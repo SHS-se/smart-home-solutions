@@ -1,26 +1,37 @@
 import { Link } from 'react-router-dom';
 import { Home, Mail, MapPin, Phone } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
-
 const Footer = () => {
-  const { t } = useLanguage();
-
-  const serviceLinks = [
-    { href: '/services#installation', label: t('Smart installation', 'Smart Installation') },
-    { href: '/services#energy', label: t('Energiövervakning', 'Energy Monitoring') },
-    { href: '/services#automation', label: t('Hemautomation', 'Home Automation') },
-    { href: '/services#support', label: t('Support', 'Support') },
-  ];
-
-  const knowledgeLinks = [
-    { href: '/knowledge/effektavgift', label: t('Vad är effektavgift?', 'What is Effektavgift?') },
-    { href: '/knowledge/load-balancing', label: t('Lastbalansering', 'Load Balancing Guide') },
-    { href: '/knowledge/sensors', label: t('Välja sensorer', 'Sensor Selection') },
-    { href: '/knowledge', label: t('Alla artiklar', 'All Articles') },
-  ];
-
-  return (
-    <footer className="cta-section text-primary-foreground">
+  const {
+    t
+  } = useLanguage();
+  const serviceLinks = [{
+    href: '/services#installation',
+    label: t('Smart installation', 'Smart Installation')
+  }, {
+    href: '/services#energy',
+    label: t('Energiövervakning', 'Energy Monitoring')
+  }, {
+    href: '/services#automation',
+    label: t('Hemautomation', 'Home Automation')
+  }, {
+    href: '/services#support',
+    label: t('Support', 'Support')
+  }];
+  const knowledgeLinks = [{
+    href: '/knowledge/effektavgift',
+    label: t('Vad är effektavgift?', 'What is Effektavgift?')
+  }, {
+    href: '/knowledge/load-balancing',
+    label: t('Lastbalansering', 'Load Balancing Guide')
+  }, {
+    href: '/knowledge/sensors',
+    label: t('Välja sensorer', 'Sensor Selection')
+  }, {
+    href: '/knowledge',
+    label: t('Alla artiklar', 'All Articles')
+  }];
+  return <footer className="cta-section text-primary-foreground">
       {/* CTA Section */}
       <div className="container mx-auto pt-16 pb-12 text-center">
         <div className="w-12 h-12 rounded-full bg-primary-foreground/20 flex items-center justify-center mx-auto mb-6">
@@ -32,22 +43,13 @@ const Footer = () => {
           {t('Redo att optimera din energi?', 'Ready to Optimize Your Energy?')}
         </h2>
         <p className="text-primary-foreground/80 max-w-xl mx-auto mb-8">
-          {t(
-            'Boka en gratis konsultation med vårt lokala Täby-team. Vi analyserar ditt hem och skapar en personlig energioptimeringsplan.',
-            "Get a free consultation with our local Täby team. We'll analyze your home and create a personalized energy optimization plan."
-          )}
+          {t('Boka en gratis konsultation med vårt lokala Täby-team. Vi analyserar ditt hem och skapar en personlig energioptimeringsplan.', "Get a free consultation with our local Täby team. We'll analyze your home and create a personalized energy optimization plan.")}
         </p>
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
-          <Link
-            to="/contact"
-            className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-lg border border-primary-foreground/30 text-primary-foreground hover:bg-primary-foreground/10 transition-colors font-medium"
-          >
+          <Link to="/contact" className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-lg border border-primary-foreground/30 text-primary-foreground hover:bg-primary-foreground/10 transition-colors font-medium">
             {t('Kontakta oss', 'Contact Us')} →
           </Link>
-          <Link
-            to="/contact"
-            className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-lg bg-primary-foreground text-primary hover:bg-primary-foreground/90 transition-colors font-medium"
-          >
+          <Link to="/contact" className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-lg bg-primary-foreground text-primary hover:bg-primary-foreground/90 transition-colors font-medium">
             {t('Boka gratis konsultation', 'Schedule Free Consultation')}
           </Link>
         </div>
@@ -71,10 +73,7 @@ const Footer = () => {
                 <span className="text-lg font-semibold">SHS</span>
               </Link>
               <p className="text-sm text-primary-foreground/70 leading-relaxed">
-                {t(
-                  'Smart hemenergioptimering för Täby och omgivande områden. Lokal expertis, professionell service.',
-                  'Smart home energy optimization for Täby and surrounding areas. Local expertise, professional service.'
-                )}
+                {t('Smart hemenergioptimering för Täby och omgivande områden. Lokal expertis, professionell service.', 'Smart home energy optimization for Täby and surrounding areas. Local expertise, professional service.')}
               </p>
             </div>
 
@@ -82,16 +81,11 @@ const Footer = () => {
             <div>
               <h4 className="font-medium mb-4">{t('Tjänster', 'Services')}</h4>
               <ul className="space-y-2">
-                {serviceLinks.map((link) => (
-                  <li key={link.href}>
-                    <Link
-                      to={link.href}
-                      className="text-sm text-primary-foreground/70 hover:text-primary-foreground transition-colors"
-                    >
+                {serviceLinks.map(link => <li key={link.href}>
+                    <Link to={link.href} className="text-sm text-primary-foreground/70 hover:text-primary-foreground transition-colors">
                       {link.label}
                     </Link>
-                  </li>
-                ))}
+                  </li>)}
               </ul>
             </div>
 
@@ -99,16 +93,11 @@ const Footer = () => {
             <div>
               <h4 className="font-medium mb-4">{t('Kunskapscenter', 'Knowledge')}</h4>
               <ul className="space-y-2">
-                {knowledgeLinks.map((link) => (
-                  <li key={link.href}>
-                    <Link
-                      to={link.href}
-                      className="text-sm text-primary-foreground/70 hover:text-primary-foreground transition-colors"
-                    >
+                {knowledgeLinks.map(link => <li key={link.href}>
+                    <Link to={link.href} className="text-sm text-primary-foreground/70 hover:text-primary-foreground transition-colors">
                       {link.label}
                     </Link>
-                  </li>
-                ))}
+                  </li>)}
               </ul>
             </div>
 
@@ -123,7 +112,7 @@ const Footer = () => {
                 <li className="flex items-center gap-3 text-sm text-primary-foreground/70">
                   <Mail className="w-4 h-4" />
                   <a href="mailto:info@shs.se" className="hover:text-primary-foreground transition-colors">
-                    info@shs.se
+                    info@smarthomesolutions.se
                   </a>
                 </li>
                 <li className="flex items-center gap-3 text-sm text-primary-foreground/70">
@@ -157,8 +146,6 @@ const Footer = () => {
           </div>
         </div>
       </div>
-    </footer>
-  );
+    </footer>;
 };
-
 export default Footer;
