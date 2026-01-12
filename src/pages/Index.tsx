@@ -169,8 +169,8 @@ const Index = () => {
             <h2 className="text-foreground mb-4">{t('Varför välja SHS?', 'Why Choose SHS?')}</h2>
             <p className="text-muted-foreground max-w-2xl mx-auto">
               {t(
-                'Vi hjälper husägare i Täby att ta kontroll över sin energiförbrukning med smart teknologi',
-                'We help Täby homeowners take control of their energy consumption with smart technology'
+                'Vi hjälper husägare att ta kontroll över sin energiförbrukning med smart teknologi',
+                'We help homeowners take control of their energy consumption with smart technology'
               )}
             </p>
           </div>
