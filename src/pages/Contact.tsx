@@ -6,27 +6,59 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
+import { z } from 'zod';
+
+const contactSchema = z.object({
+  name: z.string().trim().min(1, "Name is required").max(100, "Name must be less than 100 characters"),
+  email: z.string().trim().email("Invalid email address").max(255, "Email must be less than 255 characters"),
+  phone: z.string().trim().max(20, "Phone must be less than 20 characters").optional().or(z.literal('')),
+  message: z.string().trim().min(10, "Message must be at least 10 characters").max(5000, "Message must be less than 5000 characters")
+});
+
+type ContactFormData = z.infer<typeof contactSchema>;
+
 const Contact = () => {
-  const {
-    t
-  } = useLanguage();
+  const { t } = useLanguage();
   const [submitted, setSubmitted] = useState(false);
+  const [errors, setErrors] = useState<Partial<Record<keyof ContactFormData, string>>>({});
   const [formData, setFormData] = useState({
     name: '',
     email: '',
     phone: '',
     message: ''
   });
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    // Simulate form submission
+    setErrors({});
+    
+    const result = contactSchema.safeParse(formData);
+    
+    if (!result.success) {
+      const fieldErrors: Partial<Record<keyof ContactFormData, string>> = {};
+      result.error.errors.forEach((err) => {
+        if (err.path[0]) {
+          fieldErrors[err.path[0] as keyof ContactFormData] = err.message;
+        }
+      });
+      setErrors(fieldErrors);
+      return;
+    }
+    
+    // Form is validated - simulate submission
     setSubmitted(true);
   };
+
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const { name, value } = e.target;
     setFormData(prev => ({
       ...prev,
-      [e.target.name]: e.target.value
+      [name]: value
     }));
+    // Clear error when user starts typing
+    if (errors[name as keyof ContactFormData]) {
+      setErrors(prev => ({ ...prev, [name]: undefined }));
+    }
   };
   return <Layout>
       {/* Hero */}
@@ -63,20 +95,59 @@ const Contact = () => {
                     <div className="grid sm:grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label htmlFor="name">{t('Namn', 'Name')} *</Label>
-                        <Input id="name" name="name" required value={formData.name} onChange={handleChange} placeholder={t('Ditt namn', 'Your name')} />
+                        <Input 
+                          id="name" 
+                          name="name" 
+                          value={formData.name} 
+                          onChange={handleChange} 
+                          placeholder={t('Ditt namn', 'Your name')}
+                          maxLength={100}
+                          className={errors.name ? 'border-destructive' : ''}
+                        />
+                        {errors.name && <p className="text-xs text-destructive">{errors.name}</p>}
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="phone">{t('Telefon', 'Phone')}</Label>
-                        <Input id="phone" name="phone" type="tel" value={formData.phone} onChange={handleChange} placeholder="+46 70 123 45 67" />
+                        <Input 
+                          id="phone" 
+                          name="phone" 
+                          type="tel" 
+                          value={formData.phone} 
+                          onChange={handleChange} 
+                          placeholder="+46 70 123 45 67"
+                          maxLength={20}
+                          className={errors.phone ? 'border-destructive' : ''}
+                        />
+                        {errors.phone && <p className="text-xs text-destructive">{errors.phone}</p>}
                       </div>
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="email">{t('E-post', 'Email')} *</Label>
-                      <Input id="email" name="email" type="email" required value={formData.email} onChange={handleChange} placeholder="namn@exempel.se" />
+                      <Input 
+                        id="email" 
+                        name="email" 
+                        type="email" 
+                        value={formData.email} 
+                        onChange={handleChange} 
+                        placeholder="namn@exempel.se"
+                        maxLength={255}
+                        className={errors.email ? 'border-destructive' : ''}
+                      />
+                      {errors.email && <p className="text-xs text-destructive">{errors.email}</p>}
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="message">{t('Meddelande', 'Message')} *</Label>
-                      <Textarea id="message" name="message" required rows={5} value={formData.message} onChange={handleChange} placeholder={t('Berätta om ditt hem och vad du vill uppnå...', 'Tell us about your home and what you want to achieve...')} />
+                      <Textarea 
+                        id="message" 
+                        name="message" 
+                        rows={5} 
+                        value={formData.message} 
+                        onChange={handleChange} 
+                        placeholder={t('Berätta om ditt hem och vad du vill uppnå...', 'Tell us about your home and what you want to achieve...')}
+                        maxLength={5000}
+                        className={errors.message ? 'border-destructive' : ''}
+                      />
+                      {errors.message && <p className="text-xs text-destructive">{errors.message}</p>}
                     </div>
                     <Button type="submit" size="lg" className="w-full gap-2">
                       <Send className="w-4 h-4" />
