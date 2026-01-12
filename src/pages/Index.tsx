@@ -111,7 +111,7 @@ const Index = () => {
           <div className="grid lg:grid-cols-2 gap-12 items-center">
             <div className="animate-fade-in-up">
               <h1 className="text-foreground mb-6">
-                {t('Smartare energi för ditt Täby-hem', 'Smarter Energy for Your Täby Home')}
+                {t('Smartare energi för ditt hem', 'Smarter Energy for Your Home')}
               </h1>
               <p className="text-lg text-muted-foreground mb-8 max-w-lg leading-relaxed">
                 {t(
