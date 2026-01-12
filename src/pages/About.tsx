@@ -107,8 +107,17 @@ const About = () => {
                 </p>
               </div>
             </div>
-            <div className="bg-primary-lighter/30 rounded-2xl h-80 flex items-center justify-center">
-              <MapPin className="w-24 h-24 text-primary opacity-30" />
+            <div className="rounded-2xl h-80 overflow-hidden">
+              <iframe
+                src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d32505.89584853697!2d18.04!3d59.44!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x465f9e5a5a5a5a5b%3A0x5a5a5a5a5a5a5a5a!2sT%C3%A4by%2C%20Sweden!5e0!3m2!1sen!2sse!4v1699999999999!5m2!1sen!2sse"
+                width="100%"
+                height="100%"
+                style={{ border: 0 }}
+                allowFullScreen
+                loading="lazy"
+                referrerPolicy="no-referrer-when-downgrade"
+                title="SHS Location - Täby, Sweden"
+              />
             </div>
           </div>
         </div>
