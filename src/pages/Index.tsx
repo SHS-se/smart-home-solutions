@@ -51,7 +51,7 @@ const Index = () => {
     },
     {
       icon: MapPin,
-      title: t('Lokal Täby-expertis', 'Local Täby Expertise'),
+      title: t('Lokal expertis', 'Local Expertise'),
       description: t(
         'Professionell installation och löpande support från experter som förstår svenska energisystem.',
         'Professional installation and ongoing support from experts who understand Swedish energy systems.'
