@@ -33,10 +33,7 @@ const Header = () => {
               alt="SHS Logo" 
               className="w-10 h-10 rounded-xl transition-transform duration-200 group-hover:scale-105"
             />
-            <div className="flex flex-col">
-              <span className="text-lg font-semibold text-foreground tracking-tight text-center">SHS</span>
-              <span className="text-xs text-muted-foreground -mt-1">Smart Home Solutions</span>
-            </div>
+            <span className="text-sm font-medium text-muted-foreground">Smart Home Solutions</span>
           </Link>
 
           {/* Desktop Navigation */}
