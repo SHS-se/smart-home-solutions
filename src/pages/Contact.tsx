@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { MapPin, Mail, Phone, Send, CheckCircle } from 'lucide-react';
+import { MapPin, Mail, Phone, Send, CheckCircle, Loader2 } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import Layout from '@/components/Layout';
 import { Button } from '@/components/ui/button';
@@ -7,6 +7,8 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { z } from 'zod';
+import { supabase } from '@/integrations/supabase/client';
+import { useToast } from '@/hooks/use-toast';
 
 const contactSchema = z.object({
   name: z.string().trim().min(1, "Name is required").max(100, "Name must be less than 100 characters"),
@@ -19,7 +21,9 @@ type ContactFormData = z.infer<typeof contactSchema>;
 
 const Contact = () => {
   const { t } = useLanguage();
+  const { toast } = useToast();
   const [submitted, setSubmitted] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<keyof ContactFormData, string>>>({});
   const [formData, setFormData] = useState({
     name: '',
@@ -27,8 +31,7 @@ const Contact = () => {
     phone: '',
     message: ''
   });
-
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrors({});
     
@@ -45,8 +48,26 @@ const Contact = () => {
       return;
     }
     
-    // Form is validated - simulate submission
-    setSubmitted(true);
+    setIsLoading(true);
+    
+    try {
+      const { error } = await supabase.functions.invoke('send-contact-email', {
+        body: formData
+      });
+      
+      if (error) throw error;
+      
+      setSubmitted(true);
+    } catch (error: any) {
+      console.error('Error sending email:', error);
+      toast({
+        title: t('Fel', 'Error'),
+        description: t('Det gick inte att skicka meddelandet. Försök igen senare.', 'Failed to send message. Please try again later.'),
+        variant: 'destructive'
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -149,8 +170,12 @@ const Contact = () => {
                       />
                       {errors.message && <p className="text-xs text-destructive">{errors.message}</p>}
                     </div>
-                    <Button type="submit" size="lg" className="w-full gap-2">
-                      <Send className="w-4 h-4" />
+                    <Button type="submit" size="lg" className="w-full gap-2" disabled={isLoading}>
+                      {isLoading ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Send className="w-4 h-4" />
+                      )}
                       {t('Skicka meddelande', 'Send Message')}
                     </Button>
                     <p className="text-xs text-muted-foreground text-center">
