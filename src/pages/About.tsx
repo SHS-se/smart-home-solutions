@@ -72,20 +72,37 @@ const About = () => {
               <div className="space-y-4 text-muted-foreground leading-relaxed">
                 <p>
                   {t(
-                    'SHS grundades av en lokal Täby-bo med ett brinnande intresse för smart hemteknik och en frustration över höga elräkningar. Efter att ha optimerat sitt eget hem och sett dramatiska besparingar, blev nästa steg naturligt – att hjälpa grannar och vänner göra samma sak.',
-                    'SHS was founded by a local Täby resident with a burning interest in smart home technology and a frustration with high electricity bills. After optimizing their own home and seeing dramatic savings, the next step was natural – helping neighbors and friends do the same.'
+                    'SHS grundades av en lokal Täby-bo med över 25 års erfarenhet inom IT och systemutveckling, med starkt fokus på att använda teknik för att lösa verkliga problem. Företaget startade med ett enkelt mål: minska onödig energiförbrukning och återta kontrollen över tekniken i hemmet.',
+                    'SHS was founded by a local Täby resident with over 25 years of experience in IT and system development, and a strong focus on using technology to solve real-world problems. The company started with a simple goal: reduce unnecessary energy consumption and regain control over the technology in the home.'
                   )}
                 </p>
                 <p>
                   {t(
-                    'Idag har vi genomfört över 120 installationer i Täby och omgivande områden. Varje hem är unikt, och vi tar oss tid att förstå just dina behov innan vi rekommenderar lösningar.',
-                    'Today we have completed over 120 installations in Täby and surrounding areas. Every home is unique, and we take time to understand your specific needs before recommending solutions.'
+                    'Efter att ha optimerat sitt eget hem och uppnått betydande, mätbara minskningar av elkostnader tillsammans med förbättrad komfort och tillförlitlighet, skiftade fokus till att hjälpa grannar och lokala husägare uppnå liknande resultat.',
+                    'After optimizing their own home and delivering significant, measurable reductions in electricity costs together with improved comfort and reliability, the focus shifted to helping neighbors and local homeowners achieve similar results.'
                   )}
                 </p>
                 <p>
                   {t(
-                    'Vår filosofi är enkel: ingen överkomplicering, inga onödiga produkter, och alltid fokus på verkliga besparingar. Vi tror på att förklara tekniken på ett sätt som alla förstår.',
-                    'Our philosophy is simple: no over-complication, no unnecessary products, and always focus on real savings. We believe in explaining technology in a way everyone understands.'
+                    'Varje hem är unikt. Därför tar SHS sig tid att förstå hur ditt hushåll faktiskt fungerar innan vi rekommenderar eller installerar något. Lösningar designas för att vara robusta, begripliga och underhållbara över tid. Teknik ska ge husägare kontroll, inte låsa in dem i komplexa eller ogenomskinliga system.',
+                    'Every home is different. That\'s why SHS takes the time to understand how your household actually works before recommending or installing anything. Solutions are designed to be robust, understandable, and maintainable over time. Technology should empower homeowners, not lock them into complex or opaque systems.'
+                  )}
+                </p>
+                <p className="font-medium text-foreground">
+                  {t('Våra principer är enkla:', 'Our principles are simple:')}
+                </p>
+                <ul className="list-disc list-inside space-y-2">
+                  <li>{t('Öppna system med lokal kontroll som du äger', 'Open systems with local control that you own')}</li>
+                  <li>{t('Undvik beroende av proprietära plattformar eller tredjepartstjänster i molnet', 'Avoid dependency on proprietary platforms or third-party cloud services')}</li>
+                  <li>{t('Frihet att utöka, modifiera eller underhålla systemet utan leverantörsinlåsning', 'Freedom to expand, modify, or maintain the system without vendor lock-in')}</li>
+                  <li>{t('Ingen överkomplicering eller onödiga produkter', 'No over-complication or unnecessary products')}</li>
+                  <li>{t('Fokus på tillförlitlighet, livslängd och verkliga, mätbara besparingar', 'Focus on reliability, longevity, and real, measurable savings')}</li>
+                  <li>{t('Säkerhet, trygghet och bekvämlighet som du bestämmer', 'Security, safety and convenience that you decide')}</li>
+                </ul>
+                <p>
+                  {t(
+                    'Målet är enkelt: praktiska smarta hemlösningar som minskar kostnader, förbättrar vardagen och förblir under din kontroll.',
+                    'The goal is simple: practical smart home solutions that reduce costs, improve everyday life, and remain under your control.'
                   )}
                 </p>
               </div>
