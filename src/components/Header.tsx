@@ -27,7 +27,7 @@ const Header = () => {
         <div className="flex items-center justify-between h-16 md:h-20">
           {/* Logo */}
           <Link to="/" className="flex items-center gap-3 group">
-            <img alt="SHS Logo" className="w-10 h-10 rounded-xl transition-transform duration-200 group-hover:scale-105" src="/lovable-uploads/a209d622-0d99-4d6e-85d6-931c71c342c1.png" />
+            <img alt="SHS Logo" className="w-10 h-10 rounded-xl object-cover transition-transform duration-200 group-hover:scale-105" src="/lovable-uploads/a209d622-0d99-4d6e-85d6-931c71c342c1.png" />
             <span className="text-sm font-medium text-muted-foreground">Smart Home Solutions</span>
           </Link>
 
