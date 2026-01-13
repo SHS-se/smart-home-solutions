@@ -26,7 +26,8 @@ const handler = async (req: Request): Promise<Response> => {
 
     // Send notification email to the company
     const emailResponse = await resend.emails.send({
-      from: "Smart Home Solutions <noreply@mail.smarthomesolutions.se>",
+      from: `${name} via Smart Home Solutions <noreply@mail.smarthomesolutions.se>`,
+      reply_to: email,
       to: ["info@smarthomesolutions.se"],
       subject: `Nytt kontaktformulär: ${name}`,
       html: `
