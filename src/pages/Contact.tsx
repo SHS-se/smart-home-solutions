@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label';
 import { z } from 'zod';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import ObfuscatedEmail from '@/components/ObfuscatedEmail';
 
 const contactSchema = z.object({
   name: z.string().trim().min(1, "Name is required").max(100, "Name must be less than 100 characters"),
@@ -207,9 +208,10 @@ const Contact = () => {
                     </div>
                     <div>
                       <p className="font-medium text-foreground">{t('E-post', 'Email')}</p>
-                      <a className="text-primary hover:underline" href="mailto:info@smarthomesolutions.se">
-                        info@smarthomesolutions.se
-                      </a>
+                      <ObfuscatedEmail 
+                        email="info@smarthomesolutions.se" 
+                        className="text-primary"
+                      />
                     </div>
                   </div>
                   <div className="flex items-start gap-4">
