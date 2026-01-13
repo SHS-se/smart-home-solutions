@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { Home, Mail, MapPin, Phone } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
+import ObfuscatedEmail from '@/components/ObfuscatedEmail';
 const Footer = () => {
   const {
     t
@@ -111,9 +112,10 @@ const Footer = () => {
                 </li>
                 <li className="flex items-center gap-3 text-sm text-primary-foreground/70">
                   <Mail className="w-4 h-4" />
-                  <a href="mailto:info@shs.se" className="hover:text-primary-foreground transition-colors">
-                    info@smarthomesolutions.se
-                  </a>
+                  <ObfuscatedEmail 
+                    email="info@smarthomesolutions.se" 
+                    className="hover:text-primary-foreground transition-colors"
+                  />
                 </li>
                 <li className="flex items-center gap-3 text-sm text-primary-foreground/70">
                   <Phone className="w-4 h-4" />
