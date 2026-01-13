@@ -57,7 +57,7 @@ const Footer = () => {
         <div className="flex flex-wrap justify-center gap-6 mt-8 text-sm text-primary-foreground/70">
           <span>• {t('Ingen förpliktelse', 'No commitment required')}</span>
           <span>• {t('Svar samma dag', 'Same-day response')}</span>
-          <span>• {t('Lokala Täby-experter', 'Local Täby experts')}</span>
+          <span className="">• {t('Lokala Täby-experter', 'Local Täby experts')}</span>
         </div>
       </div>
 
@@ -112,11 +112,7 @@ const Footer = () => {
                 </li>
                 <li className="flex items-center gap-3 text-sm text-primary-foreground/70">
                   <Mail className="w-4 h-4" />
-                  <ObfuscatedEmail 
-                    address="info"
-                    domain="smarthomesolutions.se" 
-                    className="hover:text-primary-foreground transition-colors"
-                  />
+                  <ObfuscatedEmail address="info" domain="smarthomesolutions.se" className="hover:text-primary-foreground transition-colors" />
                 </li>
                 <li className="flex items-center gap-3 text-sm text-primary-foreground/70">
                   <Phone className="w-4 h-4" />
