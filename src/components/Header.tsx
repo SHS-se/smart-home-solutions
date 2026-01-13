@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { Menu, X } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { useIsPortrait } from "@/hooks/use-orientation";
 import LanguageToggle from "./LanguageToggle";
 import { Button } from "./ui/button";
 
@@ -28,6 +29,8 @@ const Header = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const { t } = useLanguage();
   const location = useLocation();
+  const { isMobilePortrait } = useIsPortrait();
+  
   const navLinks = [
     {
       href: "/services",
@@ -42,7 +45,61 @@ const Header = () => {
       label: t("Om oss", "About"),
     },
   ];
+  
   const isActive = (path: string) => location.pathname === path;
+
+  // Mobile Portrait Layout: Top bar + Bottom nav bar
+  if (isMobilePortrait) {
+    return (
+      <>
+        {/* Top Bar */}
+        <header className="fixed top-0 left-0 right-0 z-50 bg-card/95 backdrop-blur-md border-b border-border">
+          <div className="container mx-auto">
+            <div className="flex items-center justify-between h-14 px-2">
+              {/* Logo and Title */}
+              <Link to="/" className="flex items-center gap-2 group">
+                <div className="transition-transform duration-200 group-hover:scale-105">
+                  <ShsLogo />
+                </div>
+                <span className="text-xs font-medium text-muted-foreground">Smart Home Solutions</span>
+              </Link>
+
+              {/* Language Toggle and Contact Button */}
+              <div className="flex items-center gap-2">
+                <LanguageToggle />
+                <Button asChild size="sm">
+                  <Link to="/contact">{t("Kontakt", "Contact")}</Link>
+                </Button>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        {/* Bottom Navigation Bar */}
+        <nav className="fixed bottom-0 left-0 right-0 z-50 bg-card/95 backdrop-blur-md border-t border-border">
+          <div className="container mx-auto">
+            <div className="flex items-center justify-around h-14">
+              {navLinks.map((link) => (
+                <Link
+                  key={link.href}
+                  to={link.href}
+                  className={`flex-1 flex items-center justify-center py-3 text-sm font-medium transition-colors ${
+                    isActive(link.href) 
+                      ? "text-primary" 
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {link.label}
+                </Link>
+              ))}
+            </div>
+          </div>
+        </nav>
+      </>
+    );
+  }
+
+  // Desktop and Mobile Landscape Layout (original)
   return (
     <header className="fixed top-0 left-0 right-0 z-50 bg-card/95 backdrop-blur-md border-b border-border">
       <div className="container mx-auto">
@@ -76,7 +133,7 @@ const Header = () => {
             </Button>
           </div>
 
-          {/* Mobile Menu Button */}
+          {/* Mobile Menu Button (Landscape only) */}
           <button
             onClick={() => setIsMenuOpen(!isMenuOpen)}
             className="md:hidden p-2 text-foreground"
@@ -86,7 +143,7 @@ const Header = () => {
           </button>
         </div>
 
-        {/* Mobile Menu */}
+        {/* Mobile Menu (Landscape only) */}
         {isMenuOpen && (
           <div className="md:hidden py-4 border-t border-border animate-fade-in">
             <nav className="flex flex-col gap-2">
@@ -115,4 +172,5 @@ const Header = () => {
     </header>
   );
 };
+
 export default Header;
