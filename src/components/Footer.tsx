@@ -44,7 +44,7 @@ const Footer = () => {
           {t('Redo att optimera din energi?', 'Ready to Optimize Your Energy?')}
         </h2>
         <p className="text-primary-foreground/80 max-w-xl mx-auto mb-8">
-          {t('Boka en gratis konsultation med vårt lokala Täby-team. Vi analyserar ditt hem och skapar en personlig energioptimeringsplan.', "Get a free consultation with our local Täby team. We'll analyze your home and create a personalized energy optimization plan.")}
+          {t('Boka en gratis konsultation med vårt lokala team. Vi analyserar ditt hem och skapar en personlig energioptimeringsplan.', "Get a free consultation with our local team. We'll analyze your home and create a personalized energy optimization plan.")}
         </p>
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
           <Link to="/contact" className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-lg border border-primary-foreground/30 text-primary-foreground hover:bg-primary-foreground/10 transition-colors font-medium">
