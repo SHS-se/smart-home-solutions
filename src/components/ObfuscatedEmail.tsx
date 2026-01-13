@@ -2,34 +2,34 @@ import { cn } from '@/lib/utils';
 import { useEffect, useRef } from 'react';
 
 interface ObfuscatedEmailProps {
-  email: string;
+  address: string;
+  domain: string;
   className?: string;
 }
 
 /**
  * Obfuscates email address to help prevent web scraping.
- * The email is never in static HTML - it's assembled via JavaScript.
- * Falls back gracefully for users without JS.
+ * The email is split into address and domain props (never together in source).
+ * Assembled via JavaScript at runtime - never in static HTML.
  */
-const ObfuscatedEmail = ({ email, className }: ObfuscatedEmailProps) => {
+const ObfuscatedEmail = ({ address, domain, className }: ObfuscatedEmailProps) => {
   const linkRef = useRef<HTMLAnchorElement>(null);
-  const [user, domain] = email.split('@');
   
   // Encode parts to avoid plain text in JS bundle
-  const encodedUser = btoa(user);
+  const encodedAddress = btoa(address);
   const encodedDomain = btoa(domain);
 
   useEffect(() => {
     if (linkRef.current) {
       // Decode and assemble at runtime
-      const decodedUser = atob(encodedUser);
+      const decodedAddress = atob(encodedAddress);
       const decodedDomain = atob(encodedDomain);
-      const fullEmail = `${decodedUser}@${decodedDomain}`;
+      const fullEmail = `${decodedAddress}@${decodedDomain}`;
       
       linkRef.current.href = `mailto:${fullEmail}`;
       linkRef.current.textContent = fullEmail;
     }
-  }, [encodedUser, encodedDomain]);
+  }, [encodedAddress, encodedDomain]);
 
   return (
     <a
@@ -44,7 +44,7 @@ const ObfuscatedEmail = ({ email, className }: ObfuscatedEmailProps) => {
       }}
     >
       {/* Placeholder text - replaced by JS */}
-      <noscript>{user}@{domain}</noscript>
+      <noscript>{address}@{domain}</noscript>
       <span aria-hidden="true">Laddar...</span>
     </a>
   );
