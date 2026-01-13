@@ -57,7 +57,7 @@ const Footer = () => {
         <div className="flex flex-wrap justify-center gap-6 mt-8 text-sm text-primary-foreground/70">
           <span>• {t('Ingen förpliktelse', 'No commitment required')}</span>
           <span>• {t('Svar samma dag', 'Same-day response')}</span>
-          <span className="">• {t('Lokala Täby-experter', 'Local Täby experts')}</span>
+          <span className="">• {t('Lokala experter', 'Local experts')}</span>
         </div>
       </div>
 
