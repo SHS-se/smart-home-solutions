@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
-import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
+import { SMTPClient } from "https://esm.sh/emailjs@4.0.3";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -24,39 +24,39 @@ const handler = async (req: Request): Promise<Response> => {
 
     const smtpPort = parseInt(Deno.env.get("SMTP_PORT") || "587");
     
-    // Create SMTP client
+    // Create SMTP client using emailjs
     const client = new SMTPClient({
-      connection: {
-        hostname: Deno.env.get("SMTP_HOST")!,
-        port: smtpPort,
-        tls: smtpPort === 465,
-        auth: {
-          username: Deno.env.get("SMTP_USER")!,
-          password: Deno.env.get("SMTP_PASS")!,
-        },
-      },
+      user: Deno.env.get("SMTP_USER"),
+      password: Deno.env.get("SMTP_PASS"),
+      host: Deno.env.get("SMTP_HOST"),
+      port: smtpPort,
+      ssl: smtpPort === 465,
+      tls: smtpPort === 587,
     });
 
     // Send email via SMTP
-    await client.send({
-      from: "Smart Home Solutions <noreply@smarthomesolutions.se>",
-      replyTo: email,
+    const emailMessage = await client.sendAsync({
+      from: `Smart Home Solutions <noreply@smarthomesolutions.se>`,
+      "reply-to": email,
       to: "sales@smarthomesolutions.se",
       subject: `Nytt kontaktformulär: ${name}`,
-      html: `
-        <h2>Nytt meddelande från kontaktformuläret</h2>
-        <p><strong>Namn:</strong> ${name}</p>
-        <p><strong>E-post:</strong> ${email}</p>
-        <p><strong>Telefon:</strong> ${phone || 'Ej angiven'}</p>
-        <hr />
-        <h3>Meddelande:</h3>
-        <p>${message.replace(/\n/g, '<br>')}</p>
-      `,
+      attachment: [
+        {
+          data: `
+            <h2>Nytt meddelande från kontaktformuläret</h2>
+            <p><strong>Namn:</strong> ${name}</p>
+            <p><strong>E-post:</strong> ${email}</p>
+            <p><strong>Telefon:</strong> ${phone || 'Ej angiven'}</p>
+            <hr />
+            <h3>Meddelande:</h3>
+            <p>${message.replace(/\n/g, '<br>')}</p>
+          `,
+          alternative: true
+        }
+      ]
     });
 
-    await client.close();
-
-    console.log("Email sent successfully via SMTP");
+    console.log("Email sent successfully via SMTP:", emailMessage);
 
     return new Response(JSON.stringify({ success: true }), {
       status: 200,
