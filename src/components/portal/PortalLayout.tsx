@@ -1,8 +1,10 @@
 import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Building2, FileText, MessageSquare, LogOut, ArrowLeft, Users, LayoutDashboard } from 'lucide-react';
+import { Building2, FileText, MessageSquare, LogOut, Users, LayoutDashboard } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
+import { useLanguage } from '@/contexts/LanguageContext';
+import LanguageToggle from '@/components/LanguageToggle';
 
 const ShsLogoSmall = () => (
   <svg width="32" height="30" viewBox="0 0 111 104" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -25,9 +27,10 @@ interface PortalLayoutProps {
 }
 
 const PortalLayout: React.FC<PortalLayoutProps> = ({ children }) => {
-  const { user, isStaff, signOut, customerData } = useAuth();
+  const { user, isStaff, signOut } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
+  const { t } = useLanguage();
 
   const handleSignOut = async () => {
     await signOut();
@@ -35,16 +38,16 @@ const PortalLayout: React.FC<PortalLayoutProps> = ({ children }) => {
   };
 
   const customerNavItems = [
-    { href: '/portal', label: 'Dashboard', icon: LayoutDashboard },
-    { href: '/portal/account', label: 'Account', icon: Building2 },
-    { href: '/portal/billing', label: 'Billing', icon: FileText },
-    { href: '/portal/tickets', label: 'Tickets', icon: MessageSquare },
+    { href: '/portal', label: t('Översikt', 'Dashboard'), icon: LayoutDashboard },
+    { href: '/portal/account', label: t('Konto', 'Account'), icon: Building2 },
+    { href: '/portal/billing', label: t('Fakturor', 'Billing'), icon: FileText },
+    { href: '/portal/tickets', label: t('Ärenden', 'Tickets'), icon: MessageSquare },
   ];
 
   const staffNavItems = [
-    { href: '/portal', label: 'Dashboard', icon: LayoutDashboard },
-    { href: '/portal/customers', label: 'Customers', icon: Users },
-    { href: '/portal/tickets', label: 'All Tickets', icon: MessageSquare },
+    { href: '/portal', label: t('Översikt', 'Dashboard'), icon: LayoutDashboard },
+    { href: '/portal/customers', label: t('Kunder', 'Customers'), icon: Users },
+    { href: '/portal/tickets', label: t('Alla ärenden', 'All Tickets'), icon: MessageSquare },
   ];
 
   const navItems = isStaff ? staffNavItems : customerNavItems;
@@ -90,12 +93,13 @@ const PortalLayout: React.FC<PortalLayoutProps> = ({ children }) => {
 
             {/* Right side */}
             <div className="flex items-center gap-4">
+              <LanguageToggle />
               <span className="text-sm text-muted-foreground hidden lg:block">
                 {user?.email}
               </span>
               <Button variant="ghost" size="sm" onClick={handleSignOut}>
                 <LogOut className="w-4 h-4 mr-2" />
-                Logout
+                {t('Logga ut', 'Logout')}
               </Button>
             </div>
           </div>
@@ -136,7 +140,7 @@ const PortalLayout: React.FC<PortalLayoutProps> = ({ children }) => {
       <footer className="hidden md:block border-t border-border py-6">
         <div className="container mx-auto px-4">
           <p className="text-center text-sm text-muted-foreground">
-            © {new Date().getFullYear()} Smart Home Solutions. Täby, Sweden.
+            © {new Date().getFullYear()} Smart Home Solutions. {t('Täby, Sverige.', 'Täby, Sweden.')}
           </p>
         </div>
       </footer>

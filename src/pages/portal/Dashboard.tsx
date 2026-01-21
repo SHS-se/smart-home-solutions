@@ -7,12 +7,14 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
 import PortalLayout from '@/components/portal/PortalLayout';
 import { useAuth } from '@/contexts/AuthContext';
+import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
 
 const Dashboard: React.FC = () => {
   const { user, isStaff, isAdmin, customerData, loading, refreshUserData } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { t } = useLanguage();
   
   const [ticketStats, setTicketStats] = useState({ open: 0, total: 0 });
   const [invoiceStats, setInvoiceStats] = useState({ total: 0, lastDate: '' });
@@ -110,16 +112,16 @@ const Dashboard: React.FC = () => {
       if (error) throw error;
       
       toast({
-        title: 'Admin account created!',
-        description: 'You are now an admin user.',
+        title: t('Adminkonto skapat!', 'Admin account created!'),
+        description: t('Du är nu en administratör.', 'You are now an admin user.'),
       });
       
       setCanBootstrap(false);
       await refreshUserData();
     } catch (error: any) {
       toast({
-        title: 'Error',
-        description: error.message || 'Failed to create admin account.',
+        title: t('Fel', 'Error'),
+        description: error.message || t('Det gick inte att skapa adminkontot.', 'Failed to create admin account.'),
         variant: 'destructive',
       });
     } finally {
@@ -145,16 +147,18 @@ const Dashboard: React.FC = () => {
           <Card>
             <CardHeader className="text-center">
               <Shield className="w-12 h-12 mx-auto text-primary mb-4" />
-              <CardTitle>Staff Bootstrap</CardTitle>
+              <CardTitle>{t('Personalstart', 'Staff Bootstrap')}</CardTitle>
             </CardHeader>
             <CardContent className="text-center">
               <p className="text-muted-foreground mb-6">
-                No staff accounts exist yet. Since you're logged in with an @smarthomesolutions.se email,
-                you can become the first admin.
+                {t(
+                  'Inga personalkonton finns ännu. Eftersom du är inloggad med en @smarthomesolutions.se-e-post kan du bli den första administratören.',
+                  'No staff accounts exist yet. Since you\'re logged in with an @smarthomesolutions.se email, you can become the first admin.'
+                )}
               </p>
               <Button onClick={handleBootstrap} disabled={bootstrapLoading}>
                 {bootstrapLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                Make this account admin
+                {t('Gör detta konto till admin', 'Make this account admin')}
               </Button>
             </CardContent>
           </Card>
@@ -169,7 +173,10 @@ const Dashboard: React.FC = () => {
       <PortalLayout>
         <Alert>
           <AlertDescription>
-            Your account is not associated with any customer. Please contact support if you believe this is an error.
+            {t(
+              'Ditt konto är inte kopplat till någon kund. Kontakta support om du tror att detta är ett fel.',
+              'Your account is not associated with any customer. Please contact support if you believe this is an error.'
+            )}
           </AlertDescription>
         </Alert>
       </PortalLayout>
@@ -180,7 +187,7 @@ const Dashboard: React.FC = () => {
     <PortalLayout>
       <div className="space-y-8">
         <h1 className="text-3xl font-medium">
-          {isStaff ? 'Staff Dashboard' : 'Customer Portal'}
+          {isStaff ? t('Personalöversikt', 'Staff Dashboard') : t('Kundportal', 'Customer Portal')}
         </h1>
 
         {isStaff ? (
@@ -191,17 +198,17 @@ const Dashboard: React.FC = () => {
                 <div className="p-2 rounded-lg bg-primary/10">
                   <MessageSquare className="w-6 h-6 text-primary" />
                 </div>
-                <CardTitle className="text-lg">Support Tickets</CardTitle>
+                <CardTitle className="text-lg">{t('Supportärenden', 'Support Tickets')}</CardTitle>
               </CardHeader>
               <CardContent>
                 <p className="text-muted-foreground mb-1">
-                  Open tickets: <strong>{ticketStats.open}</strong>
+                  {t('Öppna ärenden:', 'Open tickets:')} <strong>{ticketStats.open}</strong>
                 </p>
                 <p className="text-muted-foreground mb-4">
-                  Total tickets: <strong>{ticketStats.total}</strong>
+                  {t('Totalt ärenden:', 'Total tickets:')} <strong>{ticketStats.total}</strong>
                 </p>
                 <Button asChild variant="outline" className="w-full">
-                  <Link to="/portal/tickets">View all tickets</Link>
+                  <Link to="/portal/tickets">{t('Visa alla ärenden', 'View all tickets')}</Link>
                 </Button>
               </CardContent>
             </Card>
@@ -211,14 +218,14 @@ const Dashboard: React.FC = () => {
                 <div className="p-2 rounded-lg bg-primary/10">
                   <Building2 className="w-6 h-6 text-primary" />
                 </div>
-                <CardTitle className="text-lg">Customers</CardTitle>
+                <CardTitle className="text-lg">{t('Kunder', 'Customers')}</CardTitle>
               </CardHeader>
               <CardContent>
                 <p className="text-muted-foreground mb-4">
-                  Manage customer accounts and users.
+                  {t('Hantera kundkonton och användare.', 'Manage customer accounts and users.')}
                 </p>
                 <Button asChild variant="outline" className="w-full">
-                  <Link to="/portal/customers">View customers</Link>
+                  <Link to="/portal/customers">{t('Visa kunder', 'View customers')}</Link>
                 </Button>
               </CardContent>
             </Card>
@@ -231,17 +238,17 @@ const Dashboard: React.FC = () => {
                 <div className="p-2 rounded-lg bg-primary/10">
                   <Building2 className="w-6 h-6 text-primary" />
                 </div>
-                <CardTitle className="text-lg">Account</CardTitle>
+                <CardTitle className="text-lg">{t('Konto', 'Account')}</CardTitle>
               </CardHeader>
               <CardContent>
                 <p className="text-muted-foreground mb-1">
-                  Company: <strong>{customerData?.org_name || 'N/A'}</strong>
+                  {t('Företag:', 'Company:')} <strong>{customerData?.org_name || 'N/A'}</strong>
                 </p>
                 <p className="text-muted-foreground mb-4">
-                  Contact: {customerData?.billing_email || user?.email}
+                  {t('Kontakt:', 'Contact:')} {customerData?.billing_email || user?.email}
                 </p>
                 <Button asChild variant="outline" className="w-full">
-                  <Link to="/portal/account">View account</Link>
+                  <Link to="/portal/account">{t('Visa konto', 'View account')}</Link>
                 </Button>
               </CardContent>
             </Card>
@@ -251,17 +258,17 @@ const Dashboard: React.FC = () => {
                 <div className="p-2 rounded-lg bg-primary/10">
                   <FileText className="w-6 h-6 text-primary" />
                 </div>
-                <CardTitle className="text-lg">Billing</CardTitle>
+                <CardTitle className="text-lg">{t('Fakturor', 'Billing')}</CardTitle>
               </CardHeader>
               <CardContent>
                 <p className="text-muted-foreground mb-1">
-                  Invoices: <strong>{invoiceStats.total} total</strong>
+                  {t('Fakturor:', 'Invoices:')} <strong>{invoiceStats.total} {t('totalt', 'total')}</strong>
                 </p>
                 <p className="text-muted-foreground mb-4">
-                  Last invoice: {invoiceStats.lastDate || 'N/A'}
+                  {t('Senaste faktura:', 'Last invoice:')} {invoiceStats.lastDate || 'N/A'}
                 </p>
                 <Button asChild variant="outline" className="w-full">
-                  <Link to="/portal/billing">View billing</Link>
+                  <Link to="/portal/billing">{t('Visa fakturor', 'View billing')}</Link>
                 </Button>
               </CardContent>
             </Card>
@@ -271,17 +278,17 @@ const Dashboard: React.FC = () => {
                 <div className="p-2 rounded-lg bg-primary/10">
                   <MessageSquare className="w-6 h-6 text-primary" />
                 </div>
-                <CardTitle className="text-lg">Support Tickets</CardTitle>
+                <CardTitle className="text-lg">{t('Supportärenden', 'Support Tickets')}</CardTitle>
               </CardHeader>
               <CardContent>
                 <p className="text-muted-foreground mb-1">
-                  Open tickets: <strong>{ticketStats.open}</strong>
+                  {t('Öppna ärenden:', 'Open tickets:')} <strong>{ticketStats.open}</strong>
                 </p>
                 <p className="text-muted-foreground mb-4">
-                  Total tickets: {ticketStats.total}
+                  {t('Totalt ärenden:', 'Total tickets:')} {ticketStats.total}
                 </p>
                 <Button asChild variant="outline" className="w-full">
-                  <Link to="/portal/tickets">View tickets</Link>
+                  <Link to="/portal/tickets">{t('Visa ärenden', 'View tickets')}</Link>
                 </Button>
               </CardContent>
             </Card>

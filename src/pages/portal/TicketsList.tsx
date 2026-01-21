@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/table';
 import PortalLayout from '@/components/portal/PortalLayout';
 import { useAuth } from '@/contexts/AuthContext';
+import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
 
 interface Ticket {
@@ -34,28 +35,38 @@ interface Ticket {
   customers?: { org_name: string | null };
 }
 
-const getStatusBadge = (status: string) => {
-  switch (status) {
-    case 'submitted':
-      return <Badge className="bg-warning/30 text-warning-foreground border-0">Open</Badge>;
-    case 'awaiting_response':
-      return <Badge className="bg-primary/20 text-primary border-0">Awaiting response</Badge>;
-    case 'awaiting_customer':
-      return <Badge className="bg-accent/20 text-accent-foreground border-0">Awaiting customer</Badge>;
-    case 'closed':
-      return <Badge variant="secondary">Closed</Badge>;
-    default:
-      return <Badge variant="outline">{status}</Badge>;
-  }
-};
-
 const TicketsList: React.FC = () => {
   const { user, customerData, loading, isStaff } = useAuth();
   const navigate = useNavigate();
+  const { t } = useLanguage();
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [ticketsLoading, setTicketsLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+
+  const getStatusBadge = (status: string) => {
+    const statusLabels: Record<string, string> = {
+      submitted: t('Öppen', 'Open'),
+      awaiting_response: t('Väntar på svar', 'Awaiting response'),
+      awaiting_customer: t('Väntar på kund', 'Awaiting customer'),
+      closed: t('Stängd', 'Closed'),
+    };
+    
+    const label = statusLabels[status] || status;
+    
+    switch (status) {
+      case 'submitted':
+        return <Badge className="bg-warning/30 text-warning-foreground border-0">{label}</Badge>;
+      case 'awaiting_response':
+        return <Badge className="bg-primary/20 text-primary border-0">{label}</Badge>;
+      case 'awaiting_customer':
+        return <Badge className="bg-accent/20 text-accent-foreground border-0">{label}</Badge>;
+      case 'closed':
+        return <Badge variant="secondary">{label}</Badge>;
+      default:
+        return <Badge variant="outline">{label}</Badge>;
+    }
+  };
 
   useEffect(() => {
     if (!loading && !user) {
@@ -125,12 +136,12 @@ const TicketsList: React.FC = () => {
     <PortalLayout>
       <div className="space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <h1 className="text-3xl font-medium">Support tickets</h1>
+          <h1 className="text-3xl font-medium">{t('Supportärenden', 'Support tickets')}</h1>
           {!isStaff && customerData && (
             <Button asChild>
               <Link to="/portal/tickets/new">
                 <Plus className="w-4 h-4 mr-2" />
-                New ticket
+                {t('Nytt ärende', 'New ticket')}
               </Link>
             </Button>
           )}
@@ -140,21 +151,21 @@ const TicketsList: React.FC = () => {
         <div className="flex flex-col sm:flex-row gap-4">
           <Select value={statusFilter} onValueChange={setStatusFilter}>
             <SelectTrigger className="w-full sm:w-48">
-              <SelectValue placeholder="Filter by status" />
+              <SelectValue placeholder={t('Filtrera på status', 'Filter by status')} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All statuses</SelectItem>
-              <SelectItem value="submitted">Open</SelectItem>
-              <SelectItem value="awaiting_response">Awaiting response</SelectItem>
-              <SelectItem value="awaiting_customer">Awaiting customer</SelectItem>
-              <SelectItem value="closed">Closed</SelectItem>
+              <SelectItem value="all">{t('Alla statusar', 'All statuses')}</SelectItem>
+              <SelectItem value="submitted">{t('Öppen', 'Open')}</SelectItem>
+              <SelectItem value="awaiting_response">{t('Väntar på svar', 'Awaiting response')}</SelectItem>
+              <SelectItem value="awaiting_customer">{t('Väntar på kund', 'Awaiting customer')}</SelectItem>
+              <SelectItem value="closed">{t('Stängd', 'Closed')}</SelectItem>
             </SelectContent>
           </Select>
           
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
-              placeholder="Search by title..."
+              placeholder={t('Sök på rubrik...', 'Search by title...')}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="pl-10"
@@ -171,10 +182,10 @@ const TicketsList: React.FC = () => {
               </div>
             ) : filteredTickets.length === 0 ? (
               <div className="text-center py-12">
-                <p className="text-muted-foreground mb-4">No tickets found.</p>
+                <p className="text-muted-foreground mb-4">{t('Inga ärenden hittades.', 'No tickets found.')}</p>
                 {!isStaff && customerData && (
                   <Button asChild variant="outline">
-                    <Link to="/portal/tickets/new">Create your first ticket</Link>
+                    <Link to="/portal/tickets/new">{t('Skapa ditt första ärende', 'Create your first ticket')}</Link>
                   </Button>
                 )}
               </div>
@@ -182,11 +193,11 @@ const TicketsList: React.FC = () => {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="text-primary">Ticket ID</TableHead>
-                    <TableHead className="text-primary">Title</TableHead>
-                    {isStaff && <TableHead className="text-primary">Customer</TableHead>}
-                    <TableHead className="text-primary">Status</TableHead>
-                    <TableHead className="text-primary">Last activity</TableHead>
+                    <TableHead className="text-primary">{t('Ärende-ID', 'Ticket ID')}</TableHead>
+                    <TableHead className="text-primary">{t('Rubrik', 'Title')}</TableHead>
+                    {isStaff && <TableHead className="text-primary">{t('Kund', 'Customer')}</TableHead>}
+                    <TableHead className="text-primary">{t('Status', 'Status')}</TableHead>
+                    <TableHead className="text-primary">{t('Senaste aktivitet', 'Last activity')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -202,7 +213,7 @@ const TicketsList: React.FC = () => {
                       </TableCell>
                       <TableCell className="max-w-md truncate">{ticket.title}</TableCell>
                       {isStaff && (
-                        <TableCell>{ticket.customers?.org_name || 'Unknown'}</TableCell>
+                        <TableCell>{ticket.customers?.org_name || t('Okänd', 'Unknown')}</TableCell>
                       )}
                       <TableCell>{getStatusBadge(ticket.status)}</TableCell>
                       <TableCell>{formatDate(ticket.last_activity_at)}</TableCell>

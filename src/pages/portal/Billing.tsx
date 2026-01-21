@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/table';
 import PortalLayout from '@/components/portal/PortalLayout';
 import { useAuth } from '@/contexts/AuthContext';
+import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
 
 interface Invoice {
@@ -30,6 +31,7 @@ interface Invoice {
 const Billing: React.FC = () => {
   const { user, customerData, loading, isStaff } = useAuth();
   const navigate = useNavigate();
+  const { t } = useLanguage();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [invoicesLoading, setInvoicesLoading] = useState(true);
 
@@ -80,7 +82,10 @@ const Billing: React.FC = () => {
       <PortalLayout>
         <Alert>
           <AlertDescription>
-            Staff accounts don't have billing information. Use the Customers page to view customer invoices.
+            {t(
+              'Personalkonton har ingen faktureringsinformation. Använd kundsidan för att se kundfakturor.',
+              "Staff accounts don't have billing information. Use the Customers page to view customer invoices."
+            )}
           </AlertDescription>
         </Alert>
       </PortalLayout>
@@ -92,7 +97,7 @@ const Billing: React.FC = () => {
       <PortalLayout>
         <Alert>
           <AlertDescription>
-            No customer data found. Please contact support.
+            {t('Ingen kunddata hittades. Kontakta support.', 'No customer data found. Please contact support.')}
           </AlertDescription>
         </Alert>
       </PortalLayout>
@@ -109,22 +114,31 @@ const Billing: React.FC = () => {
     if (!status) return null;
     const lowerStatus = status.toLowerCase();
     
+    const statusLabels: Record<string, string> = {
+      paid: t('Betald', 'Paid'),
+      pending: t('Väntande', 'Pending'),
+      sent: t('Skickad', 'Sent'),
+      overdue: t('Förfallen', 'Overdue'),
+    };
+    
+    const label = statusLabels[lowerStatus] || status;
+    
     if (lowerStatus === 'paid') {
-      return <Badge className="bg-energy/30 text-energy-darker border-0">{status}</Badge>;
+      return <Badge className="bg-energy/30 text-energy-darker border-0">{label}</Badge>;
     }
     if (lowerStatus === 'pending' || lowerStatus === 'sent') {
-      return <Badge variant="outline">{status}</Badge>;
+      return <Badge variant="outline">{label}</Badge>;
     }
     if (lowerStatus === 'overdue') {
-      return <Badge variant="destructive">{status}</Badge>;
+      return <Badge variant="destructive">{label}</Badge>;
     }
-    return <Badge variant="secondary">{status}</Badge>;
+    return <Badge variant="secondary">{label}</Badge>;
   };
 
   return (
     <PortalLayout>
       <div className="space-y-6">
-        <h1 className="text-3xl font-medium">Billing & invoices</h1>
+        <h1 className="text-3xl font-medium">{t('Fakturering', 'Billing & invoices')}</h1>
 
         <Card>
           <CardContent className="pt-6">
@@ -134,17 +148,17 @@ const Billing: React.FC = () => {
               </div>
             ) : invoices.length === 0 ? (
               <p className="text-center text-muted-foreground py-12">
-                No invoices found.
+                {t('Inga fakturor hittades.', 'No invoices found.')}
               </p>
             ) : (
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="text-primary">Date</TableHead>
-                    <TableHead className="text-primary">Invoice number</TableHead>
-                    <TableHead className="text-primary">Amount</TableHead>
-                    <TableHead className="text-primary">Status</TableHead>
-                    <TableHead className="text-primary">Download</TableHead>
+                    <TableHead className="text-primary">{t('Datum', 'Date')}</TableHead>
+                    <TableHead className="text-primary">{t('Fakturanummer', 'Invoice number')}</TableHead>
+                    <TableHead className="text-primary">{t('Belopp', 'Amount')}</TableHead>
+                    <TableHead className="text-primary">{t('Status', 'Status')}</TableHead>
+                    <TableHead className="text-primary">{t('Ladda ner', 'Download')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

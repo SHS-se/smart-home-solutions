@@ -8,6 +8,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { useLanguage } from '@/contexts/LanguageContext';
+import LanguageToggle from '@/components/LanguageToggle';
 
 const ShsLogoLarge = () => (
   <svg width="48" height="45" viewBox="0 0 111 104" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -33,6 +35,7 @@ const Login: React.FC = () => {
   const { toast } = useToast();
   const navigate = useNavigate();
   const { user, loading } = useAuth();
+  const { t } = useLanguage();
 
   // Handle magic link token exchange from URL hash
   useEffect(() => {
@@ -57,8 +60,8 @@ const Login: React.FC = () => {
         } catch (error: any) {
           console.error('Auth callback error:', error);
           toast({
-            title: 'Login failed',
-            description: error.message || 'Failed to complete login.',
+            title: t('Inloggningen misslyckades', 'Login failed'),
+            description: error.message || t('Det gick inte att slutföra inloggningen.', 'Failed to complete login.'),
             variant: 'destructive',
           });
         } finally {
@@ -68,7 +71,7 @@ const Login: React.FC = () => {
     };
     
     handleAuthCallback();
-  }, [navigate, toast]);
+  }, [navigate, toast, t]);
 
   useEffect(() => {
     if (!loading && !processingAuth && user) {
@@ -92,13 +95,13 @@ const Login: React.FC = () => {
 
       setEmailSent(true);
       toast({
-        title: 'Login link sent!',
-        description: 'Check your email for a secure login link.',
+        title: t('Inloggningslänk skickad!', 'Login link sent!'),
+        description: t('Kolla din e-post för en säker inloggningslänk.', 'Check your email for a secure login link.'),
       });
     } catch (error: any) {
       toast({
-        title: 'Error',
-        description: error.message || 'Failed to send login link.',
+        title: t('Fel', 'Error'),
+        description: error.message || t('Det gick inte att skicka inloggningslänken.', 'Failed to send login link.'),
         variant: 'destructive',
       });
     } finally {
@@ -116,6 +119,11 @@ const Login: React.FC = () => {
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-background p-4">
+      {/* Language toggle at top right */}
+      <div className="absolute top-4 right-4">
+        <LanguageToggle />
+      </div>
+
       {/* Logo */}
       <div className="mb-8 text-center">
         <div className="flex items-center justify-center gap-3 mb-2">
@@ -130,33 +138,33 @@ const Login: React.FC = () => {
       {/* Login Card */}
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
-          <CardTitle className="text-2xl">Customer Portal</CardTitle>
+          <CardTitle className="text-2xl">{t('Kundportal', 'Customer Portal')}</CardTitle>
           <CardDescription>
-            Access your account, invoices, and support tickets.
+            {t('Få tillgång till ditt konto, fakturor och supportärenden.', 'Access your account, invoices, and support tickets.')}
           </CardDescription>
         </CardHeader>
         <CardContent>
           {emailSent ? (
             <div className="text-center py-8">
               <Mail className="w-12 h-12 mx-auto text-primary mb-4" />
-              <h3 className="text-lg font-medium mb-2">Check your email</h3>
+              <h3 className="text-lg font-medium mb-2">{t('Kolla din e-post', 'Check your email')}</h3>
               <p className="text-muted-foreground mb-6">
-                We've sent a login link to <strong>{email}</strong>
+                {t('Vi har skickat en inloggningslänk till', "We've sent a login link to")} <strong>{email}</strong>
               </p>
               <Button variant="outline" onClick={() => setEmailSent(false)}>
-                Try another email
+                {t('Prova en annan e-post', 'Try another email')}
               </Button>
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="email">Email address</Label>
+                <Label htmlFor="email">{t('E-postadress', 'Email address')}</Label>
                 <div className="relative">
                   <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                   <Input
                     id="email"
                     type="email"
-                    placeholder="your@email.com"
+                    placeholder={t('din@epost.se', 'your@email.com')}
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className="pl-10"
@@ -169,10 +177,10 @@ const Login: React.FC = () => {
                 {isLoading ? (
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                 ) : null}
-                Send login link
+                {t('Skicka inloggningslänk', 'Send login link')}
               </Button>
               <p className="text-center text-sm text-muted-foreground">
-                We'll email you a secure login link.
+                {t('Vi skickar en säker inloggningslänk till din e-post.', "We'll email you a secure login link.")}
               </p>
             </form>
           )}
@@ -185,7 +193,7 @@ const Login: React.FC = () => {
         className="mt-8 flex items-center gap-2 text-sm text-primary hover:underline"
       >
         <ArrowLeft className="w-4 h-4" />
-        Back to website
+        {t('Tillbaka till webbplatsen', 'Back to website')}
       </Link>
     </div>
   );
