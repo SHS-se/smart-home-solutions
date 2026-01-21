@@ -14,13 +14,272 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      customer_users: {
+        Row: {
+          created_at: string
+          customer_id: string
+          id: string
+          role: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          customer_id: string
+          id?: string
+          role?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          customer_id?: string
+          id?: string
+          role?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "customer_users_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      customers: {
+        Row: {
+          address: string | null
+          billing_email: string | null
+          created_at: string
+          id: string
+          org_name: string | null
+          phone: string | null
+          site_address: string | null
+        }
+        Insert: {
+          address?: string | null
+          billing_email?: string | null
+          created_at?: string
+          id?: string
+          org_name?: string | null
+          phone?: string | null
+          site_address?: string | null
+        }
+        Update: {
+          address?: string | null
+          billing_email?: string | null
+          created_at?: string
+          id?: string
+          org_name?: string | null
+          phone?: string | null
+          site_address?: string | null
+        }
+        Relationships: []
+      }
+      invoices: {
+        Row: {
+          amount: number | null
+          created_at: string
+          currency: string | null
+          customer_id: string
+          date: string | null
+          external_id: string | null
+          id: string
+          pdf_url: string | null
+          status: string | null
+        }
+        Insert: {
+          amount?: number | null
+          created_at?: string
+          currency?: string | null
+          customer_id: string
+          date?: string | null
+          external_id?: string | null
+          id?: string
+          pdf_url?: string | null
+          status?: string | null
+        }
+        Update: {
+          amount?: number | null
+          created_at?: string
+          currency?: string | null
+          customer_id?: string
+          date?: string | null
+          external_id?: string | null
+          id?: string
+          pdf_url?: string | null
+          status?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "invoices_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      staff_users: {
+        Row: {
+          created_at: string
+          role: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          role?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          role?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      ticket_attachments: {
+        Row: {
+          comment_id: string | null
+          content_type: string
+          created_at: string
+          filename: string
+          id: string
+          size_bytes: number
+          storage_path: string
+          ticket_id: string
+        }
+        Insert: {
+          comment_id?: string | null
+          content_type: string
+          created_at?: string
+          filename: string
+          id?: string
+          size_bytes: number
+          storage_path: string
+          ticket_id: string
+        }
+        Update: {
+          comment_id?: string | null
+          content_type?: string
+          created_at?: string
+          filename?: string
+          id?: string
+          size_bytes?: number
+          storage_path?: string
+          ticket_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ticket_attachments_comment_id_fkey"
+            columns: ["comment_id"]
+            isOneToOne: false
+            referencedRelation: "ticket_comments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ticket_attachments_ticket_id_fkey"
+            columns: ["ticket_id"]
+            isOneToOne: false
+            referencedRelation: "tickets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ticket_comments: {
+        Row: {
+          author_email: string | null
+          author_type: string
+          author_user_id: string | null
+          body_markdown: string
+          created_at: string
+          id: string
+          source: string
+          ticket_id: string
+        }
+        Insert: {
+          author_email?: string | null
+          author_type: string
+          author_user_id?: string | null
+          body_markdown: string
+          created_at?: string
+          id?: string
+          source?: string
+          ticket_id: string
+        }
+        Update: {
+          author_email?: string | null
+          author_type?: string
+          author_user_id?: string | null
+          body_markdown?: string
+          created_at?: string
+          id?: string
+          source?: string
+          ticket_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ticket_comments_ticket_id_fkey"
+            columns: ["ticket_id"]
+            isOneToOne: false
+            referencedRelation: "tickets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tickets: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          customer_id: string
+          email_token: string
+          id: string
+          last_activity_at: string
+          status: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          customer_id: string
+          email_token?: string
+          id?: string
+          last_activity_at?: string
+          status?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          customer_id?: string
+          email_token?: string
+          id?: string
+          last_activity_at?: string
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tickets_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      get_customer_id_for_user: { Args: { _user_id: string }; Returns: string }
+      is_admin: { Args: { _user_id: string }; Returns: boolean }
+      is_staff: { Args: { _user_id: string }; Returns: boolean }
+      is_staff_table_empty: { Args: never; Returns: boolean }
     }
     Enums: {
       [_ in never]: never
