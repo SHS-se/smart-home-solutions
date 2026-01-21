@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Loader2, Users, Building2 } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Loader2, Building2 } from 'lucide-react';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/table';
 import PortalLayout from '@/components/portal/PortalLayout';
 import { useAuth } from '@/contexts/AuthContext';
+import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
 
 interface Customer {
@@ -28,6 +29,7 @@ interface Customer {
 const Customers: React.FC = () => {
   const { user, isStaff, loading } = useAuth();
   const navigate = useNavigate();
+  const { t } = useLanguage();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [customersLoading, setCustomersLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -90,7 +92,7 @@ const Customers: React.FC = () => {
       <PortalLayout>
         <Alert>
           <AlertDescription>
-            You don't have permission to view this page.
+            {t('Du har inte behörighet att visa denna sida.', "You don't have permission to view this page.")}
           </AlertDescription>
         </Alert>
       </PortalLayout>
@@ -101,13 +103,13 @@ const Customers: React.FC = () => {
     <PortalLayout>
       <div className="space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <h1 className="text-3xl font-medium">Customers</h1>
+          <h1 className="text-3xl font-medium">{t('Kunder', 'Customers')}</h1>
         </div>
 
         {/* Search */}
         <div className="max-w-md">
           <Input
-            placeholder="Search customers..."
+            placeholder={t('Sök kunder...', 'Search customers...')}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
@@ -123,30 +125,30 @@ const Customers: React.FC = () => {
             ) : filteredCustomers.length === 0 ? (
               <div className="text-center py-12">
                 <Building2 className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-                <p className="text-muted-foreground">No customers found.</p>
+                <p className="text-muted-foreground">{t('Inga kunder hittades.', 'No customers found.')}</p>
               </div>
             ) : (
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="text-primary">Company</TableHead>
-                    <TableHead className="text-primary">Email</TableHead>
-                    <TableHead className="text-primary">Phone</TableHead>
-                    <TableHead className="text-primary">Actions</TableHead>
+                    <TableHead className="text-primary">{t('Företag', 'Company')}</TableHead>
+                    <TableHead className="text-primary">{t('E-post', 'Email')}</TableHead>
+                    <TableHead className="text-primary">{t('Telefon', 'Phone')}</TableHead>
+                    <TableHead className="text-primary">{t('Åtgärder', 'Actions')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredCustomers.map((customer) => (
                     <TableRow key={customer.id}>
                       <TableCell className="font-medium">
-                        {customer.org_name || 'Unnamed'}
+                        {customer.org_name || t('Namnlös', 'Unnamed')}
                       </TableCell>
                       <TableCell>{customer.billing_email || '-'}</TableCell>
                       <TableCell>{customer.phone || '-'}</TableCell>
                       <TableCell>
                         <Button variant="ghost" size="sm" asChild>
                           <Link to={`/portal/customers/${customer.id}`}>
-                            View
+                            {t('Visa', 'View')}
                           </Link>
                         </Button>
                       </TableCell>

@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import PortalLayout from '@/components/portal/PortalLayout';
 import { useAuth } from '@/contexts/AuthContext';
+import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
 
 interface PendingFile {
@@ -20,6 +21,7 @@ const NewTicket: React.FC = () => {
   const { user, customerData, loading } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { t } = useLanguage();
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const [title, setTitle] = useState('');
@@ -126,16 +128,16 @@ const NewTicket: React.FC = () => {
       }
 
       toast({
-        title: 'Ticket created',
-        description: 'Your support ticket has been submitted.',
+        title: t('Ärende skapat', 'Ticket created'),
+        description: t('Ditt supportärende har skickats in.', 'Your support ticket has been submitted.'),
       });
 
       navigate(`/portal/tickets/${ticket.id}`);
     } catch (error: any) {
       console.error('Error creating ticket:', error);
       toast({
-        title: 'Error',
-        description: error.message || 'Failed to create ticket.',
+        title: t('Fel', 'Error'),
+        description: error.message || t('Det gick inte att skapa ärendet.', 'Failed to create ticket.'),
         variant: 'destructive',
       });
     } finally {
@@ -161,16 +163,16 @@ const NewTicket: React.FC = () => {
   return (
     <PortalLayout>
       <div className="space-y-6 max-w-2xl">
-        <h1 className="text-3xl font-medium">Create support ticket</h1>
+        <h1 className="text-3xl font-medium">{t('Skapa supportärende', 'Create support ticket')}</h1>
 
         <Card>
           <CardContent className="pt-6">
             <form onSubmit={handleSubmit} className="space-y-6">
               <div className="space-y-2">
-                <Label htmlFor="title" className="text-primary">Title</Label>
+                <Label htmlFor="title" className="text-primary">{t('Rubrik', 'Title')}</Label>
                 <Input
                   id="title"
-                  placeholder="Brief description of your issue"
+                  placeholder={t('Kort beskrivning av ditt problem', 'Brief description of your issue')}
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
                   required
@@ -179,10 +181,10 @@ const NewTicket: React.FC = () => {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="description" className="text-primary">Description</Label>
+                <Label htmlFor="description" className="text-primary">{t('Beskrivning', 'Description')}</Label>
                 <Textarea
                   id="description"
-                  placeholder="Provide detailed information about your issue. Markdown formatting is supported."
+                  placeholder={t('Beskriv ditt problem i detalj. Markdown-formatering stöds.', 'Provide detailed information about your issue. Markdown formatting is supported.')}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   required
@@ -191,17 +193,17 @@ const NewTicket: React.FC = () => {
               </div>
 
               <div className="space-y-2">
-                <Label className="text-primary">Attachments</Label>
+                <Label className="text-primary">{t('Bilagor', 'Attachments')}</Label>
                 <div
                   className="border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:border-primary/50 transition-colors"
                   onClick={() => fileInputRef.current?.click()}
                 >
                   <Upload className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
                   <p className="text-muted-foreground">
-                    Drag and drop files here, or click to browse
+                    {t('Dra och släpp filer här, eller klicka för att bläddra', 'Drag and drop files here, or click to browse')}
                   </p>
                   <Button type="button" variant="outline" size="sm" className="mt-2">
-                    Choose files
+                    {t('Välj filer', 'Choose files')}
                   </Button>
                   <input
                     ref={fileInputRef}
@@ -244,19 +246,19 @@ const NewTicket: React.FC = () => {
               <div className="flex gap-4">
                 <Button type="submit" disabled={isSubmitting}>
                   {isSubmitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                  Submit ticket
+                  {t('Skicka ärende', 'Submit ticket')}
                 </Button>
                 <Button
                   type="button"
                   variant="outline"
                   onClick={() => navigate('/portal/tickets')}
                 >
-                  Cancel
+                  {t('Avbryt', 'Cancel')}
                 </Button>
               </div>
 
               <p className="text-sm text-muted-foreground border-t border-border pt-4">
-                You can also reply by email once the ticket is created.
+                {t('Du kan även svara via e-post när ärendet har skapats.', 'You can also reply by email once the ticket is created.')}
               </p>
             </form>
           </CardContent>
