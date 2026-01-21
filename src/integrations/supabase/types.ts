@@ -276,6 +276,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      can_access_ticket_storage: {
+        Args: { storage_path: string }
+        Returns: boolean
+      }
       get_customer_id_for_user: { Args: { _user_id: string }; Returns: string }
       is_admin: { Args: { _user_id: string }; Returns: boolean }
       is_staff: { Args: { _user_id: string }; Returns: boolean }

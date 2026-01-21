@@ -1,0 +1,269 @@
+import React, { useState, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Loader2, Upload, X, File } from 'lucide-react';
+import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
+import { useToast } from '@/hooks/use-toast';
+import PortalLayout from '@/components/portal/PortalLayout';
+import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/integrations/supabase/client';
+
+interface PendingFile {
+  file: File;
+  id: string;
+}
+
+const NewTicket: React.FC = () => {
+  const { user, customerData, loading } = useAuth();
+  const navigate = useNavigate();
+  const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  React.useEffect(() => {
+    if (!loading && !user) {
+      navigate('/login');
+    }
+  }, [user, loading, navigate]);
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    const newFiles = files.map((file) => ({
+      file,
+      id: crypto.randomUUID(),
+    }));
+    setPendingFiles((prev) => [...prev, ...newFiles]);
+    
+    // Reset input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const removeFile = (id: string) => {
+    setPendingFiles((prev) => prev.filter((f) => f.id !== id));
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !customerData) return;
+    
+    setIsSubmitting(true);
+
+    try {
+      // Create ticket
+      const { data: ticket, error: ticketError } = await supabase
+        .from('tickets')
+        .insert({
+          customer_id: customerData.id,
+          created_by: user.id,
+          title: title.trim(),
+          status: 'submitted',
+        })
+        .select()
+        .single();
+
+      if (ticketError) throw ticketError;
+
+      // Create initial comment
+      const { data: comment, error: commentError } = await supabase
+        .from('ticket_comments')
+        .insert({
+          ticket_id: ticket.id,
+          author_user_id: user.id,
+          author_email: user.email,
+          author_type: 'customer',
+          source: 'portal',
+          body_markdown: description.trim(),
+        })
+        .select()
+        .single();
+
+      if (commentError) throw commentError;
+
+      // Upload attachments
+      for (const { file } of pendingFiles) {
+        const fileName = `${crypto.randomUUID()}-${file.name}`;
+        const storagePath = `customer/${customerData.id}/ticket/${ticket.id}/${fileName}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from('ticket-attachments')
+          .upload(storagePath, file);
+
+        if (uploadError) {
+          console.error('Error uploading file:', uploadError);
+          continue;
+        }
+
+        await supabase.from('ticket_attachments').insert({
+          ticket_id: ticket.id,
+          comment_id: comment.id,
+          storage_path: storagePath,
+          filename: file.name,
+          content_type: file.type,
+          size_bytes: file.size,
+        });
+      }
+
+      // Send notification email (via edge function)
+      try {
+        await supabase.functions.invoke('ticket-notification', {
+          body: {
+            ticketId: ticket.id,
+            action: 'created',
+          },
+        });
+      } catch (notifyError) {
+        console.error('Error sending notification:', notifyError);
+        // Don't fail the ticket creation if notification fails
+      }
+
+      toast({
+        title: 'Ticket created',
+        description: 'Your support ticket has been submitted.',
+      });
+
+      navigate(`/portal/tickets/${ticket.id}`);
+    } catch (error: any) {
+      console.error('Error creating ticket:', error);
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to create ticket.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <PortalLayout>
+        <div className="flex items-center justify-center min-h-[400px]">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        </div>
+      </PortalLayout>
+    );
+  }
+
+  if (!customerData) {
+    navigate('/portal/tickets');
+    return null;
+  }
+
+  return (
+    <PortalLayout>
+      <div className="space-y-6 max-w-2xl">
+        <h1 className="text-3xl font-medium">Create support ticket</h1>
+
+        <Card>
+          <CardContent className="pt-6">
+            <form onSubmit={handleSubmit} className="space-y-6">
+              <div className="space-y-2">
+                <Label htmlFor="title" className="text-primary">Title</Label>
+                <Input
+                  id="title"
+                  placeholder="Brief description of your issue"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  required
+                  maxLength={200}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="description" className="text-primary">Description</Label>
+                <Textarea
+                  id="description"
+                  placeholder="Provide detailed information about your issue. Markdown formatting is supported."
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  required
+                  className="min-h-[200px]"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-primary">Attachments</Label>
+                <div
+                  className="border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:border-primary/50 transition-colors"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <Upload className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
+                  <p className="text-muted-foreground">
+                    Drag and drop files here, or click to browse
+                  </p>
+                  <Button type="button" variant="outline" size="sm" className="mt-2">
+                    Choose files
+                  </Button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    onChange={handleFileSelect}
+                    className="hidden"
+                    accept="image/*,text/plain,application/pdf,application/zip,application/gzip,application/json"
+                  />
+                </div>
+
+                {pendingFiles.length > 0 && (
+                  <div className="space-y-2 mt-4">
+                    {pendingFiles.map(({ file, id }) => (
+                      <div
+                        key={id}
+                        className="flex items-center justify-between p-2 bg-muted rounded"
+                      >
+                        <div className="flex items-center gap-2">
+                          <File className="w-4 h-4 text-muted-foreground" />
+                          <span className="text-sm truncate max-w-xs">{file.name}</span>
+                          <span className="text-xs text-muted-foreground">
+                            ({(file.size / 1024).toFixed(1)} KB)
+                          </span>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => removeFile(id)}
+                        >
+                          <X className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex gap-4">
+                <Button type="submit" disabled={isSubmitting}>
+                  {isSubmitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                  Submit ticket
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => navigate('/portal/tickets')}
+                >
+                  Cancel
+                </Button>
+              </div>
+
+              <p className="text-sm text-muted-foreground border-t border-border pt-4">
+                You can also reply by email once the ticket is created.
+              </p>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
+    </PortalLayout>
+  );
+};
+
+export default NewTicket;
