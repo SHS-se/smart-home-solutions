@@ -1,7 +1,5 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
-import { Resend } from "https://esm.sh/resend@2.0.0";
-
-const resend = new Resend(Deno.env.get("RESEND_API_KEY"));
+import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -24,11 +22,26 @@ const handler = async (req: Request): Promise<Response> => {
   try {
     const { name, email, phone, message }: ContactEmailRequest = await req.json();
 
-    // Send notification email to the company
-    const emailResponse = await resend.emails.send({
-      from: `${name} via Smart Home Solutions <noreply@mail.smarthomesolutions.se>`,
-      reply_to: email,
-      to: ["info@smarthomesolutions.se"],
+    const smtpPort = parseInt(Deno.env.get("SMTP_PORT") || "587");
+    
+    // Create SMTP client
+    const client = new SMTPClient({
+      connection: {
+        hostname: Deno.env.get("SMTP_HOST")!,
+        port: smtpPort,
+        tls: smtpPort === 465,
+        auth: {
+          username: Deno.env.get("SMTP_USER")!,
+          password: Deno.env.get("SMTP_PASS")!,
+        },
+      },
+    });
+
+    // Send email via SMTP
+    await client.send({
+      from: "Smart Home Solutions <noreply@smarthomesolutions.se>",
+      replyTo: email,
+      to: "sales@smarthomesolutions.se",
       subject: `Nytt kontaktformulär: ${name}`,
       html: `
         <h2>Nytt meddelande från kontaktformuläret</h2>
@@ -41,7 +54,9 @@ const handler = async (req: Request): Promise<Response> => {
       `,
     });
 
-    console.log("Email sent successfully:", emailResponse);
+    await client.close();
+
+    console.log("Email sent successfully via SMTP");
 
     return new Response(JSON.stringify({ success: true }), {
       status: 200,
