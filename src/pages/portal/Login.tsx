@@ -29,15 +29,52 @@ const Login: React.FC = () => {
   const [email, setEmail] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
+  const [processingAuth, setProcessingAuth] = useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
   const { user, loading } = useAuth();
 
+  // Handle magic link token exchange from URL hash
   useEffect(() => {
-    if (!loading && user) {
+    const handleAuthCallback = async () => {
+      const hashParams = new URLSearchParams(window.location.hash.substring(1));
+      const accessToken = hashParams.get('access_token');
+      const refreshToken = hashParams.get('refresh_token');
+      
+      if (accessToken && refreshToken) {
+        setProcessingAuth(true);
+        try {
+          const { error } = await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          });
+          
+          if (error) throw error;
+          
+          // Clear the hash from URL
+          window.history.replaceState(null, '', window.location.pathname);
+          navigate('/portal');
+        } catch (error: any) {
+          console.error('Auth callback error:', error);
+          toast({
+            title: 'Login failed',
+            description: error.message || 'Failed to complete login.',
+            variant: 'destructive',
+          });
+        } finally {
+          setProcessingAuth(false);
+        }
+      }
+    };
+    
+    handleAuthCallback();
+  }, [navigate, toast]);
+
+  useEffect(() => {
+    if (!loading && !processingAuth && user) {
       navigate('/portal');
     }
-  }, [user, loading, navigate]);
+  }, [user, loading, processingAuth, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -47,7 +84,7 @@ const Login: React.FC = () => {
       const { error } = await supabase.auth.signInWithOtp({
         email: email.trim(),
         options: {
-          emailRedirectTo: `${window.location.origin}/portal`,
+          emailRedirectTo: `${window.location.origin}/login`,
         },
       });
 
@@ -69,7 +106,7 @@ const Login: React.FC = () => {
     }
   };
 
-  if (loading) {
+  if (loading || processingAuth) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
