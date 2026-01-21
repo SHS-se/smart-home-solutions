@@ -87,12 +87,13 @@ const handler = async (req: Request): Promise<Response> => {
       });
     }
 
-    const statusLabel = {
+    const statusLabels: Record<string, string> = {
       submitted: "Open",
       awaiting_response: "Awaiting response",
       awaiting_customer: "Awaiting customer",
       closed: "Closed",
-    }[ticket.status] || ticket.status;
+    };
+    const statusLabel = statusLabels[ticket.status as string] || ticket.status;
 
     const htmlBody = `
       <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
