@@ -29,6 +29,17 @@ async function sendEmailViaSMTP(
 
   // Connect to SMTP server
   const conn = await Deno.connect({ hostname: host, port });
+  let tlsConn: Deno.TlsConn | null = null;
+  let tlsClosed = false;
+
+  const safeClose = (c: { close: () => void } | null) => {
+    if (!c) return;
+    try {
+      c.close();
+    } catch (_e) {
+      // Ignore close errors; we want to preserve the original failure cause.
+    }
+  };
 
   async function read(): Promise<string> {
     const buf = new Uint8Array(4096);
@@ -86,11 +97,12 @@ async function sendEmailViaSMTP(
     assertSmtpOk("STARTTLS", response, ["220"]);
 
     // Upgrade to TLS
-    const tlsConn = await Deno.startTls(conn, { hostname: host });
+    tlsConn = await Deno.startTls(conn, { hostname: host });
+    const tls = tlsConn;
 
     async function tlsRead(): Promise<string> {
       const buf = new Uint8Array(4096);
-      const n = await tlsConn.read(buf);
+      const n = await tls.read(buf);
       if (n === null) throw new Error("Connection closed");
       return decoder.decode(buf.subarray(0, n));
     }
@@ -100,7 +112,7 @@ async function sendEmailViaSMTP(
     }
 
     async function tlsWrite(cmd: string): Promise<void> {
-      await tlsConn.write(encoder.encode(cmd + "\r\n"));
+      await tls.write(encoder.encode(cmd + "\r\n"));
     }
 
     async function tlsWriteAndRead(cmd: string): Promise<string> {
@@ -128,6 +140,7 @@ async function sendEmailViaSMTP(
     assertSmtpOk("AUTH password", response, ["235"]);
 
     // MAIL FROM
+    console.log("Envelope:", { from, to });
     response = await tlsWriteAndRead(`MAIL FROM:<${from}>`);
     console.log("MAIL FROM response:", response);
     assertSmtpOk("MAIL FROM", response, ["250"]);
@@ -168,11 +181,34 @@ async function sendEmailViaSMTP(
 
     // QUIT
     await tlsWrite("QUIT");
-    tlsConn.close();
+    safeClose(tlsConn);
+    tlsClosed = true;
 
   } catch (error) {
-    conn.close();
     throw error;
+  } finally {
+    // If TLS was established, the TLS connection owns the underlying socket.
+    if (tlsConn) {
+      if (!tlsClosed) safeClose(tlsConn);
+    } else {
+      safeClose(conn);
+    }
+  }
+}
+
+function extractEmailAddress(value: string): string {
+  const trimmed = value.trim();
+  const match = trimmed.match(/<([^>]+)>/);
+  return (match?.[1] ?? trimmed).trim();
+}
+
+function assertEmailAddress(label: string, value: string): void {
+  // Simple sanity check (we don't need full RFC compliance here)
+  const ok = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+  if (!ok) {
+    throw new Error(
+      `${label} must be a full email address like name@domain.tld (check your backend secret).`
+    );
   }
 }
 
@@ -186,13 +222,21 @@ const handler = async (req: Request): Promise<Response> => {
 
     const smtpHost = Deno.env.get("SMTP_HOST") || "smtp.protonmail.ch";
     const smtpPort = parseInt(Deno.env.get("SMTP_PORT") || "587");
-    const smtpUser = Deno.env.get("SMTP_USER")!;
-    const smtpPass = Deno.env.get("SMTP_PASS")!;
+    const smtpUserRaw = Deno.env.get("SMTP_USER");
+    const smtpPass = Deno.env.get("SMTP_PASS");
+    if (!smtpUserRaw || !smtpPass) {
+      throw new Error(
+        "Missing SMTP credentials (SMTP_USER/SMTP_PASS). Please configure backend secrets."
+      );
+    }
+    const smtpUser = extractEmailAddress(smtpUserRaw);
 
     // Proton SMTP commonly rejects envelope sender addresses that aren't owned/allowed by the authenticated user.
     // Default the FROM to the authenticated account, while keeping the user's address in Reply-To.
-    const fromAddress = Deno.env.get("SMTP_FROM") || smtpUser;
-    const toAddress = Deno.env.get("CONTACT_TO") || smtpUser;
+    const fromAddress = extractEmailAddress(Deno.env.get("SMTP_FROM") || smtpUser);
+    const toAddress = extractEmailAddress(Deno.env.get("CONTACT_TO") || smtpUser);
+    assertEmailAddress("SMTP_FROM", fromAddress);
+    assertEmailAddress("CONTACT_TO", toAddress);
 
     const htmlBody = `
       <h2>Nytt meddelande från kontaktformuläret</h2>
