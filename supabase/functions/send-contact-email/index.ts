@@ -37,6 +37,31 @@ async function sendEmailViaSMTP(
     return decoder.decode(buf.subarray(0, n));
   }
 
+  // Best-effort read for multi-line SMTP responses (e.g. EHLO)
+  async function readSmtpResponse(readFn: () => Promise<string>): Promise<string> {
+    let acc = "";
+    // limit loops to avoid hanging
+    for (let i = 0; i < 10; i++) {
+      const chunk = await readFn();
+      acc += chunk;
+      // SMTP multiline responses end with: "XYZ <text>" (space after code)
+      const lines = acc.split("\r\n").filter(Boolean);
+      const last = lines[lines.length - 1] || "";
+      if (/^\d{3} /.test(last)) return acc;
+      // If we don't even have CRLF yet, keep reading.
+      if (!acc.includes("\r\n")) continue;
+    }
+    return acc;
+  }
+
+  function assertSmtpOk(step: string, response: string, okCodes: string[]) {
+    const trimmed = response.trim();
+    const code = trimmed.slice(0, 3);
+    if (!okCodes.includes(code)) {
+      throw new Error(`${step} failed: ${trimmed}`);
+    }
+  }
+
   async function write(cmd: string): Promise<void> {
     await conn.write(encoder.encode(cmd + "\r\n"));
   }
@@ -48,20 +73,17 @@ async function sendEmailViaSMTP(
 
   try {
     // Read greeting
-    const greeting = await read();
+    const greeting = await readSmtpResponse(read);
     console.log("Greeting:", greeting);
 
     // EHLO
-    let response = await writeAndRead(`EHLO client`);
+    let response = await readSmtpResponse(() => writeAndRead(`EHLO client`));
     console.log("EHLO response:", response);
 
     // STARTTLS
     response = await writeAndRead("STARTTLS");
     console.log("STARTTLS response:", response);
-
-    if (!response.startsWith("220")) {
-      throw new Error(`STARTTLS failed: ${response}`);
-    }
+    assertSmtpOk("STARTTLS", response, ["220"]);
 
     // Upgrade to TLS
     const tlsConn = await Deno.startTls(conn, { hostname: host });
@@ -73,13 +95,17 @@ async function sendEmailViaSMTP(
       return decoder.decode(buf.subarray(0, n));
     }
 
+    async function tlsReadSmtp(): Promise<string> {
+      return await readSmtpResponse(tlsRead);
+    }
+
     async function tlsWrite(cmd: string): Promise<void> {
       await tlsConn.write(encoder.encode(cmd + "\r\n"));
     }
 
     async function tlsWriteAndRead(cmd: string): Promise<string> {
       await tlsWrite(cmd);
-      return await tlsRead();
+      return await tlsReadSmtp();
     }
 
     // EHLO again after TLS
@@ -89,30 +115,32 @@ async function sendEmailViaSMTP(
     // AUTH LOGIN
     response = await tlsWriteAndRead("AUTH LOGIN");
     console.log("AUTH LOGIN response:", response);
+    assertSmtpOk("AUTH LOGIN", response, ["334"]);
 
     // Send username (base64)
     response = await tlsWriteAndRead(btoa(username));
     console.log("Username response:", response);
+    assertSmtpOk("AUTH username", response, ["334"]);
 
     // Send password (base64)
     response = await tlsWriteAndRead(btoa(password));
     console.log("Password response:", response);
-
-    if (!response.startsWith("235")) {
-      throw new Error(`Authentication failed: ${response}`);
-    }
+    assertSmtpOk("AUTH password", response, ["235"]);
 
     // MAIL FROM
     response = await tlsWriteAndRead(`MAIL FROM:<${from}>`);
     console.log("MAIL FROM response:", response);
+    assertSmtpOk("MAIL FROM", response, ["250"]);
 
     // RCPT TO
     response = await tlsWriteAndRead(`RCPT TO:<${to}>`);
     console.log("RCPT TO response:", response);
+    assertSmtpOk("RCPT TO", response, ["250", "251"]);
 
     // DATA
     response = await tlsWriteAndRead("DATA");
     console.log("DATA response:", response);
+    assertSmtpOk("DATA", response, ["354"]);
 
     // Email content
     const boundary = `----=_Part_${Date.now()}`;
@@ -136,6 +164,7 @@ async function sendEmailViaSMTP(
 
     response = await tlsWriteAndRead(emailContent);
     console.log("Email send response:", response);
+    assertSmtpOk("Email body", response, ["250"]);
 
     // QUIT
     await tlsWrite("QUIT");
@@ -160,6 +189,11 @@ const handler = async (req: Request): Promise<Response> => {
     const smtpUser = Deno.env.get("SMTP_USER")!;
     const smtpPass = Deno.env.get("SMTP_PASS")!;
 
+    // Proton SMTP commonly rejects envelope sender addresses that aren't owned/allowed by the authenticated user.
+    // Default the FROM to the authenticated account, while keeping the user's address in Reply-To.
+    const fromAddress = Deno.env.get("SMTP_FROM") || smtpUser;
+    const toAddress = Deno.env.get("CONTACT_TO") || smtpUser;
+
     const htmlBody = `
       <h2>Nytt meddelande från kontaktformuläret</h2>
       <p><strong>Namn:</strong> ${name}</p>
@@ -175,8 +209,8 @@ const handler = async (req: Request): Promise<Response> => {
       smtpPort,
       smtpUser,
       smtpPass,
-      "noreply@smarthomesolutions.se",
-      "sales@smarthomesolutions.se",
+      fromAddress,
+      toAddress,
       email,
       `Nytt kontaktformulär: ${name}`,
       htmlBody
