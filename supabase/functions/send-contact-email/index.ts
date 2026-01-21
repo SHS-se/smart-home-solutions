@@ -212,6 +212,16 @@ function assertEmailAddress(label: string, value: string): void {
   }
 }
 
+// HTML escape to prevent XSS in email content
+function escapeHtml(unsafe: string): string {
+  return unsafe
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 const handler = async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -238,14 +248,20 @@ const handler = async (req: Request): Promise<Response> => {
     assertEmailAddress("SMTP_FROM", fromAddress);
     assertEmailAddress("CONTACT_TO", toAddress);
 
+    // Sanitize all user inputs to prevent HTML injection / XSS
+    const safeName = escapeHtml(name);
+    const safeEmail = escapeHtml(email);
+    const safePhone = escapeHtml(phone || "Ej angiven");
+    const safeMessage = escapeHtml(message).replace(/\n/g, "<br>");
+
     const htmlBody = `
       <h2>Nytt meddelande från kontaktformuläret</h2>
-      <p><strong>Namn:</strong> ${name}</p>
-      <p><strong>E-post:</strong> ${email}</p>
-      <p><strong>Telefon:</strong> ${phone || 'Ej angiven'}</p>
+      <p><strong>Namn:</strong> ${safeName}</p>
+      <p><strong>E-post:</strong> ${safeEmail}</p>
+      <p><strong>Telefon:</strong> ${safePhone}</p>
       <hr />
       <h3>Meddelande:</h3>
-      <p>${message.replace(/\n/g, '<br>')}</p>
+      <p>${safeMessage}</p>
     `;
 
     await sendEmailViaSMTP(
@@ -256,7 +272,7 @@ const handler = async (req: Request): Promise<Response> => {
       fromAddress,
       toAddress,
       email,
-      `Nytt kontaktformulär: ${name}`,
+      `Nytt kontaktformulär: ${safeName}`,
       htmlBody
     );
 
