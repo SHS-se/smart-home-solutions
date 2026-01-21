@@ -112,7 +112,7 @@ const Footer = () => {
                 </li>
                 <li className="flex items-center gap-3 text-sm text-primary-foreground/70">
                   <Mail className="w-4 h-4" />
-                  <ObfuscatedEmail address="info" domain="smarthomesolutions.se" className="hover:text-primary-foreground transition-colors" />
+                  <ObfuscatedEmail address="sales" domain="smarthomesolutions.se" className="hover:text-primary-foreground transition-colors" />
                 </li>
                 <li className="flex items-center gap-3 text-sm text-primary-foreground/70">
                   <Phone className="w-4 h-4" />

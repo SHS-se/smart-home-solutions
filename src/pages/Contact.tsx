@@ -209,7 +209,7 @@ const Contact = () => {
                     <div>
                       <p className="font-medium text-foreground">{t('E-post', 'Email')}</p>
                       <ObfuscatedEmail 
-                        address="info"
+                        address="sales"
                         domain="smarthomesolutions.se" 
                         className="text-primary"
                       />
