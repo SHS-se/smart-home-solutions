@@ -69,7 +69,7 @@ const Header = () => {
               <div className="flex items-center gap-2">
                 <LanguageToggle />
                 <Button asChild size="sm">
-                  <ScrollToTopLink to="/contact">{t("Kontakt", "Contact")}</ScrollToTopLink>
+                  <ScrollToTopLink to="/login">{t("Logga in", "Login")}</ScrollToTopLink>
                 </Button>
               </div>
             </div>
@@ -130,7 +130,7 @@ const Header = () => {
           <div className="hidden md:flex items-center gap-4">
             <LanguageToggle />
             <Button asChild>
-              <ScrollToTopLink to="/contact">{t("Kontakt", "Contact")}</ScrollToTopLink>
+              <ScrollToTopLink to="/login">{t("Logga in", "Login")}</ScrollToTopLink>
             </Button>
           </div>
 
@@ -161,8 +161,8 @@ const Header = () => {
               <div className="flex items-center justify-between px-4 pt-4 border-t border-border mt-2">
                 <LanguageToggle />
                 <Button asChild size="sm">
-                  <ScrollToTopLink to="/contact" onClick={() => setIsMenuOpen(false)}>
-                    {t("Kontakt", "Contact")}
+                  <ScrollToTopLink to="/login" onClick={() => setIsMenuOpen(false)}>
+                    {t("Logga in", "Login")}
                   </ScrollToTopLink>
                 </Button>
               </div>
