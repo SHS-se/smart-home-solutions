@@ -65,7 +65,7 @@ const handler = async (req: Request): Promise<Response> => {
 
     if (action === "created") {
       // New ticket - notify staff
-      toEmail = Deno.env.get("CONTACT_TO") || "info@smarthomesolutions.se";
+      toEmail = Deno.env.get("SUPPORT_TO") || "support@smarthomesolutions.se";
       subject = `New ticket: ${ticket.title}`;
       isStaffNotification = true;
     } else if (comment?.author_type === "staff") {
@@ -74,7 +74,7 @@ const handler = async (req: Request): Promise<Response> => {
       subject = `Re: ${ticket.title}`;
     } else {
       // Customer replied - notify staff
-      toEmail = Deno.env.get("CONTACT_TO") || "info@smarthomesolutions.se";
+      toEmail = Deno.env.get("SUPPORT_TO") || "support@smarthomesolutions.se";
       subject = `Customer reply: ${ticket.title}`;
       isStaffNotification = true;
     }
