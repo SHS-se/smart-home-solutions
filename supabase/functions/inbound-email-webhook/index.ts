@@ -6,6 +6,13 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, svix-id, svix-timestamp, svix-signature",
 };
 
+// Resend webhook payload wraps email data in a 'data' property
+interface ResendWebhookPayload {
+  type: string;
+  created_at: string;
+  data: ResendInboundEmail;
+}
+
 interface ResendInboundEmail {
   from: string;
   to: string;
@@ -154,8 +161,17 @@ const handler = async (req: Request): Promise<Response> => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Parse the webhook payload (already read as text for signature verification)
-    const payload: ResendInboundEmail = JSON.parse(rawBody);
+    // Parse the webhook payload - Resend wraps email data in 'data' property
+    const webhookPayload: ResendWebhookPayload = JSON.parse(rawBody);
+    const payload: ResendInboundEmail = webhookPayload.data;
+    
+    if (!payload) {
+      console.error("No email data in webhook payload");
+      return new Response(
+        JSON.stringify({ error: "Invalid webhook payload" }),
+        { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } }
+      );
+    }
     
     console.log("Received inbound email:", {
       from: payload.from,
