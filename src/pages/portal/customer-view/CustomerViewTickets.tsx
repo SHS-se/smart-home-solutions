@@ -105,7 +105,9 @@ const CustomerViewTickets: React.FC = () => {
   };
 
   const getTicketNumber = (id: string) => {
-    return `#${id.substring(0, 8).toUpperCase()}`;
+    // Generate a simple ticket number from UUID - must match TicketsList.tsx
+    const hash = id.split('-')[0].toUpperCase();
+    return `TKT-${hash.slice(0, 4)}`;
   };
 
   const filteredTickets = tickets.filter((ticket) => {
