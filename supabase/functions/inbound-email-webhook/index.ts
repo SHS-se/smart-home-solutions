@@ -28,8 +28,8 @@ async function verifyWebhookSignature(
   const signingSecret = Deno.env.get("RESEND_SIGNING_SECRET");
   
   if (!signingSecret) {
-    console.warn("RESEND_SIGNING_SECRET not configured, skipping verification");
-    return true; // Allow in development
+    console.error("RESEND_SIGNING_SECRET not configured - rejecting request for security");
+    return false; // Fail secure - reject requests when not properly configured
   }
 
   const svixId = headers.get("svix-id");
