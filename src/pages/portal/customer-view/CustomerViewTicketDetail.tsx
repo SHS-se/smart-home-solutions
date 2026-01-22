@@ -158,7 +158,7 @@ const CustomerViewTicketDetail: React.FC = () => {
         }
         
         setTicket(ticketData);
-        setNewStatus(ticketData.status);
+        setNewStatus(ticketData.status === 'closed' ? 'closed' : 'awaiting_customer');
 
         const { data: commentsData, error: commentsError } = await supabase
           .from('ticket_comments')
