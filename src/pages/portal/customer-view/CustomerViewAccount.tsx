@@ -117,11 +117,11 @@ const CustomerViewAccount: React.FC = () => {
       <div className="space-y-6">
         {/* Back link */}
         <Link 
-          to={`/portal/customers/${customerId}/overview`}
+          to="/portal/customers"
           className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground transition-colors"
         >
           <ArrowLeft className="w-4 h-4 mr-2" />
-          {t('Tillbaka till översikt', 'Back to overview')}
+          {t('Tillbaka till kunder', 'Back to customers')}
         </Link>
 
         <h1 className="text-3xl font-medium">{t('Kontouppgifter', 'Account details')}</h1>
