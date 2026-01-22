@@ -68,13 +68,6 @@ const CustomerViewLayout: React.FC<CustomerViewLayoutProps> = ({ children }) => 
                 </div>
               </Link>
               
-              {/* Viewing indicator */}
-              {customerData && (
-                <div className="hidden lg:flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 text-primary text-sm">
-                  <span>{t('Visar:', 'Viewing:')}</span>
-                  <span className="font-medium">{customerData.org_name || t('Namnlös', 'Unnamed')}</span>
-                </div>
-              )}
             </div>
 
             {/* Nav */}
