@@ -168,25 +168,25 @@ const CustomerViewTickets: React.FC = () => {
 
         {/* Filters */}
         <div className="flex flex-col sm:flex-row gap-4">
-          <div className="max-w-xs">
-            <Input
-              placeholder={t('Sök ärenden...', 'Search tickets...')}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-          </div>
           <Select value={statusFilter} onValueChange={setStatusFilter}>
             <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder={t('Filtrera status', 'Filter status')} />
+              <SelectValue placeholder={t('Alla statusar', 'All statuses')} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">{t('Alla', 'All')}</SelectItem>
+              <SelectItem value="all">{t('Alla statusar', 'All statuses')}</SelectItem>
               <SelectItem value="submitted">{t('Inskickad', 'Submitted')}</SelectItem>
               <SelectItem value="awaiting_staff">{t('Väntar på svar', 'Awaiting reply')}</SelectItem>
               <SelectItem value="awaiting_customer">{t('Väntar på kund', 'Awaiting customer')}</SelectItem>
               <SelectItem value="closed">{t('Stängda', 'Closed')}</SelectItem>
             </SelectContent>
           </Select>
+          <div className="flex-1">
+            <Input
+              placeholder={t('Sök på rubrik...', 'Search by title...')}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
         </div>
 
         <Card>
@@ -204,8 +204,8 @@ const CustomerViewTickets: React.FC = () => {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="text-primary">{t('Ärendenummer', 'Ticket ID')}</TableHead>
-                    <TableHead className="text-primary">{t('Titel', 'Title')}</TableHead>
+                    <TableHead className="text-primary">{t('Ärende-ID', 'Ticket ID')}</TableHead>
+                    <TableHead className="text-primary">{t('Rubrik', 'Title')}</TableHead>
                     <TableHead className="text-primary">{t('Status', 'Status')}</TableHead>
                     <TableHead className="text-primary">{t('Senaste aktivitet', 'Last activity')}</TableHead>
                   </TableRow>
