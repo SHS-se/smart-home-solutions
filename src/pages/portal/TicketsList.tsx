@@ -47,7 +47,7 @@ const TicketsList: React.FC = () => {
   const getStatusBadge = (status: string) => {
     const statusLabels: Record<string, string> = {
       submitted: t('Öppen', 'Open'),
-      awaiting_response: t('Väntar på svar', 'Awaiting response'),
+      awaiting_response: t('Väntar på personal', 'Awaiting staff'),
       awaiting_customer: t('Väntar på kund', 'Awaiting customer'),
       closed: t('Stängd', 'Closed'),
     };
@@ -156,7 +156,7 @@ const TicketsList: React.FC = () => {
             <SelectContent>
               <SelectItem value="all">{t('Alla statusar', 'All statuses')}</SelectItem>
               <SelectItem value="submitted">{t('Öppen', 'Open')}</SelectItem>
-              <SelectItem value="awaiting_response">{t('Väntar på svar', 'Awaiting response')}</SelectItem>
+              <SelectItem value="awaiting_response">{t('Väntar på personal', 'Awaiting staff')}</SelectItem>
               <SelectItem value="awaiting_customer">{t('Väntar på kund', 'Awaiting customer')}</SelectItem>
               <SelectItem value="closed">{t('Stängd', 'Closed')}</SelectItem>
             </SelectContent>
