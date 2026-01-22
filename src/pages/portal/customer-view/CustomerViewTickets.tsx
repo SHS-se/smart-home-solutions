@@ -151,19 +151,11 @@ const CustomerViewTickets: React.FC = () => {
           {t('Tillbaka till kunder', 'Back to customers')}
         </Link>
 
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <h1 className="text-3xl font-medium">{t('Ärenden', 'Tickets')}</h1>
-            <p className="text-muted-foreground">
-              {customerData.org_name || t('Namnlös kund', 'Unnamed customer')}
-            </p>
-          </div>
-          <Button asChild>
-            <Link to="/portal/tickets/new">
-              <Plus className="w-4 h-4 mr-2" />
-              {t('Nytt ärende', 'New ticket')}
-            </Link>
-          </Button>
+        <div>
+          <h1 className="text-3xl font-medium">{t('Ärenden', 'Tickets')}</h1>
+          <p className="text-muted-foreground">
+            {customerData.org_name || t('Namnlös kund', 'Unnamed customer')}
+          </p>
         </div>
 
         {/* Filters */}
