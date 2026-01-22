@@ -6,6 +6,16 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// Escape HTML to prevent injection in email templates
+function escapeHtml(unsafe: string): string {
+  return unsafe
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 interface NotificationRequest {
   ticketId: string;
   action: "created" | "comment";
@@ -97,15 +107,15 @@ const handler = async (req: Request): Promise<Response> => {
 
     const htmlBody = `
       <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #2D5F8D;">${subject}</h2>
-        <p><strong>Ticket:</strong> ${ticket.title}</p>
-        <p><strong>Status:</strong> ${statusLabel}</p>
-        <p><strong>Customer:</strong> ${ticket.customers?.org_name || "N/A"}</p>
+        <h2 style="color: #2D5F8D;">${escapeHtml(subject)}</h2>
+        <p><strong>Ticket:</strong> ${escapeHtml(ticket.title)}</p>
+        <p><strong>Status:</strong> ${escapeHtml(statusLabel)}</p>
+        <p><strong>Customer:</strong> ${escapeHtml(ticket.customers?.org_name || "N/A")}</p>
         <hr style="border: none; border-top: 1px solid #e5e5e5; margin: 20px 0;" />
         ${comment ? `
           <h3>Latest message:</h3>
           <div style="background: #f5f5f5; padding: 15px; border-radius: 8px;">
-            <p style="white-space: pre-wrap;">${comment.body_markdown}</p>
+            <p style="white-space: pre-wrap;">${escapeHtml(comment.body_markdown)}</p>
           </div>
         ` : ""}
         <p style="margin-top: 20px;">
