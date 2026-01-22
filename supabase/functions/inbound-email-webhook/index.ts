@@ -15,7 +15,7 @@ interface ResendWebhookPayload {
 
 interface ResendInboundEmail {
   from: string;
-  to: string;
+  to: string | string[];  // Can be string or array
   subject: string;
   text?: string;
   html?: string;
@@ -94,9 +94,17 @@ async function verifyWebhookSignature(
 }
 
 // Extract email token from To address: support+TOKEN@mail.smarthomesolutions.se
-function extractEmailToken(toAddress: string): string | null {
-  const match = toAddress.match(/support\+([a-f0-9]+)@/i);
-  return match ? match[1] : null;
+function extractEmailToken(toAddress: string | string[]): string | null {
+  // Handle array of recipients (Resend sends 'to' as an array)
+  const addresses = Array.isArray(toAddress) ? toAddress : [toAddress];
+  
+  for (const addr of addresses) {
+    const match = addr.match(/support\+([a-f0-9]+)@/i);
+    if (match) {
+      return match[1];
+    }
+  }
+  return null;
 }
 
 // Extract plain text from HTML if no text version available
