@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Mail, ArrowLeft, Loader2 } from 'lucide-react';
+import { Mail, ArrowLeft, Loader2, Lock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -29,6 +29,7 @@ const ShsLogoLarge = () => (
 
 const Login: React.FC = () => {
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
   const [processingAuth, setProcessingAuth] = useState(false);
@@ -36,6 +37,8 @@ const Login: React.FC = () => {
   const navigate = useNavigate();
   const { user, loading } = useAuth();
   const { t } = useLanguage();
+
+  const isStaffEmail = email.toLowerCase().endsWith('@smarthomesolutions.se');
 
   // Handle magic link token exchange from URL hash
   useEffect(() => {
@@ -84,24 +87,37 @@ const Login: React.FC = () => {
     setIsLoading(true);
 
     try {
-      const { error } = await supabase.auth.signInWithOtp({
-        email: email.trim(),
-        options: {
-          emailRedirectTo: `${window.location.origin}/login`,
-        },
-      });
+      if (isStaffEmail) {
+        // Password login for staff
+        const { error } = await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password: password,
+        });
 
-      if (error) throw error;
+        if (error) throw error;
 
-      setEmailSent(true);
-      toast({
-        title: t('Inloggningslänk skickad!', 'Login link sent!'),
-        description: t('Kolla din e-post för en säker inloggningslänk.', 'Check your email for a secure login link.'),
-      });
+        navigate('/portal');
+      } else {
+        // Magic link for customers
+        const { error } = await supabase.auth.signInWithOtp({
+          email: email.trim(),
+          options: {
+            emailRedirectTo: `${window.location.origin}/login`,
+          },
+        });
+
+        if (error) throw error;
+
+        setEmailSent(true);
+        toast({
+          title: t('Inloggningslänk skickad!', 'Login link sent!'),
+          description: t('Kolla din e-post för en säker inloggningslänk.', 'Check your email for a secure login link.'),
+        });
+      }
     } catch (error: any) {
       toast({
         title: t('Fel', 'Error'),
-        description: error.message || t('Det gick inte att skicka inloggningslänken.', 'Failed to send login link.'),
+        description: error.message || t('Det gick inte att logga in.', 'Failed to log in.'),
         variant: 'destructive',
       });
     } finally {
@@ -173,14 +189,40 @@ const Login: React.FC = () => {
                   />
                 </div>
               </div>
+              
+              {isStaffEmail && (
+                <div className="space-y-2">
+                  <Label htmlFor="password">{t('Lösenord', 'Password')}</Label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <Input
+                      id="password"
+                      type="password"
+                      placeholder="••••••••"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="pl-10"
+                      required
+                      disabled={isLoading}
+                    />
+                  </div>
+                </div>
+              )}
+              
               <Button type="submit" className="w-full" disabled={isLoading}>
                 {isLoading ? (
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                 ) : null}
-                {t('Skicka inloggningslänk', 'Send login link')}
+                {isStaffEmail 
+                  ? t('Logga in', 'Log in')
+                  : t('Skicka inloggningslänk', 'Send login link')
+                }
               </Button>
               <p className="text-center text-sm text-muted-foreground">
-                {t('Vi skickar en säker inloggningslänk till din e-post.', "We'll email you a secure login link.")}
+                {isStaffEmail
+                  ? t('Logga in med ditt personalkonto.', 'Log in with your staff account.')
+                  : t('Vi skickar en säker inloggningslänk till din e-post.', "We'll email you a secure login link.")
+                }
               </p>
             </form>
           )}
