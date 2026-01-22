@@ -1,0 +1,237 @@
+import React, { useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Loader2, ArrowLeft, MessageSquare, Plus } from 'lucide-react';
+import { Card, CardContent } from '@/components/ui/card';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import CustomerViewLayout from '@/components/portal/CustomerViewLayout';
+import { useAuth } from '@/contexts/AuthContext';
+import { useViewedCustomer } from '@/contexts/ViewedCustomerContext';
+import { useLanguage } from '@/contexts/LanguageContext';
+import { supabase } from '@/integrations/supabase/client';
+
+interface Ticket {
+  id: string;
+  title: string;
+  status: string;
+  created_at: string;
+  last_activity_at: string;
+}
+
+const CustomerViewTickets: React.FC = () => {
+  const { user, isStaff, loading: authLoading } = useAuth();
+  const { customerId, customerData, loading: customerLoading, error } = useViewedCustomer();
+  const navigate = useNavigate();
+  const { t } = useLanguage();
+
+  const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [ticketsLoading, setTicketsLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
+
+  useEffect(() => {
+    if (!authLoading && !user) {
+      navigate('/login');
+    }
+    if (!authLoading && !isStaff) {
+      navigate('/portal');
+    }
+  }, [user, isStaff, authLoading, navigate]);
+
+  useEffect(() => {
+    const fetchTickets = async () => {
+      if (!customerId) return;
+      setTicketsLoading(true);
+
+      try {
+        const { data, error: fetchError } = await supabase
+          .from('tickets')
+          .select('id, title, status, created_at, last_activity_at')
+          .eq('customer_id', customerId)
+          .order('last_activity_at', { ascending: false });
+
+        if (fetchError) throw fetchError;
+        setTickets(data || []);
+      } catch (err) {
+        console.error('Error fetching tickets:', err);
+      } finally {
+        setTicketsLoading(false);
+      }
+    };
+
+    if (!customerLoading && customerId) {
+      fetchTickets();
+    }
+  }, [customerId, customerLoading]);
+
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case 'submitted':
+        return <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-100">{t('Inskickad', 'Submitted')}</Badge>;
+      case 'awaiting_staff':
+        return <Badge className="bg-yellow-100 text-yellow-800 hover:bg-yellow-100">{t('Väntar på svar', 'Awaiting reply')}</Badge>;
+      case 'awaiting_customer':
+        return <Badge className="bg-purple-100 text-purple-800 hover:bg-purple-100">{t('Väntar på kund', 'Awaiting customer')}</Badge>;
+      case 'closed':
+        return <Badge className="bg-gray-100 text-gray-800 hover:bg-gray-100">{t('Stängd', 'Closed')}</Badge>;
+      default:
+        return <Badge variant="secondary">{status}</Badge>;
+    }
+  };
+
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString('sv-SE', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    });
+  };
+
+  const getTicketNumber = (id: string) => {
+    return `#${id.substring(0, 8).toUpperCase()}`;
+  };
+
+  const filteredTickets = tickets.filter((ticket) => {
+    const matchesStatus = statusFilter === 'all' || ticket.status === statusFilter;
+    const matchesSearch = ticket.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      ticket.id.toLowerCase().includes(searchQuery.toLowerCase());
+    return matchesStatus && matchesSearch;
+  });
+
+  if (authLoading || customerLoading) {
+    return (
+      <CustomerViewLayout>
+        <div className="flex items-center justify-center min-h-[400px]">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        </div>
+      </CustomerViewLayout>
+    );
+  }
+
+  if (error || !customerData) {
+    return (
+      <CustomerViewLayout>
+        <Alert variant="destructive">
+          <AlertDescription>
+            {error || t('Kunde inte hitta kunden.', 'Customer not found.')}
+          </AlertDescription>
+        </Alert>
+      </CustomerViewLayout>
+    );
+  }
+
+  return (
+    <CustomerViewLayout>
+      <div className="space-y-6">
+        {/* Back link */}
+        <Link 
+          to={`/portal/customers/${customerId}/overview`}
+          className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <ArrowLeft className="w-4 h-4 mr-2" />
+          {t('Tillbaka till översikt', 'Back to overview')}
+        </Link>
+
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-medium">{t('Ärenden', 'Tickets')}</h1>
+            <p className="text-muted-foreground">
+              {customerData.org_name || t('Namnlös kund', 'Unnamed customer')}
+            </p>
+          </div>
+          <Button asChild>
+            <Link to="/portal/tickets/new">
+              <Plus className="w-4 h-4 mr-2" />
+              {t('Nytt ärende', 'New ticket')}
+            </Link>
+          </Button>
+        </div>
+
+        {/* Filters */}
+        <div className="flex flex-col sm:flex-row gap-4">
+          <div className="max-w-xs">
+            <Input
+              placeholder={t('Sök ärenden...', 'Search tickets...')}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder={t('Filtrera status', 'Filter status')} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t('Alla', 'All')}</SelectItem>
+              <SelectItem value="submitted">{t('Inskickad', 'Submitted')}</SelectItem>
+              <SelectItem value="awaiting_staff">{t('Väntar på svar', 'Awaiting reply')}</SelectItem>
+              <SelectItem value="awaiting_customer">{t('Väntar på kund', 'Awaiting customer')}</SelectItem>
+              <SelectItem value="closed">{t('Stängda', 'Closed')}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <Card>
+          <CardContent className="pt-6">
+            {ticketsLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="w-6 h-6 animate-spin text-primary" />
+              </div>
+            ) : filteredTickets.length === 0 ? (
+              <div className="text-center py-12">
+                <MessageSquare className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+                <p className="text-muted-foreground">{t('Inga ärenden hittades.', 'No tickets found.')}</p>
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-primary">{t('Ärendenummer', 'Ticket ID')}</TableHead>
+                    <TableHead className="text-primary">{t('Titel', 'Title')}</TableHead>
+                    <TableHead className="text-primary">{t('Status', 'Status')}</TableHead>
+                    <TableHead className="text-primary">{t('Senaste aktivitet', 'Last activity')}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredTickets.map((ticket) => (
+                    <TableRow key={ticket.id}>
+                      <TableCell>
+                        <Link 
+                          to={`/portal/tickets/${ticket.id}`}
+                          className="text-primary hover:underline font-medium"
+                        >
+                          {getTicketNumber(ticket.id)}
+                        </Link>
+                      </TableCell>
+                      <TableCell>{ticket.title}</TableCell>
+                      <TableCell>{getStatusBadge(ticket.status)}</TableCell>
+                      <TableCell>{formatDate(ticket.last_activity_at)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </CustomerViewLayout>
+  );
+};
+
+export default CustomerViewTickets;
