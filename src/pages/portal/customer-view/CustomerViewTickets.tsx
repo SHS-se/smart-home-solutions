@@ -142,11 +142,11 @@ const CustomerViewTickets: React.FC = () => {
       <div className="space-y-6">
         {/* Back link */}
         <Link 
-          to={`/portal/customers/${customerId}/overview`}
+          to="/portal/customers"
           className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground transition-colors"
         >
           <ArrowLeft className="w-4 h-4 mr-2" />
-          {t('Tillbaka till översikt', 'Back to overview')}
+          {t('Tillbaka till kunder', 'Back to customers')}
         </Link>
 
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
