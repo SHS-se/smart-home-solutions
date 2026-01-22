@@ -215,7 +215,7 @@ const CustomerViewTickets: React.FC = () => {
                     <TableRow key={ticket.id}>
                       <TableCell>
                         <Link 
-                          to={`/portal/tickets/${ticket.id}`}
+                          to={`/portal/customers/${customerId}/tickets/${ticket.id}`}
                           className="text-primary hover:underline font-medium"
                         >
                           {getTicketNumber(ticket.id)}

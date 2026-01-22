@@ -28,6 +28,7 @@ import CustomerViewDashboard from "./pages/portal/customer-view/CustomerViewDash
 import CustomerViewAccount from "./pages/portal/customer-view/CustomerViewAccount";
 import CustomerViewBilling from "./pages/portal/customer-view/CustomerViewBilling";
 import CustomerViewTickets from "./pages/portal/customer-view/CustomerViewTickets";
+import CustomerViewTicketDetail from "./pages/portal/customer-view/CustomerViewTicketDetail";
 
 const queryClient = new QueryClient();
 
@@ -68,6 +69,7 @@ const App = () => (
               <Route path="/portal/customers/:customerId/account" element={<CustomerViewWrapper><CustomerViewAccount /></CustomerViewWrapper>} />
               <Route path="/portal/customers/:customerId/billing" element={<CustomerViewWrapper><CustomerViewBilling /></CustomerViewWrapper>} />
               <Route path="/portal/customers/:customerId/tickets" element={<CustomerViewWrapper><CustomerViewTickets /></CustomerViewWrapper>} />
+              <Route path="/portal/customers/:customerId/tickets/:id" element={<CustomerViewWrapper><CustomerViewTicketDetail /></CustomerViewWrapper>} />
               
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />
