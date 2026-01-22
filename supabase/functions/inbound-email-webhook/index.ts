@@ -109,7 +109,10 @@ async function verifyWebhookSignature(
 
 // Fetch email content from Resend API
 async function fetchEmailContent(emailId: string): Promise<ResendEmailContent | null> {
-  const resendApiKey = Deno.env.get("RESEND_API_KEY");
+  // Receiving endpoints require an API key that has Receiving permissions.
+  // Prefer a dedicated least-privilege key if configured.
+  const resendApiKey =
+    Deno.env.get("RESEND_RECEIVING_API_KEY") || Deno.env.get("RESEND_API_KEY");
   
   if (!resendApiKey) {
     console.error("RESEND_API_KEY not configured");
@@ -117,16 +120,23 @@ async function fetchEmailContent(emailId: string): Promise<ResendEmailContent | 
   }
 
   try {
-    const response = await fetch(`https://api.resend.com/emails/${emailId}`, {
+    const response = await fetch(
+      `https://api.resend.com/emails/receiving/${emailId}`,
+      {
       method: "GET",
       headers: {
         Authorization: `Bearer ${resendApiKey}`,
       },
-    });
+      }
+    );
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("Failed to fetch email content:", response.status, errorText);
+      console.error(
+        "Failed to fetch email content:",
+        response.status,
+        errorText
+      );
       return null;
     }
 
@@ -138,30 +148,56 @@ async function fetchEmailContent(emailId: string): Promise<ResendEmailContent | 
 }
 
 // Fetch attachment content from Resend API
-async function fetchAttachmentContent(emailId: string, attachmentId: string): Promise<{ content: string; contentType: string } | null> {
-  const resendApiKey = Deno.env.get("RESEND_API_KEY");
+async function fetchAttachmentContent(
+  emailId: string,
+  attachmentId: string
+): Promise<{ bytes: Uint8Array; contentType: string } | null> {
+  const resendApiKey =
+    Deno.env.get("RESEND_RECEIVING_API_KEY") || Deno.env.get("RESEND_API_KEY");
   
   if (!resendApiKey) {
     return null;
   }
 
   try {
-    const response = await fetch(`https://api.resend.com/emails/${emailId}/attachments/${attachmentId}`, {
+    const response = await fetch(
+      `https://api.resend.com/emails/receiving/${emailId}/attachments/${attachmentId}`,
+      {
       method: "GET",
       headers: {
         Authorization: `Bearer ${resendApiKey}`,
       },
-    });
+      }
+    );
 
     if (!response.ok) {
-      console.error("Failed to fetch attachment:", response.status);
+      const errorText = await response.text();
+      console.error("Failed to fetch attachment:", response.status, errorText);
       return null;
     }
 
-    const data = await response.json();
+    // API returns metadata + signed download_url.
+    // We fetch the actual bytes via download_url to avoid large JSON payloads.
+    const meta = await response.json();
+    if (!meta?.download_url) {
+      console.error("Attachment response missing download_url");
+      return null;
+    }
+
+    const downloadResp = await fetch(meta.download_url);
+    if (!downloadResp.ok) {
+      const downloadErr = await downloadResp.text();
+      console.error(
+        "Failed downloading attachment:",
+        downloadResp.status,
+        downloadErr
+      );
+      return null;
+    }
+
     return {
-      content: data.content, // base64 encoded
-      contentType: data.content_type,
+      bytes: new Uint8Array(await downloadResp.arrayBuffer()),
+      contentType: meta.content_type,
     };
   } catch (error) {
     console.error("Error fetching attachment:", error);
@@ -301,12 +337,16 @@ const handler = async (req: Request): Promise<Response> => {
 
     // Fetch the actual email content from Resend API
     const emailContent = await fetchEmailContent(metadata.email_id);
-    
+
     if (!emailContent) {
       console.error("Failed to fetch email content for:", metadata.email_id);
+      // Most common cause: the API key is restricted to sending only.
       return new Response(
-        JSON.stringify({ error: "Failed to fetch email content" }),
-        { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } }
+        JSON.stringify({
+          error:
+            "Receiving email content is not configured. Ensure your email provider API key allows Receiving permissions.",
+        }),
+        { status: 503, headers: { "Content-Type": "application/json", ...corsHeaders } }
       );
     }
 
@@ -380,8 +420,7 @@ const handler = async (req: Request): Promise<Response> => {
             continue;
           }
 
-          // Decode base64 attachment content
-          const binaryContent = Uint8Array.from(atob(attachmentData.content), c => c.charCodeAt(0));
+          const binaryContent = attachmentData.bytes;
           
           // Create storage path
           const storagePath = `customer/${ticket.customer_id}/ticket/${ticket.id}/${Date.now()}-${attachment.filename}`;
