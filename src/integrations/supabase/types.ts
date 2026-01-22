@@ -14,6 +14,47 @@ export type Database = {
   }
   public: {
     Tables: {
+      contacts: {
+        Row: {
+          converted_at: string | null
+          converted_to_customer_id: string | null
+          created_at: string
+          email: string
+          id: string
+          message: string
+          name: string
+          phone: string | null
+        }
+        Insert: {
+          converted_at?: string | null
+          converted_to_customer_id?: string | null
+          created_at?: string
+          email: string
+          id?: string
+          message: string
+          name: string
+          phone?: string | null
+        }
+        Update: {
+          converted_at?: string | null
+          converted_to_customer_id?: string | null
+          created_at?: string
+          email?: string
+          id?: string
+          message?: string
+          name?: string
+          phone?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "contacts_converted_to_customer_id_fkey"
+            columns: ["converted_to_customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       customer_users: {
         Row: {
           created_at: string
