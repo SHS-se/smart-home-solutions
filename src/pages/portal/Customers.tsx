@@ -147,7 +147,7 @@ const Customers: React.FC = () => {
                       <TableCell>{customer.phone || '-'}</TableCell>
                       <TableCell>
                         <Button variant="ghost" size="sm" asChild>
-                          <Link to={`/portal/customers/${customer.id}`}>
+                          <Link to={`/portal/customers/${customer.id}/overview`}>
                             {t('Visa', 'View')}
                           </Link>
                         </Button>
