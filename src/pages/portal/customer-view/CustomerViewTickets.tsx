@@ -82,17 +82,25 @@ const CustomerViewTickets: React.FC = () => {
   }, [customerId, customerLoading]);
 
   const getStatusBadge = (status: string) => {
+    const statusLabels: Record<string, string> = {
+      submitted: t('Öppen', 'Open'),
+      awaiting_response: t('Väntar på personal', 'Awaiting staff'),
+      awaiting_customer: t('Väntar på kund', 'Awaiting customer'),
+      closed: t('Stängd', 'Closed'),
+    };
+    const label = statusLabels[status] || status;
+
     switch (status) {
       case 'submitted':
-        return <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-100">{t('Inskickad', 'Submitted')}</Badge>;
-      case 'awaiting_staff':
-        return <Badge className="bg-yellow-100 text-yellow-800 hover:bg-yellow-100">{t('Väntar på svar', 'Awaiting reply')}</Badge>;
+        return <Badge className="bg-warning/30 text-warning-foreground border-0">{label}</Badge>;
+      case 'awaiting_response':
+        return <Badge className="bg-primary/20 text-primary border-0">{label}</Badge>;
       case 'awaiting_customer':
-        return <Badge className="bg-purple-100 text-purple-800 hover:bg-purple-100">{t('Väntar på kund', 'Awaiting customer')}</Badge>;
+        return <Badge className="bg-secondary text-secondary-foreground border-0">{label}</Badge>;
       case 'closed':
-        return <Badge className="bg-gray-100 text-gray-800 hover:bg-gray-100">{t('Stängd', 'Closed')}</Badge>;
+        return <Badge className="bg-muted text-muted-foreground border-0">{label}</Badge>;
       default:
-        return <Badge variant="secondary">{status}</Badge>;
+        return <Badge variant="secondary">{label}</Badge>;
     }
   };
 
@@ -166,10 +174,10 @@ const CustomerViewTickets: React.FC = () => {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">{t('Alla statusar', 'All statuses')}</SelectItem>
-              <SelectItem value="submitted">{t('Inskickad', 'Submitted')}</SelectItem>
-              <SelectItem value="awaiting_staff">{t('Väntar på svar', 'Awaiting reply')}</SelectItem>
+              <SelectItem value="submitted">{t('Öppen', 'Open')}</SelectItem>
+              <SelectItem value="awaiting_response">{t('Väntar på personal', 'Awaiting staff')}</SelectItem>
               <SelectItem value="awaiting_customer">{t('Väntar på kund', 'Awaiting customer')}</SelectItem>
-              <SelectItem value="closed">{t('Stängda', 'Closed')}</SelectItem>
+              <SelectItem value="closed">{t('Stängd', 'Closed')}</SelectItem>
             </SelectContent>
           </Select>
           <div className="flex-1">
