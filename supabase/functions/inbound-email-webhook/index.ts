@@ -6,25 +6,39 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, svix-id, svix-timestamp, svix-signature",
 };
 
-// Resend webhook payload wraps email data in a 'data' property
+// Resend webhook payload wraps email metadata in a 'data' property
+// Note: Webhooks do NOT include email body - we must fetch it via API
 interface ResendWebhookPayload {
   type: string;
   created_at: string;
-  data: ResendInboundEmail;
+  data: ResendEmailMetadata;
 }
 
-interface ResendInboundEmail {
+interface ResendEmailMetadata {
+  email_id: string;
   from: string;
-  to: string | string[];  // Can be string or array
+  to: string[];
+  subject: string;
+  cc?: string[];
+  bcc?: string[];
+  message_id?: string;
+  attachments?: Array<{
+    id: string;
+    filename: string;
+    content_type: string;
+    content_disposition?: string;
+    content_id?: string;
+  }>;
+}
+
+// Email content fetched from Resend API
+interface ResendEmailContent {
+  id: string;
+  from: string;
+  to: string[];
   subject: string;
   text?: string;
   html?: string;
-  headers?: Record<string, string>;
-  attachments?: Array<{
-    filename: string;
-    content: string;
-    content_type: string;
-  }>;
 }
 
 // Verify Resend webhook signature using Svix
@@ -36,7 +50,7 @@ async function verifyWebhookSignature(
   
   if (!signingSecret) {
     console.error("RESEND_SIGNING_SECRET not configured - rejecting request for security");
-    return false; // Fail secure - reject requests when not properly configured
+    return false;
   }
 
   const svixId = headers.get("svix-id");
@@ -93,12 +107,71 @@ async function verifyWebhookSignature(
   return false;
 }
 
-// Extract email token from To address: support+TOKEN@mail.smarthomesolutions.se
-function extractEmailToken(toAddress: string | string[]): string | null {
-  // Handle array of recipients (Resend sends 'to' as an array)
-  const addresses = Array.isArray(toAddress) ? toAddress : [toAddress];
+// Fetch email content from Resend API
+async function fetchEmailContent(emailId: string): Promise<ResendEmailContent | null> {
+  const resendApiKey = Deno.env.get("RESEND_API_KEY");
   
-  for (const addr of addresses) {
+  if (!resendApiKey) {
+    console.error("RESEND_API_KEY not configured");
+    return null;
+  }
+
+  try {
+    const response = await fetch(`https://api.resend.com/emails/${emailId}`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${resendApiKey}`,
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("Failed to fetch email content:", response.status, errorText);
+      return null;
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error("Error fetching email content:", error);
+    return null;
+  }
+}
+
+// Fetch attachment content from Resend API
+async function fetchAttachmentContent(emailId: string, attachmentId: string): Promise<{ content: string; contentType: string } | null> {
+  const resendApiKey = Deno.env.get("RESEND_API_KEY");
+  
+  if (!resendApiKey) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(`https://api.resend.com/emails/${emailId}/attachments/${attachmentId}`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${resendApiKey}`,
+      },
+    });
+
+    if (!response.ok) {
+      console.error("Failed to fetch attachment:", response.status);
+      return null;
+    }
+
+    const data = await response.json();
+    return {
+      content: data.content, // base64 encoded
+      contentType: data.content_type,
+    };
+  } catch (error) {
+    console.error("Error fetching attachment:", error);
+    return null;
+  }
+}
+
+// Extract email token from To address: support+TOKEN@mail.smarthomesolutions.se
+function extractEmailToken(toAddresses: string[]): string | null {
+  for (const addr of toAddresses) {
     const match = addr.match(/support\+([a-f0-9]+)@/i);
     if (match) {
       return match[1];
@@ -169,29 +242,30 @@ const handler = async (req: Request): Promise<Response> => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Parse the webhook payload - Resend wraps email data in 'data' property
+    // Parse the webhook payload - contains metadata only, not email body
     const webhookPayload: ResendWebhookPayload = JSON.parse(rawBody);
-    const payload: ResendInboundEmail = webhookPayload.data;
+    const metadata = webhookPayload.data;
     
-    if (!payload) {
-      console.error("No email data in webhook payload");
+    if (!metadata || !metadata.email_id) {
+      console.error("No email metadata in webhook payload");
       return new Response(
         JSON.stringify({ error: "Invalid webhook payload" }),
         { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } }
       );
     }
     
-    console.log("Received inbound email:", {
-      from: payload.from,
-      to: payload.to,
-      subject: payload.subject,
+    console.log("Received inbound email webhook:", {
+      emailId: metadata.email_id,
+      from: metadata.from,
+      to: metadata.to,
+      subject: metadata.subject,
     });
 
-    // Extract the email token from the To address
-    const emailToken = extractEmailToken(payload.to);
+    // Extract the email token from the To addresses
+    const emailToken = extractEmailToken(metadata.to);
     
     if (!emailToken) {
-      console.error("No valid email token found in To address:", payload.to);
+      console.error("No valid email token found in To addresses:", metadata.to);
       return new Response(
         JSON.stringify({ error: "Invalid recipient address" }),
         { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } }
@@ -225,12 +299,23 @@ const handler = async (req: Request): Promise<Response> => {
 
     console.log("Found ticket:", ticket.id, ticket.title);
 
+    // Fetch the actual email content from Resend API
+    const emailContent = await fetchEmailContent(metadata.email_id);
+    
+    if (!emailContent) {
+      console.error("Failed to fetch email content for:", metadata.email_id);
+      return new Response(
+        JSON.stringify({ error: "Failed to fetch email content" }),
+        { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } }
+      );
+    }
+
     // Extract and clean the email body
-    let emailBody = payload.text || (payload.html ? extractTextFromHtml(payload.html) : "");
+    let emailBody = emailContent.text || (emailContent.html ? extractTextFromHtml(emailContent.html) : "");
     emailBody = cleanEmailBody(emailBody);
 
     if (!emailBody) {
-      console.error("Empty email body");
+      console.error("Empty email body after processing");
       return new Response(
         JSON.stringify({ error: "Empty email body" }),
         { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } }
@@ -238,8 +323,8 @@ const handler = async (req: Request): Promise<Response> => {
     }
 
     // Extract sender email
-    const fromMatch = payload.from.match(/<([^>]+)>/) || [null, payload.from];
-    const senderEmail = fromMatch[1] || payload.from;
+    const fromMatch = metadata.from.match(/<([^>]+)>/) || [null, metadata.from];
+    const senderEmail = fromMatch[1] || metadata.from;
 
     // Create a comment on the ticket
     const { data: comment, error: commentError } = await supabase
@@ -281,14 +366,22 @@ const handler = async (req: Request): Promise<Response> => {
       }
     }
 
-    // Handle attachments if present
-    if (payload.attachments && payload.attachments.length > 0) {
-      console.log(`Processing ${payload.attachments.length} attachments`);
+    // Handle attachments if present - fetch content from Resend API
+    if (metadata.attachments && metadata.attachments.length > 0) {
+      console.log(`Processing ${metadata.attachments.length} attachments`);
       
-      for (const attachment of payload.attachments) {
+      for (const attachment of metadata.attachments) {
         try {
+          // Fetch attachment content from Resend API
+          const attachmentData = await fetchAttachmentContent(metadata.email_id, attachment.id);
+          
+          if (!attachmentData) {
+            console.error("Failed to fetch attachment:", attachment.filename);
+            continue;
+          }
+
           // Decode base64 attachment content
-          const binaryContent = Uint8Array.from(atob(attachment.content), c => c.charCodeAt(0));
+          const binaryContent = Uint8Array.from(atob(attachmentData.content), c => c.charCodeAt(0));
           
           // Create storage path
           const storagePath = `customer/${ticket.customer_id}/ticket/${ticket.id}/${Date.now()}-${attachment.filename}`;
