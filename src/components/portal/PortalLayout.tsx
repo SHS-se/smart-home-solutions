@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Building2, FileText, MessageSquare, LogOut, Users, LayoutDashboard } from 'lucide-react';
+import { Building2, FileText, MessageSquare, LogOut, Users, LayoutDashboard, Contact2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -47,6 +47,7 @@ const PortalLayout: React.FC<PortalLayoutProps> = ({ children }) => {
   const staffNavItems = [
     { href: '/portal', label: t('Översikt', 'Dashboard'), icon: LayoutDashboard },
     { href: '/portal/customers', label: t('Kunder', 'Customers'), icon: Users },
+    { href: '/portal/contacts', label: t('Kontakter', 'Contacts'), icon: Contact2 },
     { href: '/portal/tickets', label: t('Alla ärenden', 'All Tickets'), icon: MessageSquare },
   ];
 

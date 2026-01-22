@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -30,6 +31,30 @@ const handler = async (req: Request): Promise<Response> => {
 
   try {
     const { name, email, phone, message }: ContactEmailRequest = await req.json();
+
+    // Initialize Supabase client with service role for database insert
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const supabaseServiceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    
+    if (!supabaseUrl || !supabaseServiceRoleKey) {
+      console.error("Missing Supabase environment variables");
+    } else {
+      const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
+      
+      // Insert contact into database
+      const { error: insertError } = await supabase.from("contacts").insert({
+        name,
+        email,
+        phone: phone || null,
+        message,
+      });
+      
+      if (insertError) {
+        console.error("Error inserting contact:", insertError);
+      } else {
+        console.log("Contact saved to database successfully");
+      }
+    }
 
     const resendApiKey = Deno.env.get("RESEND_API_KEY");
     if (!resendApiKey) {
