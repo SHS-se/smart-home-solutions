@@ -1,1 +1,4 @@
 project_id = "ouxqcdtspedbwpceemfc"
+
+[functions.inbound-email-webhook]
+verify_jwt = false
