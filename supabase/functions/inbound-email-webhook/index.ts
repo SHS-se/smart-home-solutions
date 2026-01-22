@@ -20,6 +20,72 @@ interface ResendInboundEmail {
   }>;
 }
 
+// Verify Resend webhook signature using Svix
+async function verifyWebhookSignature(
+  payload: string,
+  headers: Headers
+): Promise<boolean> {
+  const signingSecret = Deno.env.get("RESEND_SIGNING_SECRET");
+  
+  if (!signingSecret) {
+    console.warn("RESEND_SIGNING_SECRET not configured, skipping verification");
+    return true; // Allow in development
+  }
+
+  const svixId = headers.get("svix-id");
+  const svixTimestamp = headers.get("svix-timestamp");
+  const svixSignature = headers.get("svix-signature");
+
+  if (!svixId || !svixTimestamp || !svixSignature) {
+    console.error("Missing Svix headers");
+    return false;
+  }
+
+  // Check timestamp is within 5 minutes
+  const timestamp = parseInt(svixTimestamp, 10);
+  const now = Math.floor(Date.now() / 1000);
+  if (Math.abs(now - timestamp) > 300) {
+    console.error("Webhook timestamp too old");
+    return false;
+  }
+
+  // Verify signature
+  const signedContent = `${svixId}.${svixTimestamp}.${payload}`;
+  
+  // Extract the secret (remove "whsec_" prefix if present)
+  const secretBytes = signingSecret.startsWith("whsec_")
+    ? Uint8Array.from(atob(signingSecret.slice(6)), c => c.charCodeAt(0))
+    : new TextEncoder().encode(signingSecret);
+
+  const key = await crypto.subtle.importKey(
+    "raw",
+    secretBytes,
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+
+  const signatureBytes = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(signedContent)
+  );
+
+  const expectedSignature = btoa(String.fromCharCode(...new Uint8Array(signatureBytes)));
+
+  // Svix signature header can contain multiple signatures (v1,signature v1,signature2)
+  const signatures = svixSignature.split(" ");
+  for (const sig of signatures) {
+    const [version, signature] = sig.split(",");
+    if (version === "v1" && signature === expectedSignature) {
+      return true;
+    }
+  }
+
+  console.error("Webhook signature verification failed");
+  return false;
+}
+
 // Extract email token from To address: support+TOKEN@mail.smarthomesolutions.se
 function extractEmailToken(toAddress: string): string | null {
   const match = toAddress.match(/support\+([a-f0-9]+)@/i);
@@ -28,7 +94,6 @@ function extractEmailToken(toAddress: string): string | null {
 
 // Extract plain text from HTML if no text version available
 function extractTextFromHtml(html: string): string {
-  // Remove HTML tags and decode entities
   return html
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
     .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
@@ -44,24 +109,21 @@ function extractTextFromHtml(html: string): string {
 
 // Clean up email reply by removing quoted content
 function cleanEmailBody(text: string): string {
-  // Remove common reply patterns
   const lines = text.split('\n');
   const cleanedLines: string[] = [];
   
   for (const line of lines) {
-    // Stop at common reply indicators
     if (
       line.match(/^On .+ wrote:$/i) ||
       line.match(/^-{3,}\s*Original Message/i) ||
       line.match(/^>{2,}/) ||
       line.match(/^From:\s+/i) && cleanedLines.length > 0 ||
       line.match(/^Sent:\s+/i) ||
-      line.match(/^>?\s*Den \d+.*skrev.*:$/i) // Swedish reply format
+      line.match(/^>?\s*Den \d+.*skrev.*:$/i)
     ) {
       break;
     }
     
-    // Skip quoted lines (starting with >)
     if (!line.startsWith('>')) {
       cleanedLines.push(line);
     }
@@ -76,12 +138,24 @@ const handler = async (req: Request): Promise<Response> => {
   }
 
   try {
+    // Read the raw body for signature verification
+    const rawBody = await req.text();
+    
+    // Verify webhook signature
+    const isValid = await verifyWebhookSignature(rawBody, req.headers);
+    if (!isValid) {
+      return new Response(
+        JSON.stringify({ error: "Invalid signature" }),
+        { status: 401, headers: { "Content-Type": "application/json", ...corsHeaders } }
+      );
+    }
+
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Parse the incoming webhook payload
-    const payload: ResendInboundEmail = await req.json();
+    // Parse the webhook payload (already read as text for signature verification)
+    const payload: ResendInboundEmail = JSON.parse(rawBody);
     
     console.log("Received inbound email:", {
       from: payload.from,
