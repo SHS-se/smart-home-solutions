@@ -39,8 +39,16 @@ const handler = async (req: Request): Promise<Response> => {
   }
 
   // Verify the caller is staff
-  const authHeader = req.headers.get("Authorization");
-  if (!authHeader) {
+  const authHeader = req.headers.get("Authorization") ?? req.headers.get("authorization");
+  if (!authHeader?.toLowerCase().startsWith("bearer ")) {
+    return new Response(
+      JSON.stringify({ error: "Unauthorized" }),
+      { status: 401, headers: { "Content-Type": "application/json", ...corsHeaders } }
+    );
+  }
+
+  const token = authHeader.replace(/^bearer\s+/i, "").trim();
+  if (!token) {
     return new Response(
       JSON.stringify({ error: "Unauthorized" }),
       { status: 401, headers: { "Content-Type": "application/json", ...corsHeaders } }
@@ -49,12 +57,11 @@ const handler = async (req: Request): Promise<Response> => {
 
   const supabaseAdmin = createClient(supabaseUrl, supabaseServiceRoleKey);
   // IMPORTANT: validate the caller JWT using the ANON key (signing-keys compatible).
-  const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey, {
-    global: { headers: { Authorization: authHeader } },
-  });
+  const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey);
 
   // Check if caller is staff
-  const { data: { user }, error: userError } = await supabaseAuth.auth.getUser();
+  // In edge/runtime there is no persisted session, so pass the token explicitly.
+  const { data: { user }, error: userError } = await supabaseAuth.auth.getUser(token);
   if (userError) {
     console.warn("invite-customer: auth.getUser() failed:", userError.message);
   }
