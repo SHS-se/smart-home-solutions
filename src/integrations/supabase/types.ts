@@ -55,38 +55,6 @@ export type Database = {
           },
         ]
       }
-      customer_users: {
-        Row: {
-          created_at: string
-          customer_id: string
-          id: string
-          role: string
-          user_id: string
-        }
-        Insert: {
-          created_at?: string
-          customer_id: string
-          id?: string
-          role?: string
-          user_id: string
-        }
-        Update: {
-          created_at?: string
-          customer_id?: string
-          id?: string
-          role?: string
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "customer_users_customer_id_fkey"
-            columns: ["customer_id"]
-            isOneToOne: false
-            referencedRelation: "customers"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       customers: {
         Row: {
           address: string | null
@@ -96,6 +64,7 @@ export type Database = {
           org_name: string | null
           phone: string | null
           site_address: string | null
+          user_id: string | null
         }
         Insert: {
           address?: string | null
@@ -105,6 +74,7 @@ export type Database = {
           org_name?: string | null
           phone?: string | null
           site_address?: string | null
+          user_id?: string | null
         }
         Update: {
           address?: string | null
@@ -114,6 +84,7 @@ export type Database = {
           org_name?: string | null
           phone?: string | null
           site_address?: string | null
+          user_id?: string | null
         }
         Relationships: []
       }
