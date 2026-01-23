@@ -70,7 +70,7 @@ const Header = () => {
           <div className="container mx-auto">
             <div className="flex items-center justify-between h-14 px-2">
               {/* Logo and Title */}
-              <ScrollToTopLink to="/" className="flex items-center gap-2 group">
+              <ScrollToTopLink to={user ? "/portal" : "/"} className="flex items-center gap-2 group">
                 <div className="transition-transform duration-200 group-hover:scale-105">
                   <ShsLogo />
                 </div>
@@ -118,7 +118,7 @@ const Header = () => {
       <div className="container mx-auto">
         <div className="flex items-center justify-between h-16 md:h-20">
           {/* Logo */}
-          <ScrollToTopLink to="/" className="flex items-center gap-3 group">
+          <ScrollToTopLink to={user ? "/portal" : "/"} className="flex items-center gap-3 group">
             <div className="transition-transform duration-200 group-hover:scale-105">
               <ShsLogo />
             </div>
