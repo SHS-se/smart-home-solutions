@@ -50,12 +50,29 @@ const Login: React.FC = () => {
       if (accessToken && refreshToken) {
         setProcessingAuth(true);
         try {
-          const { error } = await supabase.auth.setSession({
+          const { data, error } = await supabase.auth.setSession({
             access_token: accessToken,
             refresh_token: refreshToken,
           });
           
           if (error) throw error;
+          
+          // Auto-link user to existing customer record by matching email
+          if (data.user?.email) {
+            const { data: existingCustomer } = await supabase
+              .from('customers')
+              .select('id')
+              .eq('billing_email', data.user.email)
+              .is('user_id', null)
+              .maybeSingle();
+
+            if (existingCustomer) {
+              await supabase
+                .from('customers')
+                .update({ user_id: data.user.id })
+                .eq('id', existingCustomer.id);
+            }
+          }
           
           // Clear the hash from URL
           window.history.replaceState(null, '', window.location.pathname);

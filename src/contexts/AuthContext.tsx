@@ -11,12 +11,6 @@ interface CustomerData {
   site_address: string | null;
 }
 
-interface CustomerUserData {
-  customer_id: string;
-  role: string;
-  customer: CustomerData | null;
-}
-
 interface AuthContextType {
   user: User | null;
   session: Session | null;
@@ -25,7 +19,6 @@ interface AuthContextType {
   isAdmin: boolean;
   isCustomer: boolean;
   customerData: CustomerData | null;
-  customerRole: string | null;
   signOut: () => Promise<void>;
   refreshUserData: () => Promise<void>;
 }
@@ -39,7 +32,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isStaff, setIsStaff] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [customerData, setCustomerData] = useState<CustomerData | null>(null);
-  const [customerRole, setCustomerRole] = useState<string | null>(null);
 
   const fetchUserData = async (userId: string) => {
     try {
@@ -54,38 +46,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsStaff(true);
         setIsAdmin(staffData.role === 'admin');
         setCustomerData(null);
-        setCustomerRole(null);
         return;
       }
 
       setIsStaff(false);
       setIsAdmin(false);
 
-      // Check if user is a customer user
-      const { data: customerUserData } = await supabase
-        .from('customer_users')
-        .select(`
-          customer_id,
-          role,
-          customers (
-            id,
-            org_name,
-            billing_email,
-            phone,
-            address,
-            site_address
-          )
-        `)
+      // Check if user is a customer (direct lookup on customers table)
+      const { data: customer } = await supabase
+        .from('customers')
+        .select('id, org_name, billing_email, phone, address, site_address')
         .eq('user_id', userId)
         .maybeSingle();
 
-      if (customerUserData) {
-        const customer = customerUserData.customers as unknown as CustomerData;
+      if (customer) {
         setCustomerData(customer);
-        setCustomerRole(customerUserData.role);
       } else {
         setCustomerData(null);
-        setCustomerRole(null);
       }
     } catch (error) {
       console.error('Error fetching user data:', error);
@@ -112,7 +89,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setIsStaff(false);
           setIsAdmin(false);
           setCustomerData(null);
-          setCustomerRole(null);
         }
         setLoading(false);
       }
@@ -140,7 +116,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsStaff(false);
     setIsAdmin(false);
     setCustomerData(null);
-    setCustomerRole(null);
   };
 
   const isCustomer = !!customerData;
@@ -155,7 +130,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isAdmin,
         isCustomer,
         customerData,
-        customerRole,
         signOut,
         refreshUserData,
       }}
