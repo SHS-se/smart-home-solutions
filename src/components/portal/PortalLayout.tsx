@@ -96,11 +96,8 @@ const PortalLayout: React.FC<PortalLayoutProps> = ({ children }) => {
             <div className="flex items-center gap-4">
               <LanguageToggle />
               <Button variant="ghost" size="sm" onClick={handleSignOut}>
-                <span className="hidden lg:inline text-muted-foreground mr-2">
-                  {user?.email?.split('@')[0]}
-                </span>
-                <LogOut className="w-4 h-4 lg:mr-2" />
-                <span className="lg:hidden">{t('Logga ut', 'Logout')}</span>
+                <LogOut className="w-4 h-4 mr-2" />
+                {t('Logga ut', 'Logout')}
               </Button>
             </div>
           </div>
