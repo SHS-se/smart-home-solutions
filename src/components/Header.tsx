@@ -105,7 +105,7 @@ const Header = () => {
             <div className="transition-transform duration-200 group-hover:scale-105">
               <ShsLogo />
             </div>
-            <span className="text-sm font-medium text-muted-foreground">Portal</span>
+            <span className="text-sm font-medium text-muted-foreground">{user ? "Portal" : "Smart Home Solutions"}</span>
           </ScrollToTopLink>
 
           {/* Desktop Navigation */}
