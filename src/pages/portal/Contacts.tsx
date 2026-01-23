@@ -12,6 +12,13 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
@@ -25,7 +32,10 @@ interface Contact {
   phone: string | null;
   message: string;
   created_at: string;
+  converted_to_customer_id: string | null;
 }
+
+type FilterType = 'leads' | 'converted' | 'all';
 
 const Contacts: React.FC = () => {
   const navigate = useNavigate();
@@ -36,6 +46,7 @@ const Contacts: React.FC = () => {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [filter, setFilter] = useState<FilterType>('leads');
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -47,15 +58,23 @@ const Contacts: React.FC = () => {
     if (user && isStaff) {
       fetchContacts();
     }
-  }, [user, isStaff]);
+  }, [user, isStaff, filter]);
 
   const fetchContacts = async () => {
+    setLoading(true);
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from('contacts')
-        .select('id, name, email, phone, message, created_at')
-        .is('converted_to_customer_id', null)
+        .select('id, name, email, phone, message, created_at, converted_to_customer_id')
         .order('created_at', { ascending: false });
+
+      if (filter === 'leads') {
+        query = query.is('converted_to_customer_id', null);
+      } else if (filter === 'converted') {
+        query = query.not('converted_to_customer_id', 'is', null);
+      }
+
+      const { data, error } = await query;
 
       if (error) throw error;
       setContacts(data || []);
@@ -105,14 +124,26 @@ const Contacts: React.FC = () => {
       <div className="space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <h1 className="text-2xl font-bold">{t('Kontakter', 'Contacts')}</h1>
-          <div className="relative w-full sm:w-64">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input
-              placeholder={t('Sök kontakter...', 'Search contacts...')}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9"
-            />
+          <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+            <Select value={filter} onValueChange={(value: FilterType) => setFilter(value)}>
+              <SelectTrigger className="w-full sm:w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="leads">{t('Leads', 'Leads')}</SelectItem>
+                <SelectItem value="converted">{t('Konverterade', 'Converted')}</SelectItem>
+                <SelectItem value="all">{t('Alla', 'All')}</SelectItem>
+              </SelectContent>
+            </Select>
+            <div className="relative w-full sm:w-64">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder={t('Sök kontakter...', 'Search contacts...')}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9"
+              />
+            </div>
           </div>
         </div>
 
