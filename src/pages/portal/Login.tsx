@@ -32,105 +32,32 @@ const Login: React.FC = () => {
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
-  const [processingAuth, setProcessingAuth] = useState(false);
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
   const { user, loading } = useAuth();
   const { t } = useLanguage();
 
-  const isStaffEmail = email.toLowerCase().endsWith('@smarthomesolutions.se');
-
-  // Handle magic link token exchange from URL hash
   useEffect(() => {
-    const handleAuthCallback = async () => {
-      const hashParams = new URLSearchParams(window.location.hash.substring(1));
-      const accessToken = hashParams.get('access_token');
-      const refreshToken = hashParams.get('refresh_token');
-      
-      if (accessToken && refreshToken) {
-        setProcessingAuth(true);
-        try {
-          const { data, error } = await supabase.auth.setSession({
-            access_token: accessToken,
-            refresh_token: refreshToken,
-          });
-          
-          if (error) throw error;
-          
-          // Auto-link user to existing customer record by matching email
-          if (data.user?.email) {
-            const { data: existingCustomer } = await supabase
-              .from('customers')
-              .select('id')
-              .eq('billing_email', data.user.email)
-              .is('user_id', null)
-              .maybeSingle();
-
-            if (existingCustomer) {
-              await supabase
-                .from('customers')
-                .update({ user_id: data.user.id })
-                .eq('id', existingCustomer.id);
-            }
-          }
-          
-          // Clear the hash from URL
-          window.history.replaceState(null, '', window.location.pathname);
-          navigate('/portal');
-        } catch (error: any) {
-          console.error('Auth callback error:', error);
-          toast({
-            title: t('Inloggningen misslyckades', 'Login failed'),
-            description: error.message || t('Det gick inte att slutföra inloggningen.', 'Failed to complete login.'),
-            variant: 'destructive',
-          });
-        } finally {
-          setProcessingAuth(false);
-        }
-      }
-    };
-    
-    handleAuthCallback();
-  }, [navigate, toast, t]);
-
-  useEffect(() => {
-    if (!loading && !processingAuth && user) {
+    if (!loading && user) {
       navigate('/portal');
     }
-  }, [user, loading, processingAuth, navigate]);
+  }, [user, loading, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
 
     try {
-      if (isStaffEmail) {
-        // Password login for staff
-        const { error } = await supabase.auth.signInWithPassword({
-          email: email.trim(),
-          password: password,
-        });
+      // Password login for all users
+      const { error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password: password,
+      });
 
-        if (error) throw error;
+      if (error) throw error;
 
-        navigate('/portal');
-      } else {
-        // Magic link for customers
-        const { error } = await supabase.auth.signInWithOtp({
-          email: email.trim(),
-          options: {
-            emailRedirectTo: `${window.location.origin}/login`,
-          },
-        });
-
-        if (error) throw error;
-
-        setEmailSent(true);
-        toast({
-          title: t('Inloggningslänk skickad!', 'Login link sent!'),
-          description: t('Kolla din e-post för en säker inloggningslänk.', 'Check your email for a secure login link.'),
-        });
-      }
+      navigate('/portal');
     } catch (error: any) {
       toast({
         title: t('Fel', 'Error'),
@@ -142,7 +69,34 @@ const Login: React.FC = () => {
     }
   };
 
-  if (loading || processingAuth) {
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
+
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: `${window.location.origin}/reset-password`,
+      });
+
+      if (error) throw error;
+
+      setEmailSent(true);
+      toast({
+        title: t('Återställningslänk skickad!', 'Reset link sent!'),
+        description: t('Kolla din e-post för att återställa ditt lösenord.', 'Check your email to reset your password.'),
+      });
+    } catch (error: any) {
+      toast({
+        title: t('Fel', 'Error'),
+        description: error.message || t('Det gick inte att skicka återställningslänk.', 'Failed to send reset link.'),
+        variant: 'destructive',
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
@@ -182,12 +136,45 @@ const Login: React.FC = () => {
               <Mail className="w-12 h-12 mx-auto text-primary mb-4" />
               <h3 className="text-lg font-medium mb-2">{t('Kolla din e-post', 'Check your email')}</h3>
               <p className="text-muted-foreground mb-6">
-                {t('Vi har skickat en inloggningslänk till', "We've sent a login link to")} <strong>{email}</strong>
+                {t('Vi har skickat en återställningslänk till', "We've sent a reset link to")} <strong>{email}</strong>
               </p>
-              <Button variant="outline" onClick={() => setEmailSent(false)}>
-                {t('Prova en annan e-post', 'Try another email')}
+              <Button variant="outline" onClick={() => { setEmailSent(false); setShowForgotPassword(false); }}>
+                {t('Tillbaka till inloggning', 'Back to login')}
               </Button>
             </div>
+          ) : showForgotPassword ? (
+            <form onSubmit={handleForgotPassword} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="email">{t('E-postadress', 'Email address')}</Label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    id="email"
+                    type="email"
+                    placeholder={t('din@epost.se', 'your@email.com')}
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="pl-10"
+                    required
+                    disabled={isLoading}
+                  />
+                </div>
+              </div>
+              
+              <Button type="submit" className="w-full" disabled={isLoading}>
+                {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                {t('Skicka återställningslänk', 'Send reset link')}
+              </Button>
+              
+              <Button 
+                type="button" 
+                variant="ghost" 
+                className="w-full" 
+                onClick={() => setShowForgotPassword(false)}
+              >
+                {t('Tillbaka till inloggning', 'Back to login')}
+              </Button>
+            </form>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
@@ -207,40 +194,36 @@ const Login: React.FC = () => {
                 </div>
               </div>
               
-              {isStaffEmail && (
-                <div className="space-y-2">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
                   <Label htmlFor="password">{t('Lösenord', 'Password')}</Label>
-                  <div className="relative">
-                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <Input
-                      id="password"
-                      type="password"
-                      placeholder="••••••••"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      className="pl-10"
-                      required
-                      disabled={isLoading}
-                    />
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowForgotPassword(true)}
+                    className="text-xs text-primary hover:underline"
+                  >
+                    {t('Glömt lösenord?', 'Forgot password?')}
+                  </button>
                 </div>
-              )}
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    id="password"
+                    type="password"
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="pl-10"
+                    required
+                    disabled={isLoading}
+                  />
+                </div>
+              </div>
               
               <Button type="submit" className="w-full" disabled={isLoading}>
-                {isLoading ? (
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                ) : null}
-                {isStaffEmail 
-                  ? t('Logga in', 'Log in')
-                  : t('Skicka inloggningslänk', 'Send login link')
-                }
+                {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                {t('Logga in', 'Log in')}
               </Button>
-              <p className="text-center text-sm text-muted-foreground">
-                {isStaffEmail
-                  ? t('Logga in med ditt personalkonto.', 'Log in with your staff account.')
-                  : t('Vi skickar en säker inloggningslänk till din e-post.', "We'll email you a secure login link.")
-                }
-              </p>
             </form>
           )}
         </CardContent>
