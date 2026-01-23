@@ -15,7 +15,8 @@ const contactSchema = z.object({
   name: z.string().trim().min(1, "Name is required").max(100, "Name must be less than 100 characters"),
   email: z.string().trim().email("Invalid email address").max(255, "Email must be less than 255 characters"),
   phone: z.string().trim().min(1, "Phone is required").max(20, "Phone must be less than 20 characters"),
-  message: z.string().trim().min(10, "Message must be at least 10 characters").max(5000, "Message must be less than 5000 characters")
+  message: z.string().trim().min(10, "Message must be at least 10 characters").max(5000, "Message must be less than 5000 characters"),
+  website: z.string().max(0, "").optional() // Honeypot field - should always be empty
 });
 
 type ContactFormData = z.infer<typeof contactSchema>;
@@ -30,7 +31,8 @@ const Contact = () => {
     name: '',
     email: '',
     phone: '',
-    message: ''
+    message: '',
+    website: '' // Honeypot field
   });
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -170,6 +172,19 @@ const Contact = () => {
                         className={errors.message ? 'border-destructive' : ''}
                       />
                       {errors.message && <p className="text-xs text-destructive">{errors.message}</p>}
+                    </div>
+                    {/* Honeypot field - hidden from users, catches bots */}
+                    <div className="hidden" aria-hidden="true">
+                      <Label htmlFor="website">Website</Label>
+                      <Input 
+                        id="website" 
+                        name="website" 
+                        type="text"
+                        value={formData.website} 
+                        onChange={handleChange} 
+                        tabIndex={-1}
+                        autoComplete="off"
+                      />
                     </div>
                     <Button type="submit" size="lg" className="w-full gap-2" disabled={isLoading}>
                       {isLoading ? (
