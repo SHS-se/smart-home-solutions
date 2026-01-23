@@ -98,7 +98,7 @@ const PortalLayout: React.FC<PortalLayoutProps> = ({
 
             {/* Nav */}
             <nav className="hidden md:flex items-center gap-8">
-              {navItems.map(item => <Link key={item.href} to={item.href} className={`nav-link text-sm font-medium py-2 ${isActive(item.href) ? 'text-primary' : ''}`}>
+              {navItems.map(item => <Link key={item.href} to={item.href} className={`text-sm font-medium px-3 py-2 rounded-md transition-colors ${isActive(item.href) ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'}`}>
                   {item.label}
                 </Link>)}
             </nav>
