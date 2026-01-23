@@ -106,10 +106,51 @@ const ContactDetail: React.FC = () => {
 
       if (updateError) throw updateError;
 
-      toast({
-        title: t('Kund skapad', 'Customer created'),
-        description: t('Kontakten har konverterats till kund.', 'Contact has been converted to customer.'),
-      });
+      // Invite customer - creates auth user and sends welcome email
+      const { data: session } = await supabase.auth.getSession();
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/invite-customer`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.session?.access_token}`,
+          },
+          body: JSON.stringify({ customer_id: newCustomer.id }),
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        console.error('Invite error:', result.error);
+        // Customer was created, but invite failed - still navigate but warn
+        toast({
+          title: t('Kund skapad', 'Customer created'),
+          description: t(
+            'Kunden skapades men inbjudan kunde inte skickas. Kontrollera e-postadressen.',
+            'Customer created but invitation could not be sent. Please check the email address.'
+          ),
+          variant: 'destructive',
+        });
+      } else if (result.warning) {
+        toast({
+          title: t('Kund skapad', 'Customer created'),
+          description: t(
+            'Kunden skapades men e-post kunde inte skickas.',
+            'Customer created but email could not be sent.'
+          ),
+          variant: 'destructive',
+        });
+      } else {
+        toast({
+          title: t('Kund skapad och inbjuden', 'Customer created and invited'),
+          description: t(
+            'En inbjudan har skickats till kundens e-post.',
+            'An invitation has been sent to the customer\'s email.'
+          ),
+        });
+      }
 
       // Navigate to the new customer
       navigate(`/portal/customers/${newCustomer.id}/overview`);
