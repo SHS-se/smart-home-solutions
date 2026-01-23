@@ -275,6 +275,7 @@ export type Database = {
           id: string
           last_activity_at: string
           status: string
+          ticket_number: string
           title: string
           updated_at: string
         }
@@ -286,6 +287,7 @@ export type Database = {
           id?: string
           last_activity_at?: string
           status?: string
+          ticket_number: string
           title: string
           updated_at?: string
         }
@@ -297,6 +299,7 @@ export type Database = {
           id?: string
           last_activity_at?: string
           status?: string
+          ticket_number?: string
           title?: string
           updated_at?: string
         }

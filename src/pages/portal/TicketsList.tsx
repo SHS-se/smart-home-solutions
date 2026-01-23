@@ -27,6 +27,7 @@ import { supabase } from '@/integrations/supabase/client';
 
 interface Ticket {
   id: string;
+  ticket_number: string;
   title: string;
   status: string;
   created_at: string;
@@ -108,18 +109,14 @@ const TicketsList: React.FC = () => {
 
   const filteredTickets = tickets.filter((ticket) => {
     const matchesStatus = statusFilter === 'all' || ticket.status === statusFilter;
-    const matchesSearch = ticket.title.toLowerCase().includes(searchQuery.toLowerCase());
+    const query = searchQuery.toLowerCase();
+    const matchesSearch = ticket.title.toLowerCase().includes(query) || 
+                          ticket.ticket_number.toLowerCase().includes(query);
     return matchesStatus && matchesSearch;
   });
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('sv-SE');
-  };
-
-  const getTicketNumber = (id: string) => {
-    // Generate a simple ticket number from UUID
-    const hash = id.split('-')[0].toUpperCase();
-    return `TKT-${hash.slice(0, 4)}`;
   };
 
   if (loading) {
@@ -165,7 +162,7 @@ const TicketsList: React.FC = () => {
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
-              placeholder={t('Sök på rubrik...', 'Search by title...')}
+              placeholder={t('Sök på ID eller rubrik...', 'Search by ID or title...')}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="pl-10"
@@ -207,7 +204,7 @@ const TicketsList: React.FC = () => {
                       className="cursor-pointer"
                       onClick={() => navigate(`/portal/tickets/${ticket.id}`)}
                     >
-                      <TableCell className="font-medium">{getTicketNumber(ticket.id)}</TableCell>
+                      <TableCell className="font-medium">{ticket.ticket_number}</TableCell>
                       <TableCell className="max-w-md truncate">{ticket.title}</TableCell>
                       {isStaff && (
                         <TableCell>{ticket.customers?.org_name || t('Okänd', 'Unknown')}</TableCell>

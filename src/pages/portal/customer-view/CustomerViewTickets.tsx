@@ -29,6 +29,7 @@ import { supabase } from '@/integrations/supabase/client';
 
 interface Ticket {
   id: string;
+  ticket_number: string;
   title: string;
   status: string;
   created_at: string;
@@ -63,7 +64,7 @@ const CustomerViewTickets: React.FC = () => {
       try {
         const { data, error: fetchError } = await supabase
           .from('tickets')
-          .select('id, title, status, created_at, last_activity_at')
+          .select('id, ticket_number, title, status, created_at, last_activity_at')
           .eq('customer_id', customerId)
           .order('last_activity_at', { ascending: false });
 
@@ -112,16 +113,11 @@ const CustomerViewTickets: React.FC = () => {
     });
   };
 
-  const getTicketNumber = (id: string) => {
-    // Generate a simple ticket number from UUID - must match TicketsList.tsx
-    const hash = id.split('-')[0].toUpperCase();
-    return `TKT-${hash.slice(0, 4)}`;
-  };
-
   const filteredTickets = tickets.filter((ticket) => {
     const matchesStatus = statusFilter === 'all' || ticket.status === statusFilter;
-    const matchesSearch = ticket.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      ticket.id.toLowerCase().includes(searchQuery.toLowerCase());
+    const query = searchQuery.toLowerCase();
+    const matchesSearch = ticket.title.toLowerCase().includes(query) ||
+      ticket.ticket_number.toLowerCase().includes(query);
     return matchesStatus && matchesSearch;
   });
 
@@ -182,7 +178,7 @@ const CustomerViewTickets: React.FC = () => {
           </Select>
           <div className="flex-1">
             <Input
-              placeholder={t('Sök på rubrik...', 'Search by title...')}
+              placeholder={t('Sök på ID eller rubrik...', 'Search by ID or title...')}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
@@ -217,7 +213,7 @@ const CustomerViewTickets: React.FC = () => {
                       className="cursor-pointer"
                       onClick={() => navigate(`/portal/customers/${customerId}/tickets/${ticket.id}`)}
                     >
-                      <TableCell className="font-medium">{getTicketNumber(ticket.id)}</TableCell>
+                      <TableCell className="font-medium">{ticket.ticket_number}</TableCell>
                       <TableCell>{ticket.title}</TableCell>
                       <TableCell>{getStatusBadge(ticket.status)}</TableCell>
                       <TableCell>{formatDate(ticket.last_activity_at)}</TableCell>
