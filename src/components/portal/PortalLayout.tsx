@@ -95,7 +95,12 @@ const PortalLayout: React.FC<PortalLayoutProps> = ({ children }) => {
             {/* Right side */}
             <div className="flex items-center gap-4">
               <LanguageToggle />
-              <Button variant="ghost" size="sm" onClick={handleSignOut}>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={handleSignOut}
+                className="text-amber-600 hover:text-amber-700 hover:bg-amber-50"
+              >
                 <LogOut className="w-4 h-4 mr-2" />
                 {t('Logga ut', 'Logout')}
               </Button>
