@@ -99,7 +99,7 @@ const PortalLayout: React.FC<PortalLayoutProps> = ({ children }) => {
                 variant="ghost" 
                 size="sm" 
                 onClick={handleSignOut}
-                className="text-amber-600 hover:text-amber-700 hover:bg-amber-50"
+                className="bg-amber-400 hover:bg-amber-500 text-amber-950"
               >
                 <LogOut className="w-4 h-4 mr-2" />
                 {t('Logga ut', 'Logout')}
