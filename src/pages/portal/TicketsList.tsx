@@ -202,15 +202,12 @@ const TicketsList: React.FC = () => {
                 </TableHeader>
                 <TableBody>
                   {filteredTickets.map((ticket) => (
-                    <TableRow key={ticket.id}>
-                      <TableCell>
-                        <Link
-                          to={`/portal/tickets/${ticket.id}`}
-                          className="text-primary hover:underline font-medium"
-                        >
-                          {getTicketNumber(ticket.id)}
-                        </Link>
-                      </TableCell>
+                    <TableRow 
+                      key={ticket.id}
+                      className="cursor-pointer"
+                      onClick={() => navigate(`/portal/tickets/${ticket.id}`)}
+                    >
+                      <TableCell className="font-medium">{getTicketNumber(ticket.id)}</TableCell>
                       <TableCell className="max-w-md truncate">{ticket.title}</TableCell>
                       {isStaff && (
                         <TableCell>{ticket.customers?.org_name || t('Okänd', 'Unknown')}</TableCell>

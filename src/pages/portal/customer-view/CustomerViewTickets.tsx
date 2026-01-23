@@ -212,15 +212,12 @@ const CustomerViewTickets: React.FC = () => {
                 </TableHeader>
                 <TableBody>
                   {filteredTickets.map((ticket) => (
-                    <TableRow key={ticket.id}>
-                      <TableCell>
-                        <Link 
-                          to={`/portal/customers/${customerId}/tickets/${ticket.id}`}
-                          className="text-primary hover:underline font-medium"
-                        >
-                          {getTicketNumber(ticket.id)}
-                        </Link>
-                      </TableCell>
+                    <TableRow 
+                      key={ticket.id}
+                      className="cursor-pointer"
+                      onClick={() => navigate(`/portal/customers/${customerId}/tickets/${ticket.id}`)}
+                    >
+                      <TableCell className="font-medium">{getTicketNumber(ticket.id)}</TableCell>
                       <TableCell>{ticket.title}</TableCell>
                       <TableCell>{getStatusBadge(ticket.status)}</TableCell>
                       <TableCell>{formatDate(ticket.last_activity_at)}</TableCell>
