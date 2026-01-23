@@ -67,7 +67,7 @@ const handler = async (req: Request): Promise<Response> => {
     }
 
     const portalUrl = Deno.env.get("PORTAL_URL") || "https://smarthomesolutions.lovable.app";
-    const ticketUrl = `${portalUrl}/portal/tickets/${ticketId}`;
+    const ticketUrl = `${portalUrl}/portal/tickets/${ticketNumber}`;
     const replyTo = `support+${ticket.email_token}@mail.smarthomesolutions.se`;
 
     // Determine recipient

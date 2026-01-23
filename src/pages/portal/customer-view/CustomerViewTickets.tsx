@@ -210,7 +210,7 @@ const CustomerViewTickets: React.FC = () => {
                     <TableRow 
                       key={ticket.id}
                       className="cursor-pointer"
-                      onClick={() => navigate(`/portal/customers/${customerId}/tickets/${ticket.id}`)}
+                      onClick={() => navigate(`/portal/customers/${customerId}/tickets/${ticket.ticket_number}`)}
                     >
                       <TableCell className="font-medium">{ticket.ticket_number}</TableCell>
                       <TableCell>{ticket.title}</TableCell>
