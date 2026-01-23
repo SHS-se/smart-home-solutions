@@ -33,7 +33,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isAdmin, setIsAdmin] = useState(false);
   const [customerData, setCustomerData] = useState<CustomerData | null>(null);
 
-  const fetchUserData = async (userId: string) => {
+  const fetchUserData = async (userId: string, userEmail?: string) => {
     try {
       // Check if user is staff
       const { data: staffData } = await supabase
@@ -52,12 +52,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsStaff(false);
       setIsAdmin(false);
 
-      // Check if user is a customer (direct lookup on customers table)
-      const { data: customer } = await supabase
+      // Check if user is already linked to a customer
+      let { data: customer } = await supabase
         .from('customers')
         .select('id, org_name, billing_email, phone, address, site_address')
         .eq('user_id', userId)
         .maybeSingle();
+
+      // If not linked, try to auto-link by email
+      if (!customer && userEmail) {
+        const { data: unlinkedCustomer } = await supabase
+          .from('customers')
+          .select('id, org_name, billing_email, phone, address, site_address')
+          .eq('billing_email', userEmail)
+          .is('user_id', null)
+          .maybeSingle();
+
+        if (unlinkedCustomer) {
+          // Link the customer to this user
+          const { error: linkError } = await supabase
+            .from('customers')
+            .update({ user_id: userId })
+            .eq('id', unlinkedCustomer.id);
+
+          if (!linkError) {
+            customer = unlinkedCustomer;
+            console.log('Auto-linked customer by email:', unlinkedCustomer.id);
+          }
+        }
+      }
 
       if (customer) {
         setCustomerData(customer);
@@ -71,7 +94,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const refreshUserData = async () => {
     if (user) {
-      await fetchUserData(user.id);
+      await fetchUserData(user.id, user.email);
     }
   };
 
@@ -84,7 +107,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         if (currentSession?.user) {
           // Use setTimeout to avoid Supabase deadlock
-          setTimeout(() => fetchUserData(currentSession.user.id), 0);
+          setTimeout(() => fetchUserData(currentSession.user.id, currentSession.user.email), 0);
         } else {
           setIsStaff(false);
           setIsAdmin(false);
@@ -99,7 +122,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setSession(currentSession);
       setUser(currentSession?.user ?? null);
       if (currentSession?.user) {
-        fetchUserData(currentSession.user.id);
+        fetchUserData(currentSession.user.id, currentSession.user.email);
       }
       setLoading(false);
     });
