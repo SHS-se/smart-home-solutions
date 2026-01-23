@@ -123,72 +123,73 @@ const Contacts: React.FC = () => {
     <PortalLayout>
       <div className="space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <h1 className="text-2xl font-bold">{t('Kontakter', 'Contacts')}</h1>
-          <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
-            <Select value={filter} onValueChange={(value: FilterType) => setFilter(value)}>
-              <SelectTrigger className="w-full sm:w-40">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="leads">{t('Leads', 'Leads')}</SelectItem>
-                <SelectItem value="converted">{t('Konverterade', 'Converted')}</SelectItem>
-                <SelectItem value="all">{t('Alla', 'All')}</SelectItem>
-              </SelectContent>
-            </Select>
-            <div className="relative w-full sm:w-64">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                placeholder={t('Sök kontakter...', 'Search contacts...')}
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9"
-              />
-            </div>
+          <h1 className="text-3xl font-medium">{t('Kontakter', 'Contacts')}</h1>
+        </div>
+
+        {/* Filters */}
+        <div className="flex flex-col sm:flex-row gap-4">
+          <Select value={filter} onValueChange={(value: FilterType) => setFilter(value)}>
+            <SelectTrigger className="w-full sm:w-48">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="leads">{t('Leads', 'Leads')}</SelectItem>
+              <SelectItem value="converted">{t('Konverterade', 'Converted')}</SelectItem>
+              <SelectItem value="all">{t('Alla', 'All')}</SelectItem>
+            </SelectContent>
+          </Select>
+          
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input
+              placeholder={t('Sök kontakter...', 'Search contacts...')}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-10"
+            />
           </div>
         </div>
 
+        {/* Contacts Table */}
         <Card>
-          <CardHeader>
-            <CardTitle>{t('Kontaktformulärinlämningar', 'Contact Form Submissions')}</CardTitle>
-          </CardHeader>
-          <CardContent>
+          <CardContent className="pt-6">
             {loading ? (
-              <div className="flex justify-center py-8">
+              <div className="flex items-center justify-center py-12">
                 <Loader2 className="w-6 h-6 animate-spin text-primary" />
               </div>
             ) : filteredContacts.length === 0 ? (
-              <p className="text-muted-foreground text-center py-8">
-                {searchQuery
-                  ? t('Inga kontakter hittades', 'No contacts found')
-                  : t('Inga kontakter ännu', 'No contacts yet')}
-              </p>
-            ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>{t('Namn', 'Name')}</TableHead>
-                      <TableHead>{t('E-post', 'Email')}</TableHead>
-                      <TableHead className="hidden md:table-cell">{t('Telefon', 'Phone')}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredContacts.map((contact) => (
-                      <TableRow
-                        key={contact.id}
-                        className="cursor-pointer hover:bg-muted/50"
-                        onClick={() => navigate(`/portal/contacts/${contact.id}`)}
-                      >
-                        <TableCell className="font-medium">{contact.name}</TableCell>
-                        <TableCell>{contact.email}</TableCell>
-                        <TableCell className="hidden md:table-cell">
-                          {contact.phone || '-'}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+              <div className="text-center py-12">
+                <p className="text-muted-foreground">
+                  {searchQuery
+                    ? t('Inga kontakter hittades', 'No contacts found')
+                    : t('Inga kontakter ännu', 'No contacts yet')}
+                </p>
               </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-primary">{t('Namn', 'Name')}</TableHead>
+                    <TableHead className="text-primary">{t('E-post', 'Email')}</TableHead>
+                    <TableHead className="text-primary hidden md:table-cell">{t('Telefon', 'Phone')}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredContacts.map((contact) => (
+                    <TableRow
+                      key={contact.id}
+                      className="cursor-pointer"
+                      onClick={() => navigate(`/portal/contacts/${contact.id}`)}
+                    >
+                      <TableCell className="font-medium">{contact.name}</TableCell>
+                      <TableCell>{contact.email}</TableCell>
+                      <TableCell className="hidden md:table-cell">
+                        {contact.phone || '-'}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             )}
           </CardContent>
         </Card>
