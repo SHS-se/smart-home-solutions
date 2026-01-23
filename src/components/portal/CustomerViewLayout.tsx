@@ -90,9 +90,6 @@ const CustomerViewLayout: React.FC<CustomerViewLayoutProps> = ({ children }) => 
             {/* Right side */}
             <div className="flex items-center gap-4">
               <LanguageToggle />
-              <span className="text-sm text-muted-foreground hidden lg:block">
-                {user?.email}
-              </span>
               <Button variant="ghost" size="sm" onClick={handleSignOut}>
                 <LogOut className="w-4 h-4 mr-2" />
                 {t('Logga ut', 'Logout')}
