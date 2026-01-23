@@ -1,8 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { Loader2, Building2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
@@ -134,24 +133,20 @@ const Customers: React.FC = () => {
                     <TableHead className="text-primary">{t('Företag', 'Company')}</TableHead>
                     <TableHead className="text-primary">{t('E-post', 'Email')}</TableHead>
                     <TableHead className="text-primary">{t('Telefon', 'Phone')}</TableHead>
-                    <TableHead className="text-primary">{t('Åtgärder', 'Actions')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredCustomers.map((customer) => (
-                    <TableRow key={customer.id}>
+                    <TableRow 
+                      key={customer.id}
+                      className="cursor-pointer hover:bg-muted/50"
+                      onClick={() => navigate(`/portal/customers/${customer.id}/overview`)}
+                    >
                       <TableCell className="font-medium">
                         {customer.org_name || t('Namnlös', 'Unnamed')}
                       </TableCell>
                       <TableCell>{customer.billing_email || '-'}</TableCell>
                       <TableCell>{customer.phone || '-'}</TableCell>
-                      <TableCell>
-                        <Button variant="ghost" size="sm" asChild>
-                          <Link to={`/portal/customers/${customer.id}/overview`}>
-                            {t('Visa', 'View')}
-                          </Link>
-                        </Button>
-                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
