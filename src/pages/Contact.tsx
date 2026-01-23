@@ -14,7 +14,7 @@ import ObfuscatedEmail from '@/components/ObfuscatedEmail';
 const contactSchema = z.object({
   name: z.string().trim().min(1, "Name is required").max(100, "Name must be less than 100 characters"),
   email: z.string().trim().email("Invalid email address").max(255, "Email must be less than 255 characters"),
-  phone: z.string().trim().max(20, "Phone must be less than 20 characters").optional().or(z.literal('')),
+  phone: z.string().trim().min(1, "Phone is required").max(20, "Phone must be less than 20 characters"),
   message: z.string().trim().min(10, "Message must be at least 10 characters").max(5000, "Message must be less than 5000 characters")
 });
 
@@ -129,7 +129,7 @@ const Contact = () => {
                         {errors.name && <p className="text-xs text-destructive">{errors.name}</p>}
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="phone">{t('Telefon', 'Phone')}</Label>
+                        <Label htmlFor="phone">{t('Telefon', 'Phone')} *</Label>
                         <Input 
                           id="phone" 
                           name="phone" 
