@@ -66,9 +66,10 @@ const PortalLayout: React.FC<PortalLayoutProps> = ({ children }) => {
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
-      <header className="fixed top-0 left-0 right-0 z-50 bg-card border-b border-border">
-        <div className="container mx-auto px-4">
-          <div className="flex items-center justify-between h-16">
+      {/* Header */}
+      <header className="fixed top-0 left-0 right-0 z-50 bg-card/95 backdrop-blur-md border-b border-border">
+        <div className="container mx-auto">
+          <div className="flex items-center justify-between h-16 md:h-20">
             {/* Logo */}
             <Link to="/" className="flex items-center gap-3 group">
               <div className="transition-transform duration-200 group-hover:scale-105">
@@ -78,15 +79,13 @@ const PortalLayout: React.FC<PortalLayoutProps> = ({ children }) => {
             </Link>
 
             {/* Nav */}
-            <nav className="hidden md:flex items-center gap-1">
+            <nav className="hidden md:flex items-center gap-8">
               {navItems.map((item) => (
                 <Link
                   key={item.href}
                   to={item.href}
-                  className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                    isActive(item.href)
-                      ? 'bg-primary/10 text-primary'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+                  className={`nav-link text-sm font-medium py-2 ${
+                    isActive(item.href) ? 'text-primary' : ''
                   }`}
                 >
                   {item.label}
@@ -95,9 +94,9 @@ const PortalLayout: React.FC<PortalLayoutProps> = ({ children }) => {
             </nav>
 
             {/* Right side */}
-            <div className="flex items-center gap-4">
+            <div className="hidden md:flex items-center gap-4">
               <LanguageToggle />
-              <Button size="sm" onClick={handleSignOut}>
+              <Button onClick={handleSignOut}>
                 {t('Logga ut', 'Logout')}
               </Button>
             </div>
