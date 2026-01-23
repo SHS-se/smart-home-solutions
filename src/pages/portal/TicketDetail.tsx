@@ -35,6 +35,7 @@ import { supabase } from '@/integrations/supabase/client';
 
 interface Ticket {
   id: string;
+  ticket_number: string;
   title: string;
   status: string;
   email_token: string;
@@ -382,6 +383,9 @@ const TicketDetail: React.FC = () => {
 
         <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
           <div>
+            <div className="flex items-center gap-3 mb-1">
+              <span className="text-muted-foreground font-medium">{ticket.ticket_number}</span>
+            </div>
             <h1 className="text-2xl font-medium">{ticket.title}</h1>
             <p className="text-muted-foreground mt-1">
               {t('Skapad', 'Created')} {formatDate(ticket.created_at)}
