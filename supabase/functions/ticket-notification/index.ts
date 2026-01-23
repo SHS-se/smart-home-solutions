@@ -141,7 +141,7 @@ const handler = async (req: Request): Promise<Response> => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: "Smart Home Solutions <noreply@mail.smarthomesolutions.se>",
+        from: "Smart Home Solutions <replyonly@mail.smarthomesolutions.se>",
         to: [toEmail],
         reply_to: replyTo,
         subject,
