@@ -15,6 +15,7 @@ import NotFound from "./pages/NotFound";
 
 // Portal pages
 import Login from "./pages/portal/Login";
+import ResetPassword from "./pages/portal/ResetPassword";
 import Dashboard from "./pages/portal/Dashboard";
 import Account from "./pages/portal/Account";
 import Billing from "./pages/portal/Billing";
@@ -58,6 +59,7 @@ const App = () => (
               
               {/* Customer Portal */}
               <Route path="/login" element={<Login />} />
+              <Route path="/reset-password" element={<ResetPassword />} />
               <Route path="/portal" element={<Dashboard />} />
               <Route path="/portal/account" element={<Account />} />
               <Route path="/portal/billing" element={<Billing />} />
