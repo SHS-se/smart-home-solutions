@@ -1,11 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, Search, UserPlus } from 'lucide-react';
-import { format } from 'date-fns';
+import { Loader2, Search } from 'lucide-react';
 import PortalLayout from '@/components/portal/PortalLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
 import {
   Table,
   TableBody,
@@ -38,7 +36,6 @@ const Contacts: React.FC = () => {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [convertingId, setConvertingId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -71,62 +68,6 @@ const Contacts: React.FC = () => {
       });
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleConvertToCustomer = async (contact: Contact) => {
-    setConvertingId(contact.id);
-    try {
-      // Create new customer
-      const { data: newCustomer, error: customerError } = await supabase
-        .from('customers')
-        .insert({
-          org_name: contact.name,
-          billing_email: contact.email,
-          phone: contact.phone,
-        })
-        .select('id')
-        .single();
-
-      if (customerError) throw customerError;
-
-      // Update contact with customer reference
-      const { error: updateError } = await supabase
-        .from('contacts')
-        .update({
-          converted_to_customer_id: newCustomer.id,
-          converted_at: new Date().toISOString(),
-        })
-        .eq('id', contact.id);
-
-      if (updateError) throw updateError;
-
-      // Remove from local state
-      setContacts((prev) => prev.filter((c) => c.id !== contact.id));
-
-      toast({
-        title: t('Kund skapad', 'Customer created'),
-        description: (
-          <span>
-            {t('Kontakten har konverterats till kund.', 'Contact has been converted to customer.')}{' '}
-            <a
-              href={`/portal/customers/${newCustomer.id}/overview`}
-              className="underline font-medium"
-            >
-              {t('Visa kund', 'View customer')}
-            </a>
-          </span>
-        ),
-      });
-    } catch (error) {
-      console.error('Error converting contact:', error);
-      toast({
-        title: t('Fel', 'Error'),
-        description: t('Kunde inte konvertera kontakten', 'Could not convert contact'),
-        variant: 'destructive',
-      });
-    } finally {
-      setConvertingId(null);
     }
   };
 
@@ -198,42 +139,19 @@ const Contacts: React.FC = () => {
                       <TableHead>{t('Namn', 'Name')}</TableHead>
                       <TableHead>{t('E-post', 'Email')}</TableHead>
                       <TableHead className="hidden md:table-cell">{t('Telefon', 'Phone')}</TableHead>
-                      <TableHead className="hidden lg:table-cell">{t('Meddelande', 'Message')}</TableHead>
-                      <TableHead className="hidden sm:table-cell">{t('Datum', 'Date')}</TableHead>
-                      <TableHead className="text-right">{t('Åtgärder', 'Actions')}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {filteredContacts.map((contact) => (
-                      <TableRow key={contact.id}>
+                      <TableRow
+                        key={contact.id}
+                        className="cursor-pointer hover:bg-muted/50"
+                        onClick={() => navigate(`/portal/contacts/${contact.id}`)}
+                      >
                         <TableCell className="font-medium">{contact.name}</TableCell>
                         <TableCell>{contact.email}</TableCell>
                         <TableCell className="hidden md:table-cell">
                           {contact.phone || '-'}
-                        </TableCell>
-                        <TableCell className="hidden lg:table-cell max-w-xs truncate">
-                          {contact.message}
-                        </TableCell>
-                        <TableCell className="hidden sm:table-cell">
-                          {format(new Date(contact.created_at), 'yyyy-MM-dd')}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Button
-                            size="sm"
-                            onClick={() => handleConvertToCustomer(contact)}
-                            disabled={convertingId === contact.id}
-                          >
-                            {convertingId === contact.id ? (
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                            ) : (
-                              <>
-                                <UserPlus className="w-4 h-4 mr-1" />
-                                <span className="hidden sm:inline">
-                                  {t('Gör till kund', 'Convert')}
-                                </span>
-                              </>
-                            )}
-                          </Button>
                         </TableCell>
                       </TableRow>
                     ))}

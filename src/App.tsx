@@ -23,6 +23,7 @@ import NewTicket from "./pages/portal/NewTicket";
 import TicketDetail from "./pages/portal/TicketDetail";
 import Customers from "./pages/portal/Customers";
 import Contacts from "./pages/portal/Contacts";
+import ContactDetail from "./pages/portal/ContactDetail";
 
 // Staff customer view pages
 import CustomerViewDashboard from "./pages/portal/customer-view/CustomerViewDashboard";
@@ -65,6 +66,7 @@ const App = () => (
               <Route path="/portal/tickets/:id" element={<TicketDetail />} />
               <Route path="/portal/customers" element={<Customers />} />
               <Route path="/portal/contacts" element={<Contacts />} />
+              <Route path="/portal/contacts/:id" element={<ContactDetail />} />
               
               {/* Staff viewing customer portal */}
               <Route path="/portal/customers/:customerId/overview" element={<CustomerViewWrapper><CustomerViewDashboard /></CustomerViewWrapper>} />
