@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Menu, X } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { useAuth } from "@/contexts/AuthContext";
 import { useIsPortrait } from "@/hooks/use-orientation";
 import LanguageToggle from "./LanguageToggle";
 import ScrollToTopLink from "./ScrollToTopLink";
@@ -29,8 +30,19 @@ const ShsLogo = () => (
 const Header = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const { t } = useLanguage();
+  const { user, signOut } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const { isMobilePortrait } = useIsPortrait();
+
+  const handleAuthAction = async () => {
+    if (user) {
+      await signOut();
+      navigate('/');
+    } else {
+      navigate('/login');
+    }
+  };
   
   const navLinks = [
     {
@@ -68,8 +80,8 @@ const Header = () => {
               {/* Language Toggle and Contact Button */}
               <div className="flex items-center gap-2">
                 <LanguageToggle />
-                <Button asChild size="sm">
-                  <ScrollToTopLink to="/login">{t("Logga in", "Login")}</ScrollToTopLink>
+                <Button size="sm" onClick={handleAuthAction}>
+                  {user ? t("Logga ut", "Logout") : t("Logga in", "Login")}
                 </Button>
               </div>
             </div>
@@ -129,8 +141,8 @@ const Header = () => {
           {/* Desktop Actions */}
           <div className="hidden md:flex items-center gap-4">
             <LanguageToggle />
-            <Button asChild>
-              <ScrollToTopLink to="/login">{t("Logga in", "Login")}</ScrollToTopLink>
+            <Button onClick={handleAuthAction}>
+              {user ? t("Logga ut", "Logout") : t("Logga in", "Login")}
             </Button>
           </div>
 
@@ -160,10 +172,8 @@ const Header = () => {
               ))}
               <div className="flex items-center justify-between px-4 pt-4 border-t border-border mt-2">
                 <LanguageToggle />
-                <Button asChild size="sm">
-                  <ScrollToTopLink to="/login" onClick={() => setIsMenuOpen(false)}>
-                    {t("Logga in", "Login")}
-                  </ScrollToTopLink>
+                <Button size="sm" onClick={() => { handleAuthAction(); setIsMenuOpen(false); }}>
+                  {user ? t("Logga ut", "Logout") : t("Logga in", "Login")}
                 </Button>
               </div>
             </nav>
