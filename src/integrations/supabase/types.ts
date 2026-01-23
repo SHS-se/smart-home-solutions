@@ -14,12 +14,51 @@ export type Database = {
   }
   public: {
     Tables: {
+      contact_messages: {
+        Row: {
+          author_email: string
+          author_type: string
+          body: string
+          contact_id: string
+          created_at: string
+          id: string
+          source: string
+        }
+        Insert: {
+          author_email: string
+          author_type: string
+          body: string
+          contact_id: string
+          created_at?: string
+          id?: string
+          source?: string
+        }
+        Update: {
+          author_email?: string
+          author_type?: string
+          body?: string
+          contact_id?: string
+          created_at?: string
+          id?: string
+          source?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "contact_messages_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       contacts: {
         Row: {
           converted_at: string | null
           converted_to_customer_id: string | null
           created_at: string
           email: string
+          email_token: string
           id: string
           message: string
           name: string
@@ -30,6 +69,7 @@ export type Database = {
           converted_to_customer_id?: string | null
           created_at?: string
           email: string
+          email_token?: string
           id?: string
           message: string
           name: string
@@ -40,6 +80,7 @@ export type Database = {
           converted_to_customer_id?: string | null
           created_at?: string
           email?: string
+          email_token?: string
           id?: string
           message?: string
           name?: string

@@ -185,18 +185,44 @@ const handler = async (req: Request): Promise<Response> => {
       );
     }
     
-    // Insert contact into database
-    const { error: insertError } = await supabase.from("contacts").insert({
-      name: name.trim(),
-      email: email.trim(),
-      phone: phone?.trim() || null,
-      message: message.trim(),
-    });
+    // Insert contact into database and get the created record with email_token
+    const { data: newContact, error: insertError } = await supabase
+      .from("contacts")
+      .insert({
+        name: name.trim(),
+        email: email.trim(),
+        phone: phone?.trim() || null,
+        message: message.trim(),
+      })
+      .select("id, email_token")
+      .single();
     
-    if (insertError) {
+    if (insertError || !newContact) {
       console.error("Error inserting contact:", insertError);
+      return new Response(
+        JSON.stringify({ error: "Failed to save contact" }),
+        { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } }
+      );
+    }
+    
+    console.log("Contact saved to database:", newContact.id);
+
+    // Store the initial form message in contact_messages
+    const { error: messageError } = await supabase
+      .from("contact_messages")
+      .insert({
+        contact_id: newContact.id,
+        body: message.trim(),
+        author_type: "lead",
+        author_email: email.trim(),
+        source: "form",
+      });
+
+    if (messageError) {
+      console.error("Error inserting initial message:", messageError);
+      // Continue anyway - the contact was saved
     } else {
-      console.log("Contact saved to database successfully");
+      console.log("Initial message saved to contact_messages");
     }
 
     const resendApiKey = Deno.env.get("RESEND_API_KEY");
@@ -222,6 +248,9 @@ const handler = async (req: Request): Promise<Response> => {
       <p>${safeMessage}</p>
     `;
 
+    // Use tokenized Reply-To for bidirectional email sync
+    const replyToAddress = `sales+${newContact.email_token}@mail.smarthomesolutions.se`;
+
     const response = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
@@ -231,8 +260,8 @@ const handler = async (req: Request): Promise<Response> => {
       body: JSON.stringify({
         from: "Smart Home Solutions <noreply@mail.smarthomesolutions.se>",
         to: [toAddress],
-        reply_to: email.trim(),
-        subject: `Nytt kontaktformulär: ${safeName}`,
+        reply_to: replyToAddress,
+        subject: `Kontaktförfrågan: ${safeName}`,
         html: htmlBody,
       }),
     });
