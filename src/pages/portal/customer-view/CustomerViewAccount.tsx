@@ -105,7 +105,7 @@ const CustomerViewAccount: React.FC = () => {
   }
 
   const fields = [
-    { name: 'org_name', label: t('Företagsnamn', 'Company name'), multiline: false },
+    { name: 'org_name', label: t('Kundnamn', 'Customer name'), multiline: false },
     { name: 'billing_email', label: t('Faktura-e-post', 'Billing email'), multiline: false },
     { name: 'phone', label: t('Telefon', 'Phone'), multiline: false },
     { name: 'address', label: t('Faktureringsadress', 'Billing address'), multiline: true },
@@ -131,7 +131,7 @@ const CustomerViewAccount: React.FC = () => {
 
         <Card>
           <CardHeader>
-            <CardTitle>{t('Företagsinformation', 'Company information')}</CardTitle>
+            <CardTitle>{t('Kundinformation', 'Customer information')}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             {fields.map((field) => (
