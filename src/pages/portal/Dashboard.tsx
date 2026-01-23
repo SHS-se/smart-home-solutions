@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Building2, FileText, MessageSquare, Loader2, Shield } from 'lucide-react';
+import { Building2, FileText, MessageSquare, Loader2, Shield, Users } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -18,6 +18,8 @@ const Dashboard: React.FC = () => {
   
   const [ticketStats, setTicketStats] = useState({ open: 0, total: 0 });
   const [invoiceStats, setInvoiceStats] = useState({ total: 0, lastDate: '' });
+  const [customerStats, setCustomerStats] = useState({ total: 0 });
+  const [contactStats, setContactStats] = useState({ total: 0, unconverted: 0 });
   const [canBootstrap, setCanBootstrap] = useState(false);
   const [bootstrapLoading, setBootstrapLoading] = useState(false);
   const [statsLoading, setStatsLoading] = useState(true);
@@ -52,16 +54,17 @@ const Dashboard: React.FC = () => {
       try {
         if (isStaff) {
           // Staff sees all tickets
-          const { count: totalTickets } = await supabase
-            .from('tickets')
-            .select('*', { count: 'exact', head: true });
+          const [ticketsResult, openTicketsResult, customersResult, contactsResult, unconvertedContactsResult] = await Promise.all([
+            supabase.from('tickets').select('*', { count: 'exact', head: true }),
+            supabase.from('tickets').select('*', { count: 'exact', head: true }).neq('status', 'closed'),
+            supabase.from('customers').select('*', { count: 'exact', head: true }),
+            supabase.from('contacts').select('*', { count: 'exact', head: true }),
+            supabase.from('contacts').select('*', { count: 'exact', head: true }).is('converted_to_customer_id', null),
+          ]);
           
-          const { count: openTickets } = await supabase
-            .from('tickets')
-            .select('*', { count: 'exact', head: true })
-            .neq('status', 'closed');
-          
-          setTicketStats({ open: openTickets || 0, total: totalTickets || 0 });
+          setTicketStats({ open: openTicketsResult.count || 0, total: ticketsResult.count || 0 });
+          setCustomerStats({ total: customersResult.count || 0 });
+          setContactStats({ total: contactsResult.count || 0, unconverted: unconvertedContactsResult.count || 0 });
         } else if (customerData) {
           // Customer sees their tickets
           const { count: totalTickets } = await supabase
@@ -193,7 +196,10 @@ const Dashboard: React.FC = () => {
         {isStaff ? (
           // Staff Dashboard
           <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-            <Card>
+            <Card 
+              className="cursor-pointer transition-colors hover:bg-muted/50"
+              onClick={() => navigate('/portal/tickets')}
+            >
               <CardHeader className="flex flex-row items-center gap-4">
                 <div className="p-2 rounded-lg bg-primary/10">
                   <MessageSquare className="w-6 h-6 text-primary" />
@@ -204,16 +210,16 @@ const Dashboard: React.FC = () => {
                 <p className="text-muted-foreground mb-1">
                   {t('Öppna ärenden:', 'Open tickets:')} <strong>{ticketStats.open}</strong>
                 </p>
-                <p className="text-muted-foreground mb-4">
+                <p className="text-muted-foreground">
                   {t('Totalt ärenden:', 'Total tickets:')} <strong>{ticketStats.total}</strong>
                 </p>
-                <Button asChild variant="outline" className="w-full">
-                  <Link to="/portal/tickets">{t('Visa alla ärenden', 'View all tickets')}</Link>
-                </Button>
               </CardContent>
             </Card>
 
-            <Card>
+            <Card 
+              className="cursor-pointer transition-colors hover:bg-muted/50"
+              onClick={() => navigate('/portal/customers')}
+            >
               <CardHeader className="flex flex-row items-center gap-4">
                 <div className="p-2 rounded-lg bg-primary/10">
                   <Building2 className="w-6 h-6 text-primary" />
@@ -221,12 +227,29 @@ const Dashboard: React.FC = () => {
                 <CardTitle className="text-lg">{t('Kunder', 'Customers')}</CardTitle>
               </CardHeader>
               <CardContent>
-                <p className="text-muted-foreground mb-4">
-                  {t('Hantera kundkonton och användare.', 'Manage customer accounts and users.')}
+                <p className="text-muted-foreground">
+                  {t('Antal kunder:', 'Total customers:')} <strong>{customerStats.total}</strong>
                 </p>
-                <Button asChild variant="outline" className="w-full">
-                  <Link to="/portal/customers">{t('Visa kunder', 'View customers')}</Link>
-                </Button>
+              </CardContent>
+            </Card>
+
+            <Card 
+              className="cursor-pointer transition-colors hover:bg-muted/50"
+              onClick={() => navigate('/portal/contacts')}
+            >
+              <CardHeader className="flex flex-row items-center gap-4">
+                <div className="p-2 rounded-lg bg-primary/10">
+                  <Users className="w-6 h-6 text-primary" />
+                </div>
+                <CardTitle className="text-lg">{t('Kontakter', 'Contacts')}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-muted-foreground mb-1">
+                  {t('Ej konverterade:', 'Unconverted:')} <strong>{contactStats.unconverted}</strong>
+                </p>
+                <p className="text-muted-foreground">
+                  {t('Totalt kontakter:', 'Total contacts:')} <strong>{contactStats.total}</strong>
+                </p>
               </CardContent>
             </Card>
           </div>
