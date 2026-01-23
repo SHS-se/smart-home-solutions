@@ -202,7 +202,7 @@ const TicketsList: React.FC = () => {
                     <TableRow 
                       key={ticket.id}
                       className="cursor-pointer"
-                      onClick={() => navigate(`/portal/tickets/${ticket.id}`)}
+                      onClick={() => navigate(`/portal/tickets/${ticket.ticket_number}`)}
                     >
                       <TableCell className="font-medium">{ticket.ticket_number}</TableCell>
                       <TableCell className="max-w-md truncate">{ticket.title}</TableCell>

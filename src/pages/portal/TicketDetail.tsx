@@ -74,7 +74,7 @@ interface PendingFile {
 }
 
 const TicketDetail: React.FC = () => {
-  const { id } = useParams<{ id: string }>();
+  const { ticketNumber } = useParams<{ ticketNumber: string }>();
   const { user, isStaff, customerData, loading } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -135,14 +135,14 @@ const TicketDetail: React.FC = () => {
 
   useEffect(() => {
     const fetchTicket = async () => {
-      if (!id) return;
+      if (!ticketNumber) return;
       setTicketLoading(true);
 
       try {
         const { data: ticketData, error: ticketError } = await supabase
           .from('tickets')
           .select('*, customers(org_name, billing_email)')
-          .eq('id', id)
+          .eq('ticket_number', ticketNumber)
           .maybeSingle();
 
         if (ticketError) throw ticketError;
@@ -157,7 +157,7 @@ const TicketDetail: React.FC = () => {
         const { data: commentsData, error: commentsError } = await supabase
           .from('ticket_comments')
           .select('*')
-          .eq('ticket_id', id)
+          .eq('ticket_id', ticketData.id)
           .order('created_at', { ascending: true });
 
         if (commentsError) throw commentsError;
@@ -166,7 +166,7 @@ const TicketDetail: React.FC = () => {
         const { data: attachmentsData, error: attachmentsError } = await supabase
           .from('ticket_attachments')
           .select('*')
-          .eq('ticket_id', id);
+          .eq('ticket_id', ticketData.id);
 
         if (attachmentsError) throw attachmentsError;
         setAttachments(attachmentsData || []);
@@ -185,7 +185,7 @@ const TicketDetail: React.FC = () => {
     if (!loading) {
       fetchTicket();
     }
-  }, [id, loading, navigate, toast, t]);
+  }, [ticketNumber, loading, navigate, toast, t]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);

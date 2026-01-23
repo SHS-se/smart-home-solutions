@@ -132,7 +132,7 @@ const NewTicket: React.FC = () => {
         description: t('Ditt supportärende har skickats in.', 'Your support ticket has been submitted.'),
       });
 
-      navigate(`/portal/tickets/${ticket.id}`);
+      navigate(`/portal/tickets/${ticket.ticket_number}`);
     } catch (error: any) {
       console.error('Error creating ticket:', error);
       toast({

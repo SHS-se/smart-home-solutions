@@ -76,7 +76,7 @@ interface PendingFile {
 }
 
 const CustomerViewTicketDetail: React.FC = () => {
-  const { customerId, id } = useParams<{ customerId: string; id: string }>();
+  const { customerId, ticketNumber } = useParams<{ customerId: string; ticketNumber: string }>();
   const { user, isStaff, loading: authLoading } = useAuth();
   const { customerData, loading: customerLoading, error: customerError } = useViewedCustomer();
   const navigate = useNavigate();
@@ -141,14 +141,14 @@ const CustomerViewTicketDetail: React.FC = () => {
 
   useEffect(() => {
     const fetchTicket = async () => {
-      if (!id || !customerId) return;
+      if (!ticketNumber || !customerId) return;
       setTicketLoading(true);
 
       try {
         const { data: ticketData, error: ticketError } = await supabase
           .from('tickets')
           .select('*, customers(org_name, billing_email)')
-          .eq('id', id)
+          .eq('ticket_number', ticketNumber)
           .eq('customer_id', customerId)
           .maybeSingle();
 
@@ -164,7 +164,7 @@ const CustomerViewTicketDetail: React.FC = () => {
         const { data: commentsData, error: commentsError } = await supabase
           .from('ticket_comments')
           .select('*')
-          .eq('ticket_id', id)
+          .eq('ticket_id', ticketData.id)
           .order('created_at', { ascending: true });
 
         if (commentsError) throw commentsError;
@@ -173,7 +173,7 @@ const CustomerViewTicketDetail: React.FC = () => {
         const { data: attachmentsData, error: attachmentsError } = await supabase
           .from('ticket_attachments')
           .select('*')
-          .eq('ticket_id', id);
+          .eq('ticket_id', ticketData.id);
 
         if (attachmentsError) throw attachmentsError;
         setAttachments(attachmentsData || []);
@@ -192,7 +192,7 @@ const CustomerViewTicketDetail: React.FC = () => {
     if (!authLoading && !customerLoading) {
       fetchTicket();
     }
-  }, [id, customerId, authLoading, customerLoading, navigate, toast, t]);
+  }, [ticketNumber, customerId, authLoading, customerLoading, navigate, toast, t]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);

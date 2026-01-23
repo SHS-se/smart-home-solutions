@@ -63,7 +63,7 @@ const App = () => (
               <Route path="/portal/billing" element={<Billing />} />
               <Route path="/portal/tickets" element={<TicketsList />} />
               <Route path="/portal/tickets/new" element={<NewTicket />} />
-              <Route path="/portal/tickets/:id" element={<TicketDetail />} />
+              <Route path="/portal/tickets/:ticketNumber" element={<TicketDetail />} />
               <Route path="/portal/customers" element={<Customers />} />
               <Route path="/portal/contacts" element={<Contacts />} />
               <Route path="/portal/contacts/:id" element={<ContactDetail />} />
@@ -73,7 +73,7 @@ const App = () => (
               <Route path="/portal/customers/:customerId/account" element={<CustomerViewWrapper><CustomerViewAccount /></CustomerViewWrapper>} />
               <Route path="/portal/customers/:customerId/billing" element={<CustomerViewWrapper><CustomerViewBilling /></CustomerViewWrapper>} />
               <Route path="/portal/customers/:customerId/tickets" element={<CustomerViewWrapper><CustomerViewTickets /></CustomerViewWrapper>} />
-              <Route path="/portal/customers/:customerId/tickets/:id" element={<CustomerViewWrapper><CustomerViewTicketDetail /></CustomerViewWrapper>} />
+              <Route path="/portal/customers/:customerId/tickets/:ticketNumber" element={<CustomerViewWrapper><CustomerViewTicketDetail /></CustomerViewWrapper>} />
               
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />
