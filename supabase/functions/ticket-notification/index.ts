@@ -54,6 +54,8 @@ const handler = async (req: Request): Promise<Response> => {
       throw new Error("Ticket not found");
     }
 
+    const ticketNumber = ticket.ticket_number || `TKT-${ticketId.split('-')[0].toUpperCase().slice(0, 5)}`;
+
     let comment = null;
     if (commentId) {
       const { data } = await supabase
@@ -76,16 +78,16 @@ const handler = async (req: Request): Promise<Response> => {
     if (action === "created") {
       // New ticket - notify staff
       toEmail = Deno.env.get("SUPPORT_TO") || "support@smarthomesolutions.se";
-      subject = `New ticket: ${ticket.title}`;
+      subject = `[${ticketNumber}] New ticket: ${ticket.title}`;
       isStaffNotification = true;
     } else if (comment?.author_type === "staff") {
       // Staff replied - notify customer
       toEmail = ticket.customers?.billing_email || "";
-      subject = `Re: ${ticket.title}`;
+      subject = `[${ticketNumber}] Re: ${ticket.title}`;
     } else {
       // Customer replied - notify staff
       toEmail = Deno.env.get("SUPPORT_TO") || "support@smarthomesolutions.se";
-      subject = `Customer reply: ${ticket.title}`;
+      subject = `[${ticketNumber}] Customer reply: ${ticket.title}`;
       isStaffNotification = true;
     }
 
@@ -108,7 +110,8 @@ const handler = async (req: Request): Promise<Response> => {
     const htmlBody = `
       <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
         <h2 style="color: #2D5F8D;">${escapeHtml(subject)}</h2>
-        <p><strong>Ticket:</strong> ${escapeHtml(ticket.title)}</p>
+        <p><strong>Ticket ID:</strong> ${escapeHtml(ticketNumber)}</p>
+        <p><strong>Title:</strong> ${escapeHtml(ticket.title)}</p>
         <p><strong>Status:</strong> ${escapeHtml(statusLabel)}</p>
         <p><strong>Customer:</strong> ${escapeHtml(ticket.customers?.org_name || "N/A")}</p>
         <hr style="border: none; border-top: 1px solid #e5e5e5; margin: 20px 0;" />
