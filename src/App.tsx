@@ -1,11 +1,13 @@
+import { useEffect } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, useNavigate, useLocation } from "react-router-dom";
 import { LanguageProvider } from "@/contexts/LanguageContext";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ViewedCustomerProvider } from "@/contexts/ViewedCustomerContext";
+import { supabase } from "@/integrations/supabase/client";
 import Index from "./pages/Index";
 import Services from "./pages/Services";
 import Knowledge from "./pages/Knowledge";
@@ -40,6 +42,36 @@ const CustomerViewWrapper = ({ children }: { children: React.ReactNode }) => (
   <ViewedCustomerProvider>{children}</ViewedCustomerProvider>
 );
 
+// Component that handles auth callbacks (password recovery links, etc.)
+const AuthCallbackHandler = () => {
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  useEffect(() => {
+    // Check URL hash for auth tokens (Supabase puts tokens in hash fragments)
+    const hashParams = new URLSearchParams(window.location.hash.substring(1));
+    const type = hashParams.get('type');
+    const accessToken = hashParams.get('access_token');
+
+    // If this is a recovery link, redirect to reset-password page
+    if (type === 'recovery' && accessToken) {
+      navigate('/reset-password' + window.location.hash, { replace: true });
+      return;
+    }
+
+    // Listen for auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        navigate('/reset-password', { replace: true });
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, [navigate, location]);
+
+  return null;
+};
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <AuthProvider>
@@ -48,6 +80,7 @@ const App = () => (
           <Toaster />
           <Sonner />
           <BrowserRouter>
+            <AuthCallbackHandler />
             <Routes>
               {/* Public website */}
               <Route path="/" element={<Index />} />

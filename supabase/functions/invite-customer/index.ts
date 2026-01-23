@@ -168,10 +168,16 @@ const handler = async (req: Request): Promise<Response> => {
       );
     }
 
-    // Generate password reset link
+    // Generate password reset link with redirect to our app
+    // We need to build a custom URL that points to our app's reset-password page
+    const appUrl = "https://smarthomesolutions.lovable.app";
+    
     const { data: linkData, error: linkGenError } = await supabaseAdmin.auth.admin.generateLink({
       type: "recovery",
       email: customer.billing_email,
+      options: {
+        redirectTo: `${appUrl}/reset-password`,
+      },
     });
 
     if (linkGenError || !linkData) {
@@ -182,7 +188,9 @@ const handler = async (req: Request): Promise<Response> => {
       );
     }
 
-    // Extract the token from the action link and build our custom URL
+    // The generateLink returns a Supabase verify URL. We need to extract the token
+    // and build a URL that goes directly to our app with the token in the hash.
+    // The action_link format: https://<project>.supabase.co/auth/v1/verify?token=...&type=recovery&redirect_to=...
     const actionLink = linkData.properties?.action_link;
     if (!actionLink) {
       return new Response(
@@ -190,6 +198,24 @@ const handler = async (req: Request): Promise<Response> => {
         { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } }
       );
     }
+
+    // Parse the action link to extract the token
+    const actionUrl = new URL(actionLink);
+    const recoveryToken = actionUrl.searchParams.get("token");
+    const tokenType = actionUrl.searchParams.get("type");
+    
+    if (!recoveryToken) {
+      return new Response(
+        JSON.stringify({ error: "Failed to extract recovery token" }),
+        { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } }
+      );
+    }
+
+    // Build the password reset URL that goes directly to our app
+    // Format: https://app.com/reset-password#access_token=...&type=recovery
+    // But actually, the verify endpoint needs to be called first to exchange the token.
+    // So we'll use the Supabase verify URL but ensure redirect_to is set correctly.
+    // The simplest approach: just use the actionLink as-is since we set redirectTo.
 
     // Send welcome email with password setup link
     const customerName = escapeHtml(customer.org_name || "Valued Customer");
