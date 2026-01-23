@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Building2, FileText, MessageSquare, LogOut, Users, LayoutDashboard, Contact2 } from 'lucide-react';
+import { Building2, FileText, MessageSquare, Users, LayoutDashboard, Contact2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -95,8 +95,7 @@ const PortalLayout: React.FC<PortalLayoutProps> = ({ children }) => {
             {/* Right side */}
             <div className="flex items-center gap-4">
               <LanguageToggle />
-              <Button variant="ghost" size="sm" onClick={handleSignOut}>
-                <LogOut className="w-4 h-4 mr-2" />
+              <Button size="sm" onClick={handleSignOut}>
                 {t('Logga ut', 'Logout')}
               </Button>
             </div>
