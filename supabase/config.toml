@@ -1,6 +1,6 @@
 project_id = "ouxqcdtspedbwpceemfc"
 
-[functions.inbound-email-webhook]
+[functions.support-inbound-webhook]
 verify_jwt = false
 
 [functions.invite-customer]
