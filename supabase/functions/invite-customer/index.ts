@@ -27,10 +27,11 @@ const handler = async (req: Request): Promise<Response> => {
   }
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY");
   const supabaseServiceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   const resendApiKey = Deno.env.get("RESEND_API_KEY");
 
-  if (!supabaseUrl || !supabaseServiceRoleKey || !resendApiKey) {
+  if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceRoleKey || !resendApiKey) {
     return new Response(
       JSON.stringify({ error: "Server configuration error" }),
       { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } }
@@ -47,12 +48,16 @@ const handler = async (req: Request): Promise<Response> => {
   }
 
   const supabaseAdmin = createClient(supabaseUrl, supabaseServiceRoleKey);
-  const supabaseClient = createClient(supabaseUrl, supabaseServiceRoleKey, {
+  // IMPORTANT: validate the caller JWT using the ANON key (signing-keys compatible).
+  const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey, {
     global: { headers: { Authorization: authHeader } },
   });
 
   // Check if caller is staff
-  const { data: { user } } = await supabaseClient.auth.getUser();
+  const { data: { user }, error: userError } = await supabaseAuth.auth.getUser();
+  if (userError) {
+    console.warn("invite-customer: auth.getUser() failed:", userError.message);
+  }
   if (!user) {
     return new Response(
       JSON.stringify({ error: "Unauthorized" }),
