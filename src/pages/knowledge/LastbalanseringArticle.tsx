@@ -111,6 +111,53 @@ const tumbleDryerData = [
   { time: '18:45', power: 0 },
 ];
 
+// Heat pump (luft-luft värmepump) power consumption data
+// Shows: startup spike (~2.2kW), normal operation (~0.8-1.4kW), defrost cycle spike (~2.2kW)
+const heatPumpData = [
+  { time: '04:30', power: 0 },
+  { time: '04:32', power: 500 },
+  // Startup spike
+  { time: '04:34', power: 1500 },
+  { time: '04:35', power: 2100 },
+  { time: '04:36', power: 2200 },
+  { time: '04:37', power: 1300 },
+  { time: '04:38', power: 1100 },
+  { time: '04:40', power: 1050 },
+  { time: '04:42', power: 1100 },
+  { time: '04:44', power: 1150 },
+  { time: '04:46', power: 1300 },
+  { time: '04:48', power: 1350 },
+  { time: '04:50', power: 1400 },
+  { time: '04:52', power: 1350 },
+  { time: '04:54', power: 1300 },
+  { time: '04:56', power: 1000 },
+  { time: '04:58', power: 950 },
+  { time: '05:00', power: 900 },
+  // Brief pause/low period
+  { time: '05:02', power: 100 },
+  { time: '05:04', power: 50 },
+  { time: '05:06', power: 300 },
+  { time: '05:08', power: 500 },
+  { time: '05:10', power: 700 },
+  { time: '05:12', power: 800 },
+  { time: '05:14', power: 850 },
+  { time: '05:16', power: 900 },
+  // Defrost cycle spike
+  { time: '05:18', power: 1500 },
+  { time: '05:19', power: 2100 },
+  { time: '05:20', power: 2200 },
+  { time: '05:21', power: 2150 },
+  { time: '05:22', power: 1400 },
+  { time: '05:24', power: 1000 },
+  { time: '05:26', power: 700 },
+  { time: '05:28', power: 1000 },
+  { time: '05:30', power: 1100 },
+  { time: '05:32', power: 900 },
+  { time: '05:34', power: 950 },
+  { time: '05:36', power: 900 },
+  { time: '05:38', power: 880 },
+];
+
 const LastbalanseringArticle = () => {
   const { t } = useLanguage();
 
@@ -362,6 +409,110 @@ const LastbalanseringArticle = () => {
                     {t(
                       'Till skillnad från tvättmaskinen drar torktumlaren högt effekt under hela programmet – ofta 2-3 timmar. Det är inte en kort topp utan en lång, kontinuerlig belastning på 700-800 W. Om du kör torktumlaren samtidigt som annan utrustning, adderas denna effekt under hela tiden.',
                       'Unlike the washing machine, the tumble dryer draws high power throughout the entire program – often 2-3 hours. It\'s not a short peak but a long, continuous load of 700-800 W. If you run the dryer alongside other equipment, this power adds up the entire time.'
+                    )}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* Heat Pump Chart */}
+          <section className="mb-12">
+            <h3 className="text-xl font-medium text-foreground mb-4">
+              {t('Luft-luft värmepump: Verklig förbrukningsdata', 'Air-to-Air Heat Pump: Real Consumption Data')}
+            </h3>
+            
+            <div className="bg-card border border-border rounded-xl p-6 mb-6">
+              <div className="h-80">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={heatPumpData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="heatPumpGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.4}/>
+                        <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0.05}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis 
+                      dataKey="time" 
+                      stroke="hsl(var(--muted-foreground))"
+                      fontSize={12}
+                      tickLine={false}
+                      interval={4}
+                    />
+                    <YAxis 
+                      stroke="hsl(var(--muted-foreground))"
+                      fontSize={12}
+                      tickLine={false}
+                      tickFormatter={(value) => value >= 1000 ? `${(value/1000).toFixed(1)} kW` : `${value} W`}
+                      domain={[0, 2500]}
+                    />
+                    <Tooltip 
+                      contentStyle={{ 
+                        backgroundColor: 'hsl(var(--card))', 
+                        border: '1px solid hsl(var(--border))',
+                        borderRadius: '8px',
+                        fontSize: '14px'
+                      }}
+                      formatter={(value: number) => [
+                        value >= 1000 ? `${(value/1000).toFixed(2)} kW` : `${value} W`, 
+                        t('Effekt', 'Power')
+                      ]}
+                    />
+                    {/* Highlight startup spike */}
+                    <ReferenceArea 
+                      x1="04:34" 
+                      x2="04:38" 
+                      fill="hsl(var(--destructive))" 
+                      fillOpacity={0.15} 
+                    />
+                    {/* Highlight defrost cycle spike */}
+                    <ReferenceArea 
+                      x1="05:18" 
+                      x2="05:24" 
+                      fill="hsl(var(--destructive))" 
+                      fillOpacity={0.15} 
+                    />
+                    <Area 
+                      type="monotone" 
+                      dataKey="power" 
+                      stroke="hsl(var(--primary))" 
+                      strokeWidth={2}
+                      fill="url(#heatPumpGradient)" 
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+              
+              {/* Chart legend */}
+              <div className="flex flex-wrap items-center gap-6 mt-4 pt-4 border-t border-border">
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 rounded bg-destructive/30"></div>
+                  <span className="text-sm text-muted-foreground">
+                    {t('Uppstart & avfrostning (~2.2 kW)', 'Startup & defrost (~2.2 kW)')}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 rounded bg-primary/30"></div>
+                  <span className="text-sm text-muted-foreground">
+                    {t('Normal drift (~0.8-1.4 kW)', 'Normal operation (~0.8-1.4 kW)')}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Key insight box */}
+            <div className="bg-destructive/10 border border-destructive/20 rounded-xl p-6 mb-6">
+              <div className="flex gap-4">
+                <AlertTriangle className="w-6 h-6 text-destructive flex-shrink-0 mt-1" />
+                <div>
+                  <h4 className="font-medium text-foreground mb-2">
+                    {t('Insikt: Oförutsägbara toppar', 'Insight: Unpredictable peaks')}
+                  </h4>
+                  <p className="text-muted-foreground">
+                    {t(
+                      'Värmepumpen startar och avfrostar när den behöver – inte när du vill. Under vintern kan avfrostningscykler inträffa flera gånger om dagen, varje gång med en topp på över 2 kW. Om detta händer samtidigt som du laddar elbilen eller kör tvättmaskinen, kan du få en oväntad effekttopp som påverkar din effektavgift.',
+                      'The heat pump starts and defrosts when it needs to – not when you want it to. During winter, defrost cycles can occur several times a day, each time with a peak over 2 kW. If this happens while you\'re charging your EV or running the washing machine, you can get an unexpected power peak that affects your effektavgift.'
                     )}
                   </p>
                 </div>
