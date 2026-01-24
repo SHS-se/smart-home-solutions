@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { ArrowLeft, Clock, Zap, ExternalLink } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import Layout from '@/components/Layout';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 
 const EffektavgiftArticle = () => {
   const { t } = useLanguage();
@@ -174,19 +175,124 @@ const EffektavgiftArticle = () => {
                 )}
               </p>
               
-              <div className="grid sm:grid-cols-2 gap-4">
-                <div className="bg-card border border-border rounded-xl p-5">
-                  <div className="text-3xl font-light text-primary mb-2">{t('Morgon', 'Morning')}</div>
-                  <p className="text-sm text-muted-foreground">
-                    {t('Höglasttid: 06:00–09:00 när många startar dagen samtidigt.', 'Peak time: 06:00–09:00 when many start the day simultaneously.')}
-                  </p>
+              {/* Consumption Chart */}
+              <div className="bg-card border border-border rounded-xl p-6">
+                <h3 className="font-medium text-foreground mb-2">
+                  {t('Typisk dygnsförbrukning för ett svenskt hushåll', 'Typical daily consumption for a Swedish household')}
+                </h3>
+                <p className="text-sm text-muted-foreground mb-6">
+                  {t(
+                    'Grafen visar hur elförbrukningen varierar under dygnet. De markerade områdena representerar höglasttider då effektavgiften vanligtvis är högre.',
+                    'The chart shows how electricity consumption varies throughout the day. The highlighted areas represent peak times when the peak power charge is usually higher.'
+                  )}
+                </p>
+                
+                <div className="h-64 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart
+                      data={[
+                        { hour: '00', consumption: 1.2, isPeak: false },
+                        { hour: '01', consumption: 1.0, isPeak: false },
+                        { hour: '02', consumption: 0.9, isPeak: false },
+                        { hour: '03', consumption: 0.8, isPeak: false },
+                        { hour: '04', consumption: 0.9, isPeak: false },
+                        { hour: '05', consumption: 1.2, isPeak: false },
+                        { hour: '06', consumption: 2.8, isPeak: true },
+                        { hour: '07', consumption: 4.2, isPeak: true },
+                        { hour: '08', consumption: 3.8, isPeak: true },
+                        { hour: '09', consumption: 2.5, isPeak: false },
+                        { hour: '10', consumption: 2.0, isPeak: false },
+                        { hour: '11', consumption: 1.8, isPeak: false },
+                        { hour: '12', consumption: 2.2, isPeak: false },
+                        { hour: '13', consumption: 1.9, isPeak: false },
+                        { hour: '14', consumption: 1.7, isPeak: false },
+                        { hour: '15', consumption: 1.8, isPeak: false },
+                        { hour: '16', consumption: 2.5, isPeak: false },
+                        { hour: '17', consumption: 4.0, isPeak: true },
+                        { hour: '18', consumption: 5.2, isPeak: true },
+                        { hour: '19', consumption: 4.8, isPeak: true },
+                        { hour: '20', consumption: 3.5, isPeak: false },
+                        { hour: '21', consumption: 2.8, isPeak: false },
+                        { hour: '22', consumption: 2.0, isPeak: false },
+                        { hour: '23', consumption: 1.5, isPeak: false },
+                      ]}
+                      margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+                    >
+                      <defs>
+                        <linearGradient id="consumptionGradient" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3}/>
+                          <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0}/>
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                      <XAxis 
+                        dataKey="hour" 
+                        tick={{ fontSize: 12, fill: 'hsl(var(--muted-foreground))' }}
+                        axisLine={{ stroke: 'hsl(var(--border))' }}
+                        tickLine={false}
+                      />
+                      <YAxis 
+                        tick={{ fontSize: 12, fill: 'hsl(var(--muted-foreground))' }}
+                        axisLine={false}
+                        tickLine={false}
+                        tickFormatter={(value) => `${value} kW`}
+                        width={50}
+                      />
+                      <Tooltip 
+                        contentStyle={{ 
+                          backgroundColor: 'hsl(var(--card))', 
+                          border: '1px solid hsl(var(--border))',
+                          borderRadius: '8px',
+                          fontSize: '12px'
+                        }}
+                        formatter={(value: number) => [`${value} kW`, t('Förbrukning', 'Consumption')]}
+                        labelFormatter={(label) => `${label}:00`}
+                      />
+                      {/* Morning peak zone */}
+                      <ReferenceLine x="06" stroke="hsl(var(--warning))" strokeDasharray="3 3" strokeOpacity={0.5} />
+                      <ReferenceLine x="09" stroke="hsl(var(--warning))" strokeDasharray="3 3" strokeOpacity={0.5} />
+                      {/* Evening peak zone */}
+                      <ReferenceLine x="17" stroke="hsl(var(--warning))" strokeDasharray="3 3" strokeOpacity={0.5} />
+                      <ReferenceLine x="20" stroke="hsl(var(--warning))" strokeDasharray="3 3" strokeOpacity={0.5} />
+                      <Area 
+                        type="monotone" 
+                        dataKey="consumption" 
+                        stroke="hsl(var(--primary))" 
+                        strokeWidth={2}
+                        fill="url(#consumptionGradient)" 
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
                 </div>
-                <div className="bg-card border border-border rounded-xl p-5">
-                  <div className="text-3xl font-light text-primary mb-2">{t('Kväll', 'Evening')}</div>
-                  <p className="text-sm text-muted-foreground">
-                    {t('Höglasttid: 17:00–20:00 när hushållen lagar mat och laddar bilar.', 'Peak time: 17:00–20:00 when households cook and charge cars.')}
-                  </p>
+                
+                {/* Peak period legend */}
+                <div className="flex flex-wrap gap-4 mt-4 pt-4 border-t border-border">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-warning" />
+                    <span className="text-sm text-muted-foreground">
+                      {t('Morgontopp: 06:00–09:00', 'Morning peak: 06:00–09:00')}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-warning" />
+                    <span className="text-sm text-muted-foreground">
+                      {t('Kvällstopp: 17:00–20:00', 'Evening peak: 17:00–20:00')}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-primary" />
+                    <span className="text-sm text-muted-foreground">
+                      {t('Typisk förbrukning (kW)', 'Typical consumption (kW)')}
+                    </span>
+                  </div>
                 </div>
+                
+                <p className="text-xs text-muted-foreground mt-4">
+                  {t(
+                    'Källa: Typiska förbrukningsmönster baserade på data från svenska elnätsföretag. Faktisk förbrukning varierar beroende på hushållets storlek och vanor.',
+                    'Source: Typical consumption patterns based on data from Swedish grid operators. Actual consumption varies depending on household size and habits.'
+                  )}
+                </p>
               </div>
             </section>
 
