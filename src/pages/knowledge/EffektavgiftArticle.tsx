@@ -419,10 +419,10 @@ const EffektavgiftArticle = () => {
                 </p>
                 <Link 
                   to="/knowledge/lastbalansering" 
-                  className="inline-flex items-center gap-2 text-primary font-medium hover:underline"
+                  className="inline-flex items-center gap-2 text-primary font-medium hover:underline group"
                 >
                   {t('Läs mer: Hur lastbalansering verkligen fungerar', 'Read more: How load balancing actually works')}
-                  <ArrowLeft className="w-4 h-4 rotate-180" />
+                  <ArrowLeft className="w-4 h-4 rotate-180 group-hover:translate-x-1 transition-transform" />
                 </Link>
               </div>
             </section>
