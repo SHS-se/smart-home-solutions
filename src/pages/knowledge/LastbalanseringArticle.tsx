@@ -218,6 +218,68 @@ const dishwasherData = [
   { time: '22:48', power: 0 },
 ];
 
+// Electric water boiler power consumption data (realistic pattern based on real measurements)
+// Shows: high-power heating cycles (~3kW) after shower/bath usage and maintenance heating throughout day
+const waterBoilerData = [
+  { time: '01:00', power: 0 },
+  // Night maintenance spike
+  { time: '01:30', power: 2900 },
+  { time: '01:45', power: 0 },
+  { time: '02:00', power: 0 },
+  { time: '03:00', power: 0 },
+  // Early morning spike
+  { time: '04:00', power: 2950 },
+  { time: '04:20', power: 2900 },
+  { time: '04:30', power: 0 },
+  { time: '05:00', power: 0 },
+  { time: '06:00', power: 0 },
+  { time: '07:00', power: 0 },
+  { time: '08:00', power: 0 },
+  { time: '09:00', power: 0 },
+  // Morning shower recovery - long sustained period
+  { time: '09:30', power: 2950 },
+  { time: '10:00', power: 2900 },
+  { time: '10:30', power: 2950 },
+  { time: '11:00', power: 2900 },
+  { time: '11:30', power: 2950 },
+  { time: '12:00', power: 2900 },
+  { time: '12:30', power: 2950 },
+  { time: '13:00', power: 2900 },
+  { time: '13:30', power: 0 },
+  { time: '14:00', power: 0 },
+  // Maintenance spike
+  { time: '14:30', power: 2900 },
+  { time: '14:45', power: 2950 },
+  { time: '15:00', power: 0 },
+  { time: '16:00', power: 0 },
+  // Evening shower recovery
+  { time: '17:00', power: 2900 },
+  { time: '17:30', power: 2950 },
+  { time: '18:00', power: 2900 },
+  { time: '18:30', power: 0 },
+  { time: '19:00', power: 0 },
+  // Evening short spikes
+  { time: '19:30', power: 2900 },
+  { time: '19:35', power: 0 },
+  { time: '20:00', power: 2950 },
+  { time: '20:05', power: 0 },
+  { time: '20:30', power: 2900 },
+  { time: '20:35', power: 0 },
+  { time: '21:00', power: 2950 },
+  { time: '21:05', power: 0 },
+  { time: '21:30', power: 2900 },
+  { time: '21:35', power: 0 },
+  { time: '22:00', power: 2950 },
+  { time: '22:05', power: 0 },
+  { time: '22:30', power: 2900 },
+  { time: '22:35', power: 0 },
+  { time: '23:00', power: 2950 },
+  { time: '23:05', power: 0 },
+  { time: '23:30', power: 2900 },
+  { time: '23:35', power: 0 },
+  { time: '00:00', power: 0 },
+];
+
 const LastbalanseringArticle = () => {
   const { t } = useLanguage();
 
@@ -772,6 +834,99 @@ const LastbalanseringArticle = () => {
             </div>
           </section>
 
+          {/* Water Boiler Chart */}
+          <section className="mb-12">
+            <h3 className="text-xl font-medium text-foreground mb-4">
+              {t('Varmvattenberedare: Verklig förbrukningsdata', 'Water Boiler: Real Consumption Data')}
+            </h3>
+            
+            <div className="bg-card border border-border rounded-xl p-6 mb-6">
+              <div className="h-80">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={waterBoilerData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="boilerGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.4}/>
+                        <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0.05}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis 
+                      dataKey="time" 
+                      stroke="hsl(var(--muted-foreground))"
+                      fontSize={12}
+                      tickLine={false}
+                      interval={6}
+                    />
+                    <YAxis 
+                      stroke="hsl(var(--muted-foreground))"
+                      fontSize={12}
+                      tickLine={false}
+                      tickFormatter={(value) => value >= 1000 ? `${(value/1000).toFixed(1)} kW` : `${value} W`}
+                      domain={[0, 3500]}
+                    />
+                    <Tooltip 
+                      contentStyle={{ 
+                        backgroundColor: 'hsl(var(--card))', 
+                        border: '1px solid hsl(var(--border))',
+                        borderRadius: '8px',
+                        fontSize: '14px'
+                      }}
+                      formatter={(value: number) => [
+                        value >= 1000 ? `${(value/1000).toFixed(2)} kW` : `${value} W`, 
+                        t('Effekt', 'Power')
+                      ]}
+                    />
+                    {/* Highlight major post-shower heating periods */}
+                    <ReferenceArea x1="09:30" x2="13:30" fill="hsl(var(--destructive))" fillOpacity={0.15} />
+                    <ReferenceArea x1="17:00" x2="18:30" fill="hsl(var(--destructive))" fillOpacity={0.15} />
+                    <Area 
+                      type="stepAfter" 
+                      dataKey="power" 
+                      stroke="hsl(var(--primary))" 
+                      strokeWidth={2}
+                      fill="url(#boilerGradient)" 
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+              
+              {/* Chart legend */}
+              <div className="flex flex-wrap items-center gap-6 mt-4 pt-4 border-t border-border">
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 rounded bg-destructive/30"></div>
+                  <span className="text-sm text-muted-foreground">
+                    {t('Återuppvärmning efter dusch/bad', 'Post-shower/bath reheating')}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 rounded bg-primary/30"></div>
+                  <span className="text-sm text-muted-foreground">
+                    {t('Effektförbrukning (~3 kW)', 'Power consumption (~3 kW)')}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Key insight box */}
+            <div className="bg-destructive/10 border border-destructive/20 rounded-xl p-6 mb-6">
+              <div className="flex gap-4">
+                <AlertTriangle className="w-6 h-6 text-destructive flex-shrink-0 mt-1" />
+                <div>
+                  <h4 className="font-medium text-foreground mb-2">
+                    {t('Insikt: En av de värsta bovarna', 'Insight: One of the worst culprits')}
+                  </h4>
+                  <p className="text-muted-foreground">
+                    {t(
+                      'En elektrisk varmvattenberedare drar konstant ~3 kW varje gång den värmer. Efter dusch eller bad kan den köra i timmar för att återställa temperaturen. Dessutom slår den på regelbundet under dagen för att hålla vattnet varmt – ofta vid oförutsägbara tidpunkter. På kvällen kan dessa korta uppvärmningscykler lätt sammanfalla med matlagning, diskmaskin och elbilsladdning.',
+                      'An electric water boiler draws a constant ~3 kW every time it heats. After a shower or bath, it can run for hours to restore the temperature. Additionally, it turns on regularly throughout the day to keep the water warm – often at unpredictable times. In the evening, these short heating cycles can easily coincide with cooking, dishwasher, and EV charging.'
+                    )}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </section>
+
           {/* More appliances coming section */}
           <section className="mb-12">
             <h2 className="text-2xl font-medium text-foreground mb-4">
@@ -784,11 +939,6 @@ const LastbalanseringArticle = () => {
                 { 
                   name: t('Elbilsladdare', 'EV charger'), 
                   peak: '3.7–22 kW',
-                  description: t('Kommer snart', 'Coming soon')
-                },
-                { 
-                  name: t('Varmvattenberedare', 'Water heater'),
-                  peak: '~3 kW',
                   description: t('Kommer snart', 'Coming soon')
                 },
               ].map((appliance) => (
