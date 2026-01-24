@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Loader2, Download } from 'lucide-react';
-import { Card, CardContent } from '@/components/ui/card';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Loader2, Download, CreditCard, RefreshCw, Settings, CheckCircle } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -17,6 +17,7 @@ import PortalLayout from '@/components/portal/PortalLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
+import { useToast } from '@/hooks/use-toast';
 
 interface Invoice {
   id: string;
@@ -28,12 +29,26 @@ interface Invoice {
   pdf_url: string | null;
 }
 
+interface SubscriptionStatus {
+  subscribed: boolean;
+  subscription_end: string | null;
+  stripe_subscription_id: string | null;
+}
+
 const Billing: React.FC = () => {
   const { user, customerData, loading, isStaff } = useAuth();
   const navigate = useNavigate();
   const { t } = useLanguage();
+  const { toast } = useToast();
+  const [searchParams] = useSearchParams();
+  
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [invoicesLoading, setInvoicesLoading] = useState(true);
+  const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus | null>(null);
+  const [subscriptionLoading, setSubscriptionLoading] = useState(true);
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [portalLoading, setPortalLoading] = useState(false);
+  const [syncLoading, setSyncLoading] = useState(false);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -41,31 +56,127 @@ const Billing: React.FC = () => {
     }
   }, [user, loading, navigate]);
 
+  // Show toast for checkout result
   useEffect(() => {
-    const fetchInvoices = async () => {
-      if (!customerData) return;
-      setInvoicesLoading(true);
+    if (searchParams.get('success') === 'true') {
+      toast({
+        title: t('Prenumeration aktiverad!', 'Subscription activated!'),
+        description: t('Tack för din prenumeration.', 'Thank you for subscribing.'),
+      });
+      // Clear URL params
+      window.history.replaceState({}, '', '/portal/billing');
+      // Refresh subscription status
+      checkSubscription();
+      syncInvoices();
+    } else if (searchParams.get('canceled') === 'true') {
+      toast({
+        title: t('Avbruten', 'Canceled'),
+        description: t('Betalningen avbröts.', 'Payment was canceled.'),
+        variant: 'destructive',
+      });
+      window.history.replaceState({}, '', '/portal/billing');
+    }
+  }, [searchParams]);
 
-      try {
-        const { data, error } = await supabase
-          .from('invoices')
-          .select('*')
-          .eq('customer_id', customerData.id)
-          .order('date', { ascending: false });
+  const checkSubscription = async () => {
+    setSubscriptionLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('check-subscription');
+      if (error) throw error;
+      setSubscriptionStatus(data);
+    } catch (error) {
+      console.error('Error checking subscription:', error);
+    } finally {
+      setSubscriptionLoading(false);
+    }
+  };
 
-        if (error) throw error;
-        setInvoices(data || []);
-      } catch (error) {
-        console.error('Error fetching invoices:', error);
-      } finally {
-        setInvoicesLoading(false);
+  const fetchInvoices = async () => {
+    if (!customerData) return;
+    setInvoicesLoading(true);
+
+    try {
+      const { data, error } = await supabase
+        .from('invoices')
+        .select('*')
+        .eq('customer_id', customerData.id)
+        .order('date', { ascending: false });
+
+      if (error) throw error;
+      setInvoices(data || []);
+    } catch (error) {
+      console.error('Error fetching invoices:', error);
+    } finally {
+      setInvoicesLoading(false);
+    }
+  };
+
+  const syncInvoices = async () => {
+    setSyncLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('sync-invoices');
+      if (error) throw error;
+      if (data?.synced > 0) {
+        toast({
+          title: t('Fakturor synkroniserade', 'Invoices synced'),
+          description: t(`${data.synced} fakturor uppdaterades.`, `${data.synced} invoices updated.`),
+        });
+        fetchInvoices();
       }
-    };
+    } catch (error) {
+      console.error('Error syncing invoices:', error);
+    } finally {
+      setSyncLoading(false);
+    }
+  };
 
+  useEffect(() => {
     if (!loading && customerData) {
       fetchInvoices();
+      checkSubscription();
+      syncInvoices();
     }
   }, [customerData, loading]);
+
+  const handleCheckout = async () => {
+    setCheckoutLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('create-checkout');
+      if (error) throw error;
+      if (data?.url) {
+        window.open(data.url, '_blank');
+      }
+    } catch (error) {
+      console.error('Error creating checkout:', error);
+      toast({
+        title: t('Fel', 'Error'),
+        description: t('Kunde inte starta betalning.', 'Could not start payment.'),
+        variant: 'destructive',
+      });
+    } finally {
+      setCheckoutLoading(false);
+    }
+  };
+
+  const handleManageSubscription = async () => {
+    setPortalLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('customer-portal');
+      if (error) throw error;
+      if (data?.url) {
+        window.open(data.url, '_blank');
+      }
+    } catch (error) {
+      console.error('Error opening customer portal:', error);
+      toast({
+        title: t('Fel', 'Error'),
+        description: t('Kunde inte öppna hanteringssidan.', 'Could not open management page.'),
+        variant: 'destructive',
+      });
+    } finally {
+      setPortalLoading(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -119,6 +230,8 @@ const Billing: React.FC = () => {
       pending: t('Väntande', 'Pending'),
       sent: t('Skickad', 'Sent'),
       overdue: t('Förfallen', 'Overdue'),
+      open: t('Öppen', 'Open'),
+      draft: t('Utkast', 'Draft'),
     };
     
     const label = statusLabels[lowerStatus] || status;
@@ -126,7 +239,7 @@ const Billing: React.FC = () => {
     if (lowerStatus === 'paid') {
       return <Badge className="bg-energy/30 text-energy-darker border-0">{label}</Badge>;
     }
-    if (lowerStatus === 'pending' || lowerStatus === 'sent') {
+    if (lowerStatus === 'pending' || lowerStatus === 'sent' || lowerStatus === 'open') {
       return <Badge variant="outline">{label}</Badge>;
     }
     if (lowerStatus === 'overdue') {
@@ -140,8 +253,96 @@ const Billing: React.FC = () => {
       <div className="space-y-6">
         <h1 className="text-3xl font-medium">{t('Fakturering', 'Billing & invoices')}</h1>
 
+        {/* Subscription Card */}
         <Card>
-          <CardContent className="pt-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <CreditCard className="w-5 h-5" />
+              {t('Prenumeration', 'Subscription')}
+            </CardTitle>
+            <CardDescription>
+              {t('Din månatliga prenumeration på Smart Home Solutions-tjänster.', 'Your monthly Smart Home Solutions service subscription.')}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {subscriptionLoading ? (
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                {t('Laddar...', 'Loading...')}
+              </div>
+            ) : subscriptionStatus?.subscribed ? (
+              <div className="space-y-4">
+                <div className="flex items-center gap-3">
+                  <Badge className="bg-energy/30 text-energy-darker border-0 flex items-center gap-1">
+                    <CheckCircle className="w-3 h-3" />
+                    {t('Aktiv', 'Active')}
+                  </Badge>
+                  <span className="text-sm text-muted-foreground">
+                    {t('Förnyas', 'Renews')}: {subscriptionStatus.subscription_end 
+                      ? new Date(subscriptionStatus.subscription_end).toLocaleDateString() 
+                      : '-'}
+                  </span>
+                </div>
+                <p className="text-2xl font-semibold">249 kr<span className="text-sm font-normal text-muted-foreground">/{t('månad', 'month')}</span></p>
+                <Button 
+                  variant="outline" 
+                  onClick={handleManageSubscription} 
+                  disabled={portalLoading}
+                >
+                  {portalLoading ? (
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  ) : (
+                    <Settings className="w-4 h-4 mr-2" />
+                  )}
+                  {t('Hantera prenumeration', 'Manage subscription')}
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <p className="text-muted-foreground">
+                  {t('Du har ingen aktiv prenumeration.', "You don't have an active subscription.")}
+                </p>
+                <div className="p-4 border rounded-lg bg-muted/30">
+                  <p className="text-2xl font-semibold">249 kr<span className="text-sm font-normal text-muted-foreground">/{t('månad', 'month')}</span></p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {t('Smart Home Solutions månadsabonnemang', 'Smart Home Solutions monthly subscription')}
+                  </p>
+                </div>
+                <Button onClick={handleCheckout} disabled={checkoutLoading}>
+                  {checkoutLoading ? (
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  ) : (
+                    <CreditCard className="w-4 h-4 mr-2" />
+                  )}
+                  {t('Prenumerera nu', 'Subscribe now')}
+                </Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Invoices Card */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle>{t('Fakturor', 'Invoices')}</CardTitle>
+                <CardDescription>
+                  {t('Dina betalningshistorik och fakturor.', 'Your payment history and invoices.')}
+                </CardDescription>
+              </div>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={syncInvoices} 
+                disabled={syncLoading}
+              >
+                <RefreshCw className={`w-4 h-4 mr-2 ${syncLoading ? 'animate-spin' : ''}`} />
+                {t('Synkronisera', 'Sync')}
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
             {invoicesLoading ? (
               <div className="flex items-center justify-center py-12">
                 <Loader2 className="w-6 h-6 animate-spin text-primary" />
