@@ -289,7 +289,7 @@ const Billing: React.FC = () => {
                     {subscriptionStatus.cancel_at_period_end 
                       ? t('Avslutas', 'Ends')
                       : t('Förnyas', 'Renews')}: {subscriptionStatus.subscription_end 
-                      ? new Date(subscriptionStatus.subscription_end).toLocaleDateString() 
+                      ? new Date(subscriptionStatus.subscription_end).toLocaleDateString('sv-SE') 
                       : '-'}
                   </span>
                 </div>
