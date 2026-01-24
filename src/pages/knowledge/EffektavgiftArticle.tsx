@@ -346,20 +346,27 @@ const EffektavgiftArticle = () => {
               </p>
             </section>
 
-            {/* Practical Tips */}
+            {/* Typical Advice Section */}
             <section className="mb-12">
               <h2 className="text-2xl font-medium text-foreground mb-4">
-                {t('Praktiska tips för att sänka din effektavgift', 'Practical Tips for Reducing Your Peak Power Charge')}
+                {t('Typiska råd från myndigheterna', 'Typical Advice from the Authorities')}
               </h2>
               
-              <div className="space-y-4">
+              <p className="text-muted-foreground leading-relaxed mb-6">
+                {t(
+                  'När du läser om effektavgift får du ofta höra samma standardråd. Här är de vanligaste tipsen som myndigheterna och elnätsbolagen brukar ge:',
+                  'When reading about peak power charges, you often hear the same standard advice. Here are the typical tips that authorities and grid operators usually give:'
+                )}
+              </p>
+              
+              <div className="space-y-4 mb-8">
                 {[
                   {
                     number: '1',
                     title: t('Kartlägg dina effekttoppar', 'Map your power peaks'),
                     description: t(
-                      'Logga in på ditt elnätsföretags kundportal och analysera när dina högsta toppar inträffar. Detta ger dig en tydlig bild av vad du behöver ändra.',
-                      'Log in to your grid operator\'s customer portal and analyze when your highest peaks occur. This gives you a clear picture of what you need to change.'
+                      'Logga in på ditt elnätsföretags kundportal och analysera när dina högsta toppar inträffar.',
+                      'Log in to your grid operator\'s customer portal and analyze when your highest peaks occur.'
                     )
                   },
                   {
@@ -382,21 +389,13 @@ const EffektavgiftArticle = () => {
                     number: '4',
                     title: t('Begränsa laddeffekt', 'Limit charging power'),
                     description: t(
-                      'Många laddboxar låter dig ställa in maxeffekt. Att ladda långsammare över natten ger ofta lägre total kostnad än snabbladdning på kvällen.',
-                      'Many charging stations let you set maximum power. Charging slower overnight often results in lower total cost than fast charging in the evening.'
-                    )
-                  },
-                  {
-                    number: '5',
-                    title: t('Investera i smart hemautomation', 'Invest in smart home automation'),
-                    description: t(
-                      'Med ett smart hem kan du automatiskt balansera laster, schemalägg apparater och optimera din energianvändning utan att tänka på det.',
-                      'With a smart home, you can automatically balance loads, schedule appliances, and optimize your energy usage without thinking about it.'
+                      'Många laddboxar låter dig ställa in maxeffekt. Att ladda långsammare över natten ger ofta lägre total kostnad.',
+                      'Many charging stations let you set maximum power. Charging slower overnight often results in lower total cost.'
                     )
                   },
                 ].map((tip) => (
-                  <div key={tip.number} className="flex gap-4 bg-card border border-border rounded-xl p-5">
-                    <div className="w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center font-medium flex-shrink-0">
+                  <div key={tip.number} className="flex gap-4 bg-muted/50 border border-border rounded-xl p-5 opacity-80">
+                    <div className="w-8 h-8 rounded-full bg-muted-foreground/20 text-muted-foreground flex items-center justify-center font-medium flex-shrink-0">
                       {tip.number}
                     </div>
                     <div>
@@ -405,6 +404,26 @@ const EffektavgiftArticle = () => {
                     </div>
                   </div>
                 ))}
+              </div>
+
+              {/* Critical analysis callout */}
+              <div className="bg-primary/10 border border-primary/20 rounded-xl p-6">
+                <h3 className="text-lg font-medium text-foreground mb-2">
+                  {t('Men är det verkligen så enkelt?', 'But is it really that simple?')}
+                </h3>
+                <p className="text-muted-foreground mb-4">
+                  {t(
+                    'Dessa råd låter bra i teorin, men verkligheten är mer komplicerad. Att manuellt hålla koll på sin förbrukning och schemalägga apparater är opraktiskt för de flesta. Och hur vet du egentligen vad som drar mest ström i ditt hem? Vi har tittat närmare på siffrorna och hur smart hemautomation faktiskt kan göra skillnad.',
+                    'This advice sounds good in theory, but reality is more complicated. Manually tracking your consumption and scheduling appliances is impractical for most people. And how do you actually know what draws the most power in your home? We\'ve looked closer at the numbers and how smart home automation can actually make a difference.'
+                  )}
+                </p>
+                <Link 
+                  to="/knowledge/lastbalansering" 
+                  className="inline-flex items-center gap-2 text-primary font-medium hover:underline"
+                >
+                  {t('Läs mer: Hur lastbalansering verkligen fungerar', 'Read more: How load balancing actually works')}
+                  <ArrowLeft className="w-4 h-4 rotate-180" />
+                </Link>
               </div>
             </section>
 
