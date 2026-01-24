@@ -22,10 +22,10 @@ const Knowledge = () => {
       icon: Zap,
       title: t('Vad är effektavgift?', 'What Is Effektavgift?'),
       description: t(
-        'Den svenska effektavgiften baseras på din högsta effekttopp under månaden. Förstå hur den beräknas och varför den kan göra stor skillnad på din elräkning.',
-        'The Swedish effektavgift is based on your highest power peak during the month. Understand how it is calculated and why it can make a big difference on your electricity bill.'
+        'En komplett guide till effektavgiften – från EU-lagstiftning till praktiska tips för att sänka dina kostnader.',
+        'A complete guide to the peak power charge – from EU legislation to practical tips for reducing your costs.'
       ),
-      readTime: '5 min',
+      readTime: '8 min',
       featured: true,
     },
     {
