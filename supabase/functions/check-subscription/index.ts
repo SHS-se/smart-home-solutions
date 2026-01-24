@@ -70,12 +70,25 @@ serve(async (req) => {
       stripeSubscriptionId = subscription.id;
       cancelAtPeriodEnd = subscription.cancel_at_period_end || false;
       
-      // Safely handle the subscription end date
-      if (subscription.current_period_end && typeof subscription.current_period_end === 'number') {
+      // Log the raw subscription data to debug
+      logStep("Raw subscription data", { 
+        current_period_end: subscription.current_period_end,
+        current_period_end_type: typeof subscription.current_period_end,
+        cancel_at: subscription.cancel_at,
+      });
+      
+      // Handle the subscription end date - try current_period_end first, then cancel_at
+      const endTimestamp = subscription.current_period_end || subscription.cancel_at;
+      if (endTimestamp) {
         try {
-          subscriptionEnd = new Date(subscription.current_period_end * 1000).toISOString();
+          // Handle both number (unix timestamp) and already formatted values
+          if (typeof endTimestamp === 'number') {
+            subscriptionEnd = new Date(endTimestamp * 1000).toISOString();
+          } else if (typeof endTimestamp === 'string') {
+            subscriptionEnd = endTimestamp;
+          }
         } catch (e) {
-          logStep("Could not parse subscription end date", { current_period_end: subscription.current_period_end });
+          logStep("Could not parse subscription end date", { endTimestamp, error: String(e) });
         }
       }
       
