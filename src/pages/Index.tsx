@@ -133,22 +133,6 @@ const Index = () => {
                   </Link>
                 </Button>
               </div>
-              
-              {/* Stats */}
-              <div className="grid grid-cols-3 gap-6">
-                <div>
-                  <p className="stat-number">120+</p>
-                  <p className="text-sm text-muted-foreground">{t('Installationer', 'Installations')}</p>
-                </div>
-                <div>
-                  <p className="stat-number">5.0</p>
-                  <p className="text-sm text-muted-foreground">{t('Snittbetyg', 'Average rating')}</p>
-                </div>
-                <div>
-                  <p className="stat-number">Täby</p>
-                  <p className="text-sm text-muted-foreground">{t('Lokala experter', 'Local experts')}</p>
-                </div>
-              </div>
             </div>
             
             <div className="animate-fade-in delay-200">
@@ -343,29 +327,6 @@ const Index = () => {
         </div>
       </section>
 
-      {/* Testimonial */}
-      <section className="py-16 md:py-24 bg-card">
-        <div className="container mx-auto max-w-4xl text-center">
-          <div className="w-16 h-16 rounded-full bg-primary-lighter/50 flex items-center justify-center mx-auto mb-8">
-            <span className="text-3xl text-primary">"</span>
-          </div>
-          <blockquote className="testimonial-quote mb-8">
-            {t(
-              'Vår elräkning sjönk betydligt efter att SHS optimerade vårt hem. Installationen var sömlös och högst professionell. Vi har nu full kontroll över vår energianvändning och effektavgiften är inte längre ett problem.',
-              'Our electricity bill dropped significantly after SHS optimized our home. The setup was seamless and highly professional. We now have complete control over our energy usage and the effektavgift is no longer a concern.'
-            )}
-          </blockquote>
-          <div className="mb-4">
-            <p className="font-medium text-foreground">Erik Lindström</p>
-            <p className="text-sm text-muted-foreground">{t('Husägare i Täby', 'Täby homeowner')} · {t('Installerad april 2024', 'Installed April 2024')}</p>
-          </div>
-          <div className="flex justify-center gap-1">
-            {[...Array(5)].map((_, i) => (
-              <Star key={i} className="w-5 h-5 fill-warning text-warning" />
-            ))}
-          </div>
-        </div>
-      </section>
     </Layout>
   );
 };
