@@ -60,13 +60,15 @@ serve(async (req) => {
       status: "active",
       limit: 1,
     });
-    const hasActiveSub = subscriptions.data.length > 0;
+  const hasActiveSub = subscriptions.data.length > 0;
     let subscriptionEnd = null;
     let stripeSubscriptionId = null;
+    let cancelAtPeriodEnd = false;
 
     if (hasActiveSub) {
       const subscription = subscriptions.data[0];
       stripeSubscriptionId = subscription.id;
+      cancelAtPeriodEnd = subscription.cancel_at_period_end || false;
       
       // Safely handle the subscription end date
       if (subscription.current_period_end && typeof subscription.current_period_end === 'number') {
@@ -77,7 +79,11 @@ serve(async (req) => {
         }
       }
       
-      logStep("Active subscription found", { subscriptionId: subscription.id, endDate: subscriptionEnd });
+      logStep("Active subscription found", { 
+        subscriptionId: subscription.id, 
+        endDate: subscriptionEnd,
+        cancelAtPeriodEnd 
+      });
     } else {
       logStep("No active subscription found");
     }
@@ -86,6 +92,7 @@ serve(async (req) => {
       subscribed: hasActiveSub,
       subscription_end: subscriptionEnd,
       stripe_subscription_id: stripeSubscriptionId,
+      cancel_at_period_end: cancelAtPeriodEnd,
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 200,
