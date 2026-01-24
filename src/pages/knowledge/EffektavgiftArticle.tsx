@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom';
 import { ArrowLeft, Clock, Zap, ExternalLink } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import Layout from '@/components/Layout';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea } from 'recharts';
 
 const EffektavgiftArticle = () => {
   const { t } = useLanguage();
@@ -248,12 +248,10 @@ const EffektavgiftArticle = () => {
                         formatter={(value: number) => [`${value} kW`, t('Förbrukning', 'Consumption')]}
                         labelFormatter={(label) => `${label}:00`}
                       />
-                      {/* Morning peak zone */}
-                      <ReferenceLine x="06" stroke="hsl(var(--warning))" strokeDasharray="3 3" strokeOpacity={0.5} />
-                      <ReferenceLine x="09" stroke="hsl(var(--warning))" strokeDasharray="3 3" strokeOpacity={0.5} />
-                      {/* Evening peak zone */}
-                      <ReferenceLine x="17" stroke="hsl(var(--warning))" strokeDasharray="3 3" strokeOpacity={0.5} />
-                      <ReferenceLine x="20" stroke="hsl(var(--warning))" strokeDasharray="3 3" strokeOpacity={0.5} />
+                      {/* Morning peak zone highlight */}
+                      <ReferenceArea x1="06" x2="09" fill="hsl(var(--warning))" fillOpacity={0.2} />
+                      {/* Evening peak zone highlight */}
+                      <ReferenceArea x1="17" x2="20" fill="hsl(var(--warning))" fillOpacity={0.2} />
                       <Area 
                         type="monotone" 
                         dataKey="consumption" 
