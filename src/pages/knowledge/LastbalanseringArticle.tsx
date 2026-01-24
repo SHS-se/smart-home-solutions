@@ -171,6 +171,53 @@ const stoveTopData = [
   { time: '19:21', power: 0 },
 ];
 
+// Dishwasher power consumption data (realistic pattern based on real measurements)
+// Shows: multiple heating cycles (~2kW) for wash, rinse, and drying phases
+const dishwasherData = [
+  { time: '20:55', power: 0 },
+  { time: '21:00', power: 50 },
+  // First heating cycle - main wash
+  { time: '21:02', power: 2000 },
+  { time: '21:04', power: 2050 },
+  { time: '21:06', power: 2000 },
+  { time: '21:08', power: 2020 },
+  { time: '21:10', power: 1950 },
+  { time: '21:12', power: 50 },
+  { time: '21:14', power: 30 },
+  // Second heating cycle - rinse
+  { time: '21:16', power: 2000 },
+  { time: '21:18', power: 2050 },
+  { time: '21:20', power: 2000 },
+  { time: '21:22', power: 50 },
+  { time: '21:25', power: 30 },
+  { time: '21:30', power: 50 },
+  // Third heating cycle
+  { time: '21:35', power: 2000 },
+  { time: '21:38', power: 1980 },
+  { time: '21:40', power: 2000 },
+  { time: '21:42', power: 1950 },
+  { time: '21:45', power: 1980 },
+  { time: '21:48', power: 50 },
+  // Low power period
+  { time: '21:55', power: 30 },
+  { time: '22:00', power: 50 },
+  { time: '22:05', power: 30 },
+  { time: '22:10', power: 50 },
+  { time: '22:15', power: 30 },
+  { time: '22:20', power: 50 },
+  // Drying cycle
+  { time: '22:25', power: 1900 },
+  { time: '22:28', power: 1950 },
+  { time: '22:30', power: 2000 },
+  { time: '22:32', power: 1980 },
+  { time: '22:35', power: 2000 },
+  { time: '22:38', power: 1950 },
+  { time: '22:40', power: 1900 },
+  { time: '22:42', power: 1850 },
+  { time: '22:45', power: 50 },
+  { time: '22:48', power: 0 },
+];
+
 const LastbalanseringArticle = () => {
   const { t } = useLanguage();
 
@@ -630,6 +677,101 @@ const LastbalanseringArticle = () => {
             </div>
           </section>
 
+          {/* Dishwasher Chart */}
+          <section className="mb-12">
+            <h3 className="text-xl font-medium text-foreground mb-4">
+              {t('Diskmaskin: Verklig förbrukningsdata', 'Dishwasher: Real Consumption Data')}
+            </h3>
+            
+            <div className="bg-card border border-border rounded-xl p-6 mb-6">
+              <div className="h-80">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={dishwasherData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="dishwasherGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.4}/>
+                        <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0.05}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis 
+                      dataKey="time" 
+                      stroke="hsl(var(--muted-foreground))"
+                      fontSize={12}
+                      tickLine={false}
+                      interval={4}
+                    />
+                    <YAxis 
+                      stroke="hsl(var(--muted-foreground))"
+                      fontSize={12}
+                      tickLine={false}
+                      tickFormatter={(value) => value >= 1000 ? `${(value/1000).toFixed(1)} kW` : `${value} W`}
+                      domain={[0, 2500]}
+                    />
+                    <Tooltip 
+                      contentStyle={{ 
+                        backgroundColor: 'hsl(var(--card))', 
+                        border: '1px solid hsl(var(--border))',
+                        borderRadius: '8px',
+                        fontSize: '14px'
+                      }}
+                      formatter={(value: number) => [
+                        value >= 1000 ? `${(value/1000).toFixed(2)} kW` : `${value} W`, 
+                        t('Effekt', 'Power')
+                      ]}
+                    />
+                    {/* Highlight all heating phases */}
+                    <ReferenceArea x1="21:02" x2="21:12" fill="hsl(var(--destructive))" fillOpacity={0.15} />
+                    <ReferenceArea x1="21:16" x2="21:20" fill="hsl(var(--destructive))" fillOpacity={0.15} />
+                    <ReferenceArea x1="21:35" x2="21:48" fill="hsl(var(--destructive))" fillOpacity={0.15} />
+                    <ReferenceArea x1="22:25" x2="22:42" fill="hsl(var(--warning))" fillOpacity={0.15} />
+                    <Area 
+                      type="monotone" 
+                      dataKey="power" 
+                      stroke="hsl(var(--primary))" 
+                      strokeWidth={2}
+                      fill="url(#dishwasherGradient)" 
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+              
+              {/* Chart legend */}
+              <div className="flex flex-wrap items-center gap-6 mt-4 pt-4 border-t border-border">
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 rounded bg-destructive/30"></div>
+                  <span className="text-sm text-muted-foreground">
+                    {t('Uppvärmningscykler (~2 kW)', 'Heating cycles (~2 kW)')}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 rounded bg-warning/30"></div>
+                  <span className="text-sm text-muted-foreground">
+                    {t('Torkfas (~2 kW)', 'Drying phase (~2 kW)')}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Key insight box */}
+            <div className="bg-destructive/10 border border-destructive/20 rounded-xl p-6 mb-6">
+              <div className="flex gap-4">
+                <AlertTriangle className="w-6 h-6 text-destructive flex-shrink-0 mt-1" />
+                <div>
+                  <h4 className="font-medium text-foreground mb-2">
+                    {t('Insikt: Flera oförutsägbara toppar', 'Insight: Multiple unpredictable peaks')}
+                  </h4>
+                  <p className="text-muted-foreground">
+                    {t(
+                      'Diskmaskinen har minst 3-4 uppvärmningscykler under ett program, var och en på ~2 kW. Dessa sker vid olika tidpunkter beroende på program och hur smutsig disken är. Du kan inte veta exakt när nästa topp kommer. Ett 2-timmars diskprogram kan ge 4 effekttoppar på 2 kW – och om du startar den efter middagen kan flera av dessa sammanfalla med annan kvällsanvändning.',
+                      'The dishwasher has at least 3-4 heating cycles during a program, each at ~2 kW. These occur at different times depending on the program and how dirty the dishes are. You can\'t know exactly when the next peak will come. A 2-hour dish program can give 4 power peaks of 2 kW – and if you start it after dinner, several of these can coincide with other evening usage.'
+                    )}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </section>
+
           {/* More appliances coming section */}
           <section className="mb-12">
             <h2 className="text-2xl font-medium text-foreground mb-4">
@@ -639,11 +781,6 @@ const LastbalanseringArticle = () => {
             {/* Placeholder for future charts */}
             <div className="grid sm:grid-cols-2 gap-4">
               {[
-                { 
-                  name: t('Diskmaskin', 'Dishwasher'), 
-                  peak: '~2.2 kW',
-                  description: t('Kommer snart', 'Coming soon')
-                },
                 { 
                   name: t('Elbilsladdare', 'EV charger'), 
                   peak: '3.7–22 kW',
