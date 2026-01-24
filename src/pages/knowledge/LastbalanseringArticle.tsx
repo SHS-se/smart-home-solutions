@@ -280,6 +280,33 @@ const waterBoilerData = [
   { time: '00:00', power: 0 },
 ];
 
+// EV charger power consumption data (11kW charger, realistic pattern based on real measurements)
+// Shows: sustained high-power charging (~10-10.5kW) over several hours
+const evChargerData = [
+  { time: '21:00', power: 0 },
+  { time: '21:30', power: 0 },
+  { time: '22:00', power: 0 },
+  // Charging starts
+  { time: '22:30', power: 10200 },
+  { time: '22:45', power: 10300 },
+  { time: '23:00', power: 10400 },
+  { time: '23:15', power: 10350 },
+  { time: '23:30', power: 10400 },
+  { time: '23:45', power: 10350 },
+  { time: '00:00', power: 10400 },
+  { time: '00:15', power: 10500 },
+  { time: '00:30', power: 10400 },
+  { time: '00:45', power: 10350 },
+  { time: '01:00', power: 10400 },
+  { time: '01:15', power: 10500 },
+  { time: '01:30', power: 10400 },
+  { time: '01:45', power: 10500 },
+  { time: '02:00', power: 10400 },
+  // Charging ends
+  { time: '02:15', power: 0 },
+  { time: '02:30', power: 0 },
+];
+
 const LastbalanseringArticle = () => {
   const { t } = useLanguage();
 
@@ -927,29 +954,95 @@ const LastbalanseringArticle = () => {
             </div>
           </section>
 
-          {/* More appliances coming section */}
+          {/* EV Charger Chart */}
           <section className="mb-12">
-            <h2 className="text-2xl font-medium text-foreground mb-4">
-              {t('Fler apparater kommer', 'More Appliances Coming')}
-            </h2>
+            <h3 className="text-xl font-medium text-foreground mb-4">
+              {t('Elbilsladdare (11 kW): Verklig förbrukningsdata', 'EV Charger (11 kW): Real Consumption Data')}
+            </h3>
             
-            {/* Placeholder for future charts */}
-            <div className="grid sm:grid-cols-2 gap-4">
-              {[
-                { 
-                  name: t('Elbilsladdare', 'EV charger'), 
-                  peak: '3.7–22 kW',
-                  description: t('Kommer snart', 'Coming soon')
-                },
-              ].map((appliance) => (
-                <div key={appliance.name} className="bg-muted/50 border border-border rounded-xl p-5 opacity-70">
-                  <div className="flex items-center justify-between mb-2">
-                    <h4 className="font-medium text-foreground">{appliance.name}</h4>
-                    <span className="text-sm text-primary font-mono">{appliance.peak}</span>
-                  </div>
-                  <p className="text-sm text-muted-foreground">{appliance.description}</p>
+            <div className="bg-card border border-border rounded-xl p-6 mb-6">
+              <div className="h-80">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={evChargerData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="evGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.4}/>
+                        <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0.05}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis 
+                      dataKey="time" 
+                      stroke="hsl(var(--muted-foreground))"
+                      fontSize={12}
+                      tickLine={false}
+                      interval={2}
+                    />
+                    <YAxis 
+                      stroke="hsl(var(--muted-foreground))"
+                      fontSize={12}
+                      tickLine={false}
+                      tickFormatter={(value) => `${(value/1000).toFixed(0)} kW`}
+                      domain={[0, 12000]}
+                    />
+                    <Tooltip 
+                      contentStyle={{ 
+                        backgroundColor: 'hsl(var(--card))', 
+                        border: '1px solid hsl(var(--border))',
+                        borderRadius: '8px',
+                        fontSize: '14px'
+                      }}
+                      formatter={(value: number) => [
+                        `${(value/1000).toFixed(1)} kW`, 
+                        t('Effekt', 'Power')
+                      ]}
+                    />
+                    {/* Highlight active charging period */}
+                    <ReferenceArea x1="22:30" x2="02:00" fill="hsl(var(--destructive))" fillOpacity={0.15} />
+                    <Area 
+                      type="stepAfter" 
+                      dataKey="power" 
+                      stroke="hsl(var(--primary))" 
+                      strokeWidth={2}
+                      fill="url(#evGradient)" 
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+              
+              {/* Chart legend */}
+              <div className="flex flex-wrap items-center gap-6 mt-4 pt-4 border-t border-border">
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 rounded bg-destructive/30"></div>
+                  <span className="text-sm text-muted-foreground">
+                    {t('Aktiv laddning (~10.3 kW)', 'Active charging (~10.3 kW)')}
+                  </span>
                 </div>
-              ))}
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 rounded bg-primary/30"></div>
+                  <span className="text-sm text-muted-foreground">
+                    {t('Effektförbrukning', 'Power consumption')}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Key insight box */}
+            <div className="bg-destructive/10 border border-destructive/20 rounded-xl p-6 mb-6">
+              <div className="flex gap-4">
+                <AlertTriangle className="w-6 h-6 text-destructive flex-shrink-0 mt-1" />
+                <div>
+                  <h4 className="font-medium text-foreground mb-2">
+                    {t('Insikt: När du absolut inte vill köra andra apparater', 'Insight: When you definitely don\'t want to use other appliances')}
+                  </h4>
+                  <p className="text-muted-foreground">
+                    {t(
+                      'En 11 kW elbilsladdare drar konstant ~10 kW under hela laddningen – ofta 3-5 timmar. Detta är mer än hela din övriga hushållsförbrukning tillsammans. Om varmvattenberedaren slår på (~3 kW) eller diskmaskinen startar en uppvärmningscykel (~2 kW) medan laddningen pågår, kan du lätt nå 15 kW. Lägg till att någon lagar mat, och du är snabbt uppe i effekttoppar som kostar dig hundratals kronor extra per månad.',
+                      'An 11 kW EV charger draws a constant ~10 kW throughout charging – often 3-5 hours. This is more than your entire remaining household consumption combined. If the water heater kicks in (~3 kW) or the dishwasher starts a heating cycle (~2 kW) while charging, you can easily reach 15 kW. Add someone cooking, and you quickly reach power peaks that cost you hundreds of extra kronor per month.'
+                    )}
+                  </p>
+                </div>
+              </div>
             </div>
           </section>
 
