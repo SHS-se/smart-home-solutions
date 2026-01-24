@@ -145,6 +145,32 @@ const heatPumpData = [
   { time: '05:38', power: 880 },
 ];
 
+// Stove top power consumption data (realistic pattern based on real measurements)
+// Shows: initial high-power heating (~1.7kW), then cycling to maintain temperature (~800W)
+const stoveTopData = [
+  { time: '19:04', power: 0 },
+  { time: '19:05', power: 0 },
+  { time: '19:06', power: 0 },
+  // Initial heating - high power
+  { time: '19:07', power: 1700 },
+  { time: '19:08', power: 1720 },
+  { time: '19:09', power: 1700 },
+  { time: '19:10', power: 1710 },
+  { time: '19:11', power: 1300 },
+  // Drop to maintenance power
+  { time: '19:12', power: 850 },
+  { time: '19:13', power: 840 },
+  { time: '19:14', power: 850 },
+  { time: '19:15', power: 830 },
+  { time: '19:16', power: 850 },
+  { time: '19:17', power: 820 },
+  { time: '19:18', power: 840 },
+  { time: '19:19', power: 800 },
+  { time: '19:20', power: 820 },
+  // Turn off
+  { time: '19:21', power: 0 },
+];
+
 const LastbalanseringArticle = () => {
   const { t } = useLanguage();
 
@@ -507,6 +533,103 @@ const LastbalanseringArticle = () => {
             </div>
           </section>
 
+          {/* Stove Top Chart */}
+          <section className="mb-12">
+            <h3 className="text-xl font-medium text-foreground mb-4">
+              {t('Spishäll: Verklig förbrukningsdata', 'Stove Top: Real Consumption Data')}
+            </h3>
+            
+            <div className="bg-card border border-border rounded-xl p-6 mb-6">
+              <div className="h-80">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={stoveTopData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="stoveGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.4}/>
+                        <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0.05}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis 
+                      dataKey="time" 
+                      stroke="hsl(var(--muted-foreground))"
+                      fontSize={12}
+                      tickLine={false}
+                      interval={2}
+                    />
+                    <YAxis 
+                      stroke="hsl(var(--muted-foreground))"
+                      fontSize={12}
+                      tickLine={false}
+                      tickFormatter={(value) => value >= 1000 ? `${(value/1000).toFixed(1)} kW` : `${value} W`}
+                      domain={[0, 2000]}
+                    />
+                    <Tooltip 
+                      contentStyle={{ 
+                        backgroundColor: 'hsl(var(--card))', 
+                        border: '1px solid hsl(var(--border))',
+                        borderRadius: '8px',
+                        fontSize: '14px'
+                      }}
+                      formatter={(value: number) => [
+                        value >= 1000 ? `${(value/1000).toFixed(2)} kW` : `${value} W`, 
+                        t('Effekt', 'Power')
+                      ]}
+                    />
+                    {/* Highlight initial heating phase */}
+                    <ReferenceArea 
+                      x1="19:07" 
+                      x2="19:11" 
+                      fill="hsl(var(--destructive))" 
+                      fillOpacity={0.15} 
+                    />
+                    <Area 
+                      type="monotone" 
+                      dataKey="power" 
+                      stroke="hsl(var(--primary))" 
+                      strokeWidth={2}
+                      fill="url(#stoveGradient)" 
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+              
+              {/* Chart legend */}
+              <div className="flex flex-wrap items-center gap-6 mt-4 pt-4 border-t border-border">
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 rounded bg-destructive/30"></div>
+                  <span className="text-sm text-muted-foreground">
+                    {t('Uppvärmningsfas (~1.7 kW)', 'Heating phase (~1.7 kW)')}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 rounded bg-primary/30"></div>
+                  <span className="text-sm text-muted-foreground">
+                    {t('Underhållseffekt (~800 W)', 'Maintenance power (~800 W)')}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Key insight box */}
+            <div className="bg-warning/10 border border-warning/20 rounded-xl p-6 mb-6">
+              <div className="flex gap-4">
+                <AlertTriangle className="w-6 h-6 text-warning flex-shrink-0 mt-1" />
+                <div>
+                  <h4 className="font-medium text-foreground mb-2">
+                    {t('Insikt: Matlagning sker på kvällstid', 'Insight: Cooking happens in the evening')}
+                  </h4>
+                  <p className="text-muted-foreground">
+                    {t(
+                      'De flesta lagar mat mellan 17:00-19:00 – precis under kvällens höglasttid. En spishäll kan dra 1.5-2 kW per platta. Om du använder två plattor samtidigt som ugnen körs, kan du lätt nå 5-6 kW bara från matlagning. Lägg till elbilsladdning och du har snabbt en betydande effekttopp.',
+                      'Most people cook between 17:00-19:00 – right during the evening peak hours. A stove top can draw 1.5-2 kW per burner. If you use two burners while the oven is running, you can easily reach 5-6 kW just from cooking. Add EV charging and you quickly have a significant power peak.'
+                    )}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </section>
+
           {/* More appliances coming section */}
           <section className="mb-12">
             <h2 className="text-2xl font-medium text-foreground mb-4">
@@ -527,7 +650,7 @@ const LastbalanseringArticle = () => {
                   description: t('Kommer snart', 'Coming soon')
                 },
                 { 
-                  name: t('Varmvattenberedare', 'Water heater'), 
+                  name: t('Varmvattenberedare', 'Water heater'),
                   peak: '~3 kW',
                   description: t('Kommer snart', 'Coming soon')
                 },
