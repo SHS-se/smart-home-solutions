@@ -108,28 +108,36 @@ const EffektavgiftArticle = () => {
                 )}
               </p>
               
-              <div className="bg-card border border-border rounded-xl p-6 mb-6">
-                <h3 className="font-medium text-foreground mb-3">
+              <div className="mb-6">
+                <h3 className="font-medium text-foreground mb-4">
                   {t('Den nya prismodellen består av fyra komponenter:', 'The new pricing model consists of four components:')}
                 </h3>
-                <ul className="space-y-3 text-muted-foreground">
-                  <li className="flex items-start gap-3">
-                    <span className="font-medium text-primary min-w-[100px]">{t('Fast avgift', 'Fixed fee')}</span>
-                    <span>{t('Baseras på abonnerad effekt eller huvudsäkringens storlek.', 'Based on subscribed capacity or main fuse size.')}</span>
-                  </li>
-                  <li className="flex items-start gap-3">
-                    <span className="font-medium text-primary min-w-[100px]">{t('Kundspecifik', 'Customer-specific')}</span>
-                    <span>{t('Täcker kostnader för mätning och rapportering.', 'Covers costs for metering and reporting.')}</span>
-                  </li>
-                  <li className="flex items-start gap-3">
-                    <span className="font-medium text-primary min-w-[100px]">{t('Energiavgift', 'Energy fee')}</span>
-                    <span>{t('Betalas per kWh som transporterats i elnätet. Kan vara tidsdifferentierad.', 'Paid per kWh transported in the grid. May be time-differentiated.')}</span>
-                  </li>
-                  <li className="flex items-start gap-3">
-                    <span className="font-medium text-primary min-w-[100px]">{t('Effektavgift', 'Peak power fee')}</span>
-                    <span>{t('Betalas per kW baserat på din högsta effektanvändning. Ska vara tidsdifferentierad.', 'Paid per kW based on your peak power usage. Must be time-differentiated.')}</span>
-                  </li>
-                </ul>
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div className="bg-card border border-border rounded-xl p-5">
+                    <div className="font-medium text-primary mb-2">{t('Fast avgift', 'Fixed fee')}</div>
+                    <p className="text-sm text-muted-foreground">
+                      {t('Baseras på abonnerad effekt eller huvudsäkringens storlek.', 'Based on subscribed capacity or main fuse size.')}
+                    </p>
+                  </div>
+                  <div className="bg-card border border-border rounded-xl p-5">
+                    <div className="font-medium text-primary mb-2">{t('Kundspecifik avgift', 'Customer-specific fee')}</div>
+                    <p className="text-sm text-muted-foreground">
+                      {t('Täcker kostnader för mätning och rapportering.', 'Covers costs for metering and reporting.')}
+                    </p>
+                  </div>
+                  <div className="bg-card border border-border rounded-xl p-5">
+                    <div className="font-medium text-primary mb-2">{t('Energiavgift', 'Energy fee')}</div>
+                    <p className="text-sm text-muted-foreground">
+                      {t('Betalas per kWh som transporterats i elnätet. Kan vara tidsdifferentierad.', 'Paid per kWh transported in the grid. May be time-differentiated.')}
+                    </p>
+                  </div>
+                  <div className="bg-card border border-border rounded-xl p-5">
+                    <div className="font-medium text-primary mb-2">{t('Effektavgift', 'Peak power fee')}</div>
+                    <p className="text-sm text-muted-foreground">
+                      {t('Betalas per kW baserat på din högsta effektanvändning. Ska vara tidsdifferentierad.', 'Paid per kW based on your peak power usage. Must be time-differentiated.')}
+                    </p>
+                  </div>
+                </div>
               </div>
               
               <div className="bg-warning/10 border border-warning/30 rounded-xl p-6">
