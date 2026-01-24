@@ -10,7 +10,6 @@ import {
   TrendingDown,
   Clock,
   MapPin,
-  Star,
   Play
 } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -134,20 +133,10 @@ const Index = () => {
                 </Button>
               </div>
               
-              {/* Stats */}
-              <div className="grid grid-cols-3 gap-6">
-                <div>
-                  <p className="stat-number">120+</p>
-                  <p className="text-sm text-muted-foreground">{t('Installationer', 'Installations')}</p>
-                </div>
-                <div>
-                  <p className="stat-number">5.0</p>
-                  <p className="text-sm text-muted-foreground">{t('Snittbetyg', 'Average rating')}</p>
-                </div>
-                <div>
-                  <p className="stat-number">Täby</p>
-                  <p className="text-sm text-muted-foreground">{t('Lokala experter', 'Local experts')}</p>
-                </div>
+              {/* Local expertise badge */}
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <MapPin className="w-5 h-5 text-primary" />
+                <span>{t('Lokala experter i Täby', 'Local experts in Täby')}</span>
               </div>
             </div>
             
@@ -196,50 +185,28 @@ const Index = () => {
       {/* Energy Savings Section */}
       <section className="py-16 md:py-24">
         <div className="container mx-auto">
-          <div className="grid lg:grid-cols-2 gap-12 items-center">
-            <div>
-              <span className="energy-badge mb-6">
-                <Zap className="w-4 h-4" />
-                {t('Energibesparingar', 'Energy Savings')}
-              </span>
-              <p className="stat-number text-5xl md:text-6xl mb-2">-34%</p>
-              <p className="text-xl text-foreground mb-4">
-                {t('Genomsnittlig energiminskning efter SHS-installation', 'Average energy reduction after SHS installation')}
-              </p>
-              <p className="text-sm text-muted-foreground mb-8">
-                {t(
-                  'Baserat på 120+ installationer i Täby och närliggande områden under de senaste 12 månaderna',
-                  'Based on 120+ installations in Täby and nearby areas over the past 12 months'
-                )}
-              </p>
-              <div className="grid grid-cols-2 gap-8">
-                <div>
-                  <p className="text-3xl font-light text-primary mb-1">2.3 {t('år', 'yrs')}</p>
-                  <p className="text-sm text-muted-foreground">{t('Genomsnittlig återbetalningstid', 'Average payback period')}</p>
-                </div>
-                <div>
-                  <p className="text-3xl font-light text-primary mb-1">15k kr</p>
-                  <p className="text-sm text-muted-foreground">{t('Genomsnittlig årlig besparing', 'Avg. annual savings')}</p>
-                </div>
-              </div>
+          <div className="text-center mb-12">
+            <h2 className="text-foreground mb-4">{t('Minska din energiförbrukning', 'Reduce Your Energy Consumption')}</h2>
+            <p className="text-muted-foreground max-w-2xl mx-auto">
+              {t(
+                'Smarta hem kan ge betydande besparingar genom intelligent automation och lastbalansering',
+                'Smart homes can deliver significant savings through intelligent automation and load balancing'
+              )}
+            </p>
+          </div>
+          
+          <div className="grid md:grid-cols-3 gap-8 mb-12">
+            <div className="text-center p-6 bg-card rounded-xl border border-border">
+              <div className="text-4xl font-bold text-primary mb-2">30%</div>
+              <p className="text-muted-foreground">{t('Genomsnittlig energibesparing', 'Average energy reduction')}</p>
             </div>
-            <div className="bg-card rounded-2xl p-8 border border-border">
-              <h4 className="font-medium mb-2">{t('Typisk energiminskningstidslinje', 'Typical Energy Reduction Timeline')}</h4>
-              <p className="text-sm text-muted-foreground mb-6">{t('Relativ energiförbrukning efter installation', 'Relative energy consumption after installation')}</p>
-              <div className="space-y-4">
-                {['100%', '85%', '70%', '66%'].map((value, index) => (
-                  <div key={index} className="flex items-center gap-4">
-                    <span className="text-sm text-muted-foreground w-12">{['Jan', 'Feb', 'Mar', 'Jun'][index]}</span>
-                    <div className="flex-1 bg-muted rounded-full h-2">
-                      <div 
-                        className="bg-energy-dark h-2 rounded-full transition-all duration-500"
-                        style={{ width: value }}
-                      />
-                    </div>
-                    <span className="text-sm font-medium w-12">{value}</span>
-                  </div>
-                ))}
-              </div>
+            <div className="text-center p-6 bg-card rounded-xl border border-border">
+              <div className="text-4xl font-bold text-energy-darker mb-2">2-3 {t('år', 'yrs')}</div>
+              <p className="text-muted-foreground">{t('Typisk återbetalningstid', 'Typical payback period')}</p>
+            </div>
+            <div className="text-center p-6 bg-card rounded-xl border border-border">
+              <div className="text-4xl font-bold text-primary mb-2">24/7</div>
+              <p className="text-muted-foreground">{t('Automatisk optimering', 'Automatic optimization')}</p>
             </div>
           </div>
         </div>
@@ -343,29 +310,6 @@ const Index = () => {
         </div>
       </section>
 
-      {/* Testimonial */}
-      <section className="py-16 md:py-24 bg-card">
-        <div className="container mx-auto max-w-4xl text-center">
-          <div className="w-16 h-16 rounded-full bg-primary-lighter/50 flex items-center justify-center mx-auto mb-8">
-            <span className="text-3xl text-primary">"</span>
-          </div>
-          <blockquote className="testimonial-quote mb-8">
-            {t(
-              'Vår elräkning sjönk betydligt efter att SHS optimerade vårt hem. Installationen var sömlös och högst professionell. Vi har nu full kontroll över vår energianvändning och effektavgiften är inte längre ett problem.',
-              'Our electricity bill dropped significantly after SHS optimized our home. The setup was seamless and highly professional. We now have complete control over our energy usage and the effektavgift is no longer a concern.'
-            )}
-          </blockquote>
-          <div className="mb-4">
-            <p className="font-medium text-foreground">Erik Lindström</p>
-            <p className="text-sm text-muted-foreground">{t('Husägare i Täby', 'Täby homeowner')} · {t('Installerad april 2024', 'Installed April 2024')}</p>
-          </div>
-          <div className="flex justify-center gap-1">
-            {[...Array(5)].map((_, i) => (
-              <Star key={i} className="w-5 h-5 fill-warning text-warning" />
-            ))}
-          </div>
-        </div>
-      </section>
     </Layout>
   );
 };
