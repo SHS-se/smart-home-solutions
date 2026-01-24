@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Loader2, Download, CreditCard, RefreshCw, Settings, CheckCircle } from 'lucide-react';
+import { Loader2, Download, CreditCard, RefreshCw, Settings, CheckCircle, AlertCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -33,6 +33,7 @@ interface SubscriptionStatus {
   subscribed: boolean;
   subscription_end: string | null;
   stripe_subscription_id: string | null;
+  cancel_at_period_end?: boolean;
 }
 
 const Billing: React.FC = () => {
@@ -273,16 +274,36 @@ const Billing: React.FC = () => {
             ) : subscriptionStatus?.subscribed ? (
               <div className="space-y-4">
                 <div className="flex items-center gap-3">
-                  <Badge className="bg-energy/30 text-energy-darker border-0 flex items-center gap-1">
-                    <CheckCircle className="w-3 h-3" />
-                    {t('Aktiv', 'Active')}
-                  </Badge>
+                  {subscriptionStatus.cancel_at_period_end ? (
+                    <Badge variant="outline" className="flex items-center gap-1 border-warning text-warning">
+                      <AlertCircle className="w-3 h-3" />
+                      {t('Avbryts', 'Cancels')}
+                    </Badge>
+                  ) : (
+                    <Badge className="bg-energy/30 text-energy-darker border-0 flex items-center gap-1">
+                      <CheckCircle className="w-3 h-3" />
+                      {t('Aktiv', 'Active')}
+                    </Badge>
+                  )}
                   <span className="text-sm text-muted-foreground">
-                    {t('Förnyas', 'Renews')}: {subscriptionStatus.subscription_end 
+                    {subscriptionStatus.cancel_at_period_end 
+                      ? t('Avslutas', 'Ends')
+                      : t('Förnyas', 'Renews')}: {subscriptionStatus.subscription_end 
                       ? new Date(subscriptionStatus.subscription_end).toLocaleDateString() 
                       : '-'}
                   </span>
                 </div>
+                {subscriptionStatus.cancel_at_period_end && (
+                  <Alert variant="default" className="border-warning/50 bg-warning/10">
+                    <AlertCircle className="h-4 w-4 text-warning" />
+                    <AlertDescription className="text-foreground">
+                      {t(
+                        'Din prenumeration är schemalagd att avslutas. Du har tillgång till tjänsten fram till slutdatumet.',
+                        'Your subscription is scheduled to cancel. You will have access until the end date.'
+                      )}
+                    </AlertDescription>
+                  </Alert>
+                )}
                 <p className="text-2xl font-semibold">249 kr<span className="text-sm font-normal text-muted-foreground">/{t('månad', 'month')}</span></p>
                 <Button 
                   variant="outline" 
@@ -294,7 +315,9 @@ const Billing: React.FC = () => {
                   ) : (
                     <Settings className="w-4 h-4 mr-2" />
                   )}
-                  {t('Hantera prenumeration', 'Manage subscription')}
+                  {subscriptionStatus.cancel_at_period_end 
+                    ? t('Återuppta prenumeration', 'Resume subscription')
+                    : t('Hantera prenumeration', 'Manage subscription')}
                 </Button>
               </div>
             ) : (
