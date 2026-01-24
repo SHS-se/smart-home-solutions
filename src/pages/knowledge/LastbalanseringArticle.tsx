@@ -62,53 +62,40 @@ const washingMachineData = [
 ];
 
 // Tumble dryer power consumption data (realistic pattern based on real measurements)
-// Shows: gradual ramp-up, sustained ~700-800W heating with cycling, cool-down phase
+// Shows: brief startup, gradual ramp-up to ~700W, sustained heating, cool-down tumbling
 const tumbleDryerData = [
-  { time: '14:30', power: 0 },
-  { time: '15:00', power: 0 },
-  { time: '15:30', power: 200 },
-  { time: '15:35', power: 300 },
-  { time: '15:40', power: 400 },
-  { time: '15:45', power: 480 },
-  { time: '15:50', power: 520 },
-  { time: '15:55', power: 580 },
-  { time: '16:00', power: 650 },
-  { time: '16:05', power: 700 },
-  { time: '16:10', power: 720 },
-  { time: '16:15', power: 750 },
-  { time: '16:20', power: 780 },
-  { time: '16:25', power: 800 },
-  { time: '16:30', power: 820 },
-  { time: '16:35', power: 780 },
-  { time: '16:40', power: 800 },
-  { time: '16:45', power: 780 },
-  { time: '16:50', power: 790 },
-  { time: '16:55', power: 770 },
+  { time: '10:55', power: 0 },
+  // Brief startup spike
+  { time: '10:57', power: 200 },
+  { time: '10:58', power: 170 },
+  // Ramp up heating
+  { time: '11:00', power: 530 },
+  { time: '11:02', power: 550 },
+  { time: '11:04', power: 580 },
+  { time: '11:06', power: 600 },
+  { time: '11:08', power: 620 },
+  { time: '11:10', power: 630 },
+  { time: '11:12', power: 650 },
+  { time: '11:14', power: 640 },
+  { time: '11:16', power: 660 },
+  { time: '11:18', power: 700 },
+  { time: '11:20', power: 690 },
   // Brief dip
-  { time: '17:00', power: 200 },
-  { time: '17:05', power: 210 },
-  // Back up
-  { time: '17:10', power: 700 },
-  { time: '17:15', power: 750 },
-  { time: '17:20', power: 780 },
-  { time: '17:25', power: 760 },
-  { time: '17:30', power: 770 },
-  { time: '17:35', power: 780 },
-  { time: '17:40', power: 760 },
-  { time: '17:45', power: 770 },
-  { time: '17:50', power: 780 },
-  { time: '17:55', power: 790 },
-  { time: '18:00', power: 780 },
-  { time: '18:05', power: 770 },
-  { time: '18:10', power: 750 },
-  // Cool-down
-  { time: '18:15', power: 700 },
-  { time: '18:20', power: 520 },
-  { time: '18:25', power: 200 },
-  { time: '18:30', power: 10 },
-  { time: '18:35', power: 170 },
-  { time: '18:40', power: 180 },
-  { time: '18:45', power: 0 },
+  { time: '11:22', power: 500 },
+  { time: '11:23', power: 190 },
+  // Back up for final heating
+  { time: '11:24', power: 550 },
+  { time: '11:25', power: 680 },
+  { time: '11:26', power: 700 },
+  { time: '11:27', power: 710 },
+  // Cool-down/tumbling phase
+  { time: '11:28', power: 170 },
+  { time: '11:30', power: 160 },
+  { time: '11:32', power: 170 },
+  { time: '11:34', power: 160 },
+  { time: '11:36', power: 170 },
+  { time: '11:38', power: 160 },
+  { time: '11:40', power: 170 },
 ];
 
 // Heat pump (luft-luft värmepump) power consumption data
@@ -357,7 +344,7 @@ const LastbalanseringArticle = () => {
                       fontSize={12}
                       tickLine={false}
                       tickFormatter={(value) => `${value} W`}
-                      domain={[0, 1000]}
+                      domain={[0, 800]}
                     />
                     <Tooltip 
                       contentStyle={{ 
@@ -370,8 +357,8 @@ const LastbalanseringArticle = () => {
                     />
                     {/* Highlight sustained heating phase */}
                     <ReferenceArea 
-                      x1="16:00" 
-                      x2="18:10" 
+                      x1="11:00" 
+                      x2="11:27" 
                       fill="hsl(var(--warning))" 
                       fillOpacity={0.15} 
                     />
