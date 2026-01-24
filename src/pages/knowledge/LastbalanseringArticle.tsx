@@ -61,6 +61,56 @@ const washingMachineData = [
   { time: '14:50', power: 200 },
 ];
 
+// Tumble dryer power consumption data (realistic pattern based on real measurements)
+// Shows: gradual ramp-up, sustained ~700-800W heating with cycling, cool-down phase
+const tumbleDryerData = [
+  { time: '14:30', power: 0 },
+  { time: '15:00', power: 0 },
+  { time: '15:30', power: 200 },
+  { time: '15:35', power: 300 },
+  { time: '15:40', power: 400 },
+  { time: '15:45', power: 480 },
+  { time: '15:50', power: 520 },
+  { time: '15:55', power: 580 },
+  { time: '16:00', power: 650 },
+  { time: '16:05', power: 700 },
+  { time: '16:10', power: 720 },
+  { time: '16:15', power: 750 },
+  { time: '16:20', power: 780 },
+  { time: '16:25', power: 800 },
+  { time: '16:30', power: 820 },
+  { time: '16:35', power: 780 },
+  { time: '16:40', power: 800 },
+  { time: '16:45', power: 780 },
+  { time: '16:50', power: 790 },
+  { time: '16:55', power: 770 },
+  // Brief dip
+  { time: '17:00', power: 200 },
+  { time: '17:05', power: 210 },
+  // Back up
+  { time: '17:10', power: 700 },
+  { time: '17:15', power: 750 },
+  { time: '17:20', power: 780 },
+  { time: '17:25', power: 760 },
+  { time: '17:30', power: 770 },
+  { time: '17:35', power: 780 },
+  { time: '17:40', power: 760 },
+  { time: '17:45', power: 770 },
+  { time: '17:50', power: 780 },
+  { time: '17:55', power: 790 },
+  { time: '18:00', power: 780 },
+  { time: '18:05', power: 770 },
+  { time: '18:10', power: 750 },
+  // Cool-down
+  { time: '18:15', power: 700 },
+  { time: '18:20', power: 520 },
+  { time: '18:25', power: 200 },
+  { time: '18:30', power: 10 },
+  { time: '18:35', power: 170 },
+  { time: '18:40', power: 180 },
+  { time: '18:45', power: 0 },
+];
+
 const LastbalanseringArticle = () => {
   const { t } = useLanguage();
 
@@ -231,30 +281,106 @@ const LastbalanseringArticle = () => {
             </p>
           </section>
 
+          {/* Tumble Dryer Chart */}
+          <section className="mb-12">
+            <h3 className="text-xl font-medium text-foreground mb-4">
+              {t('Torktumlare: Verklig förbrukningsdata', 'Tumble Dryer: Real Consumption Data')}
+            </h3>
+            
+            <div className="bg-card border border-border rounded-xl p-6 mb-6">
+              <div className="h-80">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={tumbleDryerData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="dryerGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.4}/>
+                        <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0.05}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis 
+                      dataKey="time" 
+                      stroke="hsl(var(--muted-foreground))"
+                      fontSize={12}
+                      tickLine={false}
+                      interval={4}
+                    />
+                    <YAxis 
+                      stroke="hsl(var(--muted-foreground))"
+                      fontSize={12}
+                      tickLine={false}
+                      tickFormatter={(value) => `${value} W`}
+                      domain={[0, 1000]}
+                    />
+                    <Tooltip 
+                      contentStyle={{ 
+                        backgroundColor: 'hsl(var(--card))', 
+                        border: '1px solid hsl(var(--border))',
+                        borderRadius: '8px',
+                        fontSize: '14px'
+                      }}
+                      formatter={(value: number) => [`${value} W`, t('Effekt', 'Power')]}
+                    />
+                    {/* Highlight sustained heating phase */}
+                    <ReferenceArea 
+                      x1="16:00" 
+                      x2="18:10" 
+                      fill="hsl(var(--warning))" 
+                      fillOpacity={0.15} 
+                    />
+                    <Area 
+                      type="monotone" 
+                      dataKey="power" 
+                      stroke="hsl(var(--primary))" 
+                      strokeWidth={2}
+                      fill="url(#dryerGradient)" 
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+              
+              {/* Chart legend */}
+              <div className="flex flex-wrap items-center gap-6 mt-4 pt-4 border-t border-border">
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 rounded bg-warning/30"></div>
+                  <span className="text-sm text-muted-foreground">
+                    {t('Kontinuerlig uppvärmning (~700-800 W)', 'Continuous heating (~700-800 W)')}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Key insight box */}
+            <div className="bg-warning/10 border border-warning/20 rounded-xl p-6 mb-6">
+              <div className="flex gap-4">
+                <AlertTriangle className="w-6 h-6 text-warning flex-shrink-0 mt-1" />
+                <div>
+                  <h4 className="font-medium text-foreground mb-2">
+                    {t('Insikt: Långvarig belastning', 'Insight: Prolonged load')}
+                  </h4>
+                  <p className="text-muted-foreground">
+                    {t(
+                      'Till skillnad från tvättmaskinen drar torktumlaren högt effekt under hela programmet – ofta 2-3 timmar. Det är inte en kort topp utan en lång, kontinuerlig belastning på 700-800 W. Om du kör torktumlaren samtidigt som annan utrustning, adderas denna effekt under hela tiden.',
+                      'Unlike the washing machine, the tumble dryer draws high power throughout the entire program – often 2-3 hours. It\'s not a short peak but a long, continuous load of 700-800 W. If you run the dryer alongside other equipment, this power adds up the entire time.'
+                    )}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </section>
+
           {/* More appliances coming section */}
           <section className="mb-12">
             <h2 className="text-2xl font-medium text-foreground mb-4">
-              {t('Fler apparater – samma problem', 'More Appliances – Same Problem')}
+              {t('Fler apparater kommer', 'More Appliances Coming')}
             </h2>
             
-            <p className="text-muted-foreground leading-relaxed mb-6">
-              {t(
-                'Tvättmaskinen är bara ett exempel. Samma mönster gäller för diskmaskinen (uppvärmning + tork), torktumlaren (kontinuerlig hög effekt), och varmvattenberedaren. Vi kommer snart att lägga till grafer för fler apparater här.',
-                'The washing machine is just one example. The same pattern applies to the dishwasher (heating + drying), tumble dryer (continuous high power), and water heater. We will soon add graphs for more appliances here.'
-              )}
-            </p>
-
             {/* Placeholder for future charts */}
             <div className="grid sm:grid-cols-2 gap-4">
               {[
                 { 
                   name: t('Diskmaskin', 'Dishwasher'), 
                   peak: '~2.2 kW',
-                  description: t('Kommer snart', 'Coming soon')
-                },
-                { 
-                  name: t('Torktumlare', 'Tumble dryer'), 
-                  peak: '~2.5 kW',
                   description: t('Kommer snart', 'Coming soon')
                 },
                 { 
