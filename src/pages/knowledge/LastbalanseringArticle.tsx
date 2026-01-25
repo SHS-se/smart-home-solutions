@@ -5,6 +5,7 @@ import Layout from '@/components/Layout';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea } from 'recharts';
 import waterBoilerChartImage from '@/assets/water-boiler-chart.png';
 import washingMachineChartImage from '@/assets/washing-machine-chart.png';
+import tumbleDryerChartImage from '@/assets/tumble-dryer-chart.png';
 
 // Washing machine power consumption data (realistic pattern based on real measurements)
 // Shows: heating phase (~2kW), washing (~100-200W), rinse cycles, spin cycles (~200-300W)
@@ -406,67 +407,12 @@ const LastbalanseringArticle = () => {
             </h3>
             
             <div className="bg-card border border-border rounded-xl p-6 mb-6">
-              <div className="h-80">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={tumbleDryerData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="dryerGradient" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.4}/>
-                        <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0.05}/>
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis 
-                      dataKey="time" 
-                      stroke="hsl(var(--muted-foreground))"
-                      fontSize={12}
-                      tickLine={false}
-                      interval={4}
-                    />
-                    <YAxis 
-                      stroke="hsl(var(--muted-foreground))"
-                      fontSize={11}
-                      tickLine={false}
-                      tickFormatter={(value) => `${value}W`}
-                      domain={[0, 800]}
-                      ticks={[0, 200, 400, 600, 800]}
-                      width={45}
-                    />
-                    <Tooltip 
-                      contentStyle={{ 
-                        backgroundColor: 'hsl(var(--card))', 
-                        border: '1px solid hsl(var(--border))',
-                        borderRadius: '8px',
-                        fontSize: '14px'
-                      }}
-                      formatter={(value: number) => [`${value} W`, t('Effekt', 'Power')]}
-                    />
-                    {/* Highlight sustained heating phase */}
-                    <ReferenceArea 
-                      x1="11:00" 
-                      x2="11:27" 
-                      fill="hsl(var(--warning))" 
-                      fillOpacity={0.15} 
-                    />
-                    <Area 
-                      type="monotone" 
-                      dataKey="power" 
-                      stroke="hsl(var(--primary))" 
-                      strokeWidth={2}
-                      fill="url(#dryerGradient)" 
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-              
-              {/* Chart legend */}
-              <div className="flex flex-wrap items-center gap-6 mt-4 pt-4 border-t border-border">
-                <div className="flex items-center gap-2">
-                  <div className="w-4 h-4 rounded bg-warning/30"></div>
-                  <span className="text-sm text-muted-foreground">
-                    {t('Kontinuerlig uppvärmning (~700-800 W)', 'Continuous heating (~700-800 W)')}
-                  </span>
-                </div>
+              <div className="flex justify-center">
+                <img 
+                  src={tumbleDryerChartImage} 
+                  alt={t('Torktumlare effektförbrukning', 'Tumble dryer power consumption')}
+                  className="max-w-full h-auto rounded-lg"
+                />
               </div>
             </div>
 
