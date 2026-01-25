@@ -15,7 +15,7 @@ import ArticleRouter from "./pages/knowledge/ArticleRouter";
 import About from "./pages/About";
 import Contact from "./pages/Contact";
 import NotFound from "./pages/NotFound";
-import ScrollRestoration from "./components/ScrollRestoration";
+import ScrollManager from "./components/ScrollManager";
 
 // Portal pages
 import Login from "./pages/portal/Login";
@@ -82,7 +82,7 @@ const App = () => (
           <Toaster />
           <Sonner />
           <BrowserRouter>
-            <ScrollRestoration />
+            <ScrollManager />
             <AuthCallbackHandler />
             <Routes>
               {/* Public website */}

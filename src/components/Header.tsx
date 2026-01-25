@@ -5,7 +5,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useIsPortrait } from "@/hooks/use-orientation";
 import LanguageToggle from "./LanguageToggle";
-import ScrollToTopLink from "./ScrollToTopLink";
+
 import { Button } from "./ui/button";
 const ShsLogo = () => <svg width="48" height="45" viewBox="0 0 111 104" fill="none" xmlns="http://www.w3.org/2000/svg">
     <rect width="111" height="104" rx="30" fill="#2D5F8D" />
@@ -65,12 +65,12 @@ const Header = () => {
           <div className="container mx-auto">
             <div className="flex items-center justify-between h-14 px-2">
               {/* Logo and Title */}
-              <ScrollToTopLink to={user ? "/portal" : "/"} className="flex items-center gap-2 group">
+              <Link to={user ? "/portal" : "/"} className="flex items-center gap-2 group">
                 <div className="transition-transform duration-200 group-hover:scale-105">
                   <ShsLogo />
                 </div>
                 <span className="text-xs font-medium text-muted-foreground">Smart Home Solutions</span>
-              </ScrollToTopLink>
+              </Link>
 
               {/* Language Toggle and Contact Button */}
               <div className="flex items-center gap-2">
@@ -87,9 +87,9 @@ const Header = () => {
         <nav className="fixed bottom-0 left-0 right-0 z-50 bg-card/95 backdrop-blur-md border-t border-border">
           <div className="container mx-auto">
             <div className="flex items-center justify-around h-14">
-              {navLinks.map(link => <ScrollToTopLink key={link.href} to={link.href} className={`flex-1 flex items-center justify-center py-3 text-sm font-medium transition-colors ${isActive(link.href) ? "text-primary" : "text-muted-foreground hover:text-foreground"}`}>
+              {navLinks.map(link => <Link key={link.href} to={link.href} className={`flex-1 flex items-center justify-center py-3 text-sm font-medium transition-colors ${isActive(link.href) ? "text-primary" : "text-muted-foreground hover:text-foreground"}`}>
                   {link.label}
-                </ScrollToTopLink>)}
+                </Link>)}
             </div>
           </div>
         </nav>
@@ -101,18 +101,18 @@ const Header = () => {
       <div className="container mx-auto">
         <div className="flex items-center justify-between h-16 md:h-20">
           {/* Logo */}
-          <ScrollToTopLink to={user ? "/portal" : "/"} className="flex items-center gap-3 group">
+          <Link to={user ? "/portal" : "/"} className="flex items-center gap-3 group">
             <div className="transition-transform duration-200 group-hover:scale-105">
               <ShsLogo />
             </div>
             <span className="text-sm font-medium text-muted-foreground">{user ? "Portal" : "Smart Home Solutions"}</span>
-          </ScrollToTopLink>
+          </Link>
 
           {/* Desktop Navigation */}
           <nav className="hidden md:flex items-center gap-8">
-            {navLinks.map(link => <ScrollToTopLink key={link.href} to={link.href} className={`nav-link text-sm font-medium py-2 ${isActive(link.href) ? "text-primary" : ""}`}>
+            {navLinks.map(link => <Link key={link.href} to={link.href} className={`nav-link text-sm font-medium py-2 ${isActive(link.href) ? "text-primary" : ""}`}>
                 {link.label}
-              </ScrollToTopLink>)}
+              </Link>)}
           </nav>
 
           {/* Desktop Actions */}
@@ -132,9 +132,9 @@ const Header = () => {
         {/* Mobile Menu (Landscape only) */}
         {isMenuOpen && <div className="md:hidden py-4 border-t border-border animate-fade-in">
             <nav className="flex flex-col gap-2">
-              {navLinks.map(link => <ScrollToTopLink key={link.href} to={link.href} onClick={() => setIsMenuOpen(false)} className={`px-4 py-3 rounded-lg text-sm font-medium transition-colors ${isActive(link.href) ? "bg-primary/10 text-primary" : "text-foreground hover:bg-muted"}`}>
+              {navLinks.map(link => <Link key={link.href} to={link.href} onClick={() => setIsMenuOpen(false)} className={`px-4 py-3 rounded-lg text-sm font-medium transition-colors ${isActive(link.href) ? "bg-primary/10 text-primary" : "text-foreground hover:bg-muted"}`}>
                   {link.label}
-                </ScrollToTopLink>)}
+                </Link>)}
               <div className="flex items-center justify-between px-4 pt-4 border-t border-border mt-2">
                 <LanguageToggle />
                 <Button size="sm" onClick={() => {
