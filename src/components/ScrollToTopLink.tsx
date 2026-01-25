@@ -1,5 +1,6 @@
 import { Link, LinkProps } from 'react-router-dom';
 import { forwardRef } from 'react';
+import { markScrollToTop } from './ScrollRestoration';
 
 interface ScrollToTopLinkProps extends LinkProps {
   children: React.ReactNode;
@@ -8,7 +9,8 @@ interface ScrollToTopLinkProps extends LinkProps {
 const ScrollToTopLink = forwardRef<HTMLAnchorElement, ScrollToTopLinkProps>(
   ({ children, onClick, ...props }, ref) => {
     const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
-      window.scrollTo({ top: 0, behavior: 'instant' });
+      // Mark that we should scroll to top on the next page (after navigation)
+      markScrollToTop();
       onClick?.(e);
     };
 

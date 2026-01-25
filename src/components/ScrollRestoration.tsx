@@ -1,36 +1,58 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 
 // Store scroll positions for each route
 const scrollPositions = new Map<string, number>();
 
+// Track if we should scroll to top on next navigation (set by ScrollToTopLink)
+let shouldScrollToTop = false;
+
+export const markScrollToTop = () => {
+  shouldScrollToTop = true;
+};
+
 const ScrollRestoration = () => {
   const location = useLocation();
+  const previousKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
-    // Create a unique key for the current location
-    const key = location.key || location.pathname;
+    const currentKey = location.key || location.pathname;
+    const previousKey = previousKeyRef.current;
 
-    // Check if we have a saved scroll position for this location
-    const savedPosition = scrollPositions.get(key);
-    
-    if (savedPosition !== undefined) {
-      // Restore scroll position (for back/forward navigation)
-      window.scrollTo(0, savedPosition);
+    // Save the scroll position for the previous page before doing anything
+    if (previousKey && previousKey !== currentKey) {
+      // This position was already saved by the scroll listener, but ensure it's captured
     }
-    // Note: We don't scroll to top here - that's handled by ScrollToTopLink for forward navigation
 
-    // Save scroll position before navigating away
+    // Check if we should scroll to top (forward navigation via ScrollToTopLink)
+    if (shouldScrollToTop) {
+      window.scrollTo(0, 0);
+      shouldScrollToTop = false;
+    } else {
+      // Check if we have a saved scroll position for this location (back/forward nav)
+      const savedPosition = scrollPositions.get(currentKey);
+      if (savedPosition !== undefined) {
+        // Small delay to ensure the page has rendered
+        requestAnimationFrame(() => {
+          window.scrollTo(0, savedPosition);
+        });
+      }
+      // If no saved position and not marked for scroll-to-top, leave scroll as-is
+    }
+
+    // Update the previous key reference
+    previousKeyRef.current = currentKey;
+
+    // Save scroll position on scroll
     const saveScrollPosition = () => {
-      scrollPositions.set(key, window.scrollY);
+      scrollPositions.set(currentKey, window.scrollY);
     };
 
-    // Save position on scroll (debounced via passive listener)
     window.addEventListener('scroll', saveScrollPosition, { passive: true });
 
     return () => {
-      // Save final position when leaving
-      saveScrollPosition();
+      // Save final position when leaving this route
+      scrollPositions.set(currentKey, window.scrollY);
       window.removeEventListener('scroll', saveScrollPosition);
     };
   }, [location.key, location.pathname]);
