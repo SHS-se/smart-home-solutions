@@ -1,6 +1,6 @@
 import { Link, LinkProps } from 'react-router-dom';
 import { forwardRef } from 'react';
-import { markScrollToTop } from './ScrollRestoration';
+import { saveCurrentScrollPosition, getCurrentLocationKey } from './ScrollRestoration';
 
 interface ScrollToTopLinkProps extends LinkProps {
   children: React.ReactNode;
@@ -9,8 +9,15 @@ interface ScrollToTopLinkProps extends LinkProps {
 const ScrollToTopLink = forwardRef<HTMLAnchorElement, ScrollToTopLinkProps>(
   ({ children, onClick, ...props }, ref) => {
     const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
-      // Mark that we should scroll to top on the next page (after navigation)
-      markScrollToTop();
+      // Save current scroll position BEFORE scrolling to top
+      const currentKey = getCurrentLocationKey();
+      if (currentKey) {
+        saveCurrentScrollPosition(currentKey);
+      }
+      
+      // Scroll to top immediately (no visible jump on new page)
+      window.scrollTo(0, 0);
+      
       onClick?.(e);
     };
 
