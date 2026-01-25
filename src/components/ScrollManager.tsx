@@ -60,10 +60,12 @@ const ScrollManager = ({ children }: ScrollManagerProps) => {
     if (navigationType === 'POP') {
       // Back/Forward: restore saved position
       const savedPosition = scrollPositions.get(currentKey);
-      window.scrollTo(0, savedPosition ?? 0);
+      // Force instant jump even if CSS sets `scroll-behavior: smooth`
+      window.scrollTo({ left: 0, top: savedPosition ?? 0, behavior: 'auto' });
     } else {
       // PUSH/REPLACE: scroll to top
-      window.scrollTo(0, 0);
+      // Force instant jump even if CSS sets `scroll-behavior: smooth`
+      window.scrollTo({ left: 0, top: 0, behavior: 'auto' });
     }
 
     // Use requestAnimationFrame to ensure scroll has been applied before revealing
