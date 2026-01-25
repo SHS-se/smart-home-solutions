@@ -219,69 +219,52 @@ const dishwasherData = [
 ];
 
 // Electric water boiler power consumption data (realistic pattern based on real measurements)
-// Shows: sharp heating spikes (~3kW) throughout the day - morning shower recovery and evening usage
+// Shows: thin maintenance spikes throughout day, one wide bar after morning shower
 const waterBoilerData = [
+  { time: '00:00', power: 0 },
+  // Thin maintenance spike - night
+  { time: '02:00', power: 0 },
+  { time: '02:02', power: 3000 },
+  { time: '02:04', power: 0 },
+  { time: '04:00', power: 0 },
+  // Thin maintenance spike - early morning
+  { time: '05:00', power: 0 },
+  { time: '05:02', power: 3000 },
+  { time: '05:04', power: 0 },
+  { time: '06:00', power: 0 },
+  { time: '07:00', power: 0 },
+  // WIDE BAR - Post-shower recovery (significantly wider than others)
+  { time: '07:30', power: 0 },
+  { time: '07:32', power: 3000 },
+  { time: '08:30', power: 3000 },
+  { time: '08:32', power: 0 },
   { time: '09:00', power: 0 },
-  // Morning shower recovery - two sharp spikes
-  { time: '09:10', power: 0 },
-  { time: '09:12', power: 3000 },
-  { time: '09:18', power: 3050 },
-  { time: '09:20', power: 0 },
-  { time: '09:25', power: 0 },
-  { time: '09:28', power: 2950 },
-  { time: '09:35', power: 3000 },
-  { time: '09:38', power: 0 },
-  { time: '10:00', power: 0 },
-  { time: '10:30', power: 0 },
-  // Late morning spike
+  // Thin maintenance spike - late morning
   { time: '11:00', power: 0 },
-  { time: '11:05', power: 2900 },
-  { time: '11:12', power: 2950 },
-  { time: '11:15', power: 0 },
-  { time: '11:30', power: 0 },
+  { time: '11:02', power: 3000 },
+  { time: '11:04', power: 0 },
   { time: '12:00', power: 0 },
-  { time: '12:30', power: 0 },
-  // Midday spike
-  { time: '13:00', power: 0 },
-  { time: '13:05', power: 3050 },
-  { time: '13:12', power: 3000 },
-  { time: '13:15', power: 0 },
-  { time: '13:30', power: 0 },
+  // Thin maintenance spike - afternoon
   { time: '14:00', power: 0 },
+  { time: '14:02', power: 3000 },
+  { time: '14:04', power: 0 },
   { time: '15:00', power: 0 },
   { time: '16:00', power: 0 },
+  // Thin maintenance spike - evening
   { time: '17:00', power: 0 },
+  { time: '17:02', power: 3000 },
+  { time: '17:04', power: 0 },
   { time: '18:00', power: 0 },
-  // Evening usage - sustained period with multiple spikes (showers, dishes, etc.)
-  { time: '18:30', power: 0 },
-  { time: '18:32', power: 2950 },
-  { time: '18:50', power: 3000 },
-  { time: '19:00', power: 2980 },
-  { time: '19:05', power: 0 },
-  { time: '19:08', power: 3000 },
-  { time: '19:12', power: 2950 },
-  { time: '19:15', power: 0 },
-  { time: '19:18', power: 2980 },
-  { time: '19:22', power: 3000 },
-  { time: '19:25', power: 0 },
-  { time: '19:30', power: 0 },
-  { time: '19:35', power: 2950 },
-  { time: '19:42', power: 3000 },
-  { time: '19:45', power: 0 },
-  { time: '19:50', power: 0 },
-  { time: '19:55', power: 2980 },
+  // Thin maintenance spike - night
+  { time: '20:00', power: 0 },
   { time: '20:02', power: 3000 },
-  { time: '20:05', power: 0 },
-  { time: '20:10', power: 0 },
-  { time: '20:15', power: 2950 },
-  { time: '20:22', power: 3000 },
-  { time: '20:25', power: 0 },
-  { time: '20:30', power: 0 },
-  // Final evening spike
-  { time: '20:50', power: 0 },
-  { time: '20:52', power: 2980 },
-  { time: '21:00', power: 3000 },
-  { time: '21:05', power: 0 },
+  { time: '20:04', power: 0 },
+  { time: '21:00', power: 0 },
+  // Thin maintenance spike - late night
+  { time: '22:00', power: 0 },
+  { time: '22:02', power: 3000 },
+  { time: '22:04', power: 0 },
+  { time: '23:59', power: 0 },
 ];
 
 // EV charger power consumption data (11kW charger, realistic pattern based on real measurements)
@@ -895,8 +878,8 @@ const LastbalanseringArticle = () => {
                         t('Effekt', 'Power')
                       ]}
                     />
-                    {/* Highlight evening high-usage period */}
-                    <ReferenceArea x1="18:30" x2="21:05" fill="hsl(var(--destructive))" fillOpacity={0.15} />
+                    {/* Highlight post-shower recovery - the wide bar */}
+                    <ReferenceArea x1="07:30" x2="08:32" fill="hsl(var(--destructive))" fillOpacity={0.15} />
                     <Area 
                       type="stepAfter" 
                       dataKey="power" 
