@@ -215,7 +215,7 @@ const Services = () => {
                     ))}
                   </ul>
                 </div>
-                <div className={`${service.color} rounded-2xl h-64 lg:h-80 flex items-center justify-center ${index % 2 === 1 ? 'lg:order-1' : ''}`}>
+                <div className={`hidden lg:flex ${service.color} rounded-2xl h-64 lg:h-80 items-center justify-center ${index % 2 === 1 ? 'lg:order-1' : ''}`}>
                   <service.icon className="w-24 h-24 opacity-30" />
                 </div>
               </div>
