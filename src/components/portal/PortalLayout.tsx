@@ -93,7 +93,7 @@ const PortalLayout: React.FC<PortalLayoutProps> = ({
               <div className="transition-transform duration-200 group-hover:scale-105">
                 <ShsLogo />
               </div>
-              <span className="text-sm font-medium text-muted-foreground">Homepage</span>
+              <span className="text-sm font-medium text-muted-foreground">​Smart Home Solutions    </span>
             </Link>
 
             {/* Nav */}
