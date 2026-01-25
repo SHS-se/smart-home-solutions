@@ -82,40 +82,41 @@ const App = () => (
           <Toaster />
           <Sonner />
           <BrowserRouter>
-            <ScrollManager />
-            <AuthCallbackHandler />
-            <Routes>
-              {/* Public website */}
-              <Route path="/" element={<Index />} />
-              <Route path="/services" element={<Services />} />
-              <Route path="/knowledge" element={<Knowledge />} />
-              <Route path="/knowledge/:slug" element={<ArticleRouter />} />
-              <Route path="/about" element={<About />} />
-              <Route path="/contact" element={<Contact />} />
-              
-              {/* Customer Portal */}
-              <Route path="/login" element={<Login />} />
-              <Route path="/reset-password" element={<ResetPassword />} />
-              <Route path="/portal" element={<Dashboard />} />
-              <Route path="/portal/account" element={<Account />} />
-              <Route path="/portal/billing" element={<Billing />} />
-              <Route path="/portal/tickets" element={<TicketsList />} />
-              <Route path="/portal/tickets/new" element={<NewTicket />} />
-              <Route path="/portal/tickets/:ticketNumber" element={<TicketDetail />} />
-              <Route path="/portal/customers" element={<Customers />} />
-              <Route path="/portal/contacts" element={<Contacts />} />
-              <Route path="/portal/contacts/:id" element={<ContactDetail />} />
-              
-              {/* Staff viewing customer portal */}
-              <Route path="/portal/customers/:customerId/overview" element={<CustomerViewWrapper><CustomerViewDashboard /></CustomerViewWrapper>} />
-              <Route path="/portal/customers/:customerId/account" element={<CustomerViewWrapper><CustomerViewAccount /></CustomerViewWrapper>} />
-              <Route path="/portal/customers/:customerId/billing" element={<CustomerViewWrapper><CustomerViewBilling /></CustomerViewWrapper>} />
-              <Route path="/portal/customers/:customerId/tickets" element={<CustomerViewWrapper><CustomerViewTickets /></CustomerViewWrapper>} />
-              <Route path="/portal/customers/:customerId/tickets/:ticketNumber" element={<CustomerViewWrapper><CustomerViewTicketDetail /></CustomerViewWrapper>} />
-              
-              {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-              <Route path="*" element={<NotFound />} />
-            </Routes>
+            <ScrollManager>
+              <AuthCallbackHandler />
+              <Routes>
+                {/* Public website */}
+                <Route path="/" element={<Index />} />
+                <Route path="/services" element={<Services />} />
+                <Route path="/knowledge" element={<Knowledge />} />
+                <Route path="/knowledge/:slug" element={<ArticleRouter />} />
+                <Route path="/about" element={<About />} />
+                <Route path="/contact" element={<Contact />} />
+                
+                {/* Customer Portal */}
+                <Route path="/login" element={<Login />} />
+                <Route path="/reset-password" element={<ResetPassword />} />
+                <Route path="/portal" element={<Dashboard />} />
+                <Route path="/portal/account" element={<Account />} />
+                <Route path="/portal/billing" element={<Billing />} />
+                <Route path="/portal/tickets" element={<TicketsList />} />
+                <Route path="/portal/tickets/new" element={<NewTicket />} />
+                <Route path="/portal/tickets/:ticketNumber" element={<TicketDetail />} />
+                <Route path="/portal/customers" element={<Customers />} />
+                <Route path="/portal/contacts" element={<Contacts />} />
+                <Route path="/portal/contacts/:id" element={<ContactDetail />} />
+                
+                {/* Staff viewing customer portal */}
+                <Route path="/portal/customers/:customerId/overview" element={<CustomerViewWrapper><CustomerViewDashboard /></CustomerViewWrapper>} />
+                <Route path="/portal/customers/:customerId/account" element={<CustomerViewWrapper><CustomerViewAccount /></CustomerViewWrapper>} />
+                <Route path="/portal/customers/:customerId/billing" element={<CustomerViewWrapper><CustomerViewBilling /></CustomerViewWrapper>} />
+                <Route path="/portal/customers/:customerId/tickets" element={<CustomerViewWrapper><CustomerViewTickets /></CustomerViewWrapper>} />
+                <Route path="/portal/customers/:customerId/tickets/:ticketNumber" element={<CustomerViewWrapper><CustomerViewTicketDetail /></CustomerViewWrapper>} />
+                
+                {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </ScrollManager>
           </BrowserRouter>
         </TooltipProvider>
       </LanguageProvider>
