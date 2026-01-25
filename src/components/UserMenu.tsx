@@ -1,0 +1,107 @@
+import { Link, useNavigate } from "react-router-dom";
+import { ChevronDown } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+import { useLanguage } from "@/contexts/LanguageContext";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Button } from "@/components/ui/button";
+
+interface UserMenuProps {
+  size?: "sm" | "default";
+}
+
+const UserMenu = ({ size = "default" }: UserMenuProps) => {
+  const { user, isStaff, isCustomer, customerData, signOut } = useAuth();
+  const { t } = useLanguage();
+  const navigate = useNavigate();
+
+  const handleSignOut = async () => {
+    await signOut();
+    navigate('/');
+  };
+
+  // Get display name and email
+  const displayName = isStaff 
+    ? user?.email?.split('@')[0] || t("Personal", "Staff")
+    : customerData?.org_name || user?.email?.split('@')[0] || t("Kund", "Customer");
+  const displayEmail = user?.email || "";
+
+  // Get initials for avatar
+  const getInitials = (name: string) => {
+    const parts = name.split(' ');
+    if (parts.length >= 2) {
+      return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+    }
+    return name.slice(0, 2).toUpperCase();
+  };
+
+  // Staff navigation items
+  const staffNavItems = [
+    { href: "/portal", label: t("Översikt", "Overview") },
+    { href: "/portal/customers", label: t("Kunder", "Customers") },
+    { href: "/portal/contacts", label: t("Kontakter", "Contacts") },
+    { href: "/portal/tickets", label: t("Alla ärenden", "All Tickets") },
+  ];
+
+  // Customer navigation items
+  const customerNavItems = [
+    { href: "/portal", label: t("Översikt", "Overview") },
+    { href: "/portal/tickets", label: t("Mina ärenden", "My Tickets") },
+  ];
+
+  const navItems = isStaff ? staffNavItems : customerNavItems;
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button 
+          variant="ghost" 
+          size={size}
+          className="flex items-center gap-2 px-2"
+        >
+          <div className="flex items-center justify-center w-8 h-8 rounded-full bg-primary text-primary-foreground text-sm font-medium">
+            {getInitials(displayName)}
+          </div>
+          <span className="hidden sm:inline text-sm font-medium">{displayName}</span>
+          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56 bg-card border border-border shadow-lg z-50">
+        <DropdownMenuLabel className="font-normal">
+          <div className="flex flex-col space-y-1">
+            <p className="text-sm font-medium leading-none">{displayName}</p>
+            <p className="text-xs leading-none text-muted-foreground">{displayEmail}</p>
+          </div>
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {navItems.map((item) => (
+          <DropdownMenuItem key={item.href} asChild>
+            <Link to={item.href} className="cursor-pointer">
+              {item.label}
+            </Link>
+          </DropdownMenuItem>
+        ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <Link to="/portal/account" className="cursor-pointer">
+            {t("Kontoinställningar", "Account Settings")}
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuItem 
+          onClick={handleSignOut}
+          className="text-destructive focus:text-destructive cursor-pointer"
+        >
+          {t("Logga ut", "Logout")}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+};
+
+export default UserMenu;
