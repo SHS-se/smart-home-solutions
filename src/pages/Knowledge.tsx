@@ -1,7 +1,7 @@
-import { Link } from 'react-router-dom';
 import { Clock, ArrowRight, Zap, Home, Settings, Wifi, Thermometer, TrendingDown } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import Layout from '@/components/Layout';
+import ScrollToTopLink from '@/components/ScrollToTopLink';
 
 const Knowledge = () => {
   const { t } = useLanguage();
@@ -170,7 +170,7 @@ const Knowledge = () => {
           </h2>
           <div className="grid md:grid-cols-3 gap-6 mb-16">
             {featuredArticles.map((article, index) => (
-              <Link
+              <ScrollToTopLink
                 key={article.slug}
                 to={`/knowledge/${article.slug}`}
                 className="knowledge-card group animate-fade-in-up"
@@ -194,7 +194,7 @@ const Knowledge = () => {
                     <span>{article.readTime} {t('läsning', 'read')}</span>
                   </div>
                 </div>
-              </Link>
+              </ScrollToTopLink>
             ))}
           </div>
 
@@ -204,7 +204,7 @@ const Knowledge = () => {
           </h2>
           <div className="grid md:grid-cols-2 gap-6">
             {otherArticles.map((article, index) => (
-              <Link
+              <ScrollToTopLink
                 key={article.slug}
                 to={`/knowledge/${article.slug}`}
                 className="service-card flex gap-6 group"
@@ -226,7 +226,7 @@ const Knowledge = () => {
                   </div>
                 </div>
                 <ArrowRight className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors flex-shrink-0 self-center" />
-              </Link>
+              </ScrollToTopLink>
             ))}
           </div>
         </div>
@@ -244,12 +244,12 @@ const Knowledge = () => {
               "Contact us for a personal consultation and we can discuss how these concepts can be applied to your specific home."
             )}
           </p>
-          <Link
+          <ScrollToTopLink
             to="/contact"
             className="inline-flex items-center gap-2 text-primary hover:underline font-medium"
           >
             {t('Boka en konsultation', 'Book a Consultation')} <ArrowRight className="w-4 h-4" />
-          </Link>
+          </ScrollToTopLink>
         </div>
       </section>
     </Layout>
