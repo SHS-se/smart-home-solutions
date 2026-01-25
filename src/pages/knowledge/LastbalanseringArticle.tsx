@@ -453,22 +453,17 @@ const LastbalanseringArticle = () => {
               </div>
             </div>
 
-            {/* Key insight box */}
-            <div className="bg-destructive/10 border border-destructive/20 rounded-xl p-6 mb-6">
-              <div className="flex gap-4">
-                <AlertTriangle className="w-6 h-6 text-destructive flex-shrink-0 mt-1" />
-                <div>
-                  <h4 className="font-medium text-foreground mb-2">
-                    {t('Insikt: Uppvärmningen är boven', 'Insight: Heating is the culprit')}
-                  </h4>
-                  <p className="text-muted-foreground">
-                    {t(
-                      'Under cirka 15 minuter drar tvättmaskinen nästan 2 kW för att värma vattnet. Resten av tvättprogrammet (1,5–2 timmar) drar bara 100–300 W. Om du startar tvättmaskinen samtidigt som elbilsladdningen körs med 7 kW, har du plötsligt en topp på nästan 9 kW – bara från två apparater.',
-                      'For about 15 minutes, the washing machine draws almost 2 kW to heat the water. The rest of the wash cycle (1.5–2 hours) only draws 100–300 W. If you start the washing machine while EV charging is running at 7 kW, you suddenly have a peak of almost 9 kW – from just two appliances.'
-                    )}
-                  </p>
-                </div>
-              </div>
+            {/* Key insight */}
+            <div className="mb-6">
+              <h4 className="font-medium text-foreground mb-2">
+                {t('Insikt: Uppvärmningen är boven', 'Insight: Heating is the culprit')}
+              </h4>
+              <p className="text-muted-foreground leading-relaxed">
+                {t(
+                  'Under cirka 15 minuter drar tvättmaskinen nästan 2 kW för att värma vattnet. Resten av tvättprogrammet (1,5–2 timmar) drar bara 100–300 W. Om du startar tvättmaskinen samtidigt som elbilsladdningen körs med 7 kW, har du plötsligt en topp på nästan 9 kW – bara från två apparater.',
+                  'For about 15 minutes, the washing machine draws almost 2 kW to heat the water. The rest of the wash cycle (1.5–2 hours) only draws 100–300 W. If you start the washing machine while EV charging is running at 7 kW, you suddenly have a peak of almost 9 kW – from just two appliances.'
+                )}
+              </p>
             </div>
 
             <p className="text-muted-foreground leading-relaxed">
@@ -550,22 +545,17 @@ const LastbalanseringArticle = () => {
               </div>
             </div>
 
-            {/* Key insight box */}
-            <div className="bg-warning/10 border border-warning/20 rounded-xl p-6 mb-6">
-              <div className="flex gap-4">
-                <AlertTriangle className="w-6 h-6 text-warning flex-shrink-0 mt-1" />
-                <div>
-                  <h4 className="font-medium text-foreground mb-2">
-                    {t('Insikt: Långvarig belastning', 'Insight: Prolonged load')}
-                  </h4>
-                  <p className="text-muted-foreground">
-                    {t(
-                      'Till skillnad från tvättmaskinen drar torktumlaren högt effekt under hela programmet – ofta 2-3 timmar. Det är inte en kort topp utan en lång, kontinuerlig belastning på 700-800 W. Om du kör torktumlaren samtidigt som annan utrustning, adderas denna effekt under hela tiden.',
-                      'Unlike the washing machine, the tumble dryer draws high power throughout the entire program – often 2-3 hours. It\'s not a short peak but a long, continuous load of 700-800 W. If you run the dryer alongside other equipment, this power adds up the entire time.'
-                    )}
-                  </p>
-                </div>
-              </div>
+            {/* Key insight */}
+            <div className="mb-6">
+              <h4 className="font-medium text-foreground mb-2">
+                {t('Insikt: Långvarig belastning', 'Insight: Prolonged load')}
+              </h4>
+              <p className="text-muted-foreground leading-relaxed">
+                {t(
+                  'Till skillnad från tvättmaskinen drar torktumlaren högt effekt under hela programmet – ofta 2-3 timmar. Det är inte en kort topp utan en lång, kontinuerlig belastning på 700-800 W. Om du kör torktumlaren samtidigt som annan utrustning, adderas denna effekt under hela tiden.',
+                  'Unlike the washing machine, the tumble dryer draws high power throughout the entire program – often 2-3 hours. It\'s not a short peak but a long, continuous load of 700-800 W. If you run the dryer alongside other equipment, this power adds up the entire time.'
+                )}
+              </p>
             </div>
           </section>
 
@@ -656,22 +646,17 @@ const LastbalanseringArticle = () => {
               </div>
             </div>
 
-            {/* Key insight box */}
-            <div className="bg-destructive/10 border border-destructive/20 rounded-xl p-6 mb-6">
-              <div className="flex gap-4">
-                <AlertTriangle className="w-6 h-6 text-destructive flex-shrink-0 mt-1" />
-                <div>
-                  <h4 className="font-medium text-foreground mb-2">
-                    {t('Insikt: Oförutsägbara toppar', 'Insight: Unpredictable peaks')}
-                  </h4>
-                  <p className="text-muted-foreground">
-                    {t(
-                      'Värmepumpen startar och avfrostar när den behöver – inte när du vill. Under vintern kan avfrostningscykler inträffa flera gånger om dagen, varje gång med en topp på över 2 kW. Om detta händer samtidigt som du laddar elbilen eller kör tvättmaskinen, kan du få en oväntad effekttopp som påverkar din effektavgift.',
-                      'The heat pump starts and defrosts when it needs to – not when you want it to. During winter, defrost cycles can occur several times a day, each time with a peak over 2 kW. If this happens while you\'re charging your EV or running the washing machine, you can get an unexpected power peak that affects your effektavgift.'
-                    )}
-                  </p>
-                </div>
-              </div>
+            {/* Key insight */}
+            <div className="mb-6">
+              <h4 className="font-medium text-foreground mb-2">
+                {t('Insikt: Oförutsägbara toppar', 'Insight: Unpredictable peaks')}
+              </h4>
+              <p className="text-muted-foreground leading-relaxed">
+                {t(
+                  'Värmepumpen startar och avfrostar när den behöver – inte när du vill. Under vintern kan avfrostningscykler inträffa flera gånger om dagen, varje gång med en topp på över 2 kW. Om detta händer samtidigt som du laddar elbilen eller kör tvättmaskinen, kan du få en oväntad effekttopp som påverkar din effektavgift.',
+                  'The heat pump starts and defrosts when it needs to – not when you want it to. During winter, defrost cycles can occur several times a day, each time with a peak over 2 kW. If this happens while you\'re charging your EV or running the washing machine, you can get an unexpected power peak that affects your effektavgift.'
+                )}
+              </p>
             </div>
           </section>
 
@@ -755,22 +740,17 @@ const LastbalanseringArticle = () => {
               </div>
             </div>
 
-            {/* Key insight box */}
-            <div className="bg-warning/10 border border-warning/20 rounded-xl p-6 mb-6">
-              <div className="flex gap-4">
-                <AlertTriangle className="w-6 h-6 text-warning flex-shrink-0 mt-1" />
-                <div>
-                  <h4 className="font-medium text-foreground mb-2">
-                    {t('Insikt: Matlagning sker på kvällstid', 'Insight: Cooking happens in the evening')}
-                  </h4>
-                  <p className="text-muted-foreground">
-                    {t(
-                      'De flesta lagar mat mellan 17:00-19:00 – precis under kvällens höglasttid. En spishäll kan dra 1.5-2 kW per platta. Om du använder två plattor samtidigt som ugnen körs, kan du lätt nå 5-6 kW bara från matlagning. Lägg till elbilsladdning och du har snabbt en betydande effekttopp.',
-                      'Most people cook between 17:00-19:00 – right during the evening peak hours. A stove top can draw 1.5-2 kW per burner. If you use two burners while the oven is running, you can easily reach 5-6 kW just from cooking. Add EV charging and you quickly have a significant power peak.'
-                    )}
-                  </p>
-                </div>
-              </div>
+            {/* Key insight */}
+            <div className="mb-6">
+              <h4 className="font-medium text-foreground mb-2">
+                {t('Insikt: Matlagning sker på kvällstid', 'Insight: Cooking happens in the evening')}
+              </h4>
+              <p className="text-muted-foreground leading-relaxed">
+                {t(
+                  'De flesta lagar mat mellan 17:00-19:00 – precis under kvällens höglasttid. En spishäll kan dra 1.5-2 kW per platta. Om du använder två plattor samtidigt som ugnen körs, kan du lätt nå 5-6 kW bara från matlagning. Lägg till elbilsladdning och du har snabbt en betydande effekttopp.',
+                  'Most people cook between 17:00-19:00 – right during the evening peak hours. A stove top can draw 1.5-2 kW per burner. If you use two burners while the oven is running, you can easily reach 5-6 kW just from cooking. Add EV charging and you quickly have a significant power peak.'
+                )}
+              </p>
             </div>
           </section>
 
@@ -852,22 +832,17 @@ const LastbalanseringArticle = () => {
               </div>
             </div>
 
-            {/* Key insight box */}
-            <div className="bg-destructive/10 border border-destructive/20 rounded-xl p-6 mb-6">
-              <div className="flex gap-4">
-                <AlertTriangle className="w-6 h-6 text-destructive flex-shrink-0 mt-1" />
-                <div>
-                  <h4 className="font-medium text-foreground mb-2">
-                    {t('Insikt: Flera oförutsägbara toppar', 'Insight: Multiple unpredictable peaks')}
-                  </h4>
-                  <p className="text-muted-foreground">
-                    {t(
-                      'Diskmaskinen har minst 3-4 uppvärmningscykler under ett program, var och en på ~2 kW. Dessa sker vid olika tidpunkter beroende på program och hur smutsig disken är. Du kan inte veta exakt när nästa topp kommer. Ett 2-timmars diskprogram kan ge 4 effekttoppar på 2 kW – och om du startar den efter middagen kan flera av dessa sammanfalla med annan kvällsanvändning.',
-                      'The dishwasher has at least 3-4 heating cycles during a program, each at ~2 kW. These occur at different times depending on the program and how dirty the dishes are. You can\'t know exactly when the next peak will come. A 2-hour dish program can give 4 power peaks of 2 kW – and if you start it after dinner, several of these can coincide with other evening usage.'
-                    )}
-                  </p>
-                </div>
-              </div>
+            {/* Key insight */}
+            <div className="mb-6">
+              <h4 className="font-medium text-foreground mb-2">
+                {t('Insikt: Flera oförutsägbara toppar', 'Insight: Multiple unpredictable peaks')}
+              </h4>
+              <p className="text-muted-foreground leading-relaxed">
+                {t(
+                  'Diskmaskinen har minst 3-4 uppvärmningscykler under ett program, var och en på ~2 kW. Dessa sker vid olika tidpunkter beroende på program och hur smutsig disken är. Du kan inte veta exakt när nästa topp kommer. Ett 2-timmars diskprogram kan ge 4 effekttoppar på 2 kW – och om du startar den efter middagen kan flera av dessa sammanfalla med annan kvällsanvändning.',
+                  'The dishwasher has at least 3-4 heating cycles during a program, each at ~2 kW. These occur at different times depending on the program and how dirty the dishes are. You can\'t know exactly when the next peak will come. A 2-hour dish program can give 4 power peaks of 2 kW – and if you start it after dinner, several of these can coincide with other evening usage.'
+                )}
+              </p>
             </div>
           </section>
 
@@ -947,22 +922,17 @@ const LastbalanseringArticle = () => {
               </div>
             </div>
 
-            {/* Key insight box */}
-            <div className="bg-destructive/10 border border-destructive/20 rounded-xl p-6 mb-6">
-              <div className="flex gap-4">
-                <AlertTriangle className="w-6 h-6 text-destructive flex-shrink-0 mt-1" />
-                <div>
-                  <h4 className="font-medium text-foreground mb-2">
-                    {t('Insikt: En av de värsta bovarna', 'Insight: One of the worst culprits')}
-                  </h4>
-                  <p className="text-muted-foreground">
-                    {t(
-                      'En elektrisk varmvattenberedare drar konstant ~3 kW varje gång den värmer. Efter dusch eller bad kan den köra i timmar för att återställa temperaturen. Dessutom slår den på regelbundet under dagen för att hålla vattnet varmt – ofta vid oförutsägbara tidpunkter. På kvällen kan dessa korta uppvärmningscykler lätt sammanfalla med matlagning, diskmaskin och elbilsladdning.',
-                      'An electric water boiler draws a constant ~3 kW every time it heats. After a shower or bath, it can run for hours to restore the temperature. Additionally, it turns on regularly throughout the day to keep the water warm – often at unpredictable times. In the evening, these short heating cycles can easily coincide with cooking, dishwasher, and EV charging.'
-                    )}
-                  </p>
-                </div>
-              </div>
+            {/* Key insight */}
+            <div className="mb-6">
+              <h4 className="font-medium text-foreground mb-2">
+                {t('Insikt: En av de värsta bovarna', 'Insight: One of the worst culprits')}
+              </h4>
+              <p className="text-muted-foreground leading-relaxed">
+                {t(
+                  'En elektrisk varmvattenberedare drar konstant ~3 kW varje gång den värmer. Efter dusch eller bad kan den köra i timmar för att återställa temperaturen. Dessutom slår den på regelbundet under dagen för att hålla vattnet varmt – ofta vid oförutsägbara tidpunkter. På kvällen kan dessa korta uppvärmningscykler lätt sammanfalla med matlagning, diskmaskin och elbilsladdning.',
+                  'An electric water boiler draws a constant ~3 kW every time it heats. After a shower or bath, it can run for hours to restore the temperature. Additionally, it turns on regularly throughout the day to keep the water warm – often at unpredictable times. In the evening, these short heating cycles can easily coincide with cooking, dishwasher, and EV charging.'
+                )}
+              </p>
             </div>
           </section>
 
@@ -1041,22 +1011,17 @@ const LastbalanseringArticle = () => {
               </div>
             </div>
 
-            {/* Key insight box */}
-            <div className="bg-destructive/10 border border-destructive/20 rounded-xl p-6 mb-6">
-              <div className="flex gap-4">
-                <AlertTriangle className="w-6 h-6 text-destructive flex-shrink-0 mt-1" />
-                <div>
-                  <h4 className="font-medium text-foreground mb-2">
-                    {t('Insikt: När du absolut inte vill köra andra apparater', 'Insight: When you definitely don\'t want to use other appliances')}
-                  </h4>
-                  <p className="text-muted-foreground">
-                    {t(
-                      'En 11 kW elbilsladdare drar konstant ~10 kW under hela laddningen – ofta 3-5 timmar. Detta är mer än hela din övriga hushållsförbrukning tillsammans. Om varmvattenberedaren slår på (~3 kW) eller diskmaskinen startar en uppvärmningscykel (~2 kW) medan laddningen pågår, kan du lätt nå 15 kW. Lägg till att någon lagar mat, och du är snabbt uppe i effekttoppar som kostar dig hundratals kronor extra per månad.',
-                      'An 11 kW EV charger draws a constant ~10 kW throughout charging – often 3-5 hours. This is more than your entire remaining household consumption combined. If the water heater kicks in (~3 kW) or the dishwasher starts a heating cycle (~2 kW) while charging, you can easily reach 15 kW. Add someone cooking, and you quickly reach power peaks that cost you hundreds of extra kronor per month.'
-                    )}
-                  </p>
-                </div>
-              </div>
+            {/* Key insight */}
+            <div className="mb-6">
+              <h4 className="font-medium text-foreground mb-2">
+                {t('Insikt: När du absolut inte vill köra andra apparater', 'Insight: When you definitely don\'t want to use other appliances')}
+              </h4>
+              <p className="text-muted-foreground leading-relaxed">
+                {t(
+                  'En 11 kW elbilsladdare drar konstant ~10 kW under hela laddningen – ofta 3-5 timmar. Detta är mer än hela din övriga hushållsförbrukning tillsammans. Om varmvattenberedaren slår på (~3 kW) eller diskmaskinen startar en uppvärmningscykel (~2 kW) medan laddningen pågår, kan du lätt nå 15 kW. Lägg till att någon lagar mat, och du är snabbt uppe i effekttoppar som kostar dig hundratals kronor extra per månad.',
+                  'An 11 kW EV charger draws a constant ~10 kW throughout charging – often 3-5 hours. This is more than your entire remaining household consumption combined. If the water heater kicks in (~3 kW) or the dishwasher starts a heating cycle (~2 kW) while charging, you can easily reach 15 kW. Add someone cooking, and you quickly reach power peaks that cost you hundreds of extra kronor per month.'
+                )}
+              </p>
             </div>
           </section>
 
