@@ -7,6 +7,7 @@ import waterBoilerChartImage from '@/assets/water-boiler-chart.png';
 import washingMachineChartImage from '@/assets/washing-machine-chart.png';
 import tumbleDryerChartImage from '@/assets/tumble-dryer-chart.png';
 import heatPumpChartImage from '@/assets/heat-pump-chart.png';
+import stoveChartImage from '@/assets/stove-chart.png';
 
 // Washing machine power consumption data (realistic pattern based on real measurements)
 // Shows: heating phase (~2kW), washing (~100-200W), rinse cycles, spin cycles (~200-300W)
@@ -468,76 +469,12 @@ const LastbalanseringArticle = () => {
             </h3>
             
             <div className="bg-card border border-border rounded-xl p-6 mb-6">
-              <div className="h-80">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={stoveTopData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="stoveGradient" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.4}/>
-                        <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0.05}/>
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis 
-                      dataKey="time" 
-                      stroke="hsl(var(--muted-foreground))"
-                      fontSize={12}
-                      tickLine={false}
-                      interval={2}
-                    />
-                    <YAxis 
-                      stroke="hsl(var(--muted-foreground))"
-                      fontSize={11}
-                      tickLine={false}
-                      tickFormatter={(value) => value >= 1000 ? `${(value/1000).toFixed(1)}kW` : `${value}W`}
-                      domain={[0, 2000]}
-                      ticks={[0, 500, 1000, 1500, 2000]}
-                      width={45}
-                    />
-                    <Tooltip 
-                      contentStyle={{ 
-                        backgroundColor: 'hsl(var(--card))', 
-                        border: '1px solid hsl(var(--border))',
-                        borderRadius: '8px',
-                        fontSize: '14px'
-                      }}
-                      formatter={(value: number) => [
-                        value >= 1000 ? `${(value/1000).toFixed(2)} kW` : `${value} W`, 
-                        t('Effekt', 'Power')
-                      ]}
-                    />
-                    {/* Highlight initial heating phase */}
-                    <ReferenceArea 
-                      x1="19:07" 
-                      x2="19:11" 
-                      fill="hsl(var(--destructive))" 
-                      fillOpacity={0.15} 
-                    />
-                    <Area 
-                      type="monotone" 
-                      dataKey="power" 
-                      stroke="hsl(var(--primary))" 
-                      strokeWidth={2}
-                      fill="url(#stoveGradient)" 
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-              
-              {/* Chart legend */}
-              <div className="flex flex-wrap items-center gap-6 mt-4 pt-4 border-t border-border">
-                <div className="flex items-center gap-2">
-                  <div className="w-4 h-4 rounded bg-destructive/30"></div>
-                  <span className="text-sm text-muted-foreground">
-                    {t('Uppvärmningsfas (~1.7 kW)', 'Heating phase (~1.7 kW)')}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-4 h-4 rounded bg-primary/30"></div>
-                  <span className="text-sm text-muted-foreground">
-                    {t('Underhållseffekt (~800 W)', 'Maintenance power (~800 W)')}
-                  </span>
-                </div>
+              <div className="flex justify-center">
+                <img 
+                  src={stoveChartImage} 
+                  alt={t('Spishäll effektförbrukning', 'Stove top power consumption')}
+                  className="max-w-full h-auto rounded-lg"
+                />
               </div>
             </div>
 
