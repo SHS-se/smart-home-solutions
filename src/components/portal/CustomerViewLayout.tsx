@@ -1,7 +1,5 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Building2, FileText, MessageSquare, LayoutDashboard } from 'lucide-react';
-import { useViewedCustomer } from '@/contexts/ViewedCustomerContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import Header from '@/components/Header';
 
@@ -10,48 +8,38 @@ interface CustomerViewLayoutProps {
 }
 
 const CustomerViewLayout: React.FC<CustomerViewLayoutProps> = ({ children }) => {
-  const { customerId } = useViewedCustomer();
   const location = useLocation();
   const { t } = useLanguage();
 
-  const baseUrl = `/portal/customers/${customerId}`;
-
-  const navItems = [
-    { href: `${baseUrl}/overview`, label: t('Översikt', 'Overview'), icon: LayoutDashboard },
-    { href: `${baseUrl}/account`, label: t('Konto', 'Account'), icon: Building2 },
-    { href: `${baseUrl}/billing`, label: t('Fakturor', 'Invoices'), icon: FileText },
-    { href: `${baseUrl}/tickets`, label: t('Ärenden', 'Tickets'), icon: MessageSquare },
+  const navLinks = [
+    { href: "/services", label: t("Tjänster", "Services") },
+    { href: "/knowledge", label: t("Kunskapscenter", "Knowledge") },
+    { href: "/about", label: t("Om oss", "About") },
   ];
 
-  const isActive = (path: string) => {
-    return location.pathname === path || location.pathname.startsWith(path + '/');
-  };
+  const isActive = (path: string) => location.pathname === path;
 
   return (
     <div className="min-h-screen bg-background">
       {/* Use shared Header component */}
       <Header />
 
-      {/* Mobile bottom nav for customer view navigation */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-card border-t border-border">
-        <div className="flex items-center justify-around h-16">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            return (
+      {/* Mobile bottom nav - same as home page */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-card/95 backdrop-blur-md border-t border-border">
+        <div className="container mx-auto">
+          <div className="flex items-center justify-around h-14">
+            {navLinks.map(link => (
               <Link
-                key={item.href}
-                to={item.href}
-                className={`flex flex-col items-center justify-center flex-1 h-full text-xs font-medium transition-colors ${
-                  isActive(item.href)
-                    ? 'text-primary'
-                    : 'text-muted-foreground'
+                key={link.href}
+                to={link.href}
+                className={`flex-1 flex items-center justify-center py-3 text-sm font-medium transition-colors ${
+                  isActive(link.href) ? "text-primary" : "text-muted-foreground hover:text-foreground"
                 }`}
               >
-                <Icon className="w-5 h-5 mb-1" />
-                {item.label}
+                {link.label}
               </Link>
-            );
-          })}
+            ))}
+          </div>
         </div>
       </nav>
 
