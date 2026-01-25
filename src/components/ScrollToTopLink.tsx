@@ -9,15 +9,12 @@ interface ScrollToTopLinkProps extends LinkProps {
 const ScrollToTopLink = forwardRef<HTMLAnchorElement, ScrollToTopLinkProps>(
   ({ children, onClick, ...props }, ref) => {
     const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
-      // Save current scroll position BEFORE scrolling to top
+      // Save current scroll position before navigating
       const currentKey = getCurrentLocationKey();
       if (currentKey) {
         saveCurrentScrollPosition(currentKey);
       }
-      
-      // Scroll to top immediately (no visible jump on new page)
-      window.scrollTo(0, 0);
-      
+
       onClick?.(e);
     };
 

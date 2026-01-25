@@ -21,6 +21,13 @@ const ScrollRestoration = () => {
   // Update the current location key
   currentLocationKey = location.key || location.pathname;
 
+  // Disable browser's native scroll restoration
+  useLayoutEffect(() => {
+    if ('scrollRestoration' in window.history) {
+      window.history.scrollRestoration = 'manual';
+    }
+  }, []);
+
   // Use useLayoutEffect to restore scroll position synchronously before paint
   useLayoutEffect(() => {
     const key = location.key || location.pathname;
@@ -34,9 +41,12 @@ const ScrollRestoration = () => {
     // Check if we have a saved scroll position for this location (back/forward nav)
     const savedPosition = scrollPositions.get(key);
     if (savedPosition !== undefined) {
+      // Restore saved position (back/forward navigation)
       window.scrollTo(0, savedPosition);
+    } else {
+      // No saved position means this is a new navigation - start at top
+      window.scrollTo(0, 0);
     }
-    // If no saved position, page will be at top (where ScrollToTopLink left it)
   }, [location.key, location.pathname]);
 
   // Save scroll position continuously
