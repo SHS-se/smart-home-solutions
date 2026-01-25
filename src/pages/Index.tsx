@@ -1,5 +1,4 @@
 import { Link } from 'react-router-dom';
-import ScrollToTopLink from '@/components/ScrollToTopLink';
 import { 
   ArrowRight, 
   Home as HomeIcon, 
@@ -306,7 +305,7 @@ const Index = () => {
           
           <div className="grid md:grid-cols-3 gap-6">
             {articles.map((article, index) => (
-              <ScrollToTopLink 
+              <Link 
                 key={article.slug} 
                 to={`/knowledge/${article.slug}`}
                 className="knowledge-card group animate-fade-in-up"
@@ -325,7 +324,7 @@ const Index = () => {
                     <span>{article.readTime} {t('läsning', 'read')}</span>
                   </div>
                 </div>
-              </ScrollToTopLink>
+              </Link>
             ))}
           </div>
         </div>
