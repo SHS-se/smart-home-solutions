@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import ScrollToTopLink from '@/components/ScrollToTopLink';
 import { 
   ArrowRight, 
   Home as HomeIcon, 
@@ -72,6 +73,7 @@ const Index = () => {
 
   const articles = [
     {
+      slug: 'effektavgift',
       category: t('Energigrunder', 'Energy Basics'),
       categoryColor: 'bg-primary-lighter',
       title: t('Vad är effektavgift?', 'What Is Effektavgift?'),
@@ -82,6 +84,7 @@ const Index = () => {
       readTime: '5 min',
     },
     {
+      slug: 'load-balancing',
       category: t('Automation', 'Automation'),
       categoryColor: 'bg-energy',
       title: t('Hur lastbalansering fungerar i ett smart hem', 'How Load Balancing Works in a Smart Home'),
@@ -92,6 +95,7 @@ const Index = () => {
       readTime: '7 min',
     },
     {
+      slug: 'sensors',
       category: t('Installation', 'Installation'),
       categoryColor: 'bg-muted',
       title: t('Välja sensorer för ditt Täby-hem', 'Choosing Sensors for Your Täby Home'),
@@ -302,9 +306,9 @@ const Index = () => {
           
           <div className="grid md:grid-cols-3 gap-6">
             {articles.map((article, index) => (
-              <Link 
-                key={index} 
-                to="/knowledge"
+              <ScrollToTopLink 
+                key={article.slug} 
+                to={`/knowledge/${article.slug}`}
                 className="knowledge-card group animate-fade-in-up"
                 style={{ animationDelay: `${index * 100}ms` }}
               >
@@ -321,7 +325,7 @@ const Index = () => {
                     <span>{article.readTime} {t('läsning', 'read')}</span>
                   </div>
                 </div>
-              </Link>
+              </ScrollToTopLink>
             ))}
           </div>
         </div>
