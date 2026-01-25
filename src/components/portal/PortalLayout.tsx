@@ -1,7 +1,5 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Building2, FileText, MessageSquare, Users, LayoutDashboard, Contact2 } from 'lucide-react';
-import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import Header from '@/components/Header';
 
@@ -10,56 +8,38 @@ interface PortalLayoutProps {
 }
 
 const PortalLayout: React.FC<PortalLayoutProps> = ({ children }) => {
-  const { isStaff } = useAuth();
   const location = useLocation();
   const { t } = useLanguage();
 
-  const customerNavItems = [
-    { href: '/portal', label: t('Översikt', 'Dashboard'), icon: LayoutDashboard },
-    { href: '/portal/account', label: t('Konto', 'Account'), icon: Building2 },
-    { href: '/portal/billing', label: t('Fakturor', 'Billing'), icon: FileText },
-    { href: '/portal/tickets', label: t('Ärenden', 'Tickets'), icon: MessageSquare },
+  const navLinks = [
+    { href: "/services", label: t("Tjänster", "Services") },
+    { href: "/knowledge", label: t("Kunskapscenter", "Knowledge") },
+    { href: "/about", label: t("Om oss", "About") },
   ];
 
-  const staffNavItems = [
-    { href: '/portal', label: t('Översikt', 'Dashboard'), icon: LayoutDashboard },
-    { href: '/portal/customers', label: t('Kunder', 'Customers'), icon: Users },
-    { href: '/portal/contacts', label: t('Kontakter', 'Contacts'), icon: Contact2 },
-    { href: '/portal/tickets', label: t('Alla ärenden', 'All Tickets'), icon: MessageSquare },
-  ];
-
-  const navItems = isStaff ? staffNavItems : customerNavItems;
-
-  const isActive = (path: string) => {
-    if (path === '/portal') {
-      return location.pathname === '/portal';
-    }
-    return location.pathname.startsWith(path);
-  };
+  const isActive = (path: string) => location.pathname === path;
 
   return (
     <div className="min-h-screen bg-background">
       {/* Use shared Header component */}
       <Header />
 
-      {/* Mobile bottom nav for portal-specific navigation */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-card border-t border-border">
-        <div className="flex items-center justify-around h-16">
-          {navItems.map(item => {
-            const Icon = item.icon;
-            return (
+      {/* Mobile bottom nav - same as home page */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-card/95 backdrop-blur-md border-t border-border">
+        <div className="container mx-auto">
+          <div className="flex items-center justify-around h-14">
+            {navLinks.map(link => (
               <Link
-                key={item.href}
-                to={item.href}
-                className={`flex flex-col items-center justify-center flex-1 h-full text-xs font-medium transition-colors ${
-                  isActive(item.href) ? 'text-primary' : 'text-muted-foreground'
+                key={link.href}
+                to={link.href}
+                className={`flex-1 flex items-center justify-center py-3 text-sm font-medium transition-colors ${
+                  isActive(link.href) ? "text-primary" : "text-muted-foreground hover:text-foreground"
                 }`}
               >
-                <Icon className="w-5 h-5 mb-1" />
-                {item.label}
+                {link.label}
               </Link>
-            );
-          })}
+            ))}
+          </div>
         </div>
       </nav>
 
