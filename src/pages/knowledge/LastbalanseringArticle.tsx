@@ -403,6 +403,8 @@ const LastbalanseringArticle = () => {
                       tickLine={false}
                       tickFormatter={(value) => value >= 1000 ? `${(value/1000).toFixed(1)} kW` : `${value} W`}
                       domain={[0, 2500]}
+                      ticks={[0, 500, 1000, 1500, 2000, 2500]}
+                      width={50}
                     />
                     <Tooltip 
                       contentStyle={{ 
@@ -507,6 +509,8 @@ const LastbalanseringArticle = () => {
                       tickLine={false}
                       tickFormatter={(value) => `${value} W`}
                       domain={[0, 800]}
+                      ticks={[0, 200, 400, 600, 800]}
+                      width={50}
                     />
                     <Tooltip 
                       contentStyle={{ 
@@ -595,6 +599,8 @@ const LastbalanseringArticle = () => {
                       tickLine={false}
                       tickFormatter={(value) => value >= 1000 ? `${(value/1000).toFixed(1)} kW` : `${value} W`}
                       domain={[0, 2500]}
+                      ticks={[0, 500, 1000, 1500, 2000, 2500]}
+                      width={50}
                     />
                     <Tooltip 
                       contentStyle={{ 
@@ -699,6 +705,8 @@ const LastbalanseringArticle = () => {
                       tickLine={false}
                       tickFormatter={(value) => value >= 1000 ? `${(value/1000).toFixed(1)} kW` : `${value} W`}
                       domain={[0, 2000]}
+                      ticks={[0, 500, 1000, 1500, 2000]}
+                      width={50}
                     />
                     <Tooltip 
                       contentStyle={{ 
@@ -796,6 +804,8 @@ const LastbalanseringArticle = () => {
                       tickLine={false}
                       tickFormatter={(value) => value >= 1000 ? `${(value/1000).toFixed(1)} kW` : `${value} W`}
                       domain={[0, 2500]}
+                      ticks={[0, 500, 1000, 1500, 2000, 2500]}
+                      width={50}
                     />
                     <Tooltip 
                       contentStyle={{ 
@@ -891,6 +901,8 @@ const LastbalanseringArticle = () => {
                       tickLine={false}
                       tickFormatter={(value) => value >= 1000 ? `${(value/1000).toFixed(1)} kW` : `${value} W`}
                       domain={[0, 3500]}
+                      ticks={[0, 1000, 2000, 3000]}
+                      width={50}
                     />
                     <Tooltip 
                       contentStyle={{ 
@@ -984,6 +996,8 @@ const LastbalanseringArticle = () => {
                       tickLine={false}
                       tickFormatter={(value) => `${(value/1000).toFixed(0)} kW`}
                       domain={[0, 12000]}
+                      ticks={[0, 3000, 6000, 9000, 12000]}
+                      width={50}
                     />
                     <Tooltip 
                       contentStyle={{ 
