@@ -5,6 +5,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useIsPortrait } from "@/hooks/use-orientation";
 import LanguageToggle from "./LanguageToggle";
+import UserMenu from "./UserMenu";
 
 import { Button } from "./ui/button";
 const ShsLogo = () => <svg width="48" height="45" viewBox="0 0 111 104" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -72,12 +73,16 @@ const Header = () => {
                 <span className="text-xs font-medium text-muted-foreground">Smart Home Solutions</span>
               </Link>
 
-              {/* Language Toggle and Contact Button */}
+              {/* Language Toggle and Auth */}
               <div className="flex items-center gap-2">
                 <LanguageToggle />
-                <Button size="sm" onClick={handleAuthAction}>
-                  {user ? t("Logga ut", "Logout") : t("Logga in", "Login")}
-                </Button>
+                {user ? (
+                  <UserMenu size="sm" />
+                ) : (
+                  <Button size="sm" onClick={handleAuthAction}>
+                    {t("Logga in", "Login")}
+                  </Button>
+                )}
               </div>
             </div>
           </div>
@@ -118,9 +123,13 @@ const Header = () => {
           {/* Desktop Actions */}
           <div className="hidden md:flex items-center gap-4">
             <LanguageToggle />
-            <Button onClick={handleAuthAction}>
-              {user ? t("Logga ut", "Logout") : t("Logga in", "Login")}
-            </Button>
+            {user ? (
+              <UserMenu />
+            ) : (
+              <Button onClick={handleAuthAction}>
+                {t("Logga in", "Login")}
+              </Button>
+            )}
           </div>
 
           {/* Mobile Menu Button (Landscape only) */}
@@ -137,12 +146,16 @@ const Header = () => {
                 </Link>)}
               <div className="flex items-center justify-between px-4 pt-4 border-t border-border mt-2">
                 <LanguageToggle />
-                <Button size="sm" onClick={() => {
-              handleAuthAction();
-              setIsMenuOpen(false);
-            }}>
-                  {user ? t("Logga ut", "Logout") : t("Logga in", "Login")}
-                </Button>
+                {user ? (
+                  <UserMenu size="sm" />
+                ) : (
+                  <Button size="sm" onClick={() => {
+                    handleAuthAction();
+                    setIsMenuOpen(false);
+                  }}>
+                    {t("Logga in", "Login")}
+                  </Button>
+                )}
               </div>
             </nav>
           </div>}
