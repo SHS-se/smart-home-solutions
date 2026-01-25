@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import { useLayoutEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 
 // Store scroll positions for each route
@@ -49,8 +49,12 @@ const ScrollRestoration = () => {
     }
   }, [location.key, location.pathname]);
 
-  // Save scroll position continuously
-  useEffect(() => {
+  // Save scroll position continuously.
+  // IMPORTANT: Use useLayoutEffect so that the previous route's scroll listener is
+  // removed *before* the next route's layout effects run (which may call scrollTo).
+  // If we used useEffect here, the old listener could still be active when the new
+  // route scrolls to top, overwriting the previous page's saved position with 0.
+  useLayoutEffect(() => {
     const key = location.key || location.pathname;
 
     const saveScrollPosition = () => {
