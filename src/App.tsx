@@ -30,6 +30,17 @@ import Customers from "./pages/portal/Customers";
 import Contacts from "./pages/portal/Contacts";
 import ContactDetail from "./pages/portal/ContactDetail";
 
+// Staff Offerter & Material pages
+import SKUCatalog from "./pages/portal/skus/SKUCatalog";
+import SKUImport from "./pages/portal/skus/SKUImport";
+import TemplatesList from "./pages/portal/templates/TemplatesList";
+import TemplateDetail from "./pages/portal/templates/TemplateDetail";
+import BOMsList from "./pages/portal/boms/BOMsList";
+import BOMBuilder from "./pages/portal/boms/BOMBuilder";
+import QuotesList from "./pages/portal/quotes/QuotesList";
+import QuotePreparation from "./pages/portal/quotes/QuotePreparation";
+import MarginSettings from "./pages/portal/settings/MarginSettings";
+
 // Staff customer view pages
 import CustomerViewDashboard from "./pages/portal/customer-view/CustomerViewDashboard";
 import CustomerViewAccount from "./pages/portal/customer-view/CustomerViewAccount";
@@ -105,6 +116,17 @@ const App = () => (
                 <Route path="/portal/customers" element={<Customers />} />
                 <Route path="/portal/contacts" element={<Contacts />} />
                 <Route path="/portal/contacts/:id" element={<ContactDetail />} />
+                
+                {/* Staff Offerter & Material */}
+                <Route path="/portal/skus" element={<SKUCatalog />} />
+                <Route path="/portal/skus/import" element={<SKUImport />} />
+                <Route path="/portal/templates" element={<TemplatesList />} />
+                <Route path="/portal/templates/:id" element={<TemplateDetail />} />
+                <Route path="/portal/boms" element={<BOMsList />} />
+                <Route path="/portal/boms/:id" element={<BOMBuilder />} />
+                <Route path="/portal/quotes" element={<QuotesList />} />
+                <Route path="/portal/quotes/:id" element={<QuotePreparation />} />
+                <Route path="/portal/settings/margins" element={<MarginSettings />} />
                 
                 {/* Staff viewing customer portal */}
                 <Route path="/portal/customers/:customerId/overview" element={<CustomerViewWrapper><CustomerViewDashboard /></CustomerViewWrapper>} />
