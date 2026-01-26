@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Building2, FileText, MessageSquare, Loader2, Shield, Users } from 'lucide-react';
+import { Building2, FileText, MessageSquare, Loader2, Shield, Users, Package, Box, FileCheck, Settings } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -195,63 +195,166 @@ const Dashboard: React.FC = () => {
 
         {isStaff ? (
           // Staff Dashboard
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-            <Card 
-              className="cursor-pointer transition-colors hover:bg-muted/50"
-              onClick={() => navigate('/portal/tickets')}
-            >
-              <CardHeader className="flex flex-row items-center gap-4">
-                <div className="p-2 rounded-lg bg-primary/10">
-                  <MessageSquare className="w-6 h-6 text-primary" />
-                </div>
-                <CardTitle className="text-lg">{t('Supportärenden', 'Support Tickets')}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-muted-foreground mb-1">
-                  {t('Öppna ärenden:', 'Open tickets:')} <strong>{ticketStats.open}</strong>
-                </p>
-                <p className="text-muted-foreground">
-                  {t('Totalt ärenden:', 'Total tickets:')} <strong>{ticketStats.total}</strong>
-                </p>
-              </CardContent>
-            </Card>
+          <div className="space-y-8">
+            {/* CRM Section */}
+            <div>
+              <h2 className="text-lg font-medium mb-4 text-muted-foreground">{t('CRM', 'CRM')}</h2>
+              <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+                <Card 
+                  className="cursor-pointer transition-colors hover:bg-muted/50"
+                  onClick={() => navigate('/portal/tickets')}
+                >
+                  <CardHeader className="flex flex-row items-center gap-4">
+                    <div className="p-2 rounded-lg bg-primary/10">
+                      <MessageSquare className="w-6 h-6 text-primary" />
+                    </div>
+                    <CardTitle className="text-lg">{t('Supportärenden', 'Support Tickets')}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-muted-foreground mb-1">
+                      {t('Öppna ärenden:', 'Open tickets:')} <strong>{ticketStats.open}</strong>
+                    </p>
+                    <p className="text-muted-foreground">
+                      {t('Totalt ärenden:', 'Total tickets:')} <strong>{ticketStats.total}</strong>
+                    </p>
+                  </CardContent>
+                </Card>
 
-            <Card 
-              className="cursor-pointer transition-colors hover:bg-muted/50"
-              onClick={() => navigate('/portal/customers')}
-            >
-              <CardHeader className="flex flex-row items-center gap-4">
-                <div className="p-2 rounded-lg bg-primary/10">
-                  <Building2 className="w-6 h-6 text-primary" />
-                </div>
-                <CardTitle className="text-lg">{t('Kunder', 'Customers')}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-muted-foreground">
-                  {t('Antal kunder:', 'Total customers:')} <strong>{customerStats.total}</strong>
-                </p>
-              </CardContent>
-            </Card>
+                <Card 
+                  className="cursor-pointer transition-colors hover:bg-muted/50"
+                  onClick={() => navigate('/portal/customers')}
+                >
+                  <CardHeader className="flex flex-row items-center gap-4">
+                    <div className="p-2 rounded-lg bg-primary/10">
+                      <Building2 className="w-6 h-6 text-primary" />
+                    </div>
+                    <CardTitle className="text-lg">{t('Kunder', 'Customers')}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-muted-foreground">
+                      {t('Antal kunder:', 'Total customers:')} <strong>{customerStats.total}</strong>
+                    </p>
+                  </CardContent>
+                </Card>
 
-            <Card 
-              className="cursor-pointer transition-colors hover:bg-muted/50"
-              onClick={() => navigate('/portal/contacts')}
-            >
-              <CardHeader className="flex flex-row items-center gap-4">
-                <div className="p-2 rounded-lg bg-primary/10">
-                  <Users className="w-6 h-6 text-primary" />
-                </div>
-                <CardTitle className="text-lg">{t('Kontakter', 'Contacts')}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-muted-foreground mb-1">
-                  {t('Ej konverterade:', 'Unconverted:')} <strong>{contactStats.unconverted}</strong>
-                </p>
-                <p className="text-muted-foreground">
-                  {t('Totalt kontakter:', 'Total contacts:')} <strong>{contactStats.total}</strong>
-                </p>
-              </CardContent>
-            </Card>
+                <Card 
+                  className="cursor-pointer transition-colors hover:bg-muted/50"
+                  onClick={() => navigate('/portal/contacts')}
+                >
+                  <CardHeader className="flex flex-row items-center gap-4">
+                    <div className="p-2 rounded-lg bg-primary/10">
+                      <Users className="w-6 h-6 text-primary" />
+                    </div>
+                    <CardTitle className="text-lg">{t('Kontakter', 'Contacts')}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-muted-foreground mb-1">
+                      {t('Ej konverterade:', 'Unconverted:')} <strong>{contactStats.unconverted}</strong>
+                    </p>
+                    <p className="text-muted-foreground">
+                      {t('Totalt kontakter:', 'Total contacts:')} <strong>{contactStats.total}</strong>
+                    </p>
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+
+            {/* Offerter & Material Section */}
+            <div>
+              <h2 className="text-lg font-medium mb-4 text-muted-foreground">{t('Offerter & Material', 'Quotes & Materials')}</h2>
+              <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+                <Card 
+                  className="cursor-pointer transition-colors hover:bg-muted/50"
+                  onClick={() => navigate('/portal/skus')}
+                >
+                  <CardHeader className="flex flex-row items-center gap-4">
+                    <div className="p-2 rounded-lg bg-primary/10">
+                      <Package className="w-6 h-6 text-primary" />
+                    </div>
+                    <CardTitle className="text-lg">{t('SKU-katalog', 'SKU Catalog')}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-muted-foreground">
+                      {t('Hantera produkter och priser', 'Manage products and prices')}
+                    </p>
+                  </CardContent>
+                </Card>
+
+                <Card 
+                  className="cursor-pointer transition-colors hover:bg-muted/50"
+                  onClick={() => navigate('/portal/templates')}
+                >
+                  <CardHeader className="flex flex-row items-center gap-4">
+                    <div className="p-2 rounded-lg bg-primary/10">
+                      <Box className="w-6 h-6 text-primary" />
+                    </div>
+                    <CardTitle className="text-lg">{t('Mallpaket', 'Templates')}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-muted-foreground">
+                      {t('Återanvändbara produktpaket', 'Reusable product bundles')}
+                    </p>
+                  </CardContent>
+                </Card>
+
+                <Card 
+                  className="cursor-pointer transition-colors hover:bg-muted/50"
+                  onClick={() => navigate('/portal/boms')}
+                >
+                  <CardHeader className="flex flex-row items-center gap-4">
+                    <div className="p-2 rounded-lg bg-primary/10">
+                      <FileText className="w-6 h-6 text-primary" />
+                    </div>
+                    <CardTitle className="text-lg">{t('Materiallistor', 'BOMs')}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-muted-foreground">
+                      {t('Projektberäkningar', 'Project calculations')}
+                    </p>
+                  </CardContent>
+                </Card>
+
+                <Card 
+                  className="cursor-pointer transition-colors hover:bg-muted/50"
+                  onClick={() => navigate('/portal/quotes')}
+                >
+                  <CardHeader className="flex flex-row items-center gap-4">
+                    <div className="p-2 rounded-lg bg-primary/10">
+                      <FileCheck className="w-6 h-6 text-primary" />
+                    </div>
+                    <CardTitle className="text-lg">{t('Offerter', 'Quotes')}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-muted-foreground">
+                      {t('Skapa och skicka offerter', 'Create and send quotes')}
+                    </p>
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+
+            {/* Settings */}
+            <div>
+              <h2 className="text-lg font-medium mb-4 text-muted-foreground">{t('Inställningar', 'Settings')}</h2>
+              <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+                <Card 
+                  className="cursor-pointer transition-colors hover:bg-muted/50"
+                  onClick={() => navigate('/portal/settings/margins')}
+                >
+                  <CardHeader className="flex flex-row items-center gap-4">
+                    <div className="p-2 rounded-lg bg-primary/10">
+                      <Settings className="w-6 h-6 text-primary" />
+                    </div>
+                    <CardTitle className="text-lg">{t('Marginalregler', 'Margin Rules')}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-muted-foreground">
+                      {t('Konfigurera marginaler per kategori', 'Configure margins per category')}
+                    </p>
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
           </div>
         ) : (
           // Customer Dashboard
