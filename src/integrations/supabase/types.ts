@@ -14,6 +14,89 @@ export type Database = {
   }
   public: {
     Tables: {
+      bom_items: {
+        Row: {
+          bom_id: string
+          cost: number | null
+          created_at: string
+          id: string
+          quantity: number
+          sell_price: number | null
+          sku_id: string
+        }
+        Insert: {
+          bom_id: string
+          cost?: number | null
+          created_at?: string
+          id?: string
+          quantity?: number
+          sell_price?: number | null
+          sku_id: string
+        }
+        Update: {
+          bom_id?: string
+          cost?: number | null
+          created_at?: string
+          id?: string
+          quantity?: number
+          sell_price?: number | null
+          sku_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bom_items_bom_id_fkey"
+            columns: ["bom_id"]
+            isOneToOne: false
+            referencedRelation: "boms"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bom_items_sku_id_fkey"
+            columns: ["sku_id"]
+            isOneToOne: false
+            referencedRelation: "skus"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      boms: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          customer_id: string | null
+          id: string
+          project_name: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          customer_id?: string | null
+          id?: string
+          project_name: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          customer_id?: string | null
+          id?: string
+          project_name?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "boms_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       contact_messages: {
         Row: {
           author_email: string
@@ -173,6 +256,131 @@ export type Database = {
           },
         ]
       }
+      margin_rules: {
+        Row: {
+          category: string
+          created_at: string
+          description: string | null
+          margin_percent: number
+          rounding: number
+          updated_at: string
+        }
+        Insert: {
+          category: string
+          created_at?: string
+          description?: string | null
+          margin_percent?: number
+          rounding?: number
+          updated_at?: string
+        }
+        Update: {
+          category?: string
+          created_at?: string
+          description?: string | null
+          margin_percent?: number
+          rounding?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      quote_lines: {
+        Row: {
+          created_at: string
+          description: string
+          id: string
+          quantity: number
+          quote_id: string
+          section: string
+          unit_price: number
+        }
+        Insert: {
+          created_at?: string
+          description: string
+          id?: string
+          quantity?: number
+          quote_id: string
+          section: string
+          unit_price?: number
+        }
+        Update: {
+          created_at?: string
+          description?: string
+          id?: string
+          quantity?: number
+          quote_id?: string
+          section?: string
+          unit_price?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "quote_lines_quote_id_fkey"
+            columns: ["quote_id"]
+            isOneToOne: false
+            referencedRelation: "quotes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      quotes: {
+        Row: {
+          bom_id: string | null
+          created_at: string
+          created_by: string | null
+          customer_id: string | null
+          hardware_total: number
+          id: string
+          labor_total: number
+          quote_number: string
+          status: string
+          stripe_quote_id: string | null
+          travel_total: number
+          updated_at: string
+        }
+        Insert: {
+          bom_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          customer_id?: string | null
+          hardware_total?: number
+          id?: string
+          labor_total?: number
+          quote_number: string
+          status?: string
+          stripe_quote_id?: string | null
+          travel_total?: number
+          updated_at?: string
+        }
+        Update: {
+          bom_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          customer_id?: string | null
+          hardware_total?: number
+          id?: string
+          labor_total?: number
+          quote_number?: string
+          status?: string
+          stripe_quote_id?: string | null
+          travel_total?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "quotes_bom_id_fkey"
+            columns: ["bom_id"]
+            isOneToOne: false
+            referencedRelation: "boms"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "quotes_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       rate_limits: {
         Row: {
           created_at: string
@@ -200,6 +408,51 @@ export type Database = {
         }
         Relationships: []
       }
+      skus: {
+        Row: {
+          category: string
+          cost_ex_vat: number | null
+          created_at: string
+          default_margin: number | null
+          id: string
+          image_path: string | null
+          name: string
+          notes: string | null
+          sku: string
+          supplier: string | null
+          supplier_url: string | null
+          updated_at: string
+        }
+        Insert: {
+          category: string
+          cost_ex_vat?: number | null
+          created_at?: string
+          default_margin?: number | null
+          id?: string
+          image_path?: string | null
+          name: string
+          notes?: string | null
+          sku: string
+          supplier?: string | null
+          supplier_url?: string | null
+          updated_at?: string
+        }
+        Update: {
+          category?: string
+          cost_ex_vat?: number | null
+          created_at?: string
+          default_margin?: number | null
+          id?: string
+          image_path?: string | null
+          name?: string
+          notes?: string | null
+          sku?: string
+          supplier?: string | null
+          supplier_url?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       staff_users: {
         Row: {
           created_at: string
@@ -215,6 +468,69 @@ export type Database = {
           created_at?: string
           role?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      template_items: {
+        Row: {
+          created_at: string
+          id: string
+          quantity: number
+          sku_id: string
+          template_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          quantity?: number
+          sku_id: string
+          template_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          quantity?: number
+          sku_id?: string
+          template_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "template_items_sku_id_fkey"
+            columns: ["sku_id"]
+            isOneToOne: false
+            referencedRelation: "skus"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "template_items_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "templates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      templates: {
+        Row: {
+          created_at: string
+          description: string | null
+          id: string
+          name: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          name: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          name?: string
+          updated_at?: string
         }
         Relationships: []
       }
