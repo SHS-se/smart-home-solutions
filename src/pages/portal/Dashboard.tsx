@@ -298,6 +298,9 @@ const Dashboard: React.FC = () => {
                     <CardTitle className="text-lg">{t('SKU-katalog', 'SKU Catalog')}</CardTitle>
                   </CardHeader>
                   <CardContent>
+                    <p className="text-muted-foreground mb-1">
+                      {t('Hantera produkter och priser', 'Manage products and prices')}
+                    </p>
                     <p className="text-muted-foreground">
                       {t('Produkter:', 'Products:')} <strong>{skuStats.total}</strong>
                     </p>
@@ -315,6 +318,9 @@ const Dashboard: React.FC = () => {
                     <CardTitle className="text-lg">{t('Mallpaket', 'Templates')}</CardTitle>
                   </CardHeader>
                   <CardContent>
+                    <p className="text-muted-foreground mb-1">
+                      {t('Återanvändbara produktpaket', 'Reusable product bundles')}
+                    </p>
                     <p className="text-muted-foreground">
                       {t('Mallar:', 'Templates:')} <strong>{templateStats.total}</strong>
                     </p>
@@ -332,6 +338,9 @@ const Dashboard: React.FC = () => {
                     <CardTitle className="text-lg">{t('Materiallistor', 'BOMs')}</CardTitle>
                   </CardHeader>
                   <CardContent>
+                    <p className="text-muted-foreground mb-1">
+                      {t('Projektberäkningar', 'Project calculations')}
+                    </p>
                     <p className="text-muted-foreground">
                       {t('Materiallistor:', 'BOMs:')} <strong>{bomStats.total}</strong>
                     </p>
@@ -349,6 +358,9 @@ const Dashboard: React.FC = () => {
                     <CardTitle className="text-lg">{t('Offerter', 'Quotes')}</CardTitle>
                   </CardHeader>
                   <CardContent>
+                    <p className="text-muted-foreground mb-1">
+                      {t('Skapa och skicka offerter', 'Create and send quotes')}
+                    </p>
                     <p className="text-muted-foreground mb-1">
                       {t('Utkast:', 'Drafts:')} <strong>{quoteStats.draft}</strong>
                     </p>
