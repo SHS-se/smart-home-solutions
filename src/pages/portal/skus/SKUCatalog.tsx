@@ -273,7 +273,11 @@ const SKUCatalog: React.FC = () => {
                       </TableCell>
                       <TableCell className="text-center">
                         {sku.image_path ? (
-                          <ImageIcon className="h-4 w-4 text-primary mx-auto" />
+                          <img
+                            src={`${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/sku-images/${sku.image_path}`}
+                            alt={sku.name}
+                            className="h-10 w-10 object-contain mx-auto rounded"
+                          />
                         ) : (
                           <span className="text-muted-foreground">—</span>
                         )}
