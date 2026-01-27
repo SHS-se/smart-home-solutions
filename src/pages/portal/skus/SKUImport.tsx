@@ -46,6 +46,8 @@ const SKUImport: React.FC = () => {
   const [parsedSkus, setParsedSkus] = useState<ParsedSKU[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [importResults, setImportResults] = useState<{ success: number; failed: number }>({ success: 0, failed: 0 });
+  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const [fileDeleted, setFileDeleted] = useState(false);
 
   const downloadTemplate = () => {
     const csvContent = `sku,name,category,supplier,supplier_url,cost_ex_vat,default_margin,notes
@@ -105,6 +107,7 @@ HUB-ZB-PRO,Zigbee Hub Professional,Controllers,Aqara,https://aqara.com,1250,25,`
     const file = e.target.files?.[0];
     if (!file) return;
 
+    setUploadedFileName(file.name);
     setIsProcessing(true);
     
     try {
@@ -469,10 +472,39 @@ HUB-ZB-PRO,Zigbee Hub Professional,Controllers,Aqara,https://aqara.com,1250,25,`
               <Check className="h-8 w-8 text-primary" />
             </div>
             <h2 className="text-xl font-bold mb-2">{t('Import slutförd!', 'Import complete!')}</h2>
-            <p className="text-muted-foreground mb-6">
+            <p className="text-muted-foreground mb-4">
               {importResults.success} {t('SKUs importerade', 'SKUs imported')}
               {importResults.failed > 0 && `, ${importResults.failed} ${t('misslyckades', 'failed')}`}
             </p>
+            
+            {/* Delete file prompt */}
+            {uploadedFileName && !fileDeleted && (
+              <div className="bg-muted/50 border border-border rounded-lg p-4 mb-6 max-w-md mx-auto">
+                <p className="text-sm text-muted-foreground mb-3">
+                  {t('Vill du ta bort den uppladdade filen från din enhet?', 'Would you like to delete the uploaded file from your device?')}
+                </p>
+                <p className="text-xs text-muted-foreground mb-3 font-mono">{uploadedFileName}</p>
+                <p className="text-xs text-muted-foreground italic">
+                  {t('Tips: Du kan ta bort filen manuellt från din nedladdnings-/filhanterare.', 'Tip: You can delete the file manually from your downloads/file manager.')}
+                </p>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="mt-3"
+                  onClick={() => setFileDeleted(true)}
+                >
+                  {t('Jag har raderat filen', 'I have deleted the file')}
+                </Button>
+              </div>
+            )}
+            
+            {fileDeleted && (
+              <p className="text-sm text-primary mb-6">
+                <Check className="h-4 w-4 inline mr-1" />
+                {t('Bra! Filen är markerad som borttagen.', 'Great! File marked as deleted.')}
+              </p>
+            )}
+            
             <Button onClick={() => navigate('/portal/skus')}>
               {t('Visa SKU-katalog', 'View SKU catalog')}
             </Button>
