@@ -44,6 +44,20 @@ const MarginSettings: React.FC = () => {
   const [localRules, setLocalRules] = React.useState<MarginRule[]>([]);
   const [hasChanges, setHasChanges] = React.useState(false);
 
+  // Fetch categories from database
+  const { data: categories = [] } = useQuery({
+    queryKey: ['sku_categories'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('sku_categories')
+        .select('*')
+        .order('sort_order');
+      if (error) throw error;
+      return data;
+    },
+    enabled: isStaff,
+  });
+
   // Fetch margin rules
   const { data: rules = [], isLoading } = useQuery({
     queryKey: ['margin_rules'],
@@ -58,25 +72,35 @@ const MarginSettings: React.FC = () => {
     enabled: isStaff,
   });
 
-  // Sync local state with fetched data
+  // Sync local state with fetched data, ensuring all categories have a rule
   React.useEffect(() => {
-    if (rules.length > 0) {
-      setLocalRules(rules);
+    if (categories.length > 0) {
+      const mergedRules: MarginRule[] = categories.map(cat => {
+        const existingRule = rules.find(r => r.category === cat.name);
+        return existingRule || {
+          category: cat.name,
+          description: cat.description,
+          margin_percent: 0,
+          rounding: 5,
+        };
+      });
+      setLocalRules(mergedRules);
       setHasChanges(false);
     }
-  }, [rules]);
+  }, [rules, categories]);
 
-  // Save mutation
+  // Save mutation - upsert to handle new categories
   const saveMutation = useMutation({
     mutationFn: async () => {
       for (const rule of localRules) {
         const { error } = await supabase
           .from('margin_rules')
-          .update({ 
+          .upsert({ 
+            category: rule.category,
+            description: rule.description,
             margin_percent: rule.margin_percent, 
             rounding: rule.rounding 
-          })
-          .eq('category', rule.category);
+          }, { onConflict: 'category' });
         if (error) throw error;
       }
     },
