@@ -20,6 +20,10 @@ const Dashboard: React.FC = () => {
   const [invoiceStats, setInvoiceStats] = useState({ total: 0, lastDate: '' });
   const [customerStats, setCustomerStats] = useState({ total: 0 });
   const [contactStats, setContactStats] = useState({ total: 0, unconverted: 0 });
+  const [skuStats, setSkuStats] = useState({ total: 0 });
+  const [templateStats, setTemplateStats] = useState({ total: 0 });
+  const [bomStats, setBomStats] = useState({ total: 0 });
+  const [quoteStats, setQuoteStats] = useState({ total: 0, draft: 0 });
   const [canBootstrap, setCanBootstrap] = useState(false);
   const [bootstrapLoading, setBootstrapLoading] = useState(false);
   const [statsLoading, setStatsLoading] = useState(true);
@@ -53,18 +57,38 @@ const Dashboard: React.FC = () => {
       
       try {
         if (isStaff) {
-          // Staff sees all tickets
-          const [ticketsResult, openTicketsResult, customersResult, contactsResult, unconvertedContactsResult] = await Promise.all([
+          // Staff sees all tickets and Offerter & Material stats
+          const [
+            ticketsResult, 
+            openTicketsResult, 
+            customersResult, 
+            contactsResult, 
+            unconvertedContactsResult,
+            skusResult,
+            templatesResult,
+            bomsResult,
+            quotesResult,
+            draftQuotesResult,
+          ] = await Promise.all([
             supabase.from('tickets').select('*', { count: 'exact', head: true }),
             supabase.from('tickets').select('*', { count: 'exact', head: true }).neq('status', 'closed'),
             supabase.from('customers').select('*', { count: 'exact', head: true }),
             supabase.from('contacts').select('*', { count: 'exact', head: true }),
             supabase.from('contacts').select('*', { count: 'exact', head: true }).is('converted_to_customer_id', null),
+            supabase.from('skus').select('*', { count: 'exact', head: true }),
+            supabase.from('templates').select('*', { count: 'exact', head: true }),
+            supabase.from('boms').select('*', { count: 'exact', head: true }),
+            supabase.from('quotes').select('*', { count: 'exact', head: true }),
+            supabase.from('quotes').select('*', { count: 'exact', head: true }).eq('status', 'draft'),
           ]);
           
           setTicketStats({ open: openTicketsResult.count || 0, total: ticketsResult.count || 0 });
           setCustomerStats({ total: customersResult.count || 0 });
           setContactStats({ total: contactsResult.count || 0, unconverted: unconvertedContactsResult.count || 0 });
+          setSkuStats({ total: skusResult.count || 0 });
+          setTemplateStats({ total: templatesResult.count || 0 });
+          setBomStats({ total: bomsResult.count || 0 });
+          setQuoteStats({ total: quotesResult.count || 0, draft: draftQuotesResult.count || 0 });
         } else if (customerData) {
           // Customer sees their tickets
           const { count: totalTickets } = await supabase
@@ -275,7 +299,7 @@ const Dashboard: React.FC = () => {
                   </CardHeader>
                   <CardContent>
                     <p className="text-muted-foreground">
-                      {t('Hantera produkter och priser', 'Manage products and prices')}
+                      {t('Produkter:', 'Products:')} <strong>{skuStats.total}</strong>
                     </p>
                   </CardContent>
                 </Card>
@@ -292,7 +316,7 @@ const Dashboard: React.FC = () => {
                   </CardHeader>
                   <CardContent>
                     <p className="text-muted-foreground">
-                      {t('Återanvändbara produktpaket', 'Reusable product bundles')}
+                      {t('Mallar:', 'Templates:')} <strong>{templateStats.total}</strong>
                     </p>
                   </CardContent>
                 </Card>
@@ -309,7 +333,7 @@ const Dashboard: React.FC = () => {
                   </CardHeader>
                   <CardContent>
                     <p className="text-muted-foreground">
-                      {t('Projektberäkningar', 'Project calculations')}
+                      {t('Materiallistor:', 'BOMs:')} <strong>{bomStats.total}</strong>
                     </p>
                   </CardContent>
                 </Card>
@@ -325,8 +349,11 @@ const Dashboard: React.FC = () => {
                     <CardTitle className="text-lg">{t('Offerter', 'Quotes')}</CardTitle>
                   </CardHeader>
                   <CardContent>
+                    <p className="text-muted-foreground mb-1">
+                      {t('Utkast:', 'Drafts:')} <strong>{quoteStats.draft}</strong>
+                    </p>
                     <p className="text-muted-foreground">
-                      {t('Skapa och skicka offerter', 'Create and send quotes')}
+                      {t('Totalt:', 'Total:')} <strong>{quoteStats.total}</strong>
                     </p>
                   </CardContent>
                 </Card>
