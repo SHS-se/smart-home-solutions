@@ -374,9 +374,9 @@ HUB-ZB-PRO,Zigbee Hub Professional,Controllers,Aqara,https://aqara.com,1250,25,`
                   <p className="text-sm text-muted-foreground mb-4">
                     {t('Dra och släpp din ZIP-fil här eller klicka för att välja', 'Drag and drop your ZIP file here or click to select')}
                   </p>
-                  <Button variant="outline" disabled={isProcessing}>
+                  <span className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium border border-border bg-card hover:bg-muted hover:border-primary/30 text-foreground h-10 px-5 py-2 cursor-pointer">
                     {isProcessing ? t('Bearbetar...', 'Processing...') : t('Välj fil', 'Choose file')}
-                  </Button>
+                  </span>
                   <p className="text-xs text-muted-foreground mt-2">{t('Maximal filstorlek: 50 MB', 'Maximum file size: 50 MB')}</p>
                   <input
                     type="file"
