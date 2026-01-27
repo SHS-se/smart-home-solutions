@@ -265,21 +265,43 @@ const SKUForm: React.FC<SKUFormProps> = ({ sku, onClose, categories }) => {
       {/* Image Upload */}
       <div className="space-y-2">
         <Label>{t('Produktbild', 'Product Image')}</Label>
-        <div 
-          className="border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:bg-muted/50 transition-colors"
-          onClick={() => document.getElementById('image-upload')?.click()}
-        >
-          <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-          <p className="text-primary text-sm">
-            {t('Klicka för att ladda upp bild', 'Click to upload image')}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {t('Filnamn måste vara', 'Filename must be')} {formData.sku || 'SKU'}.jpg
-          </p>
-          {imageFile && (
-            <p className="text-sm text-primary mt-2">{imageFile.name}</p>
-          )}
-        </div>
+        {(sku?.image_path && !imageFile) ? (
+          <div className="space-y-3">
+            <div className="border border-border rounded-lg p-4 bg-muted/30">
+              <img
+                src={`${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/sku-images/${sku.image_path}`}
+                alt={sku.name}
+                className="max-h-40 mx-auto object-contain rounded"
+              />
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => document.getElementById('image-upload')?.click()}
+              className="w-full"
+            >
+              <Upload className="h-4 w-4 mr-2" />
+              {t('Byt bild', 'Change image')}
+            </Button>
+          </div>
+        ) : (
+          <div 
+            className="border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:bg-muted/50 transition-colors"
+            onClick={() => document.getElementById('image-upload')?.click()}
+          >
+            <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+            <p className="text-primary text-sm">
+              {t('Klicka för att ladda upp bild', 'Click to upload image')}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {t('Filnamn måste vara', 'Filename must be')} {formData.sku || 'SKU'}.jpg
+            </p>
+            {imageFile && (
+              <p className="text-sm text-primary mt-2">{imageFile.name}</p>
+            )}
+          </div>
+        )}
         <input
           id="image-upload"
           type="file"
