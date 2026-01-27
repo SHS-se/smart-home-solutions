@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -35,7 +35,6 @@ interface ParsedSKU {
   errors: string[];
 }
 
-const CATEGORIES = ['Sensorer', 'Controllers', 'Reläer', 'Material', 'Tjänst'];
 const REQUIRED_COLUMNS = ['sku', 'name', 'category', 'supplier', 'supplier_url', 'cost_ex_vat', 'default_margin', 'notes'];
 
 const SKUImport: React.FC = () => {
@@ -50,6 +49,22 @@ const SKUImport: React.FC = () => {
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [fileDeleted, setFileDeleted] = useState(false);
   const [csvText, setCsvText] = useState<string>('');
+  const [categories, setCategories] = useState<string[]>([]);
+
+  // Fetch categories from the database
+  useEffect(() => {
+    const fetchCategories = async () => {
+      const { data, error } = await supabase
+        .from('sku_categories')
+        .select('name')
+        .order('sort_order');
+      
+      if (!error && data) {
+        setCategories(data.map(c => c.name));
+      }
+    };
+    fetchCategories();
+  }, []);
 
   const downloadTemplate = () => {
     const csvContent = `sku,name,category,supplier,supplier_url,cost_ex_vat,default_margin,notes
@@ -98,7 +113,7 @@ HUB-ZB-PRO,Zigbee Hub Professional,Controllers,Aqara,https://aqara.com,1250,25,`
     if (!sku.name || sku.name.length === 0) {
       errors.push(t('Produktnamn saknas', 'Product name missing'));
     }
-    if (!sku.category || !CATEGORIES.includes(sku.category)) {
+    if (!sku.category || !categories.includes(sku.category)) {
       errors.push(t('Ogiltig kategori', 'Invalid category'));
     }
     
@@ -405,7 +420,7 @@ HUB-ZB-PRO,Zigbee Hub Professional,Controllers,Aqara,https://aqara.com,1250,25,`
                 </pre>
                 <div className="mt-4 text-sm text-muted-foreground space-y-1">
                   <p><strong>{t('Observera', 'Note')}:</strong> {t('Första raden måste vara rubriker', 'First row must be headers')}</p>
-                  <p><strong>{t('Kategorier', 'Categories')}:</strong> {CATEGORIES.join(', ')}</p>
+                  <p><strong>{t('Kategorier', 'Categories')}:</strong> {categories.length > 0 ? categories.join(', ') : t('Laddar...', 'Loading...')}</p>
                 </div>
               </CardContent>
             </Card>
