@@ -29,7 +29,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Plus, Upload, Search, Pencil, Trash2, ExternalLink, ImageIcon } from 'lucide-react';
+import { Plus, Upload, Search, Pencil, Trash2, ExternalLink, ImageIcon, Settings2 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import SKUForm from '@/components/portal/skus/SKUForm';
 
@@ -46,7 +46,7 @@ interface SKU {
   image_path: string | null;
 }
 
-const CATEGORIES = ['Sensorer', 'Controllers', 'Reläer', 'Material', 'Tjänst'];
+
 
 const SKUCatalog: React.FC = () => {
   const { t } = useLanguage();
@@ -69,6 +69,20 @@ const SKUCatalog: React.FC = () => {
         .order('sku');
       if (error) throw error;
       return data as SKU[];
+    },
+    enabled: isStaff,
+  });
+
+  // Fetch categories
+  const { data: categories = [] } = useQuery({
+    queryKey: ['sku_categories'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('sku_categories')
+        .select('*')
+        .order('sort_order');
+      if (error) throw error;
+      return data;
     },
     enabled: isStaff,
   });
@@ -152,6 +166,12 @@ const SKUCatalog: React.FC = () => {
           </div>
           <div className="flex gap-2">
             <Button variant="outline" asChild>
+              <Link to="/portal/skus/categories">
+                <Settings2 className="h-4 w-4 mr-2" />
+                {t('Kategorier', 'Categories')}
+              </Link>
+            </Button>
+            <Button variant="outline" asChild>
               <Link to="/portal/skus/import">
                 <Upload className="h-4 w-4 mr-2" />
                 Bulkimport
@@ -181,8 +201,8 @@ const SKUCatalog: React.FC = () => {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">{t('Alla kategorier', 'All categories')}</SelectItem>
-              {CATEGORIES.map(cat => (
-                <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+              {categories.map(cat => (
+                <SelectItem key={cat.id} value={cat.name}>{cat.name}</SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -300,7 +320,7 @@ const SKUCatalog: React.FC = () => {
           <SKUForm 
             sku={editingSku} 
             onClose={handleDialogClose}
-            categories={CATEGORIES}
+            categories={categories.map(c => c.name)}
           />
         </DialogContent>
       </Dialog>

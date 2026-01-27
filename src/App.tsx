@@ -33,6 +33,7 @@ import ContactDetail from "./pages/portal/ContactDetail";
 // Staff Offerter & Material pages
 import SKUCatalog from "./pages/portal/skus/SKUCatalog";
 import SKUImport from "./pages/portal/skus/SKUImport";
+import CategoryManager from "./pages/portal/skus/CategoryManager";
 import TemplatesList from "./pages/portal/templates/TemplatesList";
 import TemplateDetail from "./pages/portal/templates/TemplateDetail";
 import BOMsList from "./pages/portal/boms/BOMsList";
@@ -120,6 +121,7 @@ const App = () => (
                 {/* Staff Offerter & Material */}
                 <Route path="/portal/skus" element={<SKUCatalog />} />
                 <Route path="/portal/skus/import" element={<SKUImport />} />
+                <Route path="/portal/skus/categories" element={<CategoryManager />} />
                 <Route path="/portal/templates" element={<TemplatesList />} />
                 <Route path="/portal/templates/:id" element={<TemplateDetail />} />
                 <Route path="/portal/boms" element={<BOMsList />} />
