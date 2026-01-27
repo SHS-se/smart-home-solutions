@@ -237,14 +237,14 @@ const BOMsList: React.FC = () => {
             <div className="space-y-2">
               <Label>{t('Kund', 'Customer')}</Label>
               <Select 
-                value={formData.customer_id} 
-                onValueChange={(value) => setFormData(prev => ({ ...prev, customer_id: value }))}
+                value={formData.customer_id || "none"} 
+                onValueChange={(value) => setFormData(prev => ({ ...prev, customer_id: value === "none" ? "" : value }))}
               >
                 <SelectTrigger>
                   <SelectValue placeholder={t('Välj kund (valfritt)', 'Select customer (optional)')} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">{t('Ingen kund', 'No customer')}</SelectItem>
+                  <SelectItem value="none">{t('Ingen kund', 'No customer')}</SelectItem>
                   {customers.map(c => (
                     <SelectItem key={c.id} value={c.id}>
                       {c.org_name || t('Okänd kund', 'Unknown customer')}
