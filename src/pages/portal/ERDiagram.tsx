@@ -308,18 +308,22 @@ const ERDiagram = () => {
       // Clone the SVG to avoid modifying the original
       const clonedSvg = svgElement.cloneNode(true) as SVGSVGElement;
       
-      // Inline all text styles to ensure visibility in export
-      const textElements = clonedSvg.querySelectorAll('text, tspan');
-      textElements.forEach((el) => {
-        const computed = window.getComputedStyle(el as Element);
-        (el as SVGElement).style.fill = computed.fill || '#ffffff';
-        (el as SVGElement).style.fontSize = computed.fontSize;
-        (el as SVGElement).style.fontFamily = computed.fontFamily;
+      // Force all text to be white - Mermaid uses various text elements
+      const allTextElements = clonedSvg.querySelectorAll('text, tspan, .entityLabel, .attributeBoxEven, .attributeBoxOdd');
+      allTextElements.forEach((el) => {
+        (el as SVGElement).setAttribute('fill', '#ffffff');
+        (el as SVGElement).style.fill = '#ffffff';
+      });
+      
+      // Also target any text inside foreignObject
+      const foreignTexts = clonedSvg.querySelectorAll('foreignObject *');
+      foreignTexts.forEach((el) => {
+        (el as HTMLElement).style.color = '#ffffff';
       });
       
       // Get the actual bounding box of the SVG content
       const bbox = svgElement.getBBox();
-      const padding = 20;
+      const padding = 40;
       
       // Set viewBox to crop to actual content
       clonedSvg.setAttribute('viewBox', `${bbox.x - padding} ${bbox.y - padding} ${bbox.width + padding * 2} ${bbox.height + padding * 2}`);
@@ -335,25 +339,42 @@ const ERDiagram = () => {
       bgRect.setAttribute('fill', '#1e1e2e');
       clonedSvg.insertBefore(bgRect, clonedSvg.firstChild);
       
-      // Create a temporary container
-      const container = document.createElement('div');
-      container.appendChild(clonedSvg);
-      document.body.appendChild(container);
+      // Convert SVG to canvas for reliable export
+      const svgData = new XMLSerializer().serializeToString(clonedSvg);
+      const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+      const svgUrl = URL.createObjectURL(svgBlob);
       
-      const dataUrl = await toPng(clonedSvg as unknown as HTMLElement, {
-        pixelRatio: 2,
-      });
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const scale = 2; // High resolution
+        canvas.width = (bbox.width + padding * 2) * scale;
+        canvas.height = (bbox.height + padding * 2) * scale;
+        
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.scale(scale, scale);
+          ctx.drawImage(img, 0, 0);
+          
+          const link = document.createElement('a');
+          link.download = 'database-erd.png';
+          link.href = canvas.toDataURL('image/png');
+          link.click();
+        }
+        
+        URL.revokeObjectURL(svgUrl);
+        setIsExporting(false);
+      };
       
-      // Cleanup
-      document.body.removeChild(container);
+      img.onerror = () => {
+        console.error('Failed to load SVG for export');
+        URL.revokeObjectURL(svgUrl);
+        setIsExporting(false);
+      };
       
-      const link = document.createElement('a');
-      link.download = 'database-erd.png';
-      link.href = dataUrl;
-      link.click();
+      img.src = svgUrl;
     } catch (error) {
       console.error('Failed to export diagram:', error);
-    } finally {
       setIsExporting(false);
     }
   };
