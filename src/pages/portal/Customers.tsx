@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Loader2, Building2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { naturalSort } from '@/lib/utils';
 import {
   Table,
   TableBody,
@@ -67,14 +68,17 @@ const Customers: React.FC = () => {
     }
   }, [isStaff, loading]);
 
-  const filteredCustomers = customers.filter((customer) => {
-    const searchLower = searchQuery.toLowerCase();
-    return (
-      customer.org_name?.toLowerCase().includes(searchLower) ||
-      customer.billing_email?.toLowerCase().includes(searchLower) ||
-      customer.phone?.includes(searchQuery)
-    );
-  });
+  const filteredCustomers = useMemo(() => {
+    const filtered = customers.filter((customer) => {
+      const searchLower = searchQuery.toLowerCase();
+      return (
+        customer.org_name?.toLowerCase().includes(searchLower) ||
+        customer.billing_email?.toLowerCase().includes(searchLower) ||
+        customer.phone?.includes(searchQuery)
+      );
+    });
+    return naturalSort(filtered, 'org_name');
+  }, [customers, searchQuery]);
 
   if (loading) {
     return (

@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
+import { naturalSort } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import PortalLayout from '@/components/portal/PortalLayout';
@@ -71,16 +72,15 @@ const BOMsList: React.FC = () => {
     enabled: isStaff,
   });
 
-  // Fetch customers
+  // Fetch customers with natural sorting
   const { data: customers = [] } = useQuery({
     queryKey: ['customers'],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('customers')
-        .select('id, org_name')
-        .order('org_name');
+        .select('id, org_name');
       if (error) throw error;
-      return data;
+      return naturalSort(data, 'org_name');
     },
     enabled: isStaff,
   });

@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { naturalSort } from '@/lib/utils';
 import {
   Dialog,
   DialogContent,
@@ -70,11 +71,14 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
     },
   });
 
-  // Filter SKUs
-  const filteredSkus = skus.filter(sku =>
-    sku.sku.toLowerCase().includes(search.toLowerCase()) ||
-    sku.name.toLowerCase().includes(search.toLowerCase())
-  );
+  // Filter and sort SKUs with natural sorting
+  const filteredSkus = useMemo(() => {
+    const filtered = skus.filter(sku =>
+      sku.sku.toLowerCase().includes(search.toLowerCase()) ||
+      sku.name.toLowerCase().includes(search.toLowerCase())
+    );
+    return naturalSort(filtered, 'sku');
+  }, [skus, search]);
 
   // Calculate sell price
   const calculateSellPrice = (sku: SKU) => {

@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { naturalSort } from '@/lib/utils';
 import {
   Dialog,
   DialogContent,
@@ -38,6 +39,9 @@ const TemplateSelector: React.FC<TemplateSelectorProps> = ({
     },
   });
 
+  // Apply natural sorting
+  const sortedTemplates = useMemo(() => naturalSort(templates, 'name'), [templates]);
+
   const handleSelect = (templateId: string) => {
     onSelect(templateId);
     onOpenChange(false);
@@ -56,7 +60,7 @@ const TemplateSelector: React.FC<TemplateSelectorProps> = ({
               {t('Inga mallar skapade ännu', 'No templates created yet')}
             </p>
           ) : (
-            templates.map(template => (
+            sortedTemplates.map(template => (
               <Card key={template.id} className="hover:border-primary/50 transition-colors cursor-pointer">
                 <CardContent 
                   className="p-4 flex items-center justify-between"
