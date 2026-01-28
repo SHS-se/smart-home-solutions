@@ -83,9 +83,9 @@ const SKUForm: React.FC<SKUFormProps> = ({ sku, onClose, categories }) => {
     if (isNaN(cost)) return null;
     
     const rule = marginRules.find(r => r.category === formData.category);
-    const margin = formData.default_margin 
-      ? parseFloat(formData.default_margin) 
-      : (rule?.margin_percent ?? 0);
+    // Use SKU's default_margin if set, otherwise fall back to category rule
+    const skuMargin = formData.default_margin ? parseFloat(formData.default_margin) : null;
+    const margin = skuMargin ?? rule?.margin_percent ?? 0;
     const rounding = rule?.rounding ?? 5;
     
     const rawPrice = cost * (1 + margin / 100);
