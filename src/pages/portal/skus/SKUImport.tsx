@@ -7,6 +7,9 @@ import PortalLayout from '@/components/portal/PortalLayout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
 import {
   Table,
   TableBody,
@@ -16,9 +19,15 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
-import { ArrowLeft, Upload, Download, Check, X, FileArchive, FileText } from 'lucide-react';
+import { ArrowLeft, Upload, Download, Check, X, FileArchive, FileText, AlertTriangle, Info } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import JSZip, { JSZipObject } from 'jszip';
+
+interface MarginRule {
+  category: string;
+  margin_percent: number;
+  rounding: number;
+}
 
 interface ParsedSKU {
   sku: string;
@@ -26,16 +35,34 @@ interface ParsedSKU {
   category: string;
   supplier: string;
   supplier_url: string;
-  cost_ex_vat: string;
-  default_margin: string;
+  purchase_price: number;
+  purchase_includes_vat: boolean;
+  vat_rate: number;
+  margin_override_percent: number | null;
+  rounding_override_sek: number | null;
   notes: string;
   hasImage: boolean;
   imageFile?: File;
   isValid: boolean;
   errors: string[];
+  // Preview calculated values (computed client-side for display only)
+  preview_cost_ex_vat: number;
+  preview_sell_price_ex_vat: number;
+  preview_sell_price_inc_vat: number;
+  // For upsert logic
+  existsInDb: boolean;
+  dbSkuId?: string;
+  hasChanges?: boolean;
 }
 
-const REQUIRED_COLUMNS = ['sku', 'name', 'category', 'supplier', 'supplier_url', 'cost_ex_vat', 'default_margin', 'notes'];
+// New columns for VAT-aware pricing
+const NEW_REQUIRED_COLUMNS = ['sku', 'name', 'category'];
+const NEW_OPTIONAL_COLUMNS = ['supplier', 'supplier_url', 'purchase_price', 'purchase_includes_vat', 'vat_rate', 'margin_override_percent', 'rounding_override_sek', 'notes'];
+
+// Legacy columns for backwards compatibility
+const LEGACY_COLUMNS = ['cost_ex_vat', 'default_margin'];
+
+const VALID_VAT_RATES = [0, 0.06, 0.12, 0.25];
 
 const SKUImport: React.FC = () => {
   const { t } = useLanguage();
@@ -45,32 +72,67 @@ const SKUImport: React.FC = () => {
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [parsedSkus, setParsedSkus] = useState<ParsedSKU[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [importResults, setImportResults] = useState<{ success: number; failed: number }>({ success: 0, failed: 0 });
+  const [importResults, setImportResults] = useState<{ success: number; failed: number; skipped: number }>({ success: 0, failed: 0, skipped: 0 });
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [fileDeleted, setFileDeleted] = useState(false);
   const [csvText, setCsvText] = useState<string>('');
-  const [categories, setCategories] = useState<string[]>([]);
+  const [marginRules, setMarginRules] = useState<MarginRule[]>([]);
+  const [allowUpsert, setAllowUpsert] = useState(false);
+  const [isLegacyFormat, setIsLegacyFormat] = useState(false);
 
-  // Fetch categories from the database
+  // Fetch margin rules from the database
   useEffect(() => {
-    const fetchCategories = async () => {
+    const fetchMarginRules = async () => {
       const { data, error } = await supabase
-        .from('sku_categories')
-        .select('name')
-        .order('sort_order');
+        .from('margin_rules')
+        .select('category, margin_percent, rounding');
       
       if (!error && data) {
-        setCategories(data.map(c => c.name));
+        setMarginRules(data);
       }
     };
-    fetchCategories();
+    fetchMarginRules();
   }, []);
 
+  const categories = marginRules.map(r => r.category);
+
+  // Pricing calculation (mirrors DB trigger logic)
+  const calculatePreviewPricing = useCallback((
+    purchasePrice: number,
+    purchaseIncludesVat: boolean,
+    vatRate: number,
+    category: string,
+    marginOverride: number | null,
+    roundingOverride: number | null
+  ) => {
+    const rule = marginRules.find(r => r.category === category);
+    if (!rule) {
+      return { cost_ex_vat: 0, sell_ex_vat: 0, sell_inc_vat: 0 };
+    }
+
+    const costExVat = purchaseIncludesVat 
+      ? purchasePrice / (1 + vatRate) 
+      : purchasePrice;
+    
+    const effectiveMargin = marginOverride ?? rule.margin_percent;
+    const effectiveRounding = roundingOverride ?? rule.rounding;
+    
+    const rawPrice = costExVat * (1 + effectiveMargin / 100);
+    const sellExVat = Math.ceil(rawPrice / effectiveRounding) * effectiveRounding;
+    const sellIncVat = sellExVat * (1 + vatRate);
+
+    return {
+      cost_ex_vat: costExVat,
+      sell_ex_vat: sellExVat,
+      sell_inc_vat: sellIncVat
+    };
+  }, [marginRules]);
+
   const downloadTemplate = () => {
-    const csvContent = `sku,name,category,supplier,supplier_url,cost_ex_vat,default_margin,notes
-ZBT-2,Zigbee Temperature Sensor,Sensorer,Aqara,https://aqara.com,145,35,Requires Zigbee hub
-ESP32-RELAY-4,ESP32 4-Channel Relay Module,Reläer,Shelly,,320,30,
-HUB-ZB-PRO,Zigbee Hub Professional,Controllers,Aqara,https://aqara.com,1250,25,`;
+    const csvContent = `sku,name,category,supplier,supplier_url,purchase_price,purchase_includes_vat,vat_rate,margin_override_percent,rounding_override_sek,notes
+ZBT-2,Zigbee Temperature Sensor,Sensorer,Aqara,https://aqara.com,181.25,false,0.25,,,Requires Zigbee hub
+ESP32-RELAY-4,ESP32 4-Channel Relay Module,Reläer,Shelly,,400,true,0.25,35,,
+HUB-ZB-PRO,Zigbee Hub Professional,Controllers,Aqara,https://aqara.com,1562.50,false,0.25,,10,`;
     
     const blob = new Blob([csvContent], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
@@ -104,23 +166,229 @@ HUB-ZB-PRO,Zigbee Hub Professional,Controllers,Aqara,https://aqara.com,1250,25,`
     });
   };
 
-  const validateSKU = (sku: Partial<ParsedSKU>): { isValid: boolean; errors: string[] } => {
+  // Parse boolean from various formats
+  const parseBoolean = (value: string): boolean => {
+    const v = value.toLowerCase().trim();
+    return v === 'true' || v === '1' || v === 'yes' || v === 'ja';
+  };
+
+  // Parse VAT rate from various formats
+  const parseVatRate = (value: string): number | null => {
+    const v = value.trim().toLowerCase();
+    if (!v) return 0.25; // Default
+    
+    // Handle percentage strings like "25%", "6%"
+    if (v.endsWith('%')) {
+      const num = parseFloat(v.replace('%', ''));
+      if (!isNaN(num)) {
+        return num / 100;
+      }
+    }
+    
+    // Handle decimal values
+    const num = parseFloat(v);
+    if (!isNaN(num)) {
+      // If it's > 1, assume it's a percentage
+      if (num > 1) {
+        return num / 100;
+      }
+      return num;
+    }
+    
+    return null;
+  };
+
+  // Validate URL format
+  const isValidUrl = (url: string): boolean => {
+    if (!url) return true;
+    try {
+      new URL(url);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const validateSKU = (sku: Partial<ParsedSKU>, allSkus: string[], index: number): { isValid: boolean; errors: string[] } => {
     const errors: string[] = [];
     
     if (!sku.sku || sku.sku.length === 0) {
       errors.push(t('SKU-kod saknas', 'SKU code missing'));
+    } else {
+      // Check for duplicates within the batch
+      const duplicateIndex = allSkus.findIndex((s, i) => s === sku.sku && i < index);
+      if (duplicateIndex !== -1) {
+        errors.push(t('Duplicerad SKU i import', 'Duplicate SKU in import'));
+      }
     }
+    
     if (!sku.name || sku.name.length === 0) {
       errors.push(t('Produktnamn saknas', 'Product name missing'));
     }
+    
     if (!sku.category || !categories.includes(sku.category)) {
-      errors.push(t('Ogiltig kategori', 'Invalid category'));
+      errors.push(t('Kategori finns ej i margin_rules', 'Category not in margin_rules'));
+    }
+    
+    if (sku.purchase_price !== undefined && sku.purchase_price < 0) {
+      errors.push(t('Inköpspris måste vara >= 0', 'Purchase price must be >= 0'));
+    }
+    
+    if (sku.vat_rate !== undefined && !VALID_VAT_RATES.includes(sku.vat_rate)) {
+      errors.push(t('Ogiltig momssats (tillåtna: 0, 0.06, 0.12, 0.25)', 'Invalid VAT rate (allowed: 0, 0.06, 0.12, 0.25)'));
+    }
+    
+    if (sku.rounding_override_sek !== null && sku.rounding_override_sek !== undefined && sku.rounding_override_sek < 1) {
+      errors.push(t('Avrundning måste vara >= 1', 'Rounding must be >= 1'));
+    }
+    
+    if (sku.margin_override_percent !== null && sku.margin_override_percent !== undefined && sku.margin_override_percent < 0) {
+      errors.push(t('Marginal måste vara >= 0', 'Margin must be >= 0'));
+    }
+    
+    if (sku.supplier_url && !isValidUrl(sku.supplier_url)) {
+      errors.push(t('Ogiltig URL', 'Invalid URL'));
     }
     
     return { isValid: errors.length === 0, errors };
   };
 
-  const handleCsvTextSubmit = useCallback(() => {
+  const parseSkuData = useCallback(async (
+    headers: string[],
+    dataRows: string[][],
+    imageFiles: Map<string, File>
+  ): Promise<{ skus: ParsedSKU[]; isLegacy: boolean }> => {
+    // Check if this is legacy format
+    const hasLegacyColumns = headers.includes('cost_ex_vat') || headers.includes('default_margin');
+    const hasNewColumns = headers.includes('purchase_price');
+    const isLegacy = hasLegacyColumns && !hasNewColumns;
+
+    // Check existing SKUs in database
+    const skuCodes = dataRows.map(row => {
+      const skuIndex = headers.indexOf('sku');
+      return (row[skuIndex] || '').toUpperCase();
+    }).filter(Boolean);
+
+    const { data: existingSkus } = await supabase
+      .from('skus')
+      .select('id, sku, name, category, supplier, supplier_url, purchase_price, purchase_includes_vat, vat_rate, margin_override_percent, rounding_override_sek, notes, image_path')
+      .in('sku', skuCodes);
+
+    const existingSkuMap = new Map(existingSkus?.map(s => [s.sku, s]) || []);
+
+    const allSkuCodes = dataRows.map(row => {
+      const skuIndex = headers.indexOf('sku');
+      return (row[skuIndex] || '').toUpperCase();
+    });
+
+    const parsed: ParsedSKU[] = dataRows.map((row, index) => {
+      const getData = (col: string) => {
+        const idx = headers.indexOf(col);
+        return idx >= 0 ? row[idx] || '' : '';
+      };
+
+      const skuCode = getData('sku').toUpperCase();
+      const existingData = existingSkuMap.get(skuCode);
+
+      let purchasePrice: number;
+      let purchaseIncludesVat: boolean;
+      let vatRate: number;
+      let marginOverride: number | null = null;
+      let roundingOverride: number | null = null;
+
+      if (isLegacy) {
+        // Map legacy columns to new format
+        purchasePrice = parseFloat(getData('cost_ex_vat')) || 0;
+        purchaseIncludesVat = false;
+        vatRate = 0.25;
+        const legacyMargin = getData('default_margin');
+        marginOverride = legacyMargin ? parseFloat(legacyMargin) : null;
+      } else {
+        // Parse new format
+        purchasePrice = parseFloat(getData('purchase_price')) || 0;
+        purchaseIncludesVat = parseBoolean(getData('purchase_includes_vat'));
+        const parsedVat = parseVatRate(getData('vat_rate'));
+        vatRate = parsedVat !== null ? parsedVat : 0.25;
+        
+        const marginStr = getData('margin_override_percent');
+        marginOverride = marginStr ? parseFloat(marginStr) : null;
+        if (marginOverride !== null && isNaN(marginOverride)) marginOverride = null;
+        
+        const roundingStr = getData('rounding_override_sek');
+        roundingOverride = roundingStr ? parseInt(roundingStr, 10) : null;
+        if (roundingOverride !== null && isNaN(roundingOverride)) roundingOverride = null;
+      }
+
+      const category = getData('category');
+      const imageFile = imageFiles.get(skuCode);
+
+      // Calculate preview pricing
+      const pricing = calculatePreviewPricing(
+        purchasePrice,
+        purchaseIncludesVat,
+        vatRate,
+        category,
+        marginOverride,
+        roundingOverride
+      );
+
+      const skuData: Partial<ParsedSKU> = {
+        sku: skuCode,
+        name: getData('name'),
+        category,
+        supplier: getData('supplier'),
+        supplier_url: getData('supplier_url'),
+        purchase_price: purchasePrice,
+        purchase_includes_vat: purchaseIncludesVat,
+        vat_rate: vatRate,
+        margin_override_percent: marginOverride,
+        rounding_override_sek: roundingOverride,
+        notes: getData('notes'),
+        hasImage: !!imageFile,
+        imageFile,
+        existsInDb: !!existingData,
+        dbSkuId: existingData?.id,
+        preview_cost_ex_vat: pricing.cost_ex_vat,
+        preview_sell_price_ex_vat: pricing.sell_ex_vat,
+        preview_sell_price_inc_vat: pricing.sell_inc_vat,
+      };
+
+      // Check if there are actual changes for upsert
+      if (existingData) {
+        const hasChanges = 
+          existingData.name !== skuData.name ||
+          existingData.category !== skuData.category ||
+          existingData.supplier !== (skuData.supplier || null) ||
+          existingData.supplier_url !== (skuData.supplier_url || null) ||
+          existingData.purchase_price !== skuData.purchase_price ||
+          existingData.purchase_includes_vat !== skuData.purchase_includes_vat ||
+          existingData.vat_rate !== skuData.vat_rate ||
+          existingData.margin_override_percent !== skuData.margin_override_percent ||
+          existingData.rounding_override_sek !== skuData.rounding_override_sek ||
+          existingData.notes !== (skuData.notes || null) ||
+          (imageFile && existingData.image_path !== `${skuCode}.${imageFile.name.split('.').pop()}`);
+        
+        skuData.hasChanges = hasChanges;
+      }
+
+      const { isValid, errors } = validateSKU(skuData, allSkuCodes, index);
+
+      // Add error for existing SKU if not in upsert mode
+      if (existingData && !allowUpsert) {
+        errors.push(t('SKU finns redan', 'SKU already exists'));
+      }
+
+      return {
+        ...skuData,
+        isValid: errors.length === 0,
+        errors,
+      } as ParsedSKU;
+    });
+
+    return { skus: parsed, isLegacy };
+  }, [categories, calculatePreviewPricing, t, allowUpsert]);
+
+  const handleCsvTextSubmit = useCallback(async () => {
     if (!csvText.trim()) {
       toast({
         title: t('Fel', 'Error'),
@@ -140,34 +408,18 @@ HUB-ZB-PRO,Zigbee Hub Professional,Controllers,Aqara,https://aqara.com,1250,25,`
       }
 
       const headers = rows[0].map(h => h.toLowerCase().trim());
-      const dataRows = rows.slice(1);
+      const dataRows = rows.slice(1).filter(row => row.some(cell => cell.trim()));
 
-      // Validate headers
-      const missingHeaders = REQUIRED_COLUMNS.filter(col => !headers.includes(col));
+      // Validate required headers
+      const missingHeaders = NEW_REQUIRED_COLUMNS.filter(col => !headers.includes(col));
       if (missingHeaders.length > 0) {
         throw new Error(`${t('Saknade kolumner', 'Missing columns')}: ${missingHeaders.join(', ')}`);
       }
 
-      // Parse SKUs
-      const parsed: ParsedSKU[] = dataRows.map(row => {
-        const skuData: Partial<ParsedSKU> = {};
-        headers.forEach((header, i) => {
-          (skuData as any)[header] = row[i] || '';
-        });
-
-        const skuCode = skuData.sku?.toUpperCase() || '';
-        const { isValid, errors } = validateSKU(skuData);
-
-        return {
-          ...skuData,
-          sku: skuCode,
-          hasImage: false,
-          isValid,
-          errors,
-        } as ParsedSKU;
-      });
-
+      const { skus: parsed, isLegacy } = await parseSkuData(headers, dataRows, new Map());
+      
       setParsedSkus(parsed);
+      setIsLegacyFormat(isLegacy);
       setUploadedFileName(null);
       setStep(2);
     } catch (error: any) {
@@ -179,7 +431,7 @@ HUB-ZB-PRO,Zigbee Hub Professional,Controllers,Aqara,https://aqara.com,1250,25,`
     } finally {
       setIsProcessing(false);
     }
-  }, [csvText, t]);
+  }, [csvText, t, parseSkuData]);
 
   const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -214,44 +466,26 @@ HUB-ZB-PRO,Zigbee Hub Professional,Controllers,Aqara,https://aqara.com,1250,25,`
         throw new Error(t('Ingen CSV-fil hittades i ZIP-arkivet', 'No CSV file found in ZIP archive'));
       }
 
-      const csvText = await csvFile.async('text');
-      const rows = parseCSV(csvText);
+      const csvContent = await csvFile.async('text');
+      const rows = parseCSV(csvContent);
       
       if (rows.length < 2) {
         throw new Error(t('CSV-filen är tom eller saknar data', 'CSV file is empty or missing data'));
       }
 
       const headers = rows[0].map(h => h.toLowerCase().trim());
-      const dataRows = rows.slice(1);
+      const dataRows = rows.slice(1).filter(row => row.some(cell => cell.trim()));
 
-      // Validate headers
-      const missingHeaders = REQUIRED_COLUMNS.filter(col => !headers.includes(col));
+      // Validate required headers
+      const missingHeaders = NEW_REQUIRED_COLUMNS.filter(col => !headers.includes(col));
       if (missingHeaders.length > 0) {
         throw new Error(`${t('Saknade kolumner', 'Missing columns')}: ${missingHeaders.join(', ')}`);
       }
 
-      // Parse SKUs
-      const parsed: ParsedSKU[] = dataRows.map(row => {
-        const skuData: Partial<ParsedSKU> = {};
-        headers.forEach((header, i) => {
-          (skuData as any)[header] = row[i] || '';
-        });
-
-        const skuCode = skuData.sku?.toUpperCase() || '';
-        const imageFile = imageFiles.get(skuCode);
-        const { isValid, errors } = validateSKU(skuData);
-
-        return {
-          ...skuData,
-          sku: skuCode,
-          hasImage: !!imageFile,
-          imageFile,
-          isValid,
-          errors,
-        } as ParsedSKU;
-      });
+      const { skus: parsed, isLegacy } = await parseSkuData(headers, dataRows, imageFiles);
 
       setParsedSkus(parsed);
+      setIsLegacyFormat(isLegacy);
       setStep(2);
     } catch (error: any) {
       toast({
@@ -262,15 +496,24 @@ HUB-ZB-PRO,Zigbee Hub Professional,Controllers,Aqara,https://aqara.com,1250,25,`
     } finally {
       setIsProcessing(false);
     }
-  }, [t]);
+  }, [t, parseSkuData]);
 
   const handleImport = async () => {
     setIsProcessing(true);
     let success = 0;
     let failed = 0;
+    let skipped = 0;
 
-    for (const sku of parsedSkus.filter(s => s.isValid)) {
+    const validSkus = parsedSkus.filter(s => s.isValid);
+
+    for (const sku of validSkus) {
       try {
+        // Skip if exists and no changes (upsert mode only)
+        if (sku.existsInDb && allowUpsert && !sku.hasChanges) {
+          skipped++;
+          continue;
+        }
+
         // Upload image if present
         let imagePath: string | null = null;
         if (sku.imageFile) {
@@ -285,30 +528,82 @@ HUB-ZB-PRO,Zigbee Hub Professional,Controllers,Aqara,https://aqara.com,1250,25,`
           }
         }
 
-        // Insert SKU
-        const { error } = await supabase.from('skus').upsert({
-          sku: sku.sku,
-          name: sku.name,
-          category: sku.category,
-          supplier: sku.supplier || null,
-          supplier_url: sku.supplier_url || null,
-          cost_ex_vat: sku.cost_ex_vat ? parseFloat(sku.cost_ex_vat) : null,
-          default_margin: sku.default_margin ? parseFloat(sku.default_margin) : null,
-          notes: sku.notes || null,
-          image_path: imagePath,
-        }, { onConflict: 'sku' });
-
-        if (error) throw error;
+        if (sku.existsInDb && allowUpsert) {
+          // Update existing SKU
+          const { error } = await supabase
+            .from('skus')
+            .update({
+              name: sku.name,
+              category: sku.category,
+              supplier: sku.supplier || null,
+              supplier_url: sku.supplier_url || null,
+              purchase_price: sku.purchase_price,
+              purchase_includes_vat: sku.purchase_includes_vat,
+              vat_rate: sku.vat_rate,
+              margin_override_percent: sku.margin_override_percent,
+              rounding_override_sek: sku.rounding_override_sek,
+              notes: sku.notes || null,
+              ...(imagePath ? { image_path: imagePath } : {}),
+            })
+            .eq('id', sku.dbSkuId!);
+          
+          if (error) throw error;
+        } else {
+          // Insert new SKU
+          const { error } = await supabase
+            .from('skus')
+            .insert({
+              sku: sku.sku,
+              name: sku.name,
+              category: sku.category,
+              supplier: sku.supplier || null,
+              supplier_url: sku.supplier_url || null,
+              purchase_price: sku.purchase_price,
+              purchase_includes_vat: sku.purchase_includes_vat,
+              vat_rate: sku.vat_rate,
+              margin_override_percent: sku.margin_override_percent,
+              rounding_override_sek: sku.rounding_override_sek,
+              notes: sku.notes || null,
+              ...(imagePath ? { image_path: imagePath } : {}),
+            });
+          
+          if (error) throw error;
+        }
+        
         success++;
-      } catch {
+      } catch (err) {
+        console.error('Import error for SKU:', sku.sku, err);
         failed++;
       }
     }
 
-    setImportResults({ success, failed });
+    setImportResults({ success, failed, skipped });
     setStep(3);
     setIsProcessing(false);
   };
+
+  // Re-validate when upsert toggle changes
+  useEffect(() => {
+    if (step === 2 && parsedSkus.length > 0) {
+      const revalidated = parsedSkus.map((sku, index) => {
+        const allSkuCodes = parsedSkus.map(s => s.sku);
+        const baseErrors = sku.errors.filter(e => 
+          e !== t('SKU finns redan', 'SKU already exists')
+        );
+        
+        if (sku.existsInDb && !allowUpsert) {
+          baseErrors.push(t('SKU finns redan', 'SKU already exists'));
+        }
+        
+        return {
+          ...sku,
+          errors: baseErrors,
+          isValid: baseErrors.length === 0,
+        };
+      });
+      setParsedSkus(revalidated);
+    }
+  }, [allowUpsert]);
 
   // Redirect if not staff
   if (!authLoading && !isStaff) {
@@ -318,10 +613,16 @@ HUB-ZB-PRO,Zigbee Hub Professional,Controllers,Aqara,https://aqara.com,1250,25,`
 
   const validCount = parsedSkus.filter(s => s.isValid).length;
   const invalidCount = parsedSkus.filter(s => !s.isValid).length;
+  const existingCount = parsedSkus.filter(s => s.existsInDb).length;
+  const unchangedCount = parsedSkus.filter(s => s.existsInDb && !s.hasChanges).length;
+
+  const formatPrice = (price: number) => {
+    return price.toLocaleString('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
 
   return (
     <PortalLayout>
-      <div className="space-y-6 max-w-4xl mx-auto">
+      <div className="space-y-6 max-w-6xl mx-auto">
         {/* Header */}
         <div className="flex items-center gap-4">
           <Button variant="ghost" size="icon" onClick={() => navigate('/portal/skus')}>
@@ -330,7 +631,7 @@ HUB-ZB-PRO,Zigbee Hub Professional,Controllers,Aqara,https://aqara.com,1250,25,`
           <div>
             <h1 className="text-2xl font-bold text-foreground">{t('Importera SKUs', 'Import SKUs')}</h1>
             <p className="text-muted-foreground">
-              {t('Bulkimport av produkter med bilder från ZIP-fil', 'Bulk import of products with images from ZIP file')}
+              {t('Bulkimport av produkter med momskalkylering', 'Bulk import of products with VAT calculations')}
             </p>
           </div>
         </div>
@@ -338,9 +639,9 @@ HUB-ZB-PRO,Zigbee Hub Professional,Controllers,Aqara,https://aqara.com,1250,25,`
         {/* Progress Steps */}
         <div className="flex items-center justify-center gap-8">
           {[
-            { num: 1, title: t('Ladda upp', 'Upload'), sub: 'ZIP-fil med data' },
-            { num: 2, title: t('Granska', 'Review'), sub: 'Kontrollera data' },
-            { num: 3, title: t('Slutför', 'Complete'), sub: 'Import klar' },
+            { num: 1, title: t('Ladda upp', 'Upload'), sub: 'ZIP/CSV' },
+            { num: 2, title: t('Granska', 'Review'), sub: t('Kontrollera data', 'Check data') },
+            { num: 3, title: t('Slutför', 'Complete'), sub: t('Import klar', 'Import done') },
           ].map((s, i) => (
             <React.Fragment key={s.num}>
               <div className="flex items-center gap-3">
@@ -384,9 +685,9 @@ HUB-ZB-PRO,Zigbee Hub Professional,Controllers,Aqara,https://aqara.com,1250,25,`
                 <div className="flex items-start gap-3">
                   <div className="w-6 h-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-medium">2</div>
                   <div>
-                    <p className="font-medium">{t('Ladda upp ZIP-fil', 'Upload ZIP file')}</p>
+                    <p className="font-medium">{t('Priskalkylering', 'Price calculation')}</p>
                     <p className="text-sm text-muted-foreground">
-                      {t('Systemet extraherar CSV-filen och matchar bilder baserat på SKU-namn', 'The system extracts the CSV file and matches images based on SKU name')}
+                      {t('Säljpris beräknas automatiskt baserat på inköpspris, moms och marginaler', 'Sell price is calculated automatically based on purchase price, VAT and margins')}
                     </p>
                   </div>
                 </div>
@@ -395,7 +696,7 @@ HUB-ZB-PRO,Zigbee Hub Professional,Controllers,Aqara,https://aqara.com,1250,25,`
                   <div>
                     <p className="font-medium">{t('Granska & bekräfta', 'Review & confirm')}</p>
                     <p className="text-sm text-muted-foreground">
-                      {t('Kontrollera att alla SKUs ser korrekta ut innan import', 'Verify that all SKUs look correct before import')}
+                      {t('Kontrollera förhandsvisning av priser innan import', 'Check price preview before import')}
                     </p>
                   </div>
                 </div>
@@ -413,14 +714,21 @@ HUB-ZB-PRO,Zigbee Hub Professional,Controllers,Aqara,https://aqara.com,1250,25,`
               </CardHeader>
               <CardContent>
                 <pre className="bg-muted p-4 rounded-lg text-xs overflow-x-auto">
-{`sku,name,category,supplier,supplier_url,cost_ex_vat,default_margin,notes
-ZBT-2,Zigbee Temperature Sensor,Sensorer,Aqara,https://aqara.com,145,35,Requires Zigbee hub
-ESP32-RELAY-4,ESP32 4-Channel Relay Module,Reläer,Shelly,,320,30,
-HUB-ZB-PRO,Zigbee Hub Professional,Controllers,Aqara,https://aqara.com,1250,25,`}
+{`sku,name,category,supplier,supplier_url,purchase_price,purchase_includes_vat,vat_rate,margin_override_percent,rounding_override_sek,notes
+ZBT-2,Zigbee Temperature Sensor,Sensorer,Aqara,https://aqara.com,181.25,false,0.25,,,Requires Zigbee hub
+ESP32-RELAY-4,ESP32 4-Channel Relay Module,Reläer,Shelly,,400,true,0.25,35,,
+HUB-ZB-PRO,Zigbee Hub Professional,Controllers,Aqara,https://aqara.com,1562.50,false,0.25,,10,`}
                 </pre>
-                <div className="mt-4 text-sm text-muted-foreground space-y-1">
-                  <p><strong>{t('Observera', 'Note')}:</strong> {t('Första raden måste vara rubriker', 'First row must be headers')}</p>
-                  <p><strong>{t('Kategorier', 'Categories')}:</strong> {categories.length > 0 ? categories.join(', ') : t('Laddar...', 'Loading...')}</p>
+                <div className="mt-4 text-sm text-muted-foreground space-y-2">
+                  <p><strong>{t('Obligatoriska kolumner', 'Required columns')}:</strong> sku, name, category</p>
+                  <p><strong>{t('Valfria kolumner', 'Optional columns')}:</strong> supplier, supplier_url, purchase_price, purchase_includes_vat, vat_rate, margin_override_percent, rounding_override_sek, notes</p>
+                  <div className="mt-3 space-y-1">
+                    <p><code className="bg-muted px-1 rounded">purchase_includes_vat</code>: true/false (accepterar även 1/0, yes/no)</p>
+                    <p><code className="bg-muted px-1 rounded">vat_rate</code>: 0, 0.06, 0.12, 0.25 (accepterar även 6%, 12%, 25%)</p>
+                    <p><code className="bg-muted px-1 rounded">margin_override_percent</code>: {t('Tomt = använd kategoristandard', 'Empty = use category default')}</p>
+                    <p><code className="bg-muted px-1 rounded">rounding_override_sek</code>: {t('Tomt = använd kategoristandard', 'Empty = use category default')}</p>
+                  </div>
+                  <p className="mt-3"><strong>{t('Kategorier', 'Categories')}:</strong> {categories.length > 0 ? categories.join(', ') : t('Laddar...', 'Loading...')}</p>
                 </div>
               </CardContent>
             </Card>
@@ -454,8 +762,8 @@ HUB-ZB-PRO,Zigbee Hub Professional,Controllers,Aqara,https://aqara.com,1250,25,`
               </CardHeader>
               <CardContent className="space-y-4">
                 <Textarea
-                  placeholder={`sku,name,category,supplier,supplier_url,cost_ex_vat,default_margin,notes
-ZBT-2,Zigbee Temperature Sensor,Sensorer,Aqara,https://aqara.com,145,35,Requires Zigbee hub`}
+                  placeholder={`sku,name,category,supplier,supplier_url,purchase_price,purchase_includes_vat,vat_rate,margin_override_percent,rounding_override_sek,notes
+ZBT-2,Zigbee Temperature Sensor,Sensorer,Aqara,https://aqara.com,181.25,false,0.25,,,Requires Zigbee hub`}
                   value={csvText}
                   onChange={(e) => setCsvText(e.target.value)}
                   className="font-mono text-xs min-h-[200px]"
@@ -514,8 +822,32 @@ ZBT-2,Zigbee Temperature Sensor,Sensorer,Aqara,https://aqara.com,145,35,Requires
         {/* Step 2: Review */}
         {step === 2 && (
           <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <div className="flex gap-4">
+            {/* Legacy format warning */}
+            {isLegacyFormat && (
+              <Alert>
+                <AlertTriangle className="h-4 w-4" />
+                <AlertDescription>
+                  {t(
+                    'Legacy CSV-format upptäckt. Kolumnen cost_ex_vat har tolkats som purchase_price ex moms (purchase_includes_vat = false, vat_rate = 0.25).',
+                    'Legacy CSV format detected. The cost_ex_vat column has been interpreted as purchase_price ex VAT (purchase_includes_vat = false, vat_rate = 0.25).'
+                  )}
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {/* Preview info */}
+            <Alert>
+              <Info className="h-4 w-4" />
+              <AlertDescription>
+                {t(
+                  'Förhandsgranskning av priser beräknas lokalt. Slutgiltiga priser beräknas av databasen vid import.',
+                  'Price preview is calculated locally. Final prices are calculated by the database on import.'
+                )}
+              </AlertDescription>
+            </Alert>
+
+            <div className="flex items-center justify-between flex-wrap gap-4">
+              <div className="flex gap-4 flex-wrap">
                 <Badge variant="secondary" className="text-sm">
                   {validCount} {t('giltiga', 'valid')}
                 </Badge>
@@ -524,60 +856,142 @@ ZBT-2,Zigbee Temperature Sensor,Sensorer,Aqara,https://aqara.com,145,35,Requires
                     {invalidCount} {t('ogiltiga', 'invalid')}
                   </Badge>
                 )}
+                {existingCount > 0 && (
+                  <Badge variant="outline" className="text-sm">
+                    {existingCount} {t('finns redan', 'already exist')}
+                  </Badge>
+                )}
+                {allowUpsert && unchangedCount > 0 && (
+                  <Badge variant="secondary" className="text-sm bg-muted">
+                    {unchangedCount} {t('oförändrade (hoppas över)', 'unchanged (will skip)')}
+                  </Badge>
+                )}
               </div>
-              <div className="flex gap-2">
-                <Button variant="outline" onClick={() => { setStep(1); setCsvText(''); }}>
-                  {t('Tillbaka', 'Back')}
-                </Button>
-                <Button onClick={handleImport} disabled={validCount === 0 || isProcessing}>
-                  {isProcessing ? t('Importerar...', 'Importing...') : t('Importera', 'Import')} ({validCount})
-                </Button>
+              <div className="flex gap-4 items-center">
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    id="allow-upsert"
+                    checked={allowUpsert}
+                    onCheckedChange={setAllowUpsert}
+                  />
+                  <Label htmlFor="allow-upsert" className="text-sm">
+                    {t('Tillåt uppdateringar (upsert)', 'Allow updates (upsert)')}
+                  </Label>
+                </div>
               </div>
             </div>
 
-            <Card>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>SKU</TableHead>
-                    <TableHead>{t('Namn', 'Name')}</TableHead>
-                    <TableHead>{t('Kategori', 'Category')}</TableHead>
-                    <TableHead>{t('Kostnad', 'Cost')}</TableHead>
-                    <TableHead>{t('Bild', 'Image')}</TableHead>
-                    <TableHead>{t('Status', 'Status')}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {parsedSkus.map((sku, i) => (
-                    <TableRow key={i} className={!sku.isValid ? 'bg-destructive/10' : ''}>
-                      <TableCell className="font-mono">{sku.sku}</TableCell>
-                      <TableCell>{sku.name}</TableCell>
-                      <TableCell>
-                        <Badge variant="secondary">{sku.category}</Badge>
-                      </TableCell>
-                      <TableCell>{sku.cost_ex_vat ? `${sku.cost_ex_vat} kr` : '—'}</TableCell>
-                      <TableCell>
-                        {sku.hasImage ? (
-                          <Check className="h-4 w-4 text-primary" />
-                        ) : (
-                          <X className="h-4 w-4 text-muted-foreground" />
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {sku.isValid ? (
-                          <Badge variant="secondary" className="bg-primary/10 text-primary">
-                            {t('Redo', 'Ready')}
-                          </Badge>
-                        ) : (
-                          <Badge variant="destructive">
-                            {sku.errors.join(', ')}
-                          </Badge>
-                        )}
-                      </TableCell>
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" onClick={() => { setStep(1); setCsvText(''); setParsedSkus([]); setIsLegacyFormat(false); }}>
+                {t('Tillbaka', 'Back')}
+              </Button>
+              <Button onClick={handleImport} disabled={validCount === 0 || isProcessing}>
+                {isProcessing ? t('Importerar...', 'Importing...') : t('Importera', 'Import')} ({validCount})
+              </Button>
+            </div>
+
+            <Card className="overflow-hidden">
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="min-w-[100px]">SKU</TableHead>
+                      <TableHead className="min-w-[150px]">{t('Namn', 'Name')}</TableHead>
+                      <TableHead>{t('Kategori', 'Category')}</TableHead>
+                      <TableHead className="text-right">{t('Inköpspris', 'Purchase')}</TableHead>
+                      <TableHead className="text-center">{t('Inkl moms', 'Inc VAT')}</TableHead>
+                      <TableHead className="text-center">{t('Momssats', 'VAT rate')}</TableHead>
+                      <TableHead className="text-right">{t('Marginal', 'Margin')}</TableHead>
+                      <TableHead className="text-right">{t('Avrundning', 'Rounding')}</TableHead>
+                      <TableHead className="text-center">{t('Bild', 'Image')}</TableHead>
+                      <TableHead className="border-l border-border text-right text-muted-foreground text-xs">
+                        {t('Kostnad ex moms', 'Cost ex VAT')}*
+                      </TableHead>
+                      <TableHead className="text-right text-muted-foreground text-xs">
+                        {t('Säljpris ex', 'Sell ex')}*
+                      </TableHead>
+                      <TableHead className="text-right text-muted-foreground text-xs">
+                        {t('Säljpris inkl', 'Sell inc')}*
+                      </TableHead>
+                      <TableHead>{t('Status', 'Status')}</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {parsedSkus.map((sku, i) => (
+                      <TableRow key={i} className={!sku.isValid ? 'bg-destructive/10' : sku.existsInDb ? 'bg-muted/30' : ''}>
+                        <TableCell className="font-mono text-xs">{sku.sku}</TableCell>
+                        <TableCell className="text-sm">{sku.name}</TableCell>
+                        <TableCell>
+                          <Badge variant="secondary" className="text-xs">{sku.category}</Badge>
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-sm">
+                          {formatPrice(sku.purchase_price)} kr
+                        </TableCell>
+                        <TableCell className="text-center">
+                          {sku.purchase_includes_vat ? (
+                            <Check className="h-4 w-4 text-primary mx-auto" />
+                          ) : (
+                            <X className="h-4 w-4 text-muted-foreground mx-auto" />
+                          )}
+                        </TableCell>
+                        <TableCell className="text-center text-sm">
+                          {(sku.vat_rate * 100).toFixed(0)}%
+                        </TableCell>
+                        <TableCell className="text-right text-sm">
+                          {sku.margin_override_percent !== null ? `${sku.margin_override_percent}%` : '—'}
+                        </TableCell>
+                        <TableCell className="text-right text-sm">
+                          {sku.rounding_override_sek !== null ? `${sku.rounding_override_sek} kr` : '—'}
+                        </TableCell>
+                        <TableCell className="text-center">
+                          {sku.hasImage ? (
+                            <Check className="h-4 w-4 text-primary mx-auto" />
+                          ) : (
+                            <X className="h-4 w-4 text-muted-foreground mx-auto" />
+                          )}
+                        </TableCell>
+                        <TableCell className="border-l border-border text-right font-mono text-xs text-muted-foreground">
+                          {formatPrice(sku.preview_cost_ex_vat)} kr
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs text-muted-foreground">
+                          {formatPrice(sku.preview_sell_price_ex_vat)} kr
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs text-muted-foreground">
+                          {formatPrice(sku.preview_sell_price_inc_vat)} kr
+                        </TableCell>
+                        <TableCell>
+                          {sku.isValid ? (
+                            sku.existsInDb ? (
+                              sku.hasChanges ? (
+                                <Badge variant="outline" className="text-xs">
+                                  {t('Uppdateras', 'Update')}
+                                </Badge>
+                              ) : (
+                                <Badge variant="secondary" className="bg-muted text-muted-foreground text-xs">
+                                  {t('Hoppa över', 'Skip')}
+                                </Badge>
+                              )
+                            ) : (
+                              <Badge variant="secondary" className="bg-primary/10 text-primary text-xs">
+                                {t('Ny', 'New')}
+                              </Badge>
+                            )
+                          ) : (
+                            <Badge variant="destructive" className="text-xs">
+                              {sku.errors.join(', ')}
+                            </Badge>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+              <div className="p-3 border-t border-border bg-muted/30">
+                <p className="text-xs text-muted-foreground">
+                  * {t('Förhandsgranskning (beräknas i databasen vid import)', 'Preview (calculated by database on import)')}
+                </p>
+              </div>
             </Card>
           </div>
         )}
@@ -591,6 +1005,7 @@ ZBT-2,Zigbee Temperature Sensor,Sensorer,Aqara,https://aqara.com,145,35,Requires
             <h2 className="text-xl font-bold mb-2">{t('Import slutförd!', 'Import complete!')}</h2>
             <p className="text-muted-foreground mb-4">
               {importResults.success} {t('SKUs importerade', 'SKUs imported')}
+              {importResults.skipped > 0 && `, ${importResults.skipped} ${t('oförändrade (hoppades över)', 'unchanged (skipped)')}`}
               {importResults.failed > 0 && `, ${importResults.failed} ${t('misslyckades', 'failed')}`}
             </p>
             
