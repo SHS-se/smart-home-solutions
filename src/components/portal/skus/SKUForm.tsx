@@ -256,7 +256,7 @@ const SKUForm: React.FC<SKUFormProps> = ({ sku, onClose, categories }) => {
               step="0.1"
               value={formData.default_margin}
               onChange={(e) => setFormData(prev => ({ ...prev, default_margin: e.target.value }))}
-              placeholder="35"
+              placeholder={String(marginRules.find(r => r.category === formData.category)?.margin_percent ?? '')}
               className="pr-8"
             />
             <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">
