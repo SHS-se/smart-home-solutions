@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { naturalSort } from '@/lib/utils';
 import PortalLayout from '@/components/portal/PortalLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -123,14 +124,17 @@ const SKUCatalog: React.FC = () => {
     return Math.round(rawPrice / rounding) * rounding;
   };
 
-  // Filter SKUs
-  const filteredSkus = skus.filter(sku => {
-    const matchesSearch = 
-      sku.sku.toLowerCase().includes(search.toLowerCase()) ||
-      sku.name.toLowerCase().includes(search.toLowerCase());
-    const matchesCategory = categoryFilter === 'all' || sku.category === categoryFilter;
-    return matchesSearch && matchesCategory;
-  });
+  // Filter and sort SKUs with natural sorting
+  const filteredSkus = useMemo(() => {
+    const filtered = skus.filter(sku => {
+      const matchesSearch = 
+        sku.sku.toLowerCase().includes(search.toLowerCase()) ||
+        sku.name.toLowerCase().includes(search.toLowerCase());
+      const matchesCategory = categoryFilter === 'all' || sku.category === categoryFilter;
+      return matchesSearch && matchesCategory;
+    });
+    return naturalSort(filtered, 'sku');
+  }, [skus, search, categoryFilter]);
 
   const handleEdit = (sku: SKU) => {
     setEditingSku(sku);

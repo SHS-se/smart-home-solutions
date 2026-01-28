@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
+import { naturalSort } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import PortalLayout from '@/components/portal/PortalLayout';
@@ -85,7 +86,8 @@ const TemplatesList: React.FC = () => {
         });
       }
 
-      return templatesWithData;
+      // Apply natural sorting
+      return naturalSort(templatesWithData, 'name');
     },
     enabled: isStaff,
   });
