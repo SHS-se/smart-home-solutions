@@ -300,12 +300,52 @@ const ERDiagram = () => {
   const handleExport = async () => {
     if (!diagramRef.current) return;
     
+    const svgElement = diagramRef.current.querySelector('svg');
+    if (!svgElement) return;
+    
     setIsExporting(true);
     try {
-      const dataUrl = await toPng(diagramRef.current, {
-        backgroundColor: '#1a1a2e',
+      // Clone the SVG to avoid modifying the original
+      const clonedSvg = svgElement.cloneNode(true) as SVGSVGElement;
+      
+      // Inline all text styles to ensure visibility in export
+      const textElements = clonedSvg.querySelectorAll('text, tspan');
+      textElements.forEach((el) => {
+        const computed = window.getComputedStyle(el as Element);
+        (el as SVGElement).style.fill = computed.fill || '#ffffff';
+        (el as SVGElement).style.fontSize = computed.fontSize;
+        (el as SVGElement).style.fontFamily = computed.fontFamily;
+      });
+      
+      // Get the actual bounding box of the SVG content
+      const bbox = svgElement.getBBox();
+      const padding = 20;
+      
+      // Set viewBox to crop to actual content
+      clonedSvg.setAttribute('viewBox', `${bbox.x - padding} ${bbox.y - padding} ${bbox.width + padding * 2} ${bbox.height + padding * 2}`);
+      clonedSvg.setAttribute('width', String(bbox.width + padding * 2));
+      clonedSvg.setAttribute('height', String(bbox.height + padding * 2));
+      
+      // Add background rect
+      const bgRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      bgRect.setAttribute('x', String(bbox.x - padding));
+      bgRect.setAttribute('y', String(bbox.y - padding));
+      bgRect.setAttribute('width', String(bbox.width + padding * 2));
+      bgRect.setAttribute('height', String(bbox.height + padding * 2));
+      bgRect.setAttribute('fill', '#1e1e2e');
+      clonedSvg.insertBefore(bgRect, clonedSvg.firstChild);
+      
+      // Create a temporary container
+      const container = document.createElement('div');
+      container.appendChild(clonedSvg);
+      document.body.appendChild(container);
+      
+      const dataUrl = await toPng(clonedSvg as unknown as HTMLElement, {
         pixelRatio: 2,
       });
+      
+      // Cleanup
+      document.body.removeChild(container);
       
       const link = document.createElement('a');
       link.download = 'database-erd.png';
