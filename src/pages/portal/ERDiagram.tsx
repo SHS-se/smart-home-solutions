@@ -7,7 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { ZoomIn, ZoomOut, RotateCcw, Download, ArrowRightLeft, ArrowDownUp } from 'lucide-react';
 
-const erdDiagram = `erDiagram
+const getErdDiagram = (direction: 'TB' | 'LR') => `erDiagram
+    direction ${direction}
     %% Staff & Auth
     staff_users {
         uuid user_id PK
@@ -240,7 +241,6 @@ const ERDiagram = () => {
       securityLevel: 'loose',
       er: {
         useMaxWidth: false,
-        layoutDirection: layoutDirection,
       },
     });
 
@@ -248,9 +248,8 @@ const ERDiagram = () => {
       if (diagramRef.current) {
         diagramRef.current.innerHTML = '';
         try {
-          // Use a unique ID to force re-render when layout changes
           const diagramId = `erd-diagram-${layoutDirection}-${Date.now()}`;
-          const { svg } = await mermaid.render(diagramId, erdDiagram);
+          const { svg } = await mermaid.render(diagramId, getErdDiagram(layoutDirection));
           diagramRef.current.innerHTML = svg;
         } catch (error) {
           console.error('Failed to render Mermaid diagram:', error);
