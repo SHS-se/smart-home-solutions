@@ -737,36 +737,6 @@ ZBT-2,Zigbee Temperature Sensor,Sensorer,Aqara,https://aqara.com,181.25,false,0.
               </CardContent>
             </Card>
 
-            {/* CSV Format */}
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle className="text-lg">CSV-filformat</CardTitle>
-                <Button variant="outline" size="sm" onClick={downloadTemplate}>
-                  <Download className="h-4 w-4 mr-2" />
-                  {t('Ladda ner mall', 'Download template')}
-                </Button>
-              </CardHeader>
-              <CardContent>
-                <pre className="bg-muted p-4 rounded-lg text-xs overflow-x-auto">
-{`sku,name,category,supplier,supplier_url,purchase_price,purchase_includes_vat,vat_rate,margin_override_percent,rounding_override_sek,notes
-ZBT-2,Zigbee Temperature Sensor,Sensorer,Aqara,https://aqara.com,181.25,false,0.25,,,Requires Zigbee hub
-ESP32-RELAY-4,ESP32 4-Channel Relay Module,Reläer,Shelly,,400,true,0.25,35,,
-HUB-ZB-PRO,Zigbee Hub Professional,Controllers,Aqara,https://aqara.com,1562.50,false,0.25,,10,`}
-                </pre>
-                <div className="mt-4 text-sm text-muted-foreground space-y-2">
-                  <p><strong>{t('Obligatoriska kolumner', 'Required columns')}:</strong> sku, name, category</p>
-                  <p><strong>{t('Valfria kolumner', 'Optional columns')}:</strong> supplier, supplier_url, purchase_price, purchase_includes_vat, vat_rate, margin_override_percent, rounding_override_sek, notes</p>
-                  <div className="mt-3 space-y-1">
-                    <p><code className="bg-muted px-1 rounded">purchase_includes_vat</code>: true/false (accepterar även 1/0, yes/no)</p>
-                    <p><code className="bg-muted px-1 rounded">vat_rate</code>: 0, 0.06, 0.12, 0.25 (accepterar även 6%, 12%, 25%)</p>
-                    <p><code className="bg-muted px-1 rounded">margin_override_percent</code>: {t('Tomt = använd kategoristandard', 'Empty = use category default')}</p>
-                    <p><code className="bg-muted px-1 rounded">rounding_override_sek</code>: {t('Tomt = använd kategoristandard', 'Empty = use category default')}</p>
-                  </div>
-                  <p className="mt-3"><strong>{t('Kategorier', 'Categories')}:</strong> {categories.length > 0 ? categories.join(', ') : t('Laddar...', 'Loading...')}</p>
-                </div>
-              </CardContent>
-            </Card>
-
             <div className="flex items-center gap-4">
               <div className="flex-1 h-px bg-border" />
               <span className="text-sm text-muted-foreground">{t('eller', 'or')}</span>
