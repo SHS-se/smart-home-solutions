@@ -6,6 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Switch } from '@/components/ui/switch';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Select,
   SelectContent,
@@ -13,8 +15,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Upload } from 'lucide-react';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { Upload, History, Info } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
+import { format } from 'date-fns';
+import { sv, enUS } from 'date-fns/locale';
 
 interface SKU {
   id: string;
@@ -23,10 +35,22 @@ interface SKU {
   category: string;
   supplier: string | null;
   supplier_url: string | null;
-  cost_ex_vat: number | null;
-  default_margin: number | null;
   notes: string | null;
   image_path: string | null;
+  // VAT-aware pricing fields
+  purchase_price: number;
+  purchase_includes_vat: boolean;
+  vat_rate: number;
+  cost_ex_vat_computed: number | null;
+  margin_override_percent: number | null;
+  rounding_override_sek: number | null;
+  effective_margin_percent: number | null;
+  effective_rounding_sek: number | null;
+  sell_price_ex_vat: number | null;
+  sell_price_inc_vat: number | null;
+  // Legacy field (kept for compatibility)
+  cost_ex_vat: number | null;
+  default_margin: number | null;
 }
 
 interface SKUFormProps {
@@ -35,8 +59,17 @@ interface SKUFormProps {
   categories: string[];
 }
 
+const VAT_RATE_OPTIONS = [
+  { value: '0', label: '0%' },
+  { value: '0.06', label: '6%' },
+  { value: '0.12', label: '12%' },
+  { value: '0.25', label: '25%' },
+];
+
+const ROUNDING_OPTIONS = [1, 5, 10, 50, 100];
+
 const SKUForm: React.FC<SKUFormProps> = ({ sku, onClose, categories }) => {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const queryClient = useQueryClient();
   
   const [formData, setFormData] = useState({
@@ -45,14 +78,18 @@ const SKUForm: React.FC<SKUFormProps> = ({ sku, onClose, categories }) => {
     category: '',
     supplier: '',
     supplier_url: '',
-    cost_ex_vat: '',
-    default_margin: '',
     notes: '',
+    // VAT-aware pricing
+    purchase_price: '',
+    purchase_includes_vat: false,
+    vat_rate: '0.25',
+    margin_override_percent: '',
+    rounding_override_sek: '',
   });
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Fetch margin rules for auto-calculating sell price
+  // Fetch margin rules for placeholder values
   const { data: marginRules = [] } = useQuery({
     queryKey: ['margin_rules'],
     queryFn: async () => {
@@ -60,6 +97,22 @@ const SKUForm: React.FC<SKUFormProps> = ({ sku, onClose, categories }) => {
       if (error) throw error;
       return data;
     },
+  });
+
+  // Fetch price history for this SKU
+  const { data: priceHistory = [] } = useQuery({
+    queryKey: ['sku_price_history', sku?.id],
+    queryFn: async () => {
+      if (!sku?.id) return [];
+      const { data, error } = await supabase
+        .from('sku_price_history')
+        .select('*')
+        .eq('sku_id', sku.id)
+        .order('changed_at', { ascending: false });
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!sku?.id,
   });
 
   useEffect(() => {
@@ -70,30 +123,64 @@ const SKUForm: React.FC<SKUFormProps> = ({ sku, onClose, categories }) => {
         category: sku.category,
         supplier: sku.supplier || '',
         supplier_url: sku.supplier_url || '',
-        cost_ex_vat: sku.cost_ex_vat?.toString() || '',
-        default_margin: sku.default_margin?.toString() || '',
         notes: sku.notes || '',
+        // VAT-aware pricing
+        purchase_price: sku.purchase_price?.toString() || '',
+        purchase_includes_vat: sku.purchase_includes_vat || false,
+        vat_rate: sku.vat_rate?.toString() || '0.25',
+        margin_override_percent: sku.margin_override_percent?.toString() || '',
+        rounding_override_sek: sku.rounding_override_sek?.toString() || '',
       });
     }
   }, [sku]);
 
-  // Calculate sell price for display
-  const calculateSellPrice = () => {
-    const cost = parseFloat(formData.cost_ex_vat);
-    if (isNaN(cost)) return null;
+  // Get category rule for placeholders
+  const categoryRule = marginRules.find(r => r.category === formData.category);
+
+  // Calculate preview prices (client-side preview, actual calculation happens in DB trigger)
+  const calculatePreview = () => {
+    const purchasePrice = parseFloat(formData.purchase_price) || 0;
+    const vatRate = parseFloat(formData.vat_rate) || 0.25;
+    const includesVat = formData.purchase_includes_vat;
     
-    const rule = marginRules.find(r => r.category === formData.category);
-    // Use SKU's default_margin if set, otherwise fall back to category rule
-    const skuMargin = formData.default_margin ? parseFloat(formData.default_margin) : null;
-    const margin = skuMargin ?? rule?.margin_percent ?? 0;
-    const rounding = rule?.rounding ?? 5;
+    // Compute cost ex VAT
+    const costExVat = includesVat ? purchasePrice / (1 + vatRate) : purchasePrice;
     
-    const rawPrice = cost * (1 + margin / 100);
-    return Math.round(rawPrice / rounding) * rounding;
+    // Get effective margin and rounding
+    const marginOverride = formData.margin_override_percent ? parseFloat(formData.margin_override_percent) : null;
+    const roundingOverride = formData.rounding_override_sek ? parseInt(formData.rounding_override_sek) : null;
+    const effectiveMargin = marginOverride ?? categoryRule?.margin_percent ?? 0;
+    const effectiveRounding = roundingOverride ?? categoryRule?.rounding ?? 5;
+    
+    // Calculate sell prices with CEILING rounding
+    const rawPrice = costExVat * (1 + effectiveMargin / 100);
+    const sellPriceExVat = Math.ceil(rawPrice / effectiveRounding) * effectiveRounding;
+    const sellPriceIncVat = sellPriceExVat * (1 + vatRate);
+    
+    return {
+      costExVat: costExVat > 0 ? costExVat : null,
+      effectiveMargin,
+      effectiveRounding,
+      sellPriceExVat: costExVat > 0 ? sellPriceExVat : null,
+      sellPriceIncVat: costExVat > 0 ? sellPriceIncVat : null,
+    };
   };
+
+  const preview = calculatePreview();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Validate category exists in margin_rules
+    if (!marginRules.find(r => r.category === formData.category)) {
+      toast({
+        title: t('Ogiltig kategori', 'Invalid category'),
+        description: t('Kategorin måste finnas i marginalreglerna', 'Category must exist in margin rules'),
+        variant: 'destructive',
+      });
+      return;
+    }
+    
     setIsSubmitting(true);
 
     try {
@@ -116,10 +203,17 @@ const SKUForm: React.FC<SKUFormProps> = ({ sku, onClose, categories }) => {
         category: formData.category,
         supplier: formData.supplier || null,
         supplier_url: formData.supplier_url || null,
-        cost_ex_vat: formData.cost_ex_vat ? parseFloat(formData.cost_ex_vat) : null,
-        default_margin: formData.default_margin ? parseFloat(formData.default_margin) : null,
         notes: formData.notes || null,
         image_path: imagePath,
+        // VAT-aware pricing fields
+        purchase_price: formData.purchase_price ? parseFloat(formData.purchase_price) : 0,
+        purchase_includes_vat: formData.purchase_includes_vat,
+        vat_rate: parseFloat(formData.vat_rate),
+        margin_override_percent: formData.margin_override_percent ? parseFloat(formData.margin_override_percent) : null,
+        rounding_override_sek: formData.rounding_override_sek ? parseInt(formData.rounding_override_sek) : null,
+        // Legacy field for backwards compatibility
+        cost_ex_vat: preview.costExVat,
+        default_margin: formData.margin_override_percent ? parseFloat(formData.margin_override_percent) : null,
       };
 
       if (sku) {
@@ -136,6 +230,7 @@ const SKUForm: React.FC<SKUFormProps> = ({ sku, onClose, categories }) => {
       }
 
       queryClient.invalidateQueries({ queryKey: ['skus'] });
+      queryClient.invalidateQueries({ queryKey: ['sku_price_history'] });
       onClose();
     } catch (error: any) {
       toast({ 
@@ -148,213 +243,349 @@ const SKUForm: React.FC<SKUFormProps> = ({ sku, onClose, categories }) => {
     }
   };
 
-  const sellPrice = calculateSellPrice();
+  const formatPrice = (value: number | null) => {
+    if (value === null) return '—';
+    return value.toLocaleString('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      {/* SKU Code */}
-      <div className="space-y-2">
-        <Label htmlFor="sku">
-          SKU <span className="text-destructive">*</span>
-        </Label>
-        <Input
-          id="sku"
-          value={formData.sku}
-          onChange={(e) => setFormData(prev => ({ ...prev, sku: e.target.value.toUpperCase() }))}
-          placeholder="ex. ZBT-2"
-          required
-        />
-        <p className="text-xs text-muted-foreground">
-          {t('Unik produktkod. Används även som filnamn för bild (ex. ZBT-2.jpg)', 
-             'Unique product code. Also used as image filename (e.g. ZBT-2.jpg)')}
-        </p>
-      </div>
+    <Tabs defaultValue="details" className="w-full">
+      <TabsList className="grid w-full grid-cols-2">
+        <TabsTrigger value="details">{t('Detaljer', 'Details')}</TabsTrigger>
+        <TabsTrigger value="history" disabled={!sku}>
+          <History className="h-4 w-4 mr-2" />
+          {t('Pris-historik', 'Price History')}
+        </TabsTrigger>
+      </TabsList>
 
-      {/* Product Name */}
-      <div className="space-y-2">
-        <Label htmlFor="name">
-          {t('Produktnamn', 'Product Name')} <span className="text-destructive">*</span>
-        </Label>
-        <Input
-          id="name"
-          value={formData.name}
-          onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-          placeholder="ex. Zigbee Temperature Sensor"
-          required
-        />
-      </div>
-
-      {/* Category */}
-      <div className="space-y-2">
-        <Label>
-          {t('Kategori', 'Category')} <span className="text-destructive">*</span>
-        </Label>
-        <Select 
-          value={formData.category} 
-          onValueChange={(value) => setFormData(prev => ({ ...prev, category: value }))}
-          required
-        >
-          <SelectTrigger>
-            <SelectValue placeholder={t('Välj kategori', 'Select category')} />
-          </SelectTrigger>
-          <SelectContent>
-            {categories.map(cat => (
-              <SelectItem key={cat} value={cat}>{cat}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
-      {/* Supplier */}
-      <div className="grid grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <Label htmlFor="supplier">{t('Leverantör', 'Supplier')}</Label>
-          <Input
-            id="supplier"
-            value={formData.supplier}
-            onChange={(e) => setFormData(prev => ({ ...prev, supplier: e.target.value }))}
-            placeholder="ex. Aqara"
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="supplier_url">{t('Leverantör URL', 'Supplier URL')}</Label>
-          <Input
-            id="supplier_url"
-            type="url"
-            value={formData.supplier_url}
-            onChange={(e) => setFormData(prev => ({ ...prev, supplier_url: e.target.value }))}
-            placeholder="https://..."
-          />
-        </div>
-      </div>
-
-      {/* Pricing */}
-      <div className="grid grid-cols-3 gap-4">
-        <div className="space-y-2">
-          <Label htmlFor="cost_ex_vat">{t('Kostnad ex moms', 'Cost ex VAT')}</Label>
-          <div className="relative">
+      <TabsContent value="details">
+        <form onSubmit={handleSubmit} className="space-y-4 mt-4">
+          {/* SKU Code */}
+          <div className="space-y-2">
+            <Label htmlFor="sku">
+              SKU <span className="text-destructive">*</span>
+            </Label>
             <Input
-              id="cost_ex_vat"
-              type="number"
-              step="0.01"
-              value={formData.cost_ex_vat}
-              onChange={(e) => setFormData(prev => ({ ...prev, cost_ex_vat: e.target.value }))}
-              placeholder="145"
-              className="pr-10"
+              id="sku"
+              value={formData.sku}
+              onChange={(e) => setFormData(prev => ({ ...prev, sku: e.target.value.toUpperCase() }))}
+              placeholder="ex. ZBT-2"
+              required
             />
-            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">
-              kr
-            </span>
+            <p className="text-xs text-muted-foreground">
+              {t('Unik produktkod. Används även som filnamn för bild (ex. ZBT-2.jpg)', 
+                 'Unique product code. Also used as image filename (e.g. ZBT-2.jpg)')}
+            </p>
           </div>
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="default_margin">{t('Standard marginal', 'Default margin')}</Label>
-          <div className="relative">
-            <Input
-              id="default_margin"
-              type="number"
-              step="0.1"
-              value={formData.default_margin}
-              onChange={(e) => setFormData(prev => ({ ...prev, default_margin: e.target.value }))}
-              placeholder={String(marginRules.find(r => r.category === formData.category)?.margin_percent ?? '')}
-              className="pr-8"
-            />
-            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">
-              %
-            </span>
-          </div>
-        </div>
-        <div className="space-y-2">
-          <Label>{t('Säljpris', 'Sell Price')}</Label>
-          <div className="relative">
-            <Input
-              value={sellPrice ?? '—'}
-              readOnly
-              className="bg-muted pr-10"
-            />
-            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">
-              kr
-            </span>
-          </div>
-        </div>
-      </div>
 
-      {/* Image Upload */}
-      <div className="space-y-2">
-        <Label>{t('Produktbild', 'Product Image')}</Label>
-        {(sku?.image_path && !imageFile) ? (
-          <div className="space-y-3">
-            <div className="border border-border rounded-lg p-4 bg-muted/30">
-              <img
-                src={`${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/sku-images/${sku.image_path}`}
-                alt={sku.name}
-                className="max-h-40 mx-auto object-contain rounded"
+          {/* Product Name */}
+          <div className="space-y-2">
+            <Label htmlFor="name">
+              {t('Produktnamn', 'Product Name')} <span className="text-destructive">*</span>
+            </Label>
+            <Input
+              id="name"
+              value={formData.name}
+              onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+              placeholder="ex. Zigbee Temperature Sensor"
+              required
+            />
+          </div>
+
+          {/* Category */}
+          <div className="space-y-2">
+            <Label>
+              {t('Kategori', 'Category')} <span className="text-destructive">*</span>
+            </Label>
+            <Select 
+              value={formData.category} 
+              onValueChange={(value) => setFormData(prev => ({ ...prev, category: value }))}
+              required
+            >
+              <SelectTrigger>
+                <SelectValue placeholder={t('Välj kategori', 'Select category')} />
+              </SelectTrigger>
+              <SelectContent>
+                {categories.map(cat => (
+                  <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Supplier */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="supplier">{t('Leverantör', 'Supplier')}</Label>
+              <Input
+                id="supplier"
+                value={formData.supplier}
+                onChange={(e) => setFormData(prev => ({ ...prev, supplier: e.target.value }))}
+                placeholder="ex. Aqara"
               />
             </div>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => document.getElementById('image-upload')?.click()}
-              className="w-full"
-            >
-              <Upload className="h-4 w-4 mr-2" />
-              {t('Byt bild', 'Change image')}
+            <div className="space-y-2">
+              <Label htmlFor="supplier_url">{t('Leverantör URL', 'Supplier URL')}</Label>
+              <Input
+                id="supplier_url"
+                type="url"
+                value={formData.supplier_url}
+                onChange={(e) => setFormData(prev => ({ ...prev, supplier_url: e.target.value }))}
+                placeholder="https://..."
+              />
+            </div>
+          </div>
+
+          {/* VAT-Aware Pricing Section */}
+          <div className="border border-border rounded-lg p-4 space-y-4 bg-muted/30">
+            <h3 className="font-medium flex items-center gap-2">
+              <Info className="h-4 w-4 text-primary" />
+              {t('Prissättning', 'Pricing')}
+            </h3>
+
+            {/* Purchase Price Row */}
+            <div className="grid grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="purchase_price">{t('Inköpspris', 'Purchase Price')}</Label>
+                <div className="relative">
+                  <Input
+                    id="purchase_price"
+                    type="number"
+                    step="0.01"
+                    value={formData.purchase_price}
+                    onChange={(e) => setFormData(prev => ({ ...prev, purchase_price: e.target.value }))}
+                    placeholder="0"
+                    className="pr-10"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">
+                    kr
+                  </span>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>{t('Inkl moms', 'Incl VAT')}</Label>
+                <div className="flex items-center h-10">
+                  <Switch
+                    checked={formData.purchase_includes_vat}
+                    onCheckedChange={(checked) => setFormData(prev => ({ ...prev, purchase_includes_vat: checked }))}
+                  />
+                  <span className="ml-2 text-sm text-muted-foreground">
+                    {formData.purchase_includes_vat ? t('Ja', 'Yes') : t('Nej', 'No')}
+                  </span>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>{t('Momssats', 'VAT Rate')}</Label>
+                <Select 
+                  value={formData.vat_rate} 
+                  onValueChange={(value) => setFormData(prev => ({ ...prev, vat_rate: value }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {VAT_RATE_OPTIONS.map(opt => (
+                      <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Override Row */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="margin_override">{t('Marginal override', 'Margin override')}</Label>
+                <div className="relative">
+                  <Input
+                    id="margin_override"
+                    type="number"
+                    step="0.1"
+                    value={formData.margin_override_percent}
+                    onChange={(e) => setFormData(prev => ({ ...prev, margin_override_percent: e.target.value }))}
+                    placeholder={String(categoryRule?.margin_percent ?? '')}
+                    className="pr-8"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">
+                    %
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {t('Lämna tom för att använda kategoristandard', 'Leave empty to use category default')}
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label>{t('Avrundning override', 'Rounding override')}</Label>
+                <Select 
+                  value={formData.rounding_override_sek} 
+                  onValueChange={(value) => setFormData(prev => ({ ...prev, rounding_override_sek: value }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={categoryRule?.rounding ? `${categoryRule.rounding} kr` : t('Kategoristandard', 'Category default')} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">{t('Kategoristandard', 'Category default')}</SelectItem>
+                    {ROUNDING_OPTIONS.map(opt => (
+                      <SelectItem key={opt} value={opt.toString()}>{opt} kr</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Calculated Fields (Read-only) */}
+            <div className="border-t border-border pt-4 mt-4">
+              <p className="text-xs text-muted-foreground uppercase tracking-wide mb-3">
+                {t('Beräknade värden (ej redigerbara)', 'Calculated values (read-only)')}
+              </p>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">{t('Kostnad ex moms', 'Cost ex VAT')}</Label>
+                  <div className="bg-muted px-3 py-2 rounded-md text-sm">
+                    {formatPrice(preview.costExVat)} kr
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">{t('Effektiv marginal', 'Effective margin')}</Label>
+                  <div className="bg-muted px-3 py-2 rounded-md text-sm">
+                    {preview.effectiveMargin}%
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">{t('Säljpris ex moms', 'Sell price ex VAT')}</Label>
+                  <div className="bg-muted px-3 py-2 rounded-md text-sm font-medium">
+                    {formatPrice(preview.sellPriceExVat)} kr
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">{t('Säljpris inkl moms', 'Sell price incl VAT')}</Label>
+                  <div className="bg-muted px-3 py-2 rounded-md text-sm font-medium text-primary">
+                    {formatPrice(preview.sellPriceIncVat)} kr
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Image Upload */}
+          <div className="space-y-2">
+            <Label>{t('Produktbild', 'Product Image')}</Label>
+            {(sku?.image_path && !imageFile) ? (
+              <div className="space-y-3">
+                <div className="border border-border rounded-lg p-4 bg-muted/30">
+                  <img
+                    src={`${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/sku-images/${sku.image_path}`}
+                    alt={sku.name}
+                    className="max-h-40 mx-auto object-contain rounded"
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => document.getElementById('image-upload')?.click()}
+                  className="w-full"
+                >
+                  <Upload className="h-4 w-4 mr-2" />
+                  {t('Byt bild', 'Change image')}
+                </Button>
+              </div>
+            ) : (
+              <div 
+                className="border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:bg-muted/50 transition-colors"
+                onClick={() => document.getElementById('image-upload')?.click()}
+              >
+                <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+                <p className="text-primary text-sm">
+                  {t('Klicka för att ladda upp bild', 'Click to upload image')}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {t('Filnamn måste vara', 'Filename must be')} {formData.sku || 'SKU'}.jpg
+                </p>
+                {imageFile && (
+                  <p className="text-sm text-primary mt-2">{imageFile.name}</p>
+                )}
+              </div>
+            )}
+            <input
+              id="image-upload"
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => setImageFile(e.target.files?.[0] || null)}
+            />
+          </div>
+
+          {/* Notes */}
+          <div className="space-y-2">
+            <Label htmlFor="notes">{t('Anteckningar', 'Notes')}</Label>
+            <Textarea
+              id="notes"
+              value={formData.notes}
+              onChange={(e) => setFormData(prev => ({ ...prev, notes: e.target.value }))}
+              placeholder="ex. Requires Zigbee hub"
+              rows={3}
+            />
+          </div>
+
+          {/* Actions */}
+          <div className="flex gap-3 pt-4">
+            <Button type="submit" className="flex-1" disabled={isSubmitting}>
+              {isSubmitting 
+                ? t('Sparar...', 'Saving...') 
+                : sku 
+                  ? t('Spara ändringar', 'Save changes') 
+                  : t('Lägg till SKU', 'Add SKU')
+              }
+            </Button>
+            <Button type="button" variant="outline" onClick={onClose}>
+              {t('Avbryt', 'Cancel')}
             </Button>
           </div>
-        ) : (
-          <div 
-            className="border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:bg-muted/50 transition-colors"
-            onClick={() => document.getElementById('image-upload')?.click()}
-          >
-            <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-            <p className="text-primary text-sm">
-              {t('Klicka för att ladda upp bild', 'Click to upload image')}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              {t('Filnamn måste vara', 'Filename must be')} {formData.sku || 'SKU'}.jpg
-            </p>
-            {imageFile && (
-              <p className="text-sm text-primary mt-2">{imageFile.name}</p>
-            )}
-          </div>
-        )}
-        <input
-          id="image-upload"
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={(e) => setImageFile(e.target.files?.[0] || null)}
-        />
-      </div>
+        </form>
+      </TabsContent>
 
-      {/* Notes */}
-      <div className="space-y-2">
-        <Label htmlFor="notes">{t('Anteckningar', 'Notes')}</Label>
-        <Textarea
-          id="notes"
-          value={formData.notes}
-          onChange={(e) => setFormData(prev => ({ ...prev, notes: e.target.value }))}
-          placeholder="ex. Requires Zigbee hub"
-          rows={3}
-        />
-      </div>
-
-      {/* Actions */}
-      <div className="flex gap-3 pt-4">
-        <Button type="submit" className="flex-1" disabled={isSubmitting}>
-          {isSubmitting 
-            ? t('Sparar...', 'Saving...') 
-            : sku 
-              ? t('Spara ändringar', 'Save changes') 
-              : t('Lägg till SKU', 'Add SKU')
-          }
-        </Button>
-        <Button type="button" variant="outline" onClick={onClose}>
-          {t('Avbryt', 'Cancel')}
-        </Button>
-      </div>
-    </form>
+      <TabsContent value="history">
+        <div className="mt-4">
+          {priceHistory.length === 0 ? (
+            <p className="text-center text-muted-foreground py-8">
+              {t('Ingen pris-historik tillgänglig', 'No price history available')}
+            </p>
+          ) : (
+            <div className="border border-border rounded-lg overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-xs">{t('Datum', 'Date')}</TableHead>
+                    <TableHead className="text-xs">{t('Orsak', 'Reason')}</TableHead>
+                    <TableHead className="text-xs text-right">{t('Inköpspris', 'Purchase')}</TableHead>
+                    <TableHead className="text-xs text-right">{t('Kostnad ex', 'Cost ex')}</TableHead>
+                    <TableHead className="text-xs text-right">{t('Marginal', 'Margin')}</TableHead>
+                    <TableHead className="text-xs text-right">{t('Sälj ex', 'Sell ex')}</TableHead>
+                    <TableHead className="text-xs text-right">{t('Sälj ink', 'Sell inc')}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {priceHistory.map(record => (
+                    <TableRow key={record.id}>
+                      <TableCell className="text-sm">
+                        {format(new Date(record.changed_at), 'yyyy-MM-dd HH:mm', { locale: language === 'sv' ? sv : enUS })}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{record.change_reason}</TableCell>
+                      <TableCell className="text-sm text-right">{record.purchase_price} kr</TableCell>
+                      <TableCell className="text-sm text-right">{record.cost_ex_vat?.toFixed(2)} kr</TableCell>
+                      <TableCell className="text-sm text-right">{record.effective_margin_percent}%</TableCell>
+                      <TableCell className="text-sm text-right">{record.sell_price_ex_vat} kr</TableCell>
+                      <TableCell className="text-sm text-right font-medium">{record.sell_price_inc_vat} kr</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </div>
+      </TabsContent>
+    </Tabs>
   );
 };
 

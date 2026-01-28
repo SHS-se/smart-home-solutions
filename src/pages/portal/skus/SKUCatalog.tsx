@@ -5,7 +5,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { naturalSort } from '@/lib/utils';
-import { useTableSort, sortItems } from '@/hooks/use-table-sort';
+import { useTableSort } from '@/hooks/use-table-sort';
 import PortalLayout from '@/components/portal/PortalLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -32,6 +32,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { Plus, Upload, Search, Pencil, Trash2, ExternalLink, Settings2 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import SKUForm from '@/components/portal/skus/SKUForm';
@@ -43,10 +49,22 @@ interface SKU {
   category: string;
   supplier: string | null;
   supplier_url: string | null;
-  cost_ex_vat: number | null;
-  default_margin: number | null;
   notes: string | null;
   image_path: string | null;
+  // VAT-aware pricing fields
+  purchase_price: number;
+  purchase_includes_vat: boolean;
+  vat_rate: number;
+  cost_ex_vat_computed: number | null;
+  margin_override_percent: number | null;
+  rounding_override_sek: number | null;
+  effective_margin_percent: number | null;
+  effective_rounding_sek: number | null;
+  sell_price_ex_vat: number | null;
+  sell_price_inc_vat: number | null;
+  // Legacy fields
+  cost_ex_vat: number | null;
+  default_margin: number | null;
 }
 
 type SortColumn = 'sku' | 'name' | 'category' | 'supplier' | 'cost_ex_vat' | 'margin' | 'sell_price';
@@ -63,7 +81,7 @@ const SKUCatalog: React.FC = () => {
   const [editingSku, setEditingSku] = useState<SKU | null>(null);
   const { sortColumn, sortDirection, handleSort } = useTableSort<SortColumn>({ defaultColumn: 'sku' });
 
-  // Fetch SKUs
+  // Fetch SKUs with all pricing fields
   const { data: skus = [], isLoading } = useQuery({
     queryKey: ['skus'],
     queryFn: async () => {
@@ -91,17 +109,6 @@ const SKUCatalog: React.FC = () => {
     enabled: isStaff,
   });
 
-  // Fetch margin rules for calculating sell price
-  const { data: marginRules = [] } = useQuery({
-    queryKey: ['margin_rules'],
-    queryFn: async () => {
-      const { data, error } = await supabase.from('margin_rules').select('*');
-      if (error) throw error;
-      return data;
-    },
-    enabled: isStaff,
-  });
-
   // Delete SKU mutation
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
@@ -117,22 +124,6 @@ const SKUCatalog: React.FC = () => {
     },
   });
 
-  // Calculate sell price based on margin rules
-  const calculateSellPrice = (sku: SKU) => {
-    if (!sku.cost_ex_vat) return null;
-    const rule = marginRules.find(r => r.category === sku.category);
-    const margin = sku.default_margin ?? rule?.margin_percent ?? 0;
-    const rounding = rule?.rounding ?? 5;
-    const rawPrice = sku.cost_ex_vat * (1 + margin / 100);
-    return Math.round(rawPrice / rounding) * rounding;
-  };
-
-  // Get effective margin for a SKU
-  const getEffectiveMargin = (sku: SKU) => {
-    const rule = marginRules.find(r => r.category === sku.category);
-    return sku.default_margin ?? rule?.margin_percent ?? null;
-  };
-
   // Filter and sort SKUs
   const filteredSkus = useMemo(() => {
     const filtered = skus.filter(sku => {
@@ -143,7 +134,7 @@ const SKUCatalog: React.FC = () => {
       return matchesSearch && matchesCategory;
     });
 
-    // Apply sorting
+    // Apply sorting - use database-calculated values
     let sorted: SKU[];
     switch (sortColumn) {
       case 'sku':
@@ -156,22 +147,22 @@ const SKUCatalog: React.FC = () => {
         break;
       case 'cost_ex_vat':
         sorted = [...filtered].sort((a, b) => {
-          const aVal = a.cost_ex_vat ?? 0;
-          const bVal = b.cost_ex_vat ?? 0;
+          const aVal = a.cost_ex_vat_computed ?? 0;
+          const bVal = b.cost_ex_vat_computed ?? 0;
           return sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
         });
         break;
       case 'margin':
         sorted = [...filtered].sort((a, b) => {
-          const aVal = getEffectiveMargin(a) ?? 0;
-          const bVal = getEffectiveMargin(b) ?? 0;
+          const aVal = a.effective_margin_percent ?? 0;
+          const bVal = b.effective_margin_percent ?? 0;
           return sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
         });
         break;
       case 'sell_price':
         sorted = [...filtered].sort((a, b) => {
-          const aVal = calculateSellPrice(a) ?? 0;
-          const bVal = calculateSellPrice(b) ?? 0;
+          const aVal = a.sell_price_inc_vat ?? 0;
+          const bVal = b.sell_price_inc_vat ?? 0;
           return sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
         });
         break;
@@ -180,7 +171,7 @@ const SKUCatalog: React.FC = () => {
     }
 
     return sorted;
-  }, [skus, search, categoryFilter, sortColumn, sortDirection, marginRules]);
+  }, [skus, search, categoryFilter, sortColumn, sortDirection]);
 
   const handleEdit = (sku: SKU) => {
     setEditingSku(sku);
@@ -197,6 +188,11 @@ const SKUCatalog: React.FC = () => {
     setEditingSku(null);
   };
 
+  const formatPrice = (value: number | null | undefined) => {
+    if (value === null || value === undefined) return '—';
+    return value.toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  };
+
   // Redirect if not staff
   if (!authLoading && !isStaff) {
     navigate('/portal');
@@ -211,7 +207,7 @@ const SKUCatalog: React.FC = () => {
           <div>
             <h1 className="text-2xl font-bold text-foreground">SKU-katalog</h1>
             <p className="text-muted-foreground">
-              {t('Hantera hårdvarukatalog och standardpriser', 'Manage hardware catalog and standard prices')}
+              {t('Hantera hårdvarukatalog och prissättning', 'Manage hardware catalog and pricing')}
             </p>
           </div>
           <div className="flex gap-2">
@@ -260,107 +256,114 @@ const SKUCatalog: React.FC = () => {
 
         {/* Table */}
         <div className="bg-card border border-border rounded-lg overflow-hidden">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <SortableTableHead column="sku" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>SKU</SortableTableHead>
-                <SortableTableHead column="name" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>{t('Namn', 'Name')}</SortableTableHead>
-                <SortableTableHead column="category" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>{t('Kategori', 'Category')}</SortableTableHead>
-                <SortableTableHead column="supplier" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>{t('Leverantör', 'Supplier')}</SortableTableHead>
-                <SortableTableHead column="cost_ex_vat" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort} className="text-right">{t('Kostnad ex moms', 'Cost ex VAT')}</SortableTableHead>
-                <SortableTableHead column="margin" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort} className="text-right">{t('Marginal %', 'Margin %')}</SortableTableHead>
-                <SortableTableHead column="sell_price" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort} className="text-right">{t('Säljpris', 'Sell Price')}</SortableTableHead>
-                <TableHead className="text-muted-foreground text-xs uppercase text-center">{t('Bild', 'Image')}</TableHead>
-                <TableHead className="text-muted-foreground text-xs uppercase text-right">{t('Åtgärder', 'Actions')}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {isLoading ? (
+          <TooltipProvider>
+            <Table>
+              <TableHeader>
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
-                    {t('Laddar...', 'Loading...')}
-                  </TableCell>
+                  <SortableTableHead column="sku" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>SKU</SortableTableHead>
+                  <SortableTableHead column="name" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>{t('Namn', 'Name')}</SortableTableHead>
+                  <SortableTableHead column="category" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>{t('Kategori', 'Category')}</SortableTableHead>
+                  <SortableTableHead column="supplier" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>{t('Leverantör', 'Supplier')}</SortableTableHead>
+                  <SortableTableHead column="cost_ex_vat" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort} className="text-right">{t('Kostnad ex', 'Cost ex')}</SortableTableHead>
+                  <SortableTableHead column="margin" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort} className="text-right">{t('Marginal', 'Margin')}</SortableTableHead>
+                  <SortableTableHead column="sell_price" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort} className="text-right">{t('Säljpris inkl', 'Sell incl')}</SortableTableHead>
+                  <TableHead className="text-muted-foreground text-xs uppercase text-center">{t('Bild', 'Image')}</TableHead>
+                  <TableHead className="text-muted-foreground text-xs uppercase text-right">{t('Åtgärder', 'Actions')}</TableHead>
                 </TableRow>
-              ) : filteredSkus.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
-                    {t('Inga SKUs hittades', 'No SKUs found')}
-                  </TableCell>
-                </TableRow>
-              ) : (
-              filteredSkus.map((sku) => {
-                  const sellPrice = calculateSellPrice(sku);
-                  const effectiveMargin = getEffectiveMargin(sku);
-                  return (
-                    <TableRow key={sku.id}>
-                      <TableCell className="font-mono text-sm">{sku.sku}</TableCell>
-                      <TableCell>{sku.name}</TableCell>
-                      <TableCell>
-                        <Badge variant="secondary">{sku.category}</Badge>
-                      </TableCell>
-                      <TableCell>
-                        {sku.supplier_url ? (
-                          <a 
-                            href={sku.supplier_url} 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            className="text-primary hover:underline flex items-center gap-1"
-                          >
-                            {sku.supplier}
-                            <ExternalLink className="h-3 w-3" />
-                          </a>
-                        ) : (
-                          sku.supplier || '—'
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {sku.cost_ex_vat ? `${sku.cost_ex_vat} kr` : '—'}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {effectiveMargin != null ? `${effectiveMargin}%` : '—'}
-                      </TableCell>
-                      <TableCell className="text-right font-medium">
-                        {sellPrice ? `${sellPrice} kr` : '—'}
-                      </TableCell>
-                      <TableCell className="text-center">
-                        {sku.image_path ? (
-                          <img
-                            src={`${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/sku-images/${sku.image_path}`}
-                            alt={sku.name}
-                            className="h-10 w-10 object-contain mx-auto rounded"
-                          />
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button 
-                            variant="ghost" 
-                            size="icon"
-                            onClick={() => handleEdit(sku)}
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button 
-                            variant="ghost" 
-                            size="icon"
-                            onClick={() => {
-                              if (confirm(t('Är du säker på att du vill radera denna SKU?', 'Are you sure you want to delete this SKU?'))) {
-                                deleteMutation.mutate(sku.id);
-                              }
-                            }}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })
-              )}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {isLoading ? (
+                  <TableRow>
+                    <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
+                      {t('Laddar...', 'Loading...')}
+                    </TableCell>
+                  </TableRow>
+                ) : filteredSkus.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
+                      {t('Inga SKUs hittades', 'No SKUs found')}
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                filteredSkus.map((sku) => (
+                  <TableRow key={sku.id}>
+                    <TableCell className="font-mono text-sm">{sku.sku}</TableCell>
+                    <TableCell>{sku.name}</TableCell>
+                    <TableCell>
+                      <Badge variant="secondary">{sku.category}</Badge>
+                    </TableCell>
+                    <TableCell>
+                      {sku.supplier_url ? (
+                        <a 
+                          href={sku.supplier_url} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="text-primary hover:underline flex items-center gap-1"
+                        >
+                          {sku.supplier}
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
+                      ) : (
+                        sku.supplier || '—'
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {sku.cost_ex_vat_computed ? `${formatPrice(sku.cost_ex_vat_computed)} kr` : '—'}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {sku.effective_margin_percent != null ? `${sku.effective_margin_percent}%` : '—'}
+                    </TableCell>
+                    <TableCell className="text-right font-medium">
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="cursor-help">
+                            {sku.sell_price_inc_vat ? `${formatPrice(sku.sell_price_inc_vat)} kr` : '—'}
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>{t('Ex moms', 'Ex VAT')}: {formatPrice(sku.sell_price_ex_vat)} kr</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TableCell>
+                    <TableCell className="text-center">
+                      {sku.image_path ? (
+                        <img
+                          src={`${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/sku-images/${sku.image_path}`}
+                          alt={sku.name}
+                          className="h-10 w-10 object-contain mx-auto rounded"
+                        />
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-2">
+                        <Button 
+                          variant="ghost" 
+                          size="icon"
+                          onClick={() => handleEdit(sku)}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button 
+                          variant="ghost" 
+                          size="icon"
+                          onClick={() => {
+                            if (confirm(t('Är du säker på att du vill radera denna SKU?', 'Are you sure you want to delete this SKU?'))) {
+                              deleteMutation.mutate(sku.id);
+                            }
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))
+                )}
+              </TableBody>
+            </Table>
+          </TooltipProvider>
         </div>
       </div>
 

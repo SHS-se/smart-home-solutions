@@ -18,6 +18,9 @@ interface QuoteLine {
   description: string;
   quantity: number;
   unit_price: number;
+  unit_price_ex_vat: number | null;
+  vat_rate: number | null;
+  unit_price_inc_vat: number | null;
 }
 
 const QuotePreparation: React.FC = () => {
@@ -59,12 +62,20 @@ const QuotePreparation: React.FC = () => {
     enabled: isStaff && !!id,
   });
 
-  // Add line mutation
+  // Add line mutation with VAT-aware pricing
   const addLineMutation = useMutation({
     mutationFn: async (data: { section: string; description: string; quantity: number; unit_price: number }) => {
+      const vatRate = 0.25;
+      const unitPriceExVat = data.unit_price;
+      const unitPriceIncVat = unitPriceExVat * (1 + vatRate);
+      
       const { error } = await supabase.from('quote_lines').insert({
         quote_id: id,
         ...data,
+        unit_price_ex_vat: unitPriceExVat,
+        vat_rate: vatRate,
+        unit_price_inc_vat: unitPriceIncVat,
+        pricing_source: 'manual',
       });
       if (error) throw error;
     },
@@ -76,9 +87,20 @@ const QuotePreparation: React.FC = () => {
   // Update line mutation
   const updateLineMutation = useMutation({
     mutationFn: async ({ lineId, updates }: { lineId: string; updates: Partial<QuoteLine> }) => {
+      // If unit_price is being updated, also update VAT fields
+      let finalUpdates = { ...updates };
+      if (updates.unit_price !== undefined) {
+        const vatRate = 0.25;
+        finalUpdates = {
+          ...updates,
+          unit_price_ex_vat: updates.unit_price,
+          unit_price_inc_vat: updates.unit_price * (1 + vatRate),
+        };
+      }
+      
       const { error } = await supabase
         .from('quote_lines')
-        .update(updates)
+        .update(finalUpdates)
         .eq('id', lineId);
       if (error) throw error;
     },
@@ -104,16 +126,44 @@ const QuotePreparation: React.FC = () => {
   const laborLines = lines.filter(l => l.section === 'labor');
   const travelLines = lines.filter(l => l.section === 'travel');
 
-  // Calculate totals
-  const calculateSectionTotal = (sectionLines: QuoteLine[]) =>
-    sectionLines.reduce((sum, l) => sum + l.quantity * l.unit_price, 0);
+  // Calculate totals with VAT
+  const calculateSectionTotals = (sectionLines: QuoteLine[]) => {
+    return sectionLines.reduce((acc, l) => {
+      const exVat = (l.unit_price_ex_vat ?? l.unit_price) * l.quantity;
+      const vatRate = l.vat_rate ?? 0.25;
+      const incVat = (l.unit_price_inc_vat ?? l.unit_price * (1 + vatRate)) * l.quantity;
+      return {
+        exVat: acc.exVat + exVat,
+        incVat: acc.incVat + incVat,
+      };
+    }, { exVat: 0, incVat: 0 });
+  };
 
-  const hardwareTotal = calculateSectionTotal(hardwareLines);
-  const laborTotal = calculateSectionTotal(laborLines);
-  const travelTotal = calculateSectionTotal(travelLines);
-  const subtotal = hardwareTotal + laborTotal + travelTotal;
-  const vat = subtotal * 0.25;
-  const total = subtotal + vat;
+  const hardwareTotals = calculateSectionTotals(hardwareLines);
+  const laborTotals = calculateSectionTotals(laborLines);
+  const travelTotals = calculateSectionTotals(travelLines);
+  
+  const subtotalExVat = hardwareTotals.exVat + laborTotals.exVat + travelTotals.exVat;
+  const totalIncVat = hardwareTotals.incVat + laborTotals.incVat + travelTotals.incVat;
+  const vatTotal = totalIncVat - subtotalExVat;
+
+  // Update quote totals mutation
+  const updateQuoteTotalsMutation = useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase
+        .from('quotes')
+        .update({
+          hardware_total: hardwareTotals.exVat,
+          labor_total: laborTotals.exVat,
+          travel_total: travelTotals.exVat,
+          subtotal_ex_vat: subtotalExVat,
+          vat_total: vatTotal,
+          total_inc_vat: totalIncVat,
+        })
+        .eq('id', id);
+      if (error) throw error;
+    },
+  });
 
   // Send to Stripe
   const sendToStripe = async () => {
@@ -124,13 +174,16 @@ const QuotePreparation: React.FC = () => {
 
     setIsSending(true);
     try {
+      // First update quote totals
+      await updateQuoteTotalsMutation.mutateAsync();
+
       const { data, error } = await supabase.functions.invoke('create-stripe-quote', {
         body: {
           quote_id: id,
           customer_name: quote.customer.org_name,
-          hardware_total: hardwareTotal,
-          labor_total: laborTotal,
-          travel_total: travelTotal,
+          hardware_total: hardwareTotals.exVat,
+          labor_total: laborTotals.exVat,
+          travel_total: travelTotals.exVat,
         },
       });
 
@@ -142,9 +195,6 @@ const QuotePreparation: React.FC = () => {
         .update({ 
           stripe_quote_id: data.stripe_quote_id,
           status: 'sent',
-          hardware_total: hardwareTotal,
-          labor_total: laborTotal,
-          travel_total: travelTotal,
         })
         .eq('id', id);
 
@@ -171,6 +221,8 @@ const QuotePreparation: React.FC = () => {
     navigate('/portal');
     return null;
   }
+
+  const formatPrice = (value: number) => value.toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 
   const renderSection = (
     title: string, 
@@ -231,7 +283,7 @@ const QuotePreparation: React.FC = () => {
             />
             <span className="text-muted-foreground text-sm">kr</span>
             <span className="w-24 text-right font-medium">
-              {(line.quantity * line.unit_price).toLocaleString('sv-SE')} kr
+              {formatPrice(line.quantity * line.unit_price)} kr
             </span>
             <Button
               variant="ghost"
@@ -296,33 +348,37 @@ const QuotePreparation: React.FC = () => {
                 <CardTitle>{t('Sammanfattning', 'Summary')}</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">{t('Delsumma', 'Subtotal')}:</span>
-                  <span className="font-medium">{subtotal.toLocaleString('sv-SE')} kr</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">{t('Moms (25%)', 'VAT (25%)')}:</span>
-                  <span className="font-medium">{vat.toLocaleString('sv-SE')} kr</span>
-                </div>
-                <div className="border-t border-border pt-4 flex justify-between">
-                  <span className="font-medium">{t('Totalt', 'Total')}:</span>
-                  <span className="text-2xl font-bold text-primary">{total.toLocaleString('sv-SE')} kr</span>
-                </div>
-
-                <div className="border-t border-border pt-4 space-y-2 text-sm">
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">{t('Uppdelning', 'Breakdown')}</p>
+                {/* Section breakdown */}
+                <div className="space-y-2 text-sm">
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">{t('Uppdelning (ex moms)', 'Breakdown (ex VAT)')}</p>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">{t('Hårdvara', 'Hardware')}:</span>
-                    <span>{hardwareTotal.toLocaleString('sv-SE')} kr</span>
+                    <span>{formatPrice(hardwareTotals.exVat)} kr</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">{t('Arbete', 'Labor')}:</span>
-                    <span>{laborTotal.toLocaleString('sv-SE')} kr</span>
+                    <span>{formatPrice(laborTotals.exVat)} kr</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">{t('Övrigt', 'Other')}:</span>
-                    <span>{travelTotal.toLocaleString('sv-SE')} kr</span>
+                    <span>{formatPrice(travelTotals.exVat)} kr</span>
                   </div>
+                </div>
+
+                <div className="border-t border-border pt-4 space-y-2">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">{t('Delsumma (ex moms)', 'Subtotal (ex VAT)')}:</span>
+                    <span className="font-medium">{formatPrice(subtotalExVat)} kr</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">{t('Moms (25%)', 'VAT (25%)')}:</span>
+                    <span className="font-medium">{formatPrice(vatTotal)} kr</span>
+                  </div>
+                </div>
+
+                <div className="border-t border-border pt-4 flex justify-between">
+                  <span className="font-medium">{t('Totalt (inkl moms)', 'Total (incl VAT)')}:</span>
+                  <span className="text-2xl font-bold text-primary">{formatPrice(totalIncVat)} kr</span>
                 </div>
 
                 {quote?.status === 'draft' && (

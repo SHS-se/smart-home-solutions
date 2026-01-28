@@ -18,29 +18,44 @@ export type Database = {
         Row: {
           bom_id: string
           cost: number | null
+          cost_ex_vat_at_time: number | null
           created_at: string
           id: string
+          pricing_source: string | null
           quantity: number
           sell_price: number | null
+          sell_price_ex_vat_at_time: number | null
+          sell_price_inc_vat_at_time: number | null
           sku_id: string
+          vat_rate_at_time: number | null
         }
         Insert: {
           bom_id: string
           cost?: number | null
+          cost_ex_vat_at_time?: number | null
           created_at?: string
           id?: string
+          pricing_source?: string | null
           quantity?: number
           sell_price?: number | null
+          sell_price_ex_vat_at_time?: number | null
+          sell_price_inc_vat_at_time?: number | null
           sku_id: string
+          vat_rate_at_time?: number | null
         }
         Update: {
           bom_id?: string
           cost?: number | null
+          cost_ex_vat_at_time?: number | null
           created_at?: string
           id?: string
+          pricing_source?: string | null
           quantity?: number
           sell_price?: number | null
+          sell_price_ex_vat_at_time?: number | null
+          sell_price_inc_vat_at_time?: number | null
           sku_id?: string
+          vat_rate_at_time?: number | null
         }
         Relationships: [
           {
@@ -285,31 +300,55 @@ export type Database = {
       }
       quote_lines: {
         Row: {
+          cost_ex_vat_at_time: number | null
           created_at: string
           description: string
           id: string
+          original_sku_code: string | null
+          original_sku_name: string | null
+          pricing_source: string | null
           quantity: number
           quote_id: string
           section: string
+          sku_id: string | null
           unit_price: number
+          unit_price_ex_vat: number | null
+          unit_price_inc_vat: number | null
+          vat_rate: number | null
         }
         Insert: {
+          cost_ex_vat_at_time?: number | null
           created_at?: string
           description: string
           id?: string
+          original_sku_code?: string | null
+          original_sku_name?: string | null
+          pricing_source?: string | null
           quantity?: number
           quote_id: string
           section: string
+          sku_id?: string | null
           unit_price?: number
+          unit_price_ex_vat?: number | null
+          unit_price_inc_vat?: number | null
+          vat_rate?: number | null
         }
         Update: {
+          cost_ex_vat_at_time?: number | null
           created_at?: string
           description?: string
           id?: string
+          original_sku_code?: string | null
+          original_sku_name?: string | null
+          pricing_source?: string | null
           quantity?: number
           quote_id?: string
           section?: string
+          sku_id?: string | null
           unit_price?: number
+          unit_price_ex_vat?: number | null
+          unit_price_inc_vat?: number | null
+          vat_rate?: number | null
         }
         Relationships: [
           {
@@ -317,6 +356,13 @@ export type Database = {
             columns: ["quote_id"]
             isOneToOne: false
             referencedRelation: "quotes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "quote_lines_sku_id_fkey"
+            columns: ["sku_id"]
+            isOneToOne: false
+            referencedRelation: "skus"
             referencedColumns: ["id"]
           },
         ]
@@ -333,8 +379,11 @@ export type Database = {
           quote_number: string
           status: string
           stripe_quote_id: string | null
+          subtotal_ex_vat: number | null
+          total_inc_vat: number | null
           travel_total: number
           updated_at: string
+          vat_total: number | null
         }
         Insert: {
           bom_id?: string | null
@@ -347,8 +396,11 @@ export type Database = {
           quote_number: string
           status?: string
           stripe_quote_id?: string | null
+          subtotal_ex_vat?: number | null
+          total_inc_vat?: number | null
           travel_total?: number
           updated_at?: string
+          vat_total?: number | null
         }
         Update: {
           bom_id?: string | null
@@ -361,8 +413,11 @@ export type Database = {
           quote_number?: string
           status?: string
           stripe_quote_id?: string | null
+          subtotal_ex_vat?: number | null
+          total_inc_vat?: number | null
           travel_total?: number
           updated_at?: string
+          vat_total?: number | null
         }
         Relationships: [
           {
@@ -435,48 +490,152 @@ export type Database = {
         }
         Relationships: []
       }
+      sku_price_history: {
+        Row: {
+          category: string
+          change_reason: string
+          changed_at: string
+          changed_by: string | null
+          cost_ex_vat: number
+          effective_margin_percent: number
+          effective_rounding_sek: number
+          id: string
+          margin_override_percent: number | null
+          purchase_includes_vat: boolean
+          purchase_price: number
+          rounding_override_sek: number | null
+          rule_margin_percent: number
+          rule_rounding_sek: number
+          sell_price_ex_vat: number
+          sell_price_inc_vat: number
+          sku_id: string
+          vat_rate: number
+        }
+        Insert: {
+          category: string
+          change_reason: string
+          changed_at?: string
+          changed_by?: string | null
+          cost_ex_vat: number
+          effective_margin_percent: number
+          effective_rounding_sek: number
+          id?: string
+          margin_override_percent?: number | null
+          purchase_includes_vat: boolean
+          purchase_price: number
+          rounding_override_sek?: number | null
+          rule_margin_percent: number
+          rule_rounding_sek: number
+          sell_price_ex_vat: number
+          sell_price_inc_vat: number
+          sku_id: string
+          vat_rate: number
+        }
+        Update: {
+          category?: string
+          change_reason?: string
+          changed_at?: string
+          changed_by?: string | null
+          cost_ex_vat?: number
+          effective_margin_percent?: number
+          effective_rounding_sek?: number
+          id?: string
+          margin_override_percent?: number | null
+          purchase_includes_vat?: boolean
+          purchase_price?: number
+          rounding_override_sek?: number | null
+          rule_margin_percent?: number
+          rule_rounding_sek?: number
+          sell_price_ex_vat?: number
+          sell_price_inc_vat?: number
+          sku_id?: string
+          vat_rate?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sku_price_history_sku_id_fkey"
+            columns: ["sku_id"]
+            isOneToOne: false
+            referencedRelation: "skus"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       skus: {
         Row: {
           category: string
           cost_ex_vat: number | null
+          cost_ex_vat_computed: number | null
           created_at: string
           default_margin: number | null
+          effective_margin_percent: number | null
+          effective_rounding_sek: number | null
           id: string
           image_path: string | null
+          margin_override_percent: number | null
           name: string
           notes: string | null
+          pricing_updated_at: string | null
+          purchase_includes_vat: boolean
+          purchase_price: number
+          rounding_override_sek: number | null
+          sell_price_ex_vat: number | null
+          sell_price_inc_vat: number | null
           sku: string
           supplier: string | null
           supplier_url: string | null
           updated_at: string
+          vat_rate: number
         }
         Insert: {
           category: string
           cost_ex_vat?: number | null
+          cost_ex_vat_computed?: number | null
           created_at?: string
           default_margin?: number | null
+          effective_margin_percent?: number | null
+          effective_rounding_sek?: number | null
           id?: string
           image_path?: string | null
+          margin_override_percent?: number | null
           name: string
           notes?: string | null
+          pricing_updated_at?: string | null
+          purchase_includes_vat?: boolean
+          purchase_price?: number
+          rounding_override_sek?: number | null
+          sell_price_ex_vat?: number | null
+          sell_price_inc_vat?: number | null
           sku: string
           supplier?: string | null
           supplier_url?: string | null
           updated_at?: string
+          vat_rate?: number
         }
         Update: {
           category?: string
           cost_ex_vat?: number | null
+          cost_ex_vat_computed?: number | null
           created_at?: string
           default_margin?: number | null
+          effective_margin_percent?: number | null
+          effective_rounding_sek?: number | null
           id?: string
           image_path?: string | null
+          margin_override_percent?: number | null
           name?: string
           notes?: string | null
+          pricing_updated_at?: string | null
+          purchase_includes_vat?: boolean
+          purchase_price?: number
+          rounding_override_sek?: number | null
+          sell_price_ex_vat?: number | null
+          sell_price_inc_vat?: number | null
           sku?: string
           supplier?: string | null
           supplier_url?: string | null
           updated_at?: string
+          vat_rate?: number
         }
         Relationships: []
       }
@@ -710,6 +869,45 @@ export type Database = {
       is_admin: { Args: { _user_id: string }; Returns: boolean }
       is_staff: { Args: { _user_id: string }; Returns: boolean }
       is_staff_table_empty: { Args: never; Returns: boolean }
+      sku_compute_pricing: {
+        Args: {
+          p_category: string
+          p_margin_override_percent: number
+          p_purchase_includes_vat: boolean
+          p_purchase_price: number
+          p_rounding_override_sek: number
+          p_vat_rate: number
+        }
+        Returns: {
+          cost_ex_vat_computed: number
+          effective_margin_percent: number
+          effective_rounding_sek: number
+          rule_margin_percent: number
+          rule_rounding_sek: number
+          sell_price_ex_vat: number
+          sell_price_inc_vat: number
+        }[]
+      }
+      sku_insert_price_history: {
+        Args: {
+          p_category: string
+          p_change_reason: string
+          p_cost_ex_vat: number
+          p_effective_margin_percent: number
+          p_effective_rounding_sek: number
+          p_margin_override_percent: number
+          p_purchase_includes_vat: boolean
+          p_purchase_price: number
+          p_rounding_override_sek: number
+          p_rule_margin_percent: number
+          p_rule_rounding_sek: number
+          p_sell_price_ex_vat: number
+          p_sell_price_inc_vat: number
+          p_sku_id: string
+          p_vat_rate: number
+        }
+        Returns: undefined
+      }
     }
     Enums: {
       [_ in never]: never
