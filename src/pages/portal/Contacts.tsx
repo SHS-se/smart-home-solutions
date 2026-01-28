@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Loader2, Search } from 'lucide-react';
 import PortalLayout from '@/components/portal/PortalLayout';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import {
   Table,
@@ -12,6 +12,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { SortableTableHead } from '@/components/ui/sortable-table-head';
 import {
   Select,
   SelectContent,
@@ -21,6 +22,7 @@ import {
 } from '@/components/ui/select';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
+import { useTableSort, sortItems } from '@/hooks/use-table-sort';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -36,6 +38,7 @@ interface Contact {
 }
 
 type FilterType = 'leads' | 'converted' | 'all';
+type SortColumn = 'name' | 'email' | 'phone';
 
 const Contacts: React.FC = () => {
   const navigate = useNavigate();
@@ -47,6 +50,7 @@ const Contacts: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [filter, setFilter] = useState<FilterType>('leads');
+  const { sortColumn, sortDirection, handleSort } = useTableSort<SortColumn>({ defaultColumn: 'name' });
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -90,14 +94,17 @@ const Contacts: React.FC = () => {
     }
   };
 
-  const filteredContacts = contacts.filter((contact) => {
-    const query = searchQuery.toLowerCase();
-    return (
-      contact.name.toLowerCase().includes(query) ||
-      contact.email.toLowerCase().includes(query) ||
-      (contact.phone && contact.phone.toLowerCase().includes(query))
-    );
-  });
+  const filteredContacts = useMemo(() => {
+    const filtered = contacts.filter((contact) => {
+      const query = searchQuery.toLowerCase();
+      return (
+        contact.name.toLowerCase().includes(query) ||
+        contact.email.toLowerCase().includes(query) ||
+        (contact.phone && contact.phone.toLowerCase().includes(query))
+      );
+    });
+    return sortItems(filtered, sortColumn, sortDirection);
+  }, [contacts, searchQuery, sortColumn, sortDirection]);
 
   if (authLoading) {
     return (
@@ -169,9 +176,15 @@ const Contacts: React.FC = () => {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="text-primary">{t('Namn', 'Name')}</TableHead>
-                    <TableHead className="text-primary">{t('E-post', 'Email')}</TableHead>
-                    <TableHead className="text-primary hidden md:table-cell">{t('Telefon', 'Phone')}</TableHead>
+                    <SortableTableHead column="name" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>
+                      {t('Namn', 'Name')}
+                    </SortableTableHead>
+                    <SortableTableHead column="email" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>
+                      {t('E-post', 'Email')}
+                    </SortableTableHead>
+                    <SortableTableHead column="phone" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort} className="hidden md:table-cell">
+                      {t('Telefon', 'Phone')}
+                    </SortableTableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

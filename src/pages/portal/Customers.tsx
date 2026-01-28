@@ -4,7 +4,7 @@ import { Loader2, Building2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { naturalSort } from '@/lib/utils';
+import { useTableSort, sortItems } from '@/hooks/use-table-sort';
 import {
   Table,
   TableBody,
@@ -13,6 +13,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { SortableTableHead } from '@/components/ui/sortable-table-head';
 import PortalLayout from '@/components/portal/PortalLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -26,6 +27,8 @@ interface Customer {
   created_at: string;
 }
 
+type SortColumn = 'org_name' | 'billing_email' | 'phone';
+
 const Customers: React.FC = () => {
   const { user, isStaff, loading } = useAuth();
   const navigate = useNavigate();
@@ -33,6 +36,7 @@ const Customers: React.FC = () => {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [customersLoading, setCustomersLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const { sortColumn, sortDirection, handleSort } = useTableSort<SortColumn>({ defaultColumn: 'org_name' });
 
   useEffect(() => {
     if (!loading && !user) {
@@ -77,8 +81,8 @@ const Customers: React.FC = () => {
         customer.phone?.includes(searchQuery)
       );
     });
-    return naturalSort(filtered, 'org_name');
-  }, [customers, searchQuery]);
+    return sortItems(filtered, sortColumn, sortDirection);
+  }, [customers, searchQuery, sortColumn, sortDirection]);
 
   if (loading) {
     return (
@@ -134,9 +138,15 @@ const Customers: React.FC = () => {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="text-primary">{t('Företag', 'Company')}</TableHead>
-                    <TableHead className="text-primary">{t('E-post', 'Email')}</TableHead>
-                    <TableHead className="text-primary">{t('Telefon', 'Phone')}</TableHead>
+                    <SortableTableHead column="org_name" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>
+                      {t('Företag', 'Company')}
+                    </SortableTableHead>
+                    <SortableTableHead column="billing_email" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>
+                      {t('E-post', 'Email')}
+                    </SortableTableHead>
+                    <SortableTableHead column="phone" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>
+                      {t('Telefon', 'Phone')}
+                    </SortableTableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

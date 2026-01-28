@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useTableSort, sortItems } from '@/hooks/use-table-sort';
 import PortalLayout from '@/components/portal/PortalLayout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -15,6 +16,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { SortableTableHead } from '@/components/ui/sortable-table-head';
 import { FileText, Trash2, ExternalLink } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
@@ -32,6 +34,8 @@ interface Quote {
   customer?: { org_name: string | null };
   bom?: { project_name: string };
 }
+
+type SortColumn = 'quote_number' | 'customer' | 'project' | 'total' | 'status' | 'created_at';
 
 const getStatusBadge = (status: string) => {
   switch (status) {
@@ -53,6 +57,10 @@ const QuotesList: React.FC = () => {
   const { isStaff, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { sortColumn, sortDirection, handleSort } = useTableSort<SortColumn>({ 
+    defaultColumn: 'created_at', 
+    defaultDirection: 'desc' 
+  });
 
   // Fetch quotes
   const { data: quotes = [], isLoading } = useQuery({
@@ -71,6 +79,26 @@ const QuotesList: React.FC = () => {
     },
     enabled: isStaff,
   });
+
+  // Sort quotes
+  const sortedQuotes = useMemo(() => {
+    return sortItems(quotes, sortColumn as keyof Quote, sortDirection, {
+      getValue: (quote) => {
+        switch (sortColumn) {
+          case 'customer':
+            return quote.customer?.org_name ?? '';
+          case 'project':
+            return quote.bom?.project_name ?? '';
+          case 'total':
+            return quote.hardware_total + quote.labor_total + quote.travel_total;
+          case 'created_at':
+            return new Date(quote.created_at);
+          default:
+            return quote[sortColumn as keyof Quote] as string;
+        }
+      },
+    });
+  }, [quotes, sortColumn, sortDirection]);
 
   // Delete quote mutation
   const deleteMutation = useMutation({
@@ -106,12 +134,24 @@ const QuotesList: React.FC = () => {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="text-muted-foreground text-xs uppercase">{t('Offert ID', 'Quote ID')}</TableHead>
-                <TableHead className="text-muted-foreground text-xs uppercase">{t('Kund', 'Customer')}</TableHead>
-                <TableHead className="text-muted-foreground text-xs uppercase">{t('Projekt', 'Project')}</TableHead>
-                <TableHead className="text-muted-foreground text-xs uppercase text-right">{t('Total', 'Total')}</TableHead>
-                <TableHead className="text-muted-foreground text-xs uppercase">{t('Status', 'Status')}</TableHead>
-                <TableHead className="text-muted-foreground text-xs uppercase">{t('Skapad', 'Created')}</TableHead>
+                <SortableTableHead column="quote_number" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>
+                  {t('Offert ID', 'Quote ID')}
+                </SortableTableHead>
+                <SortableTableHead column="customer" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>
+                  {t('Kund', 'Customer')}
+                </SortableTableHead>
+                <SortableTableHead column="project" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>
+                  {t('Projekt', 'Project')}
+                </SortableTableHead>
+                <SortableTableHead column="total" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort} className="text-right">
+                  {t('Total', 'Total')}
+                </SortableTableHead>
+                <SortableTableHead column="status" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>
+                  {t('Status', 'Status')}
+                </SortableTableHead>
+                <SortableTableHead column="created_at" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>
+                  {t('Skapad', 'Created')}
+                </SortableTableHead>
                 <TableHead className="text-muted-foreground text-xs uppercase text-right">{t('Åtgärder', 'Actions')}</TableHead>
               </TableRow>
             </TableHeader>
@@ -129,7 +169,7 @@ const QuotesList: React.FC = () => {
                   </TableCell>
                 </TableRow>
               ) : (
-                quotes.map(quote => {
+                sortedQuotes.map(quote => {
                   const total = quote.hardware_total + quote.labor_total + quote.travel_total;
                   const totalWithVat = total * 1.25;
                   return (

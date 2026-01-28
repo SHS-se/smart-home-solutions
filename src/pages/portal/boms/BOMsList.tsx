@@ -5,6 +5,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { naturalSort } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useTableSort, sortItems } from '@/hooks/use-table-sort';
 import PortalLayout from '@/components/portal/PortalLayout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -16,6 +17,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { SortableTableHead } from '@/components/ui/sortable-table-head';
 import {
   Dialog,
   DialogContent,
@@ -46,6 +48,8 @@ interface BOM {
   customer?: { org_name: string | null };
 }
 
+type SortColumn = 'project_name' | 'customer' | 'version' | 'created_at';
+
 const BOMsList: React.FC = () => {
   const { t } = useLanguage();
   const { isStaff, loading: authLoading } = useAuth();
@@ -54,6 +58,10 @@ const BOMsList: React.FC = () => {
   
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [formData, setFormData] = useState({ project_name: '', customer_id: '' });
+  const { sortColumn, sortDirection, handleSort } = useTableSort<SortColumn>({ 
+    defaultColumn: 'created_at', 
+    defaultDirection: 'desc' 
+  });
 
   // Fetch BOMs
   const { data: boms = [], isLoading } = useQuery({
@@ -84,6 +92,22 @@ const BOMsList: React.FC = () => {
     },
     enabled: isStaff,
   });
+
+  // Sort BOMs
+  const sortedBoms = useMemo(() => {
+    return sortItems(boms, sortColumn as keyof BOM, sortDirection, {
+      getValue: (bom) => {
+        switch (sortColumn) {
+          case 'customer':
+            return bom.customer?.org_name ?? '';
+          case 'created_at':
+            return new Date(bom.created_at);
+          default:
+            return bom[sortColumn as keyof BOM] as string | number;
+        }
+      },
+    });
+  }, [boms, sortColumn, sortDirection]);
 
   // Create BOM mutation
   const createMutation = useMutation({
@@ -150,10 +174,18 @@ const BOMsList: React.FC = () => {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="text-muted-foreground text-xs uppercase">{t('Projekt', 'Project')}</TableHead>
-                <TableHead className="text-muted-foreground text-xs uppercase">{t('Kund', 'Customer')}</TableHead>
-                <TableHead className="text-muted-foreground text-xs uppercase">{t('Version', 'Version')}</TableHead>
-                <TableHead className="text-muted-foreground text-xs uppercase">{t('Skapad', 'Created')}</TableHead>
+                <SortableTableHead column="project_name" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>
+                  {t('Projekt', 'Project')}
+                </SortableTableHead>
+                <SortableTableHead column="customer" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>
+                  {t('Kund', 'Customer')}
+                </SortableTableHead>
+                <SortableTableHead column="version" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>
+                  {t('Version', 'Version')}
+                </SortableTableHead>
+                <SortableTableHead column="created_at" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>
+                  {t('Skapad', 'Created')}
+                </SortableTableHead>
                 <TableHead className="text-muted-foreground text-xs uppercase text-right">{t('Åtgärder', 'Actions')}</TableHead>
               </TableRow>
             </TableHeader>
@@ -171,7 +203,7 @@ const BOMsList: React.FC = () => {
                   </TableCell>
                 </TableRow>
               ) : (
-                boms.map(bom => (
+                sortedBoms.map(bom => (
                   <TableRow key={bom.id}>
                     <TableCell>
                       <Link 
