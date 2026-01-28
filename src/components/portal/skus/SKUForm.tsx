@@ -417,14 +417,14 @@ const SKUForm: React.FC<SKUFormProps> = ({ sku, onClose, categories }) => {
               <div className="space-y-2">
                 <Label>{t('Avrundning override', 'Rounding override')}</Label>
                 <Select 
-                  value={formData.rounding_override_sek} 
-                  onValueChange={(value) => setFormData(prev => ({ ...prev, rounding_override_sek: value }))}
+                  value={formData.rounding_override_sek || 'none'} 
+                  onValueChange={(value) => setFormData(prev => ({ ...prev, rounding_override_sek: value === 'none' ? '' : value }))}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder={categoryRule?.rounding ? `${categoryRule.rounding} kr` : t('Kategoristandard', 'Category default')} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">{t('Kategoristandard', 'Category default')}</SelectItem>
+                    <SelectItem value="none">{t('Kategoristandard', 'Category default')}</SelectItem>
                     {ROUNDING_OPTIONS.map(opt => (
                       <SelectItem key={opt} value={opt.toString()}>{opt} kr</SelectItem>
                     ))}
