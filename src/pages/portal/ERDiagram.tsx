@@ -5,7 +5,7 @@ import PortalLayout from '@/components/portal/PortalLayout';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { ZoomIn, ZoomOut, RotateCcw, Download } from 'lucide-react';
+import { ZoomIn, ZoomOut, RotateCcw, Download, ArrowRightLeft, ArrowDownUp } from 'lucide-react';
 
 const erdDiagram = `erDiagram
     %% Staff & Auth
@@ -231,6 +231,7 @@ const ERDiagram = () => {
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [isExporting, setIsExporting] = useState(false);
+  const [layoutDirection, setLayoutDirection] = useState<'TB' | 'LR'>('TB');
 
   useEffect(() => {
     mermaid.initialize({
@@ -239,7 +240,7 @@ const ERDiagram = () => {
       securityLevel: 'loose',
       er: {
         useMaxWidth: false,
-        layoutDirection: 'TB',
+        layoutDirection: layoutDirection,
       },
     });
 
@@ -247,7 +248,9 @@ const ERDiagram = () => {
       if (diagramRef.current) {
         diagramRef.current.innerHTML = '';
         try {
-          const { svg } = await mermaid.render('erd-diagram', erdDiagram);
+          // Use a unique ID to force re-render when layout changes
+          const diagramId = `erd-diagram-${layoutDirection}-${Date.now()}`;
+          const { svg } = await mermaid.render(diagramId, erdDiagram);
           diagramRef.current.innerHTML = svg;
         } catch (error) {
           console.error('Failed to render Mermaid diagram:', error);
@@ -257,7 +260,7 @@ const ERDiagram = () => {
     };
 
     renderDiagram();
-  }, []);
+  }, [layoutDirection]);
 
   // Zoom handlers
   const handleZoomIn = () => setScale(prev => Math.min(prev + 0.2, 3));
@@ -355,6 +358,18 @@ const ERDiagram = () => {
                 </Button>
                 <Button variant="outline" size="icon" onClick={handleReset} title={t('Återställ', 'Reset')}>
                   <RotateCcw className="h-4 w-4" />
+                </Button>
+                <Button 
+                  variant="outline" 
+                  onClick={() => setLayoutDirection(prev => prev === 'TB' ? 'LR' : 'TB')}
+                  title={layoutDirection === 'TB' ? t('Byt till horisontell layout', 'Switch to horizontal layout') : t('Byt till vertikal layout', 'Switch to vertical layout')}
+                >
+                  {layoutDirection === 'TB' ? (
+                    <ArrowRightLeft className="h-4 w-4 mr-2" />
+                  ) : (
+                    <ArrowDownUp className="h-4 w-4 mr-2" />
+                  )}
+                  {layoutDirection === 'TB' ? t('Horisontell', 'Horizontal') : t('Vertikal', 'Vertical')}
                 </Button>
                 <Button variant="outline" onClick={handleExport} disabled={isExporting}>
                   <Download className="h-4 w-4 mr-2" />
