@@ -240,6 +240,8 @@ const SKUCatalog: React.FC = () => {
               ) : (
                 filteredSkus.map((sku) => {
                   const sellPrice = calculateSellPrice(sku);
+                  const rule = marginRules.find(r => r.category === sku.category);
+                  const effectiveMargin = sku.default_margin ?? rule?.margin_percent ?? null;
                   return (
                     <TableRow key={sku.id}>
                       <TableCell className="font-mono text-sm">{sku.sku}</TableCell>
@@ -266,7 +268,7 @@ const SKUCatalog: React.FC = () => {
                         {sku.cost_ex_vat ? `${sku.cost_ex_vat} kr` : '—'}
                       </TableCell>
                       <TableCell className="text-right">
-                        {sku.default_margin ? `${sku.default_margin}%` : '—'}
+                        {effectiveMargin != null ? `${effectiveMargin}%` : '—'}
                       </TableCell>
                       <TableCell className="text-right font-medium">
                         {sellPrice ? `${sellPrice} kr` : '—'}
