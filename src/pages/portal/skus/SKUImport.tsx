@@ -702,26 +702,6 @@ HUB-ZB-PRO,Zigbee Hub Professional,Controllers,Aqara,https://aqara.com,1562.50,f
                 </div>
               </CardContent>
             </Card>
-
-            {/* Image naming */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">{t('Bildfilnamn', 'Image filenames')}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground mb-3">
-                  {t('Bildfilerna måste ha samma namn som SKU-koden med filformat', 'Image files must have the same name as the SKU code with file extension')} <code className="bg-muted px-1 rounded">.jpg</code> {t('eller', 'or')} <code className="bg-muted px-1 rounded">.png</code>
-                </p>
-                <div className="space-y-1 text-sm">
-                  <p className="text-primary"><Check className="h-3 w-3 inline mr-1" />ZBT-2.jpg</p>
-                  <p className="text-primary"><Check className="h-3 w-3 inline mr-1" />ESP32-RELAY-4.png</p>
-                  <p className="text-primary"><Check className="h-3 w-3 inline mr-1" />HUB-ZB-PRO.jpg</p>
-                  <p className="text-destructive"><X className="h-3 w-3 inline mr-1" />zigbee sensor.jpg {t('(innehåller mellanslag)', '(contains spaces)')}</p>
-                  <p className="text-destructive"><X className="h-3 w-3 inline mr-1" />zbt-2.jpg {t('(fel versaler/gemener)', '(wrong case)')}</p>
-                </div>
-              </CardContent>
-            </Card>
-
             {/* Paste CSV */}
             <Card>
               <CardHeader>
