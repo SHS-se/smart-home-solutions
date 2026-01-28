@@ -1,8 +1,11 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import mermaid from 'mermaid';
+import { toPng } from 'html-to-image';
 import PortalLayout from '@/components/portal/PortalLayout';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { ZoomIn, ZoomOut, RotateCcw, Download } from 'lucide-react';
 
 const erdDiagram = `erDiagram
     %% Staff & Auth
@@ -220,6 +223,14 @@ const erdDiagram = `erDiagram
 const ERDiagram = () => {
   const { t } = useLanguage();
   const containerRef = useRef<HTMLDivElement>(null);
+  const diagramRef = useRef<HTMLDivElement>(null);
+  
+  // Zoom and pan state
+  const [scale, setScale] = useState(0.8);
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const [isExporting, setIsExporting] = useState(false);
 
   useEffect(() => {
     mermaid.initialize({
@@ -227,26 +238,83 @@ const ERDiagram = () => {
       theme: 'dark',
       securityLevel: 'loose',
       er: {
-        useMaxWidth: true,
+        useMaxWidth: false,
         layoutDirection: 'TB',
       },
     });
 
     const renderDiagram = async () => {
-      if (containerRef.current) {
-        containerRef.current.innerHTML = '';
+      if (diagramRef.current) {
+        diagramRef.current.innerHTML = '';
         try {
           const { svg } = await mermaid.render('erd-diagram', erdDiagram);
-          containerRef.current.innerHTML = svg;
+          diagramRef.current.innerHTML = svg;
         } catch (error) {
           console.error('Failed to render Mermaid diagram:', error);
-          containerRef.current.innerHTML = '<p class="text-destructive">Failed to render diagram</p>';
+          diagramRef.current.innerHTML = '<p class="text-destructive">Failed to render diagram</p>';
         }
       }
     };
 
     renderDiagram();
   }, []);
+
+  // Zoom handlers
+  const handleZoomIn = () => setScale(prev => Math.min(prev + 0.2, 3));
+  const handleZoomOut = () => setScale(prev => Math.max(prev - 0.2, 0.2));
+  const handleReset = () => {
+    setScale(0.8);
+    setPosition({ x: 0, y: 0 });
+  };
+
+  // Mouse wheel zoom
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? -0.1 : 0.1;
+    setScale(prev => Math.min(Math.max(prev + delta, 0.2), 3));
+  }, []);
+
+  // Pan handlers
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button === 0) { // Left click only
+      setIsDragging(true);
+      setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y });
+    }
+  };
+
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (isDragging) {
+      setPosition({
+        x: e.clientX - dragStart.x,
+        y: e.clientY - dragStart.y,
+      });
+    }
+  }, [isDragging, dragStart]);
+
+  const handleMouseUp = () => setIsDragging(false);
+  const handleMouseLeave = () => setIsDragging(false);
+
+  // Export to PNG
+  const handleExport = async () => {
+    if (!diagramRef.current) return;
+    
+    setIsExporting(true);
+    try {
+      const dataUrl = await toPng(diagramRef.current, {
+        backgroundColor: '#1a1a2e',
+        pixelRatio: 2,
+      });
+      
+      const link = document.createElement('a');
+      link.download = 'database-erd.png';
+      link.href = dataUrl;
+      link.click();
+    } catch (error) {
+      console.error('Failed to export diagram:', error);
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   return (
     <PortalLayout>
@@ -265,19 +333,54 @@ const ERDiagram = () => {
 
         <Card>
           <CardHeader>
-            <CardTitle>{t('Entity Relationship Diagram', 'Entity Relationship Diagram')}</CardTitle>
-            <CardDescription>
-              {t(
-                'Visar tabeller, kolumner och relationer i databasen.',
-                'Shows tables, columns, and relationships in the database.'
-              )}
-            </CardDescription>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <CardTitle>{t('Entity Relationship Diagram', 'Entity Relationship Diagram')}</CardTitle>
+                <CardDescription>
+                  {t(
+                    'Använd musen för att panorera. Scrolla för att zooma.',
+                    'Use mouse to pan. Scroll to zoom.'
+                  )}
+                </CardDescription>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="icon" onClick={handleZoomOut} title={t('Zooma ut', 'Zoom out')}>
+                  <ZoomOut className="h-4 w-4" />
+                </Button>
+                <span className="text-sm text-muted-foreground min-w-[4rem] text-center">
+                  {Math.round(scale * 100)}%
+                </span>
+                <Button variant="outline" size="icon" onClick={handleZoomIn} title={t('Zooma in', 'Zoom in')}>
+                  <ZoomIn className="h-4 w-4" />
+                </Button>
+                <Button variant="outline" size="icon" onClick={handleReset} title={t('Återställ', 'Reset')}>
+                  <RotateCcw className="h-4 w-4" />
+                </Button>
+                <Button variant="outline" onClick={handleExport} disabled={isExporting}>
+                  <Download className="h-4 w-4 mr-2" />
+                  {isExporting ? t('Exporterar...', 'Exporting...') : t('Exportera PNG', 'Export PNG')}
+                </Button>
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
             <div 
-              ref={containerRef} 
-              className="overflow-auto max-h-[70vh] p-4 bg-muted/30 rounded-lg"
-            />
+              ref={containerRef}
+              className="overflow-hidden h-[70vh] bg-muted/30 rounded-lg cursor-grab active:cursor-grabbing"
+              onWheel={handleWheel}
+              onMouseDown={handleMouseDown}
+              onMouseMove={handleMouseMove}
+              onMouseUp={handleMouseUp}
+              onMouseLeave={handleMouseLeave}
+            >
+              <div
+                ref={diagramRef}
+                className="inline-block origin-top-left transition-transform duration-75"
+                style={{
+                  transform: `translate(${position.x}px, ${position.y}px) scale(${scale})`,
+                }}
+              />
+            </div>
           </CardContent>
         </Card>
       </div>
