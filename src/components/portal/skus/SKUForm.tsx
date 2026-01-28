@@ -231,34 +231,51 @@ const SKUForm: React.FC<SKUFormProps> = ({ sku, onClose, categories }) => {
       {/* Pricing */}
       <div className="grid grid-cols-3 gap-4">
         <div className="space-y-2">
-          <Label htmlFor="cost_ex_vat">{t('Kostnad ex moms (kr)', 'Cost ex VAT (kr)')}</Label>
-          <Input
-            id="cost_ex_vat"
-            type="number"
-            step="0.01"
-            value={formData.cost_ex_vat}
-            onChange={(e) => setFormData(prev => ({ ...prev, cost_ex_vat: e.target.value }))}
-            placeholder="145"
-          />
+          <Label htmlFor="cost_ex_vat">{t('Kostnad ex moms', 'Cost ex VAT')}</Label>
+          <div className="relative">
+            <Input
+              id="cost_ex_vat"
+              type="number"
+              step="0.01"
+              value={formData.cost_ex_vat}
+              onChange={(e) => setFormData(prev => ({ ...prev, cost_ex_vat: e.target.value }))}
+              placeholder="145"
+              className="pr-10"
+            />
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">
+              kr
+            </span>
+          </div>
         </div>
         <div className="space-y-2">
-          <Label htmlFor="default_margin">{t('Standard marginal (%)', 'Default margin (%)')}</Label>
-          <Input
-            id="default_margin"
-            type="number"
-            step="0.1"
-            value={formData.default_margin}
-            onChange={(e) => setFormData(prev => ({ ...prev, default_margin: e.target.value }))}
-            placeholder="35"
-          />
+          <Label htmlFor="default_margin">{t('Standard marginal', 'Default margin')}</Label>
+          <div className="relative">
+            <Input
+              id="default_margin"
+              type="number"
+              step="0.1"
+              value={formData.default_margin}
+              onChange={(e) => setFormData(prev => ({ ...prev, default_margin: e.target.value }))}
+              placeholder="35"
+              className="pr-8"
+            />
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">
+              %
+            </span>
+          </div>
         </div>
         <div className="space-y-2">
-          <Label>{t('Säljpris (kr)', 'Sell Price (kr)')}</Label>
-          <Input
-            value={sellPrice ?? '—'}
-            readOnly
-            className="bg-muted"
-          />
+          <Label>{t('Säljpris', 'Sell Price')}</Label>
+          <div className="relative">
+            <Input
+              value={sellPrice ?? '—'}
+              readOnly
+              className="bg-muted pr-10"
+            />
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">
+              kr
+            </span>
+          </div>
         </div>
       </div>
 
