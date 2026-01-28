@@ -8,6 +8,7 @@ import PortalLayout from '@/components/portal/PortalLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
   Table,
   TableBody,
@@ -23,7 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Settings2, Info, Save } from 'lucide-react';
+import { Settings2, Info, Save, AlertTriangle } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 
 interface MarginRule {
@@ -106,6 +107,7 @@ const MarginSettings: React.FC = () => {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['margin_rules'] });
+      queryClient.invalidateQueries({ queryKey: ['skus'] }); // Refresh SKUs as prices may have changed
       setHasChanges(false);
       toast({ title: t('Ändringar sparade', 'Changes saved') });
     },
@@ -123,12 +125,13 @@ const MarginSettings: React.FC = () => {
     setHasChanges(true);
   };
 
-  // Calculate example prices
+  // Calculate example prices with CEILING rounding
   const calculateExample = (cost: number, marginPercent: number, rounding: number) => {
     const rawPrice = cost * (1 + marginPercent / 100);
     const marginAmount = cost * (marginPercent / 100);
     const beforeRounding = rawPrice;
-    const afterRounding = Math.round(rawPrice / rounding) * rounding;
+    // CEILING rounding
+    const afterRounding = Math.ceil(rawPrice / rounding) * rounding;
     return { marginAmount, beforeRounding, afterRounding };
   };
 
@@ -137,12 +140,6 @@ const MarginSettings: React.FC = () => {
     navigate('/portal');
     return null;
   }
-
-  const exampleCosts = [
-    { category: 'Sensorer', cost: 145, marginPercent: 35 },
-    { category: 'Controllers', cost: 1250, marginPercent: 25 },
-    { category: 'Material', cost: 890, marginPercent: 60 },
-  ];
 
   return (
     <PortalLayout>
@@ -159,6 +156,16 @@ const MarginSettings: React.FC = () => {
           </div>
         </div>
 
+        {/* Warning Banner */}
+        <Alert variant="destructive" className="border-destructive/50 bg-destructive/10">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>{t('Viktigt', 'Important')}</AlertTitle>
+          <AlertDescription>
+            {t('När du ändrar marginal eller avrundning uppdateras alla SKUs i den kategorin automatiskt. Varje SKU får en ny pris-historik-rad.',
+               'When you change margin or rounding, all SKUs in that category are automatically updated. Each SKU gets a new price history record.')}
+          </AlertDescription>
+        </Alert>
+
         {/* Info Card */}
         <Card className="border-primary/20 bg-primary/5">
           <CardContent className="p-4">
@@ -167,12 +174,12 @@ const MarginSettings: React.FC = () => {
               <div className="text-sm space-y-1">
                 <p className="font-medium">{t('Hur det fungerar', 'How it works')}:</p>
                 <ul className="list-disc list-inside text-muted-foreground space-y-1">
-                  <li>{t('När du lägger till en SKU beräknas säljpriset automatiskt från kostnad + marginal', 
-                        'When you add a SKU, the sell price is automatically calculated from cost + margin')}</li>
-                  <li>{t('Säljpriset avrundas till närmaste {avrundning} SEK för snyggare prissättning', 
-                        'The sell price is rounded to the nearest {rounding} SEK for cleaner pricing')}</li>
-                  <li>{t('Du kan alltid justera säljpriset manuellt i BOM Builder', 
-                        'You can always adjust the sell price manually in BOM Builder')}</li>
+                  <li>{t('Säljpriset beräknas: Kostnad × (1 + Marginal%) → CEILING avrundning', 
+                        'Sell price is calculated: Cost × (1 + Margin%) → CEILING rounding')}</li>
+                  <li>{t('CEILING avrundning: priset avrundas alltid UPPÅT till närmaste steg', 
+                        'CEILING rounding: price is always rounded UP to the nearest step')}</li>
+                  <li>{t('SKU:s kan ha egna margin/avrundning override som överskrider kategoriregeln', 
+                        'SKUs can have their own margin/rounding override that supersedes the category rule')}</li>
                 </ul>
               </div>
             </div>
@@ -182,16 +189,16 @@ const MarginSettings: React.FC = () => {
         {/* Formula Card */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">{t('Formel', 'Formula')}</CardTitle>
+            <CardTitle className="text-lg">{t('Formel (CEILING)', 'Formula (CEILING)')}</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="bg-muted p-4 rounded-lg font-mono text-sm">
-              <span className="text-primary">Säljpris</span> = Kostnad × (1 + Marginal%) → Avrundas till närmaste {'{avrundning}'} kr
+              <span className="text-primary">Säljpris</span> = CEILING(Kostnad × (1 + Marginal%) / Avrundning) × Avrundning
             </div>
             <p className="text-sm text-muted-foreground mt-3">
               {t('Exempel: Sensor kostar 145 kr, marginal 35%, avrundning 5 kr', 
                  'Example: Sensor costs 145 kr, margin 35%, rounding 5 kr')}<br />
-              → 145 × 1.35 = 195.75 kr → avrundas till <span className="font-medium text-foreground">195 kr</span>
+              → 145 × 1.35 = 195.75 kr → CEILING(195.75 / 5) × 5 = <span className="font-medium text-foreground">200 kr</span>
             </p>
           </CardContent>
         </Card>
@@ -253,7 +260,7 @@ const MarginSettings: React.FC = () => {
         {/* Example Calculations */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">{t('Exempel på beräkningar', 'Example Calculations')}</CardTitle>
+            <CardTitle className="text-lg">{t('Exempel på beräkningar (CEILING)', 'Example Calculations (CEILING)')}</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -287,7 +294,7 @@ const MarginSettings: React.FC = () => {
                         <span className="font-bold text-primary">{calc.afterRounding} kr</span>
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        {t('Avrundat till närmaste', 'Rounded to nearest')} {rule.rounding} kr
+                        CEILING {t('till närmaste', 'to nearest')} {rule.rounding} kr
                       </p>
                     </div>
                   </div>

@@ -20,6 +20,12 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { Search, Plus, Check } from 'lucide-react';
 
 interface SKU {
@@ -27,8 +33,10 @@ interface SKU {
   sku: string;
   name: string;
   category: string;
-  cost_ex_vat: number | null;
-  default_margin: number | null;
+  cost_ex_vat_computed: number | null;
+  vat_rate: number;
+  sell_price_ex_vat: number | null;
+  sell_price_inc_vat: number | null;
 }
 
 interface SKUSelectorProps {
@@ -48,26 +56,16 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
   const [search, setSearch] = useState('');
   const [quantities, setQuantities] = useState<Record<string, number>>({});
 
-  // Fetch SKUs
+  // Fetch SKUs with pre-calculated pricing
   const { data: skus = [] } = useQuery({
     queryKey: ['skus'],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('skus')
-        .select('id, sku, name, category, cost_ex_vat, default_margin')
+        .select('id, sku, name, category, cost_ex_vat_computed, vat_rate, sell_price_ex_vat, sell_price_inc_vat')
         .order('sku');
       if (error) throw error;
       return data as SKU[];
-    },
-  });
-
-  // Fetch margin rules
-  const { data: marginRules = [] } = useQuery({
-    queryKey: ['margin_rules'],
-    queryFn: async () => {
-      const { data, error } = await supabase.from('margin_rules').select('*');
-      if (error) throw error;
-      return data;
     },
   });
 
@@ -80,16 +78,6 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
     return naturalSort(filtered, 'sku');
   }, [skus, search]);
 
-  // Calculate sell price
-  const calculateSellPrice = (sku: SKU) => {
-    if (!sku.cost_ex_vat) return null;
-    const rule = marginRules.find(r => r.category === sku.category);
-    const margin = sku.default_margin ?? rule?.margin_percent ?? 0;
-    const rounding = rule?.rounding ?? 5;
-    const rawPrice = sku.cost_ex_vat * (1 + margin / 100);
-    return Math.round(rawPrice / rounding) * rounding;
-  };
-
   const handleSelect = (sku: SKU) => {
     const quantity = quantities[sku.id] || 1;
     onSelect(sku.id, quantity);
@@ -99,6 +87,11 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
 
   const handleQuantityChange = (skuId: string, value: number) => {
     setQuantities(prev => ({ ...prev, [skuId]: Math.max(1, value) }));
+  };
+
+  const formatPrice = (value: number | null) => {
+    if (value === null) return '—';
+    return value.toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
   };
 
   return (
@@ -121,63 +114,73 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
 
         {/* SKU List */}
         <div className="flex-1 overflow-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="text-xs uppercase">SKU</TableHead>
-                <TableHead className="text-xs uppercase">{t('Namn', 'Name')}</TableHead>
-                <TableHead className="text-xs uppercase">{t('Kategori', 'Category')}</TableHead>
-                <TableHead className="text-xs uppercase text-right">{t('Pris', 'Price')}</TableHead>
-                <TableHead className="text-xs uppercase text-center">{t('Antal', 'Qty')}</TableHead>
-                <TableHead></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredSkus.map(sku => {
-                const isAdded = existingSkuIds.includes(sku.id);
-                const sellPrice = calculateSellPrice(sku);
-                return (
-                  <TableRow key={sku.id} className={isAdded ? 'opacity-50' : ''}>
-                    <TableCell className="font-mono">{sku.sku}</TableCell>
-                    <TableCell>{sku.name}</TableCell>
-                    <TableCell>
-                      <Badge variant="secondary">{sku.category}</Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {sellPrice ? `${sellPrice} kr` : '—'}
-                    </TableCell>
-                    <TableCell className="text-center">
-                      <Input
-                        type="number"
-                        min="1"
-                        value={quantities[sku.id] || 1}
-                        onChange={(e) => handleQuantityChange(sku.id, parseInt(e.target.value) || 1)}
-                        className="w-16 text-center"
-                        disabled={isAdded}
-                      />
-                    </TableCell>
-                    <TableCell>
-                      {isAdded ? (
-                        <Button variant="ghost" size="sm" disabled>
-                          <Check className="h-4 w-4 mr-1" />
-                          {t('Tillagd', 'Added')}
-                        </Button>
-                      ) : (
-                        <Button 
-                          variant="outline" 
-                          size="sm"
-                          onClick={() => handleSelect(sku)}
-                        >
-                          <Plus className="h-4 w-4 mr-1" />
-                          {t('Lägg till', 'Add')}
-                        </Button>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
+          <TooltipProvider>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-xs uppercase">SKU</TableHead>
+                  <TableHead className="text-xs uppercase">{t('Namn', 'Name')}</TableHead>
+                  <TableHead className="text-xs uppercase">{t('Kategori', 'Category')}</TableHead>
+                  <TableHead className="text-xs uppercase text-right">{t('Pris inkl', 'Price incl')}</TableHead>
+                  <TableHead className="text-xs uppercase text-center">{t('Antal', 'Qty')}</TableHead>
+                  <TableHead></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredSkus.map(sku => {
+                  const isAdded = existingSkuIds.includes(sku.id);
+                  return (
+                    <TableRow key={sku.id} className={isAdded ? 'opacity-50' : ''}>
+                      <TableCell className="font-mono">{sku.sku}</TableCell>
+                      <TableCell>{sku.name}</TableCell>
+                      <TableCell>
+                        <Badge variant="secondary">{sku.category}</Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="cursor-help">
+                              {sku.sell_price_inc_vat ? `${formatPrice(sku.sell_price_inc_vat)} kr` : '—'}
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>{t('Ex moms', 'Ex VAT')}: {formatPrice(sku.sell_price_ex_vat)} kr</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <Input
+                          type="number"
+                          min="1"
+                          value={quantities[sku.id] || 1}
+                          onChange={(e) => handleQuantityChange(sku.id, parseInt(e.target.value) || 1)}
+                          className="w-16 text-center"
+                          disabled={isAdded}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        {isAdded ? (
+                          <Button variant="ghost" size="sm" disabled>
+                            <Check className="h-4 w-4 mr-1" />
+                            {t('Tillagd', 'Added')}
+                          </Button>
+                        ) : (
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            onClick={() => handleSelect(sku)}
+                          >
+                            <Plus className="h-4 w-4 mr-1" />
+                            {t('Lägg till', 'Add')}
+                          </Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </TooltipProvider>
         </div>
       </DialogContent>
     </Dialog>
