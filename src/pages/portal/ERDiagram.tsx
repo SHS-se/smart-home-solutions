@@ -339,10 +339,10 @@ const ERDiagram = () => {
       bgRect.setAttribute('fill', '#1e1e2e');
       clonedSvg.insertBefore(bgRect, clonedSvg.firstChild);
       
-      // Convert SVG to canvas for reliable export
+      // Convert SVG to data URL (avoids tainted canvas issue)
       const svgData = new XMLSerializer().serializeToString(clonedSvg);
-      const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-      const svgUrl = URL.createObjectURL(svgBlob);
+      const svgBase64 = btoa(unescape(encodeURIComponent(svgData)));
+      const svgDataUrl = `data:image/svg+xml;base64,${svgBase64}`;
       
       const img = new Image();
       img.onload = () => {
@@ -362,17 +362,15 @@ const ERDiagram = () => {
           link.click();
         }
         
-        URL.revokeObjectURL(svgUrl);
         setIsExporting(false);
       };
       
       img.onerror = () => {
         console.error('Failed to load SVG for export');
-        URL.revokeObjectURL(svgUrl);
         setIsExporting(false);
       };
       
-      img.src = svgUrl;
+      img.src = svgDataUrl;
     } catch (error) {
       console.error('Failed to export diagram:', error);
       setIsExporting(false);
