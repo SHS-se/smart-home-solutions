@@ -725,6 +725,15 @@ ZBT-2,Zigbee Temperature Sensor,Sensorer,Aqara,https://aqara.com,181.25,false,0.
                 >
                   {isProcessing ? t('Bearbetar...', 'Processing...') : t('Analysera CSV', 'Parse CSV')}
                 </Button>
+                <div className="mt-4 text-xs text-muted-foreground space-y-1">
+                  <p><strong>{t('Obligatoriska kolumner', 'Required columns')}:</strong> sku, name, category</p>
+                  <p><strong>{t('Valfria kolumner', 'Optional columns')}:</strong> supplier, supplier_url, purchase_price, purchase_includes_vat, vat_rate, margin_override_percent, rounding_override_sek, notes</p>
+                  <p><strong>purchase_includes_vat:</strong> true/false ({t('accepterar även', 'also accepts')} 1/0, yes/no)</p>
+                  <p><strong>vat_rate:</strong> 0, 0.06, 0.12, 0.25 ({t('accepterar även', 'also accepts')} 6%, 12%, 25%)</p>
+                  <p><strong>margin_override_percent:</strong> {t('Tomt = använd kategoristandard', 'Empty = use category default')}</p>
+                  <p><strong>rounding_override_sek:</strong> {t('Tomt = använd kategoristandard', 'Empty = use category default')}</p>
+                  <p><strong>{t('Kategorier', 'Categories')}:</strong> Sensorer, Controllers, Reläer, Tjänst, Sensor, Controller, Relay, Material, Service, Server</p>
+                </div>
               </CardContent>
             </Card>
 
