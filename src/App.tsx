@@ -41,6 +41,7 @@ import BOMBuilder from "./pages/portal/boms/BOMBuilder";
 import QuotesList from "./pages/portal/quotes/QuotesList";
 import QuotePreparation from "./pages/portal/quotes/QuotePreparation";
 import MarginSettings from "./pages/portal/settings/MarginSettings";
+import ERDiagram from "./pages/portal/ERDiagram";
 
 // Staff customer view pages
 import CustomerViewDashboard from "./pages/portal/customer-view/CustomerViewDashboard";
@@ -129,6 +130,7 @@ const App = () => (
                 <Route path="/portal/quotes" element={<QuotesList />} />
                 <Route path="/portal/quotes/:id" element={<QuotePreparation />} />
                 <Route path="/portal/settings/margins" element={<MarginSettings />} />
+                <Route path="/portal/erd" element={<ERDiagram />} />
                 
                 {/* Staff viewing customer portal */}
                 <Route path="/portal/customers/:customerId/overview" element={<CustomerViewWrapper><CustomerViewDashboard /></CustomerViewWrapper>} />
