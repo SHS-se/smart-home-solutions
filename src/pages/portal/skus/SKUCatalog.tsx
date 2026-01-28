@@ -4,7 +4,8 @@ import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { cn, naturalSort } from '@/lib/utils';
+import { naturalSort } from '@/lib/utils';
+import { useTableSort, sortItems } from '@/hooks/use-table-sort';
 import PortalLayout from '@/components/portal/PortalLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -17,6 +18,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { SortableTableHead } from '@/components/ui/sortable-table-head';
 import {
   Select,
   SelectContent,
@@ -30,7 +32,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Plus, Upload, Search, Pencil, Trash2, ExternalLink, Settings2, ArrowUp, ArrowDown } from 'lucide-react';
+import { Plus, Upload, Search, Pencil, Trash2, ExternalLink, Settings2 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import SKUForm from '@/components/portal/skus/SKUForm';
 
@@ -48,7 +50,6 @@ interface SKU {
 }
 
 type SortColumn = 'sku' | 'name' | 'category' | 'supplier' | 'cost_ex_vat' | 'margin' | 'sell_price';
-type SortDirection = 'asc' | 'desc';
 
 const SKUCatalog: React.FC = () => {
   const { t } = useLanguage();
@@ -60,8 +61,7 @@ const SKUCatalog: React.FC = () => {
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingSku, setEditingSku] = useState<SKU | null>(null);
-  const [sortColumn, setSortColumn] = useState<SortColumn>('sku');
-  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+  const { sortColumn, sortDirection, handleSort } = useTableSort<SortColumn>({ defaultColumn: 'sku' });
 
   // Fetch SKUs
   const { data: skus = [], isLoading } = useQuery({
@@ -132,36 +132,6 @@ const SKUCatalog: React.FC = () => {
     const rule = marginRules.find(r => r.category === sku.category);
     return sku.default_margin ?? rule?.margin_percent ?? null;
   };
-
-  // Handle column header click
-  const handleSort = (column: SortColumn) => {
-    if (sortColumn === column) {
-      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortColumn(column);
-      setSortDirection('asc');
-    }
-  };
-
-  // Render sortable header
-  const SortableHeader = ({ column, children, className }: { column: SortColumn; children: React.ReactNode; className?: string }) => (
-    <TableHead 
-      className={cn(
-        "text-muted-foreground text-xs uppercase cursor-pointer select-none hover:bg-muted/50 transition-colors",
-        className
-      )}
-      onClick={() => handleSort(column)}
-    >
-      <div className={cn("flex items-center gap-1", className?.includes('text-right') && "justify-end", className?.includes('text-center') && "justify-center")}>
-        {children}
-        {sortColumn === column && (
-          sortDirection === 'asc' 
-            ? <ArrowUp className="h-3 w-3" /> 
-            : <ArrowDown className="h-3 w-3" />
-        )}
-      </div>
-    </TableHead>
-  );
 
   // Filter and sort SKUs
   const filteredSkus = useMemo(() => {
@@ -293,13 +263,13 @@ const SKUCatalog: React.FC = () => {
           <Table>
             <TableHeader>
               <TableRow>
-                <SortableHeader column="sku">SKU</SortableHeader>
-                <SortableHeader column="name">{t('Namn', 'Name')}</SortableHeader>
-                <SortableHeader column="category">{t('Kategori', 'Category')}</SortableHeader>
-                <SortableHeader column="supplier">{t('Leverantör', 'Supplier')}</SortableHeader>
-                <SortableHeader column="cost_ex_vat" className="text-right">{t('Kostnad ex moms', 'Cost ex VAT')}</SortableHeader>
-                <SortableHeader column="margin" className="text-right">{t('Marginal %', 'Margin %')}</SortableHeader>
-                <SortableHeader column="sell_price" className="text-right">{t('Säljpris', 'Sell Price')}</SortableHeader>
+                <SortableTableHead column="sku" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>SKU</SortableTableHead>
+                <SortableTableHead column="name" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>{t('Namn', 'Name')}</SortableTableHead>
+                <SortableTableHead column="category" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>{t('Kategori', 'Category')}</SortableTableHead>
+                <SortableTableHead column="supplier" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>{t('Leverantör', 'Supplier')}</SortableTableHead>
+                <SortableTableHead column="cost_ex_vat" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort} className="text-right">{t('Kostnad ex moms', 'Cost ex VAT')}</SortableTableHead>
+                <SortableTableHead column="margin" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort} className="text-right">{t('Marginal %', 'Margin %')}</SortableTableHead>
+                <SortableTableHead column="sell_price" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort} className="text-right">{t('Säljpris', 'Sell Price')}</SortableTableHead>
                 <TableHead className="text-muted-foreground text-xs uppercase text-center">{t('Bild', 'Image')}</TableHead>
                 <TableHead className="text-muted-foreground text-xs uppercase text-right">{t('Åtgärder', 'Actions')}</TableHead>
               </TableRow>

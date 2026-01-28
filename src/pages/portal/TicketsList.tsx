@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Loader2, Plus, Search } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -20,9 +20,11 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { SortableTableHead } from '@/components/ui/sortable-table-head';
 import PortalLayout from '@/components/portal/PortalLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useTableSort, sortItems } from '@/hooks/use-table-sort';
 import { supabase } from '@/integrations/supabase/client';
 
 interface Ticket {
@@ -36,6 +38,8 @@ interface Ticket {
   customers?: { org_name: string | null };
 }
 
+type SortColumn = 'ticket_number' | 'title' | 'customer' | 'status' | 'last_activity_at';
+
 const TicketsList: React.FC = () => {
   const { user, customerData, loading, isStaff } = useAuth();
   const navigate = useNavigate();
@@ -44,6 +48,10 @@ const TicketsList: React.FC = () => {
   const [ticketsLoading, setTicketsLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const { sortColumn, sortDirection, handleSort } = useTableSort<SortColumn>({ 
+    defaultColumn: 'last_activity_at', 
+    defaultDirection: 'desc' 
+  });
 
   const getStatusBadge = (status: string) => {
     const statusLabels: Record<string, string> = {
@@ -107,13 +115,29 @@ const TicketsList: React.FC = () => {
     }
   }, [user, customerData, isStaff, loading]);
 
-  const filteredTickets = tickets.filter((ticket) => {
-    const matchesStatus = statusFilter === 'all' || ticket.status === statusFilter;
-    const query = searchQuery.toLowerCase();
-    const matchesSearch = ticket.title.toLowerCase().includes(query) || 
-                          ticket.ticket_number.toLowerCase().includes(query);
-    return matchesStatus && matchesSearch;
-  });
+  const filteredTickets = useMemo(() => {
+    const filtered = tickets.filter((ticket) => {
+      const matchesStatus = statusFilter === 'all' || ticket.status === statusFilter;
+      const query = searchQuery.toLowerCase();
+      const matchesSearch = ticket.title.toLowerCase().includes(query) || 
+                            ticket.ticket_number.toLowerCase().includes(query);
+      return matchesStatus && matchesSearch;
+    });
+
+    // Apply sorting
+    return sortItems(filtered, sortColumn as keyof Ticket, sortDirection, {
+      getValue: (ticket) => {
+        switch (sortColumn) {
+          case 'customer':
+            return ticket.customers?.org_name ?? '';
+          case 'last_activity_at':
+            return new Date(ticket.last_activity_at);
+          default:
+            return ticket[sortColumn as keyof Ticket] as string;
+        }
+      },
+    });
+  }, [tickets, statusFilter, searchQuery, sortColumn, sortDirection]);
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('sv-SE');
@@ -190,11 +214,23 @@ const TicketsList: React.FC = () => {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="text-primary">{t('Ärende-ID', 'Ticket ID')}</TableHead>
-                    <TableHead className="text-primary">{t('Rubrik', 'Title')}</TableHead>
-                    {isStaff && <TableHead className="text-primary">{t('Kund', 'Customer')}</TableHead>}
-                    <TableHead className="text-primary">{t('Status', 'Status')}</TableHead>
-                    <TableHead className="text-primary">{t('Senaste aktivitet', 'Last activity')}</TableHead>
+                    <SortableTableHead column="ticket_number" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>
+                      {t('Ärende-ID', 'Ticket ID')}
+                    </SortableTableHead>
+                    <SortableTableHead column="title" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>
+                      {t('Rubrik', 'Title')}
+                    </SortableTableHead>
+                    {isStaff && (
+                      <SortableTableHead column="customer" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>
+                        {t('Kund', 'Customer')}
+                      </SortableTableHead>
+                    )}
+                    <SortableTableHead column="status" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>
+                      {t('Status', 'Status')}
+                    </SortableTableHead>
+                    <SortableTableHead column="last_activity_at" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>
+                      {t('Senaste aktivitet', 'Last activity')}
+                    </SortableTableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
