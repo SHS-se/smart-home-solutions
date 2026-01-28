@@ -733,25 +733,6 @@ HUB-ZB-PRO,Zigbee Hub Professional,Controllers,Aqara,https://aqara.com,1562.50,f
               </CardContent>
             </Card>
 
-            {/* Image naming */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">{t('Bildfilnamn', 'Image filenames')}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground mb-3">
-                  {t('Bildfilerna måste ha samma namn som SKU-koden med filformat', 'Image files must have the same name as the SKU code with file extension')} <code className="bg-muted px-1 rounded">.jpg</code> {t('eller', 'or')} <code className="bg-muted px-1 rounded">.png</code>
-                </p>
-                <div className="space-y-1 text-sm">
-                  <p className="text-primary"><Check className="h-3 w-3 inline mr-1" />ZBT-2.jpg</p>
-                  <p className="text-primary"><Check className="h-3 w-3 inline mr-1" />ESP32-RELAY-4.png</p>
-                  <p className="text-primary"><Check className="h-3 w-3 inline mr-1" />HUB-ZB-PRO.jpg</p>
-                  <p className="text-destructive"><X className="h-3 w-3 inline mr-1" />zigbee sensor.jpg {t('(innehåller mellanslag)', '(contains spaces)')}</p>
-                  <p className="text-destructive"><X className="h-3 w-3 inline mr-1" />zbt-2.jpg {t('(fel versaler/gemener)', '(wrong case)')}</p>
-                </div>
-              </CardContent>
-            </Card>
-
             {/* Paste CSV */}
             <Card>
               <CardHeader>
@@ -775,45 +756,6 @@ ZBT-2,Zigbee Temperature Sensor,Sensorer,Aqara,https://aqara.com,181.25,false,0.
                 >
                   {isProcessing ? t('Bearbetar...', 'Processing...') : t('Analysera CSV', 'Parse CSV')}
                 </Button>
-              </CardContent>
-            </Card>
-
-            <div className="flex items-center gap-4">
-              <div className="flex-1 h-px bg-border" />
-              <span className="text-sm text-muted-foreground">{t('eller', 'or')}</span>
-              <div className="flex-1 h-px bg-border" />
-            </div>
-
-            {/* Upload ZIP Area */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <FileArchive className="h-5 w-5" />
-                  {t('Ladda upp ZIP-fil', 'Upload ZIP file')}
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground mb-4">
-                  {t('Använd en ZIP-fil för att inkludera bilder tillsammans med CSV-data', 'Use a ZIP file to include images along with CSV data')}
-                </p>
-                <label 
-                  className="flex flex-col items-center justify-center border-2 border-dashed border-border rounded-lg p-8 cursor-pointer hover:bg-muted/50 transition-colors"
-                >
-                  <FileArchive className="h-10 w-10 text-muted-foreground mb-3" />
-                  <p className="text-sm text-muted-foreground mb-3">
-                    {t('Dra och släpp din ZIP-fil här eller klicka för att välja', 'Drag and drop your ZIP file here or click to select')}
-                  </p>
-                  <span className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium border border-border bg-card hover:bg-muted hover:border-primary/30 text-foreground h-9 px-4 py-2 cursor-pointer">
-                    {isProcessing ? t('Bearbetar...', 'Processing...') : t('Välj fil', 'Choose file')}
-                  </span>
-                  <input
-                    type="file"
-                    accept=".zip"
-                    className="hidden"
-                    onChange={handleFileUpload}
-                    disabled={isProcessing}
-                  />
-                </label>
               </CardContent>
             </Card>
           </div>
