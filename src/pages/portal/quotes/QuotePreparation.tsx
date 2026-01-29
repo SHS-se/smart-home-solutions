@@ -396,6 +396,21 @@ const QuotePreparation: React.FC = () => {
                 <CardTitle>{t('Sammanfattning', 'Summary')}</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
+                {/* BOM Products */}
+                {bomItems.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground uppercase tracking-wide">{t('Ingående produkter', 'Included Products')}</p>
+                    <div className="space-y-1 text-sm">
+                      {bomItems.map(item => (
+                        <div key={item.id} className="flex items-center gap-2 text-muted-foreground">
+                          <span className="text-muted-foreground/50">•</span>
+                          <span>{item.quantity}× {item.sku.name}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {/* Section breakdown */}
                 <div className="space-y-2 text-sm">
                   <p className="text-xs text-muted-foreground uppercase tracking-wide">{t('Uppdelning (ex moms)', 'Breakdown (ex VAT)')}</p>
