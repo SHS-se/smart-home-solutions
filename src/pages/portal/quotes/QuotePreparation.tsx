@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import BlurCommitInput from '@/components/ui/blur-commit-input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { ArrowLeft, Plus, Trash2, Send, Eye, Info } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, Send, Eye, Info, Loader2 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 
 interface QuoteLine {
@@ -32,6 +32,7 @@ const QuotePreparation: React.FC = () => {
   const queryClient = useQueryClient();
   
   const [isSending, setIsSending] = useState(false);
+  const [isLoadingPdf, setIsLoadingPdf] = useState(false);
 
   // Fetch quote
   const { data: quote } = useQuery({
@@ -214,6 +215,39 @@ const QuotePreparation: React.FC = () => {
       });
     } finally {
       setIsSending(false);
+    }
+  };
+
+  // Preview PDF from Stripe
+  const previewPdf = async () => {
+    if (!quote?.stripe_quote_id) {
+      toast({ 
+        title: t('Offert ej skickad', 'Quote not sent'), 
+        description: t('Skicka offerten till Stripe först för att kunna förhandsgranska PDF', 'Send the quote to Stripe first to preview the PDF'),
+        variant: 'destructive' 
+      });
+      return;
+    }
+
+    setIsLoadingPdf(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('get-stripe-quote-pdf', {
+        body: { stripe_quote_id: quote.stripe_quote_id },
+      });
+
+      if (error) throw error;
+      if (!data?.pdf_url) throw new Error('No PDF URL returned');
+
+      // Open PDF in new tab
+      window.open(data.pdf_url, '_blank');
+    } catch (error: any) {
+      toast({ 
+        title: t('Kunde inte hämta PDF', 'Failed to get PDF'), 
+        description: error.message,
+        variant: 'destructive' 
+      });
+    } finally {
+      setIsLoadingPdf(false);
     }
   };
 
@@ -407,8 +441,17 @@ const QuotePreparation: React.FC = () => {
             <Send className="h-4 w-4 mr-2" />
             {isSending ? t('Skickar...', 'Sending...') : t('Skicka till Stripe offert', 'Send to Stripe quote')}
           </Button>
-          <Button variant="outline" size="lg">
-            <Eye className="h-4 w-4 mr-2" />
+          <Button 
+            variant="outline" 
+            size="lg"
+            onClick={previewPdf}
+            disabled={isLoadingPdf}
+          >
+            {isLoadingPdf ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <Eye className="h-4 w-4 mr-2" />
+            )}
             {t('Förhandsgranska PDF', 'Preview PDF')}
           </Button>
         </div>
