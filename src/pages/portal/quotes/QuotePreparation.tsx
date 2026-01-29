@@ -65,6 +65,21 @@ const QuotePreparation: React.FC = () => {
     enabled: isStaff && !!id,
   });
 
+  // Fetch BOM items with SKU names for the preview
+  const { data: bomItems = [] } = useQuery({
+    queryKey: ['bom_items_for_quote', quote?.bom_id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('bom_items')
+        .select('id, quantity, sku:skus(name, sku)')
+        .eq('bom_id', quote!.bom_id!)
+        .order('created_at');
+      if (error) throw error;
+      return data as { id: string; quantity: number; sku: { name: string; sku: string } }[];
+    },
+    enabled: isStaff && !!quote?.bom_id,
+  });
+
   // Add line mutation with VAT-aware pricing
   const addLineMutation = useMutation({
     mutationFn: async (data: { section: string; description: string; quantity: number; unit_price: number }) => {
@@ -460,6 +475,7 @@ const QuotePreparation: React.FC = () => {
           onOpenChange={setShowPreview}
           quote={quote}
           lines={lines}
+          bomItems={bomItems}
           totals={{
             hardwareExVat: hardwareTotals.exVat,
             laborExVat: laborTotals.exVat,
