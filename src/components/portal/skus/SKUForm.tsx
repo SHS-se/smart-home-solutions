@@ -89,6 +89,17 @@ const SKUForm: React.FC<SKUFormProps> = ({ sku, onClose, categories }) => {
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Update image filename when SKU changes
+  useEffect(() => {
+    if (imageFile && formData.sku) {
+      const newFileName = `${formData.sku}.jpg`;
+      if (imageFile.name !== newFileName) {
+        const renamedFile = new File([imageFile], newFileName, { type: imageFile.type });
+        setImageFile(renamedFile);
+      }
+    }
+  }, [formData.sku]);
+
   // Fetch margin rules for placeholder values
   const { data: marginRules = [] } = useQuery({
     queryKey: ['margin_rules'],
