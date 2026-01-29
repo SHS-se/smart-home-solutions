@@ -10,6 +10,15 @@ interface QuoteLine {
   unit_price: number;
 }
 
+interface BomItem {
+  id: string;
+  quantity: number;
+  sku: {
+    name: string;
+    sku: string;
+  };
+}
+
 interface QuotePreviewDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -20,6 +29,7 @@ interface QuotePreviewDialogProps {
     created_at: string;
   } | null;
   lines: QuoteLine[];
+  bomItems?: BomItem[];
   totals: {
     hardwareExVat: number;
     laborExVat: number;
@@ -35,6 +45,7 @@ const QuotePreviewDialog: React.FC<QuotePreviewDialogProps> = ({
   onOpenChange,
   quote,
   lines,
+  bomItems = [],
   totals,
 }) => {
   const { t } = useLanguage();
@@ -100,6 +111,22 @@ const QuotePreviewDialog: React.FC<QuotePreviewDialogProps> = ({
               </div>
             )}
           </div>
+
+          {/* BOM Items Summary */}
+          {bomItems.length > 0 && (
+            <div className="px-8 py-6 border-b border-gray-200 bg-gray-50/50">
+              <div className="text-xs uppercase tracking-wide text-gray-500 mb-3">{t('Ingående produkter', 'Included Products')}</div>
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                {bomItems.map(item => (
+                  <div key={item.id} className="flex items-center gap-2">
+                    <span className="text-gray-400">•</span>
+                    <span className="text-gray-700">{item.quantity}× {item.sku.name}</span>
+                    <span className="text-gray-400 text-xs">({item.sku.sku})</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Line items */}
           <div className="px-8 py-6">
