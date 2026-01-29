@@ -41,21 +41,28 @@ const UserMenu = ({ size = "default" }: UserMenuProps) => {
     return name.slice(0, 2).toUpperCase();
   };
 
-  // Staff navigation items
-  const staffNavItems = [
+  // Staff CRM navigation items
+  const staffCRMItems = [
     { href: "/portal", label: t("Översikt", "Overview") },
     { href: "/portal/customers", label: t("Kunder", "Customers") },
     { href: "/portal/contacts", label: t("Kontakter", "Contacts") },
     { href: "/portal/tickets", label: t("Alla ärenden", "All Tickets") },
   ];
 
-  // Customer navigation items
+  // Staff Operations navigation items
+  const staffOperationsItems = [
+    { href: "/portal/skus", label: t("SKU-katalog", "SKU Catalog") },
+    { href: "/portal/templates", label: t("Mallar", "Templates") },
+    { href: "/portal/boms", label: t("Materiallistor", "BOMs") },
+    { href: "/portal/quotes", label: t("Offerter", "Quotes") },
+    { href: "/portal/settings/margins", label: t("Marginalregler", "Margin Rules") },
+    { href: "/portal/erd", label: t("Databas ERD", "Database ERD") },
+  ];
+
   const customerNavItems = [
     { href: "/portal", label: t("Översikt", "Overview") },
     { href: "/portal/tickets", label: t("Mina ärenden", "My Tickets") },
   ];
-
-  const navItems = isStaff ? staffNavItems : customerNavItems;
 
   return (
     <DropdownMenu>
@@ -80,13 +87,36 @@ const UserMenu = ({ size = "default" }: UserMenuProps) => {
           </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        {navItems.map((item) => (
-          <DropdownMenuItem key={item.href} asChild>
-            <Link to={item.href} className="cursor-pointer">
-              {item.label}
-            </Link>
-          </DropdownMenuItem>
-        ))}
+        {isStaff ? (
+          <>
+            {staffCRMItems.map((item) => (
+              <DropdownMenuItem key={item.href} asChild>
+                <Link to={item.href} className="cursor-pointer">
+                  {item.label}
+                </Link>
+              </DropdownMenuItem>
+            ))}
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel className="text-xs text-muted-foreground font-normal px-2 py-1">
+              {t("Offerter & Material", "Quotes & Materials")}
+            </DropdownMenuLabel>
+            {staffOperationsItems.map((item) => (
+              <DropdownMenuItem key={item.href} asChild>
+                <Link to={item.href} className="cursor-pointer">
+                  {item.label}
+                </Link>
+              </DropdownMenuItem>
+            ))}
+          </>
+        ) : (
+          customerNavItems.map((item) => (
+            <DropdownMenuItem key={item.href} asChild>
+              <Link to={item.href} className="cursor-pointer">
+                {item.label}
+              </Link>
+            </DropdownMenuItem>
+          ))
+        )}
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
           <Link to="/portal/account" className="cursor-pointer">
