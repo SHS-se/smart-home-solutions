@@ -7,6 +7,7 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import PortalLayout from '@/components/portal/PortalLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import BlurCommitInput from '@/components/ui/blur-commit-input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ArrowLeft, Plus, Trash2, Send, Eye, Info } from 'lucide-react';
@@ -253,37 +254,37 @@ const QuotePreparation: React.FC = () => {
       <CardContent className="space-y-3">
         {sectionLines.map(line => (
           <div key={line.id} className="flex items-center gap-3 p-3 bg-muted/50 rounded-lg">
-            <Input
+            <BlurCommitInput
               value={line.description}
-              onChange={(e) => updateLineMutation.mutate({ 
+              onCommit={(val) => updateLineMutation.mutate({ 
                 lineId: line.id, 
-                updates: { description: e.target.value } 
+                updates: { description: val } 
               })}
               placeholder={t('Beskrivning', 'Description')}
               className="flex-1"
             />
-            <Input
+            <BlurCommitInput
               type="number"
               value={line.quantity}
-              onChange={(e) => updateLineMutation.mutate({ 
+              onCommit={(val) => updateLineMutation.mutate({ 
                 lineId: line.id, 
-                updates: { quantity: parseFloat(e.target.value) || 0 } 
+                updates: { quantity: parseFloat(val) || 0 } 
               })}
               className="w-20 text-center"
             />
             <span className="text-muted-foreground text-sm">{unitLabel} ×</span>
-            <Input
+            <BlurCommitInput
               type="number"
               value={line.unit_price}
-              onChange={(e) => updateLineMutation.mutate({ 
+              onCommit={(val) => updateLineMutation.mutate({ 
                 lineId: line.id, 
-                updates: { unit_price: parseFloat(e.target.value) || 0 } 
+                updates: { unit_price: parseFloat(val) || 0 } 
               })}
               className="w-24 text-right"
             />
             <span className="text-muted-foreground text-sm">kr</span>
             <span className="w-24 text-right font-medium">
-              {formatPrice(line.quantity * line.unit_price)} kr
+              {formatPrice(line.quantity * line.unit_price)}
             </span>
             <Button
               variant="ghost"
