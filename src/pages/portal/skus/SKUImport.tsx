@@ -877,7 +877,16 @@ ZBT-2,Zigbee Temperature Sensor,Sensorer,Aqara,https://aqara.com,181.25,false,0.
             </div>
 
             <div className="flex gap-2 justify-end">
-              <Button variant="outline" onClick={() => { setStep(1); setCsvText(''); setParsedSkus([]); setIsLegacyFormat(false); }}>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  // Go back to editing without clearing the pasted CSV.
+                  // Clearing here also removed the saved value from sessionStorage.
+                  setStep(1);
+                  setParsedSkus([]);
+                  setIsLegacyFormat(false);
+                }}
+              >
                 {t('Tillbaka', 'Back')}
               </Button>
               <Button onClick={handleImport} disabled={validCount === 0 || isProcessing}>
