@@ -6,12 +6,12 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import PortalLayout from '@/components/portal/PortalLayout';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import BlurCommitInput from '@/components/ui/blur-commit-input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ArrowLeft, Plus, Trash2, Send, Eye, Info, Loader2 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
+import QuotePreviewDialog from '@/components/portal/quotes/QuotePreviewDialog';
 
 interface QuoteLine {
   id: string;
@@ -33,6 +33,7 @@ const QuotePreparation: React.FC = () => {
   
   const [isSending, setIsSending] = useState(false);
   const [isLoadingPdf, setIsLoadingPdf] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
 
   // Fetch quote
   const { data: quote } = useQuery({
@@ -218,17 +219,15 @@ const QuotePreparation: React.FC = () => {
     }
   };
 
-  // Preview PDF from Stripe
-  const previewPdf = async () => {
+  // Preview quote - local preview or Stripe PDF
+  const previewQuote = async () => {
+    // If not yet sent to Stripe, show local preview
     if (!quote?.stripe_quote_id) {
-      toast({ 
-        title: t('Offert ej skickad', 'Quote not sent'), 
-        description: t('Skicka offerten till Stripe först för att kunna förhandsgranska PDF', 'Send the quote to Stripe first to preview the PDF'),
-        variant: 'destructive' 
-      });
+      setShowPreview(true);
       return;
     }
 
+    // If sent to Stripe, fetch the actual PDF
     setIsLoadingPdf(true);
     try {
       const { data, error } = await supabase.functions.invoke('get-stripe-quote-pdf', {
@@ -238,7 +237,6 @@ const QuotePreparation: React.FC = () => {
       if (error) throw error;
       if (!data?.pdf_url) throw new Error('No PDF URL returned');
 
-      // Open PDF in new tab
       window.open(data.pdf_url, '_blank');
     } catch (error: any) {
       toast({ 
@@ -444,7 +442,7 @@ const QuotePreparation: React.FC = () => {
           <Button 
             variant="outline" 
             size="lg"
-            onClick={previewPdf}
+            onClick={previewQuote}
             disabled={isLoadingPdf}
           >
             {isLoadingPdf ? (
@@ -452,9 +450,25 @@ const QuotePreparation: React.FC = () => {
             ) : (
               <Eye className="h-4 w-4 mr-2" />
             )}
-            {t('Förhandsgranska PDF', 'Preview PDF')}
+            {t('Förhandsgranska', 'Preview')}
           </Button>
         </div>
+
+        {/* Local preview dialog */}
+        <QuotePreviewDialog
+          open={showPreview}
+          onOpenChange={setShowPreview}
+          quote={quote}
+          lines={lines}
+          totals={{
+            hardwareExVat: hardwareTotals.exVat,
+            laborExVat: laborTotals.exVat,
+            travelExVat: travelTotals.exVat,
+            subtotalExVat,
+            vatTotal,
+            totalIncVat,
+          }}
+        />
       </div>
     </PortalLayout>
   );
