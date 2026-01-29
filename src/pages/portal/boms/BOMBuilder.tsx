@@ -27,7 +27,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { ArrowLeft, Plus, Trash2, FileText, Package, RefreshCw } from 'lucide-react';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { ArrowLeft, Plus, Trash2, FileText, Package, RefreshCw, Pencil, Check, X } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import SKUSelector from '@/components/portal/boms/SKUSelector';
 import TemplateSelector from '@/components/portal/boms/TemplateSelector';
@@ -65,6 +72,8 @@ const BOMBuilder: React.FC = () => {
   const [isSKUSelectorOpen, setIsSKUSelectorOpen] = useState(false);
   const [isTemplateSelectorOpen, setIsTemplateSelectorOpen] = useState(false);
   const [isRefreshDialogOpen, setIsRefreshDialogOpen] = useState(false);
+  const [isEditingProject, setIsEditingProject] = useState(false);
+  const [editedProjectName, setEditedProjectName] = useState('');
 
   // Fetch BOM
   const { data: bom } = useQuery({
@@ -96,6 +105,39 @@ const BOMBuilder: React.FC = () => {
       })) as BOMItem[];
     },
     enabled: isStaff && !!id,
+  });
+
+  // Fetch customers for selector
+  const { data: customers = [] } = useQuery({
+    queryKey: ['customers'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('customers')
+        .select('id, org_name')
+        .order('org_name');
+      if (error) throw error;
+      return data;
+    },
+    enabled: isStaff,
+  });
+
+  // Update BOM mutation
+  const updateBOMMutation = useMutation({
+    mutationFn: async (updates: { project_name?: string; customer_id?: string | null }) => {
+      const { error } = await supabase
+        .from('boms')
+        .update(updates)
+        .eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['bom', id] });
+      setIsEditingProject(false);
+      toast({ title: t('BOM uppdaterad', 'BOM updated') });
+    },
+    onError: (error: any) => {
+      toast({ title: t('Kunde inte uppdatera BOM', 'Failed to update BOM'), description: error.message, variant: 'destructive' });
+    },
   });
 
   // Add item mutation with VAT-aware snapshot
@@ -311,12 +353,84 @@ const BOMBuilder: React.FC = () => {
               <h1 className="text-2xl font-bold">BOM Builder</h1>
               <Badge variant="outline">v{bom?.version || 1}</Badge>
             </div>
-            <p className="text-muted-foreground">
-              {bom?.customer?.org_name && (
-                <span className="mr-2">{t('Kund', 'Customer')}: {bom.customer.org_name}</span>
-              )}
-              {t('Projekt', 'Project')}: {bom?.project_name}
-            </p>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-1">
+              {/* Customer selector */}
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground text-sm">{t('Kund', 'Customer')}:</span>
+                <Select
+                  value={bom?.customer_id || 'none'}
+                  onValueChange={(value) => {
+                    updateBOMMutation.mutate({ customer_id: value === 'none' ? null : value });
+                  }}
+                >
+                  <SelectTrigger className="w-[200px] h-8 text-sm">
+                    <SelectValue placeholder={t('Välj kund', 'Select customer')} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">{t('Ingen kund', 'No customer')}</SelectItem>
+                    {customers.map((customer) => (
+                      <SelectItem key={customer.id} value={customer.id}>
+                        {customer.org_name || t('Namnlös', 'Unnamed')}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              {/* Project name - editable */}
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground text-sm">{t('Projekt', 'Project')}:</span>
+                {isEditingProject ? (
+                  <div className="flex items-center gap-1">
+                    <Input
+                      value={editedProjectName}
+                      onChange={(e) => setEditedProjectName(e.target.value)}
+                      className="h-8 w-[200px] text-sm"
+                      autoFocus
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && editedProjectName.trim()) {
+                          updateBOMMutation.mutate({ project_name: editedProjectName.trim() });
+                        } else if (e.key === 'Escape') {
+                          setIsEditingProject(false);
+                        }
+                      }}
+                    />
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => {
+                        if (editedProjectName.trim()) {
+                          updateBOMMutation.mutate({ project_name: editedProjectName.trim() });
+                        }
+                      }}
+                      disabled={!editedProjectName.trim() || updateBOMMutation.isPending}
+                    >
+                      <Check className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => setIsEditingProject(false)}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ) : (
+                  <button
+                    className="flex items-center gap-1 text-sm hover:text-primary transition-colors group"
+                    onClick={() => {
+                      setEditedProjectName(bom?.project_name || '');
+                      setIsEditingProject(true);
+                    }}
+                  >
+                    <span>{bom?.project_name}</span>
+                    <Pencil className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
         </div>
 
