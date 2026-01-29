@@ -9,8 +9,9 @@ interface QuantityInputProps {
 }
 
 /**
- * A quantity input that uses local state and only commits changes
- * on blur or Enter key. This prevents database mutations on every keystroke.
+ * A quantity input that uses local state while typing.
+ * Only commits when the user leaves the field (blur) or presses Enter.
+ * No processing or mutations occur during typing.
  */
 const QuantityInput: React.FC<QuantityInputProps> = ({
   value,
@@ -20,7 +21,7 @@ const QuantityInput: React.FC<QuantityInputProps> = ({
 }) => {
   const [localValue, setLocalValue] = useState(String(value));
 
-  // Sync local state when external value changes (e.g., after mutation succeeds)
+  // Sync local state when external value changes
   useEffect(() => {
     setLocalValue(String(value));
   }, [value]);
@@ -33,7 +34,6 @@ const QuantityInput: React.FC<QuantityInputProps> = ({
     if (finalValue !== value) {
       onCommit(finalValue);
     }
-    // Reset to the committed value (in case user typed invalid input)
     setLocalValue(String(finalValue));
   };
 
