@@ -38,6 +38,7 @@ import { ArrowLeft, Plus, Trash2, FileText, Package, RefreshCw, Pencil, Check, X
 import { toast } from '@/hooks/use-toast';
 import SKUSelector from '@/components/portal/boms/SKUSelector';
 import TemplateSelector from '@/components/portal/boms/TemplateSelector';
+import QuantityInput from '@/components/portal/boms/QuantityInput';
 
 interface BOMItem {
   id: string;
@@ -493,14 +494,9 @@ const BOMBuilder: React.FC = () => {
                           <TableCell className="font-mono">{item.sku.sku}</TableCell>
                           <TableCell>{item.sku.name}</TableCell>
                           <TableCell className="text-center">
-                            <Input
-                              type="number"
-                              min="1"
+                            <QuantityInput
                               value={item.quantity}
-                              onChange={(e) => {
-                                const qty = parseInt(e.target.value) || 1;
-                                updateItemMutation.mutate({ itemId: item.id, updates: { quantity: qty } });
-                              }}
+                              onCommit={(qty) => updateItemMutation.mutate({ itemId: item.id, updates: { quantity: qty } })}
                               className="w-16 text-center mx-auto"
                             />
                           </TableCell>
