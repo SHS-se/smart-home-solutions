@@ -550,15 +550,19 @@ const SKUForm: React.FC<SKUFormProps> = ({ sku, onClose, categories }) => {
                   }
                 }}
               >
-                <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-                <p className="text-primary text-sm">
-                  {t('Klistra in bild från urklipp (Ctrl+V)', 'Paste image from clipboard (Ctrl+V)')}
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {t('Bilden sparas automatiskt som', 'Image will be saved as')} {formData.sku || 'SKU'}.jpg
-                </p>
+                {!imageFile && (
+                  <>
+                    <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+                    <p className="text-primary text-sm">
+                      {t('Klistra in bild från urklipp (Ctrl+V)', 'Paste image from clipboard (Ctrl+V)')}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {t('Bilden sparas automatiskt som', 'Image will be saved as')} {formData.sku || 'SKU'}.jpg
+                    </p>
+                  </>
+                )}
                 {imageFile && (
-                  <div className="mt-3 space-y-2">
+                  <div className="space-y-2">
                     <img
                       src={URL.createObjectURL(imageFile)}
                       alt="Preview"
