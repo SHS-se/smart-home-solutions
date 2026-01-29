@@ -558,7 +558,14 @@ const SKUForm: React.FC<SKUFormProps> = ({ sku, onClose, categories }) => {
                   {t('Bilden sparas automatiskt som', 'Image will be saved as')} {formData.sku || 'SKU'}.jpg
                 </p>
                 {imageFile && (
-                  <p className="text-sm text-primary mt-2">✓ {imageFile.name}</p>
+                  <div className="mt-3 space-y-2">
+                    <img
+                      src={URL.createObjectURL(imageFile)}
+                      alt="Preview"
+                      className="max-h-32 mx-auto object-contain rounded border border-border"
+                    />
+                    <p className="text-sm text-primary">✓ {imageFile.name}</p>
+                  </div>
                 )}
               </div>
             )}
