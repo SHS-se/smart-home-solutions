@@ -75,10 +75,46 @@ const SKUImport: React.FC = () => {
   const [importResults, setImportResults] = useState<{ success: number; failed: number; skipped: number }>({ success: 0, failed: 0, skipped: 0 });
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [fileDeleted, setFileDeleted] = useState(false);
-  const [csvText, setCsvText] = useState<string>('');
   const [marginRules, setMarginRules] = useState<MarginRule[]>([]);
-  const [allowUpsert, setAllowUpsert] = useState(false);
   const [isLegacyFormat, setIsLegacyFormat] = useState(false);
+
+  // Persist form state in sessionStorage so it survives back-navigation
+  const [csvText, setCsvText] = useState<string>(() => {
+    try {
+      return sessionStorage.getItem('sku-import-csv') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [allowUpsert, setAllowUpsert] = useState(() => {
+    try {
+      return sessionStorage.getItem('sku-import-upsert') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  // Sync csvText to sessionStorage
+  useEffect(() => {
+    try {
+      if (csvText) {
+        sessionStorage.setItem('sku-import-csv', csvText);
+      } else {
+        sessionStorage.removeItem('sku-import-csv');
+      }
+    } catch {
+      // Ignore storage errors
+    }
+  }, [csvText]);
+
+  // Sync allowUpsert to sessionStorage
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('sku-import-upsert', String(allowUpsert));
+    } catch {
+      // Ignore storage errors
+    }
+  }, [allowUpsert]);
 
   // Fetch margin rules from the database
   useEffect(() => {
