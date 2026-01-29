@@ -467,7 +467,7 @@ const SKUForm: React.FC<SKUFormProps> = ({ sku, onClose, categories }) => {
             </div>
           </div>
 
-          {/* Image Upload */}
+          {/* Image Upload / Paste */}
           <div className="space-y-2">
             <Label>{t('Produktbild', 'Product Image')}</Label>
             {(sku?.image_path && !imageFile) ? (
@@ -479,41 +479,89 @@ const SKUForm: React.FC<SKUFormProps> = ({ sku, onClose, categories }) => {
                     className="max-h-40 mx-auto object-contain rounded"
                   />
                 </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => document.getElementById('image-upload')?.click()}
-                  className="w-full"
+                <div
+                  tabIndex={0}
+                  className="border-2 border-dashed border-border rounded-lg p-4 text-center cursor-pointer hover:bg-muted/50 focus:ring-2 focus:ring-primary focus:outline-none transition-colors"
+                  onPaste={async (e) => {
+                    const items = e.clipboardData?.items;
+                    if (!items) return;
+                    for (const item of Array.from(items)) {
+                      if (item.type.startsWith('image/')) {
+                        const blob = item.getAsFile();
+                        if (!blob) return;
+                        // Convert to JPG via canvas
+                        const img = new Image();
+                        img.src = URL.createObjectURL(blob);
+                        await new Promise((res) => { img.onload = res; });
+                        const canvas = document.createElement('canvas');
+                        canvas.width = img.width;
+                        canvas.height = img.height;
+                        const ctx = canvas.getContext('2d');
+                        if (!ctx) return;
+                        ctx.drawImage(img, 0, 0);
+                        canvas.toBlob((jpgBlob) => {
+                          if (!jpgBlob) return;
+                          const fileName = `${formData.sku || 'SKU'}.jpg`;
+                          const file = new File([jpgBlob], fileName, { type: 'image/jpeg' });
+                          setImageFile(file);
+                        }, 'image/jpeg', 0.92);
+                        URL.revokeObjectURL(img.src);
+                        break;
+                      }
+                    }
+                  }}
                 >
-                  <Upload className="h-4 w-4 mr-2" />
-                  {t('Byt bild', 'Change image')}
-                </Button>
+                  <Upload className="h-6 w-6 mx-auto text-muted-foreground mb-1" />
+                  <p className="text-sm text-muted-foreground">
+                    {t('Klistra in bild (Ctrl+V) för att byta', 'Paste image (Ctrl+V) to replace')}
+                  </p>
+                </div>
               </div>
             ) : (
               <div 
-                className="border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:bg-muted/50 transition-colors"
-                onClick={() => document.getElementById('image-upload')?.click()}
+                tabIndex={0}
+                className="border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:bg-muted/50 focus:ring-2 focus:ring-primary focus:outline-none transition-colors"
+                onPaste={async (e) => {
+                  const items = e.clipboardData?.items;
+                  if (!items) return;
+                  for (const item of Array.from(items)) {
+                    if (item.type.startsWith('image/')) {
+                      const blob = item.getAsFile();
+                      if (!blob) return;
+                      // Convert to JPG via canvas
+                      const img = new Image();
+                      img.src = URL.createObjectURL(blob);
+                      await new Promise((res) => { img.onload = res; });
+                      const canvas = document.createElement('canvas');
+                      canvas.width = img.width;
+                      canvas.height = img.height;
+                      const ctx = canvas.getContext('2d');
+                      if (!ctx) return;
+                      ctx.drawImage(img, 0, 0);
+                      canvas.toBlob((jpgBlob) => {
+                        if (!jpgBlob) return;
+                        const fileName = `${formData.sku || 'SKU'}.jpg`;
+                        const file = new File([jpgBlob], fileName, { type: 'image/jpeg' });
+                        setImageFile(file);
+                      }, 'image/jpeg', 0.92);
+                      URL.revokeObjectURL(img.src);
+                      break;
+                    }
+                  }
+                }}
               >
                 <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
                 <p className="text-primary text-sm">
-                  {t('Klicka för att ladda upp bild', 'Click to upload image')}
+                  {t('Klistra in bild från urklipp (Ctrl+V)', 'Paste image from clipboard (Ctrl+V)')}
                 </p>
-                <p className="text-xs text-muted-foreground">
-                  {t('Filnamn måste vara', 'Filename must be')} {formData.sku || 'SKU'}.jpg
+                <p className="text-xs text-muted-foreground mt-1">
+                  {t('Bilden sparas automatiskt som', 'Image will be saved as')} {formData.sku || 'SKU'}.jpg
                 </p>
                 {imageFile && (
-                  <p className="text-sm text-primary mt-2">{imageFile.name}</p>
+                  <p className="text-sm text-primary mt-2">✓ {imageFile.name}</p>
                 )}
               </div>
             )}
-            <input
-              id="image-upload"
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => setImageFile(e.target.files?.[0] || null)}
-            />
           </div>
 
           {/* Notes */}
