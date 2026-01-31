@@ -4,8 +4,32 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
+
+interface HardwareItem {
+  name: string;
+  sku: string;
+  quantity: number;
+  unit_price_ex_vat: number;
+}
+
+interface ServiceLine {
+  description: string;
+  quantity: number;
+  unit_price_ex_vat: number;
+}
+
+interface RequestBody {
+  quote_id: string;
+  customer_name: string;
+  hardware_items: HardwareItem[];
+  labor_lines: ServiceLine[];
+  travel_lines: ServiceLine[];
+  hardware_total: number;
+  labor_total: number;
+  travel_total: number;
+}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -40,7 +64,17 @@ serve(async (req) => {
       throw new Error("Staff access required");
     }
 
-    const { quote_id, customer_name, hardware_total, labor_total, travel_total } = await req.json();
+    const body: RequestBody = await req.json();
+    const { 
+      quote_id, 
+      customer_name, 
+      hardware_items = [], 
+      labor_lines = [], 
+      travel_lines = [],
+      hardware_total,
+      labor_total,
+      travel_total 
+    } = body;
 
     const stripe = new Stripe(Deno.env.get("STRIPE_SECRET_KEY") || "", {
       apiVersion: "2025-08-27.basil",
@@ -59,48 +93,101 @@ serve(async (req) => {
     }
 
     // Create line items for quote
-    const lineItems = [];
+    const lineItems: Stripe.QuoteCreateParams.LineItem[] = [];
 
-    if (hardware_total > 0) {
-      lineItems.push({
-        price_data: {
-          currency: "sek",
-          product_data: {
-            name: "Hårdvara för smart home-installation",
-            description: "Hardware for smart home installation",
+    // Add itemized hardware items
+    for (const item of hardware_items) {
+      if (item.quantity > 0 && item.unit_price_ex_vat > 0) {
+        lineItems.push({
+          price_data: {
+            currency: "sek",
+            product_data: {
+              name: item.name,
+              description: `SKU: ${item.sku}`,
+            },
+            unit_amount: Math.round(item.unit_price_ex_vat * 100),
           },
-          unit_amount: Math.round(hardware_total * 100),
-        },
-        quantity: 1,
-      });
+          quantity: item.quantity,
+        });
+      }
     }
 
-    if (labor_total > 0) {
-      lineItems.push({
-        price_data: {
-          currency: "sek",
-          product_data: {
-            name: "Installation & konfiguration",
-            description: "Installation and configuration services",
+    // Add itemized labor lines
+    for (const line of labor_lines) {
+      if (line.quantity > 0 && line.unit_price_ex_vat > 0) {
+        lineItems.push({
+          price_data: {
+            currency: "sek",
+            product_data: {
+              name: line.description || "Installation & konfiguration",
+              description: `${line.quantity} timmar`,
+            },
+            unit_amount: Math.round(line.unit_price_ex_vat * 100),
           },
-          unit_amount: Math.round(labor_total * 100),
-        },
-        quantity: 1,
-      });
+          quantity: line.quantity,
+        });
+      }
     }
 
-    if (travel_total > 0) {
-      lineItems.push({
-        price_data: {
-          currency: "sek",
-          product_data: {
-            name: "Resa & övrigt",
-            description: "Travel and miscellaneous costs",
+    // Add itemized travel lines
+    for (const line of travel_lines) {
+      if (line.quantity > 0 && line.unit_price_ex_vat > 0) {
+        lineItems.push({
+          price_data: {
+            currency: "sek",
+            product_data: {
+              name: line.description || "Resa & övrigt",
+            },
+            unit_amount: Math.round(line.unit_price_ex_vat * 100),
           },
-          unit_amount: Math.round(travel_total * 100),
-        },
-        quantity: 1,
-      });
+          quantity: line.quantity,
+        });
+      }
+    }
+
+    // Fallback to summarized totals if no itemized data was provided
+    if (lineItems.length === 0) {
+      if (hardware_total > 0) {
+        lineItems.push({
+          price_data: {
+            currency: "sek",
+            product_data: {
+              name: "Hårdvara för smart home-installation",
+              description: "Hardware for smart home installation",
+            },
+            unit_amount: Math.round(hardware_total * 100),
+          },
+          quantity: 1,
+        });
+      }
+
+      if (labor_total > 0) {
+        lineItems.push({
+          price_data: {
+            currency: "sek",
+            product_data: {
+              name: "Installation & konfiguration",
+              description: "Installation and configuration services",
+            },
+            unit_amount: Math.round(labor_total * 100),
+          },
+          quantity: 1,
+        });
+      }
+
+      if (travel_total > 0) {
+        lineItems.push({
+          price_data: {
+            currency: "sek",
+            product_data: {
+              name: "Resa & övrigt",
+              description: "Travel and miscellaneous costs",
+            },
+            unit_amount: Math.round(travel_total * 100),
+          },
+          quantity: 1,
+        });
+      }
     }
 
     // Create Stripe Quote
