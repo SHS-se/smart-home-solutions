@@ -12,7 +12,6 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { ArrowLeft, ExternalLink, Pencil, Send, Eye, Info, Loader2, AlertTriangle, Plus, Trash2 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
-import QuotePreviewDialog from '@/components/portal/quotes/QuotePreviewDialog';
 import QuotePriceDiffModal from '@/components/portal/quotes/QuotePriceDiffModal';
 import QuoteVersionDropdown from '@/components/portal/quotes/QuoteVersionDropdown';
 import QuoteOutdatedBanner from '@/components/portal/quotes/QuoteOutdatedBanner';
@@ -72,7 +71,7 @@ const QuotePreparation: React.FC = () => {
   
   const [isSending, setIsSending] = useState(false);
   const [isLoadingPdf, setIsLoadingPdf] = useState(false);
-  const [showPreview, setShowPreview] = useState(false);
+  
   const [editingQuantities, setEditingQuantities] = useState<Record<string, number>>({});
   const [showDiffModal, setShowDiffModal] = useState(false);
   const [showUpdateConfirm, setShowUpdateConfirm] = useState(false);
@@ -345,10 +344,14 @@ const QuotePreparation: React.FC = () => {
     }
   };
 
-  // Preview quote
+  // Preview Stripe quote PDF
   const previewQuote = async () => {
     if (!quote?.stripe_quote_id) {
-      setShowPreview(true);
+      toast({ 
+        title: t('Ingen Stripe-offert', 'No Stripe quote'), 
+        description: t('Skicka offerten till Stripe först för att generera en PDF', 'Send the quote to Stripe first to generate a PDF'),
+        variant: 'destructive' 
+      });
       return;
     }
 
@@ -857,26 +860,6 @@ const QuotePreparation: React.FC = () => {
           </div>
         </div>
 
-        {/* Local preview dialog */}
-        <QuotePreviewDialog
-          open={showPreview}
-          onOpenChange={setShowPreview}
-          quote={quote}
-          lines={lines}
-          bomItems={bomItems.map(item => ({
-            id: item.id,
-            quantity: item.quantity,
-            sku: { name: item.sku.name, sku: item.sku.sku }
-          }))}
-          totals={{
-            hardwareExVat: hardwareTotal,
-            laborExVat: laborTotal,
-            travelExVat: travelTotal,
-            subtotalExVat,
-            vatTotal,
-            totalIncVat,
-          }}
-        />
 
         {/* Price diff modal */}
         <QuotePriceDiffModal
