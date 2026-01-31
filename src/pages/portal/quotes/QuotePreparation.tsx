@@ -9,9 +9,15 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { ArrowLeft, ExternalLink, Pencil, Send, Eye, Info, Loader2 } from 'lucide-react';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { ArrowLeft, ExternalLink, Pencil, Send, Eye, Info, Loader2, AlertTriangle } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import QuotePreviewDialog from '@/components/portal/quotes/QuotePreviewDialog';
+import QuotePriceDiffModal from '@/components/portal/quotes/QuotePriceDiffModal';
+import QuoteVersionDropdown from '@/components/portal/quotes/QuoteVersionDropdown';
+import QuoteOutdatedBanner from '@/components/portal/quotes/QuoteOutdatedBanner';
+import QuoteUpdateConfirmDialog from '@/components/portal/quotes/QuoteUpdateConfirmDialog';
+import { useQuoteVersioning } from '@/hooks/use-quote-versioning';
 
 interface QuoteLine {
   id: string;
@@ -37,6 +43,25 @@ interface BomItemWithSku {
   };
 }
 
+interface PriceDiffResult {
+  items: Array<{
+    sku_id: string;
+    sku_name: string;
+    sku_code: string;
+    quantity: number;
+    old_unit_price: number;
+    new_unit_price: number;
+    delta_per_unit: number;
+    delta_total: number;
+  }>;
+  old_total_ex_vat: number;
+  new_total_ex_vat: number;
+  delta_total_ex_vat: number;
+  old_total_inc_vat: number;
+  new_total_inc_vat: number;
+  delta_total_inc_vat: number;
+}
+
 const QuotePreparation: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const { t } = useLanguage();
@@ -48,6 +73,18 @@ const QuotePreparation: React.FC = () => {
   const [isLoadingPdf, setIsLoadingPdf] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [editingQuantities, setEditingQuantities] = useState<Record<string, number>>({});
+  const [showDiffModal, setShowDiffModal] = useState(false);
+  const [showUpdateConfirm, setShowUpdateConfirm] = useState(false);
+  const [priceDiff, setPriceDiff] = useState<PriceDiffResult | null>(null);
+
+  // Quote versioning hook
+  const {
+    quoteFamily,
+    pricingStatus,
+    computePriceDiff,
+    createNewVersion,
+    isCreatingVersion,
+  } = useQuoteVersioning(id);
 
   // Fetch quote with BOM version and pricing revision info
   const { data: quote } = useQuery({
@@ -249,6 +286,32 @@ const QuotePreparation: React.FC = () => {
     }
   };
 
+  // Handle show diff
+  const handleShowDiff = async () => {
+    const diff = await computePriceDiff();
+    setPriceDiff(diff);
+    setShowDiffModal(true);
+  };
+
+  // Handle update quote to new version
+  const handleUpdateQuote = async () => {
+    try {
+      const newQuote = await createNewVersion();
+      toast({
+        title: t('Ny offertversion skapad!', 'New quote version created!'),
+        description: t(`Version ${newQuote.version} har skapats med uppdaterade priser.`, `Version ${newQuote.version} has been created with updated prices.`),
+      });
+      navigate(`/portal/quotes/${newQuote.id}`);
+    } catch (error: any) {
+      toast({
+        title: t('Kunde inte skapa ny version', 'Failed to create new version'),
+        description: error.message,
+        variant: 'destructive',
+      });
+    }
+    setShowUpdateConfirm(false);
+  };
+
   // Redirect if not staff
   if (!authLoading && !isStaff) {
     navigate('/portal');
@@ -256,6 +319,9 @@ const QuotePreparation: React.FC = () => {
   }
 
   const formatPrice = (value: number) => value.toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+
+  const currentVersion = quoteFamily.find(v => v.id === id);
+  const isLatestVersion = currentVersion?.is_latest ?? true;
 
   return (
     <PortalLayout>
@@ -269,20 +335,56 @@ const QuotePreparation: React.FC = () => {
             <ArrowLeft className="h-4 w-4 mr-1" />
           </Link>
           <div className="flex-1">
-            <h1 className="text-2xl font-bold">{t('Offertförberedelse', 'Quote Preparation')}</h1>
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl font-bold">{t('Offertförberedelse', 'Quote Preparation')}</h1>
+              <QuoteVersionDropdown versions={quoteFamily} currentQuoteId={id || ''} />
+            </div>
             <p className="text-muted-foreground">
               {t('Organisera och förhandsgranska offert innan skicka till kund', 'Organize and preview quote before sending to customer')}
             </p>
           </div>
         </div>
 
+        {/* Older version warning */}
+        {!isLatestVersion && (
+          <Alert className="border-amber-500 bg-amber-500/10">
+            <AlertTriangle className="h-4 w-4 text-amber-600" />
+            <AlertDescription className="flex items-center justify-between">
+              <span className="text-amber-700 dark:text-amber-400">
+                {t('Du tittar på en äldre offertversion.', 'You are viewing an older quote version.')}
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  const latest = quoteFamily.find(v => v.is_latest);
+                  if (latest) navigate(`/portal/quotes/${latest.id}`);
+                }}
+              >
+                {t('Gå till senaste', 'Go to latest')}
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {/* Outdated pricing banner */}
+        {pricingStatus?.isOutdated && isLatestVersion && (
+          <QuoteOutdatedBanner
+            quoteRevision={pricingStatus.quoteRevision!}
+            latestRevision={pricingStatus.latestRevision!}
+            onUpdate={() => setShowUpdateConfirm(true)}
+            onShowDiff={handleShowDiff}
+            isUpdating={isCreatingVersion}
+          />
+        )}
+
         {/* Quote Info */}
-        <div className="text-sm text-muted-foreground">
+        <div className="text-sm text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1">
           {quote?.customer?.org_name && (
-            <span className="mr-4">{t('Kund', 'Customer')}: <span className="text-foreground">{quote.customer.org_name}</span></span>
+            <span>{t('Kund', 'Customer')}: <span className="text-foreground">{quote.customer.org_name}</span></span>
           )}
           {quote?.bom?.project_name && (
-            <span className="mr-4">{t('Projekt', 'Project')}: <span className="text-foreground">{quote.bom.project_name}</span></span>
+            <span>{t('Projekt', 'Project')}: <span className="text-foreground">{quote.bom.project_name}</span></span>
           )}
           <span>{t('Offert ID', 'Quote ID')}: <span className="text-foreground font-mono">#{quote?.quote_number}</span></span>
         </div>
@@ -490,11 +592,16 @@ const QuotePreparation: React.FC = () => {
                   <Button 
                     className="w-full"
                     onClick={sendToStripe}
-                    disabled={isSending || bomItems.length === 0 || quote?.status !== 'draft'}
+                    disabled={isSending || bomItems.length === 0 || quote?.status !== 'draft' || !isLatestVersion}
                   >
                     <Send className="h-4 w-4 mr-2" />
                     {isSending ? t('Skickar...', 'Sending...') : t('Skicka till Stripe offert', 'Send to Stripe quote')}
                   </Button>
+                  {!isLatestVersion && (
+                    <p className="text-xs text-muted-foreground text-center">
+                      {t('Gå till senaste versionen för att skicka', 'Go to latest version to send')}
+                    </p>
+                  )}
                   <Button 
                     variant="outline" 
                     className="w-full"
@@ -533,6 +640,24 @@ const QuotePreparation: React.FC = () => {
             vatTotal,
             totalIncVat,
           }}
+        />
+
+        {/* Price diff modal */}
+        <QuotePriceDiffModal
+          open={showDiffModal}
+          onOpenChange={setShowDiffModal}
+          diff={priceDiff}
+          quoteRevision={pricingStatus?.quoteRevision || 1}
+          latestRevision={pricingStatus?.latestRevision || 1}
+        />
+
+        {/* Update confirm dialog */}
+        <QuoteUpdateConfirmDialog
+          open={showUpdateConfirm}
+          onOpenChange={setShowUpdateConfirm}
+          currentVersion={currentVersion?.version || 1}
+          targetRevision={pricingStatus?.latestRevision || 1}
+          onConfirm={handleUpdateQuote}
         />
       </div>
     </PortalLayout>

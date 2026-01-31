@@ -463,15 +463,19 @@ export type Database = {
           customer_id: string | null
           hardware_total: number
           id: string
+          is_latest: boolean
           labor_total: number
+          parent_quote_id: string | null
           quote_number: string
           status: string
           stripe_quote_id: string | null
           subtotal_ex_vat: number | null
+          supersedes_quote_id: string | null
           total_inc_vat: number | null
           travel_total: number
           updated_at: string
           vat_total: number | null
+          version: number
         }
         Insert: {
           bom_id?: string | null
@@ -482,15 +486,19 @@ export type Database = {
           customer_id?: string | null
           hardware_total?: number
           id?: string
+          is_latest?: boolean
           labor_total?: number
+          parent_quote_id?: string | null
           quote_number: string
           status?: string
           stripe_quote_id?: string | null
           subtotal_ex_vat?: number | null
+          supersedes_quote_id?: string | null
           total_inc_vat?: number | null
           travel_total?: number
           updated_at?: string
           vat_total?: number | null
+          version?: number
         }
         Update: {
           bom_id?: string | null
@@ -501,15 +509,19 @@ export type Database = {
           customer_id?: string | null
           hardware_total?: number
           id?: string
+          is_latest?: boolean
           labor_total?: number
+          parent_quote_id?: string | null
           quote_number?: string
           status?: string
           stripe_quote_id?: string | null
           subtotal_ex_vat?: number | null
+          supersedes_quote_id?: string | null
           total_inc_vat?: number | null
           travel_total?: number
           updated_at?: string
           vat_total?: number | null
+          version?: number
         }
         Relationships: [
           {
@@ -531,6 +543,20 @@ export type Database = {
             columns: ["customer_id"]
             isOneToOne: false
             referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "quotes_parent_quote_id_fkey"
+            columns: ["parent_quote_id"]
+            isOneToOne: false
+            referencedRelation: "quotes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "quotes_supersedes_quote_id_fkey"
+            columns: ["supersedes_quote_id"]
+            isOneToOne: false
+            referencedRelation: "quotes"
             referencedColumns: ["id"]
           },
         ]
