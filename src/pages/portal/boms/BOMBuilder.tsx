@@ -34,11 +34,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { ArrowLeft, Plus, Trash2, FileText, Package, RefreshCw, Pencil, Check, X } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, FileText, Package, RefreshCw, Pencil, Check, X, Copy } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import SKUSelector from '@/components/portal/boms/SKUSelector';
 import TemplateSelector from '@/components/portal/boms/TemplateSelector';
 import QuantityInput from '@/components/portal/boms/QuantityInput';
+import PricingRevisionDropdown from '@/components/portal/boms/PricingRevisionDropdown';
+import { useBomPricingRevisions } from '@/hooks/use-bom-pricing-revisions';
 
 interface BOMItem {
   id: string;
@@ -60,6 +62,7 @@ interface BOMItem {
     vat_rate: number;
     sell_price_ex_vat: number | null;
     sell_price_inc_vat: number | null;
+    effective_margin_percent: number | null;
   };
 }
 
@@ -72,7 +75,7 @@ const BOMBuilder: React.FC = () => {
   
   const [isSKUSelectorOpen, setIsSKUSelectorOpen] = useState(false);
   const [isTemplateSelectorOpen, setIsTemplateSelectorOpen] = useState(false);
-  const [isRefreshDialogOpen, setIsRefreshDialogOpen] = useState(false);
+  const [isNewVersionDialogOpen, setIsNewVersionDialogOpen] = useState(false);
   const [isEditingProject, setIsEditingProject] = useState(false);
   const [editedProjectName, setEditedProjectName] = useState('');
 
@@ -97,7 +100,7 @@ const BOMBuilder: React.FC = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('bom_items')
-        .select('*, skus(sku, name, category, cost_ex_vat_computed, vat_rate, sell_price_ex_vat, sell_price_inc_vat)')
+        .select('*, skus(sku, name, category, cost_ex_vat_computed, vat_rate, sell_price_ex_vat, sell_price_inc_vat, effective_margin_percent)')
         .eq('bom_id', id);
       if (error) throw error;
       return data.map(item => ({
@@ -107,6 +110,17 @@ const BOMBuilder: React.FC = () => {
     },
     enabled: isStaff && !!id,
   });
+
+  // Pricing revisions hook
+  const {
+    revisions,
+    latestRevision,
+    createRevision,
+    isCreatingRevision,
+    revertRevision,
+    isReverting,
+    ensureRevisionExists,
+  } = useBomPricingRevisions(id, t);
 
   // Fetch customers for selector
   const { data: customers = [] } = useQuery({
@@ -138,6 +152,60 @@ const BOMBuilder: React.FC = () => {
     },
     onError: (error: any) => {
       toast({ title: t('Kunde inte uppdatera BOM', 'Failed to update BOM'), description: error.message, variant: 'destructive' });
+    },
+  });
+
+  // Create new BOM version mutation
+  const createNewVersionMutation = useMutation({
+    mutationFn: async () => {
+      // Get the max version for this project
+      const newVersion = (bom?.version ?? 1) + 1;
+
+      // Create new BOM with incremented version
+      const { data: newBom, error: bomError } = await supabase
+        .from('boms')
+        .insert({
+          project_name: bom?.project_name,
+          customer_id: bom?.customer_id,
+          version: newVersion,
+        })
+        .select()
+        .single();
+      if (bomError) throw bomError;
+
+      // Copy all items to new BOM
+      if (items.length > 0) {
+        const newItems = items.map(item => ({
+          bom_id: newBom.id,
+          sku_id: item.sku_id,
+          quantity: item.quantity,
+          cost_ex_vat_at_time: item.cost_ex_vat_at_time,
+          sell_price_ex_vat_at_time: item.sell_price_ex_vat_at_time,
+          vat_rate_at_time: item.vat_rate_at_time,
+          sell_price_inc_vat_at_time: item.sell_price_inc_vat_at_time,
+          pricing_source: item.pricing_source,
+          cost: item.cost,
+          sell_price: item.sell_price,
+        }));
+
+        const { error: itemsError } = await supabase
+          .from('bom_items')
+          .insert(newItems);
+        if (itemsError) throw itemsError;
+      }
+
+      return newBom;
+    },
+    onSuccess: (newBom) => {
+      setIsNewVersionDialogOpen(false);
+      toast({ 
+        title: t('Ny BOM-version skapad', 'New BOM version created'),
+        description: `v${newBom.version}`
+      });
+      navigate(`/portal/boms/${newBom.id}`);
+    },
+    onError: (error: any) => {
+      toast({ title: t('Kunde inte skapa ny version', 'Failed to create new version'), description: error.message, variant: 'destructive' });
     },
   });
 
@@ -198,44 +266,6 @@ const BOMBuilder: React.FC = () => {
     },
   });
 
-  // Refresh all BOM prices mutation
-  const refreshPricesMutation = useMutation({
-    mutationFn: async () => {
-      for (const item of items) {
-        // Fetch current SKU pricing
-        const { data: sku, error: skuError } = await supabase
-          .from('skus')
-          .select('cost_ex_vat_computed, vat_rate, sell_price_ex_vat, sell_price_inc_vat')
-          .eq('id', item.sku_id)
-          .single();
-        if (skuError) throw skuError;
-
-        // Update BOM item with current pricing
-        const { error } = await supabase
-          .from('bom_items')
-          .update({
-            cost_ex_vat_at_time: sku.cost_ex_vat_computed,
-            sell_price_ex_vat_at_time: sku.sell_price_ex_vat,
-            vat_rate_at_time: sku.vat_rate,
-            sell_price_inc_vat_at_time: sku.sell_price_inc_vat,
-            pricing_source: 'sku',
-            cost: sku.cost_ex_vat_computed,
-            sell_price: sku.sell_price_ex_vat,
-          })
-          .eq('id', item.id);
-        if (error) throw error;
-      }
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['bom_items', id] });
-      setIsRefreshDialogOpen(false);
-      toast({ title: t('Priser uppdaterade', 'Prices updated') });
-    },
-    onError: (error: any) => {
-      toast({ title: t('Kunde inte uppdatera priser', 'Failed to update prices'), description: error.message, variant: 'destructive' });
-    },
-  });
-
   // Calculate totals with VAT
   const totals = items.reduce(
     (acc, item) => {
@@ -262,10 +292,15 @@ const BOMBuilder: React.FC = () => {
   // Create quote from BOM
   const createQuote = async () => {
     try {
+      // Ensure a pricing revision exists (create r1 if none)
+      const revision = await ensureRevisionExists(items);
+
       const { data: quote, error } = await supabase
         .from('quotes')
         .insert({
           bom_id: id,
+          bom_version: bom?.version ?? 1,
+          bom_price_revision_id: revision.id,
           customer_id: bom?.customer_id || null,
           hardware_total: totals.sellEx,
           labor_total: 0,
@@ -320,6 +355,16 @@ const BOMBuilder: React.FC = () => {
     }
   };
 
+  // Handle create pricing revision
+  const handleCreatePricingRevision = () => {
+    createRevision(items);
+  };
+
+  // Handle revert pricing revision
+  const handleRevertRevision = (targetRevision: any) => {
+    revertRevision({ targetRevision, currentBomItems: items });
+  };
+
   // Redirect if not staff
   if (!authLoading && !isStaff) {
     navigate('/portal');
@@ -350,9 +395,19 @@ const BOMBuilder: React.FC = () => {
             <ArrowLeft className="h-4 w-4 mr-1" />
           </Link>
           <div className="flex-1">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               <h1 className="text-2xl font-bold">BOM Builder</h1>
-              <Badge variant="outline">v{bom?.version || 1}</Badge>
+              {/* BOM Version Badge */}
+              <Badge variant="outline" className="font-mono">
+                BOM v{bom?.version || 1}
+              </Badge>
+              {/* Pricing Revision Dropdown */}
+              <PricingRevisionDropdown
+                revisions={revisions}
+                latestRevision={latestRevision}
+                onRevert={handleRevertRevision}
+                isReverting={isReverting}
+              />
             </div>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-1">
               {/* Customer selector */}
@@ -439,7 +494,7 @@ const BOMBuilder: React.FC = () => {
           {/* Main Content */}
           <div className="lg:col-span-2 space-y-4">
             {/* Actions */}
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button onClick={() => setIsSKUSelectorOpen(true)}>
                 <Plus className="h-4 w-4 mr-2" />
                 {t('Lägg till SKU', 'Add SKU')}
@@ -451,13 +506,21 @@ const BOMBuilder: React.FC = () => {
               {items.length > 0 && (
                 <Button 
                   variant="outline" 
-                  onClick={() => setIsRefreshDialogOpen(true)}
-                  disabled={refreshPricesMutation.isPending}
+                  onClick={handleCreatePricingRevision}
+                  disabled={isCreatingRevision}
                 >
-                  <RefreshCw className={`h-4 w-4 mr-2 ${refreshPricesMutation.isPending ? 'animate-spin' : ''}`} />
-                  {t('Uppdatera priser', 'Refresh prices')}
+                  <RefreshCw className={`h-4 w-4 mr-2 ${isCreatingRevision ? 'animate-spin' : ''}`} />
+                  {t('Skapa ny prisrevision', 'Create new pricing revision')}
                 </Button>
               )}
+              <Button
+                variant="outline"
+                onClick={() => setIsNewVersionDialogOpen(true)}
+                disabled={createNewVersionMutation.isPending}
+              >
+                <Copy className="h-4 w-4 mr-2" />
+                {t('Skapa ny BOM-revision', 'Create new BOM revision')}
+              </Button>
             </div>
 
             {/* Items Table */}
@@ -621,20 +684,20 @@ const BOMBuilder: React.FC = () => {
         onSelect={handleAddFromTemplate}
       />
 
-      {/* Refresh Prices Confirmation Dialog */}
-      <AlertDialog open={isRefreshDialogOpen} onOpenChange={setIsRefreshDialogOpen}>
+      {/* New BOM Version Confirmation Dialog */}
+      <AlertDialog open={isNewVersionDialogOpen} onOpenChange={setIsNewVersionDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t('Uppdatera alla priser?', 'Update all prices?')}</AlertDialogTitle>
+            <AlertDialogTitle>{t('Skapa ny BOM-revision?', 'Create new BOM revision?')}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t('Detta kommer att uppdatera alla priser i denna BOM till aktuella SKU-priser. Befintliga snapshot-priser kommer att skrivas över.',
-                 'This will update all prices in this BOM to current SKU prices. Existing snapshot prices will be overwritten.')}
+              {t('Detta skapar en ny version av denna BOM (v' + ((bom?.version ?? 1) + 1) + '). Den nuvarande versionen (v' + (bom?.version ?? 1) + ') behålls som historik.',
+                 'This will create a new version of this BOM (v' + ((bom?.version ?? 1) + 1) + '). The current version (v' + (bom?.version ?? 1) + ') will be kept as history.')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{t('Avbryt', 'Cancel')}</AlertDialogCancel>
-            <AlertDialogAction onClick={() => refreshPricesMutation.mutate()}>
-              {t('Uppdatera priser', 'Update prices')}
+            <AlertDialogAction onClick={() => createNewVersionMutation.mutate()}>
+              {t('Skapa ny version', 'Create new version')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

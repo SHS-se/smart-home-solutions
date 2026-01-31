@@ -1,6 +1,19 @@
 
 # VAT-Aware Pricing Engine Implementation Plan
 
+## Status: PHASE 1-7 COMPLETE ✅
+
+### Recently Completed: BOM Versioning & Pricing Revisions
+- Created `bom_price_revisions` table for tracking pricing snapshots
+- Created `bom_price_revision_items` table for snapshot line items  
+- Added `bom_version` and `bom_price_revision_id` columns to `quotes` table
+- Implemented `useBomPricingRevisions` hook with create/revert logic
+- Added `PricingRevisionDropdown` component with history and revert UI
+- Updated BOMBuilder with dual versioning badges and actions
+- Quote creation now freezes both BOM version and pricing revision
+
+---
+
 ## Overview
 This plan implements a comprehensive VAT-aware pricing system for Smart Home Solutions with automatic price calculation, history tracking, and snapshot logic for BOMs and Quotes.
 

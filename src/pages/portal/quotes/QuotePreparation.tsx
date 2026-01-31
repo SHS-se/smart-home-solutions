@@ -49,17 +49,22 @@ const QuotePreparation: React.FC = () => {
   const [showPreview, setShowPreview] = useState(false);
   const [editingQuantities, setEditingQuantities] = useState<Record<string, number>>({});
 
-  // Fetch quote
+  // Fetch quote with BOM version and pricing revision info
   const { data: quote } = useQuery({
     queryKey: ['quote', id],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('quotes')
-        .select('*, customers(org_name), boms(id, project_name, version)')
+        .select('*, customers(org_name), boms(id, project_name, version), bom_price_revisions(id, revision, note, created_at)')
         .eq('id', id)
         .single();
       if (error) throw error;
-      return { ...data, customer: (data as any).customers, bom: (data as any).boms };
+      return { 
+        ...data, 
+        customer: (data as any).customers, 
+        bom: (data as any).boms,
+        price_revision: (data as any).bom_price_revisions 
+      };
     },
     enabled: isStaff && !!id,
   });
@@ -288,8 +293,18 @@ const QuotePreparation: React.FC = () => {
             {/* Hardware Section - BOM Items Table */}
             <Card>
               <CardHeader className="flex flex-row items-center justify-between py-4">
-                <CardTitle className="text-lg">
-                  {t('Hårdvara', 'Hardware')} {quote?.bom && <span className="text-muted-foreground font-normal">({t('från BOM', 'from BOM')} #{quote.bom.version})</span>}
+                <CardTitle className="text-lg flex items-center gap-2 flex-wrap">
+                  <span>{t('Hårdvara', 'Hardware')}</span>
+                  {quote?.bom && (
+                    <Badge variant="outline" className="font-mono text-xs">
+                      BOM v{quote.bom_version ?? quote.bom.version}
+                    </Badge>
+                  )}
+                  {quote?.price_revision && (
+                    <Badge variant="secondary" className="font-mono text-xs">
+                      {t('Prisrev', 'Price rev')} r{quote.price_revision.revision}
+                    </Badge>
+                  )}
                 </CardTitle>
                 <div className="flex items-center gap-3 text-sm">
                   {quote?.bom_id && (
