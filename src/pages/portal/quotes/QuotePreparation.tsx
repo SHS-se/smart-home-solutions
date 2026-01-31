@@ -435,6 +435,25 @@ const QuotePreparation: React.FC = () => {
 
   const currentVersion = quoteFamily.find(v => v.id === id);
   const isLatestVersion = currentVersion?.is_latest ?? true;
+  const isSent = quote?.status === 'sent';
+  const isEditable = isLatestVersion && !isSent;
+
+  // Status badge helper
+  const getStatusBadge = () => {
+    const status = quote?.status || 'draft';
+    switch (status) {
+      case 'draft':
+        return <Badge variant="outline">{t('Utkast', 'Draft')}</Badge>;
+      case 'sent':
+        return <Badge variant="default">{t('Skickad', 'Sent')}</Badge>;
+      case 'accepted':
+        return <Badge variant="secondary">{t('Accepterad', 'Accepted')}</Badge>;
+      case 'rejected':
+        return <Badge variant="destructive">{t('Avvisad', 'Rejected')}</Badge>;
+      default:
+        return <Badge variant="secondary">{status}</Badge>;
+    }
+  };
 
   return (
     <PortalLayout>
@@ -493,6 +512,7 @@ const QuotePreparation: React.FC = () => {
 
         {/* Quote Info */}
         <div className="text-sm text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1">
+          {quote && getStatusBadge()}
           {quote?.customer?.org_name && (
             <span>{t('Kund', 'Customer')}: <span className="text-foreground">{quote.customer.org_name}</span></span>
           )}
@@ -574,6 +594,7 @@ const QuotePreparation: React.FC = () => {
                                   onBlur={() => handleQuantityBlur(item.id)}
                                   className="w-16 text-center h-9"
                                   min={0}
+                                  disabled={!isEditable}
                                 />
                               </td>
                               <td className="px-4 py-4 text-right text-muted-foreground">{formatPrice(unitPrice)} kr</td>
@@ -620,7 +641,7 @@ const QuotePreparation: React.FC = () => {
                   size="sm"
                   variant="outline"
                   onClick={handleAddLaborLine}
-                  disabled={!isLatestVersion}
+                  disabled={!isEditable}
                 >
                   <Plus className="h-4 w-4 mr-1" />
                   {t('Lägg till rad', 'Add row')}
@@ -650,7 +671,7 @@ const QuotePreparation: React.FC = () => {
                                 value={line.description}
                                 onCommit={(value) => updateQuoteLineMutation.mutate({ lineId: line.id, field: 'description', value })}
                                 className="h-9"
-                                disabled={!isLatestVersion}
+                                disabled={!isEditable}
                               />
                             </td>
                             <td className="px-4 py-3">
@@ -660,7 +681,7 @@ const QuotePreparation: React.FC = () => {
                                 onCommit={(value) => updateQuoteLineMutation.mutate({ lineId: line.id, field: 'quantity', value: parseFloat(value) || 0 })}
                                 className="w-20 text-center h-9"
                                 min={0}
-                                disabled={!isLatestVersion}
+                                disabled={!isEditable}
                               />
                             </td>
                             <td className="px-4 py-3">
@@ -670,7 +691,7 @@ const QuotePreparation: React.FC = () => {
                                 onCommit={(value) => updateQuoteLineMutation.mutate({ lineId: line.id, field: 'unit_price', value: parseFloat(value) || 0 })}
                                 className="w-24 text-right h-9"
                                 min={0}
-                                disabled={!isLatestVersion}
+                                disabled={!isEditable}
                               />
                             </td>
                             <td className="px-4 py-3 text-right font-medium">{formatPrice(lineTotal)} kr</td>
@@ -680,7 +701,7 @@ const QuotePreparation: React.FC = () => {
                                 variant="ghost"
                                 onClick={() => deleteQuoteLineMutation.mutate(line.id)}
                                 className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                                disabled={!isLatestVersion}
+                                disabled={!isEditable}
                               >
                                 <Trash2 className="h-4 w-4" />
                               </Button>
@@ -710,7 +731,7 @@ const QuotePreparation: React.FC = () => {
                   size="sm"
                   variant="outline"
                   onClick={handleAddTravelLine}
-                  disabled={!isLatestVersion}
+                  disabled={!isEditable}
                 >
                   <Plus className="h-4 w-4 mr-1" />
                   {t('Lägg till rad', 'Add row')}
@@ -740,7 +761,7 @@ const QuotePreparation: React.FC = () => {
                                 value={line.description}
                                 onCommit={(value) => updateQuoteLineMutation.mutate({ lineId: line.id, field: 'description', value })}
                                 className="h-9"
-                                disabled={!isLatestVersion}
+                                disabled={!isEditable}
                               />
                             </td>
                             <td className="px-4 py-3">
@@ -750,7 +771,7 @@ const QuotePreparation: React.FC = () => {
                                 onCommit={(value) => updateQuoteLineMutation.mutate({ lineId: line.id, field: 'quantity', value: parseFloat(value) || 0 })}
                                 className="w-20 text-center h-9"
                                 min={0}
-                                disabled={!isLatestVersion}
+                                disabled={!isEditable}
                               />
                             </td>
                             <td className="px-4 py-3">
@@ -760,7 +781,7 @@ const QuotePreparation: React.FC = () => {
                                 onCommit={(value) => updateQuoteLineMutation.mutate({ lineId: line.id, field: 'unit_price', value: parseFloat(value) || 0 })}
                                 className="w-24 text-right h-9"
                                 min={0}
-                                disabled={!isLatestVersion}
+                                disabled={!isEditable}
                               />
                             </td>
                             <td className="px-4 py-3 text-right font-medium">{formatPrice(lineTotal)} kr</td>
@@ -770,7 +791,7 @@ const QuotePreparation: React.FC = () => {
                                 variant="ghost"
                                 onClick={() => deleteQuoteLineMutation.mutate(line.id)}
                                 className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                                disabled={!isLatestVersion}
+                                disabled={!isEditable}
                               >
                                 <Trash2 className="h-4 w-4" />
                               </Button>
@@ -851,7 +872,7 @@ const QuotePreparation: React.FC = () => {
                     variant="outline" 
                     className="w-full"
                     onClick={previewQuote}
-                    disabled={isLoadingPdf}
+                    disabled={isLoadingPdf || !quote?.stripe_quote_id}
                   >
                     {isLoadingPdf ? (
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -860,6 +881,11 @@ const QuotePreparation: React.FC = () => {
                     )}
                     {t('Förhandsgranska PDF', 'Preview PDF')}
                   </Button>
+                  {!quote?.stripe_quote_id && (
+                    <p className="text-xs text-muted-foreground text-center">
+                      {t('Skicka till Stripe först för att förhandsgranska', 'Send to Stripe first to preview')}
+                    </p>
+                  )}
                 </div>
               </CardContent>
             </Card>
