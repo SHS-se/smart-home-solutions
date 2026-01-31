@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { ArrowLeft, ExternalLink, Pencil, Send, Eye, Info, Loader2, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Pencil, Send, Eye, Info, Loader2, AlertTriangle, Plus, Trash2 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import QuotePreviewDialog from '@/components/portal/quotes/QuotePreviewDialog';
 import QuotePriceDiffModal from '@/components/portal/quotes/QuotePriceDiffModal';
@@ -18,6 +18,7 @@ import QuoteVersionDropdown from '@/components/portal/quotes/QuoteVersionDropdow
 import QuoteOutdatedBanner from '@/components/portal/quotes/QuoteOutdatedBanner';
 import QuoteUpdateConfirmDialog from '@/components/portal/quotes/QuoteUpdateConfirmDialog';
 import { useQuoteVersioning } from '@/hooks/use-quote-versioning';
+import BlurCommitInput from '@/components/ui/blur-commit-input';
 
 interface QuoteLine {
   id: string;
@@ -150,9 +151,87 @@ const QuotePreparation: React.FC = () => {
     },
   });
 
+  // Add quote line mutation
+  const addQuoteLineMutation = useMutation({
+    mutationFn: async ({ section, description, quantity, unitPrice }: { section: string; description: string; quantity: number; unitPrice: number }) => {
+      const { error } = await supabase
+        .from('quote_lines')
+        .insert({
+          quote_id: id!,
+          section,
+          description,
+          quantity,
+          unit_price: unitPrice,
+          unit_price_ex_vat: unitPrice,
+          vat_rate: 0.25,
+          unit_price_inc_vat: unitPrice * 1.25,
+        });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['quote_lines', id] });
+    },
+  });
+
+  // Update quote line mutation
+  const updateQuoteLineMutation = useMutation({
+    mutationFn: async ({ lineId, field, value }: { lineId: string; field: string; value: string | number }) => {
+      const updateData: Record<string, unknown> = { [field]: value };
+      
+      // If updating unit_price, also update related fields
+      if (field === 'unit_price') {
+        const numValue = typeof value === 'number' ? value : parseFloat(value as string) || 0;
+        updateData.unit_price_ex_vat = numValue;
+        updateData.unit_price_inc_vat = numValue * 1.25;
+      }
+      
+      const { error } = await supabase
+        .from('quote_lines')
+        .update(updateData)
+        .eq('id', lineId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['quote_lines', id] });
+    },
+  });
+
+  // Delete quote line mutation
+  const deleteQuoteLineMutation = useMutation({
+    mutationFn: async (lineId: string) => {
+      const { error } = await supabase
+        .from('quote_lines')
+        .delete()
+        .eq('id', lineId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['quote_lines', id] });
+    },
+  });
+
   // Group lines by section
   const laborLines = lines.filter(l => l.section === 'labor');
   const travelLines = lines.filter(l => l.section === 'travel');
+
+  // Add new row handlers
+  const handleAddLaborLine = () => {
+    addQuoteLineMutation.mutate({
+      section: 'labor',
+      description: t('Installation', 'Installation'),
+      quantity: 1,
+      unitPrice: 850,
+    });
+  };
+
+  const handleAddTravelLine = () => {
+    addQuoteLineMutation.mutate({
+      section: 'travel',
+      description: t('Resa', 'Travel'),
+      quantity: 1,
+      unitPrice: 500,
+    });
+  };
 
   // Calculate hardware total from BOM items
   const hardwareTotal = bomItems.reduce((acc, item) => {
@@ -501,48 +580,180 @@ const QuotePreparation: React.FC = () => {
 
             {/* Labor Section */}
             <Card>
-              <CardHeader className="py-4">
+              <CardHeader className="flex flex-row items-center justify-between py-4">
                 <CardTitle className="text-lg">{t('Arbete', 'Labor')}</CardTitle>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleAddLaborLine}
+                  disabled={!isLatestVersion}
+                >
+                  <Plus className="h-4 w-4 mr-1" />
+                  {t('Lägg till rad', 'Add row')}
+                </Button>
               </CardHeader>
-              <CardContent className="space-y-4">
+              <CardContent className="p-0">
                 {laborLines.length > 0 ? (
-                  laborLines.map(line => (
-                    <div key={line.id} className="flex items-start justify-between">
-                      <div>
-                        <p className="font-medium">{line.description || t('Arbete', 'Labor')}</p>
-                        <p className="text-sm text-muted-foreground">
-                          {line.quantity} {t('timmar', 'hours')} × {formatPrice(line.unit_price_ex_vat ?? line.unit_price)} kr
-                        </p>
-                      </div>
-                      <span className="font-medium">{formatPrice(line.quantity * (line.unit_price_ex_vat ?? line.unit_price))} kr</span>
-                    </div>
-                  ))
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
+                        <th className="px-6 pb-3 pt-2 font-medium">{t('Beskrivning', 'Description')}</th>
+                        <th className="px-4 pb-3 pt-2 font-medium text-center">{t('Timmar', 'Hours')}</th>
+                        <th className="px-4 pb-3 pt-2 font-medium text-right">{t('À-pris', 'Unit price')}</th>
+                        <th className="px-4 pb-3 pt-2 font-medium text-right">{t('Summa', 'Total')}</th>
+                        <th className="px-4 pb-3 pt-2 font-medium w-12"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {laborLines.map(line => {
+                        const unitPrice = line.unit_price_ex_vat ?? line.unit_price;
+                        const lineTotal = line.quantity * unitPrice;
+                        
+                        return (
+                          <tr key={line.id} className="border-b border-border">
+                            <td className="px-6 py-3">
+                              <BlurCommitInput
+                                value={line.description}
+                                onCommit={(value) => updateQuoteLineMutation.mutate({ lineId: line.id, field: 'description', value })}
+                                className="h-9"
+                                disabled={!isLatestVersion}
+                              />
+                            </td>
+                            <td className="px-4 py-3">
+                              <BlurCommitInput
+                                type="number"
+                                value={line.quantity}
+                                onCommit={(value) => updateQuoteLineMutation.mutate({ lineId: line.id, field: 'quantity', value: parseFloat(value) || 0 })}
+                                className="w-20 text-center h-9"
+                                min={0}
+                                disabled={!isLatestVersion}
+                              />
+                            </td>
+                            <td className="px-4 py-3">
+                              <BlurCommitInput
+                                type="number"
+                                value={unitPrice}
+                                onCommit={(value) => updateQuoteLineMutation.mutate({ lineId: line.id, field: 'unit_price', value: parseFloat(value) || 0 })}
+                                className="w-24 text-right h-9"
+                                min={0}
+                                disabled={!isLatestVersion}
+                              />
+                            </td>
+                            <td className="px-4 py-3 text-right font-medium">{formatPrice(lineTotal)} kr</td>
+                            <td className="px-4 py-3">
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                onClick={() => deleteQuoteLineMutation.mutate(line.id)}
+                                className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                                disabled={!isLatestVersion}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 ) : (
-                  <p className="text-muted-foreground text-sm">{t('Inget arbete tillagt', 'No labor added')}</p>
+                  <div className="px-6 py-4 text-muted-foreground text-sm">{t('Inget arbete tillagt', 'No labor added')}</div>
+                )}
+                {laborLines.length > 0 && (
+                  <div className="flex justify-end items-center gap-4 px-6 py-3 border-t border-border bg-muted/30">
+                    <span className="font-medium">{t('Arbete delsumma', 'Labor subtotal')}:</span>
+                    <span className="text-lg font-semibold">{formatPrice(laborTotal)} kr</span>
+                  </div>
                 )}
               </CardContent>
             </Card>
 
             {/* Travel / Other Section */}
             <Card>
-              <CardHeader className="py-4">
+              <CardHeader className="flex flex-row items-center justify-between py-4">
                 <CardTitle className="text-lg">{t('Resa / Övrigt', 'Travel / Other')}</CardTitle>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleAddTravelLine}
+                  disabled={!isLatestVersion}
+                >
+                  <Plus className="h-4 w-4 mr-1" />
+                  {t('Lägg till rad', 'Add row')}
+                </Button>
               </CardHeader>
-              <CardContent className="space-y-4">
+              <CardContent className="p-0">
                 {travelLines.length > 0 ? (
-                  travelLines.map(line => (
-                    <div key={line.id} className="flex items-start justify-between">
-                      <div>
-                        <p className="font-medium">{line.description || t('Resa', 'Travel')}</p>
-                        <p className="text-sm text-muted-foreground">
-                          {line.quantity} × {formatPrice(line.unit_price_ex_vat ?? line.unit_price)} kr
-                        </p>
-                      </div>
-                      <span className="font-medium">{formatPrice(line.quantity * (line.unit_price_ex_vat ?? line.unit_price))} kr</span>
-                    </div>
-                  ))
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
+                        <th className="px-6 pb-3 pt-2 font-medium">{t('Beskrivning', 'Description')}</th>
+                        <th className="px-4 pb-3 pt-2 font-medium text-center">{t('Antal', 'Qty')}</th>
+                        <th className="px-4 pb-3 pt-2 font-medium text-right">{t('À-pris', 'Unit price')}</th>
+                        <th className="px-4 pb-3 pt-2 font-medium text-right">{t('Summa', 'Total')}</th>
+                        <th className="px-4 pb-3 pt-2 font-medium w-12"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {travelLines.map(line => {
+                        const unitPrice = line.unit_price_ex_vat ?? line.unit_price;
+                        const lineTotal = line.quantity * unitPrice;
+                        
+                        return (
+                          <tr key={line.id} className="border-b border-border">
+                            <td className="px-6 py-3">
+                              <BlurCommitInput
+                                value={line.description}
+                                onCommit={(value) => updateQuoteLineMutation.mutate({ lineId: line.id, field: 'description', value })}
+                                className="h-9"
+                                disabled={!isLatestVersion}
+                              />
+                            </td>
+                            <td className="px-4 py-3">
+                              <BlurCommitInput
+                                type="number"
+                                value={line.quantity}
+                                onCommit={(value) => updateQuoteLineMutation.mutate({ lineId: line.id, field: 'quantity', value: parseFloat(value) || 0 })}
+                                className="w-20 text-center h-9"
+                                min={0}
+                                disabled={!isLatestVersion}
+                              />
+                            </td>
+                            <td className="px-4 py-3">
+                              <BlurCommitInput
+                                type="number"
+                                value={unitPrice}
+                                onCommit={(value) => updateQuoteLineMutation.mutate({ lineId: line.id, field: 'unit_price', value: parseFloat(value) || 0 })}
+                                className="w-24 text-right h-9"
+                                min={0}
+                                disabled={!isLatestVersion}
+                              />
+                            </td>
+                            <td className="px-4 py-3 text-right font-medium">{formatPrice(lineTotal)} kr</td>
+                            <td className="px-4 py-3">
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                onClick={() => deleteQuoteLineMutation.mutate(line.id)}
+                                className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                                disabled={!isLatestVersion}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 ) : (
-                  <p className="text-muted-foreground text-sm">{t('Inga resekostnader tillagda', 'No travel costs added')}</p>
+                  <div className="px-6 py-4 text-muted-foreground text-sm">{t('Inga resekostnader tillagda', 'No travel costs added')}</div>
+                )}
+                {travelLines.length > 0 && (
+                  <div className="flex justify-end items-center gap-4 px-6 py-3 border-t border-border bg-muted/30">
+                    <span className="font-medium">{t('Resa/övrigt delsumma', 'Travel/other subtotal')}:</span>
+                    <span className="text-lg font-semibold">{formatPrice(travelTotal)} kr</span>
+                  </div>
                 )}
               </CardContent>
             </Card>
