@@ -34,7 +34,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { ArrowLeft, Plus, Trash2, FileText, Package, RefreshCw, Pencil, Check, X, Copy } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, FileText, Package, RefreshCw, Pencil, Check, X, Copy, BadgePlus } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import SKUSelector from '@/components/portal/boms/SKUSelector';
 import TemplateSelector from '@/components/portal/boms/TemplateSelector';
@@ -509,7 +509,7 @@ const BOMBuilder: React.FC = () => {
                   onClick={handleCreatePricingRevision}
                   disabled={isCreatingRevision}
                 >
-                  <RefreshCw className={`h-4 w-4 mr-2 ${isCreatingRevision ? 'animate-spin' : ''}`} />
+                  <BadgePlus className="h-4 w-4 mr-2" />
                   {t('Skapa ny prisrevision', 'Create new pricing revision')}
                 </Button>
               )}
