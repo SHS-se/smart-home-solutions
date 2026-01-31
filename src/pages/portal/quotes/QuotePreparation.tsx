@@ -282,10 +282,35 @@ const QuotePreparation: React.FC = () => {
     try {
       await updateQuoteTotalsMutation.mutateAsync();
 
+      // Prepare itemized hardware items
+      const hardwareItems = bomItems.map(item => ({
+        name: item.sku.name,
+        sku: item.sku.sku,
+        quantity: item.quantity,
+        unit_price_ex_vat: item.sell_price_ex_vat_at_time ?? item.sku.sell_price_ex_vat ?? 0,
+      }));
+
+      // Prepare itemized labor lines
+      const laborLinesData = laborLines.map(line => ({
+        description: line.description || t('Installation', 'Installation'),
+        quantity: line.quantity,
+        unit_price_ex_vat: line.unit_price_ex_vat ?? line.unit_price,
+      }));
+
+      // Prepare itemized travel lines
+      const travelLinesData = travelLines.map(line => ({
+        description: line.description || t('Resa', 'Travel'),
+        quantity: line.quantity,
+        unit_price_ex_vat: line.unit_price_ex_vat ?? line.unit_price,
+      }));
+
       const { data, error } = await supabase.functions.invoke('create-stripe-quote', {
         body: {
           quote_id: id,
           customer_name: quote.customer.org_name,
+          hardware_items: hardwareItems,
+          labor_lines: laborLinesData,
+          travel_lines: travelLinesData,
           hardware_total: hardwareTotal,
           labor_total: laborTotal,
           travel_total: travelTotal,
