@@ -98,101 +98,101 @@ serve(async (req) => {
       });
     }
 
+    // Helper to create a product and return a line item with price_data referencing it
+    // Stripe Quotes API requires product ID, not nested product_data
+    async function createLineItem(
+      name: string, 
+      description: string | undefined, 
+      unitAmountCents: number, 
+      quantity: number
+    ): Promise<Stripe.QuoteCreateParams.LineItem> {
+      const product = await stripe.products.create({
+        name,
+        description: description || undefined,
+      });
+      
+      return {
+        price_data: {
+          currency: "sek",
+          product: product.id,
+          unit_amount: unitAmountCents,
+        },
+        quantity,
+      };
+    }
+
     // Create line items for quote
     const lineItems: Stripe.QuoteCreateParams.LineItem[] = [];
 
     // Add itemized hardware items
     for (const item of hardware_items) {
       if (item.quantity > 0 && item.unit_price_ex_vat > 0) {
-        lineItems.push({
-          price_data: {
-            currency: "sek",
-            product_data: {
-              name: item.name,
-              description: `SKU: ${item.sku}`,
-            },
-            unit_amount: Math.round(item.unit_price_ex_vat * 100),
-          },
-          quantity: item.quantity,
-        });
+        const lineItem = await createLineItem(
+          item.name,
+          `SKU: ${item.sku}`,
+          Math.round(item.unit_price_ex_vat * 100),
+          item.quantity
+        );
+        lineItems.push(lineItem);
       }
     }
 
     // Add itemized labor lines
     for (const line of labor_lines) {
       if (line.quantity > 0 && line.unit_price_ex_vat > 0) {
-        lineItems.push({
-          price_data: {
-            currency: "sek",
-            product_data: {
-              name: line.description || "Installation & konfiguration",
-              description: `${line.quantity} timmar`,
-            },
-            unit_amount: Math.round(line.unit_price_ex_vat * 100),
-          },
-          quantity: line.quantity,
-        });
+        const lineItem = await createLineItem(
+          line.description || "Installation & konfiguration",
+          `${line.quantity} timmar`,
+          Math.round(line.unit_price_ex_vat * 100),
+          line.quantity
+        );
+        lineItems.push(lineItem);
       }
     }
 
     // Add itemized travel lines
     for (const line of travel_lines) {
       if (line.quantity > 0 && line.unit_price_ex_vat > 0) {
-        lineItems.push({
-          price_data: {
-            currency: "sek",
-            product_data: {
-              name: line.description || "Resa & övrigt",
-            },
-            unit_amount: Math.round(line.unit_price_ex_vat * 100),
-          },
-          quantity: line.quantity,
-        });
+        const lineItem = await createLineItem(
+          line.description || "Resa & övrigt",
+          undefined,
+          Math.round(line.unit_price_ex_vat * 100),
+          line.quantity
+        );
+        lineItems.push(lineItem);
       }
     }
 
     // Fallback to summarized totals if no itemized data was provided
     if (lineItems.length === 0) {
       if (hardware_total > 0) {
-        lineItems.push({
-          price_data: {
-            currency: "sek",
-            product_data: {
-              name: "Hårdvara för smart home-installation",
-              description: "Hardware for smart home installation",
-            },
-            unit_amount: Math.round(hardware_total * 100),
-          },
-          quantity: 1,
-        });
+        const lineItem = await createLineItem(
+          "Hårdvara för smart home-installation",
+          "Hardware for smart home installation",
+          Math.round(hardware_total * 100),
+          1
+        );
+        lineItems.push(lineItem);
       }
 
       if (labor_total > 0) {
-        lineItems.push({
-          price_data: {
-            currency: "sek",
-            product_data: {
-              name: "Installation & konfiguration",
-              description: "Installation and configuration services",
-            },
-            unit_amount: Math.round(labor_total * 100),
-          },
-          quantity: 1,
-        });
+        const lineItem = await createLineItem(
+          "Installation & konfiguration",
+          "Installation and configuration services",
+          Math.round(labor_total * 100),
+          1
+        );
+        lineItems.push(lineItem);
       }
 
       if (travel_total > 0) {
-        lineItems.push({
-          price_data: {
-            currency: "sek",
-            product_data: {
-              name: "Resa & övrigt",
-              description: "Travel and miscellaneous costs",
-            },
-            unit_amount: Math.round(travel_total * 100),
-          },
-          quantity: 1,
-        });
+        const lineItem = await createLineItem(
+          "Resa & övrigt",
+          "Travel and miscellaneous costs",
+          Math.round(travel_total * 100),
+          1
+        );
+        lineItems.push(lineItem);
       }
     }
 
