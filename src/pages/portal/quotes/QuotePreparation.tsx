@@ -359,12 +359,18 @@ const QuotePreparation: React.FC = () => {
     try {
       const { data, error } = await supabase.functions.invoke('get-stripe-quote-pdf', {
         body: { stripe_quote_id: quote.stripe_quote_id },
+        headers: { Accept: 'application/pdf' },
       });
 
       if (error) throw error;
-      if (!data?.pdf_url) throw new Error('No PDF URL returned');
 
-      window.open(data.pdf_url, '_blank');
+      // The response is a PDF blob - create object URL and open it
+      const pdfBlob = data instanceof Blob ? data : new Blob([data], { type: 'application/pdf' });
+      const pdfUrl = URL.createObjectURL(pdfBlob);
+      window.open(pdfUrl, '_blank');
+      
+      // Clean up the object URL after a delay
+      setTimeout(() => URL.revokeObjectURL(pdfUrl), 60000);
     } catch (error: any) {
       toast({ 
         title: t('Kunde inte hämta PDF', 'Failed to get PDF'), 
