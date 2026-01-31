@@ -1,5 +1,4 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
-import Stripe from "https://esm.sh/stripe@18.5.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 
 const corsHeaders = {
@@ -40,34 +39,35 @@ serve(async (req) => {
     const { stripe_quote_id } = await req.json();
     if (!stripe_quote_id) throw new Error("stripe_quote_id is required");
 
-    logStep("Fetching Stripe quote", { stripe_quote_id });
+    logStep("Fetching Stripe quote PDF", { stripe_quote_id });
 
-    const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
+    // Stripe quotes PDF is accessed via files.stripe.com with basic auth
+    const pdfUrl = `https://files.stripe.com/v1/quotes/${stripe_quote_id}/pdf`;
+    
+    // Fetch the PDF from Stripe with authentication
+    const pdfResponse = await fetch(pdfUrl, {
+      headers: {
+        "Authorization": `Bearer ${stripeKey}`,
+      },
+    });
 
-    // Retrieve the quote from Stripe
-    const quote = await stripe.quotes.retrieve(stripe_quote_id);
-    logStep("Quote retrieved", { status: quote.status });
-
-    // The PDF is available via the quote's pdf property
-    // For draft quotes, we need to finalize first or use a different approach
-    if (!quote.pdf) {
-      // Try to get the PDF URL by finalizing if it's a draft
-      if (quote.status === 'draft') {
-        logStep("Quote is draft, finalizing to get PDF");
-        const finalizedQuote = await stripe.quotes.finalizeQuote(stripe_quote_id);
-        
-        if (finalizedQuote.pdf) {
-          return new Response(JSON.stringify({ pdf_url: finalizedQuote.pdf }), {
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-            status: 200,
-          });
-        }
-      }
-      throw new Error("PDF not available for this quote");
+    if (!pdfResponse.ok) {
+      const errorText = await pdfResponse.text();
+      logStep("Stripe PDF fetch failed", { status: pdfResponse.status, error: errorText });
+      throw new Error(`Failed to fetch PDF: ${pdfResponse.status}`);
     }
 
-    return new Response(JSON.stringify({ pdf_url: quote.pdf }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    logStep("PDF fetched successfully");
+
+    // Return the PDF directly
+    const pdfBlob = await pdfResponse.blob();
+    
+    return new Response(pdfBlob, {
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `inline; filename="quote-${stripe_quote_id}.pdf"`,
+      },
       status: 200,
     });
 
