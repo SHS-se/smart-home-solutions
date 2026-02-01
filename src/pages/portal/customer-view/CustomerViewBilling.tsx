@@ -21,7 +21,8 @@ import { supabase } from '@/integrations/supabase/client';
 
 interface Invoice {
   id: string;
-  external_id: string | null;
+  invoice_number: string | null;
+  stripe_invoice_id: string | null;
   date: string | null;
   amount: number | null;
   currency: string | null;
@@ -161,7 +162,7 @@ const CustomerViewBilling: React.FC = () => {
                       <TableCell>
                         {invoice.date ? new Date(invoice.date).toLocaleDateString() : '-'}
                       </TableCell>
-                      <TableCell className="font-medium">{invoice.external_id || '-'}</TableCell>
+                      <TableCell className="font-medium">{invoice.invoice_number || '-'}</TableCell>
                       <TableCell>{formatAmount(invoice.amount, invoice.currency)}</TableCell>
                       <TableCell>{getStatusBadge(invoice.status)}</TableCell>
                       <TableCell>

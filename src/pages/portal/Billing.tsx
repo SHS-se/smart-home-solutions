@@ -21,7 +21,8 @@ import { useToast } from '@/hooks/use-toast';
 
 interface Invoice {
   id: string;
-  external_id: string | null;
+  invoice_number: string | null;
+  stripe_invoice_id: string | null;
   date: string | null;
   amount: number | null;
   currency: string | null;
@@ -389,7 +390,7 @@ const Billing: React.FC = () => {
                   {invoices.map((invoice) => (
                     <TableRow key={invoice.id}>
                       <TableCell>{invoice.date || 'N/A'}</TableCell>
-                      <TableCell>{invoice.external_id || invoice.id.slice(0, 8)}</TableCell>
+                      <TableCell>{invoice.invoice_number || invoice.id.slice(0, 8)}</TableCell>
                       <TableCell>{formatAmount(invoice.amount, invoice.currency)}</TableCell>
                       <TableCell>{getStatusBadge(invoice.status)}</TableCell>
                       <TableCell>
