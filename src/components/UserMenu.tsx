@@ -55,6 +55,7 @@ const UserMenu = ({ size = "default" }: UserMenuProps) => {
     { href: "/portal/templates", label: t("Mallar", "Templates") },
     { href: "/portal/boms", label: t("Materiallistor", "BOMs") },
     { href: "/portal/quotes", label: t("Offerter", "Quotes") },
+    { href: "/portal/invoices", label: t("Fakturor", "Invoices") },
     { href: "/portal/settings/margins", label: t("Marginalregler", "Margin Rules") },
     { href: "/portal/erd", label: t("Databas ERD", "Database ERD") },
   ];
