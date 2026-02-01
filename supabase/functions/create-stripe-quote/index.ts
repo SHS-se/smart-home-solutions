@@ -126,41 +126,35 @@ serve(async (req) => {
 
     // Add itemized hardware items
     for (const item of hardware_items) {
-      if (item.quantity > 0 && item.unit_price_ex_vat > 0) {
-        const lineItem = await createLineItem(
-          item.name,
-          `SKU: ${item.sku}`,
-          Math.round(item.unit_price_ex_vat * 100),
-          item.quantity
-        );
-        lineItems.push(lineItem);
-      }
+      const lineItem = await createLineItem(
+        item.name,
+        `SKU: ${item.sku}`,
+        Math.round((item.unit_price_ex_vat || 0) * 100),
+        item.quantity || 1
+      );
+      lineItems.push(lineItem);
     }
 
     // Add itemized labor lines
     for (const line of labor_lines) {
-      if (line.quantity > 0 && line.unit_price_ex_vat > 0) {
-        const lineItem = await createLineItem(
-          line.description || "Installation & konfiguration",
-          `${line.quantity} timmar`,
-          Math.round(line.unit_price_ex_vat * 100),
-          line.quantity
-        );
-        lineItems.push(lineItem);
-      }
+      const lineItem = await createLineItem(
+        line.description || "Installation & konfiguration",
+        `${line.quantity || 1} timmar`,
+        Math.round((line.unit_price_ex_vat || 0) * 100),
+        line.quantity || 1
+      );
+      lineItems.push(lineItem);
     }
 
     // Add itemized travel lines
     for (const line of travel_lines) {
-      if (line.quantity > 0 && line.unit_price_ex_vat > 0) {
-        const lineItem = await createLineItem(
-          line.description || "Resa & övrigt",
-          undefined,
-          Math.round(line.unit_price_ex_vat * 100),
-          line.quantity
-        );
-        lineItems.push(lineItem);
-      }
+      const lineItem = await createLineItem(
+        line.description || "Resa & övrigt",
+        undefined,
+        Math.round((line.unit_price_ex_vat || 0) * 100),
+        line.quantity || 1
+      );
+      lineItems.push(lineItem);
     }
 
     // Fallback to summarized totals if no itemized data was provided
