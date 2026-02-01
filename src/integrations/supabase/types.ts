@@ -354,46 +354,224 @@ export type Database = {
         }
         Relationships: []
       }
+      invoice_events: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          event_type: string
+          id: string
+          invoice_id: string
+          metadata: Json | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          event_type: string
+          id?: string
+          invoice_id: string
+          metadata?: Json | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          event_type?: string
+          id?: string
+          invoice_id?: string
+          metadata?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "invoice_events_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      invoice_line_items: {
+        Row: {
+          category: string | null
+          created_at: string
+          description: string
+          id: string
+          invoice_id: string
+          line_type: string
+          quantity: number
+          sku: string | null
+          sku_id: string | null
+          sort_order: number
+          tax_rate: number
+          unit: string | null
+          unit_price: number
+        }
+        Insert: {
+          category?: string | null
+          created_at?: string
+          description: string
+          id?: string
+          invoice_id: string
+          line_type: string
+          quantity?: number
+          sku?: string | null
+          sku_id?: string | null
+          sort_order?: number
+          tax_rate?: number
+          unit?: string | null
+          unit_price?: number
+        }
+        Update: {
+          category?: string | null
+          created_at?: string
+          description?: string
+          id?: string
+          invoice_id?: string
+          line_type?: string
+          quantity?: number
+          sku?: string | null
+          sku_id?: string | null
+          sort_order?: number
+          tax_rate?: number
+          unit?: string | null
+          unit_price?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "invoice_line_items_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invoice_line_items_sku_id_fkey"
+            columns: ["sku_id"]
+            isOneToOne: false
+            referencedRelation: "skus"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       invoices: {
         Row: {
           amount: number | null
+          bom_id: string | null
+          bom_version: number | null
           created_at: string
+          created_by: string | null
           currency: string | null
           customer_id: string
           date: string | null
+          due_date: string | null
           external_id: string | null
+          finalized_at: string | null
+          hosted_invoice_url: string | null
           id: string
+          invoice_number: string | null
+          invoice_pdf_url: string | null
+          is_test: boolean
+          last_emailed_at: string | null
+          last_emailed_to: string | null
+          last_emailed_type: string | null
+          paid_at: string | null
           pdf_url: string | null
+          quote_id: string | null
+          quote_number: string | null
           status: string | null
+          stripe_invoice_id: string | null
+          stripe_quote_id: string | null
+          subtotal: number | null
+          tax: number | null
+          total: number | null
+          updated_at: string | null
+          voided_at: string | null
         }
         Insert: {
           amount?: number | null
+          bom_id?: string | null
+          bom_version?: number | null
           created_at?: string
+          created_by?: string | null
           currency?: string | null
           customer_id: string
           date?: string | null
+          due_date?: string | null
           external_id?: string | null
+          finalized_at?: string | null
+          hosted_invoice_url?: string | null
           id?: string
+          invoice_number?: string | null
+          invoice_pdf_url?: string | null
+          is_test?: boolean
+          last_emailed_at?: string | null
+          last_emailed_to?: string | null
+          last_emailed_type?: string | null
+          paid_at?: string | null
           pdf_url?: string | null
+          quote_id?: string | null
+          quote_number?: string | null
           status?: string | null
+          stripe_invoice_id?: string | null
+          stripe_quote_id?: string | null
+          subtotal?: number | null
+          tax?: number | null
+          total?: number | null
+          updated_at?: string | null
+          voided_at?: string | null
         }
         Update: {
           amount?: number | null
+          bom_id?: string | null
+          bom_version?: number | null
           created_at?: string
+          created_by?: string | null
           currency?: string | null
           customer_id?: string
           date?: string | null
+          due_date?: string | null
           external_id?: string | null
+          finalized_at?: string | null
+          hosted_invoice_url?: string | null
           id?: string
+          invoice_number?: string | null
+          invoice_pdf_url?: string | null
+          is_test?: boolean
+          last_emailed_at?: string | null
+          last_emailed_to?: string | null
+          last_emailed_type?: string | null
+          paid_at?: string | null
           pdf_url?: string | null
+          quote_id?: string | null
+          quote_number?: string | null
           status?: string | null
+          stripe_invoice_id?: string | null
+          stripe_quote_id?: string | null
+          subtotal?: number | null
+          tax?: number | null
+          total?: number | null
+          updated_at?: string | null
+          voided_at?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "invoices_bom_id_fkey"
+            columns: ["bom_id"]
+            isOneToOne: false
+            referencedRelation: "boms"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "invoices_customer_id_fkey"
             columns: ["customer_id"]
             isOneToOne: false
             referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invoices_quote_id_fkey"
+            columns: ["quote_id"]
+            isOneToOne: false
+            referencedRelation: "quotes"
             referencedColumns: ["id"]
           },
         ]
