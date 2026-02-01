@@ -57,7 +57,8 @@ interface BOMItem {
   sku: {
     sku: string;
     name: string;
-    category: string;
+    category_id: string | null;
+    category_name?: string;
     cost_ex_vat_computed: number | null;
     vat_rate: number;
     sell_price_ex_vat: number | null;
@@ -117,13 +118,19 @@ const BOMBuilder: React.FC = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('bom_items')
-        .select('*, skus(sku, name, category, cost_ex_vat_computed, vat_rate, sell_price_ex_vat, sell_price_inc_vat, effective_margin_percent)')
+        .select('*, skus(sku, name, category_id, cost_ex_vat_computed, vat_rate, sell_price_ex_vat, sell_price_inc_vat, effective_margin_percent, sku_categories!skus_category_id_fkey(id, name))')
         .eq('bom_id', id);
       if (error) throw error;
-      return data.map(item => ({
-        ...item,
-        sku: (item as any).skus,
-      })) as BOMItem[];
+      return data.map(item => {
+        const skuData = (item as any).skus;
+        return {
+          ...item,
+          sku: {
+            ...skuData,
+            category_name: skuData?.sku_categories?.name || 'Unknown',
+          },
+        };
+      }) as BOMItem[];
     },
     enabled: isStaff && !!id,
   });
