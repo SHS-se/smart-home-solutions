@@ -1,0 +1,50 @@
+[
+  {
+    "category": "Controller",
+    "description": "Hubs and control systems",
+    "margin_percent": 25,
+    "rounding": 5,
+    "created_at": "2026-01-28T13:03:04.398815+00:00",
+    "updated_at": "2026-01-28T13:03:04.398815+00:00"
+  },
+  {
+    "category": "Material",
+    "description": "Kablar, installationsmaterial",
+    "margin_percent": 25,
+    "rounding": 5,
+    "created_at": "2026-01-26T23:05:30.152958+00:00",
+    "updated_at": "2026-01-26T23:05:30.152958+00:00"
+  },
+  {
+    "category": "Relay",
+    "description": "Relay modules, actuators",
+    "margin_percent": 25,
+    "rounding": 5,
+    "created_at": "2026-01-28T13:03:04.466196+00:00",
+    "updated_at": "2026-01-28T13:03:04.466196+00:00"
+  },
+  {
+    "category": "Sensor",
+    "description": "Temperature, motion, contact, power and energy sensors",
+    "margin_percent": 10,
+    "rounding": 5,
+    "created_at": "2026-01-28T13:03:04.302186+00:00",
+    "updated_at": "2026-01-28T13:03:04.302186+00:00"
+  },
+  {
+    "category": "Server",
+    "description": "HA hosts and other servers",
+    "margin_percent": 25,
+    "rounding": 5,
+    "created_at": "2026-01-28T13:03:04.651143+00:00",
+    "updated_at": "2026-01-28T13:03:04.651143+00:00"
+  },
+  {
+    "category": "Service",
+    "description": "Work and travel time",
+    "margin_percent": 60,
+    "rounding": 5,
+    "created_at": "2026-01-28T13:03:04.594155+00:00",
+    "updated_at": "2026-01-28T13:03:04.594155+00:00"
+  }
+]
