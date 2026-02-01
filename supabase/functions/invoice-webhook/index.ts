@@ -100,18 +100,18 @@ serve(async (req) => {
       logStep("Processing webhook without signature verification");
     }
 
-    const invoice = event.data.object as Stripe.Invoice;
-    logStep("Processing event", { type: event.type, invoiceId: invoice.id });
+    const stripeInvoice = event.data.object as Stripe.Invoice;
+    logStep("Processing event", { type: event.type, invoiceId: stripeInvoice.id });
 
-    // Find the quote by stripe_invoice_id
-    const { data: quote, error: quoteError } = await supabaseClient
-      .from('quotes')
-      .select('id, stripe_quote_id')
-      .eq('stripe_invoice_id', invoice.id)
+    // Find the invoice by stripe_invoice_id in the new invoices table
+    const { data: invoice, error: invoiceError } = await supabaseClient
+      .from('invoices')
+      .select('id, customer_id')
+      .eq('stripe_invoice_id', stripeInvoice.id)
       .single();
 
-    if (quoteError || !quote) {
-      logStep("Quote not found for invoice", { invoiceId: invoice.id });
+    if (invoiceError || !invoice) {
+      logStep("Invoice not found in invoices table", { invoiceId: stripeInvoice.id });
       // Return 200 to acknowledge receipt - invoice might not be from our system
       return new Response(JSON.stringify({ received: true, matched: false }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -119,7 +119,7 @@ serve(async (req) => {
       });
     }
 
-    logStep("Quote found", { quoteId: quote.id });
+    logStep("Invoice found", { invoiceId: invoice.id });
 
     let eventType = '';
     let updateData: Record<string, unknown> = {};
@@ -128,55 +128,58 @@ serve(async (req) => {
       case 'invoice.paid':
         eventType = 'invoice_paid';
         updateData = {
-          invoice_status: 'paid',
-          invoice_total: invoice.total ? invoice.total / 100 : null,
+          status: 'paid',
+          paid_at: new Date().toISOString(),
+          total: stripeInvoice.total ? stripeInvoice.total / 100 : null,
         };
         break;
 
       case 'invoice.voided':
         eventType = 'invoice_voided';
         updateData = {
-          invoice_status: 'void',
-          invoice_hosted_url: null,
+          status: 'void',
+          voided_at: new Date().toISOString(),
+          hosted_invoice_url: null,
         };
         break;
 
       case 'invoice.uncollectible':
         eventType = 'invoice_uncollectible';
         updateData = {
-          invoice_status: 'uncollectible',
+          status: 'uncollectible',
         };
         break;
 
       case 'invoice.created':
         eventType = 'invoice_created';
         updateData = {
-          invoice_status: invoice.status || 'draft',
-          invoice_number: invoice.number,
-          invoice_due_date: invoice.due_date ? new Date(invoice.due_date * 1000).toISOString() : null,
-          invoice_subtotal: invoice.subtotal ? invoice.subtotal / 100 : null,
-          invoice_vat: invoice.tax ? invoice.tax / 100 : null,
-          invoice_total: invoice.total ? invoice.total / 100 : null,
+          status: stripeInvoice.status || 'draft',
+          invoice_number: stripeInvoice.number,
+          due_date: stripeInvoice.due_date ? new Date(stripeInvoice.due_date * 1000).toISOString() : null,
+          subtotal: stripeInvoice.subtotal ? stripeInvoice.subtotal / 100 : null,
+          tax: stripeInvoice.tax ? stripeInvoice.tax / 100 : null,
+          total: stripeInvoice.total ? stripeInvoice.total / 100 : null,
         };
         break;
 
       case 'invoice.finalized':
         eventType = 'invoice_finalized';
         updateData = {
-          invoice_status: invoice.status || 'open',
-          invoice_hosted_url: invoice.hosted_invoice_url,
-          invoice_pdf_url: invoice.invoice_pdf,
-          invoice_number: invoice.number,
+          status: stripeInvoice.status || 'open',
+          hosted_invoice_url: stripeInvoice.hosted_invoice_url,
+          invoice_pdf_url: stripeInvoice.invoice_pdf,
+          invoice_number: stripeInvoice.number,
+          finalized_at: new Date().toISOString(),
         };
         break;
 
       case 'invoice.updated':
         eventType = 'invoice_updated';
         updateData = {
-          invoice_status: invoice.status,
-          invoice_hosted_url: invoice.hosted_invoice_url,
-          invoice_pdf_url: invoice.invoice_pdf,
-          invoice_total: invoice.total ? invoice.total / 100 : null,
+          status: stripeInvoice.status,
+          hosted_invoice_url: stripeInvoice.hosted_invoice_url,
+          invoice_pdf_url: stripeInvoice.invoice_pdf,
+          total: stripeInvoice.total ? stripeInvoice.total / 100 : null,
         };
         break;
 
@@ -188,35 +191,36 @@ serve(async (req) => {
         });
     }
 
-    // Update quote
+    // Update invoice
     if (Object.keys(updateData).length > 0) {
+      updateData.updated_at = new Date().toISOString();
+      
       const { error: updateError } = await supabaseClient
-        .from('quotes')
+        .from('invoices')
         .update(updateData)
-        .eq('id', quote.id);
+        .eq('id', invoice.id);
 
       if (updateError) {
-        logStep("Error updating quote", { error: updateError });
+        logStep("Error updating invoice", { error: updateError });
       } else {
-        logStep("Quote updated", updateData);
+        logStep("Invoice updated", updateData);
       }
     }
 
-    // Create billing event
-    await supabaseClient.from('billing_events').insert({
-      quote_id: quote.id,
-      stripe_quote_id: quote.stripe_quote_id,
-      stripe_invoice_id: invoice.id,
+    // Create invoice event
+    await supabaseClient.from('invoice_events').insert({
+      invoice_id: invoice.id,
       event_type: eventType,
       metadata: {
         stripe_event_id: event.id,
-        invoice_status: invoice.status,
-        amount_paid: invoice.amount_paid,
-        amount_due: invoice.amount_due,
+        stripe_invoice_id: stripeInvoice.id,
+        invoice_status: stripeInvoice.status,
+        amount_paid: stripeInvoice.amount_paid,
+        amount_due: stripeInvoice.amount_due,
       },
     });
 
-    logStep("Billing event created", { eventType });
+    logStep("Invoice event created", { eventType });
 
     return new Response(JSON.stringify({ received: true, handled: true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
