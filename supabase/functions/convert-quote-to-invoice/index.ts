@@ -131,7 +131,48 @@ serve(async (req) => {
       });
     }
 
-    // Update quote with invoice data
+    // Create or update invoice in invoices table (linked to quote)
+    const invoiceData = {
+      customer_id: quote.customer_id,
+      quote_id: quote_id,
+      stripe_invoice_id: invoice.id,
+      stripe_quote_id: quote.stripe_quote_id,
+      invoice_number: invoice.number,
+      status: invoice.status || 'draft',
+      currency: (invoice.currency || 'sek').toUpperCase(),
+      subtotal: invoice.subtotal ? invoice.subtotal / 100 : null,
+      tax: invoice.tax ? invoice.tax / 100 : null,
+      total: invoice.total ? invoice.total / 100 : null,
+      amount: invoice.amount_due ? invoice.amount_due / 100 : null,
+      hosted_invoice_url: invoice.hosted_invoice_url,
+      invoice_pdf_url: invoice.invoice_pdf,
+      date: invoice.created ? new Date(invoice.created * 1000).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+      due_date: invoice.due_date ? new Date(invoice.due_date * 1000).toISOString().split('T')[0] : null,
+      finalized_at: invoice.status !== 'draft' ? new Date().toISOString() : null,
+      bom_id: quote.bom_id,
+      bom_version: quote.bom_version,
+      quote_number: quote.quote_number,
+      created_by: user.id,
+      is_test: quote.is_test || false,
+    };
+
+    const { data: invoiceRecord, error: invoiceError } = await supabaseClient
+      .from('invoices')
+      .upsert(invoiceData, { 
+        onConflict: 'stripe_invoice_id',
+        ignoreDuplicates: false 
+      })
+      .select('id')
+      .single();
+
+    if (invoiceError) {
+      logStep("Error creating invoice record", { error: invoiceError });
+      throw new Error(`Failed to create invoice: ${invoiceError.message}`);
+    }
+
+    logStep("Invoice record created/updated", { invoiceId: invoiceRecord.id });
+
+    // Update quote with invoice reference
     const { error: updateError } = await supabaseClient
       .from('quotes')
       .update({
@@ -149,7 +190,7 @@ serve(async (req) => {
 
     if (updateError) {
       logStep("Error updating quote", { error: updateError });
-      throw new Error(`Failed to update quote: ${updateError.message}`);
+      // Non-fatal - invoice was created successfully
     }
 
     // Create billing event
@@ -162,11 +203,12 @@ serve(async (req) => {
         invoice_number: invoice.number,
         invoice_status: invoice.status,
         amount_due: invoice.amount_due,
+        invoice_record_id: invoiceRecord.id,
       },
       created_by: user.id,
     });
 
-    logStep("Invoice created successfully");
+    logStep("Invoice created successfully", { invoiceRecordId: invoiceRecord.id });
 
     return new Response(JSON.stringify({
       success: true,
