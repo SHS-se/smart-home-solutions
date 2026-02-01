@@ -341,11 +341,12 @@ const InvoiceDraftEditor: React.FC = () => {
             {t('Organisera och granska faktura innan den fastställs och skickas till kund', 'Organize and review invoice before it is finalized and sent to customer')}
           </p>
           {customer && (
-            <div className="flex flex-wrap gap-4 mt-2 text-sm">
+            <div className="flex flex-wrap items-center gap-4 mt-2 text-sm">
               <span>
                 <span className="text-muted-foreground">{t('Kund:', 'Customer:')}</span>{' '}
                 <strong>{customer.org_name}</strong>
               </span>
+              <Badge variant="outline">{t('Utkast', 'Draft')}</Badge>
               {bom && (
                 <span>
                   <span className="text-muted-foreground">{t('Projekt:', 'Project:')}</span>{' '}
@@ -634,13 +635,6 @@ const InvoiceDraftEditor: React.FC = () => {
                 <CardTitle>{t('Fakturering', 'Invoicing')}</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div>
-                  <span className="text-sm text-muted-foreground">{t('Status', 'Status')}</span>
-                  <div className="mt-1">
-                    <Badge variant="outline">{t('Utkast', 'Draft')}</Badge>
-                  </div>
-                </div>
-                
                 <div>
                   <span className="text-sm text-muted-foreground">{t('Fakturanummer', 'Invoice number')}</span>
                   <p className="font-mono">—</p>
