@@ -23,6 +23,7 @@ import { format } from 'date-fns';
 import { sv } from 'date-fns/locale';
 import { toast } from '@/hooks/use-toast';
 import InvoiceActionsMenu from '@/components/portal/invoices/InvoiceActionsMenu';
+import { cn } from '@/lib/utils';
 
 interface Invoice {
   id: string;
@@ -38,6 +39,7 @@ interface Invoice {
 }
 
 type SortColumn = 'invoice_number' | 'customer' | 'project' | 'created_at' | 'due_date' | 'total' | 'status';
+type StatusFilter = 'draft' | 'open' | 'paid' | 'overdue' | 'void';
 
 const getStatusBadge = (status: string, dueDate: string | null, t: (sv: string, en: string) => string) => {
   // Check for overdue
@@ -56,7 +58,7 @@ const getStatusBadge = (status: string, dueDate: string | null, t: (sv: string, 
     case 'open':
       return <Badge variant="secondary">{t('Öppen', 'Open')}</Badge>;
     case 'paid':
-      return <Badge className="bg-green-600 text-white">{t('Betald', 'Paid')}</Badge>;
+      return <Badge className="bg-[hsl(var(--success))] text-[hsl(var(--success-foreground))]">{t('Betald', 'Paid')}</Badge>;
     case 'overdue':
       return <Badge variant="destructive">{t('Förfallen', 'Overdue')}</Badge>;
     case 'void':
@@ -64,6 +66,19 @@ const getStatusBadge = (status: string, dueDate: string | null, t: (sv: string, 
     default:
       return <Badge variant="secondary">{status}</Badge>;
   }
+};
+
+// Helper to determine effective status (including overdue derivation)
+const getEffectiveStatus = (invoice: Invoice): StatusFilter => {
+  if (invoice.status === 'open' && invoice.due_date) {
+    const due = new Date(invoice.due_date);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (due < today) {
+      return 'overdue';
+    }
+  }
+  return invoice.status as StatusFilter;
 };
 
 const InvoicesList: React.FC = () => {
@@ -76,7 +91,7 @@ const InvoicesList: React.FC = () => {
     defaultDirection: 'desc' 
   });
 
-  
+  const [activeFilters, setActiveFilters] = useState<StatusFilter[]>([]);
 
   // Fetch invoices
   const { data: invoices = [], isLoading } = useQuery({
@@ -120,9 +135,18 @@ const InvoicesList: React.FC = () => {
 
   // Calculate KPI stats
   const stats = useMemo(() => {
-    const total = invoices.length;
     const draft = invoices.filter(i => i.status === 'draft').length;
-    const open = invoices.filter(i => i.status === 'open').length;
+    const open = invoices.filter(i => {
+      if (i.status !== 'open') return false;
+      // Exclude overdue from open count
+      if (i.due_date) {
+        const due = new Date(i.due_date);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        if (due < today) return false;
+      }
+      return true;
+    }).length;
     const paid = invoices.filter(i => i.status === 'paid').length;
     const overdue = invoices.filter(i => {
       if (i.status !== 'open' || !i.due_date) return false;
@@ -131,12 +155,32 @@ const InvoicesList: React.FC = () => {
       today.setHours(0, 0, 0, 0);
       return due < today;
     }).length;
-    return { total, draft, open, paid, overdue };
+    const voided = invoices.filter(i => i.status === 'void').length;
+    return { draft, open, paid, overdue, voided };
   }, [invoices]);
 
-  // Sort invoices
-  const sortedInvoices = useMemo(() => {
-    return sortItems(invoices, sortColumn as keyof Invoice, sortDirection, {
+  // Toggle filter
+  const toggleFilter = (filter: StatusFilter) => {
+    setActiveFilters(prev => 
+      prev.includes(filter) 
+        ? prev.filter(f => f !== filter)
+        : [...prev, filter]
+    );
+  };
+
+  // Filter and sort invoices
+  const filteredAndSortedInvoices = useMemo(() => {
+    let filtered = invoices;
+    
+    // Apply status filters if any are active
+    if (activeFilters.length > 0) {
+      filtered = invoices.filter(invoice => {
+        const effectiveStatus = getEffectiveStatus(invoice);
+        return activeFilters.includes(effectiveStatus);
+      });
+    }
+    
+    return sortItems(filtered, sortColumn as keyof Invoice, sortDirection, {
       getValue: (invoice) => {
         switch (sortColumn) {
           case 'customer':
@@ -154,7 +198,7 @@ const InvoicesList: React.FC = () => {
         }
       },
     });
-  }, [invoices, sortColumn, sortDirection]);
+  }, [invoices, sortColumn, sortDirection, activeFilters]);
 
   // Redirect if not staff
   if (!authLoading && !isStaff) {
@@ -186,36 +230,66 @@ const InvoicesList: React.FC = () => {
           </div>
         </div>
 
-        {/* KPI Cards */}
+        {/* Status Filter Cards */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <Card>
-            <CardContent className="pt-4">
-              <p className="text-sm text-muted-foreground">{t('Totalt', 'Total')}</p>
-              <p className="text-2xl font-bold">{stats.total}</p>
-            </CardContent>
-          </Card>
-          <Card>
+          <Card 
+            className={cn(
+              "cursor-pointer transition-all hover:border-primary/50",
+              activeFilters.includes('draft') && "ring-2 ring-primary border-primary"
+            )}
+            onClick={() => toggleFilter('draft')}
+          >
             <CardContent className="pt-4">
               <p className="text-sm text-muted-foreground">{t('Utkast', 'Drafts')}</p>
               <p className="text-2xl font-bold">{stats.draft}</p>
             </CardContent>
           </Card>
-          <Card>
+          <Card 
+            className={cn(
+              "cursor-pointer transition-all hover:border-primary/50",
+              activeFilters.includes('open') && "ring-2 ring-primary border-primary"
+            )}
+            onClick={() => toggleFilter('open')}
+          >
             <CardContent className="pt-4">
               <p className="text-sm text-muted-foreground">{t('Öppna', 'Open')}</p>
               <p className="text-2xl font-bold text-primary">{stats.open}</p>
             </CardContent>
           </Card>
-          <Card>
+          <Card 
+            className={cn(
+              "cursor-pointer transition-all hover:border-primary/50",
+              activeFilters.includes('paid') && "ring-2 ring-primary border-primary"
+            )}
+            onClick={() => toggleFilter('paid')}
+          >
             <CardContent className="pt-4">
               <p className="text-sm text-muted-foreground">{t('Betalda', 'Paid')}</p>
-              <p className="text-2xl font-bold text-green-600">{stats.paid}</p>
+              <p className="text-2xl font-bold text-[hsl(var(--success))]">{stats.paid}</p>
             </CardContent>
           </Card>
-          <Card>
+          <Card 
+            className={cn(
+              "cursor-pointer transition-all hover:border-destructive/50",
+              activeFilters.includes('overdue') && "ring-2 ring-destructive border-destructive"
+            )}
+            onClick={() => toggleFilter('overdue')}
+          >
             <CardContent className="pt-4">
               <p className="text-sm text-muted-foreground">{t('Förfallna', 'Overdue')}</p>
               <p className="text-2xl font-bold text-destructive">{stats.overdue}</p>
+            </CardContent>
+          </Card>
+          <Card 
+            className={cn(
+              "cursor-pointer transition-all hover:border-muted-foreground/50",
+              activeFilters.includes('void') && "ring-2 ring-muted-foreground border-muted-foreground"
+            )}
+            onClick={() => toggleFilter('void')}
+          >
+            <CardContent className="pt-4">
+              <p className="text-sm text-muted-foreground">{t('Makulerad', 'Voided')}</p>
+              <p className="text-2xl font-bold text-muted-foreground">{stats.voided}</p>
             </CardContent>
           </Card>
         </div>
@@ -258,14 +332,16 @@ const InvoicesList: React.FC = () => {
                     {t('Laddar...', 'Loading...')}
                   </TableCell>
                 </TableRow>
-              ) : sortedInvoices.length === 0 ? (
+              ) : filteredAndSortedInvoices.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
-                    {t('Inga fakturor skapade ännu.', 'No invoices created yet.')}
+                    {activeFilters.length > 0 
+                      ? t('Inga fakturor matchar filtret.', 'No invoices match the filter.')
+                      : t('Inga fakturor skapade ännu.', 'No invoices created yet.')}
                   </TableCell>
                 </TableRow>
               ) : (
-                sortedInvoices.map(invoice => (
+                filteredAndSortedInvoices.map(invoice => (
                   <TableRow 
                     key={invoice.id} 
                     className="cursor-pointer hover:bg-muted/50"
