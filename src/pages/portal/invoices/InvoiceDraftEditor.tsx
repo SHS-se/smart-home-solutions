@@ -347,6 +347,7 @@ const InvoiceDraftEditor: React.FC = () => {
                 <strong>{customer.org_name}</strong>
               </span>
               <Badge variant="outline">{t('Utkast', 'Draft')}</Badge>
+              {isTest && <Badge variant="outline">Test</Badge>}
               {bom && (
                 <span>
                   <span className="text-muted-foreground">{t('Projekt:', 'Project:')}</span>{' '}
