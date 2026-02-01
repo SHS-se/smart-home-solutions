@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@18.5.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
+import { crypto } from "https://deno.land/std@0.190.0/crypto/mod.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -11,6 +12,51 @@ const logStep = (step: string, details?: unknown) => {
   const detailsStr = details ? ` - ${JSON.stringify(details)}` : '';
   console.log(`[INVOICE-WEBHOOK] ${step}${detailsStr}`);
 };
+
+// Manual signature verification for Deno compatibility
+async function verifyStripeSignature(
+  payload: string,
+  signature: string,
+  secret: string
+): Promise<boolean> {
+  const parts = signature.split(",");
+  let timestamp = "";
+  let sig = "";
+  
+  for (const part of parts) {
+    const [key, value] = part.split("=");
+    if (key === "t") timestamp = value;
+    if (key === "v1") sig = value;
+  }
+  
+  if (!timestamp || !sig) return false;
+  
+  // Check timestamp is within tolerance (5 minutes)
+  const now = Math.floor(Date.now() / 1000);
+  if (Math.abs(now - parseInt(timestamp)) > 300) return false;
+  
+  const signedPayload = `${timestamp}.${payload}`;
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  
+  const signatureBytes = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    encoder.encode(signedPayload)
+  );
+  
+  const expectedSig = Array.from(new Uint8Array(signatureBytes))
+    .map(b => b.toString(16).padStart(2, "0"))
+    .join("");
+  
+  return sig === expectedSig;
+}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -31,27 +77,25 @@ serve(async (req) => {
 
     const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
 
-    // Get raw body for signature verification (if webhook secret is configured)
+    // Get raw body for signature verification
     const body = await req.text();
     let event: Stripe.Event;
 
-    // Try to verify webhook signature if configured
     const webhookSecret = Deno.env.get("STRIPE_INVOICE_WEBHOOK_SECRET");
     const signature = req.headers.get("stripe-signature");
 
     if (webhookSecret && signature) {
-      try {
-        event = stripe.webhooks.constructEvent(body, signature, webhookSecret);
-        logStep("Webhook signature verified");
-      } catch (err) {
-        logStep("Webhook signature verification failed", { error: err });
+      const isValid = await verifyStripeSignature(body, signature, webhookSecret);
+      if (!isValid) {
+        logStep("Webhook signature verification failed");
         return new Response(JSON.stringify({ error: "Webhook signature verification failed" }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
           status: 400,
         });
       }
+      logStep("Webhook signature verified");
+      event = JSON.parse(body);
     } else {
-      // Parse body as JSON if no signature verification
       event = JSON.parse(body);
       logStep("Processing webhook without signature verification");
     }
