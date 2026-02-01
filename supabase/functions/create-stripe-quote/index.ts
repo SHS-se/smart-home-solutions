@@ -124,37 +124,49 @@ serve(async (req) => {
     // Create line items for quote
     const lineItems: Stripe.QuoteCreateParams.LineItem[] = [];
 
-    // Add itemized hardware items
+    // Add itemized hardware items (filter out zero-price items)
     for (const item of hardware_items) {
-      const lineItem = await createLineItem(
-        item.name,
-        `SKU: ${item.sku}`,
-        Math.round((item.unit_price_ex_vat || 0) * 100),
-        item.quantity || 1
-      );
-      lineItems.push(lineItem);
+      const unitPrice = item.unit_price_ex_vat || 0;
+      const quantity = item.quantity || 1;
+      if (unitPrice > 0 && quantity > 0) {
+        const lineItem = await createLineItem(
+          item.name,
+          `SKU: ${item.sku}`,
+          Math.round(unitPrice * 100),
+          quantity
+        );
+        lineItems.push(lineItem);
+      }
     }
 
-    // Add itemized labor lines
+    // Add itemized labor lines (filter out zero-price items)
     for (const line of labor_lines) {
-      const lineItem = await createLineItem(
-        line.description || "Installation & konfiguration",
-        `${line.quantity || 1} timmar`,
-        Math.round((line.unit_price_ex_vat || 0) * 100),
-        line.quantity || 1
-      );
-      lineItems.push(lineItem);
+      const unitPrice = line.unit_price_ex_vat || 0;
+      const quantity = line.quantity || 1;
+      if (unitPrice > 0 && quantity > 0) {
+        const lineItem = await createLineItem(
+          line.description || "Installation & konfiguration",
+          `${quantity} timmar`,
+          Math.round(unitPrice * 100),
+          quantity
+        );
+        lineItems.push(lineItem);
+      }
     }
 
-    // Add itemized travel lines
+    // Add itemized travel lines (filter out zero-price items)
     for (const line of travel_lines) {
-      const lineItem = await createLineItem(
-        line.description || "Resa & övrigt",
-        undefined,
-        Math.round((line.unit_price_ex_vat || 0) * 100),
-        line.quantity || 1
-      );
-      lineItems.push(lineItem);
+      const unitPrice = line.unit_price_ex_vat || 0;
+      const quantity = line.quantity || 1;
+      if (unitPrice > 0 && quantity > 0) {
+        const lineItem = await createLineItem(
+          line.description || "Resa & övrigt",
+          undefined,
+          Math.round(unitPrice * 100),
+          quantity
+        );
+        lineItems.push(lineItem);
+      }
     }
 
     // Fallback to summarized totals if no itemized data was provided
