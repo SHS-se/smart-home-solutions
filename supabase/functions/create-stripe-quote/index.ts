@@ -190,10 +190,31 @@ serve(async (req) => {
       }
     }
 
-    // Create Stripe Quote
+    // Find or create a 25% VAT tax rate for Sweden
+    let taxRateId: string;
+    const existingTaxRates = await stripe.taxRates.list({ limit: 100, active: true });
+    const swedishVat = existingTaxRates.data.find(
+      (rate: Stripe.TaxRate) => rate.percentage === 25 && rate.country === "SE" && rate.inclusive === false
+    );
+
+    if (swedishVat) {
+      taxRateId = swedishVat.id;
+    } else {
+      const newTaxRate = await stripe.taxRates.create({
+        display_name: "Moms",
+        description: "Swedish VAT 25%",
+        percentage: 25,
+        country: "SE",
+        inclusive: false,
+      });
+      taxRateId = newTaxRate.id;
+    }
+
+    // Create Stripe Quote with tax rate
     const stripeQuote = await stripe.quotes.create({
       customer: stripeCustomer.id,
       line_items: lineItems,
+      default_tax_rates: [taxRateId],
       expires_at: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60, // 30 days
       metadata: {
         internal_quote_id: quote_id,
