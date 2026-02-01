@@ -406,6 +406,10 @@ const QuotePreparation: React.FC = () => {
     }
 
     setIsLoadingPdf(true);
+
+    // IMPORTANT: open a tab synchronously (during the click handler)
+    // so browsers don't block it after async work (popup blockers).
+    const popup = window.open('about:blank', '_blank', 'noopener,noreferrer');
     try {
       // Get current session token
       const { data: sessionData } = await supabase.auth.getSession();
@@ -434,11 +438,30 @@ const QuotePreparation: React.FC = () => {
       // Get the response as a blob and open it
       const pdfBlob = await response.blob();
       const pdfUrl = URL.createObjectURL(pdfBlob);
-      window.open(pdfUrl, '_blank');
+
+      if (popup && !popup.closed) {
+        popup.location.href = pdfUrl;
+      } else {
+        // Fallback: popup blocked — open in the current tab so the user still gets the PDF.
+        toast({
+          title: t('Popup blockerad', 'Popup blocked'),
+          description: t(
+            'Tillåt popup-fönster för att öppna PDF i ny flik. Öppnar PDF i samma flik som fallback.',
+            'Allow popups to open the PDF in a new tab. Opening in the same tab as a fallback.'
+          ),
+        });
+        window.location.href = pdfUrl;
+      }
       
       // Clean up the object URL after a delay
       setTimeout(() => URL.revokeObjectURL(pdfUrl), 60000);
     } catch (error: any) {
+      // If we opened a blank tab but then failed, close it to avoid leaving junk tabs.
+      try {
+        if (popup && !popup.closed) popup.close();
+      } catch {
+        // ignore
+      }
       toast({ 
         title: t('Kunde inte hämta PDF', 'Failed to get PDF'), 
         description: error.message,
