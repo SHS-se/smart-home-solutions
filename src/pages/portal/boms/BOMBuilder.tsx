@@ -94,14 +94,16 @@ const BOMBuilder: React.FC = () => {
     enabled: isStaff && !!id,
   });
 
-  // Fetch associated quotes
+  // Fetch associated quotes (only active - not cancelled, not test)
   const { data: associatedQuotes = [] } = useQuery({
     queryKey: ['bom_quotes', id],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('quotes')
-        .select('id, quote_number, version, is_latest, status, created_at')
+        .select('id, quote_number, version, is_latest, status, is_test, created_at')
         .eq('bom_id', id)
+        .eq('is_test', false)
+        .neq('status', 'cancelled')
         .order('created_at', { ascending: false });
       if (error) throw error;
       return data;
