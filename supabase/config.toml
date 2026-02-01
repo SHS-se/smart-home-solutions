@@ -8,3 +8,6 @@ verify_jwt = false
 
 [functions.sales-inbound-webhook]
 verify_jwt = false
+
+[functions.invoice-webhook]
+verify_jwt = false

@@ -1,0 +1,174 @@
+import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
+import Stripe from "https://esm.sh/stripe@18.5.0";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+const logStep = (step: string, details?: unknown) => {
+  const detailsStr = details ? ` - ${JSON.stringify(details)}` : '';
+  console.log(`[CONVERT-QUOTE-TO-INVOICE] ${step}${detailsStr}`);
+};
+
+serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  const supabaseClient = createClient(
+    Deno.env.get("SUPABASE_URL") ?? "",
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+    { auth: { persistSession: false } }
+  );
+
+  try {
+    logStep("Function started");
+
+    const stripeKey = Deno.env.get("STRIPE_SECRET_KEY");
+    if (!stripeKey) throw new Error("STRIPE_SECRET_KEY is not set");
+
+    // Authenticate staff user
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) throw new Error("No authorization header provided");
+    
+    const token = authHeader.replace("Bearer ", "");
+    const { data: userData, error: userError } = await supabaseClient.auth.getUser(token);
+    if (userError) throw new Error(`Authentication error: ${userError.message}`);
+    const user = userData.user;
+    if (!user) throw new Error("User not authenticated");
+    logStep("User authenticated", { userId: user.id });
+
+    // Check if user is staff
+    const { data: staffData, error: staffError } = await supabaseClient
+      .from('staff_users')
+      .select('user_id')
+      .eq('user_id', user.id)
+      .single();
+
+    if (staffError || !staffData) {
+      throw new Error("Access denied: Staff only");
+    }
+    logStep("Staff verified");
+
+    const { quote_id } = await req.json();
+    if (!quote_id) throw new Error("quote_id is required");
+    logStep("Processing quote", { quote_id });
+
+    // Fetch quote
+    const { data: quote, error: quoteError } = await supabaseClient
+      .from('quotes')
+      .select('*')
+      .eq('id', quote_id)
+      .single();
+
+    if (quoteError || !quote) throw new Error("Quote not found");
+    logStep("Quote loaded", { stripe_quote_id: quote.stripe_quote_id, stripe_invoice_id: quote.stripe_invoice_id });
+
+    // Check if invoice already exists
+    if (quote.stripe_invoice_id) {
+      throw new Error("Invoice already exists for this quote");
+    }
+
+    if (!quote.stripe_quote_id) {
+      throw new Error("Quote has not been sent to Stripe yet");
+    }
+
+    const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
+
+    // Get the Stripe quote
+    const stripeQuote = await stripe.quotes.retrieve(quote.stripe_quote_id);
+    logStep("Stripe quote retrieved", { status: stripeQuote.status });
+
+    // Stripe quote must be accepted to convert to invoice, but we can also use finalized quotes
+    // For draft quotes, we need to finalize and accept them first
+    let acceptedQuote = stripeQuote;
+    
+    if (stripeQuote.status === 'draft') {
+      // Finalize the quote first
+      acceptedQuote = await stripe.quotes.finalizeQuote(quote.stripe_quote_id);
+      logStep("Quote finalized");
+    }
+    
+    if (acceptedQuote.status === 'open') {
+      // Accept the quote
+      acceptedQuote = await stripe.quotes.accept(quote.stripe_quote_id);
+      logStep("Quote accepted");
+    }
+
+    // Now the quote should have an invoice
+    if (!acceptedQuote.invoice) {
+      throw new Error("No invoice was created from the quote");
+    }
+
+    const invoiceId = typeof acceptedQuote.invoice === 'string' 
+      ? acceptedQuote.invoice 
+      : acceptedQuote.invoice.id;
+
+    // Retrieve the full invoice
+    const invoice = await stripe.invoices.retrieve(invoiceId);
+    logStep("Invoice retrieved", { 
+      invoiceId: invoice.id, 
+      status: invoice.status,
+      number: invoice.number 
+    });
+
+    // Update quote with invoice data
+    const { error: updateError } = await supabaseClient
+      .from('quotes')
+      .update({
+        stripe_invoice_id: invoice.id,
+        invoice_status: invoice.status || 'draft',
+        invoice_hosted_url: invoice.hosted_invoice_url,
+        invoice_pdf_url: invoice.invoice_pdf,
+        invoice_number: invoice.number,
+        invoice_due_date: invoice.due_date ? new Date(invoice.due_date * 1000).toISOString().split('T')[0] : null,
+        invoice_subtotal: invoice.subtotal ? invoice.subtotal / 100 : null,
+        invoice_vat: invoice.tax ? invoice.tax / 100 : null,
+        invoice_total: invoice.total ? invoice.total / 100 : null,
+      })
+      .eq('id', quote_id);
+
+    if (updateError) {
+      logStep("Error updating quote", { error: updateError });
+      throw new Error(`Failed to update quote: ${updateError.message}`);
+    }
+
+    // Create billing event
+    await supabaseClient.from('billing_events').insert({
+      quote_id,
+      stripe_quote_id: quote.stripe_quote_id,
+      stripe_invoice_id: invoice.id,
+      event_type: 'invoice_created',
+      metadata: { 
+        invoice_number: invoice.number,
+        invoice_status: invoice.status,
+        amount_due: invoice.amount_due,
+      },
+      created_by: user.id,
+    });
+
+    logStep("Invoice created successfully");
+
+    return new Response(JSON.stringify({
+      success: true,
+      invoice_id: invoice.id,
+      invoice_number: invoice.number,
+      invoice_status: invoice.status,
+      hosted_url: invoice.hosted_invoice_url,
+      pdf_url: invoice.invoice_pdf,
+    }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 200,
+    });
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logStep("ERROR", { message: errorMessage });
+    return new Response(JSON.stringify({ error: errorMessage }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 500,
+    });
+  }
+});

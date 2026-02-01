@@ -14,6 +14,47 @@ export type Database = {
   }
   public: {
     Tables: {
+      billing_events: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          event_type: string
+          id: string
+          metadata: Json | null
+          quote_id: string | null
+          stripe_invoice_id: string | null
+          stripe_quote_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          event_type: string
+          id?: string
+          metadata?: Json | null
+          quote_id?: string | null
+          stripe_invoice_id?: string | null
+          stripe_quote_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          event_type?: string
+          id?: string
+          metadata?: Json | null
+          quote_id?: string | null
+          stripe_invoice_id?: string | null
+          stripe_quote_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "billing_events_quote_id_fkey"
+            columns: ["quote_id"]
+            isOneToOne: false
+            referencedRelation: "quotes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       bom_items: {
         Row: {
           bom_id: string
@@ -384,6 +425,50 @@ export type Database = {
         }
         Relationships: []
       }
+      quote_emails: {
+        Row: {
+          body: string
+          email_type: string
+          id: string
+          invoice_id: string | null
+          quote_id: string
+          recipient_email: string
+          sent_at: string
+          sent_by: string | null
+          subject: string
+        }
+        Insert: {
+          body: string
+          email_type: string
+          id?: string
+          invoice_id?: string | null
+          quote_id: string
+          recipient_email: string
+          sent_at?: string
+          sent_by?: string | null
+          subject: string
+        }
+        Update: {
+          body?: string
+          email_type?: string
+          id?: string
+          invoice_id?: string | null
+          quote_id?: string
+          recipient_email?: string
+          sent_at?: string
+          sent_by?: string | null
+          subject?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "quote_emails_quote_id_fkey"
+            columns: ["quote_id"]
+            isOneToOne: false
+            referencedRelation: "quotes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       quote_lines: {
         Row: {
           cost_ex_vat_at_time: number | null
@@ -465,6 +550,14 @@ export type Database = {
           customer_id: string | null
           hardware_total: number
           id: string
+          invoice_due_date: string | null
+          invoice_hosted_url: string | null
+          invoice_number: string | null
+          invoice_pdf_url: string | null
+          invoice_status: string | null
+          invoice_subtotal: number | null
+          invoice_total: number | null
+          invoice_vat: number | null
           is_latest: boolean
           is_test: boolean
           labor_total: number
@@ -472,6 +565,7 @@ export type Database = {
           quote_number: string
           status: string
           status_reason: string | null
+          stripe_invoice_id: string | null
           stripe_quote_id: string | null
           stripe_status: string | null
           subtotal_ex_vat: number | null
@@ -493,6 +587,14 @@ export type Database = {
           customer_id?: string | null
           hardware_total?: number
           id?: string
+          invoice_due_date?: string | null
+          invoice_hosted_url?: string | null
+          invoice_number?: string | null
+          invoice_pdf_url?: string | null
+          invoice_status?: string | null
+          invoice_subtotal?: number | null
+          invoice_total?: number | null
+          invoice_vat?: number | null
           is_latest?: boolean
           is_test?: boolean
           labor_total?: number
@@ -500,6 +602,7 @@ export type Database = {
           quote_number: string
           status?: string
           status_reason?: string | null
+          stripe_invoice_id?: string | null
           stripe_quote_id?: string | null
           stripe_status?: string | null
           subtotal_ex_vat?: number | null
@@ -521,6 +624,14 @@ export type Database = {
           customer_id?: string | null
           hardware_total?: number
           id?: string
+          invoice_due_date?: string | null
+          invoice_hosted_url?: string | null
+          invoice_number?: string | null
+          invoice_pdf_url?: string | null
+          invoice_status?: string | null
+          invoice_subtotal?: number | null
+          invoice_total?: number | null
+          invoice_vat?: number | null
           is_latest?: boolean
           is_test?: boolean
           labor_total?: number
@@ -528,6 +639,7 @@ export type Database = {
           quote_number?: string
           status?: string
           status_reason?: string | null
+          stripe_invoice_id?: string | null
           stripe_quote_id?: string | null
           stripe_status?: string | null
           subtotal_ex_vat?: number | null

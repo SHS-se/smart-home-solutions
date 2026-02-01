@@ -18,6 +18,8 @@ import QuoteOutdatedBanner from '@/components/portal/quotes/QuoteOutdatedBanner'
 import QuoteUpdateConfirmDialog from '@/components/portal/quotes/QuoteUpdateConfirmDialog';
 import { useQuoteVersioning } from '@/hooks/use-quote-versioning';
 import BlurCommitInput from '@/components/ui/blur-commit-input';
+import InvoiceCard from '@/components/portal/quotes/InvoiceCard';
+import BillingEventLog from '@/components/portal/quotes/BillingEventLog';
 
 interface QuoteLine {
   id: string;
@@ -92,7 +94,7 @@ const QuotePreparation: React.FC = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('quotes')
-        .select('*, customers(org_name), boms(id, project_name, version), bom_price_revisions(id, revision, note, created_at)')
+        .select('*, customers(org_name, billing_email), boms(id, project_name, version), bom_price_revisions(id, revision, note, created_at)')
         .eq('id', id)
         .single();
       if (error) throw error;
@@ -964,6 +966,16 @@ const QuotePreparation: React.FC = () => {
                 </div>
               </CardContent>
             </Card>
+
+            {/* Invoice Card */}
+            {quote && (
+              <InvoiceCard quote={quote} />
+            )}
+
+            {/* Billing Event Log */}
+            {id && (
+              <BillingEventLog quoteId={id} />
+            )}
           </div>
         </div>
 
