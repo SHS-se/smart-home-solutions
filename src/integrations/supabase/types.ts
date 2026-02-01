@@ -458,17 +458,22 @@ export type Database = {
           bom_id: string | null
           bom_price_revision_id: string | null
           bom_version: number | null
+          cancelled_at: string | null
+          cancelled_by_user_id: string | null
           created_at: string
           created_by: string | null
           customer_id: string | null
           hardware_total: number
           id: string
           is_latest: boolean
+          is_test: boolean
           labor_total: number
           parent_quote_id: string | null
           quote_number: string
           status: string
+          status_reason: string | null
           stripe_quote_id: string | null
+          stripe_status: string | null
           subtotal_ex_vat: number | null
           supersedes_quote_id: string | null
           total_inc_vat: number | null
@@ -481,17 +486,22 @@ export type Database = {
           bom_id?: string | null
           bom_price_revision_id?: string | null
           bom_version?: number | null
+          cancelled_at?: string | null
+          cancelled_by_user_id?: string | null
           created_at?: string
           created_by?: string | null
           customer_id?: string | null
           hardware_total?: number
           id?: string
           is_latest?: boolean
+          is_test?: boolean
           labor_total?: number
           parent_quote_id?: string | null
           quote_number: string
           status?: string
+          status_reason?: string | null
           stripe_quote_id?: string | null
+          stripe_status?: string | null
           subtotal_ex_vat?: number | null
           supersedes_quote_id?: string | null
           total_inc_vat?: number | null
@@ -504,17 +514,22 @@ export type Database = {
           bom_id?: string | null
           bom_price_revision_id?: string | null
           bom_version?: number | null
+          cancelled_at?: string | null
+          cancelled_by_user_id?: string | null
           created_at?: string
           created_by?: string | null
           customer_id?: string | null
           hardware_total?: number
           id?: string
           is_latest?: boolean
+          is_test?: boolean
           labor_total?: number
           parent_quote_id?: string | null
           quote_number?: string
           status?: string
+          status_reason?: string | null
           stripe_quote_id?: string | null
+          stripe_status?: string | null
           subtotal_ex_vat?: number | null
           supersedes_quote_id?: string | null
           total_inc_vat?: number | null

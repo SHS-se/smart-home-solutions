@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -25,16 +25,19 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { SortableTableHead } from '@/components/ui/sortable-table-head';
-import { FileText, Trash2, ExternalLink, Search } from 'lucide-react';
+import { ExternalLink, Search, TestTube } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 import { sv } from 'date-fns/locale';
+import QuoteActionsMenu from '@/components/portal/quotes/QuoteActionsMenu';
+import QuoteCancelDialog from '@/components/portal/quotes/QuoteCancelDialog';
 
 interface Quote {
   id: string;
   quote_number: string;
   version: number;
   is_latest: boolean;
+  is_test: boolean;
   hardware_total: number;
   labor_total: number;
   travel_total: number;
@@ -46,18 +49,20 @@ interface Quote {
 }
 
 type SortColumn = 'quote_number' | 'customer' | 'project' | 'total' | 'status' | 'created_at';
-type StatusFilter = 'all' | 'draft' | 'sent' | 'accepted' | 'declined' | 'latest';
+type ViewFilter = 'active' | 'include_cancelled' | 'include_test' | 'all';
 
-const getStatusBadge = (status: string) => {
+const getStatusBadge = (status: string, t: (sv: string, en: string) => string) => {
   switch (status) {
     case 'draft':
-      return <Badge variant="secondary">Utkast</Badge>;
+      return <Badge variant="secondary">{t('Utkast', 'Draft')}</Badge>;
     case 'sent':
-      return <Badge variant="default">Skickad</Badge>;
+      return <Badge variant="default">{t('Skickad', 'Sent')}</Badge>;
     case 'accepted':
-      return <Badge className="bg-primary text-primary-foreground">Accepterad</Badge>;
+      return <Badge className="bg-primary text-primary-foreground">{t('Accepterad', 'Accepted')}</Badge>;
     case 'declined':
-      return <Badge variant="destructive">Avvisad</Badge>;
+      return <Badge variant="destructive">{t('Avvisad', 'Declined')}</Badge>;
+    case 'cancelled':
+      return <Badge variant="outline" className="text-muted-foreground">{t('Avbruten', 'Cancelled')}</Badge>;
     default:
       return <Badge variant="secondary">{status}</Badge>;
   }
@@ -74,7 +79,12 @@ const QuotesList: React.FC = () => {
   });
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('latest');
+  const [viewFilter, setViewFilter] = useState<ViewFilter>('active');
+  
+  // Cancel dialog state
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  const [quoteToCancel, setQuoteToCancel] = useState<Quote | null>(null);
+  const [isCancelling, setIsCancelling] = useState(false);
 
   // Fetch quotes
   const { data: quotes = [], isLoading } = useQuery({
@@ -91,19 +101,36 @@ const QuotesList: React.FC = () => {
         bom: (q as any).boms,
         version: q.version ?? 1,
         is_latest: q.is_latest ?? true,
+        is_test: (q as any).is_test ?? false,
       })) as Quote[];
     },
     enabled: isStaff,
   });
 
-  // Filter quotes
+  // Filter quotes based on view filter
   const filteredQuotes = useMemo(() => {
     return quotes.filter(quote => {
-      // Status filter
-      if (statusFilter === 'latest') {
-        if (!quote.is_latest) return false;
-      } else if (statusFilter !== 'all') {
-        if (quote.status !== statusFilter) return false;
+      // View filter logic
+      switch (viewFilter) {
+        case 'active':
+          // Hide test and cancelled quotes, show only latest versions
+          if (quote.is_test) return false;
+          if (quote.status === 'cancelled') return false;
+          if (!quote.is_latest) return false;
+          break;
+        case 'include_cancelled':
+          // Show cancelled but hide test, only latest
+          if (quote.is_test) return false;
+          if (!quote.is_latest) return false;
+          break;
+        case 'include_test':
+          // Show test but hide cancelled, only latest
+          if (quote.status === 'cancelled') return false;
+          if (!quote.is_latest) return false;
+          break;
+        case 'all':
+          // Show everything including all versions
+          break;
       }
 
       // Search filter
@@ -117,7 +144,7 @@ const QuotesList: React.FC = () => {
 
       return true;
     });
-  }, [quotes, statusFilter, searchQuery]);
+  }, [quotes, viewFilter, searchQuery]);
 
   // Sort quotes
   const sortedQuotes = useMemo(() => {
@@ -139,17 +166,61 @@ const QuotesList: React.FC = () => {
     });
   }, [filteredQuotes, sortColumn, sortDirection]);
 
-  // Delete quote mutation
-  const deleteMutation = useMutation({
-    mutationFn: async (id: string) => {
-      const { error } = await supabase.from('quotes').delete().eq('id', id);
+  // Mark/Unmark test mutation
+  const markTestMutation = useMutation({
+    mutationFn: async ({ quoteId, markAsTest }: { quoteId: string; markAsTest: boolean }) => {
+      const { data, error } = await supabase.functions.invoke('mark-quote-test', {
+        body: { quote_id: quoteId, mark_as_test: markAsTest },
+      });
       if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      return data;
     },
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['quotes'] });
-      toast({ title: t('Offert raderad', 'Quote deleted') });
+      toast({ 
+        title: variables.markAsTest 
+          ? t('Offert markerad som test', 'Quote marked as test')
+          : t('Testmarkering borttagen', 'Test mark removed')
+      });
+    },
+    onError: (error: Error) => {
+      toast({ 
+        title: t('Fel', 'Error'),
+        description: error.message,
+        variant: 'destructive'
+      });
     },
   });
+
+  // Cancel quote handler
+  const handleCancelQuote = async (reason?: string) => {
+    if (!quoteToCancel) return;
+    
+    setIsCancelling(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('cancel-quote', {
+        body: { quote_id: quoteToCancel.id, reason },
+      });
+      
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      queryClient.invalidateQueries({ queryKey: ['quotes'] });
+      toast({ title: t('Offert avbruten', 'Quote cancelled') });
+      setCancelDialogOpen(false);
+      setQuoteToCancel(null);
+    } catch (error: unknown) {
+      const err = error as Error;
+      toast({ 
+        title: t('Kunde inte avbryta i Stripe. Inga ändringar gjordes.', 'Could not cancel in Stripe. No changes were made.'),
+        description: err.message,
+        variant: 'destructive'
+      });
+    } finally {
+      setIsCancelling(false);
+    }
+  };
 
   // Redirect if not staff
   if (!authLoading && !isStaff) {
@@ -179,17 +250,15 @@ const QuotesList: React.FC = () => {
               className="pl-9"
             />
           </div>
-          <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as StatusFilter)}>
-            <SelectTrigger className="w-full sm:w-[180px]">
+          <Select value={viewFilter} onValueChange={(v) => setViewFilter(v as ViewFilter)}>
+            <SelectTrigger className="w-full sm:w-[200px]">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="latest">{t('Senaste versioner', 'Latest versions')}</SelectItem>
-              <SelectItem value="all">{t('Alla versioner', 'All versions')}</SelectItem>
-              <SelectItem value="draft">{t('Utkast', 'Draft')}</SelectItem>
-              <SelectItem value="sent">{t('Skickade', 'Sent')}</SelectItem>
-              <SelectItem value="accepted">{t('Accepterade', 'Accepted')}</SelectItem>
-              <SelectItem value="declined">{t('Avvisade', 'Declined')}</SelectItem>
+              <SelectItem value="active">{t('Aktiva (standard)', 'Active (default)')}</SelectItem>
+              <SelectItem value="include_cancelled">{t('Inkl. avbrutna', 'Include cancelled')}</SelectItem>
+              <SelectItem value="include_test">{t('Inkl. test', 'Include test')}</SelectItem>
+              <SelectItem value="all">{t('Visa alla', 'Show all')}</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -243,7 +312,7 @@ const QuotesList: React.FC = () => {
                   return (
                     <TableRow 
                       key={quote.id} 
-                      className={`cursor-pointer hover:bg-muted/50 ${!quote.is_latest ? 'opacity-60' : ''}`}
+                      className={`cursor-pointer hover:bg-muted/50 ${!quote.is_latest || quote.status === 'cancelled' ? 'opacity-60' : ''}`}
                       onClick={() => navigate(`/portal/quotes/${quote.id}`)}
                     >
                       <TableCell>
@@ -261,6 +330,12 @@ const QuotesList: React.FC = () => {
                               {t('Äldre', 'Old')}
                             </Badge>
                           )}
+                          {quote.is_test && (
+                            <Badge variant="outline" className="text-xs">
+                              <TestTube className="h-3 w-3 mr-1" />
+                              {t('Test', 'Test')}
+                            </Badge>
+                          )}
                         </div>
                       </TableCell>
                       <TableCell>
@@ -273,13 +348,13 @@ const QuotesList: React.FC = () => {
                         {totalWithVat.toLocaleString('sv-SE')} kr
                       </TableCell>
                       <TableCell>
-                        {getStatusBadge(quote.status)}
+                        {getStatusBadge(quote.status, t)}
                       </TableCell>
                       <TableCell className="text-muted-foreground">
                         {format(new Date(quote.created_at), 'PP', { locale: sv })}
                       </TableCell>
                       <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
+                        <div className="flex justify-end gap-1">
                           {quote.stripe_quote_id && (
                             <Button 
                               variant="ghost" 
@@ -296,20 +371,16 @@ const QuotesList: React.FC = () => {
                               </a>
                             </Button>
                           )}
-                          {quote.status === 'draft' && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (confirm(t('Radera denna offert?', 'Delete this quote?'))) {
-                                  deleteMutation.mutate(quote.id);
-                                }
-                              }}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          )}
+                          <QuoteActionsMenu
+                            isTest={quote.is_test}
+                            status={quote.status}
+                            onMarkTest={() => markTestMutation.mutate({ quoteId: quote.id, markAsTest: true })}
+                            onUnmarkTest={() => markTestMutation.mutate({ quoteId: quote.id, markAsTest: false })}
+                            onCancel={() => {
+                              setQuoteToCancel(quote);
+                              setCancelDialogOpen(true);
+                            }}
+                          />
                         </div>
                       </TableCell>
                     </TableRow>
@@ -320,6 +391,15 @@ const QuotesList: React.FC = () => {
           </Table>
         </div>
       </div>
+
+      {/* Cancel Confirmation Dialog */}
+      <QuoteCancelDialog
+        open={cancelDialogOpen}
+        onOpenChange={setCancelDialogOpen}
+        quoteNumber={quoteToCancel?.quote_number ?? ''}
+        onConfirm={handleCancelQuote}
+        isLoading={isCancelling}
+      />
     </PortalLayout>
   );
 };
