@@ -107,12 +107,29 @@ serve(async (req) => {
       : acceptedQuote.invoice.id;
 
     // Retrieve the full invoice
-    const invoice = await stripe.invoices.retrieve(invoiceId);
+    let invoice = await stripe.invoices.retrieve(invoiceId);
     logStep("Invoice retrieved", { 
       invoiceId: invoice.id, 
       status: invoice.status,
       number: invoice.number 
     });
+
+    // Stripe draft invoices don't have a number - we need to finalize to get one
+    // But we might want to keep it as draft for editing. 
+    // Note: The invoice number and due_date are only assigned after finalization.
+    // For now, store what we have and the webhook will update when finalized.
+
+    // Also, Stripe Quotes API creates the invoice in draft mode by default.
+    // We can optionally finalize it immediately if we want the number right away.
+    // Let's finalize it immediately so the customer can pay.
+    if (invoice.status === 'draft') {
+      invoice = await stripe.invoices.finalizeInvoice(invoice.id);
+      logStep("Invoice finalized", { 
+        invoiceId: invoice.id, 
+        status: invoice.status,
+        number: invoice.number 
+      });
+    }
 
     // Update quote with invoice data
     const { error: updateError } = await supabaseClient
