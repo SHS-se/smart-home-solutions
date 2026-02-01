@@ -656,19 +656,6 @@ const InvoiceDraftEditor: React.FC = () => {
                     onChange={(e) => setDueDate(e.target.value)}
                   />
                 </div>
-
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label htmlFor="is_test">{t('Testfaktura', 'Test invoice')}</Label>
-                    <p className="text-xs text-muted-foreground">{t('Används för test och demo', 'Used for test and demo')}</p>
-                  </div>
-                  <Switch 
-                    id="is_test"
-                    checked={isTest}
-                    onCheckedChange={setIsTest}
-                  />
-                </div>
-
                 {/* Actions */}
                 <div className="pt-4 space-y-2">
                   {!invoiceId ? (
