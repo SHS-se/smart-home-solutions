@@ -58,7 +58,7 @@ const getStatusBadge = (status: string, dueDate: string | null, t: (sv: string, 
     case 'open':
       return <Badge variant="secondary">{t('Öppen', 'Open')}</Badge>;
     case 'paid':
-      return <Badge className="bg-[hsl(var(--success))] text-[hsl(var(--success-foreground))]">{t('Betald', 'Paid')}</Badge>;
+      return <Badge className="bg-green-600 text-white">{t('Betald', 'Paid')}</Badge>;
     case 'overdue':
       return <Badge variant="destructive">{t('Förfallen', 'Overdue')}</Badge>;
     case 'void':
@@ -265,7 +265,7 @@ const InvoicesList: React.FC = () => {
           >
             <CardContent className="pt-4">
               <p className="text-sm text-muted-foreground">{t('Betalda', 'Paid')}</p>
-              <p className="text-2xl font-bold text-[hsl(var(--success))]">{stats.paid}</p>
+              <p className="text-2xl font-bold text-green-600">{stats.paid}</p>
             </CardContent>
           </Card>
           <Card 
