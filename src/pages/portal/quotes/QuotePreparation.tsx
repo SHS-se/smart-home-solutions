@@ -407,15 +407,32 @@ const QuotePreparation: React.FC = () => {
 
     setIsLoadingPdf(true);
     try {
-      const { data, error } = await supabase.functions.invoke('get-stripe-quote-pdf', {
-        body: { stripe_quote_id: quote.stripe_quote_id },
-        headers: { Accept: 'application/pdf' },
-      });
+      // Get current session token
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData?.session?.access_token;
+      if (!token) throw new Error('Not authenticated');
 
-      if (error) throw error;
+      // Fetch PDF directly as blob using native fetch
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-stripe-quote-pdf`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+            'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          },
+          body: JSON.stringify({ stripe_quote_id: quote.stripe_quote_id }),
+        }
+      );
 
-      // The response is a PDF blob - create object URL and open it
-      const pdfBlob = data instanceof Blob ? data : new Blob([data], { type: 'application/pdf' });
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || `HTTP ${response.status}`);
+      }
+
+      // Get the response as a blob and open it
+      const pdfBlob = await response.blob();
       const pdfUrl = URL.createObjectURL(pdfBlob);
       window.open(pdfUrl, '_blank');
       
