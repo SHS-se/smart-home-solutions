@@ -38,7 +38,6 @@ interface Ticket {
   ticket_number: string;
   title: string;
   status: string;
-  email_token: string;
   created_at: string;
   updated_at: string;
   last_activity_at: string;
@@ -141,7 +140,7 @@ const TicketDetail: React.FC = () => {
       try {
         const { data: ticketData, error: ticketError } = await supabase
           .from('tickets')
-          .select('*, customers(org_name, billing_email)')
+          .select('id, ticket_number, title, status, created_at, updated_at, last_activity_at, customer_id, created_by, customers(org_name, billing_email)')
           .eq('ticket_number', ticketNumber)
           .maybeSingle();
 
