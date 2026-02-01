@@ -241,15 +241,16 @@ const QuotesList: React.FC = () => {
                   const total = quote.hardware_total + quote.labor_total + quote.travel_total;
                   const totalWithVat = total * 1.25;
                   return (
-                    <TableRow key={quote.id} className={!quote.is_latest ? 'opacity-60' : ''}>
+                    <TableRow 
+                      key={quote.id} 
+                      className={`cursor-pointer hover:bg-muted/50 ${!quote.is_latest ? 'opacity-60' : ''}`}
+                      onClick={() => navigate(`/portal/quotes/${quote.id}`)}
+                    >
                       <TableCell>
                         <div className="flex items-center gap-2">
-                          <Link 
-                            to={`/portal/quotes/${quote.id}`}
-                            className="font-mono font-medium hover:text-primary"
-                          >
+                          <span className="font-mono font-medium">
                             #{quote.quote_number}
-                          </Link>
+                          </span>
                           {quote.version > 1 && (
                             <Badge variant="outline" className="font-mono text-xs">
                               v{quote.version}
@@ -279,13 +280,13 @@ const QuotesList: React.FC = () => {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
-                          <Button variant="ghost" size="icon" asChild>
-                            <Link to={`/portal/quotes/${quote.id}`}>
-                              <FileText className="h-4 w-4" />
-                            </Link>
-                          </Button>
                           {quote.stripe_quote_id && (
-                            <Button variant="ghost" size="icon" asChild>
+                            <Button 
+                              variant="ghost" 
+                              size="icon" 
+                              asChild
+                              onClick={(e) => e.stopPropagation()}
+                            >
                               <a 
                                 href={`https://dashboard.stripe.com/quotes/${quote.stripe_quote_id}`}
                                 target="_blank"
@@ -299,7 +300,8 @@ const QuotesList: React.FC = () => {
                             <Button
                               variant="ghost"
                               size="icon"
-                              onClick={() => {
+                              onClick={(e) => {
+                                e.stopPropagation();
                                 if (confirm(t('Radera denna offert?', 'Delete this quote?'))) {
                                   deleteMutation.mutate(quote.id);
                                 }
