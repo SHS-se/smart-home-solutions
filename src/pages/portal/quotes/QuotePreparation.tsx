@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { ArrowLeft, ExternalLink, Pencil, Send, Eye, Info, Loader2, AlertTriangle, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Pencil, Send, Eye, Info, Loader2, AlertTriangle, Plus, Trash2, FileText } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import QuotePriceDiffModal from '@/components/portal/quotes/QuotePriceDiffModal';
 import QuoteVersionDropdown from '@/components/portal/quotes/QuoteVersionDropdown';
@@ -71,6 +71,7 @@ const QuotePreparation: React.FC = () => {
   
   const [isSending, setIsSending] = useState(false);
   const [isLoadingPdf, setIsLoadingPdf] = useState(false);
+  const [isCreatingInvoice, setIsCreatingInvoice] = useState(false);
   
   const [editingQuantities, setEditingQuantities] = useState<Record<string, number>>({});
   const [showDiffModal, setShowDiffModal] = useState(false);
@@ -454,6 +455,73 @@ const QuotePreparation: React.FC = () => {
       });
     } finally {
       setIsLoadingPdf(false);
+    }
+  };
+
+  // Create invoice from quote
+  const createInvoiceFromQuote = async () => {
+    if (!quote?.customer_id) {
+      toast({ title: t('Kund krävs', 'Customer required'), description: t('Offerten måste ha en kund kopplad', 'Quote must have a customer attached'), variant: 'destructive' });
+      return;
+    }
+
+    setIsCreatingInvoice(true);
+    try {
+      // Prepare line items from quote
+      const lineItems = [
+        // Hardware items from BOM
+        ...bomItems.map(item => ({
+          line_type: 'hardware',
+          description: item.sku.name,
+          sku: item.sku.sku,
+          sku_id: item.sku.id,
+          quantity: item.quantity,
+          unit_price: item.sell_price_ex_vat_at_time ?? item.sku.sell_price_ex_vat ?? 0,
+          category: item.sku.category,
+        })),
+        // Labor lines
+        ...laborLines.map(line => ({
+          line_type: 'labor',
+          description: line.description,
+          quantity: line.quantity,
+          unit_price: line.unit_price_ex_vat ?? line.unit_price,
+        })),
+        // Travel/other lines
+        ...travelLines.map(line => ({
+          line_type: 'travel_other',
+          description: line.description,
+          quantity: line.quantity,
+          unit_price: line.unit_price_ex_vat ?? line.unit_price,
+        })),
+      ];
+
+      const { data, error } = await supabase.functions.invoke('create-draft-invoice', {
+        body: {
+          customer_id: quote.customer_id,
+          bom_id: quote.bom_id,
+          quote_id: quote.id,
+          is_test: quote.is_test || false,
+          line_items: lineItems,
+        },
+      });
+
+      if (error) throw error;
+
+      toast({ 
+        title: t('Fakturautkast skapad!', 'Invoice draft created!'), 
+        description: t('Du omdirigeras till fakturautkastet', 'Redirecting to the invoice draft'),
+      });
+
+      // Navigate to the new invoice
+      navigate(`/portal/invoices/new?id=${data.invoice_id}`);
+    } catch (error: any) {
+      toast({ 
+        title: t('Kunde inte skapa faktura', 'Failed to create invoice'), 
+        description: error.message,
+        variant: 'destructive' 
+      });
+    } finally {
+      setIsCreatingInvoice(false);
     }
   };
 
@@ -961,6 +1029,19 @@ const QuotePreparation: React.FC = () => {
                       {t('Skicka till Stripe först för att förhandsgranska', 'Send to Stripe first to preview')}
                     </p>
                   )}
+                  <Button 
+                    variant="outline" 
+                    className="w-full"
+                    onClick={createInvoiceFromQuote}
+                    disabled={isCreatingInvoice || !quote?.customer_id}
+                  >
+                    {isCreatingInvoice ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <FileText className="h-4 w-4 mr-2" />
+                    )}
+                    {t('Skapa faktura', 'Create Invoice')}
+                  </Button>
                 </div>
               </CardContent>
             </Card>
