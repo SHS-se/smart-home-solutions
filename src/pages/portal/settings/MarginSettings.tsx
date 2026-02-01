@@ -28,7 +28,8 @@ import { Settings2, Info, Save, AlertTriangle } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 
 interface MarginRule {
-  category: string;
+  category_id: string | null;
+  category_name: string; // from sku_categories join or derived
   description: string | null;
   margin_percent: number;
   rounding: number;
@@ -59,16 +60,19 @@ const MarginSettings: React.FC = () => {
     enabled: isStaff,
   });
 
-  // Fetch margin rules
+  // Fetch margin rules with category join
   const { data: rules = [], isLoading } = useQuery({
     queryKey: ['margin_rules'],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('margin_rules')
-        .select('*')
-        .order('category');
+        .select('*, sku_categories!margin_rules_category_id_fkey(id, name)')
+        .order('category_id');
       if (error) throw error;
-      return data as MarginRule[];
+      return (data || []).map(rule => ({
+        ...rule,
+        category_name: (rule.sku_categories as { id: string; name: string } | null)?.name || 'Unknown',
+      })) as MarginRule[];
     },
     enabled: isStaff,
   });
@@ -77,9 +81,10 @@ const MarginSettings: React.FC = () => {
   React.useEffect(() => {
     if (categories.length > 0) {
       const mergedRules: MarginRule[] = categories.map(cat => {
-        const existingRule = rules.find(r => r.category === cat.name);
+        const existingRule = rules.find(r => r.category_id === cat.id);
         return existingRule || {
-          category: cat.name,
+          category_id: cat.id,
+          category_name: cat.name,
           description: cat.description,
           margin_percent: 0,
           rounding: 5,
@@ -97,11 +102,11 @@ const MarginSettings: React.FC = () => {
         const { error } = await supabase
           .from('margin_rules')
           .upsert({ 
-            category: rule.category,
+            category_id: rule.category_id,
             description: rule.description,
             margin_percent: rule.margin_percent, 
             rounding: rule.rounding 
-          }, { onConflict: 'category' });
+          }, { onConflict: 'category_id' });
         if (error) throw error;
       }
     },
@@ -116,10 +121,10 @@ const MarginSettings: React.FC = () => {
     },
   });
 
-  const handleChange = (category: string, field: 'margin_percent' | 'rounding', value: number) => {
+  const handleChange = (categoryId: string | null, field: 'margin_percent' | 'rounding', value: number) => {
     setLocalRules(prev => 
       prev.map(rule => 
-        rule.category === category ? { ...rule, [field]: value } : rule
+        rule.category_id === categoryId ? { ...rule, [field]: value } : rule
       )
     );
     setHasChanges(true);
@@ -223,21 +228,21 @@ const MarginSettings: React.FC = () => {
                 </TableHeader>
                 <TableBody>
                   {localRules.map(rule => (
-                    <TableRow key={rule.category}>
-                      <TableCell className="font-medium">{rule.category}</TableCell>
+                    <TableRow key={rule.category_id || rule.category_name}>
+                      <TableCell className="font-medium">{rule.category_name}</TableCell>
                       <TableCell className="text-muted-foreground">{rule.description}</TableCell>
                       <TableCell className="text-center">
                         <Input
                           type="number"
                           value={rule.margin_percent}
-                          onChange={(e) => handleChange(rule.category, 'margin_percent', parseFloat(e.target.value) || 0)}
+                          onChange={(e) => handleChange(rule.category_id, 'margin_percent', parseFloat(e.target.value) || 0)}
                           className="w-20 text-center mx-auto"
                         />
                       </TableCell>
                       <TableCell className="text-center">
                         <Select
                           value={rule.rounding.toString()}
-                          onValueChange={(value) => handleChange(rule.category, 'rounding', parseInt(value))}
+                          onValueChange={(value) => handleChange(rule.category_id, 'rounding', parseInt(value))}
                         >
                           <SelectTrigger className="w-24 mx-auto">
                             <SelectValue />
@@ -265,16 +270,16 @@ const MarginSettings: React.FC = () => {
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {localRules.slice(0, 3).map(rule => {
-                const exampleCost = rule.category === 'Sensorer' ? 145 
-                  : rule.category === 'Controllers' ? 1250 
-                  : rule.category === 'Material' ? 890 
+                const exampleCost = rule.category_name === 'Sensor' ? 145 
+                  : rule.category_name === 'Controller' ? 1250 
+                  : rule.category_name === 'Material' ? 890 
                   : 100;
                 const calc = calculateExample(exampleCost, rule.margin_percent, rule.rounding);
                 
                 return (
-                  <div key={rule.category} className="bg-muted/50 p-4 rounded-lg">
+                  <div key={rule.category_id || rule.category_name} className="bg-muted/50 p-4 rounded-lg">
                     <p className="text-xs text-muted-foreground uppercase tracking-wide mb-2">
-                      {rule.category} ({rule.margin_percent}%)
+                      {rule.category_name} ({rule.margin_percent}%)
                     </p>
                     <div className="space-y-1 text-sm">
                       <div className="flex justify-between">

@@ -1,0 +1,8 @@
+[
+  {"id":"926fce7e-b297-428f-a535-7fbc336d0f82","name":"Sensor","description":"Temperature, motion, contact, power and energy sensors","sort_order":1},
+  {"id":"2b8832c0-5427-43af-8faa-2c2687b10c95","name":"Controller","description":"Hubs and control systems","sort_order":2},
+  {"id":"689be48f-f16c-4deb-a9a3-442653f8b7c9","name":"Relay","description":"Relay modules, actuators","sort_order":3},
+  {"id":"226357ec-2625-455a-ad0a-692b53d6f1e5","name":"Material","description":"Cables, boxes, installation material.","sort_order":4},
+  {"id":"e0ba197b-10ae-4b14-9b3e-93be744a40da","name":"Service","description":"Work and travel time","sort_order":5},
+  {"id":"2b634816-307d-43a7-8578-fd1c61e74b89","name":"Server","description":"HA hosts and other servers","sort_order":6}
+]

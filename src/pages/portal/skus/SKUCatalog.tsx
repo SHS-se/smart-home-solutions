@@ -51,7 +51,6 @@ interface SKU {
   id: string;
   sku: string;
   name: string;
-  category: string; // deprecated, kept for compatibility
   category_id: string | null;
   category_name?: string; // from join
   supplier: string | null;
@@ -100,7 +99,7 @@ const SKUCatalog: React.FC = () => {
       // Map the joined category name
       return (data || []).map(sku => ({
         ...sku,
-        category_name: sku.sku_categories?.name || sku.category,
+        category_name: (sku.sku_categories as { id: string; name: string } | null)?.name || 'Unknown',
       })) as SKU[];
     },
     enabled: isStaff,

@@ -38,7 +38,8 @@ interface TemplateItem {
     name: string;
     cost_ex_vat: number | null;
     default_margin: number | null;
-    category: string;
+    category_id: string | null;
+    category_name?: string;
   };
 }
 
@@ -74,24 +75,32 @@ const TemplateDetail: React.FC = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('template_items')
-        .select('*, skus(*)')
+        .select('*, skus(*, sku_categories!skus_category_id_fkey(id, name))')
         .eq('template_id', id);
       if (error) throw error;
       return data.map(item => ({
         ...item,
-        sku: (item as any).skus,
+        sku: {
+          ...(item as any).skus,
+          category_name: ((item as any).skus?.sku_categories as { id: string; name: string } | null)?.name || 'Unknown',
+        },
       })) as TemplateItem[];
     },
     enabled: isStaff && !!id,
   });
 
-  // Fetch margin rules
+  // Fetch margin rules with category join
   const { data: marginRules = [] } = useQuery({
     queryKey: ['margin_rules'],
     queryFn: async () => {
-      const { data, error } = await supabase.from('margin_rules').select('*');
+      const { data, error } = await supabase
+        .from('margin_rules')
+        .select('*, sku_categories!margin_rules_category_id_fkey(id, name)');
       if (error) throw error;
-      return data;
+      return (data || []).map(r => ({
+        ...r,
+        category_name: (r.sku_categories as { id: string; name: string } | null)?.name || 'Unknown',
+      }));
     },
     enabled: isStaff,
   });
@@ -164,7 +173,7 @@ const TemplateDetail: React.FC = () => {
   // Calculate sell price
   const calculateSellPrice = (item: TemplateItem) => {
     if (!item.sku.cost_ex_vat) return 0;
-    const rule = marginRules.find(r => r.category === item.sku.category);
+    const rule = marginRules.find(r => r.category_name === item.sku.category_name);
     const margin = item.sku.default_margin ?? rule?.margin_percent ?? 0;
     const rounding = rule?.rounding ?? 5;
     const rawPrice = item.sku.cost_ex_vat * (1 + margin / 100);

@@ -24,7 +24,8 @@ import { toast } from '@/hooks/use-toast';
 import JSZip, { JSZipObject } from 'jszip';
 
 interface MarginRule {
-  category: string;
+  category_id: string | null;
+  category_name: string;
   margin_percent: number;
   rounding: number;
 }
@@ -116,32 +117,38 @@ const SKUImport: React.FC = () => {
     }
   }, [allowUpsert]);
 
-  // Fetch margin rules from the database
+  // Fetch margin rules from the database with category join
   useEffect(() => {
     const fetchMarginRules = async () => {
       const { data, error } = await supabase
         .from('margin_rules')
-        .select('category, margin_percent, rounding');
+        .select('category_id, margin_percent, rounding, sku_categories!margin_rules_category_id_fkey(id, name)');
       
       if (!error && data) {
-        setMarginRules(data);
+        const rules = data.map(r => ({
+          category_id: r.category_id,
+          category_name: (r.sku_categories as { id: string; name: string } | null)?.name || 'Unknown',
+          margin_percent: r.margin_percent,
+          rounding: r.rounding,
+        }));
+        setMarginRules(rules);
       }
     };
     fetchMarginRules();
   }, []);
 
-  const categories = marginRules.map(r => r.category);
+  const categories = marginRules.map(r => r.category_name);
 
   // Pricing calculation (mirrors DB trigger logic)
   const calculatePreviewPricing = useCallback((
     purchasePrice: number,
     purchaseIncludesVat: boolean,
     vatRate: number,
-    category: string,
+    categoryName: string,
     marginOverride: number | null,
     roundingOverride: number | null
   ) => {
-    const rule = marginRules.find(r => r.category === category);
+    const rule = marginRules.find(r => r.category_name === categoryName);
     if (!rule) {
       return { cost_ex_vat: 0, sell_ex_vat: 0, sell_inc_vat: 0 };
     }
@@ -307,10 +314,10 @@ HUB-ZB-PRO,Zigbee Hub Professional,Controllers,Aqara,https://aqara.com,1562.50,f
 
     const { data: existingSkus } = await supabase
       .from('skus')
-      .select('id, sku, name, category, supplier, supplier_url, purchase_price, purchase_includes_vat, vat_rate, margin_override_percent, rounding_override_sek, notes, image_path')
+      .select('id, sku, name, category_id, supplier, supplier_url, purchase_price, purchase_includes_vat, vat_rate, margin_override_percent, rounding_override_sek, notes, image_path, sku_categories!skus_category_id_fkey(id, name)')
       .in('sku', skuCodes);
 
-    const existingSkuMap = new Map(existingSkus?.map(s => [s.sku, s]) || []);
+    const existingSkuMap = new Map(existingSkus?.map(s => [s.sku, { ...s, category_name: (s.sku_categories as { id: string; name: string } | null)?.name || 'Unknown' }]) || []);
 
     const allSkuCodes = dataRows.map(row => {
       const skuIndex = headers.indexOf('sku');
@@ -393,7 +400,7 @@ HUB-ZB-PRO,Zigbee Hub Professional,Controllers,Aqara,https://aqara.com,1562.50,f
       if (existingData) {
         const hasChanges = 
           existingData.name !== skuData.name ||
-          existingData.category !== skuData.category ||
+          existingData.category_name !== skuData.category ||
           existingData.supplier !== (skuData.supplier || null) ||
           existingData.supplier_url !== (skuData.supplier_url || null) ||
           existingData.purchase_price !== skuData.purchase_price ||
@@ -542,6 +549,12 @@ HUB-ZB-PRO,Zigbee Hub Professional,Controllers,Aqara,https://aqara.com,1562.50,f
 
     const validSkus = parsedSkus.filter(s => s.isValid);
 
+    // Build a lookup map from category name to category_id
+    const categoryNameToId = new Map<string, string>();
+    for (const rule of marginRules) {
+      categoryNameToId.set(rule.category_name, rule.category_id || '');
+    }
+
     for (const sku of validSkus) {
       try {
         // Skip if exists and no changes (upsert mode only)
@@ -564,13 +577,16 @@ HUB-ZB-PRO,Zigbee Hub Professional,Controllers,Aqara,https://aqara.com,1562.50,f
           }
         }
 
+        // Resolve category_id from category name
+        const categoryId = categoryNameToId.get(sku.category) || null;
+
         if (sku.existsInDb && allowUpsert) {
           // Update existing SKU
           const { error } = await supabase
             .from('skus')
             .update({
               name: sku.name,
-              category: sku.category,
+              category_id: categoryId,
               supplier: sku.supplier || null,
               supplier_url: sku.supplier_url || null,
               purchase_price: sku.purchase_price,
@@ -591,7 +607,7 @@ HUB-ZB-PRO,Zigbee Hub Professional,Controllers,Aqara,https://aqara.com,1562.50,f
             .insert({
               sku: sku.sku,
               name: sku.name,
-              category: sku.category,
+              category_id: categoryId,
               supplier: sku.supplier || null,
               supplier_url: sku.supplier_url || null,
               purchase_price: sku.purchase_price,

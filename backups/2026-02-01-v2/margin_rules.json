@@ -1,0 +1,8 @@
+[
+  {"category_id":"226357ec-2625-455a-ad0a-692b53d6f1e5","description":"Kablar, installationsmaterial","margin_percent":25,"rounding":5},
+  {"category_id":"2b634816-307d-43a7-8578-fd1c61e74b89","description":"HA hosts and other servers","margin_percent":25,"rounding":5},
+  {"category_id":"2b8832c0-5427-43af-8faa-2c2687b10c95","description":"Hubs and control systems","margin_percent":25,"rounding":5},
+  {"category_id":"689be48f-f16c-4deb-a9a3-442653f8b7c9","description":"Relay modules, actuators","margin_percent":25,"rounding":5},
+  {"category_id":"926fce7e-b297-428f-a535-7fbc336d0f82","description":"Temperature, motion, contact, power and energy sensors","margin_percent":10,"rounding":5},
+  {"category_id":"e0ba197b-10ae-4b14-9b3e-93be744a40da","description":"Work and travel time","margin_percent":60,"rounding":5}
+]

@@ -38,7 +38,8 @@ interface BomItemWithSku {
     id: string;
     name: string;
     sku: string;
-    category: string;
+    category_id: string | null;
+    category_name?: string;
     sell_price_ex_vat: number | null;
   };
 }
@@ -178,11 +179,18 @@ const QuotePreparation: React.FC = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('bom_items')
-        .select('id, quantity, sell_price_ex_vat_at_time, sku:skus(id, name, sku, category, sell_price_ex_vat)')
+        .select('id, quantity, sell_price_ex_vat_at_time, sku:skus(id, name, sku, category_id, sell_price_ex_vat, sku_categories!skus_category_id_fkey(id, name))')
         .eq('bom_id', quote!.bom_id!)
         .order('created_at');
       if (error) throw error;
-      return data as BomItemWithSku[];
+      // Map the category name from the join
+      return (data || []).map(item => ({
+        ...item,
+        sku: {
+          ...(item.sku as any),
+          category_name: ((item.sku as any)?.sku_categories as { id: string; name: string } | null)?.name || 'Unknown',
+        },
+      })) as BomItemWithSku[];
     },
     enabled: isStaff && !!quote?.bom_id,
   });
@@ -477,7 +485,7 @@ const QuotePreparation: React.FC = () => {
           sku_id: item.sku.id,
           quantity: item.quantity,
           unit_price: item.sell_price_ex_vat_at_time ?? item.sku.sell_price_ex_vat ?? 0,
-          category: item.sku.category,
+          category: item.sku.category_name || 'Unknown',
         })),
         // Labor lines
         ...laborLines.map(line => ({
@@ -743,7 +751,7 @@ const QuotePreparation: React.FC = () => {
                               <td className="px-4 py-4 text-right text-muted-foreground">{formatPrice(unitPrice)} kr</td>
                               <td className="px-4 py-4 text-right font-medium">{formatPrice(lineTotal)} kr</td>
                               <td className="px-6 py-4 text-center">
-                                <Badge variant="outline">{item.sku.category}</Badge>
+                                <Badge variant="outline">{item.sku.category_name || 'Unknown'}</Badge>
                               </td>
                             </tr>
                           );

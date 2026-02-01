@@ -55,11 +55,18 @@ const TemplatesList: React.FC = () => {
       for (const template of templateData) {
         const { data: items } = await supabase
           .from('template_items')
-          .select('quantity, skus(cost_ex_vat, default_margin, category)')
+          .select('quantity, skus(cost_ex_vat, default_margin, category_id, sku_categories!skus_category_id_fkey(id, name))')
           .eq('template_id', template.id);
 
-        // Get margin rules
-        const { data: marginRules } = await supabase.from('margin_rules').select('*');
+        // Get margin rules with category join
+        const { data: marginRules } = await supabase
+          .from('margin_rules')
+          .select('*, sku_categories!margin_rules_category_id_fkey(id, name)');
+        
+        const rulesWithNames = (marginRules || []).map(r => ({
+          ...r,
+          category_name: (r.sku_categories as { id: string; name: string } | null)?.name || 'Unknown',
+        }));
 
         let totalPrice = 0;
         let itemCount = 0;
@@ -69,7 +76,8 @@ const TemplatesList: React.FC = () => {
             itemCount += item.quantity;
             const sku = (item as any).skus;
             if (sku?.cost_ex_vat) {
-              const rule = marginRules?.find(r => r.category === sku.category);
+              const skuCategoryName = (sku.sku_categories as { id: string; name: string } | null)?.name || 'Unknown';
+              const rule = rulesWithNames.find(r => r.category_name === skuCategoryName);
               const margin = sku.default_margin ?? rule?.margin_percent ?? 0;
               const rounding = rule?.rounding ?? 5;
               const rawPrice = sku.cost_ex_vat * (1 + margin / 100);
