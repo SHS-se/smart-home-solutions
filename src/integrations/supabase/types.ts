@@ -1321,45 +1321,86 @@ export type Database = {
       is_admin: { Args: { _user_id: string }; Returns: boolean }
       is_staff: { Args: { _user_id: string }; Returns: boolean }
       is_staff_table_empty: { Args: never; Returns: boolean }
-      sku_compute_pricing: {
-        Args: {
-          p_category: string
-          p_margin_override_percent: number
-          p_purchase_includes_vat: boolean
-          p_purchase_price: number
-          p_rounding_override_sek: number
-          p_vat_rate: number
-        }
-        Returns: {
-          cost_ex_vat_computed: number
-          effective_margin_percent: number
-          effective_rounding_sek: number
-          rule_margin_percent: number
-          rule_rounding_sek: number
-          sell_price_ex_vat: number
-          sell_price_inc_vat: number
-        }[]
-      }
-      sku_insert_price_history: {
-        Args: {
-          p_category: string
-          p_change_reason: string
-          p_cost_ex_vat: number
-          p_effective_margin_percent: number
-          p_effective_rounding_sek: number
-          p_margin_override_percent: number
-          p_purchase_includes_vat: boolean
-          p_purchase_price: number
-          p_rounding_override_sek: number
-          p_rule_margin_percent: number
-          p_rule_rounding_sek: number
-          p_sell_price_ex_vat: number
-          p_sell_price_inc_vat: number
-          p_sku_id: string
-          p_vat_rate: number
-        }
-        Returns: undefined
-      }
+      sku_compute_pricing:
+        | {
+            Args: {
+              p_category: string
+              p_margin_override_percent: number
+              p_purchase_includes_vat: boolean
+              p_purchase_price: number
+              p_rounding_override_sek: number
+              p_vat_rate: number
+            }
+            Returns: {
+              cost_ex_vat_computed: number
+              effective_margin_percent: number
+              effective_rounding_sek: number
+              rule_margin_percent: number
+              rule_rounding_sek: number
+              sell_price_ex_vat: number
+              sell_price_inc_vat: number
+            }[]
+          }
+        | {
+            Args: {
+              p_category_id: string
+              p_margin_override_percent: number
+              p_purchase_includes_vat: boolean
+              p_purchase_price: number
+              p_rounding_override_sek: number
+              p_vat_rate: number
+            }
+            Returns: {
+              cost_ex_vat_computed: number
+              effective_margin_percent: number
+              effective_rounding_sek: number
+              rule_margin_percent: number
+              rule_rounding_sek: number
+              sell_price_ex_vat: number
+              sell_price_inc_vat: number
+            }[]
+          }
+      sku_insert_price_history:
+        | {
+            Args: {
+              p_category: string
+              p_change_reason: string
+              p_cost_ex_vat: number
+              p_effective_margin_percent: number
+              p_effective_rounding_sek: number
+              p_margin_override_percent: number
+              p_purchase_includes_vat: boolean
+              p_purchase_price: number
+              p_rounding_override_sek: number
+              p_rule_margin_percent: number
+              p_rule_rounding_sek: number
+              p_sell_price_ex_vat: number
+              p_sell_price_inc_vat: number
+              p_sku_id: string
+              p_vat_rate: number
+            }
+            Returns: undefined
+          }
+        | {
+            Args: {
+              p_category_id: string
+              p_change_reason: string
+              p_cost_ex_vat: number
+              p_effective_margin_percent: number
+              p_effective_rounding_sek: number
+              p_margin_override_percent: number
+              p_purchase_includes_vat: boolean
+              p_purchase_price: number
+              p_rounding_override_sek: number
+              p_rule_margin_percent: number
+              p_rule_rounding_sek: number
+              p_sell_price_ex_vat: number
+              p_sell_price_inc_vat: number
+              p_sku_id: string
+              p_vat_rate: number
+            }
+            Returns: undefined
+          }
     }
     Enums: {
       [_ in never]: never
