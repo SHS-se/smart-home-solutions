@@ -579,6 +579,7 @@ export type Database = {
       margin_rules: {
         Row: {
           category: string
+          category_id: string | null
           created_at: string
           description: string | null
           margin_percent: number
@@ -587,6 +588,7 @@ export type Database = {
         }
         Insert: {
           category: string
+          category_id?: string | null
           created_at?: string
           description?: string | null
           margin_percent?: number
@@ -595,13 +597,22 @@ export type Database = {
         }
         Update: {
           category?: string
+          category_id?: string | null
           created_at?: string
           description?: string | null
           margin_percent?: number
           rounding?: number
           updated_at?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "margin_rules_category_id_fkey"
+            columns: ["category_id"]
+            isOneToOne: false
+            referencedRelation: "sku_categories"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       quote_emails: {
         Row: {
@@ -994,6 +1005,7 @@ export type Database = {
       skus: {
         Row: {
           category: string
+          category_id: string | null
           cost_ex_vat: number | null
           cost_ex_vat_computed: number | null
           created_at: string
@@ -1019,6 +1031,7 @@ export type Database = {
         }
         Insert: {
           category: string
+          category_id?: string | null
           cost_ex_vat?: number | null
           cost_ex_vat_computed?: number | null
           created_at?: string
@@ -1044,6 +1057,7 @@ export type Database = {
         }
         Update: {
           category?: string
+          category_id?: string | null
           cost_ex_vat?: number | null
           cost_ex_vat_computed?: number | null
           created_at?: string
@@ -1067,7 +1081,15 @@ export type Database = {
           updated_at?: string
           vat_rate?: number
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "skus_category_id_fkey"
+            columns: ["category_id"]
+            isOneToOne: false
+            referencedRelation: "sku_categories"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       staff_users: {
         Row: {
