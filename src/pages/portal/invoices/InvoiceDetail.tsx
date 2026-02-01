@@ -287,11 +287,15 @@ const InvoiceDetail: React.FC = () => {
           <p className="text-muted-foreground">
             {t('Fastställd faktura', 'Finalized invoice')}
           </p>
-          <div className="flex flex-wrap gap-4 mt-2 text-sm">
+          <div className="flex flex-wrap items-center gap-4 mt-2 text-sm">
             <span>
               <span className="text-muted-foreground">{t('Kund:', 'Customer:')}</span>{' '}
               <strong>{invoice.customer?.org_name}</strong>
             </span>
+            {getStatusBadge(invoice.status, invoice.due_date, t)}
+            {invoice.is_test && (
+              <Badge variant="outline">Test</Badge>
+            )}
             {invoice.bom && (
               <span>
                 <span className="text-muted-foreground">{t('Projekt:', 'Project:')}</span>{' '}
@@ -473,16 +477,6 @@ const InvoiceDetail: React.FC = () => {
                 <CardTitle>{t('Fakturering', 'Invoicing')}</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div>
-                  <span className="text-sm text-muted-foreground">{t('Status', 'Status')}</span>
-                  <div className="mt-1">
-                    {getStatusBadge(invoice.status, invoice.due_date, t)}
-                    {invoice.is_test && (
-                      <Badge variant="outline" className="ml-2">Test</Badge>
-                    )}
-                  </div>
-                </div>
-                
                 <div>
                   <span className="text-sm text-muted-foreground">{t('Fakturanummer', 'Invoice number')}</span>
                   <p className="font-mono font-medium">{invoice.invoice_number}</p>
