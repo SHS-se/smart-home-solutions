@@ -90,27 +90,44 @@ const getErdDiagram = (direction: 'TB' | 'LR') => `erDiagram
     invoices {
         uuid id PK
         uuid customer_id FK
-        text external_id
+        uuid quote_id FK
+        text stripe_invoice_id UK
+        text invoice_number
         numeric amount
         text currency
         text status
-        text pdf_url
+        text hosted_invoice_url
+        text invoice_pdf_url
         date date
+        date due_date
+        timestamptz finalized_at
+        timestamptz paid_at
+        timestamptz voided_at
         timestamptz created_at
+        timestamptz updated_at
     }
 
     %% SKU Catalog
     skus {
         uuid id PK
+        uuid category_id FK
         text sku
         text name
-        text category
         text supplier
         text supplier_url
-        numeric cost_ex_vat
-        numeric default_margin
+        numeric purchase_price
+        boolean purchase_includes_vat
+        numeric vat_rate
+        numeric cost_ex_vat_computed
+        numeric sell_price_ex_vat
+        numeric sell_price_inc_vat
+        numeric effective_margin_percent
+        int effective_rounding_sek
+        numeric margin_override_percent
+        int rounding_override_sek
         text image_path
         text notes
+        timestamptz pricing_updated_at
         timestamptz created_at
         timestamptz updated_at
     }
@@ -125,7 +142,7 @@ const getErdDiagram = (direction: 'TB' | 'LR') => `erDiagram
     }
 
     margin_rules {
-        text category PK
+        uuid category_id PK,FK
         numeric margin_percent
         int rounding
         text description
@@ -202,6 +219,10 @@ const getErdDiagram = (direction: 'TB' | 'LR') => `erDiagram
     customers ||--o{ invoices : "billed"
     customers ||--o{ boms : "owns"
     customers ||--o{ quotes : "receives"
+    
+    quotes }o--o| invoices : "converts to"
+    sku_categories ||--o{ skus : "categorizes"
+    sku_categories ||--o{ margin_rules : "defines margin"
 
     contacts ||--o{ contact_messages : "has"
     contacts }o--o| customers : "converts to"

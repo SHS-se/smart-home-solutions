@@ -463,7 +463,6 @@ export type Database = {
           customer_id: string
           date: string | null
           due_date: string | null
-          external_id: string | null
           finalized_at: string | null
           hosted_invoice_url: string | null
           id: string
@@ -496,7 +495,6 @@ export type Database = {
           customer_id: string
           date?: string | null
           due_date?: string | null
-          external_id?: string | null
           finalized_at?: string | null
           hosted_invoice_url?: string | null
           id?: string
@@ -529,7 +527,6 @@ export type Database = {
           customer_id?: string
           date?: string | null
           due_date?: string | null
-          external_id?: string | null
           finalized_at?: string | null
           hosted_invoice_url?: string | null
           id?: string

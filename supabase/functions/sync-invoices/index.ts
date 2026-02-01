@@ -83,40 +83,31 @@ serve(async (req) => {
       
       const invoiceData = {
         customer_id: customerId,
-        external_id: invoice.number || invoice.id,
+        stripe_invoice_id: invoice.id,
+        invoice_number: invoice.number || null,
         date: invoice.created ? new Date(invoice.created * 1000).toISOString().split('T')[0] : null,
         amount: invoice.amount_due ? invoice.amount_due / 100 : 0,
+        subtotal: invoice.subtotal ? invoice.subtotal / 100 : null,
+        tax: invoice.tax ? invoice.tax / 100 : null,
+        total: invoice.total ? invoice.total / 100 : null,
         currency: (invoice.currency || 'sek').toUpperCase(),
         status: status,
-        pdf_url: invoice.invoice_pdf || null,
+        hosted_invoice_url: invoice.hosted_invoice_url || null,
+        invoice_pdf_url: invoice.invoice_pdf || null,
+        due_date: invoice.due_date ? new Date(invoice.due_date * 1000).toISOString().split('T')[0] : null,
+        updated_at: new Date().toISOString(),
       };
 
-      // Upsert invoice
+      // Upsert invoice by stripe_invoice_id (now has UNIQUE constraint)
       const { error: upsertError } = await supabaseClient
         .from('invoices')
         .upsert(invoiceData, { 
-          onConflict: 'external_id',
+          onConflict: 'stripe_invoice_id',
           ignoreDuplicates: false 
         });
 
       if (upsertError) {
-        // If upsert fails due to missing unique constraint, try insert/update manually
-        const { data: existingInvoice } = await supabaseClient
-          .from('invoices')
-          .select('id')
-          .eq('external_id', invoiceData.external_id)
-          .maybeSingle();
-
-        if (existingInvoice) {
-          await supabaseClient
-            .from('invoices')
-            .update(invoiceData)
-            .eq('id', existingInvoice.id);
-        } else {
-          await supabaseClient
-            .from('invoices')
-            .insert(invoiceData);
-        }
+        logStep("Error upserting invoice", { invoiceId: invoice.id, error: upsertError.message });
       }
       
       syncedCount++;
