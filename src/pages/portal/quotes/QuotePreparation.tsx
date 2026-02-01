@@ -434,7 +434,15 @@ const QuotePreparation: React.FC = () => {
       // Get the response as a blob and open it
       const pdfBlob = await response.blob();
       const pdfUrl = URL.createObjectURL(pdfBlob);
-      window.open(pdfUrl, '_blank');
+      
+      // Use an anchor element to open the PDF - more reliable than window.open
+      const link = document.createElement('a');
+      link.href = pdfUrl;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
       
       // Clean up the object URL after a delay
       setTimeout(() => URL.revokeObjectURL(pdfUrl), 60000);
