@@ -1030,7 +1030,7 @@ const QuotePreparation: React.FC = () => {
                     </p>
                   )}
                   <Button 
-                    variant="outline" 
+                    variant="success" 
                     className="w-full"
                     onClick={createInvoiceFromQuote}
                     disabled={isCreatingInvoice || !quote?.customer_id}
