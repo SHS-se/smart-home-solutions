@@ -148,6 +148,18 @@ serve(async (req) => {
         };
         break;
 
+      case 'invoice.created':
+        eventType = 'invoice_created';
+        updateData = {
+          invoice_status: invoice.status || 'draft',
+          invoice_number: invoice.number,
+          invoice_due_date: invoice.due_date ? new Date(invoice.due_date * 1000).toISOString() : null,
+          invoice_subtotal: invoice.subtotal ? invoice.subtotal / 100 : null,
+          invoice_vat: invoice.tax ? invoice.tax / 100 : null,
+          invoice_total: invoice.total ? invoice.total / 100 : null,
+        };
+        break;
+
       case 'invoice.finalized':
         eventType = 'invoice_finalized';
         updateData = {
