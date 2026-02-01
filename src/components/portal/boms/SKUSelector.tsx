@@ -32,7 +32,6 @@ interface SKU {
   id: string;
   sku: string;
   name: string;
-  category: string; // deprecated
   category_id: string | null;
   category_name?: string; // from join
   cost_ex_vat_computed: number | null;
@@ -64,13 +63,13 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
     queryFn: async () => {
       const { data, error } = await supabase
         .from('skus')
-        .select('id, sku, name, category, category_id, cost_ex_vat_computed, vat_rate, sell_price_ex_vat, sell_price_inc_vat, sku_categories!skus_category_id_fkey(id, name)')
+        .select('id, sku, name, category_id, cost_ex_vat_computed, vat_rate, sell_price_ex_vat, sell_price_inc_vat, sku_categories!skus_category_id_fkey(id, name)')
         .order('sku');
       if (error) throw error;
       // Map the joined category name
       return (data || []).map(sku => ({
         ...sku,
-        category_name: sku.sku_categories?.name || sku.category,
+        category_name: (sku.sku_categories as { id: string; name: string } | null)?.name || 'Unknown',
       })) as SKU[];
     },
   });

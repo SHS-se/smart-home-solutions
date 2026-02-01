@@ -37,7 +37,6 @@ interface SKU {
   id: string;
   sku: string;
   name: string;
-  category: string; // deprecated, kept for compatibility
   category_id: string | null;
   supplier: string | null;
   supplier_url: string | null;
