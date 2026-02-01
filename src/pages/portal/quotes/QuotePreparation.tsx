@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
@@ -107,7 +107,7 @@ const QuotePreparation: React.FC = () => {
   });
 
   // Fetch quote lines (for labor and travel)
-  const { data: lines = [] } = useQuery({
+  const { data: lines = [], isSuccess: linesLoaded } = useQuery({
     queryKey: ['quote_lines', id],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -120,6 +120,56 @@ const QuotePreparation: React.FC = () => {
     },
     enabled: isStaff && !!id,
   });
+
+  // Track if we've already initialized default rows
+  const defaultRowsInitialized = useRef(false);
+
+  // Auto-create default Labor and Travel rows if none exist
+  useEffect(() => {
+    if (!linesLoaded || !id || defaultRowsInitialized.current) return;
+    
+    const laborLines = lines.filter(l => l.section === 'labor');
+    const travelLines = lines.filter(l => l.section === 'travel');
+    
+    const createDefaults = async () => {
+      let created = false;
+      
+      if (laborLines.length === 0) {
+        await supabase.from('quote_lines').insert({
+          quote_id: id,
+          section: 'labor',
+          description: 'Installation',
+          quantity: 1,
+          unit_price: 850,
+          unit_price_ex_vat: 850,
+          vat_rate: 0.25,
+          unit_price_inc_vat: 850 * 1.25,
+        });
+        created = true;
+      }
+      
+      if (travelLines.length === 0) {
+        await supabase.from('quote_lines').insert({
+          quote_id: id,
+          section: 'travel',
+          description: 'Resa',
+          quantity: 1,
+          unit_price: 500,
+          unit_price_ex_vat: 500,
+          vat_rate: 0.25,
+          unit_price_inc_vat: 500 * 1.25,
+        });
+        created = true;
+      }
+      
+      if (created) {
+        queryClient.invalidateQueries({ queryKey: ['quote_lines', id] });
+      }
+    };
+    
+    defaultRowsInitialized.current = true;
+    createDefaults();
+  }, [linesLoaded, lines, id, queryClient]);
 
   // Fetch BOM items with full SKU data
   const { data: bomItems = [] } = useQuery({
