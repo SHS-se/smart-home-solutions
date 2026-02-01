@@ -24,10 +24,7 @@ const InvoiceActionsMenu: React.FC<InvoiceActionsMenuProps> = ({
 }) => {
   const { t } = useLanguage();
 
-  // Only show test toggle for draft invoices
-  const canToggleTest = status === 'draft';
-
-  if (!canToggleTest) return null;
+  // Always show the menu for test toggle capability
 
   return (
     <DropdownMenu>
