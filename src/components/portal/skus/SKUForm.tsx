@@ -28,11 +28,17 @@ import { toast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 import { sv, enUS } from 'date-fns/locale';
 
+interface Category {
+  id: string;
+  name: string;
+}
+
 interface SKU {
   id: string;
   sku: string;
   name: string;
-  category: string;
+  category: string; // deprecated, kept for compatibility
+  category_id: string | null;
   supplier: string | null;
   supplier_url: string | null;
   notes: string | null;
@@ -56,7 +62,7 @@ interface SKU {
 interface SKUFormProps {
   sku: SKU | null;
   onClose: () => void;
-  categories: string[];
+  categories: Category[];
 }
 
 const VAT_RATE_OPTIONS = [
@@ -75,7 +81,7 @@ const SKUForm: React.FC<SKUFormProps> = ({ sku, onClose, categories }) => {
   const [formData, setFormData] = useState({
     sku: '',
     name: '',
-    category: '',
+    category_id: '', // Using category_id instead of category text
     supplier: '',
     supplier_url: '',
     notes: '',
@@ -100,11 +106,13 @@ const SKUForm: React.FC<SKUFormProps> = ({ sku, onClose, categories }) => {
     }
   }, [formData.sku]);
 
-  // Fetch margin rules for placeholder values
+  // Fetch margin rules for placeholder values (with category_id join)
   const { data: marginRules = [] } = useQuery({
-    queryKey: ['margin_rules'],
+    queryKey: ['margin_rules_with_categories'],
     queryFn: async () => {
-      const { data, error } = await supabase.from('margin_rules').select('*');
+      const { data, error } = await supabase
+        .from('margin_rules')
+        .select('*, sku_categories!margin_rules_category_id_fkey(id, name)');
       if (error) throw error;
       return data;
     },
@@ -131,7 +139,7 @@ const SKUForm: React.FC<SKUFormProps> = ({ sku, onClose, categories }) => {
       setFormData({
         sku: sku.sku,
         name: sku.name,
-        category: sku.category,
+        category_id: sku.category_id || '',
         supplier: sku.supplier || '',
         supplier_url: sku.supplier_url || '',
         notes: sku.notes || '',
@@ -145,8 +153,8 @@ const SKUForm: React.FC<SKUFormProps> = ({ sku, onClose, categories }) => {
     }
   }, [sku]);
 
-  // Get category rule for placeholders
-  const categoryRule = marginRules.find(r => r.category === formData.category);
+  // Get category rule for placeholders using category_id
+  const categoryRule = marginRules.find(r => r.category_id === formData.category_id);
 
   // Calculate preview prices (client-side preview, actual calculation happens in DB trigger)
   const calculatePreview = () => {
@@ -182,8 +190,8 @@ const SKUForm: React.FC<SKUFormProps> = ({ sku, onClose, categories }) => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Validate category exists in margin_rules
-    if (!marginRules.find(r => r.category === formData.category)) {
+    // Validate category_id exists in margin_rules
+    if (!marginRules.find(r => r.category_id === formData.category_id)) {
       toast({
         title: t('Ogiltig kategori', 'Invalid category'),
         description: t('Kategorin måste finnas i marginalreglerna', 'Category must exist in margin rules'),
@@ -208,10 +216,14 @@ const SKUForm: React.FC<SKUFormProps> = ({ sku, onClose, categories }) => {
         imagePath = fileName;
       }
 
+      // Get category name for legacy field
+      const selectedCategory = categories.find(c => c.id === formData.category_id);
+      
       const skuData = {
         sku: formData.sku,
         name: formData.name,
-        category: formData.category,
+        category_id: formData.category_id,
+        category: selectedCategory?.name || '', // Keep legacy field in sync
         supplier: formData.supplier || null,
         supplier_url: formData.supplier_url || null,
         notes: formData.notes || null,
@@ -309,8 +321,8 @@ const SKUForm: React.FC<SKUFormProps> = ({ sku, onClose, categories }) => {
               {t('Kategori', 'Category')} <span className="text-destructive">*</span>
             </Label>
             <Select 
-              value={formData.category} 
-              onValueChange={(value) => setFormData(prev => ({ ...prev, category: value }))}
+              value={formData.category_id} 
+              onValueChange={(value) => setFormData(prev => ({ ...prev, category_id: value }))}
               required
             >
               <SelectTrigger>
@@ -318,7 +330,7 @@ const SKUForm: React.FC<SKUFormProps> = ({ sku, onClose, categories }) => {
               </SelectTrigger>
               <SelectContent>
                 {categories.map(cat => (
-                  <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                  <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
