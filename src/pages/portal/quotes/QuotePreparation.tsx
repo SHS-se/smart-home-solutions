@@ -1033,7 +1033,7 @@ const QuotePreparation: React.FC = () => {
                     variant="success" 
                     className="w-full"
                     onClick={createInvoiceFromQuote}
-                    disabled={isCreatingInvoice || !quote?.customer_id}
+                    disabled={isCreatingInvoice || !quote?.customer_id || !quote?.stripe_quote_id}
                   >
                     {isCreatingInvoice ? (
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />
