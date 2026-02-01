@@ -18,8 +18,6 @@ import QuoteOutdatedBanner from '@/components/portal/quotes/QuoteOutdatedBanner'
 import QuoteUpdateConfirmDialog from '@/components/portal/quotes/QuoteUpdateConfirmDialog';
 import { useQuoteVersioning } from '@/hooks/use-quote-versioning';
 import BlurCommitInput from '@/components/ui/blur-commit-input';
-import InvoiceCard from '@/components/portal/quotes/InvoiceCard';
-import BillingEventLog from '@/components/portal/quotes/BillingEventLog';
 
 interface QuoteLine {
   id: string;
@@ -967,15 +965,6 @@ const QuotePreparation: React.FC = () => {
               </CardContent>
             </Card>
 
-            {/* Invoice Card */}
-            {quote && (
-              <InvoiceCard quote={quote} />
-            )}
-
-            {/* Billing Event Log */}
-            {id && (
-              <BillingEventLog quoteId={id} />
-            )}
           </div>
         </div>
 

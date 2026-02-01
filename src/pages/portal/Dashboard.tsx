@@ -294,7 +294,7 @@ const Dashboard: React.FC = () => {
             {/* Offerter & Material Section */}
             <div>
               <h2 className="text-lg font-medium mb-4 text-muted-foreground">{t('Offerter & Material', 'Quotes & Materials')}</h2>
-              <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+              <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-5">
                 <Card 
                   className="cursor-pointer transition-colors hover:bg-muted/50"
                   onClick={() => navigate('/portal/skus')}
@@ -374,6 +374,29 @@ const Dashboard: React.FC = () => {
                     </p>
                     <p className="text-muted-foreground">
                       {t('Totalt:', 'Total:')} <strong>{quoteStats.total}</strong>
+                    </p>
+                  </CardContent>
+                </Card>
+
+                <Card 
+                  className="cursor-pointer transition-colors hover:bg-muted/50"
+                  onClick={() => navigate('/portal/invoices')}
+                >
+                  <CardHeader className="flex flex-row items-center gap-4">
+                    <div className="p-2 rounded-lg bg-primary/10">
+                      <Receipt className="w-6 h-6 text-primary" />
+                    </div>
+                    <CardTitle className="text-lg">{t('Fakturor', 'Invoices')}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-muted-foreground mb-1">
+                      {t('Hantera fakturor', 'Manage invoices')}
+                    </p>
+                    <p className="text-muted-foreground mb-1">
+                      {t('Öppna:', 'Open:')} <strong>{invoiceStats2.open}</strong> | {t('Betalda:', 'Paid:')} <strong>{invoiceStats2.paid}</strong>
+                    </p>
+                    <p className="text-muted-foreground">
+                      {t('Totalt:', 'Total:')} <strong>{invoiceStats2.total}</strong>
                     </p>
                   </CardContent>
                 </Card>
