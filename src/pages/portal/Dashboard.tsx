@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Building2, FileText, MessageSquare, Loader2, Shield, Users, Package, Box, FileCheck, Settings, Database } from 'lucide-react';
+import { Building2, FileText, MessageSquare, Loader2, Shield, Users, Package, Box, FileCheck, Settings, Database, Receipt } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -24,6 +24,7 @@ const Dashboard: React.FC = () => {
   const [templateStats, setTemplateStats] = useState({ total: 0 });
   const [bomStats, setBomStats] = useState({ total: 0 });
   const [quoteStats, setQuoteStats] = useState({ total: 0, draft: 0 });
+  const [invoiceStats2, setInvoiceStats2] = useState({ total: 0, open: 0, paid: 0 });
   const [canBootstrap, setCanBootstrap] = useState(false);
   const [bootstrapLoading, setBootstrapLoading] = useState(false);
   const [statsLoading, setStatsLoading] = useState(true);
@@ -69,6 +70,9 @@ const Dashboard: React.FC = () => {
             bomsResult,
             quotesResult,
             draftQuotesResult,
+            invoicesResult,
+            openInvoicesResult,
+            paidInvoicesResult,
           ] = await Promise.all([
             supabase.from('tickets').select('*', { count: 'exact', head: true }),
             supabase.from('tickets').select('*', { count: 'exact', head: true }).neq('status', 'closed'),
@@ -80,6 +84,9 @@ const Dashboard: React.FC = () => {
             supabase.from('boms').select('*', { count: 'exact', head: true }),
             supabase.from('quotes').select('*', { count: 'exact', head: true }),
             supabase.from('quotes').select('*', { count: 'exact', head: true }).eq('status', 'draft'),
+            supabase.from('invoices').select('*', { count: 'exact', head: true }),
+            supabase.from('invoices').select('*', { count: 'exact', head: true }).eq('status', 'open'),
+            supabase.from('invoices').select('*', { count: 'exact', head: true }).eq('status', 'paid'),
           ]);
           
           setTicketStats({ open: openTicketsResult.count || 0, total: ticketsResult.count || 0 });
@@ -89,6 +96,7 @@ const Dashboard: React.FC = () => {
           setTemplateStats({ total: templatesResult.count || 0 });
           setBomStats({ total: bomsResult.count || 0 });
           setQuoteStats({ total: quotesResult.count || 0, draft: draftQuotesResult.count || 0 });
+          setInvoiceStats2({ total: invoicesResult.count || 0, open: openInvoicesResult.count || 0, paid: paidInvoicesResult.count || 0 });
         } else if (customerData) {
           // Customer sees their tickets
           const { count: totalTickets } = await supabase
