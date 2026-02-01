@@ -18,7 +18,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { SortableTableHead } from '@/components/ui/sortable-table-head';
-import { Plus, Filter, TestTube, ExternalLink } from 'lucide-react';
+import { Plus, TestTube, ExternalLink } from 'lucide-react';
 import { format } from 'date-fns';
 import { sv } from 'date-fns/locale';
 import { toast } from '@/hooks/use-toast';
@@ -76,7 +76,7 @@ const InvoicesList: React.FC = () => {
     defaultDirection: 'desc' 
   });
 
-  const [showFilters, setShowFilters] = useState(false);
+  
 
   // Fetch invoices
   const { data: invoices = [], isLoading } = useQuery({
@@ -179,10 +179,6 @@ const InvoicesList: React.FC = () => {
             </p>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => setShowFilters(!showFilters)}>
-              <Filter className="h-4 w-4 mr-2" />
-              {t('Filter', 'Filter')}
-            </Button>
             <Button onClick={() => navigate('/portal/invoices/new')}>
               <Plus className="h-4 w-4 mr-2" />
               {t('Skapa faktura', 'Create invoice')}
