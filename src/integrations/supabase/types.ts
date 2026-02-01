@@ -578,7 +578,6 @@ export type Database = {
       }
       margin_rules: {
         Row: {
-          category: string
           category_id: string | null
           created_at: string
           description: string | null
@@ -587,7 +586,6 @@ export type Database = {
           updated_at: string
         }
         Insert: {
-          category: string
           category_id?: string | null
           created_at?: string
           description?: string | null
@@ -596,7 +594,6 @@ export type Database = {
           updated_at?: string
         }
         Update: {
-          category?: string
           category_id?: string | null
           created_at?: string
           description?: string | null
@@ -1004,7 +1001,6 @@ export type Database = {
       }
       skus: {
         Row: {
-          category: string
           category_id: string | null
           cost_ex_vat: number | null
           cost_ex_vat_computed: number | null
@@ -1030,7 +1026,6 @@ export type Database = {
           vat_rate: number
         }
         Insert: {
-          category: string
           category_id?: string | null
           cost_ex_vat?: number | null
           cost_ex_vat_computed?: number | null
@@ -1056,7 +1051,6 @@ export type Database = {
           vat_rate?: number
         }
         Update: {
-          category?: string
           category_id?: string | null
           cost_ex_vat?: number | null
           cost_ex_vat_computed?: number | null
