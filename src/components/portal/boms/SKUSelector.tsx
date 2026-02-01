@@ -32,7 +32,9 @@ interface SKU {
   id: string;
   sku: string;
   name: string;
-  category: string;
+  category: string; // deprecated
+  category_id: string | null;
+  category_name?: string; // from join
   cost_ex_vat_computed: number | null;
   vat_rate: number;
   sell_price_ex_vat: number | null;
@@ -56,16 +58,20 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
   const [search, setSearch] = useState('');
   const [quantities, setQuantities] = useState<Record<string, number>>({});
 
-  // Fetch SKUs with pre-calculated pricing
+  // Fetch SKUs with pre-calculated pricing and category join
   const { data: skus = [] } = useQuery({
-    queryKey: ['skus'],
+    queryKey: ['skus_for_selector'],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('skus')
-        .select('id, sku, name, category, cost_ex_vat_computed, vat_rate, sell_price_ex_vat, sell_price_inc_vat')
+        .select('id, sku, name, category, category_id, cost_ex_vat_computed, vat_rate, sell_price_ex_vat, sell_price_inc_vat, sku_categories!skus_category_id_fkey(id, name)')
         .order('sku');
       if (error) throw error;
-      return data as SKU[];
+      // Map the joined category name
+      return (data || []).map(sku => ({
+        ...sku,
+        category_name: sku.sku_categories?.name || sku.category,
+      })) as SKU[];
     },
   });
 
@@ -134,7 +140,7 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
                       <TableCell className="font-mono">{sku.sku}</TableCell>
                       <TableCell>{sku.name}</TableCell>
                       <TableCell>
-                        <Badge variant="secondary">{sku.category}</Badge>
+                        <Badge variant="secondary">{sku.category_name}</Badge>
                       </TableCell>
                       <TableCell className="text-right">
                         <Tooltip>

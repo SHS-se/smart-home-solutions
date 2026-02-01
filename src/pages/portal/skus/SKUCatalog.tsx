@@ -42,11 +42,18 @@ import { Plus, Upload, Search, Pencil, Trash2, ExternalLink, Settings2 } from 'l
 import { toast } from '@/hooks/use-toast';
 import SKUForm from '@/components/portal/skus/SKUForm';
 
+interface Category {
+  id: string;
+  name: string;
+}
+
 interface SKU {
   id: string;
   sku: string;
   name: string;
-  category: string;
+  category: string; // deprecated, kept for compatibility
+  category_id: string | null;
+  category_name?: string; // from join
   supplier: string | null;
   supplier_url: string | null;
   notes: string | null;
@@ -81,16 +88,20 @@ const SKUCatalog: React.FC = () => {
   const [editingSku, setEditingSku] = useState<SKU | null>(null);
   const { sortColumn, sortDirection, handleSort } = useTableSort<SortColumn>({ defaultColumn: 'sku' });
 
-  // Fetch SKUs with all pricing fields
+  // Fetch SKUs with category join
   const { data: skus = [], isLoading } = useQuery({
     queryKey: ['skus'],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('skus')
-        .select('*')
+        .select('*, sku_categories!skus_category_id_fkey(id, name)')
         .order('sku');
       if (error) throw error;
-      return data as SKU[];
+      // Map the joined category name
+      return (data || []).map(sku => ({
+        ...sku,
+        category_name: sku.sku_categories?.name || sku.category,
+      })) as SKU[];
     },
     enabled: isStaff,
   });
@@ -130,7 +141,8 @@ const SKUCatalog: React.FC = () => {
       const matchesSearch = 
         sku.sku.toLowerCase().includes(search.toLowerCase()) ||
         sku.name.toLowerCase().includes(search.toLowerCase());
-      const matchesCategory = categoryFilter === 'all' || sku.category === categoryFilter;
+      // Filter by category_name (from join) or legacy category
+      const matchesCategory = categoryFilter === 'all' || sku.category_name === categoryFilter;
       return matchesSearch && matchesCategory;
     });
 
@@ -139,8 +151,10 @@ const SKUCatalog: React.FC = () => {
     switch (sortColumn) {
       case 'sku':
       case 'name':
-      case 'category':
         sorted = naturalSort(filtered, sortColumn, sortDirection === 'asc');
+        break;
+      case 'category':
+        sorted = naturalSort(filtered, 'category_name', sortDirection === 'asc');
         break;
       case 'supplier':
         sorted = naturalSort(filtered, 'supplier', sortDirection === 'asc');
@@ -290,7 +304,7 @@ const SKUCatalog: React.FC = () => {
                     <TableCell className="font-mono text-sm">{sku.sku}</TableCell>
                     <TableCell>{sku.name}</TableCell>
                     <TableCell>
-                      <Badge variant="secondary">{sku.category}</Badge>
+                      <Badge variant="secondary">{sku.category_name}</Badge>
                     </TableCell>
                     <TableCell>
                       {sku.supplier_url ? (
@@ -378,7 +392,7 @@ const SKUCatalog: React.FC = () => {
           <SKUForm 
             sku={editingSku} 
             onClose={handleDialogClose}
-            categories={categories.map(c => c.name)}
+            categories={categories as Category[]}
           />
         </DialogContent>
       </Dialog>
