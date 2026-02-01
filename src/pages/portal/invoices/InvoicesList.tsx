@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -18,13 +18,16 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { SortableTableHead } from '@/components/ui/sortable-table-head';
-import { Plus, Filter, TestTube } from 'lucide-react';
+import { Plus, Filter, TestTube, ExternalLink } from 'lucide-react';
 import { format } from 'date-fns';
 import { sv } from 'date-fns/locale';
+import { toast } from '@/hooks/use-toast';
+import InvoiceActionsMenu from '@/components/portal/invoices/InvoiceActionsMenu';
 
 interface Invoice {
   id: string;
   invoice_number: string | null;
+  stripe_invoice_id: string | null;
   status: string;
   is_test: boolean;
   due_date: string | null;
@@ -67,6 +70,7 @@ const InvoicesList: React.FC = () => {
   const { t } = useLanguage();
   const { isStaff, loading: authLoading } = useAuth();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { sortColumn, sortDirection, handleSort } = useTableSort<SortColumn>({ 
     defaultColumn: 'created_at', 
     defaultDirection: 'desc' 
@@ -86,6 +90,32 @@ const InvoicesList: React.FC = () => {
       return data as Invoice[];
     },
     enabled: isStaff,
+  });
+
+  // Mark/Unmark test mutation
+  const markTestMutation = useMutation({
+    mutationFn: async ({ invoiceId, markAsTest }: { invoiceId: string; markAsTest: boolean }) => {
+      const { error } = await supabase
+        .from('invoices')
+        .update({ is_test: markAsTest })
+        .eq('id', invoiceId);
+      if (error) throw error;
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['invoices'] });
+      toast({ 
+        title: variables.markAsTest 
+          ? t('Faktura markerad som test', 'Invoice marked as test')
+          : t('Testmarkering borttagen', 'Test mark removed')
+      });
+    },
+    onError: (error: Error) => {
+      toast({ 
+        title: t('Fel', 'Error'),
+        description: error.message,
+        variant: 'destructive'
+      });
+    },
   });
 
   // Calculate KPI stats
@@ -220,18 +250,21 @@ const InvoicesList: React.FC = () => {
                 <TableHead className="text-muted-foreground text-xs uppercase">
                   {t('STATUS', 'STATUS')}
                 </TableHead>
+                <TableHead className="text-muted-foreground text-xs uppercase text-right">
+                  {t('ÅTGÄRDER', 'ACTIONS')}
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                     {t('Laddar...', 'Loading...')}
                   </TableCell>
                 </TableRow>
               ) : sortedInvoices.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                     {t('Inga fakturor skapade ännu.', 'No invoices created yet.')}
                   </TableCell>
                 </TableRow>
@@ -278,6 +311,32 @@ const InvoicesList: React.FC = () => {
                     </TableCell>
                     <TableCell>
                       {getStatusBadge(invoice.status, invoice.due_date, t)}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-1">
+                        {invoice.stripe_invoice_id && (
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            asChild
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <a 
+                              href={`https://dashboard.stripe.com/invoices/${invoice.stripe_invoice_id}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              <ExternalLink className="h-4 w-4" />
+                            </a>
+                          </Button>
+                        )}
+                        <InvoiceActionsMenu
+                          isTest={invoice.is_test}
+                          status={invoice.status}
+                          onMarkTest={() => markTestMutation.mutate({ invoiceId: invoice.id, markAsTest: true })}
+                          onUnmarkTest={() => markTestMutation.mutate({ invoiceId: invoice.id, markAsTest: false })}
+                        />
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))
