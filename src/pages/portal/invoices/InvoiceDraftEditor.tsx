@@ -141,6 +141,55 @@ const InvoiceDraftEditor: React.FC = () => {
     enabled: isStaff,
   });
 
+  // Fetch BOM items when a BOM is selected (for new invoices only)
+  const { data: bomItems } = useQuery({
+    queryKey: ['bom_items_for_invoice', selectedBomId],
+    queryFn: async () => {
+      if (!selectedBomId) return [];
+      const { data, error } = await supabase
+        .from('bom_items')
+        .select(`
+          id,
+          sku_id,
+          quantity,
+          sell_price_ex_vat_at_time,
+          sell_price_inc_vat_at_time,
+          vat_rate_at_time,
+          skus!bom_items_sku_id_fkey(sku, name, sell_price_ex_vat, vat_rate)
+        `)
+        .eq('bom_id', selectedBomId);
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!selectedBomId && !invoiceId && isStaff,
+  });
+
+  // Populate line items when BOM items are loaded (for new invoices only)
+  useEffect(() => {
+    if (bomItems && bomItems.length > 0 && !invoiceId) {
+      const hardwareItems: LineItem[] = bomItems.map((item, idx) => {
+        const sku = item.skus as { sku: string; name: string; sell_price_ex_vat: number | null; vat_rate: number } | null;
+        const unitPrice = item.sell_price_ex_vat_at_time ?? sku?.sell_price_ex_vat ?? 0;
+        const vatRate = item.vat_rate_at_time ?? sku?.vat_rate ?? 25;
+        return {
+          line_type: 'hardware' as const,
+          description: sku?.name || 'Unknown product',
+          sku: sku?.sku || '',
+          sku_id: item.sku_id,
+          quantity: item.quantity,
+          unit_price: unitPrice,
+          tax_rate: vatRate,
+          sort_order: idx,
+        };
+      });
+      // Keep existing labor/travel items, replace hardware
+      setLineItems(prev => [
+        ...hardwareItems,
+        ...prev.filter(i => i.line_type !== 'hardware'),
+      ]);
+    }
+  }, [bomItems, invoiceId]);
+
   // Initialize state from existing invoice
   useEffect(() => {
     if (existingInvoice) {
