@@ -392,12 +392,15 @@ const InvoiceDraftEditor: React.FC = () => {
                   </div>
                   <div>
                     <Label>{t('Materiallista (valfritt)', 'BOM (optional)')}</Label>
-                    <Select value={selectedBomId || ''} onValueChange={setSelectedBomId}>
+                    <Select 
+                      value={selectedBomId || 'none'} 
+                      onValueChange={(val) => setSelectedBomId(val === 'none' ? null : val)}
+                    >
                       <SelectTrigger>
                         <SelectValue placeholder={t('Välj BOM...', 'Select BOM...')} />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="">{t('Ingen', 'None')}</SelectItem>
+                        <SelectItem value="none">{t('Ingen', 'None')}</SelectItem>
                         {boms.filter(b => !selectedCustomerId || b.customer_id === selectedCustomerId).map(b => (
                           <SelectItem key={b.id} value={b.id}>{b.project_name} (v{b.version})</SelectItem>
                         ))}
