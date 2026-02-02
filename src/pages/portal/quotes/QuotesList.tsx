@@ -42,6 +42,7 @@ interface Quote {
   hardware_total: number;
   labor_total: number;
   travel_total: number;
+  computed_total_inc_vat: number;
   stripe_quote_id: string | null;
   status: string;
   created_at: string;
@@ -93,23 +94,39 @@ const QuotesList: React.FC = () => {
   const [pdfQuoteNumber, setPdfQuoteNumber] = useState<string>('');
   const [isCancelling, setIsCancelling] = useState(false);
 
-  // Fetch quotes
+  // Fetch quotes with computed totals
   const { data: quotes = [], isLoading } = useQuery({
     queryKey: ['quotes'],
     queryFn: async () => {
-      const { data, error } = await supabase
+      // Fetch quotes
+      const { data: quotesData, error: quotesError } = await supabase
         .from('quotes')
         .select('*, customers(org_name), boms(project_name)')
         .order('created_at', { ascending: false });
-      if (error) throw error;
-      return data.map(q => ({
-        ...q,
-        customer: (q as any).customers,
-        bom: (q as any).boms,
-        version: q.version ?? 1,
-        is_latest: q.is_latest ?? true,
-        is_test: (q as any).is_test ?? false,
-      })) as Quote[];
+      if (quotesError) throw quotesError;
+
+      // Fetch computed totals
+      const { data: totalsData, error: totalsError } = await supabase
+        .from('quote_computed_totals')
+        .select('*');
+      if (totalsError) throw totalsError;
+
+      // Create a map for quick lookup
+      const totalsMap = new Map(totalsData?.map(t => [t.quote_id, t]) || []);
+
+      return quotesData.map(q => {
+        const computed = totalsMap.get(q.id);
+        return {
+          ...q,
+          customer: (q as any).customers,
+          bom: (q as any).boms,
+          version: q.version ?? 1,
+          is_latest: q.is_latest ?? true,
+          is_test: (q as any).is_test ?? false,
+          // Use computed totals
+          computed_total_inc_vat: computed?.total_inc_vat ?? 0,
+        };
+      }) as Quote[];
     },
     enabled: isStaff,
   });
@@ -163,7 +180,7 @@ const QuotesList: React.FC = () => {
           case 'project':
             return quote.bom?.project_name ?? '';
           case 'total':
-            return quote.hardware_total + quote.labor_total + quote.travel_total;
+            return quote.computed_total_inc_vat;
           case 'created_at':
             return new Date(quote.created_at);
           default:
@@ -365,8 +382,7 @@ const QuotesList: React.FC = () => {
                 </TableRow>
               ) : (
                 sortedQuotes.map(quote => {
-                  const total = quote.hardware_total + quote.labor_total + quote.travel_total;
-                  const totalWithVat = total * 1.25;
+                  const totalWithVat = quote.computed_total_inc_vat;
                   return (
                     <TableRow 
                       key={quote.id} 
