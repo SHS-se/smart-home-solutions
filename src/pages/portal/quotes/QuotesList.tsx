@@ -25,13 +25,12 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { SortableTableHead } from '@/components/ui/sortable-table-head';
-import { ExternalLink, Search, TestTube } from 'lucide-react';
+import { FileText, Loader2, Search, TestTube } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 import { sv } from 'date-fns/locale';
 import QuoteActionsMenu from '@/components/portal/quotes/QuoteActionsMenu';
 import QuoteCancelDialog from '@/components/portal/quotes/QuoteCancelDialog';
-import { getStripeDashboardUrl, openExternalUrl } from '@/lib/stripe-dashboard';
 
 interface Quote {
   id: string;
@@ -85,6 +84,9 @@ const QuotesList: React.FC = () => {
   // Cancel dialog state
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [quoteToCancel, setQuoteToCancel] = useState<Quote | null>(null);
+  
+  // PDF download state
+  const [downloadingPdfId, setDownloadingPdfId] = useState<string | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
 
   // Fetch quotes
@@ -223,6 +225,61 @@ const QuotesList: React.FC = () => {
     }
   };
 
+  // Download PDF handler
+  const handleDownloadPdf = async (quote: Quote) => {
+    if (!quote.stripe_quote_id) return;
+    
+    setDownloadingPdfId(quote.id);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData?.session?.access_token;
+      if (!token) throw new Error('Not authenticated');
+
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-stripe-quote-pdf`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+            'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          },
+          body: JSON.stringify({ stripe_quote_id: quote.stripe_quote_id }),
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || `HTTP ${response.status}`);
+      }
+
+      const pdfBlob = await response.blob();
+      const pdfUrl = URL.createObjectURL(pdfBlob);
+      
+      const link = document.createElement('a');
+      link.href = pdfUrl;
+      link.download = `quote-${quote.quote_number}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      setTimeout(() => URL.revokeObjectURL(pdfUrl), 60000);
+      
+      toast({ 
+        title: t('PDF nedladdad', 'PDF downloaded'),
+      });
+    } catch (error: unknown) {
+      const err = error as Error;
+      toast({ 
+        title: t('Kunde inte ladda ner PDF', 'Failed to download PDF'),
+        description: err.message,
+        variant: 'destructive'
+      });
+    } finally {
+      setDownloadingPdfId(null);
+    }
+  };
+
   // Redirect if not staff
   if (!authLoading && !isStaff) {
     navigate('/portal');
@@ -357,34 +414,22 @@ const QuotesList: React.FC = () => {
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-1">
                           {quote.stripe_quote_id && (
-                            (() => {
-                              const stripeUrl = getStripeDashboardUrl(
-                                `/quotes/${quote.stripe_quote_id}`,
-                                quote.is_test
-                              );
-                              return (
                             <Button 
                               variant="ghost" 
-                              size="icon" 
-                              asChild
+                              size="icon"
+                              disabled={downloadingPdfId === quote.id}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDownloadPdf(quote);
+                              }}
+                              title={t('Ladda ner PDF', 'Download PDF')}
                             >
-                              <a 
-                                href={stripeUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={(e) => {
-                                  // In embedded previews, navigating within the iframe causes Stripe to refuse framing.
-                                  // Force a real new-tab open attempt instead.
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  openExternalUrl(stripeUrl);
-                                }}
-                              >
-                                <ExternalLink className="h-4 w-4" />
-                              </a>
+                              {downloadingPdfId === quote.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <FileText className="h-4 w-4" />
+                              )}
                             </Button>
-                              );
-                            })()
                           )}
                           <QuoteActionsMenu
                             isTest={quote.is_test}
