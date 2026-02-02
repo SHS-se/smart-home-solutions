@@ -440,21 +440,27 @@ const QuotePreparation: React.FC = () => {
         throw new Error(errorText || `HTTP ${response.status}`);
       }
 
-      // Get the response as a blob and open it
+      // Get the response as a blob and trigger a download
+      // (Brave and other browsers block blob URLs opened in new tabs from iframe contexts,
+      // but downloads are trusted and work reliably)
       const pdfBlob = await response.blob();
       const pdfUrl = URL.createObjectURL(pdfBlob);
       
-      // Use an anchor element to open the PDF - more reliable than window.open
       const link = document.createElement('a');
       link.href = pdfUrl;
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
+      // Use download attribute to trigger a save/open dialog instead of navigating
+      link.download = `quote-${quote.quote_number || quote.stripe_quote_id}.pdf`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       
       // Clean up the object URL after a delay
       setTimeout(() => URL.revokeObjectURL(pdfUrl), 60000);
+      
+      toast({ 
+        title: t('PDF nedladdad', 'PDF downloaded'),
+        description: t('Offerten har laddats ner som PDF', 'Quote has been downloaded as PDF'),
+      });
     } catch (error: any) {
       toast({ 
         title: t('Kunde inte hämta PDF', 'Failed to get PDF'), 
