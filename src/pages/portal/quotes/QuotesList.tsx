@@ -363,7 +363,7 @@ const QuotesList: React.FC = () => {
                               onClick={(e) => e.stopPropagation()}
                             >
                               <a 
-                                href={`https://dashboard.stripe.com/quotes/${quote.stripe_quote_id}`}
+                                href={`https://dashboard.stripe.com/test/quotes/${quote.stripe_quote_id}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
                               >
