@@ -382,7 +382,7 @@ const QuotesList: React.FC = () => {
                 </TableRow>
               ) : (
                 sortedQuotes.map(quote => {
-                  const totalWithVat = quote.computed_total_inc_vat;
+                  const totalWithVat = quote.computed_total_inc_vat ?? 0;
                   return (
                     <TableRow 
                       key={quote.id} 
