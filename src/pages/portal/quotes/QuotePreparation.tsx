@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { ArrowLeft, ExternalLink, Pencil, Send, Eye, Info, Loader2, AlertTriangle, Plus, Trash2, FileText } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Pencil, Send, Download, Info, Loader2, AlertTriangle, Plus, Trash2 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import QuotePriceDiffModal from '@/components/portal/quotes/QuotePriceDiffModal';
 import QuoteVersionDropdown from '@/components/portal/quotes/QuoteVersionDropdown';
@@ -1034,7 +1034,7 @@ const QuotePreparation: React.FC = () => {
                     {isLoadingPdf ? (
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                     ) : (
-                      <FileText className="h-4 w-4 mr-2" />
+                      <Download className="h-4 w-4 mr-2" />
                     )}
                     {t('Ladda ner PDF', 'Download PDF')}
                   </Button>
@@ -1052,7 +1052,7 @@ const QuotePreparation: React.FC = () => {
                     {isCreatingInvoice ? (
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                     ) : (
-                      <FileText className="h-4 w-4 mr-2" />
+                      <Send className="h-4 w-4 mr-2" />
                     )}
                     {t('Skapa faktura', 'Create Invoice')}
                   </Button>
