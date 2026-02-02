@@ -1,16 +1,20 @@
 
 # VAT-Aware Pricing Engine Implementation Plan
 
-## Status: PHASE 1-7 COMPLETE ✅
+## Status: PHASE 1-7 COMPLETE ✅ | QUOTE ISOLATION COMPLETE ✅
 
-### Recently Completed: BOM Versioning & Pricing Revisions
-- Created `bom_price_revisions` table for tracking pricing snapshots
-- Created `bom_price_revision_items` table for snapshot line items  
-- Added `bom_version` and `bom_price_revision_id` columns to `quotes` table
-- Implemented `useBomPricingRevisions` hook with create/revert logic
-- Added `PricingRevisionDropdown` component with history and revert UI
-- Updated BOMBuilder with dual versioning badges and actions
-- Quote creation now freezes both BOM version and pricing revision
+### Recently Completed: Quote Data Integrity Fix
+- **Phase 1: Quotes are now independent snapshots**
+  - `createQuote` in BOMBuilder now copies individual BOM items to `quote_lines` with full SKU details
+  - Quote editing only updates `quote_lines`, never BOM items
+  - Added `source_bom_id` and `source_bom_item_id` columns for traceability
+- **Phase 2: Computed totals view**
+  - Created `quote_computed_totals` view that calculates totals from `quote_lines` SUM
+  - Stopped writing to legacy total columns (kept for backward compat)
+  - UI computes totals client-side from quote_lines
+- **Phase 3: Guardrails**
+  - Added index `idx_quote_lines_quote_id` for performance
+  - Quote versioning hook updated to create hardware lines from pricing revisions
 
 ---
 
