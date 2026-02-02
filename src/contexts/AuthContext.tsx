@@ -133,6 +133,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const signOut = async () => {
+    // Clean up cached quote PDFs before signing out
+    if (session?.access_token) {
+      try {
+        await supabase.functions.invoke('cleanup-quote-pdfs');
+      } catch (error) {
+        console.error('Failed to cleanup quote PDFs:', error);
+        // Don't block logout if cleanup fails
+      }
+    }
+    
     await supabase.auth.signOut();
     setUser(null);
     setSession(null);
