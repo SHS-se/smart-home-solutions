@@ -342,9 +342,6 @@ const InvoiceDetail: React.FC = () => {
                       <TableHead className="text-xs uppercase text-center">{t('ANTAL', 'QTY')}</TableHead>
                       <TableHead className="text-xs uppercase text-right">{t('Å-PRIS', 'UNIT')}</TableHead>
                       <TableHead className="text-xs uppercase text-right">{t('SUMMA', 'TOTAL')}</TableHead>
-                      {hardwareItems.some(i => i.category) && (
-                        <TableHead className="text-xs uppercase">{t('KATEGORI', 'CATEGORY')}</TableHead>
-                      )}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -362,11 +359,6 @@ const InvoiceDetail: React.FC = () => {
                           <TableCell className="text-center">{item.quantity}</TableCell>
                           <TableCell className="text-right text-muted-foreground">{formatPrice(item.unit_price)}</TableCell>
                           <TableCell className="text-right font-medium">{formatPrice(item.quantity * item.unit_price)}</TableCell>
-                          {hardwareItems.some(i => i.category) && (
-                            <TableCell>
-                              {item.category && <Badge variant="secondary">{item.category}</Badge>}
-                            </TableCell>
-                          )}
                         </TableRow>
                       ))
                     )}
