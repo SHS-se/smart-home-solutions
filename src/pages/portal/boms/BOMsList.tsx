@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { naturalSort } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
@@ -34,7 +34,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, FileText, Trash2 } from 'lucide-react';
+import { Plus, Trash2 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 import { sv } from 'date-fns/locale';
@@ -204,14 +204,13 @@ const BOMsList: React.FC = () => {
                 </TableRow>
               ) : (
                 sortedBoms.map(bom => (
-                  <TableRow key={bom.id}>
+                  <TableRow 
+                    key={bom.id} 
+                    className="cursor-pointer"
+                    onClick={() => navigate(`/portal/boms/${bom.id}`)}
+                  >
                     <TableCell>
-                      <Link 
-                        to={`/portal/boms/${bom.id}`}
-                        className="font-medium hover:text-primary"
-                      >
-                        {bom.project_name}
-                      </Link>
+                      <span className="font-medium">{bom.project_name}</span>
                     </TableCell>
                     <TableCell>
                       {bom.customer?.org_name || <span className="text-muted-foreground">—</span>}
@@ -223,24 +222,18 @@ const BOMsList: React.FC = () => {
                       {format(new Date(bom.created_at), 'PP', { locale: sv })}
                     </TableCell>
                     <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button variant="ghost" size="icon" asChild>
-                          <Link to={`/portal/boms/${bom.id}`}>
-                            <FileText className="h-4 w-4" />
-                          </Link>
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => {
-                            if (confirm(t('Radera denna BOM?', 'Delete this BOM?'))) {
-                              deleteMutation.mutate(bom.id);
-                            }
-                          }}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (confirm(t('Radera denna BOM?', 'Delete this BOM?'))) {
+                            deleteMutation.mutate(bom.id);
+                          }
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))
