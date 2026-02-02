@@ -22,10 +22,15 @@ serve(async (req) => {
     const stripeKey = Deno.env.get("STRIPE_SECRET_KEY");
     if (!stripeKey) throw new Error("STRIPE_SECRET_KEY is not set");
 
-    const supabaseClient = createClient(
-      Deno.env.get("SUPABASE_URL") ?? "",
-      Deno.env.get("SUPABASE_ANON_KEY") ?? ""
-    );
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+
+    // Create client with anon key for auth validation
+    const supabaseClient = createClient(supabaseUrl, supabaseAnonKey);
+    
+    // Create service role client for storage operations
+    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
     // Authenticate user
     const authHeader = req.headers.get("Authorization");
@@ -36,15 +41,23 @@ serve(async (req) => {
     if (userError) throw new Error(`Authentication error: ${userError.message}`);
     if (!userData.user) throw new Error("User not authenticated");
 
+    // Verify staff
+    const { data: staffData } = await supabaseAdmin
+      .from('staff_users')
+      .select('user_id')
+      .eq('user_id', userData.user.id)
+      .single();
+    
+    if (!staffData) throw new Error("Only staff can access quote PDFs");
+
     const { stripe_quote_id } = await req.json();
     if (!stripe_quote_id) throw new Error("stripe_quote_id is required");
 
     logStep("Fetching Stripe quote PDF", { stripe_quote_id });
 
-    // Stripe quotes PDF is accessed via files.stripe.com with basic auth
+    // Fetch the PDF from Stripe
     const pdfUrl = `https://files.stripe.com/v1/quotes/${stripe_quote_id}/pdf`;
     
-    // Fetch the PDF from Stripe with authentication
     const pdfResponse = await fetch(pdfUrl, {
       headers: {
         "Authorization": `Bearer ${stripeKey}`,
@@ -57,19 +70,61 @@ serve(async (req) => {
       throw new Error(`Failed to fetch PDF: ${pdfResponse.status}`);
     }
 
-    logStep("PDF fetched successfully");
+    logStep("PDF fetched successfully from Stripe");
 
-    // Return the PDF directly
-    const pdfBlob = await pdfResponse.blob();
+    // Get PDF as ArrayBuffer for storage upload
+    const pdfArrayBuffer = await pdfResponse.arrayBuffer();
+    const pdfUint8Array = new Uint8Array(pdfArrayBuffer);
     
-    return new Response(pdfBlob, {
-      headers: {
-        ...corsHeaders,
-        "Content-Type": "application/pdf",
-        "Content-Disposition": `inline; filename="quote-${stripe_quote_id}.pdf"`,
-      },
-      status: 200,
-    });
+    // Generate a unique filename with timestamp
+    const timestamp = Date.now();
+    const fileName = `${stripe_quote_id}-${timestamp}.pdf`;
+    
+    logStep("Uploading PDF to storage", { fileName });
+
+    // Upload to Supabase storage using service role
+    const { data: uploadData, error: uploadError } = await supabaseAdmin
+      .storage
+      .from('quote-pdfs')
+      .upload(fileName, pdfUint8Array, {
+        contentType: 'application/pdf',
+        upsert: true,
+      });
+
+    if (uploadError) {
+      logStep("Storage upload failed", { error: uploadError.message });
+      throw new Error(`Failed to upload PDF to storage: ${uploadError.message}`);
+    }
+
+    logStep("PDF uploaded to storage", { path: uploadData.path });
+
+    // Generate a signed URL (valid for 5 minutes)
+    const { data: signedUrlData, error: signedUrlError } = await supabaseAdmin
+      .storage
+      .from('quote-pdfs')
+      .createSignedUrl(fileName, 300); // 5 minutes
+
+    if (signedUrlError) {
+      logStep("Signed URL generation failed", { error: signedUrlError.message });
+      throw new Error(`Failed to generate signed URL: ${signedUrlError.message}`);
+    }
+
+    logStep("Signed URL generated successfully");
+
+    // Schedule cleanup of old PDFs (optional - could be done by a cron job instead)
+    // For now, we'll rely on manual cleanup or a separate scheduled function
+
+    return new Response(
+      JSON.stringify({ 
+        url: signedUrlData.signedUrl,
+        fileName,
+        expiresIn: 300,
+      }), 
+      {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 200,
+      }
+    );
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);

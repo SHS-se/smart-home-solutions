@@ -16,6 +16,7 @@ import QuotePriceDiffModal from '@/components/portal/quotes/QuotePriceDiffModal'
 import QuoteVersionDropdown from '@/components/portal/quotes/QuoteVersionDropdown';
 import QuoteOutdatedBanner from '@/components/portal/quotes/QuoteOutdatedBanner';
 import QuoteUpdateConfirmDialog from '@/components/portal/quotes/QuoteUpdateConfirmDialog';
+import QuotePdfModal from '@/components/portal/quotes/QuotePdfModal';
 import { useQuoteVersioning } from '@/hooks/use-quote-versioning';
 import BlurCommitInput from '@/components/ui/blur-commit-input';
 
@@ -77,6 +78,8 @@ const QuotePreparation: React.FC = () => {
   const [editingQuantities, setEditingQuantities] = useState<Record<string, number>>({});
   const [showDiffModal, setShowDiffModal] = useState(false);
   const [showUpdateConfirm, setShowUpdateConfirm] = useState(false);
+  const [showPdfModal, setShowPdfModal] = useState(false);
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [priceDiff, setPriceDiff] = useState<PriceDiffResult | null>(null);
 
   // Quote versioning hook
@@ -421,7 +424,7 @@ const QuotePreparation: React.FC = () => {
       const token = sessionData?.session?.access_token;
       if (!token) throw new Error('Not authenticated');
 
-      // Fetch PDF directly as blob using native fetch
+      // Fetch signed URL from edge function
       const response = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-stripe-quote-pdf`,
         {
@@ -440,20 +443,16 @@ const QuotePreparation: React.FC = () => {
         throw new Error(errorText || `HTTP ${response.status}`);
       }
 
-      // Get the response as a blob and open in new tab for preview
-      const pdfBlob = await response.blob();
-      const pdfUrl = URL.createObjectURL(pdfBlob);
+      const data = await response.json();
       
-      // Open in new window/tab for preview
-      window.open(pdfUrl, '_blank');
+      if (data.error) {
+        throw new Error(data.error);
+      }
+
+      // Set the signed URL and open the modal
+      setPdfUrl(data.url);
+      setShowPdfModal(true);
       
-      // Clean up the object URL after a delay
-      setTimeout(() => URL.revokeObjectURL(pdfUrl), 60000);
-      
-      toast({ 
-        title: t('PDF öppnad', 'PDF opened'),
-        description: t('Offerten visas i en ny flik', 'Quote is displayed in a new tab'),
-      });
     } catch (error: any) {
       toast({ 
         title: t('Kunde inte hämta PDF', 'Failed to get PDF'), 
@@ -1073,6 +1072,17 @@ const QuotePreparation: React.FC = () => {
           currentVersion={currentVersion?.version || 1}
           targetRevision={pricingStatus?.latestRevision || 1}
           onConfirm={handleUpdateQuote}
+        />
+
+        {/* PDF Preview Modal */}
+        <QuotePdfModal
+          open={showPdfModal}
+          onOpenChange={(open) => {
+            setShowPdfModal(open);
+            if (!open) setPdfUrl(null);
+          }}
+          pdfUrl={pdfUrl}
+          quoteNumber={quote?.quote_number || ''}
         />
       </div>
     </PortalLayout>
