@@ -23,7 +23,7 @@ interface Invoice {
   id: string;
   invoice_number: string | null;
   stripe_invoice_id: string | null;
-  date: string | null;
+  issued_at: string | null;
   amount: number | null;
   currency: string | null;
   status: string | null;
@@ -58,7 +58,7 @@ const CustomerViewBilling: React.FC = () => {
           .from('invoices')
           .select('*')
           .eq('customer_id', customerId)
-          .order('date', { ascending: false });
+          .order('issued_at', { ascending: false });
 
         if (fetchError) throw fetchError;
         setInvoices(data || []);
@@ -160,7 +160,7 @@ const CustomerViewBilling: React.FC = () => {
                   {invoices.map((invoice) => (
                     <TableRow key={invoice.id}>
                       <TableCell>
-                        {invoice.date ? new Date(invoice.date).toLocaleDateString() : '-'}
+                        {invoice.issued_at ? new Date(invoice.issued_at).toLocaleDateString('sv-SE') : '-'}
                       </TableCell>
                       <TableCell className="font-medium">{invoice.invoice_number || '-'}</TableCell>
                       <TableCell>{formatAmount(invoice.amount, invoice.currency)}</TableCell>

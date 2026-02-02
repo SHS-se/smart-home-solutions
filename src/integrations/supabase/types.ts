@@ -468,7 +468,6 @@ export type Database = {
           created_by: string | null
           currency: string | null
           customer_id: string
-          date: string | null
           due_date: string | null
           finalized_at: string | null
           hosted_invoice_url: string | null
@@ -476,6 +475,7 @@ export type Database = {
           invoice_number: string | null
           invoice_pdf_url: string | null
           is_test: boolean
+          issued_at: string | null
           last_emailed_at: string | null
           last_emailed_to: string | null
           last_emailed_type: string | null
@@ -500,7 +500,6 @@ export type Database = {
           created_by?: string | null
           currency?: string | null
           customer_id: string
-          date?: string | null
           due_date?: string | null
           finalized_at?: string | null
           hosted_invoice_url?: string | null
@@ -508,6 +507,7 @@ export type Database = {
           invoice_number?: string | null
           invoice_pdf_url?: string | null
           is_test?: boolean
+          issued_at?: string | null
           last_emailed_at?: string | null
           last_emailed_to?: string | null
           last_emailed_type?: string | null
@@ -532,7 +532,6 @@ export type Database = {
           created_by?: string | null
           currency?: string | null
           customer_id?: string
-          date?: string | null
           due_date?: string | null
           finalized_at?: string | null
           hosted_invoice_url?: string | null
@@ -540,6 +539,7 @@ export type Database = {
           invoice_number?: string | null
           invoice_pdf_url?: string | null
           is_test?: boolean
+          issued_at?: string | null
           last_emailed_at?: string | null
           last_emailed_to?: string | null
           last_emailed_type?: string | null

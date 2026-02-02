@@ -98,7 +98,7 @@ const getErdDiagram = (direction: 'TB' | 'LR') => `erDiagram
         text status
         text hosted_invoice_url
         text invoice_pdf_url
-        date date
+        timestamptz issued_at
         date due_date
         timestamptz finalized_at
         timestamptz paid_at
@@ -195,9 +195,9 @@ const getErdDiagram = (direction: 'TB' | 'LR') => `erDiagram
         uuid customer_id FK
         uuid bom_id FK
         uuid created_by FK
-        text quote_number
+        text quote_number UK
         text status
-        text stripe_quote_id
+        text stripe_quote_id UK
         numeric hardware_total
         numeric labor_total
         numeric travel_total
