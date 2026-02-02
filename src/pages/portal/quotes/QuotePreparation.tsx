@@ -1034,13 +1034,13 @@ const QuotePreparation: React.FC = () => {
                     {isLoadingPdf ? (
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                     ) : (
-                      <Eye className="h-4 w-4 mr-2" />
+                      <FileText className="h-4 w-4 mr-2" />
                     )}
-                    {t('Förhandsgranska PDF', 'Preview PDF')}
+                    {t('Ladda ner PDF', 'Download PDF')}
                   </Button>
                   {!quote?.stripe_quote_id && (
                     <p className="text-xs text-muted-foreground text-center">
-                      {t('Skicka till Stripe först för att förhandsgranska', 'Send to Stripe first to preview')}
+                      {t('Skicka till Stripe först för att ladda ner', 'Send to Stripe first to download')}
                     </p>
                   )}
                   <Button 
