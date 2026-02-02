@@ -394,7 +394,7 @@ const InvoicesList: React.FC = () => {
                             onClick={(e) => e.stopPropagation()}
                           >
                             <a 
-                              href={`https://dashboard.stripe.com/invoices/${invoice.stripe_invoice_id}`}
+                              href={`https://dashboard.stripe.com${invoice.is_test ? '/test' : ''}/invoices/${invoice.stripe_invoice_id}`}
                               target="_blank"
                               rel="noopener noreferrer"
                             >
