@@ -25,7 +25,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { SortableTableHead } from '@/components/ui/sortable-table-head';
-import { FileText, Loader2, Search, TestTube } from 'lucide-react';
+import { Download, Loader2, Search, TestTube } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 import { sv } from 'date-fns/locale';
@@ -427,7 +427,7 @@ const QuotesList: React.FC = () => {
                               {downloadingPdfId === quote.id ? (
                                 <Loader2 className="h-4 w-4 animate-spin" />
                               ) : (
-                                <FileText className="h-4 w-4" />
+                                <Download className="h-4 w-4" />
                               )}
                             </Button>
                           )}
