@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { ArrowLeft, ExternalLink, Pencil, Send, Download, Info, Loader2, AlertTriangle, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Pencil, Send, Eye, Info, Loader2, AlertTriangle, Plus, Trash2 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import QuotePriceDiffModal from '@/components/portal/quotes/QuotePriceDiffModal';
 import QuoteVersionDropdown from '@/components/portal/quotes/QuoteVersionDropdown';
@@ -440,26 +440,19 @@ const QuotePreparation: React.FC = () => {
         throw new Error(errorText || `HTTP ${response.status}`);
       }
 
-      // Get the response as a blob and trigger a download
-      // (Brave and other browsers block blob URLs opened in new tabs from iframe contexts,
-      // but downloads are trusted and work reliably)
+      // Get the response as a blob and open in new tab for preview
       const pdfBlob = await response.blob();
       const pdfUrl = URL.createObjectURL(pdfBlob);
       
-      const link = document.createElement('a');
-      link.href = pdfUrl;
-      // Use download attribute to trigger a save/open dialog instead of navigating
-      link.download = `quote-${quote.quote_number || quote.stripe_quote_id}.pdf`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      // Open in new window/tab for preview
+      window.open(pdfUrl, '_blank');
       
       // Clean up the object URL after a delay
       setTimeout(() => URL.revokeObjectURL(pdfUrl), 60000);
       
       toast({ 
-        title: t('PDF nedladdad', 'PDF downloaded'),
-        description: t('Offerten har laddats ner som PDF', 'Quote has been downloaded as PDF'),
+        title: t('PDF öppnad', 'PDF opened'),
+        description: t('Offerten visas i en ny flik', 'Quote is displayed in a new tab'),
       });
     } catch (error: any) {
       toast({ 
@@ -1034,9 +1027,9 @@ const QuotePreparation: React.FC = () => {
                     {isLoadingPdf ? (
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                     ) : (
-                      <Download className="h-4 w-4 mr-2" />
+                      <Eye className="h-4 w-4 mr-2" />
                     )}
-                    {t('Ladda ner PDF', 'Download PDF')}
+                    {t('Förhandsgranska PDF', 'Preview PDF')}
                   </Button>
                   {!quote?.stripe_quote_id && (
                     <p className="text-xs text-muted-foreground text-center">
