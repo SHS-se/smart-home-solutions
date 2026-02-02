@@ -215,14 +215,10 @@ const SKUForm: React.FC<SKUFormProps> = ({ sku, onClose, categories }) => {
         imagePath = fileName;
       }
 
-      // Get category name for legacy field
-      const selectedCategory = categories.find(c => c.id === formData.category_id);
-      
       const skuData = {
         sku: formData.sku,
         name: formData.name,
         category_id: formData.category_id,
-        category: selectedCategory?.name || '', // Keep legacy field in sync
         supplier: formData.supplier || null,
         supplier_url: formData.supplier_url || null,
         notes: formData.notes || null,
@@ -233,7 +229,7 @@ const SKUForm: React.FC<SKUFormProps> = ({ sku, onClose, categories }) => {
         vat_rate: parseFloat(formData.vat_rate),
         margin_override_percent: formData.margin_override_percent ? parseFloat(formData.margin_override_percent) : null,
         rounding_override_sek: formData.rounding_override_sek ? parseInt(formData.rounding_override_sek) : null,
-        // Legacy field for backwards compatibility
+        // Legacy fields for backwards compatibility
         cost_ex_vat: preview.costExVat,
         default_margin: formData.margin_override_percent ? parseFloat(formData.margin_override_percent) : null,
       };
