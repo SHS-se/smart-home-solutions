@@ -127,9 +127,9 @@ const PdfCanvasViewer: React.FC<Props> = ({ data, className }) => {
   }
 
   return (
-    <div className={className}>
+    <div className={`flex flex-col overflow-hidden ${className ?? ""}`}>
       {isRendering && (
-        <div className="sticky top-0 z-10 bg-background/80 backdrop-blur border-b border-border px-4 py-2 flex items-center gap-2 text-sm text-muted-foreground">
+        <div className="flex-shrink-0 z-10 bg-background/80 backdrop-blur border-b border-border px-4 py-2 flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
           <span>
             {t("Renderar PDF...", "Rendering PDF...")}
@@ -137,7 +137,7 @@ const PdfCanvasViewer: React.FC<Props> = ({ data, className }) => {
           </span>
         </div>
       )}
-      <div ref={containerRef} className="p-4 space-y-4 overflow-auto" />
+      <div ref={containerRef} className="flex-1 p-4 space-y-4 overflow-y-auto" />
     </div>
   );
 };
