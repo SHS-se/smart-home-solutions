@@ -263,7 +263,14 @@ const QuotePreparation: React.FC = () => {
   }, 0);
 
   const subtotalExVat = hardwareTotal + laborTotal + travelTotal;
-  const vatTotal = subtotalExVat * 0.25;
+  
+  // Calculate VAT per-line to handle mixed VAT rates correctly
+  const vatTotal = lines.reduce((acc, l) => {
+    const lineExVat = l.quantity * (l.unit_price_ex_vat ?? l.unit_price);
+    const lineVatRate = l.vat_rate ?? 0.25;
+    return acc + Math.round(lineExVat * lineVatRate * 100) / 100;
+  }, 0);
+  
   const totalIncVat = subtotalExVat + vatTotal;
 
   // Send to Stripe - uses quote_lines as source of truth
