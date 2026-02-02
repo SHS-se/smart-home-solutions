@@ -28,6 +28,7 @@ import { toast } from '@/hooks/use-toast';
 
 interface Category {
   id: string;
+  key: string;
   name: string;
   description: string | null;
   sort_order: number;
@@ -56,6 +57,10 @@ const CategoryManager: React.FC = () => {
     enabled: isStaff,
   });
 
+  // Generate machine key from name (lowercase, underscores)
+  const generateKey = (name: string) => 
+    name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+
   // Create category mutation
   const createMutation = useMutation({
     mutationFn: async (data: { name: string; description: string }) => {
@@ -65,6 +70,7 @@ const CategoryManager: React.FC = () => {
       const { error } = await supabase
         .from('sku_categories')
         .insert({ 
+          key: generateKey(data.name),
           name: data.name, 
           description: data.description || null,
           sort_order: maxOrder + 1 

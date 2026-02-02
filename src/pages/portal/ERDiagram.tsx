@@ -134,6 +134,7 @@ const getErdDiagram = (direction: 'TB' | 'LR') => `erDiagram
 
     sku_categories {
         uuid id PK
+        text key UK "machine identifier"
         text name
         text description
         int sort_order
