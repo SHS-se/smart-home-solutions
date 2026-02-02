@@ -119,7 +119,7 @@ serve(async (req) => {
       // Create the invoice item
       await stripe.invoiceItems.create({
         invoice: invoice.stripe_invoice_id,
-        price: price.id,
+        pricing: { price: price.id },
         quantity: item.quantity,
         description: item.description,
         metadata: {
