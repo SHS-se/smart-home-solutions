@@ -275,26 +275,29 @@ const QuotePreparation: React.FC = () => {
 
     setIsSending(true);
     try {
-      // Prepare itemized hardware items from quote_lines
+      // Prepare itemized hardware items from quote_lines with VAT rate
       const hardwareItems = hardwareLines.map(line => ({
         name: line.description,
         sku: line.original_sku_code || '',
         quantity: line.quantity,
         unit_price_ex_vat: line.unit_price_ex_vat ?? line.unit_price,
+        vat_rate: line.vat_rate ?? 0.25,
       }));
 
-      // Prepare itemized labor lines
+      // Prepare itemized labor lines with VAT rate
       const laborLinesData = laborLines.map(line => ({
         description: line.description || t('Installation', 'Installation'),
         quantity: line.quantity,
         unit_price_ex_vat: line.unit_price_ex_vat ?? line.unit_price,
+        vat_rate: line.vat_rate ?? 0.25,
       }));
 
-      // Prepare itemized travel lines
+      // Prepare itemized travel lines with VAT rate
       const travelLinesData = travelLines.map(line => ({
         description: line.description || t('Resa', 'Travel'),
         quantity: line.quantity,
         unit_price_ex_vat: line.unit_price_ex_vat ?? line.unit_price,
+        vat_rate: line.vat_rate ?? 0.25,
       }));
 
       const { data, error } = await supabase.functions.invoke('create-stripe-quote', {
