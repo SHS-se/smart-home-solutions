@@ -491,7 +491,7 @@ const QuotePreparation: React.FC = () => {
     return null;
   }
 
-  const formatPrice = (value: number) => value.toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  const formatPrice = (value: number) => value.toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
   const currentVersion = quoteFamily.find(v => v.id === id);
   const isLatestVersion = currentVersion?.is_latest ?? true;
