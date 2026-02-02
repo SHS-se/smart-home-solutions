@@ -1,0 +1,32 @@
+[
+  {
+    "id": "3d8f96d4-e80b-4954-ac8e-ce3b68507845",
+    "customer_id": "2bfb44c8-07a7-412d-aa71-91211cf9118c",
+    "amount": 249,
+    "currency": "SEK",
+    "status": "paid",
+    "date": "2026-01-24",
+    "is_test": true,
+    "quote_id": null,
+    "stripe_invoice_id": null,
+    "stripe_quote_id": null,
+    "pdf_url": "https://pay.stripe.com/invoice/acct_1StAUmFXcb7HEmpU/test_YWNjdF8xU3RBVW1GWGNiN0hFbXBVLF9UcXQxdzBBSWpuN3FCMXRqbEdZeE4xZ2YzU2dVNGQwLDE1OTg4OTg0MQ0200sfzIUzQ5/pdf?s=ap",
+    "created_at": "2026-01-24T18:08:28.421945+00:00",
+    "updated_at": "2026-02-01T20:55:44.32688+00:00"
+  },
+  {
+    "id": "97c475fb-1d19-4103-b5ae-f5fea77d5f33",
+    "customer_id": "2bfb44c8-07a7-412d-aa71-91211cf9118c",
+    "amount": 0,
+    "currency": "SEK",
+    "status": "draft",
+    "date": "2026-01-24",
+    "is_test": true,
+    "quote_id": null,
+    "stripe_invoice_id": null,
+    "stripe_quote_id": null,
+    "pdf_url": null,
+    "created_at": "2026-01-24T21:30:07.01825+00:00",
+    "updated_at": "2026-02-01T20:54:03.155598+00:00"
+  }
+]
