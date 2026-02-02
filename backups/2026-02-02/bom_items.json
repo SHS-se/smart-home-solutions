@@ -1,0 +1,44 @@
+[
+  {
+    "id": "e0cd7143-6a1f-424b-9275-beff20a540a2",
+    "bom_id": "bf01f619-028b-4fdc-9a2b-ec169bd1a243",
+    "sku_id": "68a99abf-c0c4-4f25-acb4-893bd3fc1305",
+    "quantity": 1,
+    "cost": 414.4,
+    "sell_price": 520,
+    "cost_ex_vat_at_time": 414.4,
+    "sell_price_ex_vat_at_time": 520,
+    "sell_price_inc_vat_at_time": 650,
+    "vat_rate_at_time": 0.25,
+    "pricing_source": "sku",
+    "created_at": "2026-01-29T12:23:16.890635+00:00"
+  },
+  {
+    "id": "d52d67ac-c979-40c4-aa0f-734e932b5f10",
+    "bom_id": "bf01f619-028b-4fdc-9a2b-ec169bd1a243",
+    "sku_id": "be2b1b30-d056-40e3-becb-9431a95165af",
+    "quantity": 1,
+    "cost": 2899,
+    "sell_price": 3625,
+    "cost_ex_vat_at_time": 2899,
+    "sell_price_ex_vat_at_time": 3625,
+    "sell_price_inc_vat_at_time": 4531.25,
+    "vat_rate_at_time": 0.25,
+    "pricing_source": "sku",
+    "created_at": "2026-01-29T12:45:22.638891+00:00"
+  },
+  {
+    "id": "aaa44e5f-b0e7-4f77-8884-db32017759f3",
+    "bom_id": "bf01f619-028b-4fdc-9a2b-ec169bd1a243",
+    "sku_id": "adde855d-5a00-4b13-9610-04e00e08af2f",
+    "quantity": 1,
+    "cost": 239.2,
+    "sell_price": 300,
+    "cost_ex_vat_at_time": 239.2,
+    "sell_price_ex_vat_at_time": 300,
+    "sell_price_inc_vat_at_time": 375,
+    "vat_rate_at_time": 0.25,
+    "pricing_source": "sku",
+    "created_at": "2026-01-29T12:45:45.916745+00:00"
+  }
+]

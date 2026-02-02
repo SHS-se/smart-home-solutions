@@ -1,0 +1,38 @@
+[
+  {
+    "id": "d1ea46be-56fc-4e4c-8d85-52b1ab02cc63",
+    "ticket_number": "TKT-00001",
+    "title": "some problem",
+    "customer_id": "2bfb44c8-07a7-412d-aa71-91211cf9118c",
+    "created_by": "905f5c79-8975-4b39-bd3b-691a29455a3c",
+    "status": "awaiting_customer",
+    "email_token": "a706d92043f54f836136a404186a9619",
+    "created_at": "2026-01-22T13:40:47.855723+00:00",
+    "updated_at": "2026-01-23T22:53:48.822959+00:00",
+    "last_activity_at": "2026-01-23T22:53:48.822959+00:00"
+  },
+  {
+    "id": "0f3dfc9d-fd14-4790-a943-762c04e5605e",
+    "ticket_number": "TKT-00002",
+    "title": "Error doing job: Exception in callback Task.task_wakeup() (task: None)",
+    "customer_id": "7524c7bd-4291-46cf-8b05-9e8d1edc8e9c",
+    "created_by": "eb8a554d-d4de-4774-bcec-1fd092ab4d03",
+    "status": "awaiting_response",
+    "email_token": "738dab2cc67d27a9f86fe27b1b4d092e",
+    "created_at": "2026-01-23T14:19:21.422027+00:00",
+    "updated_at": "2026-01-23T21:06:27.782855+00:00",
+    "last_activity_at": "2026-01-23T21:06:27.782855+00:00"
+  },
+  {
+    "id": "e201f8df-a905-4cac-9a94-3a4b264a4c02",
+    "ticket_number": "TKT-00003",
+    "title": "Flushing light in a corridor",
+    "customer_id": "42900197-d688-4743-9165-c389aa6103a6",
+    "created_by": "21ad8954-65cd-40d4-8317-7c6c8bb89989",
+    "status": "awaiting_response",
+    "email_token": "6b89d909e33825e244f826cd73cb75e7",
+    "created_at": "2026-01-23T20:14:10.257691+00:00",
+    "updated_at": "2026-01-23T20:44:04.894919+00:00",
+    "last_activity_at": "2026-01-23T20:44:04.894919+00:00"
+  }
+]

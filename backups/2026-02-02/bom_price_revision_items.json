@@ -1,0 +1,35 @@
+[
+  {
+    "id": "d6573f6a-c202-438d-8e28-6ce61938fae5",
+    "bom_price_revision_id": "86acbc73-77f1-4fa0-8f54-4abafa56069f",
+    "sku_id": "68a99abf-c0c4-4f25-acb4-893bd3fc1305",
+    "quantity": 1,
+    "cost_ex_vat": 414.4,
+    "sell_ex_vat": 520,
+    "vat_rate": 0.25,
+    "margin_pct": 25,
+    "created_at": "2026-01-31T22:27:32.4951+00:00"
+  },
+  {
+    "id": "03e04629-9535-49d7-a450-8c15daa17ab2",
+    "bom_price_revision_id": "86acbc73-77f1-4fa0-8f54-4abafa56069f",
+    "sku_id": "adde855d-5a00-4b13-9610-04e00e08af2f",
+    "quantity": 1,
+    "cost_ex_vat": 239.2,
+    "sell_ex_vat": 300,
+    "vat_rate": 0.25,
+    "margin_pct": 25,
+    "created_at": "2026-01-31T22:27:32.4951+00:00"
+  },
+  {
+    "id": "928c9661-757a-4037-902d-fa5d2461c39e",
+    "bom_price_revision_id": "86acbc73-77f1-4fa0-8f54-4abafa56069f",
+    "sku_id": "be2b1b30-d056-40e3-becb-9431a95165af",
+    "quantity": 1,
+    "cost_ex_vat": 2899,
+    "sell_ex_vat": 3625,
+    "vat_rate": 0.25,
+    "margin_pct": 25,
+    "created_at": "2026-01-31T22:27:32.4951+00:00"
+  }
+]

@@ -1,0 +1,133 @@
+[
+  {
+    "id": "3770e61c-ac39-4405-ac27-92e0c47df013",
+    "quote_id": "2c1f59c2-91ba-4bc9-abd6-974a6f32bf8b",
+    "stripe_quote_id": "qt_1Sw0gPFXcb7HEmpUEoZ6KzCD",
+    "stripe_invoice_id": "in_1Sw2mcFXcb7HEmpUIOF8ntaU",
+    "event_type": "invoice_created",
+    "metadata": {
+      "amount_due": 555625,
+      "invoice_number": null,
+      "invoice_status": "draft"
+    },
+    "created_by": "8f63cb33-bc48-424c-b6ee-936779a0c3ba",
+    "created_at": "2026-02-01T15:41:54.905828+00:00"
+  },
+  {
+    "id": "3a3fa387-4448-4fd3-9117-95d7959464da",
+    "quote_id": "558cdc2c-fd15-4f4d-b866-17e86c120990",
+    "stripe_quote_id": "qt_1Sw4ZkFXcb7HEmpUKxtJ41VC",
+    "stripe_invoice_id": "in_1Sw4alFXcb7HEmpUkOPxPVqx",
+    "event_type": "invoice_created",
+    "metadata": {
+      "amount_due": 555625,
+      "invoice_number": null,
+      "invoice_status": "draft"
+    },
+    "created_by": "8f63cb33-bc48-424c-b6ee-936779a0c3ba",
+    "created_at": "2026-02-01T17:37:48.666644+00:00"
+  },
+  {
+    "id": "bf431e32-fff6-4a4c-9ad4-23b492735673",
+    "quote_id": "558cdc2c-fd15-4f4d-b866-17e86c120990",
+    "stripe_quote_id": "qt_1Sw4ZkFXcb7HEmpUKxtJ41VC",
+    "stripe_invoice_id": "in_1Sw4alFXcb7HEmpUkOPxPVqx",
+    "event_type": "invoice_created",
+    "metadata": {
+      "amount_due": 555625,
+      "amount_paid": 0,
+      "invoice_status": "draft",
+      "stripe_event_id": "evt_1Sw4amFXcb7HEmpUxyMUIbrb"
+    },
+    "created_by": null,
+    "created_at": "2026-02-01T17:37:49.433084+00:00"
+  },
+  {
+    "id": "17ffb017-d0b1-4044-8d68-4044fd7863d4",
+    "quote_id": "558cdc2c-fd15-4f4d-b866-17e86c120990",
+    "stripe_quote_id": "qt_1Sw4ZkFXcb7HEmpUKxtJ41VC",
+    "stripe_invoice_id": "in_1Sw4alFXcb7HEmpUkOPxPVqx",
+    "event_type": "invoice_finalized",
+    "metadata": {
+      "hosted_url": "https://invoice.stripe.com/i/acct_1StAUmFXcb7HEmpU/test_YWNjdF8xU3RBVW1GWGNiN0hFbXBVLF9UdHNMTEc0dUpieFpGWk1UcDFsZVV0WkdHMlVTVHlhLDE2MDUxMjk1MA020061Ls8FJQ?s=ap",
+      "invoice_number": "2XTRR3GV-0001",
+      "invoice_status": "open"
+    },
+    "created_by": "8f63cb33-bc48-424c-b6ee-936779a0c3ba",
+    "created_at": "2026-02-01T18:55:50.993578+00:00"
+  },
+  {
+    "id": "312593e5-2153-489d-8d35-1fea3eabb66e",
+    "quote_id": "558cdc2c-fd15-4f4d-b866-17e86c120990",
+    "stripe_quote_id": "qt_1Sw4ZkFXcb7HEmpUKxtJ41VC",
+    "stripe_invoice_id": "in_1Sw4alFXcb7HEmpUkOPxPVqx",
+    "event_type": "invoice_finalized",
+    "metadata": {
+      "amount_due": 555625,
+      "amount_paid": 0,
+      "invoice_status": "open",
+      "stripe_event_id": "evt_1Sw5oIFXcb7HEmpUgmbMPOkb"
+    },
+    "created_by": null,
+    "created_at": "2026-02-01T18:55:52.395519+00:00"
+  },
+  {
+    "id": "5f10451b-2e3e-4d51-91c0-791da77f0f95",
+    "quote_id": "558cdc2c-fd15-4f4d-b866-17e86c120990",
+    "stripe_quote_id": "qt_1Sw4ZkFXcb7HEmpUKxtJ41VC",
+    "stripe_invoice_id": "in_1Sw4alFXcb7HEmpUkOPxPVqx",
+    "event_type": "invoice_updated",
+    "metadata": {
+      "amount_due": 555625,
+      "amount_paid": 0,
+      "invoice_status": "open",
+      "stripe_event_id": "evt_1Sw5oIFXcb7HEmpUWuZhrhsH"
+    },
+    "created_by": null,
+    "created_at": "2026-02-01T18:55:52.428076+00:00"
+  },
+  {
+    "id": "450d1750-1be1-4555-9c3c-3ab5a12c74f8",
+    "quote_id": "bf815fe4-1e36-4909-8190-e4ad1e55725a",
+    "stripe_quote_id": "qt_1Sw6jSFXcb7HEmpUfYjVwknz",
+    "stripe_invoice_id": "in_1Sw6jbFXcb7HEmpU06UZNJ1h",
+    "event_type": "invoice_created",
+    "metadata": {
+      "amount_due": 724375,
+      "invoice_number": "SKWQCTWN-0001",
+      "invoice_status": "open"
+    },
+    "created_by": "8f63cb33-bc48-424c-b6ee-936779a0c3ba",
+    "created_at": "2026-02-01T19:55:06.149329+00:00"
+  },
+  {
+    "id": "97d01402-0366-4b33-b809-546144722e1c",
+    "quote_id": "bf815fe4-1e36-4909-8190-e4ad1e55725a",
+    "stripe_quote_id": "qt_1Sw6jSFXcb7HEmpUfYjVwknz",
+    "stripe_invoice_id": "in_1Sw6jbFXcb7HEmpU06UZNJ1h",
+    "event_type": "invoice_updated",
+    "metadata": {
+      "amount_due": 724375,
+      "amount_paid": 0,
+      "invoice_status": "open",
+      "stripe_event_id": "evt_1Sw6jeFXcb7HEmpUJNzUzhmw"
+    },
+    "created_by": null,
+    "created_at": "2026-02-01T19:55:07.400884+00:00"
+  },
+  {
+    "id": "aaba9641-39a2-4b3e-b54b-93f69124e352",
+    "quote_id": "bf815fe4-1e36-4909-8190-e4ad1e55725a",
+    "stripe_quote_id": "qt_1Sw6jSFXcb7HEmpUfYjVwknz",
+    "stripe_invoice_id": "in_1Sw6jbFXcb7HEmpU06UZNJ1h",
+    "event_type": "invoice_finalized",
+    "metadata": {
+      "amount_due": 724375,
+      "amount_paid": 0,
+      "invoice_status": "open",
+      "stripe_event_id": "evt_1Sw6jeFXcb7HEmpUKYZBJtUR"
+    },
+    "created_by": null,
+    "created_at": "2026-02-01T19:55:07.894461+00:00"
+  }
+]

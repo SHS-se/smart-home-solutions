@@ -1,0 +1,35 @@
+[
+  {
+    "id": "8f0aae6b-a313-4ee8-81c8-d33e94eafd35",
+    "name": "wahwahweewah",
+    "email": "isctsf@gmail.com",
+    "phone": "+4623987293487",
+    "message": "gimme free stuff",
+    "email_token": "99f7e1190205ff3acb7eb8c6e63030e1",
+    "converted_at": "2026-01-23T14:12:23.433+00:00",
+    "converted_to_customer_id": "7524c7bd-4291-46cf-8b05-9e8d1edc8e9c",
+    "created_at": "2026-01-23T10:34:35.461924+00:00"
+  },
+  {
+    "id": "4f8816a6-f910-4aba-9588-d309e514622b",
+    "name": "Ana the Wifey",
+    "email": "rusinswe@gmail.com",
+    "phone": "0762181012",
+    "message": "Got an issue",
+    "email_token": "ef91d98ed082b4f476fa139bddb11224",
+    "converted_at": "2026-01-23T20:11:49.386+00:00",
+    "converted_to_customer_id": "42900197-d688-4743-9165-c389aa6103a6",
+    "created_at": "2026-01-23T20:11:00.562705+00:00"
+  },
+  {
+    "id": "899e5f82-a827-4c75-8373-6f007773020a",
+    "name": "hoobiegoobie",
+    "email": "phio@philbert.io",
+    "phone": "+463982348",
+    "message": "lets break stuff!",
+    "email_token": "dd1f9938e046220bb6fe583e956966a8",
+    "converted_at": null,
+    "converted_to_customer_id": null,
+    "created_at": "2026-01-23T22:31:58.150958+00:00"
+  }
+]
