@@ -485,7 +485,6 @@ export type Database = {
           quote_number: string | null
           status: string | null
           stripe_invoice_id: string | null
-          stripe_quote_id: string | null
           subtotal: number | null
           tax: number | null
           total: number | null
@@ -517,7 +516,6 @@ export type Database = {
           quote_number?: string | null
           status?: string | null
           stripe_invoice_id?: string | null
-          stripe_quote_id?: string | null
           subtotal?: number | null
           tax?: number | null
           total?: number | null
@@ -549,7 +547,6 @@ export type Database = {
           quote_number?: string | null
           status?: string | null
           stripe_invoice_id?: string | null
-          stripe_quote_id?: string | null
           subtotal?: number | null
           tax?: number | null
           total?: number | null

@@ -90,12 +90,17 @@ const getErdDiagram = (direction: 'TB' | 'LR') => `erDiagram
     invoices {
         uuid id PK
         uuid customer_id FK
-        uuid quote_id FK
-        text stripe_invoice_id UK
-        text invoice_number
-        numeric amount
+        uuid bom_id FK
+        uuid quote_id FK "nullable"
+        uuid created_by FK
+        text stripe_invoice_id UK "nullable"
+        text invoice_number UK
+        numeric subtotal
+        numeric tax
+        numeric total
         text currency
         text status
+        boolean is_test
         text hosted_invoice_url
         text invoice_pdf_url
         timestamptz issued_at
@@ -105,6 +110,28 @@ const getErdDiagram = (direction: 'TB' | 'LR') => `erDiagram
         timestamptz voided_at
         timestamptz created_at
         timestamptz updated_at
+    }
+
+    invoice_line_items {
+        uuid id PK
+        uuid invoice_id FK
+        uuid sku_id FK
+        text line_type
+        text description
+        numeric quantity
+        numeric unit_price
+        numeric tax_rate
+        int sort_order
+        timestamptz created_at
+    }
+
+    invoice_events {
+        uuid id PK
+        uuid invoice_id FK
+        uuid created_by FK
+        text event_type
+        jsonb metadata
+        timestamptz created_at
     }
 
     %% SKU Catalog
@@ -221,7 +248,11 @@ const getErdDiagram = (direction: 'TB' | 'LR') => `erDiagram
     customers ||--o{ boms : "owns"
     customers ||--o{ quotes : "receives"
     
-    quotes }o--o| invoices : "converts to"
+    quotes |o--o{ invoices : "converts to"
+    invoices ||--o{ invoice_line_items : "contains"
+    invoices ||--o{ invoice_events : "logs"
+    invoice_line_items }o--o| skus : "references"
+    
     sku_categories ||--o{ skus : "categorizes"
     sku_categories ||--o{ margin_rules : "defines margin"
 
@@ -240,7 +271,6 @@ const getErdDiagram = (direction: 'TB' | 'LR') => `erDiagram
 
     quotes ||--o{ quote_lines : "contains"
     quotes }o--o| boms : "from"
-    quotes }o--o| customers : "for"
 `;
 
 const ERDiagram = () => {
