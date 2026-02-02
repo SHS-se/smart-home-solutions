@@ -24,6 +24,7 @@ import { sv } from 'date-fns/locale';
 import { toast } from '@/hooks/use-toast';
 import InvoiceActionsMenu from '@/components/portal/invoices/InvoiceActionsMenu';
 import { cn } from '@/lib/utils';
+import { getStripeDashboardUrl, openExternalUrl } from '@/lib/stripe-dashboard';
 
 interface Invoice {
   id: string;
@@ -387,20 +388,32 @@ const InvoicesList: React.FC = () => {
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
                         {invoice.stripe_invoice_id && (
+                            (() => {
+                              const stripeUrl = getStripeDashboardUrl(
+                                `/invoices/${invoice.stripe_invoice_id}`,
+                                invoice.is_test
+                              );
+                              return (
                           <Button 
                             variant="ghost" 
                             size="icon" 
                             asChild
-                            onClick={(e) => e.stopPropagation()}
                           >
                             <a 
-                              href={`https://dashboard.stripe.com${invoice.is_test ? '/test' : ''}/invoices/${invoice.stripe_invoice_id}`}
+                                href={stripeUrl}
                               target="_blank"
                               rel="noopener noreferrer"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  openExternalUrl(stripeUrl);
+                                }}
                             >
                               <ExternalLink className="h-4 w-4" />
                             </a>
                           </Button>
+                              );
+                            })()
                         )}
                         <InvoiceActionsMenu
                           isTest={invoice.is_test}

@@ -31,6 +31,7 @@ import { format } from 'date-fns';
 import { sv } from 'date-fns/locale';
 import QuoteActionsMenu from '@/components/portal/quotes/QuoteActionsMenu';
 import QuoteCancelDialog from '@/components/portal/quotes/QuoteCancelDialog';
+import { getStripeDashboardUrl, openExternalUrl } from '@/lib/stripe-dashboard';
 
 interface Quote {
   id: string;
@@ -356,20 +357,34 @@ const QuotesList: React.FC = () => {
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-1">
                           {quote.stripe_quote_id && (
+                            (() => {
+                              const stripeUrl = getStripeDashboardUrl(
+                                `/quotes/${quote.stripe_quote_id}`,
+                                quote.is_test
+                              );
+                              return (
                             <Button 
                               variant="ghost" 
                               size="icon" 
                               asChild
-                              onClick={(e) => e.stopPropagation()}
                             >
                               <a 
-                                href={`https://dashboard.stripe.com${quote.is_test ? '/test' : ''}/quotes/${quote.stripe_quote_id}`}
+                                href={stripeUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
+                                onClick={(e) => {
+                                  // In embedded previews, navigating within the iframe causes Stripe to refuse framing.
+                                  // Force a real new-tab open attempt instead.
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  openExternalUrl(stripeUrl);
+                                }}
                               >
                                 <ExternalLink className="h-4 w-4" />
                               </a>
                             </Button>
+                              );
+                            })()
                           )}
                           <QuoteActionsMenu
                             isTest={quote.is_test}
