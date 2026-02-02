@@ -131,7 +131,7 @@ const QuotePdfModal: React.FC<QuotePdfModalProps> = ({
           </div>
         </DialogHeader>
         <div className="flex-1 overflow-hidden">
-          {isLoading ? (
+          {isLoading || (pdfUrl && !blobUrl && !error) ? (
             <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-3">
               <Loader2 className="h-8 w-8 animate-spin" />
               <span>{t('Laddar PDF...', 'Loading PDF...')}</span>
