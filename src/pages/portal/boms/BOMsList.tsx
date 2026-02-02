@@ -219,7 +219,7 @@ const BOMsList: React.FC = () => {
                       <Badge variant="secondary">v{bom.version}</Badge>
                     </TableCell>
                     <TableCell className="text-muted-foreground">
-                      {format(new Date(bom.created_at), 'PP', { locale: sv })}
+                      {bom.created_at ? format(new Date(bom.created_at), 'yyyy-MM-dd', { locale: sv }) : '—'}
                     </TableCell>
                     <TableCell className="text-right">
                       <Button
