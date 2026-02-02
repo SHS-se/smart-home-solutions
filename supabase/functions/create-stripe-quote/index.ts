@@ -12,12 +12,14 @@ interface HardwareItem {
   sku: string;
   quantity: number;
   unit_price_ex_vat: number;
+  vat_rate: number;
 }
 
 interface ServiceLine {
   description: string;
   quantity: number;
   unit_price_ex_vat: number;
+  vat_rate: number;
 }
 
 interface RequestBody {
@@ -29,6 +31,77 @@ interface RequestBody {
   hardware_total: number;
   labor_total: number;
   travel_total: number;
+}
+
+// Swedish VAT rates we support
+const SUPPORTED_VAT_RATES = [0, 0.06, 0.12, 0.25];
+
+// In-memory cache for tax rate IDs during this function invocation
+const taxRateCache: Map<number, string> = new Map();
+
+/**
+ * Get or create a Stripe tax rate for a given VAT percentage.
+ * Caches results to avoid repeated API calls within the same invocation.
+ */
+async function getOrCreateTaxRate(
+  stripe: Stripe,
+  vatRate: number
+): Promise<string> {
+  // Normalize VAT rate to percentage (e.g., 0.25 -> 25)
+  const percentage = Math.round(vatRate * 100);
+  
+  // Check in-memory cache first
+  if (taxRateCache.has(percentage)) {
+    return taxRateCache.get(percentage)!;
+  }
+  
+  // Search for existing tax rate in Stripe
+  const existingTaxRates = await stripe.taxRates.list({ 
+    limit: 100, 
+    active: true 
+  });
+  
+  const matchingRate = existingTaxRates.data.find(
+    (rate: Stripe.TaxRate) => 
+      rate.percentage === percentage && 
+      rate.country === "SE" && 
+      rate.inclusive === false
+  );
+  
+  if (matchingRate) {
+    taxRateCache.set(percentage, matchingRate.id);
+    return matchingRate.id;
+  }
+  
+  // Create new tax rate if not found
+  const displayName = percentage === 0 ? "Momsfritt" : `Moms ${percentage}%`;
+  const newTaxRate = await stripe.taxRates.create({
+    display_name: displayName,
+    description: `Swedish VAT ${percentage}%`,
+    percentage: percentage,
+    country: "SE",
+    inclusive: false,
+  });
+  
+  taxRateCache.set(percentage, newTaxRate.id);
+  return newTaxRate.id;
+}
+
+/**
+ * Normalize VAT rate to nearest supported rate.
+ * Falls back to 25% if rate is unexpected.
+ */
+function normalizeVatRate(rate: number | undefined | null): number {
+  if (rate === undefined || rate === null) {
+    return 0.25; // Default to 25%
+  }
+  
+  // Find closest supported rate
+  const closest = SUPPORTED_VAT_RATES.reduce((prev, curr) => 
+    Math.abs(curr - rate) < Math.abs(prev - rate) ? curr : prev
+  );
+  
+  return closest;
 }
 
 serve(async (req) => {
@@ -98,18 +171,22 @@ serve(async (req) => {
       });
     }
 
-    // Helper to create a product and return a line item with price_data referencing it
-    // Stripe Quotes API requires product ID, not nested product_data
+    // Helper to create a product and return a line item with per-line tax rate
     async function createLineItem(
       name: string, 
       description: string | undefined, 
       unitAmountCents: number, 
-      quantity: number
+      quantity: number,
+      vatRate: number
     ): Promise<Stripe.QuoteCreateParams.LineItem> {
       const product = await stripe.products.create({
         name,
         description: description || undefined,
       });
+      
+      // Get tax rate ID for this line's VAT rate
+      const normalizedVatRate = normalizeVatRate(vatRate);
+      const taxRateId = await getOrCreateTaxRate(stripe, normalizedVatRate);
       
       return {
         price_data: {
@@ -118,53 +195,61 @@ serve(async (req) => {
           unit_amount: unitAmountCents,
         },
         quantity,
+        tax_rates: [taxRateId], // Per-line tax rate
       };
     }
 
     // Create line items for quote
     const lineItems: Stripe.QuoteCreateParams.LineItem[] = [];
 
-    // Add itemized hardware items
+    // Add itemized hardware items with per-line VAT
     for (const item of hardware_items) {
       const lineItem = await createLineItem(
         item.name,
         `SKU: ${item.sku}`,
         Math.round((item.unit_price_ex_vat || 0) * 100),
-        item.quantity || 1
+        item.quantity || 1,
+        item.vat_rate
       );
       lineItems.push(lineItem);
     }
 
-    // Add itemized labor lines (including 0-price items)
+    // Add itemized labor lines with per-line VAT
     for (const line of labor_lines) {
       const lineItem = await createLineItem(
         line.description || "Installation & konfiguration",
         `${line.quantity || 1} timmar`,
         Math.round((line.unit_price_ex_vat || 0) * 100),
-        line.quantity || 1
+        line.quantity || 1,
+        line.vat_rate
       );
       lineItems.push(lineItem);
     }
 
-    // Add itemized travel lines (including 0-price items)
+    // Add itemized travel lines with per-line VAT
     for (const line of travel_lines) {
       const lineItem = await createLineItem(
         line.description || "Resa & övrigt",
         undefined,
         Math.round((line.unit_price_ex_vat || 0) * 100),
-        line.quantity || 1
+        line.quantity || 1,
+        line.vat_rate
       );
       lineItems.push(lineItem);
     }
 
     // Fallback to summarized totals if no itemized data was provided
     if (lineItems.length === 0) {
+      // Use default 25% VAT for fallback totals
+      const defaultVatRate = 0.25;
+      
       if (hardware_total > 0) {
         const lineItem = await createLineItem(
           "Hårdvara för smart home-installation",
           "Hardware for smart home installation",
           Math.round(hardware_total * 100),
-          1
+          1,
+          defaultVatRate
         );
         lineItems.push(lineItem);
       }
@@ -174,7 +259,8 @@ serve(async (req) => {
           "Installation & konfiguration",
           "Installation and configuration services",
           Math.round(labor_total * 100),
-          1
+          1,
+          defaultVatRate
         );
         lineItems.push(lineItem);
       }
@@ -184,37 +270,18 @@ serve(async (req) => {
           "Resa & övrigt",
           "Travel and miscellaneous costs",
           Math.round(travel_total * 100),
-          1
+          1,
+          defaultVatRate
         );
         lineItems.push(lineItem);
       }
     }
 
-    // Find or create a 25% VAT tax rate for Sweden
-    let taxRateId: string;
-    const existingTaxRates = await stripe.taxRates.list({ limit: 100, active: true });
-    const swedishVat = existingTaxRates.data.find(
-      (rate: Stripe.TaxRate) => rate.percentage === 25 && rate.country === "SE" && rate.inclusive === false
-    );
-
-    if (swedishVat) {
-      taxRateId = swedishVat.id;
-    } else {
-      const newTaxRate = await stripe.taxRates.create({
-        display_name: "Moms",
-        description: "Swedish VAT 25%",
-        percentage: 25,
-        country: "SE",
-        inclusive: false,
-      });
-      taxRateId = newTaxRate.id;
-    }
-
-    // Create Stripe Quote with tax rate
+    // Create Stripe Quote WITHOUT default_tax_rates (using per-line tax_rates instead)
     const stripeQuote = await stripe.quotes.create({
       customer: stripeCustomer.id,
       line_items: lineItems,
-      default_tax_rates: [taxRateId],
+      // No default_tax_rates - each line has its own tax_rates
       expires_at: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60, // 30 days
       metadata: {
         internal_quote_id: quote_id,
