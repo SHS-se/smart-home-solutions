@@ -25,7 +25,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { SortableTableHead } from '@/components/ui/sortable-table-head';
-import { Download, Loader2, Search, TestTube } from 'lucide-react';
+import { Eye, Loader2, Search, TestTube } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 import { sv } from 'date-fns/locale';
@@ -256,17 +256,13 @@ const QuotesList: React.FC = () => {
       const pdfBlob = await response.blob();
       const pdfUrl = URL.createObjectURL(pdfBlob);
       
-      const link = document.createElement('a');
-      link.href = pdfUrl;
-      link.download = `quote-${quote.quote_number}.pdf`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      // Open in new window/tab for preview
+      window.open(pdfUrl, '_blank');
       
       setTimeout(() => URL.revokeObjectURL(pdfUrl), 60000);
       
       toast({ 
-        title: t('PDF nedladdad', 'PDF downloaded'),
+        title: t('PDF öppnad', 'PDF opened'),
       });
     } catch (error: unknown) {
       const err = error as Error;
@@ -422,12 +418,12 @@ const QuotesList: React.FC = () => {
                                 e.stopPropagation();
                                 handleDownloadPdf(quote);
                               }}
-                              title={t('Ladda ner PDF', 'Download PDF')}
+                              title={t('Förhandsgranska PDF', 'Preview PDF')}
                             >
                               {downloadingPdfId === quote.id ? (
                                 <Loader2 className="h-4 w-4 animate-spin" />
                               ) : (
-                                <Download className="h-4 w-4" />
+                                <Eye className="h-4 w-4" />
                               )}
                             </Button>
                           )}
