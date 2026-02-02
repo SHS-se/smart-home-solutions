@@ -50,6 +50,13 @@ export type Database = {
             foreignKeyName: "billing_events_quote_id_fkey"
             columns: ["quote_id"]
             isOneToOne: false
+            referencedRelation: "quote_computed_totals"
+            referencedColumns: ["quote_id"]
+          },
+          {
+            foreignKeyName: "billing_events_quote_id_fkey"
+            columns: ["quote_id"]
+            isOneToOne: false
             referencedRelation: "quotes"
             referencedColumns: ["id"]
           },
@@ -568,6 +575,13 @@ export type Database = {
             foreignKeyName: "invoices_quote_id_fkey"
             columns: ["quote_id"]
             isOneToOne: false
+            referencedRelation: "quote_computed_totals"
+            referencedColumns: ["quote_id"]
+          },
+          {
+            foreignKeyName: "invoices_quote_id_fkey"
+            columns: ["quote_id"]
+            isOneToOne: false
             referencedRelation: "quotes"
             referencedColumns: ["id"]
           },
@@ -647,6 +661,13 @@ export type Database = {
             foreignKeyName: "quote_emails_quote_id_fkey"
             columns: ["quote_id"]
             isOneToOne: false
+            referencedRelation: "quote_computed_totals"
+            referencedColumns: ["quote_id"]
+          },
+          {
+            foreignKeyName: "quote_emails_quote_id_fkey"
+            columns: ["quote_id"]
+            isOneToOne: false
             referencedRelation: "quotes"
             referencedColumns: ["id"]
           },
@@ -665,6 +686,8 @@ export type Database = {
           quote_id: string
           section: string
           sku_id: string | null
+          source_bom_id: string | null
+          source_bom_item_id: string | null
           unit_price: number
           unit_price_ex_vat: number | null
           unit_price_inc_vat: number | null
@@ -682,6 +705,8 @@ export type Database = {
           quote_id: string
           section: string
           sku_id?: string | null
+          source_bom_id?: string | null
+          source_bom_item_id?: string | null
           unit_price?: number
           unit_price_ex_vat?: number | null
           unit_price_inc_vat?: number | null
@@ -699,12 +724,21 @@ export type Database = {
           quote_id?: string
           section?: string
           sku_id?: string | null
+          source_bom_id?: string | null
+          source_bom_item_id?: string | null
           unit_price?: number
           unit_price_ex_vat?: number | null
           unit_price_inc_vat?: number | null
           vat_rate?: number | null
         }
         Relationships: [
+          {
+            foreignKeyName: "quote_lines_quote_id_fkey"
+            columns: ["quote_id"]
+            isOneToOne: false
+            referencedRelation: "quote_computed_totals"
+            referencedColumns: ["quote_id"]
+          },
           {
             foreignKeyName: "quote_lines_quote_id_fkey"
             columns: ["quote_id"]
@@ -717,6 +751,13 @@ export type Database = {
             columns: ["sku_id"]
             isOneToOne: false
             referencedRelation: "skus"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "quote_lines_source_bom_id_fkey"
+            columns: ["source_bom_id"]
+            isOneToOne: false
+            referencedRelation: "boms"
             referencedColumns: ["id"]
           },
         ]
@@ -859,8 +900,22 @@ export type Database = {
             foreignKeyName: "quotes_parent_quote_id_fkey"
             columns: ["parent_quote_id"]
             isOneToOne: false
+            referencedRelation: "quote_computed_totals"
+            referencedColumns: ["quote_id"]
+          },
+          {
+            foreignKeyName: "quotes_parent_quote_id_fkey"
+            columns: ["parent_quote_id"]
+            isOneToOne: false
             referencedRelation: "quotes"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "quotes_supersedes_quote_id_fkey"
+            columns: ["supersedes_quote_id"]
+            isOneToOne: false
+            referencedRelation: "quote_computed_totals"
+            referencedColumns: ["quote_id"]
           },
           {
             foreignKeyName: "quotes_supersedes_quote_id_fkey"
@@ -1301,7 +1356,18 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      quote_computed_totals: {
+        Row: {
+          hardware_total: number | null
+          labor_total: number | null
+          quote_id: string | null
+          subtotal_ex_vat: number | null
+          total_inc_vat: number | null
+          travel_total: number | null
+          vat_total: number | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       can_access_ticket_storage: {
