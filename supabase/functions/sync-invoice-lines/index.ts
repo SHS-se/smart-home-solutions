@@ -68,6 +68,31 @@ serve(async (req) => {
 
     logStep("Invoice loaded", { stripeInvoiceId: invoice.stripe_invoice_id, status: invoice.status });
 
+    // Get the customer to find Stripe customer ID
+    const { data: customer, error: customerError } = await supabaseClient
+      .from('customers')
+      .select('billing_email, org_name')
+      .eq('id', invoice.customer_id)
+      .single();
+
+    if (customerError || !customer) throw new Error("Customer not found");
+    if (!customer.billing_email) throw new Error("Customer has no billing email");
+
+    const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
+
+    // Find Stripe customer by email
+    const stripeCustomers = await stripe.customers.list({ 
+      email: customer.billing_email, 
+      limit: 1 
+    });
+
+    if (stripeCustomers.data.length === 0) {
+      throw new Error("No Stripe customer found for this billing email");
+    }
+
+    const stripeCustomerId = stripeCustomers.data[0].id;
+    logStep("Found Stripe customer", { stripeCustomerId });
+
     // Fetch line items
     const { data: lineItems, error: lineItemsError } = await supabaseClient
       .from('invoice_line_items')
@@ -78,8 +103,6 @@ serve(async (req) => {
     if (lineItemsError) throw new Error(`Failed to fetch line items: ${lineItemsError.message}`);
 
     logStep("Line items loaded", { count: lineItems?.length || 0 });
-
-    const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
 
     // Get existing Stripe invoice items
     const existingItems = await stripe.invoiceItems.list({
@@ -116,8 +139,9 @@ serve(async (req) => {
         }
       });
 
-      // Create the invoice item
+      // Create the invoice item with customer
       await stripe.invoiceItems.create({
+        customer: stripeCustomerId,
         invoice: invoice.stripe_invoice_id,
         pricing: { price: price.id },
         quantity: item.quantity,
