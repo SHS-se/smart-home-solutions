@@ -112,15 +112,15 @@ const Dashboard: React.FC = () => {
           
           const { data: invoices, count: invoiceCount } = await supabase
             .from('invoices')
-            .select('date', { count: 'exact' })
+            .select('issued_at', { count: 'exact' })
             .eq('customer_id', customerData.id)
-            .order('date', { ascending: false })
+            .order('issued_at', { ascending: false })
             .limit(1);
           
           setTicketStats({ open: openTickets || 0, total: totalTickets || 0 });
           setInvoiceStats({
             total: invoiceCount || 0,
-            lastDate: invoices?.[0]?.date || '',
+            lastDate: invoices?.[0]?.issued_at || '',
           });
         }
       } catch (error) {

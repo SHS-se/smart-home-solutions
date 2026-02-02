@@ -93,14 +93,14 @@ const CustomerViewDashboard: React.FC = () => {
         // Fetch invoice stats
         const { data: invoices } = await supabase
           .from('invoices')
-          .select('date')
+          .select('issued_at')
           .eq('customer_id', customerId)
-          .order('date', { ascending: false });
+          .order('issued_at', { ascending: false });
 
         if (invoices) {
           setInvoiceStats({
             total: invoices.length,
-            lastDate: invoices[0]?.date || null,
+            lastDate: invoices[0]?.issued_at || null,
           });
         }
       } catch (err) {
