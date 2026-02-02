@@ -1,13 +1,14 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { useLanguage } from '@/contexts/LanguageContext';
+import React, { useEffect, useRef, useState } from "react";
+import { useLanguage } from "@/contexts/LanguageContext";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { Download, X, ExternalLink, Loader2, AlertCircle } from 'lucide-react';
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { AlertCircle, Download, ExternalLink, Loader2, X } from "lucide-react";
+import PdfCanvasViewer from "@/components/portal/quotes/PdfCanvasViewer";
 
 interface QuotePdfModalProps {
   open: boolean;
@@ -16,81 +17,86 @@ interface QuotePdfModalProps {
   quoteNumber: string;
 }
 
-const QuotePdfModal: React.FC<QuotePdfModalProps> = ({
-  open,
-  onOpenChange,
-  pdfUrl,
-  quoteNumber,
-}) => {
+const QuotePdfModal: React.FC<QuotePdfModalProps> = ({ open, onOpenChange, pdfUrl, quoteNumber }) => {
   const { t } = useLanguage();
-  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
+  const [downloadBlobUrl, setDownloadBlobUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const blobUrlRef = useRef<string | null>(null);
+  const downloadUrlRef = useRef<string | null>(null);
 
-  // Fetch PDF and create blob URL when pdfUrl changes
-  useEffect(() => {
-    if (!open || !pdfUrl) {
-      return;
+  const cleanupDownloadUrl = () => {
+    if (downloadUrlRef.current) {
+      URL.revokeObjectURL(downloadUrlRef.current);
+      downloadUrlRef.current = null;
     }
+    setDownloadBlobUrl(null);
+  };
 
-    const fetchPdf = async () => {
-      setIsLoading(true);
-      setError(null);
-      
-      // Revoke previous blob URL if exists
-      if (blobUrlRef.current) {
-        URL.revokeObjectURL(blobUrlRef.current);
-        blobUrlRef.current = null;
-      }
+  // Fetch PDF bytes when modal opens and pdfUrl is present.
+  // Important: we do NOT navigate an iframe to the remote URL or to a blob URL.
+  useEffect(() => {
+    if (!open || !pdfUrl) return;
 
+    let cancelled = false;
+    setIsLoading(true);
+    setError(null);
+    setPdfBytes(null);
+    cleanupDownloadUrl();
+
+    (async () => {
       try {
-        const response = await fetch(pdfUrl);
-        
+        const response = await fetch(pdfUrl, { cache: "no-store" });
         if (!response.ok) {
           throw new Error(`Failed to fetch PDF: ${response.status}`);
         }
 
         const blob = await response.blob();
-        const url = URL.createObjectURL(blob);
-        blobUrlRef.current = url;
-        setBlobUrl(url);
-      } catch (err) {
-        console.error('Error fetching PDF:', err);
-        setError(err instanceof Error ? err.message : 'Failed to load PDF');
-      } finally {
-        setIsLoading(false);
-      }
-    };
+        const buffer = await blob.arrayBuffer();
+        if (cancelled) return;
 
-    fetchPdf();
+        setPdfBytes(new Uint8Array(buffer));
+
+        const url = URL.createObjectURL(blob);
+        downloadUrlRef.current = url;
+        setDownloadBlobUrl(url);
+      } catch (err) {
+        if (cancelled) return;
+        console.error("Error fetching PDF:", err);
+        setError(err instanceof Error ? err.message : "Failed to load PDF");
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, pdfUrl]);
 
-  // Cleanup blob URL on unmount or modal close
+  // Cleanup on close/unmount
   useEffect(() => {
-    if (!open && blobUrlRef.current) {
-      URL.revokeObjectURL(blobUrlRef.current);
-      blobUrlRef.current = null;
-      setBlobUrl(null);
+    if (!open) {
+      setPdfBytes(null);
       setError(null);
+      cleanupDownloadUrl();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // Cleanup on component unmount
   useEffect(() => {
     return () => {
-      if (blobUrlRef.current) {
-        URL.revokeObjectURL(blobUrlRef.current);
-      }
+      cleanupDownloadUrl();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleDownload = () => {
-    const downloadUrl = blobUrl || pdfUrl;
-    if (!downloadUrl) return;
-    
-    const link = document.createElement('a');
-    link.href = downloadUrl;
+    const url = downloadBlobUrl || pdfUrl;
+    if (!url) return;
+    const link = document.createElement("a");
+    link.href = url;
     link.download = `quote-${quoteNumber}.pdf`;
     document.body.appendChild(link);
     link.click();
@@ -99,7 +105,7 @@ const QuotePdfModal: React.FC<QuotePdfModalProps> = ({
 
   const handleOpenInNewTab = () => {
     if (!pdfUrl) return;
-    window.open(pdfUrl, '_blank', 'noopener,noreferrer');
+    window.open(pdfUrl, "_blank", "noopener,noreferrer");
   };
 
   return (
@@ -115,7 +121,7 @@ const QuotePdfModal: React.FC<QuotePdfModalProps> = ({
                 variant="outline"
                 size="sm"
                 onClick={handleDownload}
-                disabled={!blobUrl && !pdfUrl}
+                disabled={!downloadBlobUrl && !pdfUrl}
               >
                 <Download className="h-4 w-4 mr-2" />
                 {t('Ladda ner', 'Download')}
@@ -131,43 +137,41 @@ const QuotePdfModal: React.FC<QuotePdfModalProps> = ({
           </div>
         </DialogHeader>
         <div className="flex-1 overflow-hidden">
-          {isLoading || (pdfUrl && !blobUrl && !error) ? (
+          {isLoading ? (
             <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-3">
               <Loader2 className="h-8 w-8 animate-spin" />
-              <span>{t('Laddar PDF...', 'Loading PDF...')}</span>
+              <span>{t("Laddar PDF...", "Loading PDF...")}</span>
             </div>
           ) : error ? (
             <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-4 p-6">
               <AlertCircle className="h-12 w-12 text-destructive" />
               <p className="text-center">
-                {t('Kunde inte ladda PDF-förhandsgranskning.', 'Could not load PDF preview.')}
+                {t("Kunde inte ladda PDF-förhandsgranskning.", "Could not load PDF preview.")}
               </p>
               <p className="text-sm text-center max-w-md">
                 {t(
-                  'Din webbläsare kan ha blockerat förhandsgranskningen. Prova att ladda ner filen eller öppna den i en ny flik.',
-                  'Your browser may have blocked the preview. Try downloading the file or opening it in a new tab.'
+                  "Din webbläsare kan ha blockerat förhandsgranskningen. Prova att ladda ner filen eller öppna den i en ny flik.",
+                  "Your browser may have blocked the preview. Try downloading the file or opening it in a new tab."
                 )}
               </p>
               <div className="flex gap-3 mt-2">
                 <Button onClick={handleDownload} disabled={!pdfUrl}>
                   <Download className="h-4 w-4 mr-2" />
-                  {t('Ladda ner', 'Download')}
+                  {t("Ladda ner", "Download")}
                 </Button>
                 <Button variant="outline" onClick={handleOpenInNewTab} disabled={!pdfUrl}>
                   <ExternalLink className="h-4 w-4 mr-2" />
-                  {t('Öppna i ny flik', 'Open in new tab')}
+                  {t("Öppna i ny flik", "Open in new tab")}
                 </Button>
               </div>
             </div>
-          ) : blobUrl ? (
-            <iframe
-              src={blobUrl}
-              className="w-full h-full border-0"
-              title={`Quote ${quoteNumber} PDF`}
-            />
+          ) : pdfBytes ? (
+            <PdfCanvasViewer data={pdfBytes} className="h-full" />
           ) : (
             <div className="flex items-center justify-center h-full text-muted-foreground">
-              {t('Ingen PDF tillgänglig', 'No PDF available')}
+              {pdfUrl
+                ? t("Laddar PDF...", "Loading PDF...")
+                : t("Ingen PDF tillgänglig", "No PDF available")}
             </div>
           )}
         </div>
