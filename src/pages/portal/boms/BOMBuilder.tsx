@@ -313,7 +313,7 @@ const BOMBuilder: React.FC = () => {
 
   const marginPercent = totals.costEx > 0 ? ((totals.sellEx - totals.costEx) / totals.costEx) * 100 : 0;
 
-  // Create quote from BOM
+  // Create quote from BOM - copies individual items as quote_lines snapshots
   const createQuote = async () => {
     try {
       // Ensure a pricing revision exists (create r1 if none)
@@ -326,6 +326,7 @@ const BOMBuilder: React.FC = () => {
           bom_version: bom?.version ?? 1,
           bom_price_revision_id: revision.id,
           customer_id: bom?.customer_id || null,
+          // Legacy totals - kept for backward compatibility but no longer authoritative
           hardware_total: totals.sellEx,
           labor_total: 0,
           travel_total: 0,
@@ -338,18 +339,30 @@ const BOMBuilder: React.FC = () => {
         .single();
       if (error) throw error;
 
-      // Add hardware line with VAT-aware pricing
-      await supabase.from('quote_lines').insert({
+      // Create individual hardware quote_lines for each BOM item (snapshot)
+      // This ensures quote is independent of BOM - edits to quote don't mutate BOM
+      const hardwareLines = items.map(item => ({
         quote_id: quote.id,
         section: 'hardware',
-        description: `Hårdvara (från BOM #${bom?.id.slice(0, 8)})`,
-        quantity: 1,
-        unit_price: totals.sellEx,
-        unit_price_ex_vat: totals.sellEx,
-        vat_rate: 0.25,
-        unit_price_inc_vat: totals.sellInc,
+        description: item.sku.name,
+        quantity: item.quantity,
+        unit_price: item.sell_price_ex_vat_at_time ?? item.sell_price ?? 0,
+        unit_price_ex_vat: item.sell_price_ex_vat_at_time ?? item.sell_price ?? 0,
+        vat_rate: item.vat_rate_at_time ?? 0.25,
+        unit_price_inc_vat: item.sell_price_inc_vat_at_time ?? ((item.sell_price_ex_vat_at_time ?? item.sell_price ?? 0) * 1.25),
+        sku_id: item.sku_id,
+        original_sku_name: item.sku.name,
+        original_sku_code: item.sku.sku,
+        cost_ex_vat_at_time: item.cost_ex_vat_at_time ?? item.cost ?? 0,
         pricing_source: 'bom',
-      });
+        source_bom_id: id,
+        source_bom_item_id: item.id,
+      }));
+
+      if (hardwareLines.length > 0) {
+        const { error: linesError } = await supabase.from('quote_lines').insert(hardwareLines);
+        if (linesError) throw linesError;
+      }
 
       navigate(`/portal/quotes/${quote.id}`);
     } catch (error: any) {

@@ -29,20 +29,11 @@ interface QuoteLine {
   unit_price_ex_vat: number | null;
   vat_rate: number | null;
   unit_price_inc_vat: number | null;
-}
-
-interface BomItemWithSku {
-  id: string;
-  quantity: number;
-  sell_price_ex_vat_at_time: number | null;
-  sku: {
-    id: string;
-    name: string;
-    sku: string;
-    category_id: string | null;
-    category_name?: string;
-    sell_price_ex_vat: number | null;
-  };
+  sku_id: string | null;
+  original_sku_name: string | null;
+  original_sku_code: string | null;
+  cost_ex_vat_at_time: number | null;
+  source_bom_id: string | null;
 }
 
 interface PriceDiffResult {
@@ -75,7 +66,6 @@ const QuotePreparation: React.FC = () => {
   const [isLoadingPdf, setIsLoadingPdf] = useState(false);
   const [isCreatingInvoice, setIsCreatingInvoice] = useState(false);
   
-  const [editingQuantities, setEditingQuantities] = useState<Record<string, number>>({});
   const [showDiffModal, setShowDiffModal] = useState(false);
   const [showUpdateConfirm, setShowUpdateConfirm] = useState(false);
   const [showPdfModal, setShowPdfModal] = useState(false);
@@ -111,7 +101,7 @@ const QuotePreparation: React.FC = () => {
     enabled: isStaff && !!id,
   });
 
-  // Fetch quote lines (for labor and travel)
+  // Fetch ALL quote lines (hardware, labor, travel) - single source of truth
   const { data: lines = [], isSuccess: linesLoaded } = useQuery({
     queryKey: ['quote_lines', id],
     queryFn: async () => {
@@ -119,7 +109,7 @@ const QuotePreparation: React.FC = () => {
         .from('quote_lines')
         .select('*')
         .eq('quote_id', id)
-        .order('section');
+        .order('created_at');
       if (error) throw error;
       return data as QuoteLine[];
     },
@@ -176,42 +166,6 @@ const QuotePreparation: React.FC = () => {
     createDefaults();
   }, [linesLoaded, lines, id, queryClient]);
 
-  // Fetch BOM items with full SKU data
-  const { data: bomItems = [] } = useQuery({
-    queryKey: ['bom_items_full', quote?.bom_id],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('bom_items')
-        .select('id, quantity, sell_price_ex_vat_at_time, sku:skus(id, name, sku, category_id, sell_price_ex_vat, sku_categories!skus_category_id_fkey(id, name))')
-        .eq('bom_id', quote!.bom_id!)
-        .order('created_at');
-      if (error) throw error;
-      // Map the category name from the join
-      return (data || []).map(item => ({
-        ...item,
-        sku: {
-          ...(item.sku as any),
-          category_name: ((item.sku as any)?.sku_categories as { id: string; name: string } | null)?.name || 'Unknown',
-        },
-      })) as BomItemWithSku[];
-    },
-    enabled: isStaff && !!quote?.bom_id,
-  });
-
-  // Update BOM item quantity mutation
-  const updateBomItemMutation = useMutation({
-    mutationFn: async ({ itemId, quantity }: { itemId: string; quantity: number }) => {
-      const { error } = await supabase
-        .from('bom_items')
-        .update({ quantity })
-        .eq('id', itemId);
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['bom_items_full', quote?.bom_id] });
-    },
-  });
-
   // Add quote line mutation
   const addQuoteLineMutation = useMutation({
     mutationFn: async ({ section, description, quantity, unitPrice }: { section: string; description: string; quantity: number; unitPrice: number }) => {
@@ -234,7 +188,7 @@ const QuotePreparation: React.FC = () => {
     },
   });
 
-  // Update quote line mutation
+  // Update quote line mutation (works for hardware, labor, travel - all sections)
   const updateQuoteLineMutation = useMutation({
     mutationFn: async ({ lineId, field, value }: { lineId: string; field: string; value: string | number }) => {
       const updateData: Record<string, unknown> = { [field]: value };
@@ -271,7 +225,8 @@ const QuotePreparation: React.FC = () => {
     },
   });
 
-  // Group lines by section
+  // Group lines by section - all from quote_lines (single source of truth)
+  const hardwareLines = lines.filter(l => l.section === 'hardware');
   const laborLines = lines.filter(l => l.section === 'labor');
   const travelLines = lines.filter(l => l.section === 'travel');
 
@@ -294,18 +249,15 @@ const QuotePreparation: React.FC = () => {
     });
   };
 
-  // Calculate hardware total from BOM items
-  const hardwareTotal = bomItems.reduce((acc, item) => {
-    const unitPrice = item.sell_price_ex_vat_at_time ?? item.sku.sell_price_ex_vat ?? 0;
-    return acc + (item.quantity * unitPrice);
+  // Calculate totals from quote_lines (single source of truth)
+  const hardwareTotal = hardwareLines.reduce((acc, l) => {
+    return acc + (l.quantity * (l.unit_price_ex_vat ?? l.unit_price));
   }, 0);
 
-  // Calculate labor total
   const laborTotal = laborLines.reduce((acc, l) => {
     return acc + (l.quantity * (l.unit_price_ex_vat ?? l.unit_price));
   }, 0);
 
-  // Calculate travel total
   const travelTotal = travelLines.reduce((acc, l) => {
     return acc + (l.quantity * (l.unit_price_ex_vat ?? l.unit_price));
   }, 0);
@@ -314,25 +266,7 @@ const QuotePreparation: React.FC = () => {
   const vatTotal = subtotalExVat * 0.25;
   const totalIncVat = subtotalExVat + vatTotal;
 
-  // Update quote totals mutation
-  const updateQuoteTotalsMutation = useMutation({
-    mutationFn: async () => {
-      const { error } = await supabase
-        .from('quotes')
-        .update({
-          hardware_total: hardwareTotal,
-          labor_total: laborTotal,
-          travel_total: travelTotal,
-          subtotal_ex_vat: subtotalExVat,
-          vat_total: vatTotal,
-          total_inc_vat: totalIncVat,
-        })
-        .eq('id', id);
-      if (error) throw error;
-    },
-  });
-
-  // Send to Stripe
+  // Send to Stripe - uses quote_lines as source of truth
   const sendToStripe = async () => {
     if (!quote?.customer?.org_name) {
       toast({ title: t('Kund krävs', 'Customer required'), description: t('Offerten måste ha en kund kopplad', 'Quote must have a customer attached'), variant: 'destructive' });
@@ -341,14 +275,12 @@ const QuotePreparation: React.FC = () => {
 
     setIsSending(true);
     try {
-      await updateQuoteTotalsMutation.mutateAsync();
-
-      // Prepare itemized hardware items
-      const hardwareItems = bomItems.map(item => ({
-        name: item.sku.name,
-        sku: item.sku.sku,
-        quantity: item.quantity,
-        unit_price_ex_vat: item.sell_price_ex_vat_at_time ?? item.sku.sell_price_ex_vat ?? 0,
+      // Prepare itemized hardware items from quote_lines
+      const hardwareItems = hardwareLines.map(line => ({
+        name: line.description,
+        sku: line.original_sku_code || '',
+        quantity: line.quantity,
+        unit_price_ex_vat: line.unit_price_ex_vat ?? line.unit_price,
       }));
 
       // Prepare itemized labor lines
@@ -419,12 +351,10 @@ const QuotePreparation: React.FC = () => {
 
     setIsLoadingPdf(true);
     try {
-      // Get current session token
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData?.session?.access_token;
       if (!token) throw new Error('Not authenticated');
 
-      // Fetch signed URL from edge function
       const response = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-stripe-quote-pdf`,
         {
@@ -449,7 +379,6 @@ const QuotePreparation: React.FC = () => {
         throw new Error(data.error);
       }
 
-      // Set the signed URL and open the modal
       setPdfUrl(data.url);
       setShowPdfModal(true);
       
@@ -464,7 +393,7 @@ const QuotePreparation: React.FC = () => {
     }
   };
 
-  // Create invoice from quote
+  // Create invoice from quote - uses quote_lines as source
   const createInvoiceFromQuote = async () => {
     if (!quote?.customer_id) {
       toast({ title: t('Kund krävs', 'Customer required'), description: t('Offerten måste ha en kund kopplad', 'Quote must have a customer attached'), variant: 'destructive' });
@@ -473,17 +402,17 @@ const QuotePreparation: React.FC = () => {
 
     setIsCreatingInvoice(true);
     try {
-      // Prepare line items from quote
+      // Prepare line items from quote_lines (single source of truth)
       const lineItems = [
-        // Hardware items from BOM
-        ...bomItems.map(item => ({
+        // Hardware items from quote_lines
+        ...hardwareLines.map(line => ({
           line_type: 'hardware',
-          description: item.sku.name,
-          sku: item.sku.sku,
-          sku_id: item.sku.id,
-          quantity: item.quantity,
-          unit_price: item.sell_price_ex_vat_at_time ?? item.sku.sell_price_ex_vat ?? 0,
-          category: item.sku.category_name || 'Unknown',
+          description: line.description,
+          sku: line.original_sku_code || '',
+          sku_id: line.sku_id,
+          quantity: line.quantity,
+          unit_price: line.unit_price_ex_vat ?? line.unit_price,
+          category: 'Hardware',
         })),
         // Labor lines
         ...laborLines.map(line => ({
@@ -518,7 +447,6 @@ const QuotePreparation: React.FC = () => {
         description: t('Du omdirigeras till fakturautkastet', 'Redirecting to the invoice draft'),
       });
 
-      // Navigate to the new invoice
       navigate(`/portal/invoices/new?id=${data.invoice_id}`);
     } catch (error: any) {
       toast({ 
@@ -528,23 +456,6 @@ const QuotePreparation: React.FC = () => {
       });
     } finally {
       setIsCreatingInvoice(false);
-    }
-  };
-
-  // Handle quantity change
-  const handleQuantityChange = (itemId: string, value: string) => {
-    const quantity = parseInt(value) || 0;
-    setEditingQuantities(prev => ({ ...prev, [itemId]: quantity }));
-  };
-
-  const handleQuantityBlur = (itemId: string) => {
-    const quantity = editingQuantities[itemId];
-    if (quantity !== undefined) {
-      updateBomItemMutation.mutate({ itemId, quantity });
-      setEditingQuantities(prev => {
-        const { [itemId]: _, ...rest } = prev;
-        return rest;
-      });
     }
   };
 
@@ -674,7 +585,7 @@ const QuotePreparation: React.FC = () => {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Main Content */}
           <div className="lg:col-span-2 space-y-4">
-            {/* Hardware Section - BOM Items Table */}
+            {/* Hardware Section - from quote_lines (single source of truth) */}
             <Card>
               <CardHeader className="flex flex-row items-center justify-between py-4">
                 <CardTitle className="text-lg flex items-center gap-2 flex-wrap">
@@ -692,27 +603,18 @@ const QuotePreparation: React.FC = () => {
                 </CardTitle>
                 <div className="flex items-center gap-3 text-sm">
                   {quote?.bom_id && (
-                    <>
-                      <Link 
-                        to={`/portal/boms/${quote.bom_id}`}
-                        className="inline-flex items-center gap-1 text-primary hover:underline"
-                      >
-                        <ExternalLink className="h-3.5 w-3.5" />
-                        {t('Visa hela BOM', 'View full BOM')}
-                      </Link>
-                      <Link 
-                        to={`/portal/boms/${quote.bom_id}`}
-                        className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground"
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                        {t('Redigera BOM', 'Edit BOM')}
-                      </Link>
-                    </>
+                    <Link 
+                      to={`/portal/boms/${quote.bom_id}`}
+                      className="inline-flex items-center gap-1 text-primary hover:underline"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      {t('Visa BOM', 'View BOM')}
+                    </Link>
                   )}
                 </div>
               </CardHeader>
               <CardContent className="p-0">
-                {bomItems.length > 0 ? (
+                {hardwareLines.length > 0 ? (
                   <>
                     <table className="w-full">
                       <thead>
@@ -722,34 +624,58 @@ const QuotePreparation: React.FC = () => {
                           <th className="px-4 pb-3 font-medium text-center">{t('Antal', 'Qty')}</th>
                           <th className="px-4 pb-3 font-medium text-right">{t('Å-pris', 'Unit price')}</th>
                           <th className="px-4 pb-3 font-medium text-right">{t('Summa', 'Total')}</th>
-                          <th className="px-6 pb-3 font-medium text-center">{t('Kategori', 'Category')}</th>
+                          <th className="px-4 pb-3 font-medium w-12"></th>
                         </tr>
                       </thead>
                       <tbody>
-                        {bomItems.map(item => {
-                          const unitPrice = item.sell_price_ex_vat_at_time ?? item.sku.sell_price_ex_vat ?? 0;
-                          const currentQty = editingQuantities[item.id] ?? item.quantity;
-                          const lineTotal = currentQty * unitPrice;
+                        {hardwareLines.map(line => {
+                          const unitPrice = line.unit_price_ex_vat ?? line.unit_price;
+                          const lineTotal = line.quantity * unitPrice;
                           
                           return (
-                            <tr key={item.id} className="border-b border-border">
-                              <td className="px-6 py-4 font-medium">{item.sku.name}</td>
-                              <td className="px-4 py-4 text-muted-foreground font-mono text-sm">{item.sku.sku}</td>
+                            <tr key={line.id} className="border-b border-border">
+                              <td className="px-6 py-4">
+                                <BlurCommitInput
+                                  value={line.description}
+                                  onCommit={(value) => updateQuoteLineMutation.mutate({ lineId: line.id, field: 'description', value })}
+                                  className="h-9"
+                                  disabled={!isEditable}
+                                />
+                              </td>
+                              <td className="px-4 py-4 text-muted-foreground font-mono text-sm">
+                                {line.original_sku_code || '—'}
+                              </td>
                               <td className="px-4 py-4">
-                                <Input
+                                <BlurCommitInput
                                   type="number"
-                                  value={currentQty}
-                                  onChange={(e) => handleQuantityChange(item.id, e.target.value)}
-                                  onBlur={() => handleQuantityBlur(item.id)}
+                                  value={line.quantity}
+                                  onCommit={(value) => updateQuoteLineMutation.mutate({ lineId: line.id, field: 'quantity', value: parseInt(value) || 0 })}
                                   className="w-16 text-center h-9"
                                   min={0}
                                   disabled={!isEditable}
                                 />
                               </td>
-                              <td className="px-4 py-4 text-right text-muted-foreground">{formatPrice(unitPrice)} kr</td>
+                              <td className="px-4 py-4">
+                                <BlurCommitInput
+                                  type="number"
+                                  value={unitPrice}
+                                  onCommit={(value) => updateQuoteLineMutation.mutate({ lineId: line.id, field: 'unit_price', value: parseFloat(value) || 0 })}
+                                  className="w-24 text-right h-9"
+                                  min={0}
+                                  disabled={!isEditable}
+                                />
+                              </td>
                               <td className="px-4 py-4 text-right font-medium">{formatPrice(lineTotal)} kr</td>
-                              <td className="px-6 py-4 text-center">
-                                <Badge variant="outline">{item.sku.category_name || 'Unknown'}</Badge>
+                              <td className="px-4 py-4">
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  onClick={() => deleteQuoteLineMutation.mutate(line.id)}
+                                  className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                                  disabled={!isEditable}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
                               </td>
                             </tr>
                           );
@@ -768,15 +694,15 @@ const QuotePreparation: React.FC = () => {
                       <div className="flex items-start gap-2 text-sm text-muted-foreground">
                         <Info className="h-4 w-4 mt-0.5 flex-shrink-0" />
                         <span>
-                          {t('Hårdvarulistan genereras automatiskt från projektets BOM och utgör grunden för offerten.',
-                             'The hardware list is automatically generated from the project BOM and forms the basis for the quote.')}
+                          {t('Hårdvarulistan är en oberoende kopia från BOM vid offertskapande. Ändringar här påverkar inte BOM.',
+                             'The hardware list is an independent copy from the BOM at quote creation. Changes here do not affect the BOM.')}
                         </span>
                       </div>
                     </div>
                   </>
                 ) : (
                   <div className="px-6 py-8 text-center text-muted-foreground">
-                    {t('Ingen BOM kopplad till offerten', 'No BOM linked to this quote')}
+                    {t('Ingen hårdvara på offerten', 'No hardware on this quote')}
                   </div>
                 )}
               </CardContent>
@@ -1007,7 +933,7 @@ const QuotePreparation: React.FC = () => {
                   <Button 
                     className="w-full"
                     onClick={sendToStripe}
-                    disabled={isSending || bomItems.length === 0 || quote?.status !== 'draft' || !isLatestVersion}
+                    disabled={isSending || hardwareLines.length === 0 || quote?.status !== 'draft' || !isLatestVersion}
                   >
                     <Send className="h-4 w-4 mr-2" />
                     {isSending ? t('Skickar...', 'Sending...') : t('Skicka till Stripe offert', 'Send to Stripe quote')}

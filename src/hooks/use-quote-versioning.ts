@@ -226,16 +226,29 @@ export function useQuoteVersioning(quoteId: string | undefined) {
         .update({ is_latest: false })
         .or(`id.eq.${rootId},parent_quote_id.eq.${rootId}`);
 
-      // Get latest pricing revision items for totals calculation
+      // Get latest pricing revision items for hardware
       const { data: revisionItems } = await supabase
         .from('bom_price_revision_items')
-        .select('quantity, sell_ex_vat, vat_rate')
+        .select('sku_id, quantity, cost_ex_vat, sell_ex_vat, vat_rate, margin_pct, skus(name, sku)')
         .eq('bom_price_revision_id', pricingStatus.latestRevisionId);
 
       const hardwareTotal = (revisionItems || []).reduce(
         (acc, item) => acc + (item.quantity * item.sell_ex_vat),
         0
       );
+
+      // Get existing labor/travel lines to preserve totals
+      const { data: existingLines } = await supabase
+        .from('quote_lines')
+        .select('*')
+        .eq('quote_id', currentQuote.id);
+
+      const laborLines = (existingLines || []).filter(l => l.section === 'labor');
+      const travelLines = (existingLines || []).filter(l => l.section === 'travel');
+
+      const laborTotal = laborLines.reduce((acc, l) => acc + (l.quantity * (l.unit_price_ex_vat ?? l.unit_price)), 0);
+      const travelTotal = travelLines.reduce((acc, l) => acc + (l.quantity * (l.unit_price_ex_vat ?? l.unit_price)), 0);
+      const subtotal = hardwareTotal + laborTotal + travelTotal;
 
       // Create new quote
       const { data: newQuote, error: createError } = await supabase
@@ -251,11 +264,11 @@ export function useQuoteVersioning(quoteId: string | undefined) {
           bom_price_revision_id: pricingStatus.latestRevisionId,
           customer_id: currentQuote.customer_id,
           hardware_total: hardwareTotal,
-          labor_total: currentQuote.labor_total,
-          travel_total: currentQuote.travel_total,
-          subtotal_ex_vat: hardwareTotal + currentQuote.labor_total + currentQuote.travel_total,
-          vat_total: (hardwareTotal + currentQuote.labor_total + currentQuote.travel_total) * 0.25,
-          total_inc_vat: (hardwareTotal + currentQuote.labor_total + currentQuote.travel_total) * 1.25,
+          labor_total: laborTotal,
+          travel_total: travelTotal,
+          subtotal_ex_vat: subtotal,
+          vat_total: subtotal * 0.25,
+          total_inc_vat: subtotal * 1.25,
           status: 'draft',
           created_by: currentQuote.created_by,
         })
@@ -264,14 +277,32 @@ export function useQuoteVersioning(quoteId: string | undefined) {
 
       if (createError) throw createError;
 
-      // Copy quote lines (labor & travel)
-      const { data: existingLines } = await supabase
-        .from('quote_lines')
-        .select('*')
-        .eq('quote_id', currentQuote.id);
+      // Create new hardware lines from latest pricing revision (updated prices)
+      if (revisionItems && revisionItems.length > 0) {
+        const newHardwareLines = revisionItems.map(item => ({
+          quote_id: newQuote.id,
+          section: 'hardware',
+          description: (item.skus as any)?.name || 'Unknown',
+          quantity: item.quantity,
+          unit_price: item.sell_ex_vat,
+          unit_price_ex_vat: item.sell_ex_vat,
+          vat_rate: item.vat_rate,
+          unit_price_inc_vat: item.sell_ex_vat * (1 + item.vat_rate),
+          sku_id: item.sku_id,
+          cost_ex_vat_at_time: item.cost_ex_vat,
+          original_sku_name: (item.skus as any)?.name || null,
+          original_sku_code: (item.skus as any)?.sku || null,
+          pricing_source: 'bom',
+          source_bom_id: currentQuote.bom_id,
+        }));
 
-      if (existingLines && existingLines.length > 0) {
-        const newLines = existingLines.map(line => ({
+        await supabase.from('quote_lines').insert(newHardwareLines);
+      }
+
+      // Copy labor and travel lines (unchanged)
+      const nonHardwareLines = (existingLines || []).filter(l => l.section !== 'hardware');
+      if (nonHardwareLines.length > 0) {
+        const copiedLines = nonHardwareLines.map(line => ({
           quote_id: newQuote.id,
           section: line.section,
           description: line.description,
@@ -287,7 +318,7 @@ export function useQuoteVersioning(quoteId: string | undefined) {
           pricing_source: line.pricing_source,
         }));
 
-        await supabase.from('quote_lines').insert(newLines);
+        await supabase.from('quote_lines').insert(copiedLines);
       }
 
       return newQuote;
