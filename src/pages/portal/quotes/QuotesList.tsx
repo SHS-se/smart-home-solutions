@@ -31,6 +31,7 @@ import { format } from 'date-fns';
 import { sv } from 'date-fns/locale';
 import QuoteActionsMenu from '@/components/portal/quotes/QuoteActionsMenu';
 import QuoteCancelDialog from '@/components/portal/quotes/QuoteCancelDialog';
+import QuotePdfModal from '@/components/portal/quotes/QuotePdfModal';
 
 interface Quote {
   id: string;
@@ -85,8 +86,11 @@ const QuotesList: React.FC = () => {
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [quoteToCancel, setQuoteToCancel] = useState<Quote | null>(null);
   
-  // PDF download state
+  // PDF preview state
   const [downloadingPdfId, setDownloadingPdfId] = useState<string | null>(null);
+  const [showPdfModal, setShowPdfModal] = useState(false);
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const [pdfQuoteNumber, setPdfQuoteNumber] = useState<string>('');
   const [isCancelling, setIsCancelling] = useState(false);
 
   // Fetch quotes
@@ -225,8 +229,8 @@ const QuotesList: React.FC = () => {
     }
   };
 
-  // Download PDF handler
-  const handleDownloadPdf = async (quote: Quote) => {
+  // Preview PDF handler
+  const handlePreviewPdf = async (quote: Quote) => {
     if (!quote.stripe_quote_id) return;
     
     setDownloadingPdfId(quote.id);
@@ -253,17 +257,17 @@ const QuotesList: React.FC = () => {
         throw new Error(errorText || `HTTP ${response.status}`);
       }
 
-      const pdfBlob = await response.blob();
-      const pdfUrl = URL.createObjectURL(pdfBlob);
+      const data = await response.json();
       
-      // Open in new window/tab for preview
-      window.open(pdfUrl, '_blank');
+      if (data.error) {
+        throw new Error(data.error);
+      }
+
+      // Set the signed URL and open the modal
+      setPdfUrl(data.url);
+      setPdfQuoteNumber(quote.quote_number);
+      setShowPdfModal(true);
       
-      setTimeout(() => URL.revokeObjectURL(pdfUrl), 60000);
-      
-      toast({ 
-        title: t('PDF öppnad', 'PDF opened'),
-      });
     } catch (error: unknown) {
       const err = error as Error;
       toast({ 
@@ -416,7 +420,7 @@ const QuotesList: React.FC = () => {
                               disabled={downloadingPdfId === quote.id}
                               onClick={(e) => {
                                 e.stopPropagation();
-                                handleDownloadPdf(quote);
+                                handlePreviewPdf(quote);
                               }}
                               title={t('Förhandsgranska PDF', 'Preview PDF')}
                             >
@@ -455,6 +459,17 @@ const QuotesList: React.FC = () => {
         quoteNumber={quoteToCancel?.quote_number ?? ''}
         onConfirm={handleCancelQuote}
         isLoading={isCancelling}
+      />
+
+      {/* PDF Preview Modal */}
+      <QuotePdfModal
+        open={showPdfModal}
+        onOpenChange={(open) => {
+          setShowPdfModal(open);
+          if (!open) setPdfUrl(null);
+        }}
+        pdfUrl={pdfUrl}
+        quoteNumber={pdfQuoteNumber}
       />
     </PortalLayout>
   );
