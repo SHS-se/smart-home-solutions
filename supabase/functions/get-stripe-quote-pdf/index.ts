@@ -41,17 +41,59 @@ serve(async (req) => {
     if (userError) throw new Error(`Authentication error: ${userError.message}`);
     if (!userData.user) throw new Error("User not authenticated");
 
+    const userId = userData.user.id;
+
     // Verify staff
     const { data: staffData } = await supabaseAdmin
       .from('staff_users')
       .select('user_id')
-      .eq('user_id', userData.user.id)
+      .eq('user_id', userId)
       .single();
     
     if (!staffData) throw new Error("Only staff can access quote PDFs");
 
     const { stripe_quote_id } = await req.json();
     if (!stripe_quote_id) throw new Error("stripe_quote_id is required");
+
+    // Use user-scoped path for session-based caching
+    const fileName = `${userId}/${stripe_quote_id}.pdf`;
+
+    logStep("Checking if PDF exists in storage", { fileName });
+
+    // Check if PDF already exists in storage
+    const { data: existingFiles } = await supabaseAdmin
+      .storage
+      .from('quote-pdfs')
+      .list(userId, { search: `${stripe_quote_id}.pdf` });
+
+    const pdfExists = existingFiles && existingFiles.some(f => f.name === `${stripe_quote_id}.pdf`);
+
+    if (pdfExists) {
+      logStep("PDF already cached, generating signed URL");
+      
+      // Generate a signed URL for existing file (valid for 5 minutes)
+      const { data: signedUrlData, error: signedUrlError } = await supabaseAdmin
+        .storage
+        .from('quote-pdfs')
+        .createSignedUrl(fileName, 300);
+
+      if (signedUrlError) {
+        throw new Error(`Failed to generate signed URL: ${signedUrlError.message}`);
+      }
+
+      return new Response(
+        JSON.stringify({ 
+          url: signedUrlData.signedUrl,
+          fileName,
+          expiresIn: 300,
+          cached: true,
+        }), 
+        {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 200,
+        }
+      );
+    }
 
     logStep("Fetching Stripe quote PDF", { stripe_quote_id });
 
@@ -76,10 +118,6 @@ serve(async (req) => {
     const pdfArrayBuffer = await pdfResponse.arrayBuffer();
     const pdfUint8Array = new Uint8Array(pdfArrayBuffer);
     
-    // Generate a unique filename with timestamp
-    const timestamp = Date.now();
-    const fileName = `${stripe_quote_id}-${timestamp}.pdf`;
-    
     logStep("Uploading PDF to storage", { fileName });
 
     // Upload to Supabase storage using service role
@@ -102,7 +140,7 @@ serve(async (req) => {
     const { data: signedUrlData, error: signedUrlError } = await supabaseAdmin
       .storage
       .from('quote-pdfs')
-      .createSignedUrl(fileName, 300); // 5 minutes
+      .createSignedUrl(fileName, 300);
 
     if (signedUrlError) {
       logStep("Signed URL generation failed", { error: signedUrlError.message });
@@ -111,14 +149,12 @@ serve(async (req) => {
 
     logStep("Signed URL generated successfully");
 
-    // Schedule cleanup of old PDFs (optional - could be done by a cron job instead)
-    // For now, we'll rely on manual cleanup or a separate scheduled function
-
     return new Response(
       JSON.stringify({ 
         url: signedUrlData.signedUrl,
         fileName,
         expiresIn: 300,
+        cached: false,
       }), 
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
