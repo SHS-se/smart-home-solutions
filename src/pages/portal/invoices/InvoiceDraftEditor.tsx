@@ -402,24 +402,33 @@ const InvoiceDraftEditor: React.FC = () => {
     mutationFn: async (items: LineItem[]) => {
       if (!invoiceId) return;
 
-      // Ensure stable IDs in the payload (never send id: null)
+      // Ensure stable IDs and required fields in the payload
       const normalized = items.map((item, idx) => {
         const id = item.id ?? crypto.randomUUID();
         return {
-          ...item,
           id,
           invoice_id: invoiceId,
+          line_type: item.line_type,
+          description: item.description,
+          sku: item.sku ?? null,
+          sku_id: item.sku_id ?? null,
+          quantity: item.quantity,
+          unit_price: item.unit_price,
+          unit: item.unit ?? null,
+          tax_rate: item.tax_rate,
+          category: item.category ?? null,
           sort_order: idx,
+          // created_at is handled by DB default; omit it
         };
       });
 
-      const newIds = normalized.map((i) => i.id).filter(Boolean) as string[];
+      const newIds = normalized.map((i) => i.id);
       const removedIds = lastSavedIdsRef.current.filter((id) => !newIds.includes(id));
 
       if (normalized.length > 0) {
         const { error } = await supabase
           .from('invoice_line_items')
-          .upsert(normalized as any, { onConflict: 'id' });
+          .upsert(normalized, { onConflict: 'id', ignoreDuplicates: false });
         if (error) throw error;
       }
 
