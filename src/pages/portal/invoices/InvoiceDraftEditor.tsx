@@ -112,7 +112,7 @@ const InvoiceDraftEditor: React.FC = () => {
   });
 
   // Fetch line items for existing invoice
-  const { data: existingLineItems } = useQuery({
+  const { data: existingLineItems, isFetched: lineItemsFetched } = useQuery({
     queryKey: ['invoice_line_items', invoiceId],
     queryFn: async () => {
       if (!invoiceId) return [];
@@ -402,22 +402,17 @@ const InvoiceDraftEditor: React.FC = () => {
   const initialLoadComplete = useRef(false);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Mark initial load as complete after existingLineItems are loaded
+  // Mark initial load as complete only after query has fetched and state has been set
   useEffect(() => {
-    if (existingLineItems && existingLineItems.length > 0) {
-      // Delay marking complete to avoid immediate save
-      const timeout = setTimeout(() => {
-        initialLoadComplete.current = true;
-      }, 500);
-      return () => clearTimeout(timeout);
-    } else if (invoiceId && !existingLineItems) {
-      // No existing items, mark complete after short delay
-      const timeout = setTimeout(() => {
-        initialLoadComplete.current = true;
-      }, 500);
-      return () => clearTimeout(timeout);
-    }
-  }, [existingLineItems, invoiceId]);
+    if (!invoiceId) return;
+    if (!lineItemsFetched) return;
+    
+    // Give time for existingLineItems to be set to state
+    const timeout = setTimeout(() => {
+      initialLoadComplete.current = true;
+    }, 600);
+    return () => clearTimeout(timeout);
+  }, [invoiceId, lineItemsFetched]);
 
   // Auto-save line items when they change (debounced)
   useEffect(() => {
