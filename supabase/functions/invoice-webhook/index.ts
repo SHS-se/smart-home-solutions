@@ -124,13 +124,14 @@ serve(async (req) => {
     let eventType = '';
     let updateData: Record<string, unknown> = {};
 
+    // Note: subtotal, tax, total columns have been removed from invoices table
+    // Totals are now computed via invoice_computed_totals view from line items
     switch (event.type) {
       case 'invoice.paid':
         eventType = 'invoice_paid';
         updateData = {
           status: 'paid',
           paid_at: new Date().toISOString(),
-          total: stripeInvoice.total ? stripeInvoice.total / 100 : null,
         };
         break;
 
@@ -156,9 +157,6 @@ serve(async (req) => {
           status: stripeInvoice.status || 'draft',
           invoice_number: stripeInvoice.number,
           due_date: stripeInvoice.due_date ? new Date(stripeInvoice.due_date * 1000).toISOString() : null,
-          subtotal: stripeInvoice.subtotal ? stripeInvoice.subtotal / 100 : null,
-          tax: stripeInvoice.tax ? stripeInvoice.tax / 100 : null,
-          total: stripeInvoice.total ? stripeInvoice.total / 100 : null,
         };
         break;
 
@@ -179,7 +177,6 @@ serve(async (req) => {
           status: stripeInvoice.status,
           hosted_invoice_url: stripeInvoice.hosted_invoice_url,
           invoice_pdf_url: stripeInvoice.invoice_pdf,
-          total: stripeInvoice.total ? stripeInvoice.total / 100 : null,
         };
         break;
 

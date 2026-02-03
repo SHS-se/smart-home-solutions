@@ -112,7 +112,7 @@ serve(async (req) => {
     const invoiceNumber = generateInvoiceNumber(nextSeq);
     logStep("Generated invoice number", { invoiceNumber });
 
-    // Update local invoice
+    // Update local invoice (totals are computed via invoice_computed_totals view)
     const { error: updateError } = await supabaseClient
       .from('invoices')
       .update({
@@ -120,9 +120,6 @@ serve(async (req) => {
         status: 'open',
         hosted_invoice_url: finalizedInvoice.hosted_invoice_url,
         invoice_pdf_url: finalizedInvoice.invoice_pdf,
-        subtotal: finalizedInvoice.subtotal ? finalizedInvoice.subtotal / 100 : invoice.subtotal,
-        tax: finalizedInvoice.tax ? finalizedInvoice.tax / 100 : invoice.tax,
-        total: finalizedInvoice.total ? finalizedInvoice.total / 100 : invoice.total,
         finalized_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       })
