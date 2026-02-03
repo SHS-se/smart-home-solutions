@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
@@ -348,6 +348,36 @@ const InvoiceDraftEditor: React.FC = () => {
       });
     },
   });
+
+  // Update due date mutation
+  const updateDueDateMutation = useMutation({
+    mutationFn: async (newDueDate: string) => {
+      if (!invoiceId) return;
+      const { error } = await supabase
+        .from('invoices')
+        .update({ due_date: newDueDate || null })
+        .eq('id', invoiceId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['invoice', invoiceId] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: t('Kunde inte spara förfallodatum', 'Failed to save due date'),
+        description: error.message,
+        variant: 'destructive',
+      });
+    },
+  });
+
+  // Handle due date change with auto-save
+  const handleDueDateChange = useCallback((newValue: string) => {
+    setDueDate(newValue);
+    if (invoiceId) {
+      updateDueDateMutation.mutate(newValue);
+    }
+  }, [invoiceId, updateDueDateMutation]);
 
   // Add line item
   const addLineItem = (type: 'hardware' | 'labor' | 'travel_other') => {
@@ -714,7 +744,7 @@ const InvoiceDraftEditor: React.FC = () => {
                     id="due_date"
                     type="date"
                     value={dueDate}
-                    onChange={(e) => setDueDate(e.target.value)}
+                    onChange={(e) => handleDueDateChange(e.target.value)}
                   />
                 </div>
                 {/* Actions */}
