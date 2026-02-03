@@ -95,6 +95,7 @@ const InvoicesList: React.FC = () => {
   const [activeFilters, setActiveFilters] = useState<StatusFilter[]>([]);
 
   // Fetch invoices with computed totals
+  // staleTime: 0 ensures we always refetch on mount/focus to defeat bfcache staleness
   const { data: invoices = [], isLoading } = useQuery({
     queryKey: ['invoices'],
     queryFn: async () => {
@@ -124,6 +125,9 @@ const InvoicesList: React.FC = () => {
       }) as Invoice[];
     },
     enabled: isStaff,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
   });
 
   // Mark/Unmark test mutation

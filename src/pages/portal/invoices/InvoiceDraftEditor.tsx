@@ -84,6 +84,7 @@ const InvoiceDraftEditor: React.FC = () => {
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
 
   // Fetch existing invoice if editing
+  // staleTime: 0 ensures we always refetch on mount/focus to defeat bfcache staleness
   const { data: existingInvoice, isLoading: invoiceLoading } = useQuery({
     queryKey: ['invoice', invoiceId],
     queryFn: async () => {
@@ -110,10 +111,14 @@ const InvoiceDraftEditor: React.FC = () => {
       } as Invoice;
     },
     enabled: !!invoiceId && isStaff,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
   });
 
   // Fetch line items for existing invoice
-  const { data: existingLineItems, isFetched: lineItemsFetched } = useQuery({
+  // staleTime: 0 ensures we always refetch on mount/focus to defeat bfcache staleness
+  const { data: existingLineItems, isFetched: lineItemsFetched, dataUpdatedAt } = useQuery({
     queryKey: ['invoice_line_items', invoiceId],
     queryFn: async () => {
       if (!invoiceId) return [];
@@ -126,6 +131,9 @@ const InvoiceDraftEditor: React.FC = () => {
       return data as LineItem[];
     },
     enabled: !!invoiceId && isStaff,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
   });
 
   // Fetch customers for selection
@@ -219,7 +227,7 @@ const InvoiceDraftEditor: React.FC = () => {
 
   // Hydrate line items from DB once per invoice (prevents auto-save from wiping rows on load)
   const initialLoadComplete = useRef(false);
-  const hasHydratedFromDbRef = useRef(false);
+  const lastHydratedAtRef = useRef<number>(0);
   const lastSavedIdsRef = useRef<string[]>([]);
   const restoredHardwareFromBomRef = useRef(false);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -234,24 +242,29 @@ const InvoiceDraftEditor: React.FC = () => {
   useEffect(() => {
     // Reset refs when switching invoice
     initialLoadComplete.current = false;
-    hasHydratedFromDbRef.current = false;
+    lastHydratedAtRef.current = 0;
     restoredHardwareFromBomRef.current = false;
     lastSavedIdsRef.current = [];
   }, [invoiceId]);
 
+  // Re-hydrate local state whenever React Query fetches fresh data.
+  // This is critical for defeating bfcache: the browser may restore stale JS state,
+  // but React Query will refetch (staleTime:0 + refetchOnMount:'always').
+  // When dataUpdatedAt changes, we know fresh data arrived and should re-sync local state.
   useEffect(() => {
     if (!invoiceId) return;
     if (!lineItemsFetched) return;
-    if (hasHydratedFromDbRef.current) return;
+    // Only sync if this is new data we haven't hydrated yet
+    if (dataUpdatedAt <= lastHydratedAtRef.current) return;
 
     const items = (existingLineItems ?? []) as LineItem[];
 
     skipNextAutosaveRef.current = true;
     setLineItems(items);
     lastSavedIdsRef.current = items.map((i) => i.id).filter(Boolean) as string[];
-    hasHydratedFromDbRef.current = true;
+    lastHydratedAtRef.current = dataUpdatedAt;
     initialLoadComplete.current = true;
-  }, [invoiceId, lineItemsFetched, existingLineItems]);
+  }, [invoiceId, lineItemsFetched, existingLineItems, dataUpdatedAt]);
 
   // Initialize from query params
   useEffect(() => {
@@ -466,7 +479,7 @@ const InvoiceDraftEditor: React.FC = () => {
     if (!invoiceId) return;
     if (!existingInvoice?.bom_id) return;
     if (existingInvoice.status !== 'draft') return;
-    if (!hasHydratedFromDbRef.current) return;
+    if (!initialLoadComplete.current) return;
     if (restoredHardwareFromBomRef.current) return;
     if (!bomItems || bomItems.length === 0) return;
 
