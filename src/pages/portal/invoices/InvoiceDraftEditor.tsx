@@ -538,6 +538,8 @@ const InvoiceDraftEditor: React.FC = () => {
   }, [lineItems, invoiceId, saveLineItemsMutation]);
 
   // If the user navigates away while a debounced save is pending, flush it immediately.
+  // NOTE: Empty dependency array is intentional - this should only run on unmount.
+  // Including saveLineItemsMutation would cause infinite loops due to react-query state updates.
   useEffect(() => {
     return () => {
       if (!invoiceId || !initialLoadComplete.current) return;
@@ -547,7 +549,8 @@ const InvoiceDraftEditor: React.FC = () => {
       saveTimeoutRef.current = null;
       saveLineItemsMutation.mutate(lineItemsRef.current);
     };
-  }, [invoiceId, saveLineItemsMutation]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invoiceId]);
 
   // Handle due date change with auto-save
   const handleDueDateChange = useCallback((newValue: string) => {
