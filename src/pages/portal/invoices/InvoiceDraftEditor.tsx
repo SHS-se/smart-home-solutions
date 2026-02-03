@@ -5,6 +5,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import PortalLayout from '@/components/portal/PortalLayout';
+import { getDefaultInvoiceDueDate } from '@/lib/swedish-banking-days';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -77,7 +78,7 @@ const InvoiceDraftEditor: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   const [selectedBomId, setSelectedBomId] = useState<string | null>(null);
-  const [dueDate, setDueDate] = useState<string>('');
+  const [dueDate, setDueDate] = useState<string>(() => getDefaultInvoiceDueDate());
   const [isTest, setIsTest] = useState(false);
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
 
