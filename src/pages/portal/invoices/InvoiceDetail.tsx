@@ -331,15 +331,6 @@ const InvoiceDetail: React.FC = () => {
           </div>
         </div>
 
-        {/* Void Banner */}
-        {isVoid && (
-          <Alert variant="destructive" className="border-destructive/50 bg-destructive/10">
-            <XCircle className="h-5 w-5" />
-            <AlertDescription className="font-medium">
-              {t('Denna faktura har makulerats och är inte längre giltig.', 'This invoice has been voided and is no longer valid.')}
-            </AlertDescription>
-          </Alert>
-        )}
 
         {/* Main content */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
