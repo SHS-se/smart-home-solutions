@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -731,10 +731,10 @@ const InvoiceDraftEditor: React.FC = () => {
                   </Button>
                   {bom && (
                     <Button variant="ghost" size="sm" asChild>
-                      <a href={`/portal/boms/${bom.id}`} target="_blank">
+                      <Link to={`/portal/boms/${bom.id}`}>
                         <LinkIcon className="h-4 w-4 mr-1" />
                         {t('Visa hela BOM', 'View full BOM')}
-                      </a>
+                      </Link>
                     </Button>
                   )}
                 </div>
