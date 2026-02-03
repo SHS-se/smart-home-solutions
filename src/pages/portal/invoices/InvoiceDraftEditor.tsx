@@ -451,6 +451,7 @@ const InvoiceDraftEditor: React.FC = () => {
       : { description: '', unit_price: 0 };
     
     setLineItems(prev => [...prev, {
+      id: crypto.randomUUID(),
       line_type: type,
       description: defaults.description,
       quantity: 1,
