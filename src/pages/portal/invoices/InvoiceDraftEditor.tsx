@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import BlurCommitInput from '@/components/ui/blur-commit-input';
 import {
   Table,
   TableBody,
@@ -710,11 +711,11 @@ const InvoiceDraftEditor: React.FC = () => {
                       </TableRow>
                     ) : (
                       lineItems.map((item, idx) => item.line_type === 'hardware' && (
-                        <TableRow key={idx}>
+                        <TableRow key={item.id || idx}>
                           <TableCell>
-                            <Input 
+                            <BlurCommitInput 
                               value={item.description}
-                              onChange={(e) => updateLineItem(idx, { description: e.target.value })}
+                              onCommit={(val) => updateLineItem(idx, { description: val })}
                               placeholder={t('Produktnamn', 'Product name')}
                             />
                           </TableCell>
@@ -722,18 +723,18 @@ const InvoiceDraftEditor: React.FC = () => {
                             <span className="text-xs text-muted-foreground font-mono">{item.sku || '—'}</span>
                           </TableCell>
                           <TableCell>
-                            <Input 
+                            <BlurCommitInput 
                               type="number"
                               value={item.quantity}
-                              onChange={(e) => updateLineItem(idx, { quantity: parseFloat(e.target.value) || 0 })}
+                              onCommit={(val) => updateLineItem(idx, { quantity: parseFloat(val) || 1 })}
                               className="w-20"
                             />
                           </TableCell>
                           <TableCell>
-                            <Input 
+                            <BlurCommitInput 
                               type="number"
                               value={item.unit_price}
-                              onChange={(e) => updateLineItem(idx, { unit_price: parseFloat(e.target.value) || 0 })}
+                              onCommit={(val) => updateLineItem(idx, { unit_price: parseFloat(val) || 0 })}
                               className="w-24"
                             />
                           </TableCell>
@@ -772,24 +773,24 @@ const InvoiceDraftEditor: React.FC = () => {
                 ) : (
                   <div className="space-y-2">
                     {lineItems.map((item, idx) => item.line_type === 'labor' && (
-                      <div key={idx} className="flex items-center gap-3">
-                        <Input 
+                      <div key={item.id || idx} className="flex items-center gap-3">
+                        <BlurCommitInput 
                           className="flex-1"
                           value={item.description}
-                          onChange={(e) => updateLineItem(idx, { description: e.target.value })}
+                          onCommit={(val) => updateLineItem(idx, { description: val })}
                           placeholder={t('Beskrivning', 'Description')}
                         />
-                        <Input 
+                        <BlurCommitInput 
                           type="number"
                           value={item.quantity}
-                          onChange={(e) => updateLineItem(idx, { quantity: parseFloat(e.target.value) || 0 })}
+                          onCommit={(val) => updateLineItem(idx, { quantity: parseFloat(val) || 1 })}
                           className="w-20"
                         />
                         <span className="text-muted-foreground text-sm">{t('tim ×', 'hrs ×')}</span>
-                        <Input 
+                        <BlurCommitInput 
                           type="number"
                           value={item.unit_price}
-                          onChange={(e) => updateLineItem(idx, { unit_price: parseFloat(e.target.value) || 0 })}
+                          onCommit={(val) => updateLineItem(idx, { unit_price: parseFloat(val) || 0 })}
                           className="w-24"
                         />
                         <span className="text-muted-foreground text-sm">kr</span>
@@ -819,24 +820,24 @@ const InvoiceDraftEditor: React.FC = () => {
                 ) : (
                   <div className="space-y-2">
                     {lineItems.map((item, idx) => item.line_type === 'travel_other' && (
-                      <div key={idx} className="flex items-center gap-3">
-                        <Input 
+                      <div key={item.id || idx} className="flex items-center gap-3">
+                        <BlurCommitInput 
                           className="flex-1"
                           value={item.description}
-                          onChange={(e) => updateLineItem(idx, { description: e.target.value })}
+                          onCommit={(val) => updateLineItem(idx, { description: val })}
                           placeholder={t('Beskrivning', 'Description')}
                         />
-                        <Input 
+                        <BlurCommitInput 
                           type="number"
                           value={item.quantity}
-                          onChange={(e) => updateLineItem(idx, { quantity: parseFloat(e.target.value) || 0 })}
+                          onCommit={(val) => updateLineItem(idx, { quantity: parseFloat(val) || 1 })}
                           className="w-20"
                         />
                         <span className="text-muted-foreground text-sm">×</span>
-                        <Input 
+                        <BlurCommitInput 
                           type="number"
                           value={item.unit_price}
-                          onChange={(e) => updateLineItem(idx, { unit_price: parseFloat(e.target.value) || 0 })}
+                          onCommit={(val) => updateLineItem(idx, { unit_price: parseFloat(val) || 0 })}
                           className="w-24"
                         />
                         <span className="text-muted-foreground text-sm">kr</span>
