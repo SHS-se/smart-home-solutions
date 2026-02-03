@@ -155,7 +155,7 @@ const InvoiceDraftEditor: React.FC = () => {
     enabled: isStaff,
   });
 
-  // Fetch BOM items when a BOM is selected (for new invoices only)
+  // Fetch BOM items when a BOM is selected
   const { data: bomItems } = useQuery({
     queryKey: ['bom_items_for_invoice', selectedBomId],
     queryFn: async () => {
@@ -175,7 +175,7 @@ const InvoiceDraftEditor: React.FC = () => {
       if (error) throw error;
       return data;
     },
-    enabled: !!selectedBomId && !invoiceId && isStaff,
+    enabled: !!selectedBomId && isStaff,
   });
 
   // Populate line items when BOM items are loaded (for new invoices only)
@@ -184,15 +184,17 @@ const InvoiceDraftEditor: React.FC = () => {
       const hardwareItems: LineItem[] = bomItems.map((item, idx) => {
         const sku = item.skus as { sku: string; name: string; sell_price_ex_vat: number | null; vat_rate: number } | null;
         const unitPrice = item.sell_price_ex_vat_at_time ?? sku?.sell_price_ex_vat ?? 0;
-        const vatRate = item.vat_rate_at_time ?? sku?.vat_rate ?? 25;
+        const vatRateRaw = item.vat_rate_at_time ?? sku?.vat_rate;
+        const vatRatePct = vatRateRaw == null ? 25 : vatRateRaw <= 1 ? vatRateRaw * 100 : vatRateRaw;
         return {
+          id: crypto.randomUUID(),
           line_type: 'hardware' as const,
           description: sku?.name || 'Unknown product',
           sku: sku?.sku || '',
           sku_id: item.sku_id,
           quantity: item.quantity,
           unit_price: unitPrice,
-          tax_rate: vatRate,
+          tax_rate: vatRatePct,
           sort_order: idx,
         };
       });
@@ -214,11 +216,35 @@ const InvoiceDraftEditor: React.FC = () => {
     }
   }, [existingInvoice]);
 
+  // Hydrate line items from DB once per invoice (prevents auto-save from wiping rows on load)
+  const initialLoadComplete = useRef(false);
+  const hasHydratedFromDbRef = useRef(false);
+  const lastSavedIdsRef = useRef<string[]>([]);
+  const restoredHardwareFromBomRef = useRef(false);
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const skipNextAutosaveRef = useRef(false);
+
   useEffect(() => {
-    if (existingLineItems) {
-      setLineItems(existingLineItems);
-    }
-  }, [existingLineItems]);
+    // Reset refs when switching invoice
+    initialLoadComplete.current = false;
+    hasHydratedFromDbRef.current = false;
+    restoredHardwareFromBomRef.current = false;
+    lastSavedIdsRef.current = [];
+  }, [invoiceId]);
+
+  useEffect(() => {
+    if (!invoiceId) return;
+    if (!lineItemsFetched) return;
+    if (hasHydratedFromDbRef.current) return;
+
+    const items = (existingLineItems ?? []) as LineItem[];
+
+    skipNextAutosaveRef.current = true;
+    setLineItems(items);
+    lastSavedIdsRef.current = items.map((i) => i.id).filter(Boolean) as string[];
+    hasHydratedFromDbRef.current = true;
+    initialLoadComplete.current = true;
+  }, [invoiceId, lineItemsFetched, existingLineItems]);
 
   // Initialize from query params
   useEffect(() => {
@@ -375,19 +401,39 @@ const InvoiceDraftEditor: React.FC = () => {
   const saveLineItemsMutation = useMutation({
     mutationFn: async (items: LineItem[]) => {
       if (!invoiceId) return;
-      
-      // Delete existing and insert new
-      await supabase.from('invoice_line_items').delete().eq('invoice_id', invoiceId);
-      if (items.length > 0) {
-        const { error } = await supabase.from('invoice_line_items').insert(
-          items.map((item, idx) => ({
-            ...item,
-            invoice_id: invoiceId,
-            sort_order: idx,
-          }))
-        );
+
+      // Ensure stable IDs in the payload (never send id: null)
+      const normalized = items.map((item, idx) => {
+        const id = item.id ?? crypto.randomUUID();
+        return {
+          ...item,
+          id,
+          invoice_id: invoiceId,
+          sort_order: idx,
+        };
+      });
+
+      const newIds = normalized.map((i) => i.id).filter(Boolean) as string[];
+      const removedIds = lastSavedIdsRef.current.filter((id) => !newIds.includes(id));
+
+      if (normalized.length > 0) {
+        const { error } = await supabase
+          .from('invoice_line_items')
+          .upsert(normalized as any, { onConflict: 'id' });
         if (error) throw error;
       }
+
+      if (removedIds.length > 0) {
+        const { error } = await supabase
+          .from('invoice_line_items')
+          .delete()
+          .eq('invoice_id', invoiceId)
+          .in('id', removedIds);
+        if (error) throw error;
+      }
+
+      // Update last saved set only after successful operations
+      lastSavedIdsRef.current = newIds;
     },
     onError: (error: Error) => {
       toast({
@@ -398,25 +444,63 @@ const InvoiceDraftEditor: React.FC = () => {
     },
   });
 
-  // Track if initial load is complete to avoid saving on mount
-  const initialLoadComplete = useRef(false);
-  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Mark initial load as complete only after query has fetched and state has been set
+  // If this invoice is linked to a BOM but hardware rows are missing, restore them from the BOM.
+  // This is a safety net in case a previous save wiped rows.
   useEffect(() => {
     if (!invoiceId) return;
-    if (!lineItemsFetched) return;
-    
-    // Give time for existingLineItems to be set to state
-    const timeout = setTimeout(() => {
-      initialLoadComplete.current = true;
-    }, 600);
-    return () => clearTimeout(timeout);
-  }, [invoiceId, lineItemsFetched]);
+    if (!existingInvoice?.bom_id) return;
+    if (existingInvoice.status !== 'draft') return;
+    if (!hasHydratedFromDbRef.current) return;
+    if (restoredHardwareFromBomRef.current) return;
+    if (!bomItems || bomItems.length === 0) return;
+
+    const hasHardware = lineItems.some((i) => i.line_type === 'hardware');
+    if (hasHardware) return;
+
+    restoredHardwareFromBomRef.current = true;
+
+    const hardwareItems: LineItem[] = bomItems.map((item, idx) => {
+      const sku = item.skus as { sku: string; name: string; sell_price_ex_vat: number | null; vat_rate: number } | null;
+      const unitPrice = item.sell_price_ex_vat_at_time ?? sku?.sell_price_ex_vat ?? 0;
+      const vatRateRaw = item.vat_rate_at_time ?? sku?.vat_rate;
+      const vatRatePct = vatRateRaw == null ? 25 : vatRateRaw <= 1 ? vatRateRaw * 100 : vatRateRaw;
+      return {
+        id: crypto.randomUUID(),
+        line_type: 'hardware' as const,
+        description: sku?.name || 'Unknown product',
+        sku: sku?.sku || '',
+        sku_id: item.sku_id,
+        quantity: item.quantity,
+        unit_price: unitPrice,
+        tax_rate: vatRatePct,
+        sort_order: idx,
+      };
+    });
+
+    const updated: LineItem[] = [
+      ...hardwareItems,
+      ...lineItems.filter((i) => i.line_type !== 'hardware'),
+    ];
+
+    setLineItems(updated);
+    saveLineItemsMutation.mutate(updated);
+  }, [
+    invoiceId,
+    existingInvoice?.bom_id,
+    existingInvoice?.status,
+    bomItems,
+    lineItems,
+    saveLineItemsMutation,
+  ]);
 
   // Auto-save line items when they change (debounced)
   useEffect(() => {
     if (!invoiceId || !initialLoadComplete.current) return;
+
+    if (skipNextAutosaveRef.current) {
+      skipNextAutosaveRef.current = false;
+      return;
+    }
 
     // Clear any pending save
     if (saveTimeoutRef.current) {
@@ -433,7 +517,7 @@ const InvoiceDraftEditor: React.FC = () => {
         clearTimeout(saveTimeoutRef.current);
       }
     };
-  }, [lineItems, invoiceId]);
+  }, [lineItems, invoiceId, saveLineItemsMutation]);
 
   // Handle due date change with auto-save
   const handleDueDateChange = useCallback((newValue: string) => {
