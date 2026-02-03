@@ -9,6 +9,14 @@ import PortalLayout from '@/components/portal/PortalLayout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   Table,
   TableBody,
@@ -18,7 +26,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { SortableTableHead } from '@/components/ui/sortable-table-head';
-import { Plus, TestTube, Eye, Mail } from 'lucide-react';
+import { Plus, TestTube, Eye, Mail, Search } from 'lucide-react';
 import { format } from 'date-fns';
 import { sv } from 'date-fns/locale';
 import { toast } from '@/hooks/use-toast';
@@ -42,6 +50,7 @@ interface Invoice {
 
 type SortColumn = 'invoice_number' | 'customer' | 'project' | 'created_at' | 'due_date' | 'total' | 'status';
 type StatusFilter = 'draft' | 'open' | 'paid' | 'overdue' | 'void';
+type ViewFilter = 'active' | 'include_void' | 'include_test' | 'all';
 
 const getStatusBadge = (status: string, dueDate: string | null, t: (sv: string, en: string) => string) => {
   // Check for overdue
@@ -95,6 +104,8 @@ const InvoicesList: React.FC = () => {
 
   const [activeFilters, setActiveFilters] = useState<StatusFilter[]>([]);
   const [pdfModalInvoice, setPdfModalInvoice] = useState<Invoice | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [viewFilter, setViewFilter] = useState<ViewFilter>('active');
 
   // Fetch invoices with computed totals
   // staleTime: 0 ensures we always refetch on mount/focus to defeat bfcache staleness
@@ -197,9 +208,43 @@ const InvoicesList: React.FC = () => {
   const filteredAndSortedInvoices = useMemo(() => {
     let filtered = invoices;
     
+    // Apply view filter (test/void visibility)
+    filtered = filtered.filter(invoice => {
+      switch (viewFilter) {
+        case 'active':
+          // Hide test and voided invoices
+          if (invoice.is_test) return false;
+          if (invoice.status === 'void') return false;
+          break;
+        case 'include_void':
+          // Show voided but hide test
+          if (invoice.is_test) return false;
+          break;
+        case 'include_test':
+          // Show test but hide voided
+          if (invoice.status === 'void') return false;
+          break;
+        case 'all':
+          // Show everything
+          break;
+      }
+      return true;
+    });
+    
+    // Apply search filter
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(invoice => {
+        const matchesInvoiceNumber = invoice.invoice_number?.toLowerCase().includes(query);
+        const matchesCustomer = invoice.customer?.org_name?.toLowerCase().includes(query);
+        const matchesProject = invoice.bom?.project_name?.toLowerCase().includes(query);
+        return matchesInvoiceNumber || matchesCustomer || matchesProject;
+      });
+    }
+    
     // Apply status filters if any are active
     if (activeFilters.length > 0) {
-      filtered = invoices.filter(invoice => {
+      filtered = filtered.filter(invoice => {
         const effectiveStatus = getEffectiveStatus(invoice);
         return activeFilters.includes(effectiveStatus);
       });
@@ -223,7 +268,7 @@ const InvoicesList: React.FC = () => {
         }
       },
     });
-  }, [invoices, sortColumn, sortDirection, activeFilters]);
+  }, [invoices, sortColumn, sortDirection, activeFilters, viewFilter, searchQuery]);
 
   // Redirect if not staff
   if (!authLoading && !isStaff) {
@@ -253,6 +298,30 @@ const InvoicesList: React.FC = () => {
               {t('Skapa faktura', 'Create invoice')}
             </Button>
           </div>
+        </div>
+
+        {/* Search and View Filter */}
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="relative flex-1 max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder={t('Sök faktura, kund eller projekt...', 'Search invoice, customer or project...')}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-9"
+            />
+          </div>
+          <Select value={viewFilter} onValueChange={(v) => setViewFilter(v as ViewFilter)}>
+            <SelectTrigger className="w-full sm:w-[200px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="active">{t('Aktiva (standard)', 'Active (default)')}</SelectItem>
+              <SelectItem value="include_void">{t('Inkl. makulerade', 'Include voided')}</SelectItem>
+              <SelectItem value="include_test">{t('Inkl. test', 'Include test')}</SelectItem>
+              <SelectItem value="all">{t('Visa alla', 'Show all')}</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
 
         {/* Status Filter Cards */}
@@ -360,9 +429,10 @@ const InvoicesList: React.FC = () => {
               ) : filteredAndSortedInvoices.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
-                    {activeFilters.length > 0 
-                      ? t('Inga fakturor matchar filtret.', 'No invoices match the filter.')
-                      : t('Inga fakturor skapade ännu.', 'No invoices created yet.')}
+                    {invoices.length === 0 
+                      ? t('Inga fakturor skapade ännu.', 'No invoices created yet.')
+                      : t('Inga fakturor matchar din sökning.', 'No invoices match your search.')
+                    }
                   </TableCell>
                 </TableRow>
               ) : (
