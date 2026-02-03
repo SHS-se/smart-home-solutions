@@ -54,6 +54,7 @@ interface Invoice {
   finalized_at: string | null;
   paid_at: string | null;
   voided_at: string | null;
+  last_emailed_at: string | null;
   created_at: string;
   customer?: { id: string; org_name: string | null; billing_email?: string | null } | null;
   bom?: { id: string; project_name: string } | null;
@@ -313,6 +314,12 @@ const InvoiceDetail: React.FC = () => {
             {getStatusBadge(invoice.status, invoice.due_date, t)}
             {invoice.is_test && (
               <Badge variant="outline">Test</Badge>
+            )}
+            {invoice.last_emailed_at && (
+              <Badge variant="outline" className="border-primary/50 text-primary">
+                <Mail className="h-3 w-3 mr-1" />
+                {t('Skickad', 'Sent')}
+              </Badge>
             )}
             {invoice.bom && (
               <span>
