@@ -18,7 +18,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { SortableTableHead } from '@/components/ui/sortable-table-head';
-import { Plus, TestTube, Eye } from 'lucide-react';
+import { Plus, TestTube, Eye, Mail } from 'lucide-react';
 import { format } from 'date-fns';
 import { sv } from 'date-fns/locale';
 import { toast } from '@/hooks/use-toast';
@@ -35,6 +35,7 @@ interface Invoice {
   due_date: string | null;
   total: number | null;
   created_at: string;
+  last_emailed_at: string | null;
   customer?: { org_name: string | null } | null;
   bom?: { project_name: string } | null;
 }
@@ -386,6 +387,12 @@ const InvoicesList: React.FC = () => {
                           <Badge variant="outline" className="text-xs">
                             <TestTube className="h-3 w-3 mr-1" />
                             {t('Test', 'Test')}
+                          </Badge>
+                        )}
+                        {invoice.last_emailed_at && (
+                          <Badge variant="outline" className="text-xs border-primary/50 text-primary">
+                            <Mail className="h-3 w-3 mr-1" />
+                            {t('Skickad', 'Sent')}
                           </Badge>
                         )}
                       </div>
