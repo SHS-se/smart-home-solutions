@@ -26,11 +26,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { ExternalLink, FileText, Mail, XCircle, CheckCircle2, Loader2, Clock, AlertCircle } from 'lucide-react';
+import { Eye, ExternalLink, FileText, Mail, XCircle, CheckCircle2, Loader2, Clock, AlertCircle } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 import { sv } from 'date-fns/locale';
 import InvoiceEmailModal from '@/components/portal/invoices/InvoiceEmailModal';
+import InvoicePdfModal from '@/components/portal/invoices/InvoicePdfModal';
 
 interface Invoice {
   id: string;
@@ -148,6 +149,7 @@ const InvoiceDetail: React.FC = () => {
   const [showVoidDialog, setShowVoidDialog] = useState(false);
   const [isVoiding, setIsVoiding] = useState(false);
   const [showEmailModal, setShowEmailModal] = useState(false);
+  const [showPdfModal, setShowPdfModal] = useState(false);
 
   // Fetch invoice by invoice_number or id
   const { data: invoice, isLoading } = useQuery({
@@ -521,12 +523,14 @@ const InvoiceDetail: React.FC = () => {
                     </Button>
                   )}
 
-                  {invoice.invoice_pdf_url && (
-                    <Button variant="outline" className="w-full" asChild>
-                      <a href={invoice.invoice_pdf_url} target="_blank" rel="noopener noreferrer">
-                        <FileText className="h-4 w-4 mr-2" />
-                        {t('Visa PDF', 'View PDF')}
-                      </a>
+                  {invoice.stripe_invoice_id && (
+                    <Button 
+                      variant="outline" 
+                      className="w-full" 
+                      onClick={() => setShowPdfModal(true)}
+                    >
+                      <Eye className="h-4 w-4 mr-2" />
+                      {t('Visa PDF', 'View PDF')}
                     </Button>
                   )}
 
@@ -625,6 +629,16 @@ const InvoiceDetail: React.FC = () => {
           open={showEmailModal}
           onOpenChange={setShowEmailModal}
           invoice={invoice}
+        />
+      )}
+
+      {/* PDF modal */}
+      {invoice && (
+        <InvoicePdfModal
+          open={showPdfModal}
+          onOpenChange={setShowPdfModal}
+          stripeInvoiceId={invoice.stripe_invoice_id}
+          invoiceNumber={invoice.invoice_number || invoice.id}
         />
       )}
     </PortalLayout>
