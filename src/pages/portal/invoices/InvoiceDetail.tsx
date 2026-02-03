@@ -184,10 +184,10 @@ const InvoiceDetail: React.FC = () => {
       // Merge computed totals with invoice data
       return {
         ...data,
-        // Use computed totals as authoritative, fallback to stored for backwards compatibility
-        subtotal: computed?.subtotal ?? data.subtotal,
-        tax: computed?.tax ?? data.tax,
-        total: computed?.total ?? data.total,
+        // Use computed totals as authoritative
+        subtotal: computed?.subtotal ?? 0,
+        tax: computed?.tax ?? 0,
+        total: computed?.total ?? 0,
       } as Invoice;
     },
     enabled: !!id && isStaff,

@@ -39,9 +39,6 @@ interface Quote {
   version: number;
   is_latest: boolean;
   is_test: boolean;
-  hardware_total: number;
-  labor_total: number;
-  travel_total: number;
   computed_total_inc_vat: number;
   stripe_quote_id: string | null;
   status: string;
