@@ -224,6 +224,12 @@ const InvoiceDraftEditor: React.FC = () => {
   const restoredHardwareFromBomRef = useRef(false);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const skipNextAutosaveRef = useRef(false);
+  const lineItemsRef = useRef<LineItem[]>([]);
+
+  // Always keep a ref to the latest lineItems so we can safely flush pending saves on navigation/unmount.
+  useEffect(() => {
+    lineItemsRef.current = lineItems;
+  }, [lineItems]);
 
   useEffect(() => {
     // Reset refs when switching invoice
@@ -519,7 +525,9 @@ const InvoiceDraftEditor: React.FC = () => {
 
     // Debounce save by 500ms
     saveTimeoutRef.current = setTimeout(() => {
-      saveLineItemsMutation.mutate(lineItems);
+      // Mark timer as consumed; prevents an unnecessary flush on unmount.
+      saveTimeoutRef.current = null;
+      saveLineItemsMutation.mutate(lineItemsRef.current);
     }, 500);
 
     return () => {
@@ -528,6 +536,18 @@ const InvoiceDraftEditor: React.FC = () => {
       }
     };
   }, [lineItems, invoiceId, saveLineItemsMutation]);
+
+  // If the user navigates away while a debounced save is pending, flush it immediately.
+  useEffect(() => {
+    return () => {
+      if (!invoiceId || !initialLoadComplete.current) return;
+      if (!saveTimeoutRef.current) return;
+
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+      saveLineItemsMutation.mutate(lineItemsRef.current);
+    };
+  }, [invoiceId, saveLineItemsMutation]);
 
   // Handle due date change with auto-save
   const handleDueDateChange = useCallback((newValue: string) => {
@@ -562,7 +582,20 @@ const InvoiceDraftEditor: React.FC = () => {
 
   // Remove line item
   const removeLineItem = (index: number) => {
-    setLineItems(prev => prev.filter((_, i) => i !== index));
+    // Persist deletions immediately so they can't be lost if the user navigates away before the debounce fires.
+    const next = lineItems.filter((_, i) => i !== index);
+    skipNextAutosaveRef.current = true;
+
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+
+    setLineItems(next);
+
+    if (invoiceId && initialLoadComplete.current) {
+      saveLineItemsMutation.mutate(next);
+    }
   };
 
   const formatPrice = (value: number) => {
