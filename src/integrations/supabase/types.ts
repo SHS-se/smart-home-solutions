@@ -499,9 +499,6 @@ export type Database = {
           quote_number: string | null
           status: string | null
           stripe_invoice_id: string | null
-          subtotal: number | null
-          tax: number | null
-          total: number | null
           updated_at: string | null
           voided_at: string | null
         }
@@ -530,9 +527,6 @@ export type Database = {
           quote_number?: string | null
           status?: string | null
           stripe_invoice_id?: string | null
-          subtotal?: number | null
-          tax?: number | null
-          total?: number | null
           updated_at?: string | null
           voided_at?: string | null
         }
@@ -561,9 +555,6 @@ export type Database = {
           quote_number?: string | null
           status?: string | null
           stripe_invoice_id?: string | null
-          subtotal?: number | null
-          tax?: number | null
-          total?: number | null
           updated_at?: string | null
           voided_at?: string | null
         }
@@ -783,7 +774,6 @@ export type Database = {
           created_at: string
           created_by: string | null
           customer_id: string | null
-          hardware_total: number
           id: string
           invoice_due_date: string | null
           invoice_hosted_url: string | null
@@ -795,7 +785,6 @@ export type Database = {
           invoice_vat: number | null
           is_latest: boolean
           is_test: boolean
-          labor_total: number
           parent_quote_id: string | null
           quote_number: string
           status: string
@@ -803,12 +792,8 @@ export type Database = {
           stripe_invoice_id: string | null
           stripe_quote_id: string | null
           stripe_status: string | null
-          subtotal_ex_vat: number | null
           supersedes_quote_id: string | null
-          total_inc_vat: number | null
-          travel_total: number
           updated_at: string
-          vat_total: number | null
           version: number
         }
         Insert: {
@@ -820,7 +805,6 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           customer_id?: string | null
-          hardware_total?: number
           id?: string
           invoice_due_date?: string | null
           invoice_hosted_url?: string | null
@@ -832,7 +816,6 @@ export type Database = {
           invoice_vat?: number | null
           is_latest?: boolean
           is_test?: boolean
-          labor_total?: number
           parent_quote_id?: string | null
           quote_number: string
           status?: string
@@ -840,12 +823,8 @@ export type Database = {
           stripe_invoice_id?: string | null
           stripe_quote_id?: string | null
           stripe_status?: string | null
-          subtotal_ex_vat?: number | null
           supersedes_quote_id?: string | null
-          total_inc_vat?: number | null
-          travel_total?: number
           updated_at?: string
-          vat_total?: number | null
           version?: number
         }
         Update: {
@@ -857,7 +836,6 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           customer_id?: string | null
-          hardware_total?: number
           id?: string
           invoice_due_date?: string | null
           invoice_hosted_url?: string | null
@@ -869,7 +847,6 @@ export type Database = {
           invoice_vat?: number | null
           is_latest?: boolean
           is_test?: boolean
-          labor_total?: number
           parent_quote_id?: string | null
           quote_number?: string
           status?: string
@@ -877,12 +854,8 @@ export type Database = {
           stripe_invoice_id?: string | null
           stripe_quote_id?: string | null
           stripe_status?: string | null
-          subtotal_ex_vat?: number | null
           supersedes_quote_id?: string | null
-          total_inc_vat?: number | null
-          travel_total?: number
           updated_at?: string
-          vat_total?: number | null
           version?: number
         }
         Relationships: [
