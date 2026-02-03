@@ -63,7 +63,7 @@ const getStatusBadge = (status: string, dueDate: string | null, t: (sv: string, 
     case 'overdue':
       return <Badge variant="destructive">{t('Förfallen', 'Overdue')}</Badge>;
     case 'void':
-      return <Badge variant="outline" className="text-muted-foreground">{t('Makulerad', 'Voided')}</Badge>;
+      return <Badge variant="destructive">{t('Makulerad', 'Voided')}</Badge>;
     default:
       return <Badge variant="secondary">{status}</Badge>;
   }

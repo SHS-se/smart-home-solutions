@@ -8,6 +8,7 @@ import PortalLayout from '@/components/portal/PortalLayout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   Table,
   TableBody,
@@ -97,7 +98,7 @@ const getStatusBadge = (status: string, dueDate: string | null, t: (sv: string, 
     case 'overdue':
       return <Badge variant="destructive">{t('Förfallen', 'Overdue')}</Badge>;
     case 'void':
-      return <Badge variant="outline" className="text-muted-foreground">{t('Makulerad', 'Voided')}</Badge>;
+      return <Badge variant="destructive">{t('Makulerad', 'Voided')}</Badge>;
     default:
       return <Badge variant="secondary">{status}</Badge>;
   }
@@ -329,6 +330,16 @@ const InvoiceDetail: React.FC = () => {
             )}
           </div>
         </div>
+
+        {/* Void Banner */}
+        {isVoid && (
+          <Alert variant="destructive" className="border-destructive/50 bg-destructive/10">
+            <XCircle className="h-5 w-5" />
+            <AlertDescription className="font-medium">
+              {t('Denna faktura har makulerats och är inte längre giltig.', 'This invoice has been voided and is no longer valid.')}
+            </AlertDescription>
+          </Alert>
+        )}
 
         {/* Main content */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
