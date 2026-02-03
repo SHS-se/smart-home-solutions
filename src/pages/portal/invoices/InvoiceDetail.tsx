@@ -173,7 +173,22 @@ const InvoiceDetail: React.FC = () => {
 
       if (error) throw error;
       if (!data) throw new Error('Invoice not found');
-      return data as Invoice;
+
+      // Fetch computed totals
+      const { data: computed } = await supabase
+        .from('invoice_computed_totals')
+        .select('*')
+        .eq('invoice_id', data.id)
+        .maybeSingle();
+
+      // Merge computed totals with invoice data
+      return {
+        ...data,
+        // Use computed totals as authoritative, fallback to stored for backwards compatibility
+        subtotal: computed?.subtotal ?? data.subtotal,
+        tax: computed?.tax ?? data.tax,
+        total: computed?.total ?? data.total,
+      } as Invoice;
     },
     enabled: !!id && isStaff,
   });
