@@ -12,6 +12,79 @@ const logStep = (step: string, details?: unknown) => {
   console.log(`[SYNC-INVOICE-LINES] ${step}${detailsStr}`);
 };
 
+// Swedish VAT rates we support
+const SUPPORTED_VAT_RATES = [0, 0.06, 0.12, 0.25];
+
+// In-memory cache for tax rate IDs during this function invocation
+const taxRateCache: Map<number, string> = new Map();
+
+/**
+ * Normalize VAT rate to nearest supported rate.
+ * Falls back to 25% if rate is unexpected.
+ */
+function normalizeVatRate(rate: number | undefined | null): number {
+  if (rate === undefined || rate === null) {
+    return 0.25; // Default to 25%
+  }
+  // Convert from percentage (25) to decimal (0.25) if needed
+  const decimalRate = rate > 1 ? rate / 100 : rate;
+  
+  // Find closest supported rate
+  const closest = SUPPORTED_VAT_RATES.reduce((prev, curr) => 
+    Math.abs(curr - decimalRate) < Math.abs(prev - decimalRate) ? curr : prev
+  );
+  
+  return closest;
+}
+
+/**
+ * Get or create a Stripe tax rate for a given VAT percentage.
+ * Caches results to avoid repeated API calls within the same invocation.
+ */
+async function getOrCreateTaxRate(
+  stripe: Stripe,
+  vatRate: number
+): Promise<string> {
+  // Normalize VAT rate to percentage (e.g., 0.25 -> 25)
+  const percentage = Math.round(vatRate * 100);
+  
+  // Check in-memory cache first
+  if (taxRateCache.has(percentage)) {
+    return taxRateCache.get(percentage)!;
+  }
+  
+  // Search for existing tax rate in Stripe
+  const existingTaxRates = await stripe.taxRates.list({ 
+    limit: 100, 
+    active: true 
+  });
+  
+  const matchingRate = existingTaxRates.data.find(
+    (rate: Stripe.TaxRate) => 
+      rate.percentage === percentage && 
+      rate.country === "SE" && 
+      rate.inclusive === false
+  );
+  
+  if (matchingRate) {
+    taxRateCache.set(percentage, matchingRate.id);
+    return matchingRate.id;
+  }
+  
+  // Create new tax rate if not found
+  const displayName = percentage === 0 ? "Momsfritt" : `Moms ${percentage}%`;
+  const newTaxRate = await stripe.taxRates.create({
+    display_name: displayName,
+    description: `Swedish VAT ${percentage}%`,
+    percentage: percentage,
+    country: "SE",
+    inclusive: false,
+  });
+  
+  taxRateCache.set(percentage, newTaxRate.id);
+  return newTaxRate.id;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -119,16 +192,21 @@ serve(async (req) => {
 
     logStep("Deleted existing items");
 
-    // Create new invoice items
+    // Create new invoice items with tax rates
     let subtotal = 0;
     let taxTotal = 0;
 
     for (const item of lineItems || []) {
       const amount = Math.round(item.quantity * item.unit_price * 100); // Convert to cents/öre
-      const taxAmount = Math.round(amount * (item.tax_rate / 100));
+      const normalizedVatRate = normalizeVatRate(item.tax_rate);
+      const taxAmount = Math.round(amount * normalizedVatRate);
       
       subtotal += amount;
       taxTotal += taxAmount;
+
+      // Get or create tax rate for this item
+      const taxRateId = await getOrCreateTaxRate(stripe, normalizedVatRate);
+      logStep("Tax rate for item", { description: item.description, tax_rate: item.tax_rate, normalizedVatRate, taxRateId });
 
       // Create a price for this line item
       const price = await stripe.prices.create({
@@ -139,13 +217,14 @@ serve(async (req) => {
         }
       });
 
-      // Create the invoice item with customer
+      // Create the invoice item with customer and tax rate
       await stripe.invoiceItems.create({
         customer: stripeCustomerId,
         invoice: invoice.stripe_invoice_id,
         pricing: { price: price.id },
         quantity: item.quantity,
         description: item.description,
+        tax_rates: [taxRateId], // Per-line tax rate
         metadata: {
           line_type: item.line_type,
           sku: item.sku || '',
