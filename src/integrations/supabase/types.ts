@@ -391,6 +391,13 @@ export type Database = {
             foreignKeyName: "invoice_events_invoice_id_fkey"
             columns: ["invoice_id"]
             isOneToOne: false
+            referencedRelation: "invoice_computed_totals"
+            referencedColumns: ["invoice_id"]
+          },
+          {
+            foreignKeyName: "invoice_events_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
             referencedRelation: "invoices"
             referencedColumns: ["id"]
           },
@@ -443,6 +450,13 @@ export type Database = {
           unit_price?: number
         }
         Relationships: [
+          {
+            foreignKeyName: "invoice_line_items_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoice_computed_totals"
+            referencedColumns: ["invoice_id"]
+          },
           {
             foreignKeyName: "invoice_line_items_invoice_id_fkey"
             columns: ["invoice_id"]
@@ -1356,6 +1370,15 @@ export type Database = {
       }
     }
     Views: {
+      invoice_computed_totals: {
+        Row: {
+          invoice_id: string | null
+          subtotal: number | null
+          tax: number | null
+          total: number | null
+        }
+        Relationships: []
+      }
       quote_computed_totals: {
         Row: {
           hardware_total: number | null

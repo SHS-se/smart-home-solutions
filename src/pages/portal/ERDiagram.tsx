@@ -86,54 +86,6 @@ const getErdDiagram = (direction: 'TB' | 'LR') => `erDiagram
         timestamptz created_at
     }
 
-    %% Billing
-    invoices {
-        uuid id PK
-        uuid customer_id FK
-        uuid bom_id FK
-        uuid quote_id FK "nullable"
-        uuid created_by FK
-        text stripe_invoice_id UK "nullable"
-        text invoice_number UK
-        numeric subtotal
-        numeric tax
-        numeric total
-        text currency
-        text status
-        boolean is_test
-        text hosted_invoice_url
-        text invoice_pdf_url
-        timestamptz issued_at
-        date due_date
-        timestamptz finalized_at
-        timestamptz paid_at
-        timestamptz voided_at
-        timestamptz created_at
-        timestamptz updated_at
-    }
-
-    invoice_line_items {
-        uuid id PK
-        uuid invoice_id FK
-        uuid sku_id FK
-        text line_type
-        text description
-        numeric quantity
-        numeric unit_price
-        numeric tax_rate
-        int sort_order
-        timestamptz created_at
-    }
-
-    invoice_events {
-        uuid id PK
-        uuid invoice_id FK
-        uuid created_by FK
-        text event_type
-        jsonb metadata
-        timestamptz created_at
-    }
-
     %% SKU Catalog
     skus {
         uuid id PK
@@ -216,7 +168,7 @@ const getErdDiagram = (direction: 'TB' | 'LR') => `erDiagram
         timestamptz created_at
     }
 
-    %% Quotes
+    %% Quotes - LINE ITEMS ARE SOURCE OF TRUTH
     quotes {
         uuid id PK
         uuid customer_id FK
@@ -225,9 +177,9 @@ const getErdDiagram = (direction: 'TB' | 'LR') => `erDiagram
         text quote_number UK
         text status
         text stripe_quote_id UK
-        numeric hardware_total
-        numeric labor_total
-        numeric travel_total
+        numeric hardware_total "deprecated - use view"
+        numeric labor_total "deprecated - use view"
+        numeric travel_total "deprecated - use view"
         timestamptz created_at
         timestamptz updated_at
     }
@@ -235,10 +187,77 @@ const getErdDiagram = (direction: 'TB' | 'LR') => `erDiagram
     quote_lines {
         uuid id PK
         uuid quote_id FK
-        text section
+        text section "hardware|labor|travel"
         text description
-        numeric quantity
-        numeric unit_price
+        numeric quantity "SOURCE OF TRUTH"
+        numeric unit_price_ex_vat "SOURCE OF TRUTH"
+        numeric vat_rate "SOURCE OF TRUTH"
+        uuid sku_id FK
+        timestamptz created_at
+    }
+
+    quote_computed_totals {
+        uuid quote_id FK "VIEW - derived"
+        numeric hardware_total "computed"
+        numeric labor_total "computed"
+        numeric travel_total "computed"
+        numeric subtotal_ex_vat "computed"
+        numeric vat_total "computed"
+        numeric total_inc_vat "computed"
+    }
+
+    %% Invoices - LINE ITEMS ARE SOURCE OF TRUTH
+    invoices {
+        uuid id PK
+        uuid customer_id FK
+        uuid bom_id FK
+        uuid quote_id FK "nullable"
+        uuid created_by FK
+        text stripe_invoice_id UK "nullable"
+        text invoice_number UK
+        numeric subtotal "deprecated - use view"
+        numeric tax "deprecated - use view"
+        numeric total "deprecated - use view"
+        text currency
+        text status
+        boolean is_test
+        text hosted_invoice_url
+        text invoice_pdf_url
+        timestamptz issued_at
+        date due_date
+        timestamptz finalized_at
+        timestamptz paid_at
+        timestamptz voided_at
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    invoice_line_items {
+        uuid id PK
+        uuid invoice_id FK
+        uuid sku_id FK
+        text line_type
+        text description
+        numeric quantity "SOURCE OF TRUTH"
+        numeric unit_price "SOURCE OF TRUTH"
+        numeric tax_rate "SOURCE OF TRUTH"
+        int sort_order
+        timestamptz created_at
+    }
+
+    invoice_computed_totals {
+        uuid invoice_id FK "VIEW - derived"
+        numeric subtotal "computed"
+        numeric tax "computed"
+        numeric total "computed"
+    }
+
+    invoice_events {
+        uuid id PK
+        uuid invoice_id FK
+        uuid created_by FK
+        text event_type
+        jsonb metadata
         timestamptz created_at
     }
 
@@ -249,8 +268,12 @@ const getErdDiagram = (direction: 'TB' | 'LR') => `erDiagram
     customers ||--o{ quotes : "receives"
     
     quotes |o--o{ invoices : "converts to"
+    quotes ||--o{ quote_lines : "contains"
+    quote_lines }o--|| quote_computed_totals : "aggregates to"
+    
     invoices ||--o{ invoice_line_items : "contains"
     invoices ||--o{ invoice_events : "logs"
+    invoice_line_items }o--|| invoice_computed_totals : "aggregates to"
     invoice_line_items }o--o| skus : "references"
     
     sku_categories ||--o{ skus : "categorizes"
@@ -269,8 +292,8 @@ const getErdDiagram = (direction: 'TB' | 'LR') => `erDiagram
     boms ||--o{ bom_items : "contains"
     bom_items }o--|| skus : "references"
 
-    quotes ||--o{ quote_lines : "contains"
     quotes }o--o| boms : "from"
+    quote_lines }o--o| skus : "references"
 `;
 
 const ERDiagram = () => {
