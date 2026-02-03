@@ -97,7 +97,7 @@ serve(async (req) => {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        from: 'Smart Home Solutions <faktura@smarthomesolutions.se>',
+        from: 'Smart Home Solutions <faktura@mail.smarthomesolutions.se>',
         to: [to],
         subject: subject,
         text: emailBody
