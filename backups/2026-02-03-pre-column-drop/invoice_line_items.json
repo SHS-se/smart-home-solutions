@@ -1,0 +1,77 @@
+[
+  {
+    "id": "f97797a0-9e83-4981-af81-9f705714e107",
+    "invoice_id": "6ca4790a-87c0-4eb0-8c0d-e051c92b15d2",
+    "line_type": "labor",
+    "description": "Test labor item",
+    "quantity": 2.00,
+    "unit_price": 500.00,
+    "tax_rate": 25.00,
+    "sort_order": 0,
+    "created_at": "2026-02-02T22:47:10.080622+00:00"
+  },
+  {
+    "id": "95f036cc-699a-4775-9a9f-4a1508a18cab",
+    "invoice_id": "1cee5695-edba-4f96-8fed-70ca2bcea3c2",
+    "line_type": "hardware",
+    "category": "Hardware",
+    "description": "Home Assistant Connect ZBT-2",
+    "sku": "CTR-ZBTH-NABU-ZBT2",
+    "sku_id": "68a99abf-c0c4-4f25-acb4-893bd3fc1305",
+    "quantity": 1.00,
+    "unit_price": 520.00,
+    "tax_rate": 25.00,
+    "sort_order": 0,
+    "created_at": "2026-02-02T22:59:41.981495+00:00"
+  },
+  {
+    "id": "c459019d-240c-4a9e-8523-c73c0d92a93a",
+    "invoice_id": "1cee5695-edba-4f96-8fed-70ca2bcea3c2",
+    "line_type": "hardware",
+    "category": "Hardware",
+    "description": "Shelly 1PM Gen4 16A",
+    "sku": "REL-SHELLY-1PM-GEN4",
+    "sku_id": "adde855d-5a00-4b13-9610-04e00e08af2f",
+    "quantity": 4.00,
+    "unit_price": 300.00,
+    "tax_rate": 25.00,
+    "sort_order": 1,
+    "created_at": "2026-02-02T22:59:41.981495+00:00"
+  },
+  {
+    "id": "4bb0d24d-7209-4892-bc08-49b9870d651d",
+    "invoice_id": "1cee5695-edba-4f96-8fed-70ca2bcea3c2",
+    "line_type": "hardware",
+    "category": "Hardware",
+    "description": "Beelink MINI-S13 Mini PC – Intel N150, 16GB RAM, 500GB SSD",
+    "sku": "HA-HOST-BEELINK-S13",
+    "sku_id": "be2b1b30-d056-40e3-becb-9431a95165af",
+    "quantity": 1.00,
+    "unit_price": 3071.00,
+    "tax_rate": 25.00,
+    "sort_order": 2,
+    "created_at": "2026-02-02T22:59:41.981495+00:00"
+  },
+  {
+    "id": "4a2b2c07-cf05-41c7-aaa3-796d9a9a5118",
+    "invoice_id": "1cee5695-edba-4f96-8fed-70ca2bcea3c2",
+    "line_type": "labor",
+    "description": "Installation",
+    "quantity": 1.00,
+    "unit_price": 847.00,
+    "tax_rate": 25.00,
+    "sort_order": 3,
+    "created_at": "2026-02-02T22:59:41.981495+00:00"
+  },
+  {
+    "id": "c9d7350e-7115-4219-a290-5d8382079e21",
+    "invoice_id": "1cee5695-edba-4f96-8fed-70ca2bcea3c2",
+    "line_type": "travel_other",
+    "description": "Resa",
+    "quantity": 1.00,
+    "unit_price": 500.00,
+    "tax_rate": 25.00,
+    "sort_order": 4,
+    "created_at": "2026-02-02T22:59:41.981495+00:00"
+  }
+]
