@@ -58,7 +58,7 @@ const getStatusBadge = (status: string, dueDate: string | null, t: (sv: string, 
     case 'draft':
       return <Badge variant="outline">{t('Utkast', 'Draft')}</Badge>;
     case 'open':
-      return <Badge variant="secondary">{t('Öppen', 'Open')}</Badge>;
+      return <Badge variant="sky">{t('Öppen', 'Open')}</Badge>;
     case 'paid':
       return <Badge className="bg-green-600 text-white">{t('Betald', 'Paid')}</Badge>;
     case 'overdue':
