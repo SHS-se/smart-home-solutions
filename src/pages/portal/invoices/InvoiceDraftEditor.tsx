@@ -381,11 +381,15 @@ const InvoiceDraftEditor: React.FC = () => {
 
   // Add line item
   const addLineItem = (type: 'hardware' | 'labor' | 'travel_other') => {
+    const defaults = type === 'labor' 
+      ? { description: 'Installation', unit_price: 850 }
+      : { description: '', unit_price: 0 };
+    
     setLineItems(prev => [...prev, {
       line_type: type,
-      description: '',
+      description: defaults.description,
       quantity: 1,
-      unit_price: 0,
+      unit_price: defaults.unit_price,
       tax_rate: 25,
       sort_order: prev.length,
     }]);
