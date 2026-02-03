@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
+import Stripe from "https://esm.sh/stripe@18.5.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -27,6 +28,9 @@ serve(async (req) => {
 
     const resendKey = Deno.env.get("RESEND_API_KEY");
     if (!resendKey) throw new Error("RESEND_API_KEY is not set");
+
+    const stripeKey = Deno.env.get("STRIPE_SECRET_KEY");
+    if (!stripeKey) throw new Error("STRIPE_SECRET_KEY is not set");
 
     // Authenticate staff user
     const authHeader = req.headers.get("Authorization");
@@ -56,7 +60,7 @@ serve(async (req) => {
       subject, 
       message,
       include_payment_link = true,
-      include_pdf_link = true
+      attach_pdf = false
     } = await req.json();
 
     if (!invoice_id) throw new Error("invoice_id is required");
@@ -64,7 +68,7 @@ serve(async (req) => {
     if (!subject) throw new Error("subject is required");
     if (!message) throw new Error("message is required");
 
-    logStep("Sending invoice email", { invoice_id, to });
+    logStep("Sending invoice email", { invoice_id, to, attach_pdf });
 
     // Fetch invoice
     const { data: invoice, error: invoiceError } = await supabaseClient
@@ -85,8 +89,51 @@ serve(async (req) => {
       emailBody += `\n\n📋 Betala fakturan: ${invoice.hosted_invoice_url}`;
     }
 
-    if (include_pdf_link && invoice.invoice_pdf_url) {
-      emailBody += `\n\n📄 Ladda ner PDF: ${invoice.invoice_pdf_url}`;
+    // Prepare attachments if requested
+    const attachments: Array<{ filename: string; content: string }> = [];
+    
+    if (attach_pdf && invoice.stripe_invoice_id) {
+      logStep("Fetching PDF from Stripe", { stripeInvoiceId: invoice.stripe_invoice_id });
+      
+      const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
+      
+      // Fetch the invoice from Stripe to get PDF URL
+      const stripeInvoice = await stripe.invoices.retrieve(invoice.stripe_invoice_id);
+      
+      if (stripeInvoice.invoice_pdf) {
+        // Download the PDF
+        const pdfResponse = await fetch(stripeInvoice.invoice_pdf);
+        if (!pdfResponse.ok) {
+          throw new Error(`Failed to download PDF: ${pdfResponse.status}`);
+        }
+        
+        const pdfBuffer = await pdfResponse.arrayBuffer();
+        const pdfBase64 = btoa(
+          String.fromCharCode(...new Uint8Array(pdfBuffer))
+        );
+        
+        const filename = `Faktura-${invoice.invoice_number || invoice.id}.pdf`;
+        attachments.push({
+          filename,
+          content: pdfBase64,
+        });
+        
+        logStep("PDF attached", { filename, size: pdfBuffer.byteLength });
+      } else {
+        logStep("No PDF URL available from Stripe");
+      }
+    }
+
+    // Build email payload
+    const emailPayload: Record<string, unknown> = {
+      from: 'Smart Home Solutions <faktura@mail.smarthomesolutions.se>',
+      to: [to],
+      subject: subject,
+      text: emailBody,
+    };
+
+    if (attachments.length > 0) {
+      emailPayload.attachments = attachments;
     }
 
     // Send email via Resend
@@ -96,12 +143,7 @@ serve(async (req) => {
         'Authorization': `Bearer ${resendKey}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        from: 'Smart Home Solutions <faktura@mail.smarthomesolutions.se>',
-        to: [to],
-        subject: subject,
-        text: emailBody
-      })
+      body: JSON.stringify(emailPayload)
     });
 
     if (!emailResponse.ok) {
@@ -110,7 +152,7 @@ serve(async (req) => {
     }
 
     const emailResult = await emailResponse.json();
-    logStep("Email sent", { emailId: emailResult.id });
+    logStep("Email sent", { emailId: emailResult.id, hasAttachment: attachments.length > 0 });
 
     // Update invoice email audit fields
     const { error: updateError } = await supabaseClient
@@ -136,7 +178,7 @@ serve(async (req) => {
         subject,
         email_id: emailResult.id,
         include_payment_link,
-        include_pdf_link
+        pdf_attached: attachments.length > 0
       },
       created_by: user.id
     });
@@ -145,7 +187,8 @@ serve(async (req) => {
 
     return new Response(JSON.stringify({
       success: true,
-      email_id: emailResult.id
+      email_id: emailResult.id,
+      pdf_attached: attachments.length > 0
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 200,

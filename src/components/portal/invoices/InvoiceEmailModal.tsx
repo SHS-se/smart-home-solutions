@@ -15,12 +15,13 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
-import { Loader2, Send } from 'lucide-react';
+import { Loader2, Send, Paperclip } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 
 interface Invoice {
   id: string;
   invoice_number: string | null;
+  stripe_invoice_id: string | null;
   hosted_invoice_url: string | null;
   invoice_pdf_url: string | null;
   customer?: { org_name: string | null; billing_email?: string | null } | null;
@@ -54,7 +55,7 @@ Smart Home Solutions`;
   const [subject, setSubject] = useState(defaultSubject);
   const [message, setMessage] = useState(defaultMessage);
   const [includePaymentLink, setIncludePaymentLink] = useState(true);
-  const [includePdfLink, setIncludePdfLink] = useState(!!invoice.invoice_pdf_url);
+  const [attachPdf, setAttachPdf] = useState(!!invoice.stripe_invoice_id);
 
   const sendMutation = useMutation({
     mutationFn: async () => {
@@ -65,7 +66,7 @@ Smart Home Solutions`;
           subject,
           message,
           include_payment_link: includePaymentLink,
-          include_pdf_link: includePdfLink,
+          attach_pdf: attachPdf,
         },
       });
       if (error) throw error;
@@ -141,13 +142,14 @@ Smart Home Solutions`;
             </div>
             <div className="flex items-center space-x-2">
               <Checkbox
-                id="include-pdf"
-                checked={includePdfLink}
-                onCheckedChange={(checked) => setIncludePdfLink(!!checked)}
-                disabled={!invoice.invoice_pdf_url}
+                id="attach-pdf"
+                checked={attachPdf}
+                onCheckedChange={(checked) => setAttachPdf(!!checked)}
+                disabled={!invoice.stripe_invoice_id}
               />
-              <Label htmlFor="include-pdf" className="font-normal">
-                {t('Inkludera PDF-länk', 'Include PDF link')}
+              <Label htmlFor="attach-pdf" className="font-normal flex items-center gap-1">
+                <Paperclip className="h-3 w-3" />
+                {t('Bifoga PDF-fil', 'Attach PDF file')}
               </Label>
             </div>
           </div>
