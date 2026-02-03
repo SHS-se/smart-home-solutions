@@ -156,19 +156,16 @@ serve(async (req) => {
 
     logStep("Created invoice items in Stripe");
 
-    // Update local invoice totals
+    // Update invoice timestamp (totals are computed via invoice_computed_totals view)
     const { error: updateError } = await supabaseClient
       .from('invoices')
       .update({
-        subtotal: subtotal / 100,
-        tax: taxTotal / 100,
-        total: (subtotal + taxTotal) / 100,
         updated_at: new Date().toISOString()
       })
       .eq('id', invoice_id);
 
     if (updateError) {
-      logStep("Error updating invoice totals", { error: updateError });
+      logStep("Error updating invoice", { error: updateError });
     }
 
     // Create event
