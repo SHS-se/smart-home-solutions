@@ -94,16 +94,34 @@ const InvoicesList: React.FC = () => {
 
   const [activeFilters, setActiveFilters] = useState<StatusFilter[]>([]);
 
-  // Fetch invoices
+  // Fetch invoices with computed totals
   const { data: invoices = [], isLoading } = useQuery({
     queryKey: ['invoices'],
     queryFn: async () => {
-      const { data, error } = await supabase
+      // Fetch invoices
+      const { data: invoicesData, error: invoicesError } = await supabase
         .from('invoices')
         .select('*, customer:customers(org_name), bom:boms(project_name)')
         .order('created_at', { ascending: false });
-      if (error) throw error;
-      return data as Invoice[];
+      if (invoicesError) throw invoicesError;
+
+      // Fetch computed totals
+      const { data: totalsData, error: totalsError } = await supabase
+        .from('invoice_computed_totals')
+        .select('*');
+      if (totalsError) throw totalsError;
+
+      // Create a map for quick lookup
+      const totalsMap = new Map(totalsData?.map(t => [t.invoice_id, t]) || []);
+
+      return invoicesData.map(inv => {
+        const computed = totalsMap.get(inv.id);
+        return {
+          ...inv,
+          // Use computed total, fallback to stored for backwards compatibility
+          total: computed?.total ?? inv.total,
+        };
+      }) as Invoice[];
     },
     enabled: isStaff,
   });
