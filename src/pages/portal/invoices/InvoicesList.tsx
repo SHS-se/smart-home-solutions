@@ -118,8 +118,8 @@ const InvoicesList: React.FC = () => {
         const computed = totalsMap.get(inv.id);
         return {
           ...inv,
-          // Use computed total, fallback to stored for backwards compatibility
-          total: computed?.total ?? inv.total,
+          // Use computed total
+          total: computed?.total ?? 0,
         };
       }) as Invoice[];
     },

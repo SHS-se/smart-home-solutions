@@ -263,12 +263,6 @@ export function useQuoteVersioning(quoteId: string | undefined) {
           bom_version: currentQuote.bom_version,
           bom_price_revision_id: pricingStatus.latestRevisionId,
           customer_id: currentQuote.customer_id,
-          hardware_total: hardwareTotal,
-          labor_total: laborTotal,
-          travel_total: travelTotal,
-          subtotal_ex_vat: subtotal,
-          vat_total: subtotal * 0.25,
-          total_inc_vat: subtotal * 1.25,
           status: 'draft',
           created_by: currentQuote.created_by,
         })

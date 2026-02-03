@@ -92,7 +92,20 @@ const InvoiceDraftEditor: React.FC = () => {
         .eq('id', invoiceId)
         .single();
       if (error) throw error;
-      return data as Invoice;
+
+      // Fetch computed totals
+      const { data: computed } = await supabase
+        .from('invoice_computed_totals')
+        .select('*')
+        .eq('invoice_id', data.id)
+        .maybeSingle();
+
+      return {
+        ...data,
+        subtotal: computed?.subtotal ?? 0,
+        tax: computed?.tax ?? 0,
+        total: computed?.total ?? 0,
+      } as Invoice;
     },
     enabled: !!invoiceId && isStaff,
   });

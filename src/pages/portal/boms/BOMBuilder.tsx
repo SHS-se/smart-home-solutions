@@ -326,15 +326,8 @@ const BOMBuilder: React.FC = () => {
           bom_version: bom?.version ?? 1,
           bom_price_revision_id: revision.id,
           customer_id: bom?.customer_id || null,
-          // Legacy totals - kept for backward compatibility but no longer authoritative
-          hardware_total: totals.sellEx,
-          labor_total: 0,
-          travel_total: 0,
-          subtotal_ex_vat: totals.sellEx,
-          vat_total: totals.vatAmount,
-          total_inc_vat: totals.sellInc,
           quote_number: '',
-        } as any)
+        })
         .select()
         .single();
       if (error) throw error;

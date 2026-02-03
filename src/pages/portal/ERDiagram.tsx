@@ -177,9 +177,6 @@ const getErdDiagram = (direction: 'TB' | 'LR') => `erDiagram
         text quote_number UK
         text status
         text stripe_quote_id UK
-        numeric hardware_total "deprecated - use view"
-        numeric labor_total "deprecated - use view"
-        numeric travel_total "deprecated - use view"
         timestamptz created_at
         timestamptz updated_at
     }
@@ -215,9 +212,6 @@ const getErdDiagram = (direction: 'TB' | 'LR') => `erDiagram
         uuid created_by FK
         text stripe_invoice_id UK "nullable"
         text invoice_number UK
-        numeric subtotal "deprecated - use view"
-        numeric tax "deprecated - use view"
-        numeric total "deprecated - use view"
         text currency
         text status
         boolean is_test
