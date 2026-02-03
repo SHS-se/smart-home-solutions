@@ -253,7 +253,7 @@ const InvoiceDetail: React.FC = () => {
 
   const formatPrice = (value: number | null) => {
     if (value === null) return '—';
-    return value.toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + ' kr';
+    return value.toLocaleString('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' kr';
   };
 
   // Redirect if not staff
