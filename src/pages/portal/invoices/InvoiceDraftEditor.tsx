@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
@@ -370,6 +370,75 @@ const InvoiceDraftEditor: React.FC = () => {
       });
     },
   });
+
+  // Save line items mutation (for auto-save)
+  const saveLineItemsMutation = useMutation({
+    mutationFn: async (items: LineItem[]) => {
+      if (!invoiceId) return;
+      
+      // Delete existing and insert new
+      await supabase.from('invoice_line_items').delete().eq('invoice_id', invoiceId);
+      if (items.length > 0) {
+        const { error } = await supabase.from('invoice_line_items').insert(
+          items.map((item, idx) => ({
+            ...item,
+            invoice_id: invoiceId,
+            sort_order: idx,
+          }))
+        );
+        if (error) throw error;
+      }
+    },
+    onError: (error: Error) => {
+      toast({
+        title: t('Kunde inte spara rader', 'Failed to save lines'),
+        description: error.message,
+        variant: 'destructive',
+      });
+    },
+  });
+
+  // Track if initial load is complete to avoid saving on mount
+  const initialLoadComplete = useRef(false);
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Mark initial load as complete after existingLineItems are loaded
+  useEffect(() => {
+    if (existingLineItems && existingLineItems.length > 0) {
+      // Delay marking complete to avoid immediate save
+      const timeout = setTimeout(() => {
+        initialLoadComplete.current = true;
+      }, 500);
+      return () => clearTimeout(timeout);
+    } else if (invoiceId && !existingLineItems) {
+      // No existing items, mark complete after short delay
+      const timeout = setTimeout(() => {
+        initialLoadComplete.current = true;
+      }, 500);
+      return () => clearTimeout(timeout);
+    }
+  }, [existingLineItems, invoiceId]);
+
+  // Auto-save line items when they change (debounced)
+  useEffect(() => {
+    if (!invoiceId || !initialLoadComplete.current) return;
+
+    // Clear any pending save
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+
+    // Debounce save by 500ms
+    saveTimeoutRef.current = setTimeout(() => {
+      saveLineItemsMutation.mutate(lineItems);
+    }, 500);
+
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+    };
+  }, [lineItems, invoiceId]);
 
   // Handle due date change with auto-save
   const handleDueDateChange = useCallback((newValue: string) => {
