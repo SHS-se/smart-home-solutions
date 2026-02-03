@@ -18,13 +18,13 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { SortableTableHead } from '@/components/ui/sortable-table-head';
-import { Plus, TestTube, ExternalLink } from 'lucide-react';
+import { Plus, TestTube, Eye } from 'lucide-react';
 import { format } from 'date-fns';
 import { sv } from 'date-fns/locale';
 import { toast } from '@/hooks/use-toast';
 import InvoiceActionsMenu from '@/components/portal/invoices/InvoiceActionsMenu';
+import InvoicePdfModal from '@/components/portal/invoices/InvoicePdfModal';
 import { cn } from '@/lib/utils';
-import { getStripeDashboardUrl, openExternalUrl } from '@/lib/stripe-dashboard';
 
 interface Invoice {
   id: string;
@@ -93,6 +93,7 @@ const InvoicesList: React.FC = () => {
   });
 
   const [activeFilters, setActiveFilters] = useState<StatusFilter[]>([]);
+  const [pdfModalInvoice, setPdfModalInvoice] = useState<Invoice | null>(null);
 
   // Fetch invoices with computed totals
   // staleTime: 0 ensures we always refetch on mount/focus to defeat bfcache staleness
@@ -410,32 +411,16 @@ const InvoicesList: React.FC = () => {
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
                         {invoice.stripe_invoice_id && (
-                            (() => {
-                              const stripeUrl = getStripeDashboardUrl(
-                                `/invoices/${invoice.stripe_invoice_id}`,
-                                invoice.is_test
-                              );
-                              return (
                           <Button 
                             variant="ghost" 
-                            size="icon" 
-                            asChild
+                            size="icon"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setPdfModalInvoice(invoice);
+                            }}
                           >
-                            <a 
-                                href={stripeUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  openExternalUrl(stripeUrl);
-                                }}
-                            >
-                              <ExternalLink className="h-4 w-4" />
-                            </a>
+                            <Eye className="h-4 w-4" />
                           </Button>
-                              );
-                            })()
                         )}
                         <InvoiceActionsMenu
                           isTest={invoice.is_test}
@@ -451,6 +436,16 @@ const InvoicesList: React.FC = () => {
             </TableBody>
           </Table>
         </div>
+
+        {/* PDF modal */}
+        {pdfModalInvoice && (
+          <InvoicePdfModal
+            open={!!pdfModalInvoice}
+            onOpenChange={(open) => !open && setPdfModalInvoice(null)}
+            stripeInvoiceId={pdfModalInvoice.stripe_invoice_id}
+            invoiceNumber={pdfModalInvoice.invoice_number || pdfModalInvoice.id}
+          />
+        )}
       </div>
     </PortalLayout>
   );
