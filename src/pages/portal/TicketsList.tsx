@@ -162,12 +162,19 @@ const TicketsList: React.FC = () => {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <h1 className="text-3xl font-medium">{t('Supportärenden', 'Support tickets')}</h1>
           {!isStaff && customerData && (
-            <Button asChild disabled={!isSubscribed || subscriptionLoading}>
-              <Link to="/portal/tickets/new">
+            !isSubscribed || subscriptionLoading ? (
+              <Button disabled>
                 <Plus className="w-4 h-4 mr-2" />
                 {t('Nytt ärende', 'New ticket')}
-              </Link>
-            </Button>
+              </Button>
+            ) : (
+              <Button asChild>
+                <Link to="/portal/tickets/new">
+                  <Plus className="w-4 h-4 mr-2" />
+                  {t('Nytt ärende', 'New ticket')}
+                </Link>
+              </Button>
+            )
           )}
         </div>
 
