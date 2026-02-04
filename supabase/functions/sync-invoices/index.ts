@@ -77,24 +77,30 @@ serve(async (req) => {
     let syncedCount = 0;
 
     for (const invoice of stripeInvoices.data) {
-      // Map Stripe status to our status
-      let status = invoice.status || 'draft';
-      if (status === 'void') status = 'voided';
-      
+      const status = invoice.status || 'draft';
+
+      const finalizedAt = invoice.status_transitions?.finalized_at ?? null;
+      const paidAt = invoice.status_transitions?.paid_at ?? null;
+      const voidedAt = invoice.status_transitions?.voided_at ?? null;
+
+      // If invoice is finalized, use finalized_at as the issue date; otherwise fall back to created.
+      const issuedAtTs = finalizedAt ?? invoice.created ?? null;
+
       const invoiceData = {
         customer_id: customerId,
         stripe_invoice_id: invoice.id,
         invoice_number: invoice.number || null,
-        date: invoice.created ? new Date(invoice.created * 1000).toISOString().split('T')[0] : null,
-        amount: invoice.amount_due ? invoice.amount_due / 100 : 0,
-        subtotal: invoice.subtotal ? invoice.subtotal / 100 : null,
-        tax: invoice.tax ? invoice.tax / 100 : null,
-        total: invoice.total ? invoice.total / 100 : null,
+        issued_at: issuedAtTs ? new Date(issuedAtTs * 1000).toISOString() : null,
+        finalized_at: finalizedAt ? new Date(finalizedAt * 1000).toISOString() : null,
+        paid_at: paidAt ? new Date(paidAt * 1000).toISOString() : null,
+        voided_at: voidedAt ? new Date(voidedAt * 1000).toISOString() : null,
+        due_date: invoice.due_date ? new Date(invoice.due_date * 1000).toISOString().split('T')[0] : null,
+        // Store the actual invoice total (minor units -> major units)
+        amount: (typeof invoice.total === 'number' ? invoice.total : (invoice.amount_due ?? 0)) / 100,
         currency: (invoice.currency || 'sek').toUpperCase(),
-        status: status,
+        status,
         hosted_invoice_url: invoice.hosted_invoice_url || null,
         invoice_pdf_url: invoice.invoice_pdf || null,
-        due_date: invoice.due_date ? new Date(invoice.due_date * 1000).toISOString().split('T')[0] : null,
         updated_at: new Date().toISOString(),
       };
 
@@ -108,6 +114,7 @@ serve(async (req) => {
 
       if (upsertError) {
         logStep("Error upserting invoice", { invoiceId: invoice.id, error: upsertError.message });
+        continue;
       }
       
       syncedCount++;

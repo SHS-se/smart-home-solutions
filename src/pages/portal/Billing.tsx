@@ -114,28 +114,53 @@ const Billing: React.FC = () => {
           currency,
           status,
           pdf_url,
-          is_test,
-          invoice_computed_totals(total)
+          is_test
         `)
         .eq('customer_id', customerData.id)
         .order('issued_at', { ascending: false });
 
       if (error) throw error;
-      
-      // Map the computed total to a flat structure, falling back to amount for Stripe-synced invoices
-      const mappedInvoices: Invoice[] = (data || []).map((inv: any) => ({
-        id: inv.id,
-        invoice_number: inv.invoice_number,
-        stripe_invoice_id: inv.stripe_invoice_id,
-        issued_at: inv.issued_at,
-        due_date: inv.due_date,
-        currency: inv.currency,
-        status: inv.status,
-        pdf_url: inv.pdf_url,
-        is_test: inv.is_test,
-        computed_total: inv.invoice_computed_totals?.total ?? inv.amount ?? null,
-      }));
-      
+
+      const invoicesData = (data || []) as any[];
+      const invoiceIds = invoicesData.map((inv) => inv.id).filter(Boolean);
+
+      // Optional: fetch computed totals (for locally generated invoices with line items)
+      const totalsByInvoiceId = new Map<string, number>();
+      if (invoiceIds.length > 0) {
+        const { data: totalsData, error: totalsError } = await supabase
+          .from('invoice_computed_totals')
+          .select('invoice_id,total')
+          .in('invoice_id', invoiceIds);
+
+        if (totalsError) {
+          // Non-fatal: fall back to invoices.amount
+          console.warn('Could not fetch invoice_computed_totals:', totalsError);
+        } else {
+          (totalsData || []).forEach((row: any) => {
+            if (row?.invoice_id && typeof row.total === 'number') {
+              totalsByInvoiceId.set(row.invoice_id, row.total);
+            }
+          });
+        }
+      }
+
+      const mappedInvoices: Invoice[] = invoicesData.map((inv: any) => {
+        const computed = totalsByInvoiceId.get(inv.id) ?? null;
+        const fallbackAmount = typeof inv.amount === 'number' ? inv.amount : null;
+        return {
+          id: inv.id,
+          invoice_number: inv.invoice_number,
+          stripe_invoice_id: inv.stripe_invoice_id,
+          issued_at: inv.issued_at,
+          due_date: inv.due_date,
+          currency: inv.currency,
+          status: inv.status,
+          pdf_url: inv.pdf_url,
+          is_test: inv.is_test,
+          computed_total: computed ?? fallbackAmount,
+        };
+      });
+
       setInvoices(mappedInvoices);
     } catch (error) {
       console.error('Error fetching invoices:', error);
