@@ -38,9 +38,10 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { Plus, Upload, Search, Pencil, Trash2, ExternalLink, Settings2 } from 'lucide-react';
+import { Plus, Upload, Search, Settings2, ExternalLink } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import SKUForm from '@/components/portal/skus/SKUForm';
+import SKUActionsMenu from '@/components/portal/skus/SKUActionsMenu';
 
 interface Category {
   id: string;
@@ -57,6 +58,7 @@ interface SKU {
   supplier_url: string | null;
   notes: string | null;
   image_path: string | null;
+  is_test: boolean;
   // VAT-aware pricing fields
   purchase_price: number;
   purchase_includes_vat: boolean;
@@ -74,6 +76,7 @@ interface SKU {
 }
 
 type SortColumn = 'sku' | 'name' | 'category' | 'supplier' | 'cost_ex_vat' | 'margin' | 'sell_price';
+type ViewFilter = 'active' | 'include_test' | 'all';
 
 const SKUCatalog: React.FC = () => {
   const { t } = useLanguage();
@@ -83,6 +86,7 @@ const SKUCatalog: React.FC = () => {
   
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const [viewFilter, setViewFilter] = useState<ViewFilter>('active');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingSku, setEditingSku] = useState<SKU | null>(null);
   const { sortColumn, sortDirection, handleSort } = useTableSort<SortColumn>({ defaultColumn: 'sku' });
@@ -134,9 +138,39 @@ const SKUCatalog: React.FC = () => {
     },
   });
 
+  // Toggle test status mutation
+  const toggleTestMutation = useMutation({
+    mutationFn: async ({ id, isTest }: { id: string; isTest: boolean }) => {
+      const { error } = await supabase.from('skus').update({ is_test: isTest }).eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['skus'] });
+      toast({ title: t('Status uppdaterad', 'Status updated') });
+    },
+    onError: () => {
+      toast({ title: t('Kunde inte uppdatera status', 'Failed to update status'), variant: 'destructive' });
+    },
+  });
+
   // Filter and sort SKUs
   const filteredSkus = useMemo(() => {
-    const filtered = skus.filter(sku => {
+    let filtered = skus;
+    
+    // Apply view filter
+    switch (viewFilter) {
+      case 'active':
+        filtered = filtered.filter(sku => !sku.is_test);
+        break;
+      case 'include_test':
+        // Show all
+        break;
+      default:
+        break;
+    }
+
+    // Apply search
+    filtered = filtered.filter(sku => {
       const matchesSearch = 
         sku.sku.toLowerCase().includes(search.toLowerCase()) ||
         sku.name.toLowerCase().includes(search.toLowerCase());
@@ -184,7 +218,7 @@ const SKUCatalog: React.FC = () => {
     }
 
     return sorted;
-  }, [skus, search, categoryFilter, sortColumn, sortDirection]);
+  }, [skus, search, categoryFilter, viewFilter, sortColumn, sortDirection]);
 
   const handleEdit = (sku: SKU) => {
     setEditingSku(sku);
@@ -265,6 +299,15 @@ const SKUCatalog: React.FC = () => {
               ))}
             </SelectContent>
           </Select>
+          <Select value={viewFilter} onValueChange={(v) => setViewFilter(v as ViewFilter)}>
+            <SelectTrigger className="w-full sm:w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="active">{t('Aktiva', 'Active')}</SelectItem>
+              <SelectItem value="include_test">{t('Inkl test', 'Include test')}</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
 
         {/* Table */}
@@ -300,7 +343,14 @@ const SKUCatalog: React.FC = () => {
                 ) : (
                 filteredSkus.map((sku) => (
                   <TableRow key={sku.id}>
-                    <TableCell className="font-mono text-sm">{sku.sku}</TableCell>
+                    <TableCell className="font-mono text-sm">
+                      <div className="flex items-center gap-2">
+                        {sku.sku}
+                        {sku.is_test && (
+                          <Badge variant="outline" className="text-xs">Test</Badge>
+                        )}
+                      </div>
+                    </TableCell>
                     <TableCell>{sku.name}</TableCell>
                     <TableCell>
                       <Badge variant="secondary">{sku.category_name}</Badge>
@@ -350,26 +400,17 @@ const SKUCatalog: React.FC = () => {
                       )}
                     </TableCell>
                     <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button 
-                          variant="ghost" 
-                          size="icon"
-                          onClick={() => handleEdit(sku)}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button 
-                          variant="ghost" 
-                          size="icon"
-                          onClick={() => {
-                            if (confirm(t('Är du säker på att du vill radera denna SKU?', 'Are you sure you want to delete this SKU?'))) {
-                              deleteMutation.mutate(sku.id);
-                            }
-                          }}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
+                      <SKUActionsMenu
+                        isTest={sku.is_test}
+                        onEdit={() => handleEdit(sku)}
+                        onDelete={() => {
+                          if (confirm(t('Är du säker på att du vill radera denna SKU?', 'Are you sure you want to delete this SKU?'))) {
+                            deleteMutation.mutate(sku.id);
+                          }
+                        }}
+                        onMarkTest={() => toggleTestMutation.mutate({ id: sku.id, isTest: true })}
+                        onUnmarkTest={() => toggleTestMutation.mutate({ id: sku.id, isTest: false })}
+                      />
                     </TableCell>
                   </TableRow>
                 ))
