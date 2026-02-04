@@ -126,12 +126,7 @@ const UserMenu = ({ size = "default" }: UserMenuProps) => {
           ))
         )}
         <DropdownMenuSeparator />
-        <DropdownMenuItem asChild>
-          <Link to="/portal/account" className="cursor-pointer">
-            {t("Kontoinställningar", "Account Settings")}
-          </Link>
-        </DropdownMenuItem>
-        <DropdownMenuItem 
+        <DropdownMenuItem
           onClick={handleSignOut}
           className="text-destructive focus:text-destructive cursor-pointer"
         >
