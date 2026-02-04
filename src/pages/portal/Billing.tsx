@@ -110,18 +110,19 @@ const Billing: React.FC = () => {
           stripe_invoice_id,
           issued_at,
           due_date,
+          amount,
           currency,
           status,
           pdf_url,
           is_test,
-          invoice_computed_totals!inner(total)
+          invoice_computed_totals(total)
         `)
         .eq('customer_id', customerData.id)
         .order('issued_at', { ascending: false });
 
       if (error) throw error;
       
-      // Map the computed total to a flat structure
+      // Map the computed total to a flat structure, falling back to amount for Stripe-synced invoices
       const mappedInvoices: Invoice[] = (data || []).map((inv: any) => ({
         id: inv.id,
         invoice_number: inv.invoice_number,
@@ -132,7 +133,7 @@ const Billing: React.FC = () => {
         status: inv.status,
         pdf_url: inv.pdf_url,
         is_test: inv.is_test,
-        computed_total: inv.invoice_computed_totals?.total ?? null,
+        computed_total: inv.invoice_computed_totals?.total ?? inv.amount ?? null,
       }));
       
       setInvoices(mappedInvoices);
