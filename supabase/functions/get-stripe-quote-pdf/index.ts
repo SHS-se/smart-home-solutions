@@ -53,25 +53,84 @@ serve(async (req) => {
 
     const userId = userData.user.id;
 
-    // Verify staff
+    const { quoteId, stripe_quote_id: directStripeQuoteId, is_test } = await req.json();
+    
+    // Check if user is staff
     const { data: staffData } = await supabaseAdmin
       .from('staff_users')
       .select('user_id')
       .eq('user_id', userId)
       .single();
     
-    if (!staffData) throw new Error("Only staff can access quote PDFs");
-
-    const { stripe_quote_id, is_test } = await req.json();
-    if (!stripe_quote_id) throw new Error("stripe_quote_id is required");
-
-    // Default to test mode if not specified
-    const isTest = is_test ?? true;
+    const isStaff = !!staffData;
+    
+    let stripeQuoteId: string;
+    let isTest: boolean;
+    
+    if (isStaff) {
+      // Staff can access any quote directly with stripe_quote_id
+      if (directStripeQuoteId) {
+        stripeQuoteId = directStripeQuoteId;
+        isTest = is_test ?? true;
+      } else if (quoteId) {
+        // Look up the quote
+        const { data: quote, error: quoteError } = await supabaseAdmin
+          .from('quotes')
+          .select('stripe_quote_id, is_test')
+          .eq('id', quoteId)
+          .single();
+        
+        if (quoteError || !quote?.stripe_quote_id) {
+          throw new Error("Quote not found or has no Stripe quote");
+        }
+        stripeQuoteId = quote.stripe_quote_id;
+        isTest = quote.is_test;
+      } else {
+        throw new Error("stripe_quote_id or quoteId is required");
+      }
+    } else {
+      // Customer - must verify they own the quote
+      if (!quoteId) throw new Error("quoteId is required");
+      
+      // Get customer for this user
+      const { data: customer } = await supabaseAdmin
+        .from('customers')
+        .select('id')
+        .eq('user_id', userId)
+        .single();
+      
+      if (!customer) throw new Error("Customer not found");
+      
+      // Verify quote belongs to this customer and is accessible
+      const { data: quote, error: quoteError } = await supabaseAdmin
+        .from('quotes')
+        .select('stripe_quote_id, is_test, status')
+        .eq('id', quoteId)
+        .eq('customer_id', customer.id)
+        .single();
+      
+      if (quoteError || !quote) {
+        throw new Error("Quote not found or access denied");
+      }
+      
+      if (!quote.stripe_quote_id) {
+        throw new Error("Quote has no PDF available");
+      }
+      
+      // Customers can only download non-draft, non-cancelled quotes
+      if (quote.status === 'draft' || quote.status === 'cancelled') {
+        throw new Error("This quote is not available for download");
+      }
+      
+      stripeQuoteId = quote.stripe_quote_id;
+      isTest = quote.is_test;
+      logStep("Customer accessing own quote", { customerId: customer.id, quoteId });
+    }
     const stripeKey = getStripeKey(isTest);
     logStep("Using Stripe mode", { isTest });
 
     // Use user-scoped path for session-based caching
-    const fileName = `${userId}/${stripe_quote_id}.pdf`;
+    const fileName = `${userId}/${stripeQuoteId}.pdf`;
 
     logStep("Checking if PDF exists in storage", { fileName });
 
@@ -79,9 +138,9 @@ serve(async (req) => {
     const { data: existingFiles } = await supabaseAdmin
       .storage
       .from('quote-pdfs')
-      .list(userId, { search: `${stripe_quote_id}.pdf` });
+      .list(userId, { search: `${stripeQuoteId}.pdf` });
 
-    const pdfExists = existingFiles && existingFiles.some(f => f.name === `${stripe_quote_id}.pdf`);
+    const pdfExists = existingFiles && existingFiles.some(f => f.name === `${stripeQuoteId}.pdf`);
 
     if (pdfExists) {
       logStep("PDF already cached, generating signed URL");
@@ -110,10 +169,10 @@ serve(async (req) => {
       );
     }
 
-    logStep("Fetching Stripe quote PDF", { stripe_quote_id });
+    logStep("Fetching Stripe quote PDF", { stripeQuoteId });
 
     // Fetch the PDF from Stripe
-    const pdfUrl = `https://files.stripe.com/v1/quotes/${stripe_quote_id}/pdf`;
+    const pdfUrl = `https://files.stripe.com/v1/quotes/${stripeQuoteId}/pdf`;
     
     const pdfResponse = await fetch(pdfUrl, {
       headers: {
