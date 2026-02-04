@@ -26,10 +26,6 @@ serve(async (req) => {
   try {
     logStep("Function started");
 
-    const stripeKey = Deno.env.get("STRIPE_SECRET_KEY_LIVE");
-    if (!stripeKey) throw new Error("STRIPE_SECRET_KEY_LIVE is not set");
-    logStep("Stripe key verified");
-
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) throw new Error("No authorization header provided");
     logStep("Authorization header found");
@@ -41,12 +37,29 @@ serve(async (req) => {
     if (!user?.email) throw new Error("User not authenticated or email not available");
     logStep("User authenticated", { userId: user.id, email: user.email });
 
+    // Check if customer is a test customer
+    const { data: customerData } = await supabaseClient
+      .from('customers')
+      .select('is_test')
+      .eq('user_id', user.id)
+      .single();
+    
+    const isTestCustomer = customerData?.is_test ?? false;
+    logStep("Customer test status", { isTestCustomer });
+
+    // Use appropriate Stripe key based on customer test status
+    const stripeKey = isTestCustomer 
+      ? Deno.env.get("STRIPE_SECRET_KEY") 
+      : Deno.env.get("STRIPE_SECRET_KEY_LIVE");
+    if (!stripeKey) throw new Error(isTestCustomer ? "STRIPE_SECRET_KEY is not set" : "STRIPE_SECRET_KEY_LIVE is not set");
+    logStep("Stripe key verified", { mode: isTestCustomer ? "test" : "live" });
+
     const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
     const customers = await stripe.customers.list({ email: user.email, limit: 1 });
 
     if (customers.data.length === 0) {
       logStep("No Stripe customer found");
-      return new Response(JSON.stringify({ subscribed: false }), {
+      return new Response(JSON.stringify({ subscribed: false, is_test: isTestCustomer }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 200,
       });
@@ -60,7 +73,7 @@ serve(async (req) => {
       status: "active",
       limit: 1,
     });
-  const hasActiveSub = subscriptions.data.length > 0;
+    const hasActiveSub = subscriptions.data.length > 0;
     let subscriptionEnd = null;
     let stripeSubscriptionId = null;
     let cancelAtPeriodEnd = false;
@@ -70,18 +83,15 @@ serve(async (req) => {
       stripeSubscriptionId = subscription.id;
       cancelAtPeriodEnd = subscription.cancel_at_period_end || false;
       
-      // Log the raw subscription data to debug
       logStep("Raw subscription data", { 
         current_period_end: subscription.current_period_end,
         current_period_end_type: typeof subscription.current_period_end,
         cancel_at: subscription.cancel_at,
       });
       
-      // Handle the subscription end date - try current_period_end first, then cancel_at
       const endTimestamp = subscription.current_period_end || subscription.cancel_at;
       if (endTimestamp) {
         try {
-          // Handle both number (unix timestamp) and already formatted values
           if (typeof endTimestamp === 'number') {
             subscriptionEnd = new Date(endTimestamp * 1000).toISOString();
           } else if (typeof endTimestamp === 'string') {
@@ -106,6 +116,7 @@ serve(async (req) => {
       subscription_end: subscriptionEnd,
       stripe_subscription_id: stripeSubscriptionId,
       cancel_at_period_end: cancelAtPeriodEnd,
+      is_test: isTestCustomer,
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 200,

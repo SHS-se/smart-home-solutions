@@ -1,9 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Loader2, Building2, FileText, MessageSquare, ArrowLeft, Trash2 } from 'lucide-react';
+import { Loader2, Building2, FileText, MessageSquare, ArrowLeft, Trash2, FlaskConical } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,7 +27,7 @@ import { supabase } from '@/integrations/supabase/client';
 
 const CustomerViewDashboard: React.FC = () => {
   const { user, isStaff, loading: authLoading } = useAuth();
-  const { customerId, customerData, loading: customerLoading, error } = useViewedCustomer();
+  const { customerId, customerData, loading: customerLoading, error, refetch } = useViewedCustomer();
   const navigate = useNavigate();
   const { t } = useLanguage();
   const { toast } = useToast();
@@ -33,6 +36,7 @@ const CustomerViewDashboard: React.FC = () => {
   const [invoiceStats, setInvoiceStats] = useState({ total: 0, lastDate: null as string | null });
   const [statsLoading, setStatsLoading] = useState(true);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isTogglingTest, setIsTogglingTest] = useState(false);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -70,6 +74,38 @@ const CustomerViewDashboard: React.FC = () => {
       });
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  const handleToggleTest = async (checked: boolean) => {
+    if (!customerId) return;
+    setIsTogglingTest(true);
+
+    try {
+      const { error: updateError } = await supabase
+        .from('customers')
+        .update({ is_test: checked })
+        .eq('id', customerId);
+
+      if (updateError) throw updateError;
+
+      toast({
+        title: checked ? t('Testkund aktiverad', 'Test customer enabled') : t('Testkund avaktiverad', 'Test customer disabled'),
+        description: checked 
+          ? t('Kunden använder nu Stripe sandbox.', 'Customer now uses Stripe sandbox.')
+          : t('Kunden använder nu Stripe live.', 'Customer now uses Stripe live.'),
+      });
+
+      refetch?.();
+    } catch (err) {
+      console.error('Error toggling test status:', err);
+      toast({
+        title: t('Fel', 'Error'),
+        description: t('Kunde inte uppdatera teststatus.', 'Could not update test status.'),
+        variant: 'destructive',
+      });
+    } finally {
+      setIsTogglingTest(false);
     }
   };
 
@@ -150,22 +186,42 @@ const CustomerViewDashboard: React.FC = () => {
         </Link>
 
         {/* Customer name header */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-medium">
-              {customerData.org_name || t('Namnlös kund', 'Unnamed customer')}
-            </h1>
+            <div className="flex items-center gap-3">
+              <h1 className="text-3xl font-medium">
+                {customerData.org_name || t('Namnlös kund', 'Unnamed customer')}
+              </h1>
+              {customerData.is_test && (
+                <Badge variant="secondary">
+                  <FlaskConical className="w-3 h-3 mr-1" />
+                  Test
+                </Badge>
+              )}
+            </div>
             <p className="text-muted-foreground mt-1">
               {t('Visar kundvy', 'Viewing customer portal')}
             </p>
           </div>
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button variant="destructive" size="sm">
-                <Trash2 className="w-4 h-4 mr-2" />
-                {t('Radera', 'Delete')}
-              </Button>
-            </AlertDialogTrigger>
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+            <div className="flex items-center gap-2">
+              <Switch
+                id="test-mode"
+                checked={customerData.is_test ?? false}
+                onCheckedChange={handleToggleTest}
+                disabled={isTogglingTest}
+              />
+              <Label htmlFor="test-mode" className="text-sm text-muted-foreground cursor-pointer">
+                {t('Testkund', 'Test customer')}
+              </Label>
+            </div>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="destructive" size="sm">
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  {t('Radera', 'Delete')}
+                </Button>
+              </AlertDialogTrigger>
             <AlertDialogContent>
               <AlertDialogHeader>
                 <AlertDialogTitle>
@@ -195,6 +251,7 @@ const CustomerViewDashboard: React.FC = () => {
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>
+          </div>
         </div>
 
         {/* Stats cards */}

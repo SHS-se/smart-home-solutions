@@ -1,9 +1,17 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, Building2 } from 'lucide-react';
+import { Loader2, Building2, FlaskConical } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { useTableSort, sortItems } from '@/hooks/use-table-sort';
 import {
   Table,
@@ -25,9 +33,11 @@ interface Customer {
   billing_email: string | null;
   phone: string | null;
   created_at: string;
+  is_test: boolean;
 }
 
 type SortColumn = 'org_name' | 'billing_email' | 'phone';
+type TestFilter = 'all' | 'live' | 'test';
 
 const Customers: React.FC = () => {
   const { user, isStaff, loading } = useAuth();
@@ -36,6 +46,7 @@ const Customers: React.FC = () => {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [customersLoading, setCustomersLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [testFilter, setTestFilter] = useState<TestFilter>('live');
   const { sortColumn, sortDirection, handleSort } = useTableSort<SortColumn>({ defaultColumn: 'org_name' });
 
   useEffect(() => {
@@ -74,6 +85,11 @@ const Customers: React.FC = () => {
 
   const filteredCustomers = useMemo(() => {
     const filtered = customers.filter((customer) => {
+      // Test filter
+      if (testFilter === 'live' && customer.is_test) return false;
+      if (testFilter === 'test' && !customer.is_test) return false;
+      
+      // Search filter
       const searchLower = searchQuery.toLowerCase();
       return (
         customer.org_name?.toLowerCase().includes(searchLower) ||
@@ -82,7 +98,7 @@ const Customers: React.FC = () => {
       );
     });
     return sortItems(filtered, sortColumn, sortDirection);
-  }, [customers, searchQuery, sortColumn, sortDirection]);
+  }, [customers, searchQuery, testFilter, sortColumn, sortDirection]);
 
   if (loading) {
     return (
@@ -113,13 +129,25 @@ const Customers: React.FC = () => {
           <h1 className="text-3xl font-medium">{t('Kunder', 'Customers')}</h1>
         </div>
 
-        {/* Search */}
-        <div className="max-w-md">
-          <Input
-            placeholder={t('Sök kunder...', 'Search customers...')}
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
+        {/* Search and Filter */}
+        <div className="flex flex-col sm:flex-row gap-4">
+          <div className="flex-1 max-w-md">
+            <Input
+              placeholder={t('Sök kunder...', 'Search customers...')}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+          <Select value={testFilter} onValueChange={(value: TestFilter) => setTestFilter(value)}>
+            <SelectTrigger className="w-[140px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="live">{t('Live', 'Live')}</SelectItem>
+              <SelectItem value="test">{t('Test', 'Test')}</SelectItem>
+              <SelectItem value="all">{t('Alla', 'All')}</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
 
         {/* Customers Table */}
@@ -157,7 +185,15 @@ const Customers: React.FC = () => {
                       onClick={() => navigate(`/portal/customers/${customer.id}/overview`)}
                     >
                       <TableCell className="font-medium">
-                        {customer.org_name || t('Namnlös', 'Unnamed')}
+                        <div className="flex items-center gap-2">
+                          {customer.org_name || t('Namnlös', 'Unnamed')}
+                          {customer.is_test && (
+                            <Badge variant="secondary" className="text-xs">
+                              <FlaskConical className="w-3 h-3 mr-1" />
+                              Test
+                            </Badge>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell>{customer.billing_email || '-'}</TableCell>
                       <TableCell>{customer.phone || '-'}</TableCell>

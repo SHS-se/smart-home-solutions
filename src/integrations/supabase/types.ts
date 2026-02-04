@@ -334,6 +334,7 @@ export type Database = {
           billing_email: string | null
           created_at: string
           id: string
+          is_test: boolean
           org_name: string | null
           phone: string | null
           site_address: string | null
@@ -344,6 +345,7 @@ export type Database = {
           billing_email?: string | null
           created_at?: string
           id?: string
+          is_test?: boolean
           org_name?: string | null
           phone?: string | null
           site_address?: string | null
@@ -354,6 +356,7 @@ export type Database = {
           billing_email?: string | null
           created_at?: string
           id?: string
+          is_test?: boolean
           org_name?: string | null
           phone?: string | null
           site_address?: string | null
