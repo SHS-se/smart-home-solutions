@@ -24,14 +24,19 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
-    const stripeSecretKey = Deno.env.get("STRIPE_SECRET_KEY");
 
-    if (!stripeSecretKey) {
-      return new Response(JSON.stringify({ error: "Stripe not configured" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    // Helper to get the appropriate Stripe key
+    const getStripeKey = (isTest: boolean): string => {
+      if (isTest) {
+        const testKey = Deno.env.get("STRIPE_SECRET_KEY");
+        if (!testKey) throw new Error("STRIPE_SECRET_KEY (test) is not set");
+        return testKey;
+      } else {
+        const liveKey = Deno.env.get("STRIPE_SECRET_KEY_LIVE");
+        if (!liveKey) throw new Error("STRIPE_SECRET_KEY_LIVE is not set");
+        return liveKey;
+      }
+    };
 
     // Verify staff authorization
     const authHeader = req.headers.get("Authorization");
@@ -107,8 +112,11 @@ serve(async (req) => {
       });
     }
 
-    // Initialize Stripe
-    const stripe = new Stripe(stripeSecretKey, { apiVersion: "2025-08-27.basil" });
+    // Initialize Stripe with the correct key based on is_test flag
+    const isTest = quote.is_test ?? true;
+    const stripeKey = getStripeKey(isTest);
+    logStep("Using Stripe mode", { isTest });
+    const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
 
     let stripeStatus: string | null = null;
 

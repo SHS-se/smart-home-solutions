@@ -19,8 +19,18 @@ serve(async (req) => {
   try {
     logStep("Function started");
 
-    const stripeKey = Deno.env.get("STRIPE_SECRET_KEY");
-    if (!stripeKey) throw new Error("STRIPE_SECRET_KEY is not set");
+    // Helper to get the appropriate Stripe key
+    const getStripeKey = (isTest: boolean): string => {
+      if (isTest) {
+        const testKey = Deno.env.get("STRIPE_SECRET_KEY");
+        if (!testKey) throw new Error("STRIPE_SECRET_KEY (test) is not set");
+        return testKey;
+      } else {
+        const liveKey = Deno.env.get("STRIPE_SECRET_KEY_LIVE");
+        if (!liveKey) throw new Error("STRIPE_SECRET_KEY_LIVE is not set");
+        return liveKey;
+      }
+    };
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
@@ -52,8 +62,13 @@ serve(async (req) => {
     
     if (!staffData) throw new Error("Only staff can access quote PDFs");
 
-    const { stripe_quote_id } = await req.json();
+    const { stripe_quote_id, is_test } = await req.json();
     if (!stripe_quote_id) throw new Error("stripe_quote_id is required");
+
+    // Default to test mode if not specified
+    const isTest = is_test ?? true;
+    const stripeKey = getStripeKey(isTest);
+    logStep("Using Stripe mode", { isTest });
 
     // Use user-scoped path for session-based caching
     const fileName = `${userId}/${stripe_quote_id}.pdf`;
