@@ -9,7 +9,7 @@ const corsHeaders = {
 
 // Price IDs for test and live modes
 const PRICE_ID_TEST = "price_1StBDfFXcb7HEmpU2WQ58M1G";
-const PRICE_ID_LIVE = "price_1SxDg4FXcb7HEmpUzrNEOGYG";
+const PRICE_ID_LIVE = "price_1StB0xFat41qiV6YdaKBrFzE";
 
 const logStep = (step: string, details?: unknown) => {
   const detailsStr = details ? ` - ${JSON.stringify(details)}` : '';
