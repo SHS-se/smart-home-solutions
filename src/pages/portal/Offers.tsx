@@ -123,9 +123,9 @@ const Offers: React.FC = () => {
 
         if (fetchError) throw fetchError;
 
-        // Fetch totals from Stripe for quotes with stripe_quote_id
+        // Fetch totals and sync status from Stripe for quotes with stripe_quote_id
         const quoteIds = (data || []).map((q: any) => q.id);
-        const totalsByQuoteId = new Map<string, number>();
+        const stripeDataByQuoteId = new Map<string, { amount_total: number; status: string }>();
 
         if (quoteIds.length > 0) {
           const { data: stripeData, error: stripeError } = await supabase.functions.invoke('get-stripe-quote-totals', {
@@ -135,17 +135,23 @@ const Offers: React.FC = () => {
           if (!stripeError && stripeData?.totals) {
             Object.entries(stripeData.totals).forEach(([quoteId, info]: [string, any]) => {
               // Stripe returns amount in öre (cents), convert to SEK
-              if (info?.amount_total) {
-                totalsByQuoteId.set(quoteId, info.amount_total / 100);
-              }
+              stripeDataByQuoteId.set(quoteId, {
+                amount_total: info?.amount_total ? info.amount_total / 100 : 0,
+                status: info?.status ?? null,
+              });
             });
           }
         }
 
-        const mappedQuotes: Quote[] = (data || []).map((q: any) => ({
-          ...q,
-          total_inc_vat: totalsByQuoteId.get(q.id) ?? null,
-        }));
+        const mappedQuotes: Quote[] = (data || []).map((q: any) => {
+          const stripeInfo = stripeDataByQuoteId.get(q.id);
+          return {
+            ...q,
+            total_inc_vat: stripeInfo?.amount_total ?? null,
+            // Use the fresh status from Stripe if available
+            stripe_status: stripeInfo?.status ?? q.stripe_status,
+          };
+        });
 
         setQuotes(mappedQuotes);
       } catch (err) {
