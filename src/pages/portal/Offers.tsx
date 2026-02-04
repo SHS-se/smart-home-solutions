@@ -260,7 +260,7 @@ const Offers: React.FC = () => {
                       currentColumn={sortColumn}
                       currentDirection={sortDirection}
                       onSort={handleSort}
-                      className="text-primary"
+                      className="text-primary text-center"
                     >
                       {t('Datum', 'Date')}
                     </SortableTableHead>
@@ -269,7 +269,7 @@ const Offers: React.FC = () => {
                       currentColumn={sortColumn}
                       currentDirection={sortDirection}
                       onSort={handleSort}
-                      className="text-primary"
+                      className="text-primary text-center"
                     >
                       {t('Offertnummer', 'Quote Number')}
                     </SortableTableHead>
@@ -278,7 +278,7 @@ const Offers: React.FC = () => {
                       currentColumn={sortColumn}
                       currentDirection={sortDirection}
                       onSort={handleSort}
-                      className="text-right text-primary"
+                      className="text-primary text-center"
                     >
                       {t('Summa', 'Total')}
                     </SortableTableHead>
@@ -287,33 +287,33 @@ const Offers: React.FC = () => {
                       currentColumn={sortColumn}
                       currentDirection={sortDirection}
                       onSort={handleSort}
-                      className="text-primary"
+                      className="text-primary text-center"
                     >
                       {t('Status', 'Status')}
                     </SortableTableHead>
-                    <TableHead className="text-primary">{t('Åtgärder', 'Actions')}</TableHead>
+                    <TableHead className="text-primary text-center">{t('Åtgärder', 'Actions')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {sortedQuotes.map((quote) => (
                     <TableRow key={quote.id}>
-                      <TableCell>
+                      <TableCell className="text-center">
                         {new Date(quote.created_at).toLocaleDateString('sv-SE')}
                       </TableCell>
-                      <TableCell className="font-medium">
+                      <TableCell className="text-center font-medium">
                         {quote.quote_number}
                         {quote.version > 1 && (
                           <span className="text-muted-foreground ml-1">v{quote.version}</span>
                         )}
                       </TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="text-center">
                         {formatAmount(quote.total_inc_vat)}
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="text-center">
                         {getStatusBadge(quote.status, quote.stripe_status)}
                       </TableCell>
                       <TableCell>
-                        <div className="flex items-center gap-1 justify-end">
+                        <div className="flex items-center gap-1 justify-center">
                           {quote.stripe_quote_id && (quote.stripe_status === 'open' || quote.status === 'open') && (
                             <Button
                               variant="success"
