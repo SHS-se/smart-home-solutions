@@ -62,6 +62,8 @@ const UserMenu = ({ size = "default" }: UserMenuProps) => {
 
   const customerNavItems = [
     { href: "/portal", label: t("Översikt", "Overview") },
+    { href: "/portal/account", label: t("Konto", "Account") },
+    { href: "/portal/billing", label: t("Fakturor", "Billing") },
     { href: "/portal/tickets", label: t("Mina ärenden", "My Tickets") },
   ];
 
