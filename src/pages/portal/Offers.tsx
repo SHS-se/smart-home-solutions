@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, FileCheck, ExternalLink, Download } from 'lucide-react';
+import { Loader2, FileCheck, Eye } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -14,10 +14,10 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import PortalLayout from '@/components/portal/PortalLayout';
+import OfferPdfModal from '@/components/portal/offers/OfferPdfModal';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
-import { openExternalUrl } from '@/lib/stripe-dashboard';
 
 interface Quote {
   id: string;
@@ -43,7 +43,7 @@ const Offers: React.FC = () => {
   const [quotes, setQuotes] = useState<Quote[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [previewQuote, setPreviewQuote] = useState<Quote | null>(null);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -94,24 +94,9 @@ const Offers: React.FC = () => {
     }
   }, [customerData, authLoading, t]);
 
-  const handleDownloadPdf = async (quote: Quote) => {
+  const handlePreviewPdf = (quote: Quote) => {
     if (!quote.stripe_quote_id) return;
-    
-    setDownloadingId(quote.id);
-    try {
-      const { data, error: fnError } = await supabase.functions.invoke('get-stripe-quote-pdf', {
-        body: { quoteId: quote.id },
-      });
-
-      if (fnError) throw fnError;
-      if (data?.url) {
-        openExternalUrl(data.url);
-      }
-    } catch (err) {
-      console.error('Error downloading PDF:', err);
-    } finally {
-      setDownloadingId(null);
-    }
+    setPreviewQuote(quote);
   };
 
   const getStatusBadge = (status: string, stripeStatus: string | null) => {
@@ -205,15 +190,10 @@ const Offers: React.FC = () => {
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => handleDownloadPdf(quote)}
-                            disabled={downloadingId === quote.id}
+                            onClick={() => handlePreviewPdf(quote)}
                           >
-                            {downloadingId === quote.id ? (
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                            ) : (
-                              <Download className="w-4 h-4" />
-                            )}
-                            <span className="ml-2 hidden sm:inline">{t('Ladda ner PDF', 'Download PDF')}</span>
+                            <Eye className="w-4 h-4" />
+                            <span className="ml-2 hidden sm:inline">{t('Visa', 'View')}</span>
                           </Button>
                         )}
                       </TableCell>
@@ -225,6 +205,13 @@ const Offers: React.FC = () => {
           </CardContent>
         </Card>
       </div>
+
+      <OfferPdfModal
+        open={!!previewQuote}
+        onOpenChange={(open) => !open && setPreviewQuote(null)}
+        quoteId={previewQuote?.id ?? null}
+        quoteNumber={previewQuote?.quote_number ?? ''}
+      />
     </PortalLayout>
   );
 };
