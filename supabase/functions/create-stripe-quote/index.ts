@@ -148,6 +148,21 @@ function normalizeVatRate(rate: number | undefined | null): number {
   return closest;
 }
 
+/**
+ * Get the appropriate Stripe key based on is_test flag
+ */
+function getStripeKey(isTest: boolean): string {
+  if (isTest) {
+    const testKey = Deno.env.get("STRIPE_SECRET_KEY");
+    if (!testKey) throw new Error("STRIPE_SECRET_KEY (test) is not set");
+    return testKey;
+  } else {
+    const liveKey = Deno.env.get("STRIPE_SECRET_KEY_LIVE");
+    if (!liveKey) throw new Error("STRIPE_SECRET_KEY_LIVE is not set");
+    return liveKey;
+  }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -199,7 +214,22 @@ serve(async (req) => {
       travel_total 
     } = body;
 
-    const stripe = new Stripe(Deno.env.get("STRIPE_SECRET_KEY") || "", {
+    // Fetch quote to determine if it's a test quote
+    const { data: quote, error: quoteError } = await supabaseClient
+      .from("quotes")
+      .select("is_test")
+      .eq("id", quote_id)
+      .single();
+
+    if (quoteError || !quote) {
+      throw new Error("Quote not found");
+    }
+
+    const isTest = quote.is_test ?? true; // Default to test mode if not set
+    const stripeKey = getStripeKey(isTest);
+    console.log(`[CREATE-STRIPE-QUOTE] Using ${isTest ? 'TEST' : 'LIVE'} Stripe key`);
+
+    const stripe = new Stripe(stripeKey, {
       apiVersion: "2025-08-27.basil",
     });
 

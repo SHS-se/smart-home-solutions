@@ -72,10 +72,18 @@ serve(async (req) => {
   try {
     logStep("Webhook received");
 
-    const stripeKey = Deno.env.get("STRIPE_SECRET_KEY");
-    if (!stripeKey) throw new Error("STRIPE_SECRET_KEY is not set");
-
-    const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
+    // Helper to get the appropriate Stripe key based on livemode
+    const getStripeKey = (livemode: boolean): string => {
+      if (!livemode) {
+        const testKey = Deno.env.get("STRIPE_SECRET_KEY");
+        if (!testKey) throw new Error("STRIPE_SECRET_KEY (test) is not set");
+        return testKey;
+      } else {
+        const liveKey = Deno.env.get("STRIPE_SECRET_KEY_LIVE");
+        if (!liveKey) throw new Error("STRIPE_SECRET_KEY_LIVE is not set");
+        return liveKey;
+      }
+    };
 
     // Get raw body for signature verification
     const body = await req.text();
@@ -101,7 +109,10 @@ serve(async (req) => {
     }
 
     const stripeInvoice = event.data.object as Stripe.Invoice;
-    logStep("Processing event", { type: event.type, invoiceId: stripeInvoice.id });
+    
+    // Determine if this is a live or test event based on Stripe's livemode flag
+    const livemode = event.livemode ?? false;
+    logStep("Processing event", { type: event.type, invoiceId: stripeInvoice.id, livemode });
 
     // Find the invoice by stripe_invoice_id in the new invoices table
     const { data: invoice, error: invoiceError } = await supabaseClient

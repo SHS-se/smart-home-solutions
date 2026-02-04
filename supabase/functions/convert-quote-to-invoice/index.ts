@@ -26,8 +26,18 @@ serve(async (req) => {
   try {
     logStep("Function started");
 
-    const stripeKey = Deno.env.get("STRIPE_SECRET_KEY");
-    if (!stripeKey) throw new Error("STRIPE_SECRET_KEY is not set");
+    // Helper to get the appropriate Stripe key
+    const getStripeKey = (isTest: boolean): string => {
+      if (isTest) {
+        const testKey = Deno.env.get("STRIPE_SECRET_KEY");
+        if (!testKey) throw new Error("STRIPE_SECRET_KEY (test) is not set");
+        return testKey;
+      } else {
+        const liveKey = Deno.env.get("STRIPE_SECRET_KEY_LIVE");
+        if (!liveKey) throw new Error("STRIPE_SECRET_KEY_LIVE is not set");
+        return liveKey;
+      }
+    };
 
     // Authenticate staff user
     const authHeader = req.headers.get("Authorization");
@@ -75,6 +85,10 @@ serve(async (req) => {
       throw new Error("Quote has not been sent to Stripe yet");
     }
 
+    // Initialize Stripe with the correct key based on is_test flag
+    const isTest = quote.is_test ?? true;
+    const stripeKey = getStripeKey(isTest);
+    logStep("Using Stripe mode", { isTest });
     const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
 
     // Get the Stripe quote
