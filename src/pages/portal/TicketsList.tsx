@@ -22,9 +22,11 @@ import {
 } from '@/components/ui/table';
 import { SortableTableHead } from '@/components/ui/sortable-table-head';
 import PortalLayout from '@/components/portal/PortalLayout';
+import SubscriptionRequiredAlert from '@/components/portal/SubscriptionRequiredAlert';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useTableSort, sortItems } from '@/hooks/use-table-sort';
+import { useSubscription } from '@/hooks/use-subscription';
 import { supabase } from '@/integrations/supabase/client';
 
 interface Ticket {
@@ -42,6 +44,7 @@ type SortColumn = 'ticket_number' | 'title' | 'customer' | 'status' | 'last_acti
 
 const TicketsList: React.FC = () => {
   const { user, customerData, loading, isStaff } = useAuth();
+  const { isSubscribed, loading: subscriptionLoading } = useSubscription();
   const navigate = useNavigate();
   const { t } = useLanguage();
   const [tickets, setTickets] = useState<Ticket[]>([]);
@@ -159,7 +162,7 @@ const TicketsList: React.FC = () => {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <h1 className="text-3xl font-medium">{t('Supportärenden', 'Support tickets')}</h1>
           {!isStaff && customerData && (
-            <Button asChild>
+            <Button asChild disabled={!isSubscribed || subscriptionLoading}>
               <Link to="/portal/tickets/new">
                 <Plus className="w-4 h-4 mr-2" />
                 {t('Nytt ärende', 'New ticket')}
@@ -167,6 +170,11 @@ const TicketsList: React.FC = () => {
             </Button>
           )}
         </div>
+
+        {/* Show subscription required alert for customers without subscription */}
+        {!isStaff && !subscriptionLoading && !isSubscribed && (
+          <SubscriptionRequiredAlert />
+        )}
 
         {/* Filters */}
         <div className="flex flex-col sm:flex-row gap-4">

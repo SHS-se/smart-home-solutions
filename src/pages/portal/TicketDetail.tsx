@@ -29,8 +29,10 @@ import {
 import { Separator } from '@/components/ui/separator';
 import { useToast } from '@/hooks/use-toast';
 import PortalLayout from '@/components/portal/PortalLayout';
+import SubscriptionRequiredAlert from '@/components/portal/SubscriptionRequiredAlert';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useSubscription } from '@/hooks/use-subscription';
 import { supabase } from '@/integrations/supabase/client';
 
 interface Ticket {
@@ -76,6 +78,7 @@ interface PendingFile {
 const TicketDetail: React.FC = () => {
   const { ticketNumber } = useParams<{ ticketNumber: string }>();
   const { user, isStaff, customerData, loading } = useAuth();
+  const { isSubscribed, loading: subscriptionLoading } = useSubscription();
   const navigate = useNavigate();
   const { toast } = useToast();
   const { t } = useLanguage();
@@ -454,69 +457,81 @@ const TicketDetail: React.FC = () => {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">{t('Lägg till svar', 'Add a reply')}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleSubmitComment} className="space-y-4">
-              {isStaff && ticket.status !== 'closed' && (
-                <div className="space-y-2">
-                  <Label>{t('Status efter svar', 'Status after reply')}</Label>
-                  <Select value={newStatus} onValueChange={setNewStatus}>
-                    <SelectTrigger className="w-48">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="awaiting_customer">{t('Väntar på kund', 'Awaiting customer')}</SelectItem>
-                      <SelectItem value="awaiting_response">{t('Väntar på personal', 'Awaiting staff')}</SelectItem>
-                      <SelectItem value="closed">{t('Stängd', 'Closed')}</SelectItem>
-                    </SelectContent>
-                  </Select>
+        {/* Show subscription required alert for customers without subscription */}
+        {!isStaff && !subscriptionLoading && !isSubscribed ? (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">{t('Lägg till svar', 'Add a reply')}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <SubscriptionRequiredAlert />
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">{t('Lägg till svar', 'Add a reply')}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleSubmitComment} className="space-y-4">
+                {isStaff && ticket.status !== 'closed' && (
+                  <div className="space-y-2">
+                    <Label>{t('Status efter svar', 'Status after reply')}</Label>
+                    <Select value={newStatus} onValueChange={setNewStatus}>
+                      <SelectTrigger className="w-48">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="awaiting_customer">{t('Väntar på kund', 'Awaiting customer')}</SelectItem>
+                        <SelectItem value="awaiting_response">{t('Väntar på personal', 'Awaiting staff')}</SelectItem>
+                        <SelectItem value="closed">{t('Stängd', 'Closed')}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                
+                <Textarea
+                  placeholder={t('Skriv ditt svar... Markdown stöds.', 'Write your reply... Markdown is supported.')}
+                  value={newComment}
+                  onChange={(e) => setNewComment(e.target.value)}
+                  className="min-h-[120px]"
+                />
+
+                <div className="flex items-center gap-4">
+                  <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()}>
+                    <Paperclip className="w-4 h-4 mr-2" />
+                    {t('Bifoga filer', 'Attach files')}
+                  </Button>
+                  <input ref={fileInputRef} type="file" multiple onChange={handleFileSelect} className="hidden" accept="image/*,text/plain,application/pdf,application/zip,application/gzip,application/json" />
                 </div>
-              )}
-              
-              <Textarea
-                placeholder={t('Skriv ditt svar... Markdown stöds.', 'Write your reply... Markdown is supported.')}
-                value={newComment}
-                onChange={(e) => setNewComment(e.target.value)}
-                className="min-h-[120px]"
-              />
 
-              <div className="flex items-center gap-4">
-                <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()}>
-                  <Paperclip className="w-4 h-4 mr-2" />
-                  {t('Bifoga filer', 'Attach files')}
-                </Button>
-                <input ref={fileInputRef} type="file" multiple onChange={handleFileSelect} className="hidden" accept="image/*,text/plain,application/pdf,application/zip,application/gzip,application/json" />
-              </div>
-
-              {pendingFiles.length > 0 && (
-                <div className="space-y-2">
-                  {pendingFiles.map(({ file, id: fileId }) => (
-                    <div key={fileId} className="flex items-center justify-between p-2 bg-muted rounded">
-                      <div className="flex items-center gap-2">
-                        <File className="w-4 h-4 text-muted-foreground" />
-                        <span className="text-sm truncate max-w-xs">{file.name}</span>
-                        <span className="text-xs text-muted-foreground">({(file.size / 1024).toFixed(1)} KB)</span>
+                {pendingFiles.length > 0 && (
+                  <div className="space-y-2">
+                    {pendingFiles.map(({ file, id: fileId }) => (
+                      <div key={fileId} className="flex items-center justify-between p-2 bg-muted rounded">
+                        <div className="flex items-center gap-2">
+                          <File className="w-4 h-4 text-muted-foreground" />
+                          <span className="text-sm truncate max-w-xs">{file.name}</span>
+                          <span className="text-xs text-muted-foreground">({(file.size / 1024).toFixed(1)} KB)</span>
+                        </div>
+                        <Button type="button" variant="ghost" size="sm" onClick={() => removeFile(fileId)}>
+                          <X className="w-4 h-4" />
+                        </Button>
                       </div>
-                      <Button type="button" variant="ghost" size="sm" onClick={() => removeFile(fileId)}>
-                        <X className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              )}
+                    ))}
+                  </div>
+                )}
 
-              <div className="flex justify-end">
-                <Button type="submit" disabled={isSubmitting || !newComment.trim()}>
-                  {isSubmitting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Send className="w-4 h-4 mr-2" />}
-                  {t('Skicka svar', 'Send reply')}
-                </Button>
-              </div>
-            </form>
-          </CardContent>
-        </Card>
+                <div className="flex justify-end">
+                  <Button type="submit" disabled={isSubmitting || !newComment.trim()}>
+                    {isSubmitting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Send className="w-4 h-4 mr-2" />}
+                    {t('Skicka svar', 'Send reply')}
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </PortalLayout>
   );
