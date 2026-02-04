@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Loader2, Download, CreditCard, RefreshCw, Settings, CheckCircle, AlertCircle } from 'lucide-react';
+import { Loader2, Download, CreditCard, Settings, CheckCircle, AlertCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -50,7 +50,7 @@ const Billing: React.FC = () => {
   const [subscriptionLoading, setSubscriptionLoading] = useState(true);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [portalLoading, setPortalLoading] = useState(false);
-  const [syncLoading, setSyncLoading] = useState(false);
+  
 
   useEffect(() => {
     if (!loading && !user) {
@@ -114,21 +114,14 @@ const Billing: React.FC = () => {
   };
 
   const syncInvoices = async () => {
-    setSyncLoading(true);
     try {
       const { data, error } = await supabase.functions.invoke('sync-invoices');
       if (error) throw error;
       if (data?.synced > 0) {
-        toast({
-          title: t('Fakturor synkroniserade', 'Invoices synced'),
-          description: t(`${data.synced} fakturor uppdaterades.`, `${data.synced} invoices updated.`),
-        });
         fetchInvoices();
       }
     } catch (error) {
       console.error('Error syncing invoices:', error);
-    } finally {
-      setSyncLoading(false);
     }
   };
 
@@ -348,23 +341,10 @@ const Billing: React.FC = () => {
         {/* Invoices Card */}
         <Card>
           <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle>{t('Fakturor', 'Invoices')}</CardTitle>
-                <CardDescription>
-                  {t('Dina betalningshistorik och fakturor.', 'Your payment history and invoices.')}
-                </CardDescription>
-              </div>
-              <Button 
-                variant="outline" 
-                size="sm" 
-                onClick={syncInvoices} 
-                disabled={syncLoading}
-              >
-                <RefreshCw className={`w-4 h-4 mr-2 ${syncLoading ? 'animate-spin' : ''}`} />
-                {t('Synkronisera', 'Sync')}
-              </Button>
-            </div>
+            <CardTitle>{t('Fakturor', 'Invoices')}</CardTitle>
+            <CardDescription>
+              {t('Dina betalningshistorik och fakturor.', 'Your payment history and invoices.')}
+            </CardDescription>
           </CardHeader>
           <CardContent>
             {invoicesLoading ? (
