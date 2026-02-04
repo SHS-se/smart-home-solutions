@@ -254,7 +254,7 @@ const Offers: React.FC = () => {
                     >
                       {t('Status', 'Status')}
                     </SortableTableHead>
-                    <TableHead className="w-[60px]"></TableHead>
+                    <TableHead className="text-primary">{t('Åtgärder', 'Actions')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

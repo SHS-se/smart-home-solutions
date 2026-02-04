@@ -508,7 +508,7 @@ const Billing: React.FC = () => {
                     >
                       {t('Status', 'Status')}
                     </SortableTableHead>
-                    <TableHead className="text-primary"></TableHead>
+                    <TableHead className="text-primary">{t('Åtgärder', 'Actions')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
