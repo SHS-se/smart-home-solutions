@@ -175,8 +175,14 @@ const Billing: React.FC = () => {
       }
 
       const mappedInvoices: Invoice[] = invoicesData.map((inv: any) => {
+        // For Stripe-synced invoices, use the amount from Stripe directly
+        // For locally-created invoices without stripe_invoice_id, use computed totals
+        const stripeAmount = typeof inv.amount === 'number' ? inv.amount : null;
         const computed = totalsByInvoiceId.get(inv.id) ?? null;
-        const fallbackAmount = typeof inv.amount === 'number' ? inv.amount : null;
+        
+        // Prefer Stripe amount for synced invoices, fall back to computed for local invoices
+        const total = inv.stripe_invoice_id ? stripeAmount : (computed ?? stripeAmount);
+        
         return {
           id: inv.id,
           invoice_number: inv.invoice_number,
@@ -187,7 +193,7 @@ const Billing: React.FC = () => {
           status: inv.status,
           pdf_url: inv.pdf_url,
           is_test: inv.is_test,
-          computed_total: computed ?? fallbackAmount,
+          computed_total: total,
         };
       });
 
