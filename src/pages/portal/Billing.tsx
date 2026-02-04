@@ -26,11 +26,11 @@ interface Invoice {
   stripe_invoice_id: string | null;
   issued_at: string | null;
   due_date: string | null;
-  amount: number | null;
   currency: string | null;
   status: string | null;
   pdf_url: string | null;
   is_test?: boolean;
+  computed_total: number | null;
 }
 
 interface SubscriptionStatus {
@@ -104,12 +104,38 @@ const Billing: React.FC = () => {
     try {
       const { data, error } = await supabase
         .from('invoices')
-        .select('*')
+        .select(`
+          id,
+          invoice_number,
+          stripe_invoice_id,
+          issued_at,
+          due_date,
+          currency,
+          status,
+          pdf_url,
+          is_test,
+          invoice_computed_totals!inner(total)
+        `)
         .eq('customer_id', customerData.id)
         .order('issued_at', { ascending: false });
 
       if (error) throw error;
-      setInvoices(data || []);
+      
+      // Map the computed total to a flat structure
+      const mappedInvoices: Invoice[] = (data || []).map((inv: any) => ({
+        id: inv.id,
+        invoice_number: inv.invoice_number,
+        stripe_invoice_id: inv.stripe_invoice_id,
+        issued_at: inv.issued_at,
+        due_date: inv.due_date,
+        currency: inv.currency,
+        status: inv.status,
+        pdf_url: inv.pdf_url,
+        is_test: inv.is_test,
+        computed_total: inv.invoice_computed_totals?.total ?? null,
+      }));
+      
+      setInvoices(mappedInvoices);
     } catch (error) {
       console.error('Error fetching invoices:', error);
     } finally {
@@ -215,9 +241,9 @@ const Billing: React.FC = () => {
   }
 
   const formatAmount = (amount: number | null, currency: string | null) => {
-    if (amount === null) return 'N/A';
-    const formatted = new Intl.NumberFormat('sv-SE').format(amount);
-    return `${formatted} ${currency || 'kr'}`;
+    if (amount === null || amount === undefined) return '-';
+    const formatted = new Intl.NumberFormat('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount);
+    return `${formatted} ${currency?.toUpperCase() || 'SEK'}`;
   };
 
   const getStatusBadge = (status: string | null) => {
@@ -389,7 +415,7 @@ const Billing: React.FC = () => {
                       <TableCell>{invoice.issued_at ? new Date(invoice.issued_at).toLocaleDateString('sv-SE') : 'N/A'}</TableCell>
                       <TableCell>{invoice.due_date ? new Date(invoice.due_date).toLocaleDateString('sv-SE') : '-'}</TableCell>
                       <TableCell>{invoice.invoice_number || invoice.id.slice(0, 8)}</TableCell>
-                      <TableCell>{formatAmount(invoice.amount, invoice.currency)}</TableCell>
+                      <TableCell>{formatAmount(invoice.computed_total, invoice.currency)}</TableCell>
                       <TableCell>{getStatusBadge(invoice.status)}</TableCell>
                       <TableCell>
                         {canDownloadInvoice(invoice.status) && invoice.stripe_invoice_id ? (
