@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, FileCheck, Eye } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Loader2, Eye } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -13,11 +13,15 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { SortableTableHead } from '@/components/ui/sortable-table-head';
 import PortalLayout from '@/components/portal/PortalLayout';
 import OfferPdfModal from '@/components/portal/offers/OfferPdfModal';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
+import { useTableSort, sortItems } from '@/hooks/use-table-sort';
+
+type QuoteSortColumn = 'created_at' | 'quote_number' | 'total_inc_vat' | 'status';
 
 interface Quote {
   id: string;
@@ -33,6 +37,7 @@ interface Quote {
   bom: {
     project_name: string;
   } | null;
+  total_inc_vat: number | null;
 }
 
 const Offers: React.FC = () => {
@@ -44,6 +49,30 @@ const Offers: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [previewQuote, setPreviewQuote] = useState<Quote | null>(null);
+
+  const { sortColumn, sortDirection, handleSort } = useTableSort<QuoteSortColumn>({
+    defaultColumn: 'created_at',
+    defaultDirection: 'desc',
+  });
+
+  const sortedQuotes = useMemo(() => {
+    return sortItems(quotes, sortColumn as keyof Quote, sortDirection, {
+      getValue: (quote) => {
+        switch (sortColumn) {
+          case 'created_at':
+            return quote.created_at ? new Date(quote.created_at) : null;
+          case 'quote_number':
+            return quote.quote_number ?? '';
+          case 'total_inc_vat':
+            return quote.total_inc_vat ?? 0;
+          case 'status':
+            return (quote.stripe_status || quote.status) ?? '';
+          default:
+            return null;
+        }
+      },
+    });
+  }, [quotes, sortColumn, sortDirection]);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -80,7 +109,32 @@ const Offers: React.FC = () => {
           .order('created_at', { ascending: false });
 
         if (fetchError) throw fetchError;
-        setQuotes(data || []);
+
+        // Fetch totals from quote_computed_totals
+        const quoteIds = (data || []).map((q: any) => q.id);
+        const totalsByQuoteId = new Map<string, number>();
+
+        if (quoteIds.length > 0) {
+          const { data: totalsData, error: totalsError } = await supabase
+            .from('quote_computed_totals')
+            .select('quote_id, total_inc_vat')
+            .in('quote_id', quoteIds);
+
+          if (!totalsError && totalsData) {
+            totalsData.forEach((row: any) => {
+              if (row?.quote_id && typeof row.total_inc_vat === 'number') {
+                totalsByQuoteId.set(row.quote_id, row.total_inc_vat);
+              }
+            });
+          }
+        }
+
+        const mappedQuotes: Quote[] = (data || []).map((q: any) => ({
+          ...q,
+          total_inc_vat: totalsByQuoteId.get(q.id) ?? null,
+        }));
+
+        setQuotes(mappedQuotes);
       } catch (err) {
         console.error('Error fetching quotes:', err);
         setError(t('Kunde inte hämta offerter.', 'Could not fetch offers.'));
@@ -99,14 +153,20 @@ const Offers: React.FC = () => {
     setPreviewQuote(quote);
   };
 
+  const formatAmount = (amount: number | null) => {
+    if (amount === null || amount === undefined) return '-';
+    const formatted = new Intl.NumberFormat('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount);
+    return `${formatted} SEK`;
+  };
+
   const getStatusBadge = (status: string, stripeStatus: string | null) => {
     const displayStatus = stripeStatus || status;
     
     switch (displayStatus) {
       case 'open':
-        return <Badge variant="default">{t('Öppen', 'Open')}</Badge>;
+        return <Badge variant="outline">{t('Öppen', 'Open')}</Badge>;
       case 'accepted':
-        return <Badge className="bg-[#5A8F73] text-white">{t('Accepterad', 'Accepted')}</Badge>;
+        return <Badge className="bg-energy/30 text-energy-darker border-0">{t('Accepterad', 'Accepted')}</Badge>;
       case 'canceled':
       case 'cancelled':
         return <Badge variant="secondary">{t('Avbruten', 'Cancelled')}</Badge>;
@@ -140,60 +200,89 @@ const Offers: React.FC = () => {
   return (
     <PortalLayout>
       <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <h1 className="text-3xl font-medium">{t('Mina offerter', 'My Offers')}</h1>
-        </div>
+        <h1 className="text-3xl font-medium">{t('Mina offerter', 'My Offers')}</h1>
 
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <FileCheck className="w-5 h-5" />
-              {t('Offerter', 'Offers')}
-            </CardTitle>
+            <CardTitle>{t('Offerter', 'Offers')}</CardTitle>
+            <CardDescription>
+              {t('Dina offerter och prisförslag.', 'Your offers and price proposals.')}
+            </CardDescription>
           </CardHeader>
           <CardContent>
             {quotes.length === 0 ? (
-              <p className="text-muted-foreground text-center py-8">
+              <p className="text-center text-muted-foreground py-12">
                 {t('Du har inga offerter ännu.', 'You have no offers yet.')}
               </p>
             ) : (
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>{t('Offertnummer', 'Quote Number')}</TableHead>
-                    <TableHead>{t('Projekt', 'Project')}</TableHead>
-                    <TableHead>{t('Status', 'Status')}</TableHead>
-                    <TableHead>{t('Datum', 'Date')}</TableHead>
-                    <TableHead className="text-right">{t('Åtgärder', 'Actions')}</TableHead>
+                    <SortableTableHead<QuoteSortColumn>
+                      column="created_at"
+                      currentColumn={sortColumn}
+                      currentDirection={sortDirection}
+                      onSort={handleSort}
+                      className="text-primary"
+                    >
+                      {t('Datum', 'Date')}
+                    </SortableTableHead>
+                    <SortableTableHead<QuoteSortColumn>
+                      column="quote_number"
+                      currentColumn={sortColumn}
+                      currentDirection={sortDirection}
+                      onSort={handleSort}
+                      className="text-primary"
+                    >
+                      {t('Offertnummer', 'Quote Number')}
+                    </SortableTableHead>
+                    <SortableTableHead<QuoteSortColumn>
+                      column="total_inc_vat"
+                      currentColumn={sortColumn}
+                      currentDirection={sortDirection}
+                      onSort={handleSort}
+                      className="text-right text-primary"
+                    >
+                      {t('Summa', 'Total')}
+                    </SortableTableHead>
+                    <SortableTableHead<QuoteSortColumn>
+                      column="status"
+                      currentColumn={sortColumn}
+                      currentDirection={sortDirection}
+                      onSort={handleSort}
+                      className="text-primary"
+                    >
+                      {t('Status', 'Status')}
+                    </SortableTableHead>
+                    <TableHead className="w-[60px]"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {quotes.map((quote) => (
+                  {sortedQuotes.map((quote) => (
                     <TableRow key={quote.id}>
+                      <TableCell>
+                        {new Date(quote.created_at).toLocaleDateString('sv-SE')}
+                      </TableCell>
                       <TableCell className="font-medium">
                         {quote.quote_number}
                         {quote.version > 1 && (
                           <span className="text-muted-foreground ml-1">v{quote.version}</span>
                         )}
                       </TableCell>
-                      <TableCell>
-                        {quote.bom?.project_name || '-'}
+                      <TableCell className="text-right">
+                        {formatAmount(quote.total_inc_vat)}
                       </TableCell>
                       <TableCell>
                         {getStatusBadge(quote.status, quote.stripe_status)}
                       </TableCell>
-                      <TableCell>
-                        {new Date(quote.created_at).toLocaleDateString()}
-                      </TableCell>
                       <TableCell className="text-right">
                         {quote.stripe_quote_id && (
                           <Button
-                            variant="outline"
-                            size="sm"
+                            variant="ghost"
+                            size="icon"
                             onClick={() => handlePreviewPdf(quote)}
                           >
                             <Eye className="w-4 h-4" />
-                            <span className="ml-2 hidden sm:inline">{t('Visa', 'View')}</span>
                           </Button>
                         )}
                       </TableCell>
