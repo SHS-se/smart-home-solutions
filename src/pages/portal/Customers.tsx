@@ -176,7 +176,9 @@ const Customers: React.FC = () => {
                     <SortableTableHead column="phone" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>
                       {t('Telefon', 'Phone')}
                     </SortableTableHead>
-                    <TableHead className="w-12" />
+                    <TableHead className="w-12">
+                      {t('Åtgärder', 'Actions')}
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -202,6 +204,7 @@ const Customers: React.FC = () => {
                       <TableCell>
                         <CustomerActionsMenu
                           customerId={customer.id}
+                          customerName={customer.org_name || t('Namnlös', 'Unnamed')}
                           isTest={customer.is_test}
                           onUpdated={fetchCustomers}
                         />
