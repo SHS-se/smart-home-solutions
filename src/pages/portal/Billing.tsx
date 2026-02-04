@@ -378,7 +378,7 @@ const Billing: React.FC = () => {
                     <TableHead className="text-primary">{t('Datum', 'Date')}</TableHead>
                     <TableHead className="text-primary">{t('Förfallodatum', 'Due date')}</TableHead>
                     <TableHead className="text-primary">{t('Fakturanummer', 'Invoice number')}</TableHead>
-                    <TableHead className="text-primary">{t('Belopp', 'Amount')}</TableHead>
+                    <TableHead className="text-primary">{t('Summa', 'Total')}</TableHead>
                     <TableHead className="text-primary">{t('Status', 'Status')}</TableHead>
                     <TableHead className="text-primary"></TableHead>
                   </TableRow>
