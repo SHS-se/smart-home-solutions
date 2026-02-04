@@ -39,6 +39,50 @@ const SUPPORTED_VAT_RATES = [0, 0.06, 0.12, 0.25];
 // In-memory cache for tax rate IDs during this function invocation
 const taxRateCache: Map<number, string> = new Map();
 
+// In-memory cache for product IDs during this function invocation
+const productCache: Map<string, string> = new Map();
+
+/**
+ * Get or create a Stripe product using idempotent lookup by SKU/identifier.
+ * Caches results to avoid repeated API calls within the same invocation.
+ */
+async function getOrCreateProduct(
+  stripe: Stripe,
+  identifier: string,
+  name: string,
+  description?: string
+): Promise<string> {
+  // Check in-memory cache first
+  if (productCache.has(identifier)) {
+    return productCache.get(identifier)!;
+  }
+
+  // Search for existing product by metadata
+  const existingProducts = await stripe.products.search({
+    query: `metadata['sku_identifier']:'${identifier}'`,
+    limit: 1,
+  });
+
+  if (existingProducts.data.length > 0) {
+    const productId = existingProducts.data[0].id;
+    productCache.set(identifier, productId);
+    return productId;
+  }
+
+  // Create new product with metadata for future lookups
+  const newProduct = await stripe.products.create({
+    name,
+    description: description || undefined,
+    metadata: {
+      sku_identifier: identifier,
+      source: 'smart-home-solutions',
+    },
+  });
+
+  productCache.set(identifier, newProduct.id);
+  return newProduct.id;
+}
+
 /**
  * Get or create a Stripe tax rate for a given VAT percentage.
  * Caches results to avoid repeated API calls within the same invocation.
@@ -171,18 +215,17 @@ serve(async (req) => {
       });
     }
 
-    // Helper to create a product and return a line item with per-line tax rate
+    // Helper to create a line item with idempotent product lookup
     async function createLineItem(
+      identifier: string,
       name: string, 
       description: string | undefined, 
       unitAmountCents: number, 
       quantity: number,
       vatRate: number
     ): Promise<Stripe.QuoteCreateParams.LineItem> {
-      const product = await stripe.products.create({
-        name,
-        description: description || undefined,
-      });
+      // Get or create product using idempotent lookup
+      const productId = await getOrCreateProduct(stripe, identifier, name, description);
       
       // Get tax rate ID for this line's VAT rate
       const normalizedVatRate = normalizeVatRate(vatRate);
@@ -191,11 +234,11 @@ serve(async (req) => {
       return {
         price_data: {
           currency: "sek",
-          product: product.id,
+          product: productId,
           unit_amount: unitAmountCents,
         },
         quantity,
-        tax_rates: [taxRateId], // Per-line tax rate
+        tax_rates: [taxRateId],
       };
     }
 
@@ -205,6 +248,7 @@ serve(async (req) => {
     // Add itemized hardware items with per-line VAT
     for (const item of hardware_items) {
       const lineItem = await createLineItem(
+        `sku:${item.sku}`, // Use SKU code as unique identifier
         item.name,
         `SKU: ${item.sku}`,
         Math.round((item.unit_price_ex_vat || 0) * 100),
@@ -217,6 +261,7 @@ serve(async (req) => {
     // Add itemized labor lines with per-line VAT
     for (const line of labor_lines) {
       const lineItem = await createLineItem(
+        `service:labor:${line.description || 'installation'}`, // Unique identifier for labor services
         line.description || "Installation & konfiguration",
         `${line.quantity || 1} timmar`,
         Math.round((line.unit_price_ex_vat || 0) * 100),
@@ -229,6 +274,7 @@ serve(async (req) => {
     // Add itemized travel lines with per-line VAT
     for (const line of travel_lines) {
       const lineItem = await createLineItem(
+        `service:travel:${line.description || 'travel'}`, // Unique identifier for travel services
         line.description || "Resa & övrigt",
         undefined,
         Math.round((line.unit_price_ex_vat || 0) * 100),
@@ -245,6 +291,7 @@ serve(async (req) => {
       
       if (hardware_total > 0) {
         const lineItem = await createLineItem(
+          "fallback:hardware",
           "Hårdvara för smart home-installation",
           "Hardware for smart home installation",
           Math.round(hardware_total * 100),
@@ -256,6 +303,7 @@ serve(async (req) => {
 
       if (labor_total > 0) {
         const lineItem = await createLineItem(
+          "fallback:labor",
           "Installation & konfiguration",
           "Installation and configuration services",
           Math.round(labor_total * 100),
@@ -267,6 +315,7 @@ serve(async (req) => {
 
       if (travel_total > 0) {
         const lineItem = await createLineItem(
+          "fallback:travel",
           "Resa & övrigt",
           "Travel and miscellaneous costs",
           Math.round(travel_total * 100),
