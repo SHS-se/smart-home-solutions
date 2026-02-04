@@ -78,7 +78,12 @@ const UserMenu = ({ size = "default" }: UserMenuProps) => {
           <div className="flex items-center justify-center w-8 h-8 rounded-full bg-primary text-primary-foreground text-sm font-medium">
             {getInitials(displayName)}
           </div>
-          <span className="hidden sm:inline text-sm font-medium">{displayName}</span>
+          <div className="hidden sm:flex flex-col items-start">
+            <span className="text-sm font-medium">{displayName}</span>
+            {isCustomer && customerData?.is_test && (
+              <span className="text-xs font-semibold text-destructive leading-none">TEST</span>
+            )}
+          </div>
           <ChevronDown className="h-4 w-4 text-muted-foreground" />
         </Button>
       </DropdownMenuTrigger>
@@ -87,9 +92,6 @@ const UserMenu = ({ size = "default" }: UserMenuProps) => {
           <div className="flex flex-col space-y-1">
             <p className="text-sm font-medium leading-none">{displayName}</p>
             <p className="text-xs leading-none text-muted-foreground">{displayEmail}</p>
-            {isCustomer && customerData?.is_test && (
-              <span className="text-xs font-semibold text-destructive">TEST</span>
-            )}
           </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
