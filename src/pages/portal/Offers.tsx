@@ -6,6 +6,16 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
   Table,
   TableBody,
   TableCell,
@@ -51,6 +61,7 @@ const Offers: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [previewQuote, setPreviewQuote] = useState<Quote | null>(null);
   const [acceptingQuoteId, setAcceptingQuoteId] = useState<string | null>(null);
+  const [confirmQuote, setConfirmQuote] = useState<Quote | null>(null);
 
   const { sortColumn, sortDirection, handleSort } = useTableSort<QuoteSortColumn>({
     defaultColumn: 'created_at',
@@ -155,13 +166,14 @@ const Offers: React.FC = () => {
     setPreviewQuote(quote);
   };
 
-  const handleAcceptQuote = async (quote: Quote) => {
-    if (!quote.stripe_quote_id) return;
+  const handleConfirmAccept = async () => {
+    if (!confirmQuote?.stripe_quote_id) return;
     
-    setAcceptingQuoteId(quote.id);
+    setAcceptingQuoteId(confirmQuote.id);
+    setConfirmQuote(null);
     try {
       const { data, error: acceptError } = await supabase.functions.invoke('accept-stripe-quote', {
-        body: { quote_id: quote.id },
+        body: { quote_id: confirmQuote.id },
       });
 
       if (acceptError) throw acceptError;
@@ -169,7 +181,7 @@ const Offers: React.FC = () => {
 
       // Update the local state to reflect the accepted status
       setQuotes(prev => prev.map(q => 
-        q.id === quote.id 
+        q.id === confirmQuote.id 
           ? { ...q, status: 'accepted', stripe_status: 'accepted' }
           : q
       ));
@@ -318,7 +330,7 @@ const Offers: React.FC = () => {
                             <Button
                               variant="success"
                               size="sm"
-                              onClick={() => handleAcceptQuote(quote)}
+                              onClick={() => setConfirmQuote(quote)}
                               disabled={acceptingQuoteId === quote.id}
                             >
                               {acceptingQuoteId === quote.id ? (
@@ -357,6 +369,30 @@ const Offers: React.FC = () => {
         quoteId={previewQuote?.id ?? null}
         quoteNumber={previewQuote?.quote_number ?? ''}
       />
+
+      <AlertDialog open={!!confirmQuote} onOpenChange={(open) => !open && setConfirmQuote(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t('Bekräfta accepterande', 'Confirm Acceptance')}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t(
+                `Är du säker på att du vill acceptera offert ${confirmQuote?.quote_number}? Denna åtgärd kan inte ångras.`,
+                `Are you sure you want to accept offer ${confirmQuote?.quote_number}? This action cannot be undone.`
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>
+              {t('Avbryt', 'Cancel')}
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmAccept}>
+              {t('Acceptera', 'Accept')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </PortalLayout>
   );
 };
