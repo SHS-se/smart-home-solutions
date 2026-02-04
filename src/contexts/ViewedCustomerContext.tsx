@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 
@@ -9,6 +9,7 @@ interface CustomerData {
   phone: string | null;
   address: string | null;
   site_address: string | null;
+  is_test: boolean;
 }
 
 interface ViewedCustomerContextType {
@@ -16,6 +17,7 @@ interface ViewedCustomerContextType {
   customerData: CustomerData | null;
   loading: boolean;
   error: string | null;
+  refetch: () => void;
 }
 
 const ViewedCustomerContext = createContext<ViewedCustomerContextType | undefined>(undefined);
@@ -30,39 +32,43 @@ export const ViewedCustomerProvider: React.FC<ViewedCustomerProviderProps> = ({ 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchCustomer = async () => {
-      if (!customerId) {
-        setLoading(false);
-        return;
-      }
+  const fetchCustomer = useCallback(async () => {
+    if (!customerId) {
+      setLoading(false);
+      return;
+    }
 
-      setLoading(true);
-      setError(null);
+    setLoading(true);
+    setError(null);
 
-      try {
-        const { data, error: fetchError } = await supabase
-          .from('customers')
-          .select('id, org_name, billing_email, phone, address, site_address')
-          .eq('id', customerId)
-          .single();
+    try {
+      const { data, error: fetchError } = await supabase
+        .from('customers')
+        .select('id, org_name, billing_email, phone, address, site_address, is_test')
+        .eq('id', customerId)
+        .single();
 
-        if (fetchError) throw fetchError;
-        setCustomerData(data);
-      } catch (err: any) {
-        console.error('Error fetching customer:', err);
-        setError(err.message || 'Failed to fetch customer');
-        setCustomerData(null);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchCustomer();
+      if (fetchError) throw fetchError;
+      setCustomerData(data);
+    } catch (err: any) {
+      console.error('Error fetching customer:', err);
+      setError(err.message || 'Failed to fetch customer');
+      setCustomerData(null);
+    } finally {
+      setLoading(false);
+    }
   }, [customerId]);
 
+  useEffect(() => {
+    fetchCustomer();
+  }, [fetchCustomer]);
+
+  const refetch = useCallback(() => {
+    fetchCustomer();
+  }, [fetchCustomer]);
+
   return (
-    <ViewedCustomerContext.Provider value={{ customerId: customerId || null, customerData, loading, error }}>
+    <ViewedCustomerContext.Provider value={{ customerId: customerId || null, customerData, loading, error, refetch }}>
       {children}
     </ViewedCustomerContext.Provider>
   );
