@@ -1049,6 +1049,7 @@ export type Database = {
           effective_rounding_sek: number | null
           id: string
           image_path: string | null
+          is_test: boolean
           margin_override_percent: number | null
           name: string
           notes: string | null
@@ -1074,6 +1075,7 @@ export type Database = {
           effective_rounding_sek?: number | null
           id?: string
           image_path?: string | null
+          is_test?: boolean
           margin_override_percent?: number | null
           name: string
           notes?: string | null
@@ -1099,6 +1101,7 @@ export type Database = {
           effective_rounding_sek?: number | null
           id?: string
           image_path?: string | null
+          is_test?: boolean
           margin_override_percent?: number | null
           name?: string
           notes?: string | null
