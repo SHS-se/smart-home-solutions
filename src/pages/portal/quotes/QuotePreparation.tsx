@@ -327,6 +327,7 @@ const QuotePreparation: React.FC = () => {
         .update({ 
           stripe_quote_id: data.stripe_quote_id,
           status: 'sent',
+          stripe_status: 'open', // Stripe quote is finalized and open for acceptance
         })
         .eq('id', id);
 
