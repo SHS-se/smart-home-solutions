@@ -22,6 +22,7 @@ import Login from "./pages/portal/Login";
 import ResetPassword from "./pages/portal/ResetPassword";
 import Dashboard from "./pages/portal/Dashboard";
 import Account from "./pages/portal/Account";
+import Offers from "./pages/portal/Offers";
 import Billing from "./pages/portal/Billing";
 import TicketsList from "./pages/portal/TicketsList";
 import NewTicket from "./pages/portal/NewTicket";
@@ -114,6 +115,7 @@ const App = () => (
                 <Route path="/reset-password" element={<ResetPassword />} />
                 <Route path="/portal" element={<Dashboard />} />
                 <Route path="/portal/account" element={<Account />} />
+                <Route path="/portal/offers" element={<Offers />} />
                 <Route path="/portal/billing" element={<Billing />} />
                 <Route path="/portal/tickets" element={<TicketsList />} />
                 <Route path="/portal/tickets/new" element={<NewTicket />} />

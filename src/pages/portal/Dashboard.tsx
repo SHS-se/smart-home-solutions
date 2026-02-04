@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Building2, FileText, MessageSquare, Loader2, Shield, Users, Package, Box, FileCheck, Settings, Database, Receipt } from 'lucide-react';
+import { Building2, FileText, MessageSquare, Loader2, Shield, Users, Package, Box, FileCheck, Settings, Database, Receipt, ClipboardList } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -24,6 +24,7 @@ const Dashboard: React.FC = () => {
   const [templateStats, setTemplateStats] = useState({ total: 0 });
   const [bomStats, setBomStats] = useState({ total: 0 });
   const [quoteStats, setQuoteStats] = useState({ total: 0, draft: 0 });
+  const [customerQuoteStats, setCustomerQuoteStats] = useState({ total: 0 });
   const [invoiceStats2, setInvoiceStats2] = useState({ total: 0, open: 0, paid: 0 });
   const [canBootstrap, setCanBootstrap] = useState(false);
   const [bootstrapLoading, setBootstrapLoading] = useState(false);
@@ -117,7 +118,16 @@ const Dashboard: React.FC = () => {
             .order('issued_at', { ascending: false })
             .limit(1);
           
+          const { count: quoteCount } = await supabase
+            .from('quotes')
+            .select('*', { count: 'exact', head: true })
+            .eq('customer_id', customerData.id)
+            .eq('is_test', false)
+            .neq('status', 'draft')
+            .neq('status', 'cancelled');
+          
           setTicketStats({ open: openTickets || 0, total: totalTickets || 0 });
+          setCustomerQuoteStats({ total: quoteCount || 0 });
           setInvoiceStats({
             total: invoiceCount || 0,
             lastDate: invoices?.[0]?.issued_at || '',
@@ -462,6 +472,26 @@ const Dashboard: React.FC = () => {
                 </p>
                 <Button asChild variant="outline" className="w-full">
                   <Link to="/portal/account">{t('Visa konto', 'View account')}</Link>
+                </Button>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex flex-row items-center gap-4">
+                <div className="p-2 rounded-lg bg-primary/10">
+                  <ClipboardList className="w-6 h-6 text-primary" />
+                </div>
+                <CardTitle className="text-lg">{t('Offerter', 'Offers')}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-muted-foreground mb-1">
+                  {t('Offerter:', 'Offers:')} <strong>{customerQuoteStats.total} {t('totalt', 'total')}</strong>
+                </p>
+                <p className="text-muted-foreground mb-4">
+                  {t('Se och ladda ner offerter', 'View and download offers')}
+                </p>
+                <Button asChild variant="outline" className="w-full">
+                  <Link to="/portal/offers">{t('Visa offerter', 'View offers')}</Link>
                 </Button>
               </CardContent>
             </Card>
