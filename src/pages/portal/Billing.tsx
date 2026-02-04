@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Loader2, Download, CreditCard, Settings, CheckCircle, AlertCircle, Eye } from 'lucide-react';
+import { Loader2, CreditCard, Settings, CheckCircle, AlertCircle, Eye } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -13,12 +13,16 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { SortableTableHead } from '@/components/ui/sortable-table-head';
 import PortalLayout from '@/components/portal/PortalLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { useTableSort, sortItems } from '@/hooks/use-table-sort';
 import InvoicePdfModal from '@/components/portal/invoices/InvoicePdfModal';
+
+type InvoiceSortColumn = 'issued_at' | 'due_date' | 'invoice_number' | 'computed_total' | 'status';
 
 interface Invoice {
   id: string;
@@ -55,6 +59,32 @@ const Billing: React.FC = () => {
   const [portalLoading, setPortalLoading] = useState(false);
   const [pdfModalOpen, setPdfModalOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
+
+  const { sortColumn, sortDirection, handleSort } = useTableSort<InvoiceSortColumn>({
+    defaultColumn: 'issued_at',
+    defaultDirection: 'desc',
+  });
+
+  const sortedInvoices = useMemo(() => {
+    return sortItems(invoices, sortColumn as keyof Invoice, sortDirection, {
+      getValue: (inv) => {
+        switch (sortColumn) {
+          case 'issued_at':
+            return inv.issued_at ? new Date(inv.issued_at) : null;
+          case 'due_date':
+            return inv.due_date ? new Date(inv.due_date) : null;
+          case 'invoice_number':
+            return inv.invoice_number ?? '';
+          case 'computed_total':
+            return inv.computed_total ?? 0;
+          case 'status':
+            return inv.status ?? '';
+          default:
+            return null;
+        }
+      },
+    });
+  }, [invoices, sortColumn, sortDirection]);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -427,21 +457,61 @@ const Billing: React.FC = () => {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="text-primary">{t('Datum', 'Date')}</TableHead>
-                    <TableHead className="text-primary">{t('Förfallodatum', 'Due date')}</TableHead>
-                    <TableHead className="text-primary">{t('Fakturanummer', 'Invoice number')}</TableHead>
-                    <TableHead className="text-primary">{t('Summa', 'Total')}</TableHead>
-                    <TableHead className="text-primary">{t('Status', 'Status')}</TableHead>
+                    <SortableTableHead<InvoiceSortColumn>
+                      column="issued_at"
+                      currentColumn={sortColumn}
+                      currentDirection={sortDirection}
+                      onSort={handleSort}
+                      className="text-primary"
+                    >
+                      {t('Datum', 'Date')}
+                    </SortableTableHead>
+                    <SortableTableHead<InvoiceSortColumn>
+                      column="due_date"
+                      currentColumn={sortColumn}
+                      currentDirection={sortDirection}
+                      onSort={handleSort}
+                      className="text-primary"
+                    >
+                      {t('Förfallodatum', 'Due date')}
+                    </SortableTableHead>
+                    <SortableTableHead<InvoiceSortColumn>
+                      column="invoice_number"
+                      currentColumn={sortColumn}
+                      currentDirection={sortDirection}
+                      onSort={handleSort}
+                      className="text-primary"
+                    >
+                      {t('Fakturanummer', 'Invoice number')}
+                    </SortableTableHead>
+                    <SortableTableHead<InvoiceSortColumn>
+                      column="computed_total"
+                      currentColumn={sortColumn}
+                      currentDirection={sortDirection}
+                      onSort={handleSort}
+                      className="text-primary text-right"
+                    >
+                      {t('Summa', 'Total')}
+                    </SortableTableHead>
+                    <SortableTableHead<InvoiceSortColumn>
+                      column="status"
+                      currentColumn={sortColumn}
+                      currentDirection={sortDirection}
+                      onSort={handleSort}
+                      className="text-primary"
+                    >
+                      {t('Status', 'Status')}
+                    </SortableTableHead>
                     <TableHead className="text-primary"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                {invoices.map((invoice) => (
+                  {sortedInvoices.map((invoice) => (
                     <TableRow key={invoice.id}>
                       <TableCell>{invoice.issued_at ? new Date(invoice.issued_at).toLocaleDateString('sv-SE') : 'N/A'}</TableCell>
                       <TableCell>{invoice.due_date ? new Date(invoice.due_date).toLocaleDateString('sv-SE') : '-'}</TableCell>
                       <TableCell>{invoice.invoice_number || invoice.id.slice(0, 8)}</TableCell>
-                      <TableCell>{formatAmount(invoice.computed_total, invoice.currency)}</TableCell>
+                      <TableCell className="text-right">{formatAmount(invoice.computed_total, invoice.currency)}</TableCell>
                       <TableCell>{getStatusBadge(invoice.status)}</TableCell>
                       <TableCell>
                         {canDownloadInvoice(invoice.status) && invoice.stripe_invoice_id ? (
