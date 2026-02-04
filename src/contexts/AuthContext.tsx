@@ -9,6 +9,7 @@ interface CustomerData {
   phone: string | null;
   address: string | null;
   site_address: string | null;
+  is_test: boolean;
 }
 
 interface AuthContextType {
@@ -55,7 +56,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Check if user is already linked to a customer
       let { data: customer } = await supabase
         .from('customers')
-        .select('id, org_name, billing_email, phone, address, site_address')
+        .select('id, org_name, billing_email, phone, address, site_address, is_test')
         .eq('user_id', userId)
         .maybeSingle();
 
@@ -63,7 +64,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!customer && userEmail) {
         const { data: unlinkedCustomer } = await supabase
           .from('customers')
-          .select('id, org_name, billing_email, phone, address, site_address')
+          .select('id, org_name, billing_email, phone, address, site_address, is_test')
           .eq('billing_email', userEmail)
           .is('user_id', null)
           .maybeSingle();

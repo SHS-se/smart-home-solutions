@@ -87,6 +87,9 @@ const UserMenu = ({ size = "default" }: UserMenuProps) => {
           <div className="flex flex-col space-y-1">
             <p className="text-sm font-medium leading-none">{displayName}</p>
             <p className="text-xs leading-none text-muted-foreground">{displayEmail}</p>
+            {isCustomer && customerData?.is_test && (
+              <span className="text-xs font-semibold text-destructive">TEST</span>
+            )}
           </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
