@@ -28,6 +28,14 @@ serve(async (req) => {
 
     const stripeKey = Deno.env.get("STRIPE_SECRET_KEY_LIVE");
     if (!stripeKey) throw new Error("STRIPE_SECRET_KEY_LIVE is not set");
+    
+    // Validate key type
+    if (stripeKey.startsWith("sk_test_")) {
+      throw new Error("STRIPE_SECRET_KEY_LIVE contains a TEST key. Please update it with your live secret key (sk_live_*)");
+    }
+    if (!stripeKey.startsWith("sk_live_")) {
+      throw new Error("STRIPE_SECRET_KEY_LIVE must be a live secret key starting with sk_live_");
+    }
 
     const stripe = new Stripe(stripeKey, {
       apiVersion: "2025-08-27.basil",
