@@ -214,10 +214,10 @@ serve(async (req) => {
       travel_total 
     } = body;
 
-    // Fetch quote to determine if it's a test quote
+    // Fetch quote to determine if it's a test quote and get quote_number
     const { data: quote, error: quoteError } = await supabaseClient
       .from("quotes")
-      .select("is_test")
+      .select("is_test, quote_number")
       .eq("id", quote_id)
       .single();
 
@@ -225,7 +225,15 @@ serve(async (req) => {
       throw new Error("Quote not found");
     }
 
+    // CRITICAL: quote_number is our legally valid identifier - must be present
+    if (!quote.quote_number) {
+      throw new Error("Quote number is missing - cannot create Stripe quote without a valid quote_number");
+    }
+
     const isTest = quote.is_test ?? true; // Default to test mode if not set
+    const quoteNumber = quote.quote_number;
+    console.log(`[CREATE-STRIPE-QUOTE] Creating Stripe quote for ${quoteNumber}`);
+    
     const stripeKey = getStripeKey(isTest);
     console.log(`[CREATE-STRIPE-QUOTE] Using ${isTest ? 'TEST' : 'LIVE'} Stripe key`);
 
@@ -357,13 +365,16 @@ serve(async (req) => {
     }
 
     // Create Stripe Quote WITHOUT default_tax_rates (using per-line tax_rates instead)
+    // Include our quote number as the visible description and in metadata
     const stripeQuote = await stripe.quotes.create({
       customer: stripeCustomer.id,
+      description: `Offert ${quoteNumber}`,
       line_items: lineItems,
       // No default_tax_rates - each line has its own tax_rates
       expires_at: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60, // 30 days
       metadata: {
         internal_quote_id: quote_id,
+        shs_quote_number: quoteNumber,
       },
     });
 
