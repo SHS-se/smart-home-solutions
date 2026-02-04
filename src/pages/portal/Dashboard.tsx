@@ -122,7 +122,7 @@ const Dashboard: React.FC = () => {
             .from('quotes')
             .select('*', { count: 'exact', head: true })
             .eq('customer_id', customerData.id)
-            .eq('is_test', false)
+            .eq('is_test', customerData.is_test ?? false)
             .neq('status', 'draft')
             .neq('status', 'cancelled');
           

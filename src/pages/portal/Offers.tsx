@@ -74,7 +74,7 @@ const Offers: React.FC = () => {
             bom:boms(project_name)
           `)
           .eq('customer_id', customerData.id)
-          .eq('is_test', false)
+          .eq('is_test', customerData.is_test ?? false)
           .neq('status', 'draft')
           .neq('status', 'cancelled')
           .order('created_at', { ascending: false });
