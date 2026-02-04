@@ -110,20 +110,20 @@ const Offers: React.FC = () => {
 
         if (fetchError) throw fetchError;
 
-        // Fetch totals from quote_computed_totals
+        // Fetch totals from Stripe for quotes with stripe_quote_id
         const quoteIds = (data || []).map((q: any) => q.id);
         const totalsByQuoteId = new Map<string, number>();
 
         if (quoteIds.length > 0) {
-          const { data: totalsData, error: totalsError } = await supabase
-            .from('quote_computed_totals')
-            .select('quote_id, total_inc_vat')
-            .in('quote_id', quoteIds);
+          const { data: stripeData, error: stripeError } = await supabase.functions.invoke('get-stripe-quote-totals', {
+            body: { quote_ids: quoteIds },
+          });
 
-          if (!totalsError && totalsData) {
-            totalsData.forEach((row: any) => {
-              if (row?.quote_id && typeof row.total_inc_vat === 'number') {
-                totalsByQuoteId.set(row.quote_id, row.total_inc_vat);
+          if (!stripeError && stripeData?.totals) {
+            Object.entries(stripeData.totals).forEach(([quoteId, info]: [string, any]) => {
+              // Stripe returns amount in öre (cents), convert to SEK
+              if (info?.amount_total) {
+                totalsByQuoteId.set(quoteId, info.amount_total / 100);
               }
             });
           }
