@@ -330,36 +330,51 @@ export type Database = {
       }
       customers: {
         Row: {
-          address: string | null
+          billing_city: string | null
           billing_email: string | null
+          billing_postcode: string | null
+          billing_same_as_site: boolean | null
+          billing_street: string | null
           created_at: string
           id: string
           is_test: boolean
           org_name: string | null
           phone: string | null
-          site_address: string | null
+          site_city: string | null
+          site_postcode: string | null
+          site_street: string | null
           user_id: string | null
         }
         Insert: {
-          address?: string | null
+          billing_city?: string | null
           billing_email?: string | null
+          billing_postcode?: string | null
+          billing_same_as_site?: boolean | null
+          billing_street?: string | null
           created_at?: string
           id?: string
           is_test?: boolean
           org_name?: string | null
           phone?: string | null
-          site_address?: string | null
+          site_city?: string | null
+          site_postcode?: string | null
+          site_street?: string | null
           user_id?: string | null
         }
         Update: {
-          address?: string | null
+          billing_city?: string | null
           billing_email?: string | null
+          billing_postcode?: string | null
+          billing_same_as_site?: boolean | null
+          billing_street?: string | null
           created_at?: string
           id?: string
           is_test?: boolean
           org_name?: string | null
           phone?: string | null
-          site_address?: string | null
+          site_city?: string | null
+          site_postcode?: string | null
+          site_street?: string | null
           user_id?: string | null
         }
         Relationships: []
