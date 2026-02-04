@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, Eye } from 'lucide-react';
+import { Loader2, Eye, Check } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -20,6 +20,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useTableSort, sortItems } from '@/hooks/use-table-sort';
+import { toast } from '@/hooks/use-toast';
 
 type QuoteSortColumn = 'created_at' | 'quote_number' | 'total_inc_vat' | 'status';
 
@@ -49,6 +50,7 @@ const Offers: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [previewQuote, setPreviewQuote] = useState<Quote | null>(null);
+  const [acceptingQuoteId, setAcceptingQuoteId] = useState<string | null>(null);
 
   const { sortColumn, sortDirection, handleSort } = useTableSort<QuoteSortColumn>({
     defaultColumn: 'created_at',
@@ -151,6 +153,41 @@ const Offers: React.FC = () => {
   const handlePreviewPdf = (quote: Quote) => {
     if (!quote.stripe_quote_id) return;
     setPreviewQuote(quote);
+  };
+
+  const handleAcceptQuote = async (quote: Quote) => {
+    if (!quote.stripe_quote_id) return;
+    
+    setAcceptingQuoteId(quote.id);
+    try {
+      const { data, error: acceptError } = await supabase.functions.invoke('accept-stripe-quote', {
+        body: { quote_id: quote.id },
+      });
+
+      if (acceptError) throw acceptError;
+      if (data?.error) throw new Error(data.error);
+
+      // Update the local state to reflect the accepted status
+      setQuotes(prev => prev.map(q => 
+        q.id === quote.id 
+          ? { ...q, status: 'accepted', stripe_status: 'accepted' }
+          : q
+      ));
+
+      toast({
+        title: t('Offert accepterad', 'Offer Accepted'),
+        description: t('Offerten har accepterats.', 'The offer has been accepted.'),
+      });
+    } catch (err) {
+      console.error('Error accepting quote:', err);
+      toast({
+        title: t('Fel', 'Error'),
+        description: t('Kunde inte acceptera offerten.', 'Could not accept the offer.'),
+        variant: 'destructive',
+      });
+    } finally {
+      setAcceptingQuoteId(null);
+    }
   };
 
   const formatAmount = (amount: number | null) => {
@@ -275,16 +312,35 @@ const Offers: React.FC = () => {
                       <TableCell>
                         {getStatusBadge(quote.status, quote.stripe_status)}
                       </TableCell>
-                      <TableCell className="text-right">
-                        {quote.stripe_quote_id && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handlePreviewPdf(quote)}
-                          >
-                            <Eye className="w-4 h-4" />
-                          </Button>
-                        )}
+                      <TableCell>
+                        <div className="flex items-center gap-1 justify-end">
+                          {quote.stripe_quote_id && (quote.stripe_status === 'open' || quote.status === 'open') && (
+                            <Button
+                              variant="success"
+                              size="sm"
+                              onClick={() => handleAcceptQuote(quote)}
+                              disabled={acceptingQuoteId === quote.id}
+                            >
+                              {acceptingQuoteId === quote.id ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                              ) : (
+                                <>
+                                  <Check className="w-4 h-4" />
+                                  {t('Acceptera', 'Accept')}
+                                </>
+                              )}
+                            </Button>
+                          )}
+                          {quote.stripe_quote_id && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handlePreviewPdf(quote)}
+                            >
+                              <Eye className="w-4 h-4" />
+                            </Button>
+                          )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}

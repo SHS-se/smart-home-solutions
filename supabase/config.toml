@@ -20,3 +20,6 @@ verify_jwt = false
 
 [functions.customer-portal]
 verify_jwt = false
+
+[functions.accept-stripe-quote]
+verify_jwt = false
