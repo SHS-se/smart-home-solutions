@@ -114,7 +114,8 @@ serve(async (req) => {
     const testQuotes = quotes.filter(q => q.is_test);
     const liveQuotes = quotes.filter(q => !q.is_test);
 
-    const totals: Record<string, { amount_total: number; currency: string }> = {};
+    const totals: Record<string, { amount_total: number; currency: string; status: string }> = {};
+    const statusUpdates: Array<{ id: string; stripe_status: string }> = [];
 
     // Helper to fetch quote totals from Stripe
     async function fetchStripeTotals(quoteList: NonNullable<typeof quotes>, isTest: boolean) {
@@ -126,10 +127,16 @@ serve(async (req) => {
       for (const quote of quoteList) {
         try {
           const stripeQuote = await stripe.quotes.retrieve(quote.stripe_quote_id!);
+          const stripeStatus = stripeQuote.status ?? 'draft';
+          
           totals[quote.id] = {
             amount_total: stripeQuote.amount_total ?? 0,
             currency: stripeQuote.currency ?? 'sek',
+            status: stripeStatus,
           };
+          
+          // Queue status update if status differs
+          statusUpdates.push({ id: quote.id, stripe_status: stripeStatus });
         } catch (err) {
           logStep("Error fetching Stripe quote", { 
             quoteId: quote.id, 
@@ -148,6 +155,25 @@ serve(async (req) => {
     ]);
 
     logStep("Fetched Stripe totals", { count: Object.keys(totals).length });
+
+    // Sync stripe_status back to database
+    if (statusUpdates.length > 0) {
+      logStep("Syncing stripe_status to database", { count: statusUpdates.length });
+      
+      for (const update of statusUpdates) {
+        const { error: updateError } = await supabaseAdmin
+          .from('quotes')
+          .update({ stripe_status: update.stripe_status })
+          .eq('id', update.id);
+        
+        if (updateError) {
+          logStep("Error updating stripe_status", { 
+            quoteId: update.id, 
+            error: updateError.message 
+          });
+        }
+      }
+    }
 
     return new Response(
       JSON.stringify({ totals }),
