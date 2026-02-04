@@ -53,14 +53,15 @@ serve(async (req) => {
 
     const userId = userData.user.id;
 
-    // Verify staff
+    // Check if user is staff
     const { data: staffData } = await supabaseAdmin
       .from('staff_users')
       .select('user_id')
       .eq('user_id', userId)
       .single();
     
-    if (!staffData) throw new Error("Only staff can access invoice PDFs");
+    const isStaff = !!staffData;
+    logStep("User role check", { userId, isStaff });
 
     const { stripe_invoice_id, is_test } = await req.json();
     if (!stripe_invoice_id) throw new Error("stripe_invoice_id is required");
@@ -69,6 +70,40 @@ serve(async (req) => {
     const isTest = is_test ?? true;
     const stripeKey = getStripeKey(isTest);
     logStep("Using Stripe mode", { isTest });
+
+    // If not staff, verify the invoice belongs to the customer
+    if (!isStaff) {
+      // Get customer_id for this user
+      const { data: customerData } = await supabaseAdmin
+        .from('customers')
+        .select('id')
+        .eq('user_id', userId)
+        .single();
+
+      if (!customerData) {
+        throw new Error("No customer record found for this user");
+      }
+
+      // Verify the invoice belongs to this customer and has an allowed status
+      const { data: invoiceData, error: invoiceError } = await supabaseAdmin
+        .from('invoices')
+        .select('id, status')
+        .eq('stripe_invoice_id', stripe_invoice_id)
+        .eq('customer_id', customerData.id)
+        .single();
+
+      if (invoiceError || !invoiceData) {
+        throw new Error("Invoice not found or access denied");
+      }
+
+      // Only allow PDF access for open, paid, overdue invoices (not void or draft)
+      const allowedStatuses = ['open', 'paid', 'overdue'];
+      if (!invoiceData.status || !allowedStatuses.includes(invoiceData.status.toLowerCase())) {
+        throw new Error("PDF not available for this invoice status");
+      }
+
+      logStep("Customer access verified", { customerId: customerData.id, invoiceStatus: invoiceData.status });
+    }
 
     // Use user-scoped path for session-based caching
     const fileName = `${userId}/${stripe_invoice_id}.pdf`;

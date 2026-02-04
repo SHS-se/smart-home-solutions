@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Loader2, Download, CreditCard, Settings, CheckCircle, AlertCircle } from 'lucide-react';
+import { Loader2, Download, CreditCard, Settings, CheckCircle, AlertCircle, Eye } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -18,6 +18,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import InvoicePdfModal from '@/components/portal/invoices/InvoicePdfModal';
 
 interface Invoice {
   id: string;
@@ -28,6 +29,7 @@ interface Invoice {
   currency: string | null;
   status: string | null;
   pdf_url: string | null;
+  is_test?: boolean;
 }
 
 interface SubscriptionStatus {
@@ -50,7 +52,8 @@ const Billing: React.FC = () => {
   const [subscriptionLoading, setSubscriptionLoading] = useState(true);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [portalLoading, setPortalLoading] = useState(false);
-  
+  const [pdfModalOpen, setPdfModalOpen] = useState(false);
+  const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -243,6 +246,18 @@ const Billing: React.FC = () => {
     return <Badge variant="secondary">{label}</Badge>;
   };
 
+  // Determine if invoice can be previewed/downloaded (open, paid, overdue - not void)
+  const canDownloadInvoice = (status: string | null) => {
+    if (!status) return false;
+    const lower = status.toLowerCase();
+    return ['open', 'paid', 'overdue'].includes(lower);
+  };
+
+  const handlePreviewInvoice = (invoice: Invoice) => {
+    setSelectedInvoice(invoice);
+    setPdfModalOpen(true);
+  };
+
   return (
     <PortalLayout>
       <div className="space-y-6">
@@ -363,7 +378,7 @@ const Billing: React.FC = () => {
                     <TableHead className="text-primary">{t('Fakturanummer', 'Invoice number')}</TableHead>
                     <TableHead className="text-primary">{t('Belopp', 'Amount')}</TableHead>
                     <TableHead className="text-primary">{t('Status', 'Status')}</TableHead>
-                    <TableHead className="text-primary">{t('Ladda ner', 'Download')}</TableHead>
+                    <TableHead className="text-primary"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -374,15 +389,13 @@ const Billing: React.FC = () => {
                       <TableCell>{formatAmount(invoice.amount, invoice.currency)}</TableCell>
                       <TableCell>{getStatusBadge(invoice.status)}</TableCell>
                       <TableCell>
-                        {invoice.pdf_url ? (
+                        {canDownloadInvoice(invoice.status) && invoice.stripe_invoice_id ? (
                           <Button
                             variant="ghost"
                             size="sm"
-                            asChild
+                            onClick={() => handlePreviewInvoice(invoice)}
                           >
-                            <a href={invoice.pdf_url} target="_blank" rel="noopener noreferrer">
-                              <Download className="w-4 h-4" />
-                            </a>
+                            <Eye className="w-4 h-4" />
                           </Button>
                         ) : (
                           <span className="text-muted-foreground">-</span>
@@ -395,6 +408,13 @@ const Billing: React.FC = () => {
             )}
           </CardContent>
         </Card>
+
+        <InvoicePdfModal
+          open={pdfModalOpen}
+          onOpenChange={setPdfModalOpen}
+          stripeInvoiceId={selectedInvoice?.stripe_invoice_id ?? null}
+          invoiceNumber={selectedInvoice?.invoice_number || selectedInvoice?.id.slice(0, 8) || ''}
+        />
       </div>
     </PortalLayout>
   );
