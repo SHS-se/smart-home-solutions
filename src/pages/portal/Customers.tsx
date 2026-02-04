@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Loader2, Building2, FlaskConical } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -26,6 +26,7 @@ import PortalLayout from '@/components/portal/PortalLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
+import { CustomerActionsMenu } from '@/components/portal/customers/CustomerActionsMenu';
 
 interface Customer {
   id: string;
@@ -58,30 +59,30 @@ const Customers: React.FC = () => {
     }
   }, [user, isStaff, loading, navigate]);
 
+  const fetchCustomers = useCallback(async () => {
+    if (!isStaff) return;
+    setCustomersLoading(true);
+
+    try {
+      const { data, error } = await supabase
+        .from('customers')
+        .select('*')
+        .order('org_name', { ascending: true });
+
+      if (error) throw error;
+      setCustomers(data || []);
+    } catch (error) {
+      console.error('Error fetching customers:', error);
+    } finally {
+      setCustomersLoading(false);
+    }
+  }, [isStaff]);
+
   useEffect(() => {
-    const fetchCustomers = async () => {
-      if (!isStaff) return;
-      setCustomersLoading(true);
-
-      try {
-        const { data, error } = await supabase
-          .from('customers')
-          .select('*')
-          .order('org_name', { ascending: true });
-
-        if (error) throw error;
-        setCustomers(data || []);
-      } catch (error) {
-        console.error('Error fetching customers:', error);
-      } finally {
-        setCustomersLoading(false);
-      }
-    };
-
     if (!loading && isStaff) {
       fetchCustomers();
     }
-  }, [isStaff, loading]);
+  }, [isStaff, loading, fetchCustomers]);
 
   const filteredCustomers = useMemo(() => {
     const filtered = customers.filter((customer) => {
@@ -167,7 +168,7 @@ const Customers: React.FC = () => {
                 <TableHeader>
                   <TableRow>
                     <SortableTableHead column="org_name" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>
-                      {t('Företag', 'Company')}
+                      {t('Kundnamn', 'Customer Name')}
                     </SortableTableHead>
                     <SortableTableHead column="billing_email" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>
                       {t('E-post', 'Email')}
@@ -175,6 +176,7 @@ const Customers: React.FC = () => {
                     <SortableTableHead column="phone" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>
                       {t('Telefon', 'Phone')}
                     </SortableTableHead>
+                    <TableHead className="w-12" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -197,6 +199,13 @@ const Customers: React.FC = () => {
                       </TableCell>
                       <TableCell>{customer.billing_email || '-'}</TableCell>
                       <TableCell>{customer.phone || '-'}</TableCell>
+                      <TableCell>
+                        <CustomerActionsMenu
+                          customerId={customer.id}
+                          isTest={customer.is_test}
+                          onUpdated={fetchCustomers}
+                        />
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
