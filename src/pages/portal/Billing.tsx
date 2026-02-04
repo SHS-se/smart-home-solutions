@@ -25,6 +25,7 @@ interface Invoice {
   invoice_number: string | null;
   stripe_invoice_id: string | null;
   issued_at: string | null;
+  due_date: string | null;
   amount: number | null;
   currency: string | null;
   status: string | null;
@@ -375,6 +376,7 @@ const Billing: React.FC = () => {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="text-primary">{t('Datum', 'Date')}</TableHead>
+                    <TableHead className="text-primary">{t('Förfallodatum', 'Due date')}</TableHead>
                     <TableHead className="text-primary">{t('Fakturanummer', 'Invoice number')}</TableHead>
                     <TableHead className="text-primary">{t('Belopp', 'Amount')}</TableHead>
                     <TableHead className="text-primary">{t('Status', 'Status')}</TableHead>
@@ -385,6 +387,7 @@ const Billing: React.FC = () => {
                 {invoices.map((invoice) => (
                     <TableRow key={invoice.id}>
                       <TableCell>{invoice.issued_at ? new Date(invoice.issued_at).toLocaleDateString('sv-SE') : 'N/A'}</TableCell>
+                      <TableCell>{invoice.due_date ? new Date(invoice.due_date).toLocaleDateString('sv-SE') : '-'}</TableCell>
                       <TableCell>{invoice.invoice_number || invoice.id.slice(0, 8)}</TableCell>
                       <TableCell>{formatAmount(invoice.amount, invoice.currency)}</TableCell>
                       <TableCell>{getStatusBadge(invoice.status)}</TableCell>
