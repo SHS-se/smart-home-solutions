@@ -7,8 +7,13 @@ interface CustomerData {
   org_name: string | null;
   billing_email: string | null;
   phone: string | null;
-  address: string | null;
-  site_address: string | null;
+  site_street: string | null;
+  site_postcode: string | null;
+  site_city: string | null;
+  billing_street: string | null;
+  billing_postcode: string | null;
+  billing_city: string | null;
+  billing_same_as_site: boolean;
   is_test: boolean;
 }
 
@@ -56,7 +61,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Check if user is already linked to a customer
       let { data: customer } = await supabase
         .from('customers')
-        .select('id, org_name, billing_email, phone, address, site_address, is_test')
+        .select('id, org_name, billing_email, phone, site_street, site_postcode, site_city, billing_street, billing_postcode, billing_city, billing_same_as_site, is_test')
         .eq('user_id', userId)
         .maybeSingle();
 
@@ -64,7 +69,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!customer && userEmail) {
         const { data: unlinkedCustomer } = await supabase
           .from('customers')
-          .select('id, org_name, billing_email, phone, address, site_address, is_test')
+          .select('id, org_name, billing_email, phone, site_street, site_postcode, site_city, billing_street, billing_postcode, billing_city, billing_same_as_site, is_test')
           .eq('billing_email', userEmail)
           .is('user_id', null)
           .maybeSingle();
