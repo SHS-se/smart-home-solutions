@@ -468,7 +468,7 @@ const Billing: React.FC = () => {
                       currentColumn={sortColumn}
                       currentDirection={sortDirection}
                       onSort={handleSort}
-                      className="text-primary"
+                      className="text-primary text-center"
                     >
                       {t('Datum', 'Date')}
                     </SortableTableHead>
@@ -477,7 +477,7 @@ const Billing: React.FC = () => {
                       currentColumn={sortColumn}
                       currentDirection={sortDirection}
                       onSort={handleSort}
-                      className="text-primary"
+                      className="text-primary text-center"
                     >
                       {t('Förfallodatum', 'Due date')}
                     </SortableTableHead>
@@ -486,7 +486,7 @@ const Billing: React.FC = () => {
                       currentColumn={sortColumn}
                       currentDirection={sortDirection}
                       onSort={handleSort}
-                      className="text-primary"
+                      className="text-primary text-center"
                     >
                       {t('Fakturanummer', 'Invoice number')}
                     </SortableTableHead>
@@ -495,7 +495,7 @@ const Billing: React.FC = () => {
                       currentColumn={sortColumn}
                       currentDirection={sortDirection}
                       onSort={handleSort}
-                      className="text-primary text-right"
+                      className="text-primary text-center"
                     >
                       {t('Summa', 'Total')}
                     </SortableTableHead>
@@ -504,22 +504,22 @@ const Billing: React.FC = () => {
                       currentColumn={sortColumn}
                       currentDirection={sortDirection}
                       onSort={handleSort}
-                      className="text-primary"
+                      className="text-primary text-center"
                     >
                       {t('Status', 'Status')}
                     </SortableTableHead>
-                    <TableHead className="text-primary">{t('Åtgärder', 'Actions')}</TableHead>
+                    <TableHead className="text-primary text-center">{t('Åtgärder', 'Actions')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {sortedInvoices.map((invoice) => (
                     <TableRow key={invoice.id}>
-                      <TableCell>{invoice.issued_at ? new Date(invoice.issued_at).toLocaleDateString('sv-SE') : 'N/A'}</TableCell>
-                      <TableCell>{invoice.due_date ? new Date(invoice.due_date).toLocaleDateString('sv-SE') : '-'}</TableCell>
-                      <TableCell>{invoice.invoice_number || invoice.id.slice(0, 8)}</TableCell>
-                      <TableCell className="text-right">{formatAmount(invoice.computed_total, invoice.currency)}</TableCell>
-                      <TableCell>{getStatusBadge(invoice.status)}</TableCell>
-                      <TableCell>
+                      <TableCell className="text-center">{invoice.issued_at ? new Date(invoice.issued_at).toLocaleDateString('sv-SE') : 'N/A'}</TableCell>
+                      <TableCell className="text-center">{invoice.due_date ? new Date(invoice.due_date).toLocaleDateString('sv-SE') : '-'}</TableCell>
+                      <TableCell className="text-center">{invoice.invoice_number || invoice.id.slice(0, 8)}</TableCell>
+                      <TableCell className="text-center">{formatAmount(invoice.computed_total, invoice.currency)}</TableCell>
+                      <TableCell className="text-center">{getStatusBadge(invoice.status)}</TableCell>
+                      <TableCell className="text-center">
                         {canDownloadInvoice(invoice.status) && invoice.stripe_invoice_id ? (
                           <Button
                             variant="ghost"
