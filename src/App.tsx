@@ -54,6 +54,8 @@ import CustomerViewAccount from "./pages/portal/customer-view/CustomerViewAccoun
 import CustomerViewBilling from "./pages/portal/customer-view/CustomerViewBilling";
 import CustomerViewTickets from "./pages/portal/customer-view/CustomerViewTickets";
 import CustomerViewTicketDetail from "./pages/portal/customer-view/CustomerViewTicketDetail";
+import CustomerViewOffers from "./pages/portal/customer-view/CustomerViewOffers";
+import CustomerViewOfferDetail from "./pages/portal/customer-view/CustomerViewOfferDetail";
 
 const queryClient = new QueryClient();
 
@@ -148,6 +150,8 @@ const App = () => (
                 <Route path="/portal/customers/:customerId/billing" element={<CustomerViewWrapper><CustomerViewBilling /></CustomerViewWrapper>} />
                 <Route path="/portal/customers/:customerId/tickets" element={<CustomerViewWrapper><CustomerViewTickets /></CustomerViewWrapper>} />
                 <Route path="/portal/customers/:customerId/tickets/:ticketNumber" element={<CustomerViewWrapper><CustomerViewTicketDetail /></CustomerViewWrapper>} />
+                <Route path="/portal/customers/:customerId/offers" element={<CustomerViewWrapper><CustomerViewOffers /></CustomerViewWrapper>} />
+                <Route path="/portal/customers/:customerId/offers/:quoteId" element={<CustomerViewWrapper><CustomerViewOfferDetail /></CustomerViewWrapper>} />
                 
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
