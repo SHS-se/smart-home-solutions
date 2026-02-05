@@ -587,17 +587,6 @@ const QuotePreparation: React.FC = () => {
           </div>
         </div>
 
-        {/* Customer Warning */}
-        {!quote?.customer_id && isEditable && (
-          <Alert variant="destructive">
-            <AlertTriangle className="h-4 w-4" />
-            <AlertDescription>
-              {t('Ingen kund vald. Du måste välja en kund innan du kan skicka offerten till Stripe.', 
-                 'No customer selected. You must select a customer before sending the quote to Stripe.')}
-            </AlertDescription>
-          </Alert>
-        )}
-
         {/* Older version warning */}
         {!isLatestVersion && (
           <Alert className="border-amber-500 bg-amber-500/10">
