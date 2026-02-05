@@ -336,13 +336,18 @@ const BOMBuilder: React.FC = () => {
     },
   });
 
-  // Calculate totals with VAT
+  // Calculate totals using local quantities for live preview
   const totals = items.reduce(
     (acc, item) => {
-      const costEx = (item.cost_ex_vat_at_time ?? item.cost ?? 0) * item.quantity;
-      const sellEx = (item.sell_price_ex_vat_at_time ?? item.sell_price ?? 0) * item.quantity;
+      const qty = localQuantities[item.id] ?? item.quantity;
+      const unitCostEx = item.cost_ex_vat_at_time ?? item.cost ?? 0;
+      const unitSellEx = item.sell_price_ex_vat_at_time ?? item.sell_price ?? 0;
       const vatRate = item.vat_rate_at_time ?? 0.25;
-      const sellInc = (item.sell_price_inc_vat_at_time ?? sellEx * (1 + vatRate)) * item.quantity;
+      const unitSellInc = item.sell_price_inc_vat_at_time ?? unitSellEx * (1 + vatRate);
+      
+      const costEx = unitCostEx * qty;
+      const sellEx = unitSellEx * qty;
+      const sellInc = unitSellInc * qty;
       const vatAmount = sellInc - sellEx;
       
       return {
@@ -351,7 +356,7 @@ const BOMBuilder: React.FC = () => {
         vatAmount: acc.vatAmount + vatAmount,
         sellInc: acc.sellInc + sellInc,
         margin: acc.margin + (sellEx - costEx),
-        items: acc.items + item.quantity,
+        items: acc.items + qty,
       };
     },
     { costEx: 0, sellEx: 0, vatAmount: 0, sellInc: 0, margin: 0, items: 0 }
@@ -651,10 +656,14 @@ const BOMBuilder: React.FC = () => {
                     </TableRow>
                   ) : (
                     items.map(item => {
-                      const costEx = item.cost_ex_vat_at_time ?? item.cost ?? 0;
-                      const sellEx = item.sell_price_ex_vat_at_time ?? item.sell_price ?? 0;
-                      const sellInc = item.sell_price_inc_vat_at_time ?? sellEx * 1.25;
-                      const marginPct = costEx > 0 ? Math.round(((sellEx - costEx) / costEx) * 100) : null;
+                      const qty = localQuantities[item.id] ?? item.quantity;
+                      const unitCostEx = item.cost_ex_vat_at_time ?? item.cost ?? 0;
+                      const unitSellEx = item.sell_price_ex_vat_at_time ?? item.sell_price ?? 0;
+                      const unitSellInc = item.sell_price_inc_vat_at_time ?? unitSellEx * 1.25;
+                      const costEx = unitCostEx * qty;
+                      const sellEx = unitSellEx * qty;
+                      const sellInc = unitSellInc * qty;
+                      const marginPct = unitCostEx > 0 ? Math.round(((unitSellEx - unitCostEx) / unitCostEx) * 100) : null;
                       
                       return (
                         <TableRow key={item.id}>
@@ -771,9 +780,8 @@ const BOMBuilder: React.FC = () => {
             </Button>
 
             <Button 
-              className="w-full" 
+              className="w-full bg-[#F5A38A] text-foreground hover:bg-[#E8937A] disabled:bg-muted disabled:text-muted-foreground" 
               size="lg"
-              variant="outline"
               onClick={handleSaveChanges}
               disabled={!hasUnsavedChanges || isSaving}
             >
