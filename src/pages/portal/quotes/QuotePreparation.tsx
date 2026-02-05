@@ -10,13 +10,13 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { ArrowLeft, ExternalLink, Pencil, Send, Eye, Info, Loader2, AlertTriangle, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Pencil, Send, Info, Loader2, AlertTriangle, Plus, Trash2 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import QuotePriceDiffModal from '@/components/portal/quotes/QuotePriceDiffModal';
 import QuoteVersionDropdown from '@/components/portal/quotes/QuoteVersionDropdown';
 import QuoteOutdatedBanner from '@/components/portal/quotes/QuoteOutdatedBanner';
 import QuoteUpdateConfirmDialog from '@/components/portal/quotes/QuoteUpdateConfirmDialog';
-import QuotePdfModal from '@/components/portal/quotes/QuotePdfModal';
+// QuotePdfModal removed - no longer using Stripe PDFs
 import { useQuoteVersioning } from '@/hooks/use-quote-versioning';
 import BlurCommitInput from '@/components/ui/blur-commit-input';
 import {
@@ -70,13 +70,11 @@ const QuotePreparation: React.FC = () => {
   const queryClient = useQueryClient();
   
   const [isSending, setIsSending] = useState(false);
-  const [isLoadingPdf, setIsLoadingPdf] = useState(false);
   const [isCreatingInvoice, setIsCreatingInvoice] = useState(false);
+  const hasInvoice = !!quote?.stripe_invoice_id;
   
   const [showDiffModal, setShowDiffModal] = useState(false);
   const [showUpdateConfirm, setShowUpdateConfirm] = useState(false);
-  const [showPdfModal, setShowPdfModal] = useState(false);
-  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [priceDiff, setPriceDiff] = useState<PriceDiffResult | null>(null);
 
   // Quote versioning hook
@@ -315,71 +313,29 @@ const QuotePreparation: React.FC = () => {
   
   const totalIncVat = subtotalExVat + vatTotal;
 
-  // Send to Stripe - uses quote_lines as source of truth
-  const sendToStripe = async () => {
+  // Send quote via email (replaces Stripe flow)
+  const sendQuoteEmail = async () => {
     if (!quote?.customer_id || !quote?.customer?.name) {
-      toast({ title: t('Kund krävs', 'Customer required'), description: t('Välj en kund innan du skickar till Stripe', 'Select a customer before sending to Stripe'), variant: 'destructive' });
+      toast({ title: t('Kund krävs', 'Customer required'), description: t('Välj en kund innan du skickar', 'Select a customer before sending'), variant: 'destructive' });
       return;
     }
 
     setIsSending(true);
     try {
-      // Prepare itemized hardware items from quote_lines with VAT rate
-      const hardwareItems = hardwareLines.map(line => ({
-        name: line.description,
-        sku: line.original_sku_code || '',
-        quantity: line.quantity,
-        unit_price_ex_vat: line.unit_price_ex_vat ?? line.unit_price,
-        vat_rate: line.vat_rate ?? 0.25,
-      }));
-
-      // Prepare itemized labor lines with VAT rate
-      const laborLinesData = laborLines.map(line => ({
-        description: line.description || t('Installation', 'Installation'),
-        quantity: line.quantity,
-        unit_price_ex_vat: line.unit_price_ex_vat ?? line.unit_price,
-        vat_rate: line.vat_rate ?? 0.25,
-      }));
-
-      // Prepare itemized travel lines with VAT rate
-      const travelLinesData = travelLines.map(line => ({
-        description: line.description || t('Resa', 'Travel'),
-        quantity: line.quantity,
-        unit_price_ex_vat: line.unit_price_ex_vat ?? line.unit_price,
-        vat_rate: line.vat_rate ?? 0.25,
-      }));
-
-      const { data, error } = await supabase.functions.invoke('create-stripe-quote', {
-        body: {
-          quote_id: id,
-          customer_name: quote.customer.name,
-          hardware_items: hardwareItems,
-          labor_lines: laborLinesData,
-          travel_lines: travelLinesData,
-          hardware_total: hardwareTotal,
-          labor_total: laborTotal,
-          travel_total: travelTotal,
-        },
+      const { data, error } = await supabase.functions.invoke('send-quote-email', {
+        body: { quote_id: id },
       });
 
       if (error) throw error;
-
-      await supabase
-        .from('quotes')
-        .update({ 
-          stripe_quote_id: data.stripe_quote_id,
-          quote_number: data.stripe_quote_number || null,
-          status: 'sent',
-          stripe_status: 'open', // Stripe quote is finalized and open for acceptance
-        })
-        .eq('id', id);
+      if (data?.error) throw new Error(data.error);
 
       queryClient.invalidateQueries({ queryKey: ['quote', id] });
       queryClient.invalidateQueries({ queryKey: ['quotes'] });
+      queryClient.invalidateQueries({ queryKey: ['quote_events', id] });
 
       toast({ 
         title: t('Offert skickad!', 'Quote sent!'), 
-        description: t('Offerten har skapats i Stripe', 'Quote has been created in Stripe')
+        description: t(`Offert ${data.quote_number} skickad till ${data.recipient_email}`, `Quote ${data.quote_number} sent to ${data.recipient_email}`)
       });
     } catch (error: any) {
       toast({ 
@@ -392,60 +348,7 @@ const QuotePreparation: React.FC = () => {
     }
   };
 
-  // Preview Stripe quote PDF
-  const previewQuote = async () => {
-    if (!quote?.stripe_quote_id) {
-      toast({ 
-        title: t('Ingen Stripe-offert', 'No Stripe quote'), 
-        description: t('Skicka offerten till Stripe först för att generera en PDF', 'Send the quote to Stripe first to generate a PDF'),
-        variant: 'destructive' 
-      });
-      return;
-    }
-
-    setIsLoadingPdf(true);
-    try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData?.session?.access_token;
-      if (!token) throw new Error('Not authenticated');
-
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-stripe-quote-pdf`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-            'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
-          },
-          body: JSON.stringify({ stripe_quote_id: quote.stripe_quote_id, is_test: quote.is_test }),
-        }
-      );
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || `HTTP ${response.status}`);
-      }
-
-      const data = await response.json();
-      
-      if (data.error) {
-        throw new Error(data.error);
-      }
-
-      setPdfUrl(data.url);
-      setShowPdfModal(true);
-      
-    } catch (error: any) {
-      toast({ 
-        title: t('Kunde inte hämta PDF', 'Failed to get PDF'), 
-        description: error.message,
-        variant: 'destructive' 
-      });
-    } finally {
-      setIsLoadingPdf(false);
-    }
-  };
+  // Preview removed - no longer using Stripe PDFs
 
   // Create invoice from quote - uses quote_lines as source
   const createInvoiceFromQuote = async () => {
@@ -549,23 +452,34 @@ const QuotePreparation: React.FC = () => {
 
   const currentVersion = quoteFamily.find(v => v.id === id);
   const isLatestVersion = currentVersion?.is_latest ?? true;
-  const isSent = quote?.status === 'sent';
-  const isEditable = isLatestVersion && !isSent;
+  const quoteStatus = quote?.status || 'draft';
+  const isEditable = isLatestVersion && quoteStatus === 'draft';
+  const canSend = isLatestVersion && quoteStatus === 'draft' && !!quote?.customer_id && hardwareLines.length > 0;
+  const canCreateInvoice = quoteStatus === 'accepted' && !!quote?.customer_id;
 
   // Status badge helper
   const getStatusBadge = () => {
-    const status = quote?.status || 'draft';
-    switch (status) {
+    switch (quoteStatus) {
       case 'draft':
         return <Badge variant="outline">{t('Utkast', 'Draft')}</Badge>;
       case 'sent':
         return <Badge variant="default">{t('Skickad', 'Sent')}</Badge>;
+      case 'viewed':
+        return <Badge className="bg-blue-500/20 text-blue-700 border-0">{t('Visad', 'Viewed')}</Badge>;
       case 'accepted':
-        return <Badge variant="secondary">{t('Accepterad', 'Accepted')}</Badge>;
-      case 'rejected':
-        return <Badge variant="destructive">{t('Avvisad', 'Rejected')}</Badge>;
+        return <Badge className="bg-green-500/20 text-green-700 border-0">{t('Accepterad', 'Accepted')}</Badge>;
+      case 'declined':
+        return <Badge variant="destructive">{t('Avvisad', 'Declined')}</Badge>;
+      case 'revision_requested':
+        return <Badge className="bg-amber-500/20 text-amber-700 border-0">{t('Ändring begärd', 'Revision requested')}</Badge>;
+      case 'invoiced':
+        return <Badge className="bg-primary/20 text-primary border-0">{t('Fakturerad', 'Invoiced')}</Badge>;
+      case 'expired':
+        return <Badge variant="secondary">{t('Utgången', 'Expired')}</Badge>;
+      case 'cancelled':
+        return <Badge variant="outline" className="text-muted-foreground">{t('Avbruten', 'Cancelled')}</Badge>;
       default:
-        return <Badge variant="secondary">{status}</Badge>;
+        return <Badge variant="secondary">{quoteStatus}</Badge>;
     }
   };
 
@@ -1010,11 +924,11 @@ const QuotePreparation: React.FC = () => {
                 <div className="pt-4 space-y-3">
                   <Button 
                     className="w-full"
-                    onClick={sendToStripe}
-                    disabled={isSending || hardwareLines.length === 0 || quote?.status !== 'draft' || !isLatestVersion || !quote?.customer_id}
+                    onClick={sendQuoteEmail}
+                    disabled={isSending || !canSend}
                   >
                     <Send className="h-4 w-4 mr-2" />
-                    {isSending ? t('Skickar...', 'Sending...') : t('Skicka till Stripe offert', 'Send to Stripe quote')}
+                    {isSending ? t('Skickar...', 'Sending...') : t('Skicka offert via e-post', 'Send quote via email')}
                   </Button>
                   {!quote?.customer_id && (
                     <p className="text-xs text-destructive text-center">
@@ -1027,28 +941,10 @@ const QuotePreparation: React.FC = () => {
                     </p>
                   )}
                   <Button 
-                    variant="outline" 
-                    className="w-full"
-                    onClick={previewQuote}
-                    disabled={isLoadingPdf || !quote?.stripe_quote_id}
-                  >
-                    {isLoadingPdf ? (
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    ) : (
-                      <Eye className="h-4 w-4 mr-2" />
-                    )}
-                    {t('Förhandsgranska PDF', 'Preview PDF')}
-                  </Button>
-                  {!quote?.stripe_quote_id && (
-                    <p className="text-xs text-muted-foreground text-center">
-                      {t('Skicka till Stripe först för att ladda ner', 'Send to Stripe first to download')}
-                    </p>
-                  )}
-                  <Button 
                     variant="success" 
                     className="w-full"
                     onClick={createInvoiceFromQuote}
-                    disabled={isCreatingInvoice || !quote?.customer_id || !quote?.stripe_quote_id}
+                    disabled={isCreatingInvoice || !canCreateInvoice}
                   >
                     {isCreatingInvoice ? (
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -1057,6 +953,11 @@ const QuotePreparation: React.FC = () => {
                     )}
                     {t('Skapa faktura', 'Create Invoice')}
                   </Button>
+                  {quoteStatus !== 'draft' && quoteStatus !== 'accepted' && !hasInvoice && (
+                    <p className="text-xs text-muted-foreground text-center">
+                      {t('Offerten måste vara accepterad för att skapa faktura', 'Quote must be accepted to create invoice')}
+                    </p>
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -1083,16 +984,7 @@ const QuotePreparation: React.FC = () => {
           onConfirm={handleUpdateQuote}
         />
 
-        {/* PDF Preview Modal */}
-        <QuotePdfModal
-          open={showPdfModal}
-          onOpenChange={(open) => {
-            setShowPdfModal(open);
-            if (!open) setPdfUrl(null);
-          }}
-          pdfUrl={pdfUrl}
-          quoteNumber={quote?.quote_number || quote?.stripe_quote_id || ''}
-        />
+        {/* PDF Preview Modal removed - no longer using Stripe PDFs */}
       </div>
     </PortalLayout>
   );

@@ -1,7 +1,5 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
-import Stripe from "https://esm.sh/stripe@18.5.0";
-import { getStripeSecretKey, getAppEnvironment } from "../_shared/stripe-env.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -20,10 +18,6 @@ serve(async (req) => {
   }
 
   try {
-    const appEnv = getAppEnvironment();
-    const stripeKey = getStripeSecretKey();
-    logStep("Function started", { environment: appEnv });
-
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
@@ -32,161 +26,101 @@ serve(async (req) => {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
       return new Response(JSON.stringify({ error: "Missing authorization header" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
     const token = authHeader.replace("Bearer ", "");
     const anonClient = createClient(supabaseUrl, supabaseAnonKey);
     const { data: userData, error: userError } = await anonClient.auth.getUser(token);
-    
+
     if (userError || !userData.user) {
       return new Response(JSON.stringify({ error: "Invalid authorization" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
     logStep("User authenticated", { userId: userData.user.id });
 
-    // Check staff status using service role
     const serviceClient = createClient(supabaseUrl, supabaseServiceRoleKey);
     const { data: staffCheck } = await serviceClient
-      .from("staff_users")
-      .select("user_id")
-      .eq("user_id", userData.user.id)
-      .single();
+      .from("staff_users").select("user_id").eq("user_id", userData.user.id).single();
 
     if (!staffCheck) {
       return new Response(JSON.stringify({ error: "Staff access required" }), {
-        status: 403,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
     logStep("Staff verified");
 
-    // Parse request body
     const { quote_id, reason } = await req.json();
-    
     if (!quote_id) {
       return new Response(JSON.stringify({ error: "quote_id is required" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
     // Load the quote
     const { data: quote, error: quoteError } = await serviceClient
-      .from("quotes")
-      .select("*")
-      .eq("id", quote_id)
-      .single();
+      .from("quotes").select("*").eq("id", quote_id).single();
 
     if (quoteError || !quote) {
       return new Response(JSON.stringify({ error: "Quote not found" }), {
-        status: 404,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    logStep("Quote loaded", { quoteId: quote.id, status: quote.status, stripeQuoteId: quote.stripe_quote_id });
+    logStep("Quote loaded", { quoteId: quote.id, status: quote.status });
 
-    // Idempotency: if already cancelled, return success
+    // Idempotency
     if (quote.status === "cancelled") {
-      logStep("Quote already cancelled, returning success");
+      logStep("Already cancelled");
       return new Response(JSON.stringify({ success: true, quote, message: "Quote was already cancelled" }), {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
-
-    let stripeStatus: string | null = null;
-
-    // If there's a Stripe quote, try to cancel it
-    if (quote.stripe_quote_id) {
-      logStep("Cancelling Stripe quote", { stripeQuoteId: quote.stripe_quote_id });
-
-      try {
-        // First, retrieve the current status
-        const stripeQuote = await stripe.quotes.retrieve(quote.stripe_quote_id);
-        logStep("Stripe quote retrieved", { status: stripeQuote.status });
-
-        // Only try to cancel if not already cancelled
-        if (stripeQuote.status === "canceled") {
-          logStep("Stripe quote already canceled");
-          stripeStatus = "canceled";
-        } else if (stripeQuote.status === "draft" || stripeQuote.status === "open") {
-          // Cancel the quote in Stripe
-          const cancelledStripeQuote = await stripe.quotes.cancel(quote.stripe_quote_id);
-          stripeStatus = cancelledStripeQuote.status;
-          logStep("Stripe quote cancelled", { newStatus: stripeStatus });
-        } else {
-          // Quote is in a state that can't be cancelled (accepted, etc.)
-          stripeStatus = stripeQuote.status;
-          logStep("Stripe quote in non-cancellable state", { status: stripeStatus });
-        }
-      } catch (stripeError: unknown) {
-        const error = stripeError as { message?: string; code?: string };
-        logStep("Stripe cancel error", { message: error.message, code: error.code });
-        
-        // If the quote is already cancelled or doesn't exist, proceed
-        if (error.code === "resource_missing" || error.message?.includes("already been canceled")) {
-          stripeStatus = "canceled";
-          logStep("Treating as already cancelled");
-        } else {
-          // Stripe cancel failed - do not update local DB
-          return new Response(JSON.stringify({ 
-            error: "Stripe cancel failed; quote was not cancelled.",
-            details: error.message 
-          }), {
-            status: 500,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          });
-        }
-      }
-    } else {
-      logStep("No Stripe quote ID, proceeding with local cancel only");
-    }
-
-    // Update the quote in the database
+    // Update the quote (local DB only, no Stripe)
     const { data: updatedQuote, error: updateError } = await serviceClient
       .from("quotes")
       .update({
         status: "cancelled",
         cancelled_at: new Date().toISOString(),
         cancelled_by_user_id: userData.user.id,
-        stripe_status: stripeStatus,
         status_reason: reason || null,
+        accept_token_expires_at: new Date().toISOString(), // Invalidate any active token
       })
       .eq("id", quote_id)
       .select()
       .single();
 
     if (updateError) {
-      console.error("Update error:", updateError);
-      return new Response(JSON.stringify({ error: "Failed to update quote in database" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      return new Response(JSON.stringify({ error: "Failed to update quote" }), {
+        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    logStep("Quote cancelled successfully", { quoteId: updatedQuote.id });
+    // Log event
+    await serviceClient.from("quote_events").insert({
+      quote_id,
+      event_type: "cancelled",
+      actor_type: "staff",
+      actor_email: userData.user.email,
+      metadata: reason ? { reason } : {},
+    });
+
+    logStep("Quote cancelled successfully");
 
     return new Response(JSON.stringify({ success: true, quote: updatedQuote }), {
-      status: 200,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
 
   } catch (error) {
-    console.error("Error:", error);
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return new Response(JSON.stringify({ error: errorMessage }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    const msg = error instanceof Error ? error.message : String(error);
+    logStep("ERROR", { message: msg });
+    return new Response(JSON.stringify({ error: msg }), {
+      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 });

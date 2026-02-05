@@ -1,20 +1,9 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, Eye, Check } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 import {
   Table,
   TableBody,
@@ -25,12 +14,10 @@ import {
 } from '@/components/ui/table';
 import { SortableTableHead } from '@/components/ui/sortable-table-head';
 import PortalLayout from '@/components/portal/PortalLayout';
-import OfferPdfModal from '@/components/portal/offers/OfferPdfModal';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useTableSort, sortItems } from '@/hooks/use-table-sort';
-import { toast } from '@/hooks/use-toast';
 
 type QuoteSortColumn = 'created_at' | 'quote_number' | 'total_inc_vat' | 'status';
 
@@ -38,13 +25,10 @@ interface Quote {
   id: string;
   quote_number: string | null;
   status: string;
-  stripe_status: string | null;
   created_at: string;
-  updated_at: string;
   version: number;
   is_latest: boolean;
   bom_id: string | null;
-  stripe_quote_id: string | null;
   bom: {
     project_name: string;
   } | null;
@@ -59,9 +43,6 @@ const Offers: React.FC = () => {
   const [quotes, setQuotes] = useState<Quote[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [previewQuote, setPreviewQuote] = useState<Quote | null>(null);
-  const [acceptingQuoteId, setAcceptingQuoteId] = useState<string | null>(null);
-  const [confirmQuote, setConfirmQuote] = useState<Quote | null>(null);
 
   const { sortColumn, sortDirection, handleSort } = useTableSort<QuoteSortColumn>({
     defaultColumn: 'created_at',
@@ -79,7 +60,7 @@ const Offers: React.FC = () => {
           case 'total_inc_vat':
             return quote.total_inc_vat ?? 0;
           case 'status':
-            return (quote.stripe_status || quote.status) ?? '';
+            return quote.status ?? '';
           default:
             return null;
         }
@@ -100,19 +81,17 @@ const Offers: React.FC = () => {
       setError(null);
 
       try {
+        // Fetch quotes
         const { data, error: fetchError } = await supabase
           .from('quotes')
           .select(`
             id,
             quote_number,
             status,
-            stripe_status,
             created_at,
-            updated_at,
             version,
             is_latest,
             bom_id,
-            stripe_quote_id,
             bom:boms(project_name)
           `)
           .eq('customer_id', customerData.id)
@@ -123,35 +102,27 @@ const Offers: React.FC = () => {
 
         if (fetchError) throw fetchError;
 
-        // Fetch totals and sync status from Stripe for quotes with stripe_quote_id
+        // Fetch computed totals
         const quoteIds = (data || []).map((q: any) => q.id);
-        const stripeDataByQuoteId = new Map<string, { amount_total: number; status: string }>();
-
+        let totalsMap = new Map<string, number>();
+        
         if (quoteIds.length > 0) {
-          const { data: stripeData, error: stripeError } = await supabase.functions.invoke('get-stripe-quote-totals', {
-            body: { quote_ids: quoteIds },
-          });
-
-          if (!stripeError && stripeData?.totals) {
-            Object.entries(stripeData.totals).forEach(([quoteId, info]: [string, any]) => {
-              // Stripe returns amount in öre (cents), convert to SEK
-              stripeDataByQuoteId.set(quoteId, {
-                amount_total: info?.amount_total ? info.amount_total / 100 : 0,
-                status: info?.status ?? null,
-              });
+          const { data: totals } = await supabase
+            .from('quote_computed_totals')
+            .select('quote_id, total_inc_vat')
+            .in('quote_id', quoteIds);
+          
+          if (totals) {
+            totals.forEach(t => {
+              if (t.quote_id) totalsMap.set(t.quote_id, t.total_inc_vat || 0);
             });
           }
         }
 
-        const mappedQuotes: Quote[] = (data || []).map((q: any) => {
-          const stripeInfo = stripeDataByQuoteId.get(q.id);
-          return {
-            ...q,
-            total_inc_vat: stripeInfo?.amount_total ?? null,
-            // Use the fresh status from Stripe if available
-            stripe_status: stripeInfo?.status ?? q.stripe_status,
-          };
-        });
+        const mappedQuotes: Quote[] = (data || []).map((q: any) => ({
+          ...q,
+          total_inc_vat: totalsMap.get(q.id) ?? null,
+        }));
 
         setQuotes(mappedQuotes);
       } catch (err) {
@@ -167,68 +138,28 @@ const Offers: React.FC = () => {
     }
   }, [customerData, authLoading, t]);
 
-  const handlePreviewPdf = (quote: Quote) => {
-    if (!quote.stripe_quote_id) return;
-    setPreviewQuote(quote);
-  };
-
-  const handleConfirmAccept = async () => {
-    if (!confirmQuote?.stripe_quote_id) return;
-    
-    setAcceptingQuoteId(confirmQuote.id);
-    setConfirmQuote(null);
-    try {
-      const { data, error: acceptError } = await supabase.functions.invoke('accept-stripe-quote', {
-        body: { quote_id: confirmQuote.id },
-      });
-
-      if (acceptError) throw acceptError;
-      if (data?.error) throw new Error(data.error);
-
-      // Update the local state to reflect the accepted status
-      setQuotes(prev => prev.map(q => 
-        q.id === confirmQuote.id 
-          ? { ...q, status: 'accepted', stripe_status: 'accepted' }
-          : q
-      ));
-
-      toast({
-        title: t('Offert accepterad', 'Offer Accepted'),
-        description: t('Offerten har accepterats.', 'The offer has been accepted.'),
-      });
-    } catch (err) {
-      console.error('Error accepting quote:', err);
-      toast({
-        title: t('Fel', 'Error'),
-        description: t('Kunde inte acceptera offerten.', 'Could not accept the offer.'),
-        variant: 'destructive',
-      });
-    } finally {
-      setAcceptingQuoteId(null);
-    }
-  };
-
   const formatAmount = (amount: number | null) => {
     if (amount === null || amount === undefined) return '-';
-    const formatted = new Intl.NumberFormat('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount);
-    return `${formatted} SEK`;
+    const formatted = new Intl.NumberFormat('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
+    return `${formatted} kr`;
   };
 
-  const getStatusBadge = (status: string, stripeStatus: string | null) => {
-    const displayStatus = stripeStatus || status;
-    
-    switch (displayStatus) {
-      case 'open':
-        return <Badge variant="outline">{t('Öppen', 'Open')}</Badge>;
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case 'sent':
+        return <Badge variant="default">{t('Skickad', 'Sent')}</Badge>;
+      case 'viewed':
+        return <Badge className="bg-blue-500/20 text-blue-700 border-0">{t('Visad', 'Viewed')}</Badge>;
       case 'accepted':
-        return <Badge className="bg-energy/30 text-energy-darker border-0">{t('Accepterad', 'Accepted')}</Badge>;
-      case 'canceled':
-      case 'cancelled':
-        return <Badge variant="secondary">{t('Avbruten', 'Cancelled')}</Badge>;
-      case 'draft':
-        return <Badge variant="outline">{t('Utkast', 'Draft')}</Badge>;
+        return <Badge className="bg-green-500/20 text-green-700 border-0">{t('Accepterad', 'Accepted')}</Badge>;
+      case 'declined':
+        return <Badge variant="destructive">{t('Avvisad', 'Declined')}</Badge>;
+      case 'revision_requested':
+        return <Badge className="bg-amber-500/20 text-amber-700 border-0">{t('Ändring begärd', 'Revision requested')}</Badge>;
+      case 'invoiced':
+        return <Badge className="bg-primary/20 text-primary border-0">{t('Fakturerad', 'Invoiced')}</Badge>;
       default:
-        return <Badge variant="secondary">{displayStatus}</Badge>;
+        return <Badge variant="secondary">{status}</Badge>;
     }
   };
 
@@ -309,7 +240,6 @@ const Offers: React.FC = () => {
                     >
                       {t('Status', 'Status')}
                     </SortableTableHead>
-                    <TableHead className="text-primary text-center">{t('Åtgärder', 'Actions')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -328,37 +258,7 @@ const Offers: React.FC = () => {
                         {formatAmount(quote.total_inc_vat)}
                       </TableCell>
                       <TableCell className="text-center">
-                        {getStatusBadge(quote.status, quote.stripe_status)}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1 justify-center">
-                          {quote.stripe_quote_id && (quote.stripe_status === 'open' || quote.status === 'open') && (
-                            <Button
-                              variant="success"
-                              size="sm"
-                              onClick={() => setConfirmQuote(quote)}
-                              disabled={acceptingQuoteId === quote.id}
-                            >
-                              {acceptingQuoteId === quote.id ? (
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                              ) : (
-                                <>
-                                  <Check className="w-4 h-4" />
-                                  {t('Acceptera', 'Accept')}
-                                </>
-                              )}
-                            </Button>
-                          )}
-                          {quote.stripe_quote_id && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => handlePreviewPdf(quote)}
-                            >
-                              <Eye className="w-4 h-4" />
-                            </Button>
-                          )}
-                        </div>
+                        {getStatusBadge(quote.status)}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -368,37 +268,6 @@ const Offers: React.FC = () => {
           </CardContent>
         </Card>
       </div>
-
-      <OfferPdfModal
-        open={!!previewQuote}
-        onOpenChange={(open) => !open && setPreviewQuote(null)}
-        quoteId={previewQuote?.id ?? null}
-        quoteNumber={previewQuote?.quote_number ?? previewQuote?.stripe_quote_id ?? ''}
-      />
-
-      <AlertDialog open={!!confirmQuote} onOpenChange={(open) => !open && setConfirmQuote(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {t('Bekräfta accepterande', 'Confirm Acceptance')}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {t(
-                `Är du säker på att du vill acceptera denna offert${confirmQuote?.quote_number ? ` (${confirmQuote.quote_number})` : ''}? Denna åtgärd kan inte ångras.`,
-                `Are you sure you want to accept this offer${confirmQuote?.quote_number ? ` (${confirmQuote.quote_number})` : ''}? This action cannot be undone.`
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>
-              {t('Avbryt', 'Cancel')}
-            </AlertDialogCancel>
-            <AlertDialogAction onClick={handleConfirmAccept}>
-              {t('Acceptera', 'Accept')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </PortalLayout>
   );
 };

@@ -46,6 +46,7 @@ import ERDiagram from "./pages/portal/ERDiagram";
 import InvoicesList from "./pages/portal/invoices/InvoicesList";
 import InvoiceDraftEditor from "./pages/portal/invoices/InvoiceDraftEditor";
 import InvoiceDetail from "./pages/portal/invoices/InvoiceDetail";
+import PublicQuotePage from "./pages/portal/PublicQuotePage";
 
 // Staff customer view pages
 import CustomerViewDashboard from "./pages/portal/customer-view/CustomerViewDashboard";
@@ -134,6 +135,7 @@ const App = () => (
                 <Route path="/portal/boms/:id" element={<BOMBuilder />} />
                 <Route path="/portal/quotes" element={<QuotesList />} />
                 <Route path="/portal/quotes/:id" element={<QuotePreparation />} />
+                <Route path="/portal/quote/:id" element={<PublicQuotePage />} />
                 <Route path="/portal/invoices" element={<InvoicesList />} />
                 <Route path="/portal/invoices/new" element={<InvoiceDraftEditor />} />
                 <Route path="/portal/invoices/:id" element={<InvoiceDetail />} />
