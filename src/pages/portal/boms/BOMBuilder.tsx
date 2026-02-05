@@ -779,7 +779,7 @@ const BOMBuilder: React.FC = () => {
             </Button>
 
             <Button 
-              className="w-full bg-[#F5A38A] text-foreground hover:bg-[#E8937A] disabled:bg-muted disabled:text-muted-foreground" 
+              className="w-full bg-[#F6C573] text-foreground hover:bg-[#E5B463] disabled:bg-muted disabled:text-muted-foreground"
               size="lg"
               onClick={handleSaveChanges}
               disabled={!hasUnsavedChanges || isSaving}
