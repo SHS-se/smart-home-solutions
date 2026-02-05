@@ -1463,6 +1463,7 @@ export type Database = {
       is_admin: { Args: { _user_id: string }; Returns: boolean }
       is_staff: { Args: { _user_id: string }; Returns: boolean }
       is_staff_table_empty: { Args: never; Returns: boolean }
+      set_app_environment: { Args: { env: string }; Returns: undefined }
       sku_compute_pricing: {
         Args: {
           p_category_id: string

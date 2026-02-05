@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import Stripe from "https://esm.sh/stripe@18.5.0";
+import { getStripeSecretKey, getAppEnvironment } from "../_shared/stripe-env.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -24,25 +25,13 @@ serve(async (req) => {
   );
 
   try {
-    logStep("Function started");
+    const appEnv = getAppEnvironment();
+    const stripeKey = getStripeSecretKey();
+    logStep("Function started", { environment: appEnv });
 
     const resendKey = Deno.env.get("RESEND_API_KEY");
     if (!resendKey) throw new Error("RESEND_API_KEY is not set");
 
-    // Helper to get the appropriate Stripe key
-    const getStripeKey = (isTest: boolean): string => {
-      if (isTest) {
-        const testKey = Deno.env.get("STRIPE_SECRET_KEY");
-        if (!testKey) throw new Error("STRIPE_SECRET_KEY (test) is not set");
-        return testKey;
-      } else {
-        const liveKey = Deno.env.get("STRIPE_SECRET_KEY_LIVE");
-        if (!liveKey) throw new Error("STRIPE_SECRET_KEY_LIVE is not set");
-        return liveKey;
-      }
-    };
-
-    // Authenticate staff user
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) throw new Error("No authorization header provided");
     
@@ -52,35 +41,13 @@ serve(async (req) => {
     const user = userData.user;
     if (!user) throw new Error("User not authenticated");
 
-    // Check if user is staff
-    const { data: staffData, error: staffError } = await supabaseClient
-      .from('staff_users')
-      .select('user_id')
-      .eq('user_id', user.id)
-      .single();
-
-    if (staffError || !staffData) {
-      throw new Error("Access denied: Staff only");
-    }
+    const { data: staffData } = await supabaseClient.from('staff_users').select('user_id').eq('user_id', user.id).single();
+    if (!staffData) throw new Error("Access denied: Staff only");
     logStep("Staff verified");
 
-    const { 
-      invoice_id, 
-      to, 
-      subject, 
-      message,
-      include_payment_link = true,
-      attach_pdf = false
-    } = await req.json();
+    const { invoice_id, to, subject, message, include_payment_link = true, attach_pdf = false } = await req.json();
+    if (!invoice_id || !to || !subject || !message) throw new Error("Missing required fields");
 
-    if (!invoice_id) throw new Error("invoice_id is required");
-    if (!to) throw new Error("to is required");
-    if (!subject) throw new Error("subject is required");
-    if (!message) throw new Error("message is required");
-
-    logStep("Sending invoice email", { invoice_id, to, attach_pdf });
-
-    // Fetch invoice
     const { data: invoice, error: invoiceError } = await supabaseClient
       .from('invoices')
       .select('*, customer:customers_with_identity!invoices_customer_id_fkey(name, contact_email)')
@@ -90,130 +57,51 @@ serve(async (req) => {
     if (invoiceError || !invoice) throw new Error("Invoice not found");
     if (invoice.status === 'draft') throw new Error("Cannot email draft invoices");
 
-    logStep("Invoice loaded", { invoiceNumber: invoice.invoice_number, status: invoice.status });
-
-    // Build email body
     let emailBody = message;
-
     if (include_payment_link && invoice.hosted_invoice_url) {
       emailBody += `\n\n📋 Betala fakturan: ${invoice.hosted_invoice_url}`;
     }
 
-    // Prepare attachments if requested
     const attachments: Array<{ filename: string; content: string }> = [];
     
     if (attach_pdf && invoice.stripe_invoice_id) {
-      logStep("Fetching PDF from Stripe", { stripeInvoiceId: invoice.stripe_invoice_id });
-      
-      // Initialize Stripe with the correct key based on is_test flag
-      const isTest = invoice.is_test ?? true;
-      const stripeKey = getStripeKey(isTest);
-      logStep("Using Stripe mode", { isTest });
       const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
-      
-      // Fetch the invoice from Stripe to get PDF URL
       const stripeInvoice = await stripe.invoices.retrieve(invoice.stripe_invoice_id);
       
       if (stripeInvoice.invoice_pdf) {
-        // Download the PDF
         const pdfResponse = await fetch(stripeInvoice.invoice_pdf);
-        if (!pdfResponse.ok) {
-          throw new Error(`Failed to download PDF: ${pdfResponse.status}`);
+        if (pdfResponse.ok) {
+          const pdfBuffer = await pdfResponse.arrayBuffer();
+          const pdfBase64 = btoa(String.fromCharCode(...new Uint8Array(pdfBuffer)));
+          attachments.push({ filename: `Faktura-${invoice.invoice_number || invoice.id}.pdf`, content: pdfBase64 });
         }
-        
-        const pdfBuffer = await pdfResponse.arrayBuffer();
-        const pdfBase64 = btoa(
-          String.fromCharCode(...new Uint8Array(pdfBuffer))
-        );
-        
-        const filename = `Faktura-${invoice.invoice_number || invoice.id}.pdf`;
-        attachments.push({
-          filename,
-          content: pdfBase64,
-        });
-        
-        logStep("PDF attached", { filename, size: pdfBuffer.byteLength });
-      } else {
-        logStep("No PDF URL available from Stripe");
       }
     }
 
-    // Build email payload
     const emailPayload: Record<string, unknown> = {
       from: 'Smart Home Solutions <faktura@mail.smarthomesolutions.se>',
       to: [to],
-      subject: subject,
+      subject,
       text: emailBody,
     };
+    if (attachments.length > 0) emailPayload.attachments = attachments;
 
-    if (attachments.length > 0) {
-      emailPayload.attachments = attachments;
-    }
-
-    // Send email via Resend
     const emailResponse = await fetch('https://api.resend.com/emails', {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${resendKey}`,
-        'Content-Type': 'application/json'
-      },
+      headers: { 'Authorization': `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(emailPayload)
     });
 
-    if (!emailResponse.ok) {
-      const errorData = await emailResponse.text();
-      throw new Error(`Failed to send email: ${errorData}`);
-    }
-
+    if (!emailResponse.ok) throw new Error(`Failed to send email: ${await emailResponse.text()}`);
     const emailResult = await emailResponse.json();
-    logStep("Email sent", { emailId: emailResult.id, hasAttachment: attachments.length > 0 });
 
-    // Update invoice email audit fields
-    const { error: updateError } = await supabaseClient
-      .from('invoices')
-      .update({
-        last_emailed_at: new Date().toISOString(),
-        last_emailed_to: to,
-        last_emailed_type: 'invoice',
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', invoice_id);
+    await supabaseClient.from('invoices').update({ last_emailed_at: new Date().toISOString(), last_emailed_to: to, last_emailed_type: 'invoice' }).eq('id', invoice_id);
+    await supabaseClient.from('invoice_events').insert({ invoice_id, event_type: 'email_sent', metadata: { to, subject, email_id: emailResult.id }, created_by: user.id });
 
-    if (updateError) {
-      logStep("Error updating invoice email fields", { error: updateError });
-    }
-
-    // Create event
-    await supabaseClient.from('invoice_events').insert({
-      invoice_id,
-      event_type: 'email_sent',
-      metadata: {
-        to,
-        subject,
-        email_id: emailResult.id,
-        include_payment_link,
-        pdf_attached: attachments.length > 0
-      },
-      created_by: user.id
-    });
-
-    logStep("Invoice email complete");
-
-    return new Response(JSON.stringify({
-      success: true,
-      email_id: emailResult.id,
-      pdf_attached: attachments.length > 0
-    }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-      status: 200,
-    });
-
+    return new Response(JSON.stringify({ success: true, email_id: emailResult.id }), { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logStep("ERROR", { message: errorMessage });
-    return new Response(JSON.stringify({ error: errorMessage }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-      status: 500,
-    });
+    return new Response(JSON.stringify({ error: errorMessage }), { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 500 });
   }
 });

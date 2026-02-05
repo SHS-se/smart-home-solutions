@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@18.5.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
+import { getStripeSecretKey, getAppEnvironment } from "../_shared/stripe-env.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -18,7 +19,9 @@ serve(async (req) => {
   }
 
   try {
-    logStep("Function started");
+    const appEnv = getAppEnvironment();
+    const stripeKey = getStripeSecretKey();
+    logStep("Function started", { environment: appEnv });
 
     const supabaseClient = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
@@ -36,23 +39,6 @@ serve(async (req) => {
     const user = userData.user;
     if (!user?.email) throw new Error("User not authenticated or email not available");
     logStep("User authenticated", { userId: user.id, email: user.email });
-
-    // Check if customer is a test customer
-    const { data: customerData } = await supabaseClient
-      .from('customers')
-      .select('is_test')
-      .eq('user_id', user.id)
-      .single();
-    
-    const isTestCustomer = customerData?.is_test ?? false;
-    logStep("Customer test status", { isTestCustomer });
-
-    // Use appropriate Stripe key based on customer test status
-    const stripeKey = isTestCustomer 
-      ? Deno.env.get("STRIPE_SECRET_KEY") 
-      : Deno.env.get("STRIPE_SECRET_KEY_LIVE");
-    if (!stripeKey) throw new Error(isTestCustomer ? "STRIPE_SECRET_KEY is not set" : "STRIPE_SECRET_KEY_LIVE is not set");
-    logStep("Stripe key verified", { mode: isTestCustomer ? "test" : "live" });
 
     const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
     const customers = await stripe.customers.list({ email: user.email, limit: 1 });

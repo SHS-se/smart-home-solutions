@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@18.5.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
+import { getStripeSecretKey, getAppEnvironment } from "../_shared/stripe-env.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -148,27 +149,16 @@ function normalizeVatRate(rate: number | undefined | null): number {
   return closest;
 }
 
-/**
- * Get the appropriate Stripe key based on is_test flag
- */
-function getStripeKey(isTest: boolean): string {
-  if (isTest) {
-    const testKey = Deno.env.get("STRIPE_SECRET_KEY");
-    if (!testKey) throw new Error("STRIPE_SECRET_KEY (test) is not set");
-    return testKey;
-  } else {
-    const liveKey = Deno.env.get("STRIPE_SECRET_KEY_LIVE");
-    if (!liveKey) throw new Error("STRIPE_SECRET_KEY_LIVE is not set");
-    return liveKey;
-  }
-}
-
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
+    const appEnv = getAppEnvironment();
+    const stripeKey = getStripeSecretKey();
+    console.log(`[CREATE-STRIPE-QUOTE] Running in ${appEnv} mode`);
+
     // Verify user is staff
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
@@ -214,10 +204,10 @@ serve(async (req) => {
       travel_total 
     } = body;
 
-    // Fetch quote to determine if it's a test quote and get quote_number
+    // Fetch quote to get quote_number
     const { data: quote, error: quoteError } = await supabaseClient
       .from("quotes")
-      .select("is_test, quote_number")
+      .select("quote_number")
       .eq("id", quote_id)
       .single();
 
@@ -230,12 +220,8 @@ serve(async (req) => {
       throw new Error("Quote number is missing - cannot create Stripe quote without a valid quote_number");
     }
 
-    const isTest = quote.is_test ?? true; // Default to test mode if not set
     const quoteNumber = quote.quote_number;
     console.log(`[CREATE-STRIPE-QUOTE] Creating Stripe quote for ${quoteNumber}`);
-    
-    const stripeKey = getStripeKey(isTest);
-    console.log(`[CREATE-STRIPE-QUOTE] Using ${isTest ? 'TEST' : 'LIVE'} Stripe key`);
 
     const stripe = new Stripe(stripeKey, {
       apiVersion: "2025-08-27.basil",

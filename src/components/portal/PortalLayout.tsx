@@ -2,6 +2,7 @@ import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useLanguage } from '@/contexts/LanguageContext';
 import Header from '@/components/Header';
+import { isTestEnvironment } from '@/lib/environment';
 
 interface PortalLayoutProps {
   children: React.ReactNode;
@@ -21,6 +22,13 @@ const PortalLayout: React.FC<PortalLayoutProps> = ({ children }) => {
 
   return (
     <div className="min-h-screen bg-background">
+      {/* Environment banner for TEST mode */}
+      {isTestEnvironment() && (
+        <div className="bg-amber-500 text-black text-center text-sm py-1 font-medium">
+          ⚠️ {t("TESTMILJÖ - All data är endast för testning", "TEST ENVIRONMENT - All data is for testing only")}
+        </div>
+      )}
+
       {/* Use shared Header component */}
       <Header />
 
@@ -44,7 +52,7 @@ const PortalLayout: React.FC<PortalLayoutProps> = ({ children }) => {
       </nav>
 
       {/* Main content */}
-      <main className="pt-16 pb-20 md:pt-20 md:pb-8">
+      <main className={`pt-16 pb-20 md:pt-20 md:pb-8 ${isTestEnvironment() ? 'mt-7' : ''}`}>
         <div className="container mx-auto px-4 py-8">
           {children}
         </div>

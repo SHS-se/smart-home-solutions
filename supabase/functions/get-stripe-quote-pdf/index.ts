@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
+import { getStripeSecretKey, getAppEnvironment } from "../_shared/stripe-env.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -17,20 +18,9 @@ serve(async (req) => {
   }
 
   try {
-    logStep("Function started");
-
-    // Helper to get the appropriate Stripe key
-    const getStripeKey = (isTest: boolean): string => {
-      if (isTest) {
-        const testKey = Deno.env.get("STRIPE_SECRET_KEY");
-        if (!testKey) throw new Error("STRIPE_SECRET_KEY (test) is not set");
-        return testKey;
-      } else {
-        const liveKey = Deno.env.get("STRIPE_SECRET_KEY_LIVE");
-        if (!liveKey) throw new Error("STRIPE_SECRET_KEY_LIVE is not set");
-        return liveKey;
-      }
-    };
+    const appEnv = getAppEnvironment();
+    const stripeKey = getStripeSecretKey();
+    logStep("Function started", { environment: appEnv });
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
@@ -53,7 +43,7 @@ serve(async (req) => {
 
     const userId = userData.user.id;
 
-    const { quoteId, stripe_quote_id: directStripeQuoteId, is_test } = await req.json();
+    const { quoteId, stripe_quote_id: directStripeQuoteId } = await req.json();
     
     // Check if user is staff
     const { data: staffData } = await supabaseAdmin
@@ -65,18 +55,16 @@ serve(async (req) => {
     const isStaff = !!staffData;
     
     let stripeQuoteId: string;
-    let isTest: boolean;
     
     if (isStaff) {
       // Staff can access any quote directly with stripe_quote_id
       if (directStripeQuoteId) {
         stripeQuoteId = directStripeQuoteId;
-        isTest = is_test ?? true;
       } else if (quoteId) {
         // Look up the quote
         const { data: quote, error: quoteError } = await supabaseAdmin
           .from('quotes')
-          .select('stripe_quote_id, is_test')
+          .select('stripe_quote_id')
           .eq('id', quoteId)
           .single();
         
@@ -84,7 +72,6 @@ serve(async (req) => {
           throw new Error("Quote not found or has no Stripe quote");
         }
         stripeQuoteId = quote.stripe_quote_id;
-        isTest = quote.is_test;
       } else {
         throw new Error("stripe_quote_id or quoteId is required");
       }
@@ -104,7 +91,7 @@ serve(async (req) => {
       // Verify quote belongs to this customer and is accessible
       const { data: quote, error: quoteError } = await supabaseAdmin
         .from('quotes')
-        .select('stripe_quote_id, is_test, status')
+        .select('stripe_quote_id, status')
         .eq('id', quoteId)
         .eq('customer_id', customer.id)
         .single();
@@ -123,11 +110,8 @@ serve(async (req) => {
       }
       
       stripeQuoteId = quote.stripe_quote_id;
-      isTest = quote.is_test;
       logStep("Customer accessing own quote", { customerId: customer.id, quoteId });
     }
-    const stripeKey = getStripeKey(isTest);
-    logStep("Using Stripe mode", { isTest });
 
     // Use user-scoped path for session-based caching
     const fileName = `${userId}/${stripeQuoteId}.pdf`;
