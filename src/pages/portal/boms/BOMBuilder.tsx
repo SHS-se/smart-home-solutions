@@ -145,7 +145,7 @@ const BOMBuilder: React.FC = () => {
     enabled: isStaff,
   });
 
-  // Update BOM mutation
+  // Update BOM mutation with optimistic UI
   const updateBOMMutation = useMutation({
     mutationFn: async (updates: { project_name?: string; customer_id?: string | null }) => {
       const { error } = await supabase
@@ -164,14 +164,29 @@ const BOMBuilder: React.FC = () => {
         if (quoteError) console.error('Failed to update quote customers:', quoteError);
       }
     },
-    onSuccess: () => {
+    onMutate: async (updates) => {
+      // Cancel outgoing refetches so they don't overwrite our optimistic update
+      await queryClient.cancelQueries({ queryKey: ['bom', id] });
+      const previous = queryClient.getQueryData(['bom', id]);
+      // Optimistically update the cached BOM
+      queryClient.setQueryData(['bom', id], (old: any) => old ? { ...old, ...updates } : old);
+      return { previous };
+    },
+    onError: (error: any, _updates, context) => {
+      // Roll back on error
+      if (context?.previous) {
+        queryClient.setQueryData(['bom', id], context.previous);
+      }
+      toast({ title: t('Kunde inte uppdatera BOM', 'Failed to update BOM'), description: error.message, variant: 'destructive' });
+    },
+    onSettled: () => {
+      // Always refetch after mutation settles to ensure consistency
       queryClient.invalidateQueries({ queryKey: ['bom', id] });
       queryClient.invalidateQueries({ queryKey: ['bom_quotes', id] });
       setIsEditingProject(false);
-      toast({ title: t('BOM uppdaterad', 'BOM updated') });
     },
-    onError: (error: any) => {
-      toast({ title: t('Kunde inte uppdatera BOM', 'Failed to update BOM'), description: error.message, variant: 'destructive' });
+    onSuccess: () => {
+      toast({ title: t('BOM uppdaterad', 'BOM updated') });
     },
   });
 
