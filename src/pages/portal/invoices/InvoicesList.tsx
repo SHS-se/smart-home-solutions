@@ -44,7 +44,7 @@ interface Invoice {
   total: number | null;
   created_at: string;
   last_emailed_at: string | null;
-  customer?: { name: string | null } | null;
+  customer?: { name: string | null; contact_name: string | null } | null;
   bom?: { project_name: string } | null;
 }
 
@@ -115,7 +115,7 @@ const InvoicesList: React.FC = () => {
       // Fetch invoices
       const { data: invoicesData, error: invoicesError } = await supabase
         .from('invoices')
-        .select('*, customer:customers(name), bom:boms(project_name)')
+        .select('*, customer:customers_with_identity!invoices_customer_id_fkey(name, contact_name), bom:boms(project_name)')
         .order('created_at', { ascending: false });
       if (invoicesError) throw invoicesError;
 
@@ -254,7 +254,7 @@ const InvoicesList: React.FC = () => {
       getValue: (invoice) => {
         switch (sortColumn) {
           case 'customer':
-            return invoice.customer?.name ?? '';
+          return invoice.customer?.name || invoice.customer?.contact_name || '';
           case 'project':
             return invoice.bom?.project_name ?? '';
           case 'created_at':

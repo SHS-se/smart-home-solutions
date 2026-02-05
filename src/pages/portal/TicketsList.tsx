@@ -37,7 +37,7 @@ interface Ticket {
   created_at: string;
   last_activity_at: string;
   customer_id: string;
-  customers?: { name: string | null };
+  customers?: { name: string | null; contact_name: string | null };
 }
 
 type SortColumn = 'ticket_number' | 'title' | 'customer' | 'status' | 'last_activity_at';
@@ -94,7 +94,7 @@ const TicketsList: React.FC = () => {
       try {
         let query = supabase
           .from('tickets')
-          .select('*, customers(name)')
+          .select('*, customers:customers_with_identity!tickets_customer_id_fkey(name, contact_name)')
           .order('last_activity_at', { ascending: false });
 
         // Filter by customer if not staff
@@ -132,7 +132,7 @@ const TicketsList: React.FC = () => {
       getValue: (ticket) => {
         switch (sortColumn) {
           case 'customer':
-            return ticket.customers?.name ?? '';
+            return ticket.customers?.name || ticket.customers?.contact_name || '';
           case 'last_activity_at':
             return new Date(ticket.last_activity_at);
           default:
@@ -258,7 +258,7 @@ const TicketsList: React.FC = () => {
                       <TableCell className="font-medium">{ticket.ticket_number}</TableCell>
                       <TableCell className="max-w-md truncate">{ticket.title}</TableCell>
                       {isStaff && (
-                        <TableCell>{ticket.customers?.name || t('Okänd', 'Unknown')}</TableCell>
+                        <TableCell>{ticket.customers?.name || ticket.customers?.contact_name || t('Okänd', 'Unknown')}</TableCell>
                       )}
                       <TableCell>{getStatusBadge(ticket.status)}</TableCell>
                       <TableCell>{formatDate(ticket.last_activity_at)}</TableCell>

@@ -151,8 +151,8 @@ const BOMBuilder: React.FC = () => {
     queryKey: ['customers'],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('customers')
-        .select('id, name')
+        .from('customers_with_identity')
+        .select('id, name, contact_name')
         .order('name');
       if (error) throw error;
       return data;

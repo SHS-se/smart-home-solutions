@@ -15,6 +15,9 @@ interface CustomerData {
   billing_city: string | null;
   billing_same_as_site: boolean;
   is_test: boolean;
+  contact_name: string | null;
+  contact_email: string | null;
+  contact_phone: string | null;
 }
 
 interface ViewedCustomerContextType {
@@ -48,13 +51,13 @@ export const ViewedCustomerProvider: React.FC<ViewedCustomerProviderProps> = ({ 
 
     try {
       const { data, error: fetchError } = await supabase
-        .from('customers')
-        .select('id, name, billing_email, phone, site_street, site_postcode, site_city, billing_street, billing_postcode, billing_city, billing_same_as_site, is_test')
+        .from('customers_with_identity')
+        .select('id, name, billing_email, phone, site_street, site_postcode, site_city, billing_street, billing_postcode, billing_city, billing_same_as_site, is_test, contact_name, contact_email, contact_phone')
         .eq('id', customerId)
         .single();
 
       if (fetchError) throw fetchError;
-      setCustomerData(data);
+      setCustomerData(data as CustomerData);
     } catch (err: any) {
       console.error('Error fetching customer:', err);
       setError(err.message || 'Failed to fetch customer');

@@ -60,16 +60,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       // Check if user is already linked to a customer
       let { data: customer } = await supabase
-        .from('customers')
-        .select('id, name, billing_email, phone, site_street, site_postcode, site_city, billing_street, billing_postcode, billing_city, billing_same_as_site, is_test')
+        .from('customers_with_identity')
+        .select('id, name, billing_email, phone, site_street, site_postcode, site_city, billing_street, billing_postcode, billing_city, billing_same_as_site, is_test, contact_name, contact_email, contact_phone')
         .eq('user_id', userId)
         .maybeSingle();
 
       // If not linked, try to auto-link by email
       if (!customer && userEmail) {
         const { data: unlinkedCustomer } = await supabase
-          .from('customers')
-          .select('id, name, billing_email, phone, site_street, site_postcode, site_city, billing_street, billing_postcode, billing_city, billing_same_as_site, is_test')
+          .from('customers_with_identity')
+          .select('id, name, billing_email, phone, site_street, site_postcode, site_city, billing_street, billing_postcode, billing_city, billing_same_as_site, is_test, contact_name, contact_email, contact_phone')
           .eq('billing_email', userEmail)
           .is('user_id', null)
           .maybeSingle();

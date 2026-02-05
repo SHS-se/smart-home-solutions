@@ -46,7 +46,7 @@ interface Ticket {
   last_activity_at: string;
   customer_id: string;
   created_by: string | null;
-  customers?: { name: string | null; billing_email: string | null };
+  customers?: { name: string | null; billing_email: string | null; contact_name: string | null; contact_email: string | null };
 }
 
 interface Comment {
@@ -144,7 +144,7 @@ const TicketDetail: React.FC = () => {
       try {
         const { data: ticketData, error: ticketError } = await supabase
           .from('tickets')
-          .select('*, customers(name, billing_email)')
+          .select('*, customers:customers_with_identity!tickets_customer_id_fkey(name, billing_email, contact_name, contact_email)')
           .eq('ticket_number', ticketNumber)
           .maybeSingle();
 
@@ -393,7 +393,7 @@ const TicketDetail: React.FC = () => {
             <p className="text-muted-foreground mt-1">
               {t('Skapad', 'Created')} {formatDate(ticket.created_at)}
               {isStaff && ticket.customers && (
-                <> · {ticket.customers.name || ticket.customers.billing_email}</>
+                        <> · {ticket.customers.name || ticket.customers.contact_name || ticket.customers.contact_email || ticket.customers.billing_email}</>
               )}
             </p>
           </div>

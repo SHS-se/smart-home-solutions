@@ -43,7 +43,7 @@ interface Quote {
   stripe_quote_id: string | null;
   status: string;
   created_at: string;
-  customer?: { name: string | null };
+  customer?: { name: string | null; contact_name: string | null };
   bom?: { project_name: string };
 }
 
@@ -98,7 +98,7 @@ const QuotesList: React.FC = () => {
       // Fetch quotes
       const { data: quotesData, error: quotesError } = await supabase
         .from('quotes')
-        .select('*, customers(name), boms(project_name)')
+        .select('*, customers:customers_with_identity!quotes_customer_id_fkey(name, contact_name), boms(project_name)')
         .order('created_at', { ascending: false });
       if (quotesError) throw quotesError;
 
@@ -173,7 +173,7 @@ const QuotesList: React.FC = () => {
       getValue: (quote) => {
         switch (sortColumn) {
           case 'customer':
-            return quote.customer?.name ?? '';
+          return quote.customer?.name || quote.customer?.contact_name || '';
           case 'project':
             return quote.bom?.project_name ?? '';
           case 'total':
@@ -410,7 +410,7 @@ const QuotesList: React.FC = () => {
                         </div>
                       </TableCell>
                       <TableCell>
-                        {quote.customer?.name || <span className="text-muted-foreground">—</span>}
+                        {quote.customer?.name || quote.customer?.contact_name || <span className="text-muted-foreground">—</span>}
                       </TableCell>
                       <TableCell>
                         {quote.bom?.project_name || <span className="text-muted-foreground">—</span>}
