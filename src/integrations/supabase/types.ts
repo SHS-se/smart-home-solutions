@@ -395,6 +395,21 @@ export type Database = {
           },
         ]
       }
+      document_sequences: {
+        Row: {
+          key: string
+          next_value: number
+        }
+        Insert: {
+          key: string
+          next_value?: number
+        }
+        Update: {
+          key?: string
+          next_value?: number
+        }
+        Relationships: []
+      }
       invoice_events: {
         Row: {
           created_at: string
@@ -716,6 +731,51 @@ export type Database = {
           },
         ]
       }
+      quote_events: {
+        Row: {
+          actor_email: string | null
+          actor_type: string | null
+          created_at: string
+          event_type: string
+          id: string
+          metadata: Json | null
+          quote_id: string
+        }
+        Insert: {
+          actor_email?: string | null
+          actor_type?: string | null
+          created_at?: string
+          event_type: string
+          id?: string
+          metadata?: Json | null
+          quote_id: string
+        }
+        Update: {
+          actor_email?: string | null
+          actor_type?: string | null
+          created_at?: string
+          event_type?: string
+          id?: string
+          metadata?: Json | null
+          quote_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "quote_events_quote_id_fkey"
+            columns: ["quote_id"]
+            isOneToOne: false
+            referencedRelation: "quote_computed_totals"
+            referencedColumns: ["quote_id"]
+          },
+          {
+            foreignKeyName: "quote_events_quote_id_fkey"
+            columns: ["quote_id"]
+            isOneToOne: false
+            referencedRelation: "quotes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       quote_lines: {
         Row: {
           cost_ex_vat_at_time: number | null
@@ -805,8 +865,63 @@ export type Database = {
           },
         ]
       }
+      quote_messages: {
+        Row: {
+          author_email: string | null
+          author_name: string | null
+          author_type: string
+          body_markdown: string
+          created_at: string
+          id: string
+          quote_id: string
+          source: string
+        }
+        Insert: {
+          author_email?: string | null
+          author_name?: string | null
+          author_type: string
+          body_markdown: string
+          created_at?: string
+          id?: string
+          quote_id: string
+          source?: string
+        }
+        Update: {
+          author_email?: string | null
+          author_name?: string | null
+          author_type?: string
+          body_markdown?: string
+          created_at?: string
+          id?: string
+          quote_id?: string
+          source?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "quote_messages_quote_id_fkey"
+            columns: ["quote_id"]
+            isOneToOne: false
+            referencedRelation: "quote_computed_totals"
+            referencedColumns: ["quote_id"]
+          },
+          {
+            foreignKeyName: "quote_messages_quote_id_fkey"
+            columns: ["quote_id"]
+            isOneToOne: false
+            referencedRelation: "quotes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       quotes: {
         Row: {
+          accept_token_expires_at: string | null
+          accept_token_hash: string | null
+          accepted_at: string | null
+          accepted_by_email: string | null
+          accepted_by_name: string | null
+          accepted_ip: string | null
+          accepted_user_agent: string | null
           bom_id: string | null
           bom_price_revision_id: string | null
           bom_version: number | null
@@ -815,6 +930,8 @@ export type Database = {
           created_at: string
           created_by: string | null
           customer_id: string | null
+          declined_at: string | null
+          expires_at: string | null
           id: string
           invoice_due_date: string | null
           invoice_hosted_url: string | null
@@ -826,8 +943,10 @@ export type Database = {
           invoice_vat: number | null
           is_latest: boolean
           is_test: boolean
+          last_viewed_at: string | null
           parent_quote_id: string | null
           quote_number: string | null
+          sent_at: string | null
           status: string
           status_reason: string | null
           stripe_invoice_id: string | null
@@ -838,6 +957,13 @@ export type Database = {
           version: number
         }
         Insert: {
+          accept_token_expires_at?: string | null
+          accept_token_hash?: string | null
+          accepted_at?: string | null
+          accepted_by_email?: string | null
+          accepted_by_name?: string | null
+          accepted_ip?: string | null
+          accepted_user_agent?: string | null
           bom_id?: string | null
           bom_price_revision_id?: string | null
           bom_version?: number | null
@@ -846,6 +972,8 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           customer_id?: string | null
+          declined_at?: string | null
+          expires_at?: string | null
           id?: string
           invoice_due_date?: string | null
           invoice_hosted_url?: string | null
@@ -857,8 +985,10 @@ export type Database = {
           invoice_vat?: number | null
           is_latest?: boolean
           is_test?: boolean
+          last_viewed_at?: string | null
           parent_quote_id?: string | null
           quote_number?: string | null
+          sent_at?: string | null
           status?: string
           status_reason?: string | null
           stripe_invoice_id?: string | null
@@ -869,6 +999,13 @@ export type Database = {
           version?: number
         }
         Update: {
+          accept_token_expires_at?: string | null
+          accept_token_hash?: string | null
+          accepted_at?: string | null
+          accepted_by_email?: string | null
+          accepted_by_name?: string | null
+          accepted_ip?: string | null
+          accepted_user_agent?: string | null
           bom_id?: string | null
           bom_price_revision_id?: string | null
           bom_version?: number | null
@@ -877,6 +1014,8 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           customer_id?: string | null
+          declined_at?: string | null
+          expires_at?: string | null
           id?: string
           invoice_due_date?: string | null
           invoice_hosted_url?: string | null
@@ -888,8 +1027,10 @@ export type Database = {
           invoice_vat?: number | null
           is_latest?: boolean
           is_test?: boolean
+          last_viewed_at?: string | null
           parent_quote_id?: string | null
           quote_number?: string | null
+          sent_at?: string | null
           status?: string
           status_reason?: string | null
           stripe_invoice_id?: string | null
@@ -1459,6 +1600,7 @@ export type Database = {
         Args: { storage_path: string }
         Returns: boolean
       }
+      generate_next_quote_number: { Args: never; Returns: string }
       get_customer_id_for_user: { Args: { _user_id: string }; Returns: string }
       is_admin: { Args: { _user_id: string }; Returns: boolean }
       is_staff: { Args: { _user_id: string }; Returns: boolean }

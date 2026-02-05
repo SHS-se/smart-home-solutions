@@ -103,7 +103,7 @@ const InvoiceCard: React.FC<InvoiceCardProps> = ({ quote }) => {
   const handleCreateInvoice = async () => {
     setIsCreating(true);
     try {
-      const { data, error } = await supabase.functions.invoke('convert-quote-to-invoice', {
+      const { data, error } = await supabase.functions.invoke('create-invoice-from-quote', {
         body: { quote_id: quote.id },
       });
 
@@ -116,7 +116,7 @@ const InvoiceCard: React.FC<InvoiceCardProps> = ({ quote }) => {
       });
 
       queryClient.invalidateQueries({ queryKey: ['quote', quote.id] });
-      queryClient.invalidateQueries({ queryKey: ['billing_events', quote.id] });
+      queryClient.invalidateQueries({ queryKey: ['quote_events', quote.id] });
     } catch (error: any) {
       toast({
         title: t('Kunde inte skapa faktura', 'Failed to create invoice'),
@@ -276,8 +276,8 @@ const InvoiceCard: React.FC<InvoiceCardProps> = ({ quote }) => {
 
           {/* Action buttons */}
           <div className="space-y-2 pt-2">
-            {/* Create invoice */}
-            {!hasInvoice && quote.stripe_quote_id && (
+            {/* Create invoice - enabled when quote is accepted */}
+            {!hasInvoice && (
               <Button
                 onClick={() => setShowCreateDialog(true)}
                 disabled={isCreating}
@@ -290,14 +290,6 @@ const InvoiceCard: React.FC<InvoiceCardProps> = ({ quote }) => {
                 )}
                 {t('Skapa faktura från offert', 'Create invoice from quote')}
               </Button>
-            )}
-
-            {/* No Stripe quote warning */}
-            {!quote.stripe_quote_id && !hasInvoice && (
-              <div className="flex items-center gap-2 text-muted-foreground text-sm">
-                <AlertCircle className="h-4 w-4" />
-                <span>{t('Skicka offerten till Stripe först', 'Send quote to Stripe first')}</span>
-              </div>
             )}
 
             {/* Finalize invoice */}

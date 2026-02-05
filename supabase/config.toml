@@ -1,1 +1,13 @@
 project_id = "pdqidiwovlvdyqgbdlda"
+
+[functions.fetch-public-quote]
+verify_jwt = false
+
+[functions.accept-quote]
+verify_jwt = false
+
+[functions.decline-quote]
+verify_jwt = false
+
+[functions.request-quote-revision]
+verify_jwt = false
