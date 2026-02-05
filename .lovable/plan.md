@@ -1,238 +1,172 @@
 
 
-# Stop Using Stripe Quotes -- Own the Quote Lifecycle
+# Customer Detail: Offerter (Quotes) Integration
 
 ## Overview
 
-Replace the current Stripe Quotes flow with a fully app-owned quote system. Quotes will be managed entirely in the database, sent via custom HTML email (Resend), and customers can accept/decline/request changes via a token-based public page -- no login required. Stripe remains for invoicing and payments only.
+Add a complete Offers/Quotes section to the internal staff Customer Detail view, including a dashboard card, a customer-scoped offers list, and a full offer detail page with timeline, messaging, and integration with the existing quote editor.
 
-## What Gets Removed
+## What will be built
 
-- Edge functions: `create-stripe-quote`, `accept-stripe-quote`, `get-stripe-quote-pdf`, `get-stripe-quote-totals`, `convert-quote-to-invoice`, `cleanup-quote-pdfs`
-- Frontend: All Stripe Quote PDF preview logic, `OfferPdfModal` component (Stripe-based), Stripe Quote totals fetching in `Offers.tsx`
-- The "Skicka till Stripe offert" button and related Stripe PDF preview on the QuotePreparation page
-- Customer `Offers.tsx` page's Stripe-dependent accept flow
+### 1. "Offerter" Card on Customer Dashboard
 
-## What Gets Added/Changed
+Add a fourth card to the existing 3-column grid on `/portal/customers/:customerId/overview`:
 
----
+- **Title**: "Offerter" / "Quotes"
+- **Primary number**: Count of quotes requiring action (`revision_requested` status)
+- **Subtitle**: "X att hantera av Y totalt" / "X to handle of Y total"
+- **Link**: "Visa alla" -> `/portal/customers/:customerId/offers`
 
-### Phase 1: Database Schema
+Data fetched alongside existing ticket/invoice stats using queries on the `quotes` table filtered by `customer_id`.
 
-**A) Alter `quotes` table** -- add columns for the new lifecycle:
+### 2. Customer-Scoped Offers List Page
 
-| Column | Type | Purpose |
-|--------|------|---------|
-| `expires_at` | timestamptz | When the quote expires |
-| `sent_at` | timestamptz | When sent via email |
-| `accepted_at` | timestamptz | When accepted |
-| `declined_at` | timestamptz | When declined |
-| `accepted_by_name` | text | Name typed during acceptance |
-| `accepted_by_email` | text | Email typed during acceptance |
-| `accepted_ip` | text | IP recorded on acceptance |
-| `accepted_user_agent` | text | Browser UA on acceptance |
-| `accept_token_hash` | text | SHA-256 of the access token |
-| `accept_token_expires_at` | timestamptz | Token expiry |
-| `last_viewed_at` | timestamptz | Last time customer viewed |
+**Route**: `/portal/customers/:customerId/offers`
 
-**B) New table: `quote_events`**
+**New file**: `src/pages/portal/customer-view/CustomerViewOffers.tsx`
 
-Replaces the `billing_events` table for quote-specific events. Columns: `id`, `quote_id`, `event_type`, `actor_type`, `actor_email`, `metadata`, `created_at`. RLS: staff can read/insert; public access via a DB function for token-validated inserts.
+Following the exact pattern of `CustomerViewTickets.tsx` and `CustomerViewBilling.tsx`:
 
-Event types: `created`, `sent`, `viewed`, `accept_opened`, `accepted`, `declined`, `revision_requested`, `message_posted`, `invoice_created`
+- Uses `CustomerViewLayout` wrapper
+- Back link to customers list
+- Status filter dropdown (All / Draft / Sent / Revision Requested / Accepted / Declined / etc.)
+- Search by quote number or project name
+- Table columns:
+  - Quote number (mono font, with version badge if v > 1)
+  - Project name (from BOM)
+  - Status badge (reusing existing badge style from `QuotesList.tsx`)
+  - Total inc VAT (from `quote_computed_totals` view)
+  - Last activity (from `updated_at`)
+  - Action indicator: amber dot/badge for `revision_requested`
+- Rows are clickable, navigating to the offer detail page
+- Sorted newest first by default
 
-**C) New table: `quote_messages`**
+### 3. Offer Detail Page
 
-For customer-staff communication on revision requests. Columns: `id`, `quote_id`, `author_type` (customer/staff), `author_name`, `author_email`, `body_markdown`, `source` (portal/email), `created_at`. RLS: staff full access; token-validated inserts for customers.
+**Route**: `/portal/customers/:customerId/offers/:quoteId`
 
-**D) New table: `document_sequences`**
+**New file**: `src/pages/portal/customer-view/CustomerViewOfferDetail.tsx`
 
-Atomic quote number generation. Columns: `key` (text PK), `next_value` (int). Initialized with `key='quote'`, `next_value=1`.
+#### A) Summary Header
+- Quote number + status badge
+- Customer name
+- Project name (from BOM)
+- Key timestamps: Created, Sent, Viewed, Accepted/Declined (only those that exist)
+- Total inc VAT, VAT breakdown, subtotal
 
-**E) Postgres function: `generate_next_quote_number()`**
+#### B) Action Banner (conditional)
+When `status === 'revision_requested'`:
+- Amber alert banner: "Kunden har begart andringar -- uppdatera offerten och skicka igen."
+- Primary CTA button: "Redigera & skicka igen" -> navigates to `/portal/quotes/:quoteId`
 
-Atomically increments `document_sequences.next_value` and returns formatted string. Uses `APP_ENV` setting to determine prefix:
-- LIVE: `Q-00000001`  
-- TEST: `TQ-00000001`
+#### C) Staff Action Buttons
+- **"Oppna i offertredigeraren"** -- always available, navigates to existing `/portal/quotes/:quoteId`
+- **"Skicka igen"** -- calls the existing `send-quote-email` edge function, re-logs `sent` event
+- **"Skapa ny revision"** (when status is `accepted`) -- duplicates quote + quote_lines into a new quote with incremented version, `parent_quote_id` set to current quote, status `draft`, then navigates to the new quote in the editor
 
----
+For `declined`/`expired`/`cancelled` quotes: show "Duplicera som ny" which creates a fresh copy as a new draft.
 
-### Phase 2: Edge Functions
+#### D) Timeline (Event Log)
+Reuse the existing `QuoteEventLog` component pattern but embedded directly in this page. Queries `quote_events` for this quote, renders a chronological timeline with icons and Swedish labels (same mapping already in `QuoteEventLog.tsx`).
 
-**A) `send-quote-email`** (new)
+#### E) Messages Section
+- Query `quote_messages` for this quote, ordered by `created_at` ascending
+- Render as a threaded conversation:
+  - Customer messages (author_type=customer): left-aligned, distinct styling
+  - Staff messages (author_type=staff): right-aligned
+- Staff can compose and send a new message:
+  - Textarea + Send button
+  - Inserts into `quote_messages` with `author_type='staff'`, `source='portal'`
+  - Also logs a `quote_events` entry with `event_type='message_posted'`
 
-Staff-authenticated. Flow:
-1. If `quote_number` is null, call `generate_next_quote_number()` RPC and save it
-2. Generate a 32-byte random token, store `sha256(token)` and expiry (30 days) on the quote
-3. Build responsive HTML email via Resend with:
-   - Subject: "Offert {number} fran Smart Home Solutions"
-   - Customer greeting, summary box (hardware/labor/other/VAT/total), big CTA button, expiry date, contact info
-   - Plain text fallback
-4. Send via Resend (`offert@mail.smarthomesolutions.se`)
-5. Update `quotes.status = 'sent'`, set `sent_at`
-6. Insert `quote_events` with `event_type = 'sent'`
+### 4. Editing Rules (enforced in UI)
 
-**B) `fetch-public-quote`** (new)
+| Current Status | Available Actions |
+|---|---|
+| `draft` / `sent` / `viewed` / `revision_requested` | Open editor, Resend email |
+| `accepted` | "Skapa ny revision" (duplicates as new draft) |
+| `invoiced` | View only |
+| `declined` / `expired` / `cancelled` | "Duplicera som ny" (fresh copy) |
 
-No auth required (`verify_jwt = false`). Accepts `quote_id` + `token` as query params.
-1. Validates token hash + expiry
-2. Returns quote data: line items, totals, customer name, status, expiry
-3. Logs `quote_events.viewed`, updates `last_viewed_at`
+### 5. Routing
 
-**C) `accept-quote`** (rewrite existing)
+Add three new routes to `App.tsx` inside the "Staff viewing customer portal" section:
 
-No auth required. Accepts POST with `quote_id`, `token`, `name`, `email`, consent flag.
-1. Validates token hash + expiry
-2. Validates quote status is `sent` or `viewed`
-3. Stores acceptance metadata (name, email, IP, user agent)
-4. Sets status = `accepted`, `accepted_at`
-5. Invalidates token (sets `accept_token_expires_at` to now)
-6. Logs `quote_events.accepted`
+```text
+/portal/customers/:customerId/offers          -> CustomerViewOffers
+/portal/customers/:customerId/offers/:quoteId -> CustomerViewOfferDetail
+```
 
-**D) `decline-quote`** (new)
+Both wrapped in `CustomerViewWrapper` (same as existing customer view routes).
 
-No auth required. Accepts POST with `quote_id`, `token`, optional `reason`.
-1. Validates token
-2. Sets status = `declined`, `declined_at`
-3. Logs `quote_events.declined`
+### 6. No Database Migration Needed
 
-**E) `request-quote-revision`** (new)
-
-No auth required. Accepts POST with `quote_id`, `token`, `message`, `name`, `email`.
-1. Validates token
-2. Inserts into `quote_messages`
-3. Sets status = `revision_requested`
-4. Logs `quote_events.revision_requested` + `message_posted`
-5. Sends notification email to staff (`support@smarthomesolutions.se`)
-
-**F) `create-invoice-from-quote`** (rewrite existing `convert-quote-to-invoice`)
-
-Staff-authenticated. Creates a Stripe Invoice directly from quote line items (no Stripe Quote involved).
-1. Creates Stripe customer if needed
-2. Creates Stripe Invoice with line items mirroring quote_lines
-3. Finalizes invoice
-4. Stores invoice record in `invoices` table
-5. Updates quote with `stripe_invoice_id`, `invoice_number`, etc.
-6. Logs `quote_events.invoice_created`
-
-**G) Update `cancel-quote`** -- remove Stripe Quote cancellation logic, keep local DB cancel only.
-
----
-
-### Phase 3: Public Customer Quote Page
-
-**New route: `/portal/quote/:id`** (note: singular, not plural like staff `/quotes`)
-
-A standalone page (no login required) that:
-1. Reads `token` from URL query param
-2. Calls `fetch-public-quote` edge function
-3. Shows mobile-first, clean layout:
-   - Company logo + quote number + date
-   - Status badge
-   - Sections: Hardvara, Arbete, Resa/Ovrigt
-   - VAT breakdown
-   - Prominent total inc VAT
-   - Three action buttons: Acceptera / Avvisa / Begir andring
-4. Accept flow: modal with name + email + consent checkbox
-5. Decline flow: optional reason textarea
-6. Revision request: message textarea + name/email
-7. After acceptance: confirmation message with "next steps"
-
----
-
-### Phase 4: Internal UI Changes (QuotePreparation page)
-
-**Summary sidebar updates:**
-- Replace "Skicka till Stripe offert" button with **"Skicka offert via e-post"**
-- Add **"Forhandsgranska e-post"** button (shows email preview in a modal)
-- Keep "Skapa faktura" button but remove the `stripe_quote_id` requirement -- enable it when status is `accepted`
-- Show quote status prominently
-- Show `quote_events` timeline (replace `BillingEventLog`)
-- Show customer messages when `revision_requested`
-
-**QuotesList updates:**
-- Remove Stripe PDF preview button
-- Status badges updated for new statuses (`sent`, `viewed`, `accepted`, `declined`, `revision_requested`, `expired`, `invoiced`)
-
-**Offers.tsx (customer portal) updates:**
-- Remove Stripe totals fetching
-- Use `quote_computed_totals` view for totals
-- Remove Stripe-based accept flow (customer now accepts on public page)
-- Keep as a simple list with status + link to the public quote page
-
-**InvoiceCard updates:**
-- Remove `stripe_quote_id` requirement for invoice creation
-- Enable "Create invoice" when quote status is `accepted`
-
----
-
-### Phase 5: Cleanup
-
-- Delete edge functions: `create-stripe-quote`, `accept-stripe-quote`, `get-stripe-quote-pdf`, `get-stripe-quote-totals`, `convert-quote-to-invoice`, `cleanup-quote-pdfs`
-- Delete `OfferPdfModal` component (Stripe-based)
-- Clean up `_shared/stripe-env.ts` -- keep it for invoice functions only
-- Remove `stripe_status` references from frontend code
-
----
+- `parent_quote_id` already exists on `quotes` table with FK to `quotes.id`
+- `quote_events` and `quote_messages` tables already exist with proper schema
+- `quote_computed_totals` view already provides aggregated totals
+- RLS policies for `quotes`, `quote_events`, `quote_messages` already allow staff access
+- No new columns or tables required
 
 ## Technical Details
 
-### Token Security
-- 32 random bytes generated server-side
-- Only `SHA-256(token)` stored in DB
-- Token sent in URL as hex string
-- 30-day expiry
-- Single-use: invalidated on accept/decline
+### New Files
+1. `src/pages/portal/customer-view/CustomerViewOffers.tsx` -- Offers list page
+2. `src/pages/portal/customer-view/CustomerViewOfferDetail.tsx` -- Offer detail page
 
-### Quote Number Generation (Postgres function)
-```text
-CREATE FUNCTION generate_next_quote_number()
-  RETURNS text
-  LANGUAGE plpgsql
-  SECURITY DEFINER
-AS $$
-DECLARE
-  v_next int;
-  v_prefix text;
-  v_env text;
-BEGIN
-  v_env := current_setting('app.environment', true);
-  IF v_env = 'live' THEN
-    v_prefix := 'Q-';
-  ELSE
-    v_prefix := 'TQ-';
-  END IF;
+### Modified Files
+1. `src/pages/portal/customer-view/CustomerViewDashboard.tsx` -- Add "Offerter" card + stats fetching
+2. `src/App.tsx` -- Add 2 new routes
 
-  UPDATE document_sequences
-    SET next_value = next_value + 1
-    WHERE key = 'quote'
-    RETURNING next_value - 1 INTO v_next;
+### Data Queries
 
-  RETURN v_prefix || LPAD(v_next::text, 8, '0');
-END;
-$$;
+**Dashboard stats** (added to existing `fetchStats`):
+```sql
+-- Total quotes + revision_requested count
+SELECT status FROM quotes WHERE customer_id = :customerId AND is_latest = true
 ```
 
-The edge function calls `set_app_environment()` before calling this RPC to ensure correct prefix.
+**Offers list**:
+```sql
+SELECT q.*, boms(project_name), quote_computed_totals(total_inc_vat)
+FROM quotes q
+WHERE q.customer_id = :customerId
+ORDER BY q.created_at DESC
+```
 
-### Email HTML Design
-- Single-column, max-width 600px
-- Inline CSS only (email client compatibility)
-- Large summary box with section totals
-- Prominent CTA button (48px tall, full width)
-- Mobile-responsive (fluid widths)
-- Plain text fallback included
+**Offer detail**:
+```sql
+-- Quote with customer + BOM
+SELECT * FROM quotes WHERE id = :quoteId
 
-### RLS Policies for New Tables
-- `quote_events`: Staff can SELECT/INSERT. Service role used for public inserts via edge functions.
-- `quote_messages`: Staff can SELECT/INSERT/UPDATE/DELETE. Service role for customer inserts.
-- `document_sequences`: Only accessible via `SECURITY DEFINER` function.
+-- Events timeline
+SELECT * FROM quote_events WHERE quote_id = :quoteId ORDER BY created_at DESC
 
-### Implementation Order
-1. Database migration (tables, functions, RLS)
-2. Edge functions (send-quote-email, fetch-public-quote, accept-quote, decline-quote, request-quote-revision, create-invoice-from-quote)
-3. Public quote page component
-4. Internal UI changes (QuotePreparation, QuotesList, Offers, InvoiceCard)
-5. Delete old Stripe Quote edge functions
-6. Test end-to-end
+-- Messages thread
+SELECT * FROM quote_messages WHERE quote_id = :quoteId ORDER BY created_at ASC
+```
+
+**Staff message insert**:
+```sql
+INSERT INTO quote_messages (quote_id, author_type, author_email, author_name, body_markdown, source)
+VALUES (:quoteId, 'staff', :staffEmail, :staffName, :body, 'portal')
+
+INSERT INTO quote_events (quote_id, event_type, actor_type, actor_email)
+VALUES (:quoteId, 'message_posted', 'staff', :staffEmail)
+```
+
+### "Create New Revision" Logic (client-side)
+1. Fetch current quote + quote_lines
+2. Insert new quote row with: `parent_quote_id = current.id`, `version = current.version + 1`, `status = 'draft'`, `customer_id`, `bom_id` carried over, `is_latest = true`
+3. Update current quote: `is_latest = false`
+4. Copy all `quote_lines` from current quote to new quote
+5. Navigate to `/portal/quotes/:newQuoteId`
+
+### Resend Logic
+Call `supabase.functions.invoke('send-quote-email', { body: { quote_id } })` -- the existing edge function handles token generation, email sending, status update, and event logging.
+
+### Status Badge Helper
+Extract the `getStatusBadge` function from `QuotesList.tsx` into a shared utility or import pattern to avoid duplication across the new pages.
+
+### Grid Layout Update
+The dashboard card grid changes from `md:grid-cols-3` to `md:grid-cols-2 lg:grid-cols-4` to accommodate the fourth card while remaining responsive.
 
