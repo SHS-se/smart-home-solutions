@@ -152,7 +152,7 @@ const Account: React.FC = () => {
             {/* Basic info */}
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label htmlFor="name">{t('Företagsnamn', 'Company name')}</Label>
+                <Label htmlFor="name">{t('Kundnamn', 'Customer name')}</Label>
                 <Input
                   id="name"
                   value={formData.name}
