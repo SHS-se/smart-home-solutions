@@ -25,13 +25,12 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { SortableTableHead } from '@/components/ui/sortable-table-head';
-import { Eye, Loader2, Search, TestTube } from 'lucide-react';
+import { Loader2, Search, TestTube } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 import { sv } from 'date-fns/locale';
 import QuoteActionsMenu from '@/components/portal/quotes/QuoteActionsMenu';
 import QuoteCancelDialog from '@/components/portal/quotes/QuoteCancelDialog';
-import QuotePdfModal from '@/components/portal/quotes/QuotePdfModal';
 
 interface Quote {
   id: string;
@@ -40,7 +39,6 @@ interface Quote {
   is_latest: boolean;
   is_test: boolean;
   computed_total_inc_vat: number;
-  stripe_quote_id: string | null;
   status: string;
   created_at: string;
   customer?: { name: string | null; contact_name: string | null };
@@ -92,11 +90,6 @@ const QuotesList: React.FC = () => {
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [quoteToCancel, setQuoteToCancel] = useState<Quote | null>(null);
   
-  // PDF preview state
-  const [downloadingPdfId, setDownloadingPdfId] = useState<string | null>(null);
-  const [showPdfModal, setShowPdfModal] = useState(false);
-  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
-  const [pdfQuoteNumber, setPdfQuoteNumber] = useState<string>('');
   const [isCancelling, setIsCancelling] = useState(false);
 
   // Fetch quotes with computed totals
@@ -242,7 +235,7 @@ const QuotesList: React.FC = () => {
     } catch (error: unknown) {
       const err = error as Error;
       toast({ 
-        title: t('Kunde inte avbryta i Stripe. Inga ändringar gjordes.', 'Could not cancel in Stripe. No changes were made.'),
+        title: t('Kunde inte avbryta offerten. Inga ändringar gjordes.', 'Could not cancel quote. No changes were made.'),
         description: err.message,
         variant: 'destructive'
       });
@@ -251,56 +244,7 @@ const QuotesList: React.FC = () => {
     }
   };
 
-  // Preview PDF handler
-  const handlePreviewPdf = async (quote: Quote) => {
-    if (!quote.stripe_quote_id) return;
-    
-    setDownloadingPdfId(quote.id);
-    try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData?.session?.access_token;
-      if (!token) throw new Error('Not authenticated');
 
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-stripe-quote-pdf`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-            'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
-          },
-          body: JSON.stringify({ stripe_quote_id: quote.stripe_quote_id, is_test: quote.is_test }),
-        }
-      );
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || `HTTP ${response.status}`);
-      }
-
-      const data = await response.json();
-      
-      if (data.error) {
-        throw new Error(data.error);
-      }
-
-      // Set the signed URL and open the modal
-      setPdfUrl(data.url);
-      setPdfQuoteNumber(quote.quote_number || quote.stripe_quote_id || '');
-      setShowPdfModal(true);
-      
-    } catch (error: unknown) {
-      const err = error as Error;
-      toast({ 
-        title: t('Kunde inte ladda ner PDF', 'Failed to download PDF'),
-        description: err.message,
-        variant: 'destructive'
-      });
-    } finally {
-      setDownloadingPdfId(null);
-    }
-  };
 
   // Redirect if not staff
   if (!authLoading && !isStaff) {
@@ -464,16 +408,8 @@ const QuotesList: React.FC = () => {
         isLoading={isCancelling}
       />
 
-      {/* PDF Preview Modal */}
-      <QuotePdfModal
-        open={showPdfModal}
-        onOpenChange={(open) => {
-          setShowPdfModal(open);
-          if (!open) setPdfUrl(null);
-        }}
-        pdfUrl={pdfUrl}
-        quoteNumber={pdfQuoteNumber}
-      />
+
+
     </PortalLayout>
   );
 };

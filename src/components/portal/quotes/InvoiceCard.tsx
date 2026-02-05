@@ -32,7 +32,6 @@ interface InvoiceCardProps {
   quote: {
     id: string;
     quote_number: string | null;
-    stripe_quote_id: string | null;
     stripe_invoice_id: string | null;
     invoice_status: string | null;
     invoice_number: string | null;
