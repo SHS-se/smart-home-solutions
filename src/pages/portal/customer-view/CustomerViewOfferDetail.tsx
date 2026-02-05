@@ -490,39 +490,6 @@ const CustomerViewOfferDetail: React.FC = () => {
           </CardContent>
         </Card>
 
-        {/* ─── Action buttons ─── */}
-        <div className="flex flex-wrap gap-3">
-          {canEdit(quote.status) && (
-            <Button variant="outline" onClick={() => navigate(`/portal/quotes/${quote.id}`)}>
-              <ExternalLink className="w-4 h-4 mr-2" />
-              {t('Öppna i offertredigeraren', 'Open in quote editor')}
-            </Button>
-          )}
-          {canResend(quote.status) && (
-            <Button variant="outline" onClick={handleResend} disabled={isResending}>
-              {isResending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Send className="w-4 h-4 mr-2" />}
-              {t('Skicka igen', 'Resend')}
-            </Button>
-          )}
-          {canCreateRevision(quote.status) && (
-            <Button variant="outline" onClick={handleCreateRevision} disabled={isCreatingRevision}>
-              {isCreatingRevision ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Plus className="w-4 h-4 mr-2" />}
-              {t('Skapa ny revision', 'Create new revision')}
-            </Button>
-          )}
-          {canDuplicate(quote.status) && (
-            <Button variant="outline" onClick={handleDuplicate} disabled={isCreatingRevision}>
-              {isCreatingRevision ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Copy className="w-4 h-4 mr-2" />}
-              {t('Duplicera som ny', 'Duplicate as new')}
-            </Button>
-          )}
-          {quote.status === 'invoiced' && (
-            <Button variant="outline" onClick={() => navigate(`/portal/quotes/${quote.id}`)}>
-              <Eye className="w-4 h-4 mr-2" />
-              {t('Visa offert', 'View quote')}
-            </Button>
-          )}
-        </div>
 
         {/* ─── Two-column: Timeline + Messages ─── */}
         <div className="grid gap-6 lg:grid-cols-2">
