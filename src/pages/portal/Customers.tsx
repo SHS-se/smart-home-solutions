@@ -30,14 +30,14 @@ import { CustomerActionsMenu } from '@/components/portal/customers/CustomerActio
 
 interface Customer {
   id: string;
-  org_name: string | null;
+  name: string | null;
   billing_email: string | null;
   phone: string | null;
   created_at: string;
   is_test: boolean;
 }
 
-type SortColumn = 'org_name' | 'billing_email' | 'phone';
+type SortColumn = 'name' | 'billing_email' | 'phone';
 type TestFilter = 'all' | 'live' | 'test';
 
 const Customers: React.FC = () => {
@@ -48,7 +48,7 @@ const Customers: React.FC = () => {
   const [customersLoading, setCustomersLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [testFilter, setTestFilter] = useState<TestFilter>('live');
-  const { sortColumn, sortDirection, handleSort } = useTableSort<SortColumn>({ defaultColumn: 'org_name' });
+  const { sortColumn, sortDirection, handleSort } = useTableSort<SortColumn>({ defaultColumn: 'name' });
 
   useEffect(() => {
     if (!loading && !user) {
@@ -67,7 +67,7 @@ const Customers: React.FC = () => {
       const { data, error } = await supabase
         .from('customers')
         .select('*')
-        .order('org_name', { ascending: true });
+        .order('name', { ascending: true });
 
       if (error) throw error;
       setCustomers(data || []);
@@ -93,7 +93,7 @@ const Customers: React.FC = () => {
       // Search filter
       const searchLower = searchQuery.toLowerCase();
       return (
-        customer.org_name?.toLowerCase().includes(searchLower) ||
+        customer.name?.toLowerCase().includes(searchLower) ||
         customer.billing_email?.toLowerCase().includes(searchLower) ||
         customer.phone?.includes(searchQuery)
       );
@@ -167,7 +167,7 @@ const Customers: React.FC = () => {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <SortableTableHead column="org_name" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>
+                    <SortableTableHead column="name" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>
                       {t('Kundnamn', 'Customer Name')}
                     </SortableTableHead>
                     <SortableTableHead column="billing_email" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>
@@ -190,7 +190,7 @@ const Customers: React.FC = () => {
                     >
                       <TableCell className="font-medium">
                         <div className="flex items-center gap-2">
-                          {customer.org_name || t('Namnlös', 'Unnamed')}
+                          {customer.name || t('Namnlös', 'Unnamed')}
                           {customer.is_test && (
                             <Badge variant="secondary" className="text-xs">
                               <FlaskConical className="w-3 h-3 mr-1" />
@@ -204,7 +204,7 @@ const Customers: React.FC = () => {
                       <TableCell>
                         <CustomerActionsMenu
                           customerId={customer.id}
-                          customerName={customer.org_name || t('Namnlös', 'Unnamed')}
+                          customerName={customer.name || t('Namnlös', 'Unnamed')}
                           isTest={customer.is_test}
                           onUpdated={fetchCustomers}
                         />

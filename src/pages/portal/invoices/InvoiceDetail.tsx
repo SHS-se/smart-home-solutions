@@ -56,7 +56,7 @@ interface Invoice {
   voided_at: string | null;
   last_emailed_at: string | null;
   created_at: string;
-  customer?: { id: string; org_name: string | null; billing_email?: string | null } | null;
+  customer?: { id: string; name: string | null; billing_email?: string | null } | null;
   bom?: { id: string; project_name: string } | null;
 }
 
@@ -160,7 +160,7 @@ const InvoiceDetail: React.FC = () => {
       // Try finding by invoice_number first
       let { data, error } = await supabase
         .from('invoices')
-        .select('*, customer:customers(id, org_name, billing_email), bom:boms(id, project_name)')
+        .select('*, customer:customers(id, name, billing_email), bom:boms(id, project_name)')
         .eq('invoice_number', id!)
         .maybeSingle();
 
@@ -168,7 +168,7 @@ const InvoiceDetail: React.FC = () => {
       if (!data) {
         const result = await supabase
           .from('invoices')
-          .select('*, customer:customers(id, org_name, billing_email), bom:boms(id, project_name)')
+          .select('*, customer:customers(id, name, billing_email), bom:boms(id, project_name)')
           .eq('id', id!)
           .maybeSingle();
         data = result.data;
@@ -309,7 +309,7 @@ const InvoiceDetail: React.FC = () => {
           <div className="flex flex-wrap items-center gap-4 mt-2 text-sm">
             <span>
               <span className="text-muted-foreground">{t('Kund:', 'Customer:')}</span>{' '}
-              <strong>{invoice.customer?.org_name}</strong>
+              <strong>{invoice.customer?.name}</strong>
             </span>
             {getStatusBadge(invoice.status, invoice.due_date, t)}
             {invoice.is_test && (

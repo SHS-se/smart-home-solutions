@@ -194,7 +194,7 @@ const ContactDetail: React.FC = () => {
       const { data: newCustomer, error: customerError } = await supabase
         .from('customers')
         .insert({
-          org_name: contact.name,
+          name: contact.name,
           billing_email: contact.email,
           phone: contact.phone,
         })

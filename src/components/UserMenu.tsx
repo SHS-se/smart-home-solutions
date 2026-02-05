@@ -29,7 +29,7 @@ const UserMenu = ({ size = "default" }: UserMenuProps) => {
   // Get display name and email
   const displayName = isStaff 
     ? user?.email?.split('@')[0] || t("Personal", "Staff")
-    : customerData?.org_name || user?.email?.split('@')[0] || t("Kund", "Customer");
+    : customerData?.name || user?.email?.split('@')[0] || t("Kund", "Customer");
   const displayEmail = user?.email || "";
 
   // Get initials for avatar

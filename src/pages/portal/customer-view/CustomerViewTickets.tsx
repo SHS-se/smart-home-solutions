@@ -157,7 +157,7 @@ const CustomerViewTickets: React.FC = () => {
         <div>
           <h1 className="text-3xl font-medium">{t('Ärenden', 'Tickets')}</h1>
           <p className="text-muted-foreground">
-            {customerData.org_name || t('Namnlös kund', 'Unnamed customer')}
+            {customerData.name || t('Namnlös kund', 'Unnamed customer')}
           </p>
         </div>
 

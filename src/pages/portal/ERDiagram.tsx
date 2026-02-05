@@ -20,7 +20,8 @@ const getErdDiagram = (direction: 'TB' | 'LR') => `erDiagram
     customers {
         uuid id PK
         uuid user_id FK
-        text org_name
+        text name
+        uuid contact_id FK
         text billing_email
         text phone
         text address

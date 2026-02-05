@@ -86,7 +86,7 @@ const BOMBuilder: React.FC = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('boms')
-        .select('*, customers(org_name)')
+        .select('*, customers(name)')
         .eq('id', id)
         .single();
       if (error) throw error;
@@ -152,8 +152,8 @@ const BOMBuilder: React.FC = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('customers')
-        .select('id, org_name')
-        .order('org_name');
+        .select('id, name')
+        .order('name');
       if (error) throw error;
       return data;
     },
@@ -456,7 +456,7 @@ const BOMBuilder: React.FC = () => {
                     <SelectItem value="none">{t('Ingen kund', 'No customer')}</SelectItem>
                     {customers.map((customer) => (
                       <SelectItem key={customer.id} value={customer.id}>
-                        {customer.org_name || t('Namnlös', 'Unnamed')}
+                        {customer.name || t('Namnlös', 'Unnamed')}
                       </SelectItem>
                     ))}
                   </SelectContent>

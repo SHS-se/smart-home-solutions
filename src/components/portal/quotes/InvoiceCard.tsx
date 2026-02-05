@@ -45,7 +45,7 @@ interface InvoiceCardProps {
     subtotal_ex_vat: number | null;
     vat_total: number | null;
     total_inc_vat: number | null;
-    customer?: { org_name: string | null; billing_email?: string | null } | null;
+    customer?: { name: string | null; billing_email?: string | null } | null;
     bom?: { project_name: string } | null;
   };
 }

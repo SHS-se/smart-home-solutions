@@ -190,7 +190,7 @@ const CustomerViewDashboard: React.FC = () => {
           <div>
             <div className="flex items-center gap-3">
               <h1 className="text-3xl font-medium">
-                {customerData.org_name || t('Namnlös kund', 'Unnamed customer')}
+                {customerData.name || t('Namnlös kund', 'Unnamed customer')}
               </h1>
               {customerData.is_test && (
                 <Badge variant="secondary">
@@ -262,7 +262,7 @@ const CustomerViewDashboard: React.FC = () => {
               <Building2 className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{customerData.org_name || '-'}</div>
+              <div className="text-2xl font-bold">{customerData.name || '-'}</div>
               <p className="text-xs text-muted-foreground mt-1">
                 {customerData.billing_email || t('Ingen e-post', 'No email')}
               </p>

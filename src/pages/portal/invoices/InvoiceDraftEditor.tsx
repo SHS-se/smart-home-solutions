@@ -59,7 +59,7 @@ interface Invoice {
   subtotal: number | null;
   tax: number | null;
   total: number | null;
-  customer?: { id: string; org_name: string | null; billing_email?: string | null } | null;
+  customer?: { id: string; name: string | null; billing_email?: string | null } | null;
   bom?: { id: string; project_name: string; version: number } | null;
 }
 
@@ -91,7 +91,7 @@ const InvoiceDraftEditor: React.FC = () => {
       if (!invoiceId) return null;
       const { data, error } = await supabase
         .from('invoices')
-        .select('*, customer:customers(id, org_name, billing_email), bom:boms(id, project_name, version)')
+        .select('*, customer:customers(id, name, billing_email), bom:boms(id, project_name, version)')
         .eq('id', invoiceId)
         .single();
       if (error) throw error;
@@ -142,8 +142,8 @@ const InvoiceDraftEditor: React.FC = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('customers')
-        .select('id, org_name')
-        .order('org_name');
+        .select('id, name')
+        .order('name');
       if (error) throw error;
       return data;
     },
@@ -650,7 +650,7 @@ const InvoiceDraftEditor: React.FC = () => {
             <div className="flex flex-wrap items-center gap-4 mt-2 text-sm">
               <span>
                 <span className="text-muted-foreground">{t('Kund:', 'Customer:')}</span>{' '}
-                <strong>{customer.org_name}</strong>
+                <strong>{customer.name}</strong>
               </span>
               <Badge variant="outline">{t('Utkast', 'Draft')}</Badge>
               {isTest && <Badge variant="outline">Test</Badge>}
@@ -691,7 +691,7 @@ const InvoiceDraftEditor: React.FC = () => {
                       </SelectTrigger>
                       <SelectContent>
                         {customers.map(c => (
-                          <SelectItem key={c.id} value={c.id}>{c.org_name}</SelectItem>
+                          <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
