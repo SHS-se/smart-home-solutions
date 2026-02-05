@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   Table,
   TableBody,
@@ -34,26 +35,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { ArrowLeft, Plus, Trash2, FileText, Package, Pencil, Check, X, Copy, BadgePlus, ScrollText, Save } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, FileText, Package, Pencil, Check, X, Copy, ScrollText, Save, Info } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import SKUSelector from '@/components/portal/boms/SKUSelector';
 import TemplateSelector from '@/components/portal/boms/TemplateSelector';
 import QuantityInput from '@/components/portal/boms/QuantityInput';
-import PricingRevisionDropdown from '@/components/portal/boms/PricingRevisionDropdown';
-import { useBomPricingRevisions } from '@/hooks/use-bom-pricing-revisions';
 
 interface BOMItem {
   id: string;
   sku_id: string;
   quantity: number;
   cost_ex_vat_at_time: number | null;
-  sell_price_ex_vat_at_time: number | null;
-  vat_rate_at_time: number | null;
-  sell_price_inc_vat_at_time: number | null;
-  pricing_source: string | null;
-  // Legacy fields
-  cost: number | null;
-  sell_price: number | null;
   sku: {
     sku: string;
     name: string;
@@ -116,7 +108,7 @@ const BOMBuilder: React.FC = () => {
     enabled: isStaff && !!id,
   });
 
-  // Fetch BOM items with SKU pricing data
+  // Fetch BOM items with SKU data (scope only - no pricing)
   const { data: items = [] } = useQuery({
     queryKey: ['bom_items', id],
     queryFn: async () => {
@@ -138,17 +130,6 @@ const BOMBuilder: React.FC = () => {
     },
     enabled: isStaff && !!id,
   });
-
-  // Pricing revisions hook
-  const {
-    revisions,
-    latestRevision,
-    createRevision,
-    isCreatingRevision,
-    revertRevision,
-    isReverting,
-    ensureRevisionExists,
-  } = useBomPricingRevisions(id, t);
 
   // Fetch customers for selector
   const { data: customers = [] } = useQuery({
@@ -186,10 +167,8 @@ const BOMBuilder: React.FC = () => {
   // Create new BOM version mutation
   const createNewVersionMutation = useMutation({
     mutationFn: async () => {
-      // Get the max version for this project
       const newVersion = (bom?.version ?? 1) + 1;
 
-      // Create new BOM with incremented version
       const { data: newBom, error: bomError } = await supabase
         .from('boms')
         .insert({
@@ -201,19 +180,13 @@ const BOMBuilder: React.FC = () => {
         .single();
       if (bomError) throw bomError;
 
-      // Copy all items to new BOM
+      // Copy all items to new BOM (scope only)
       if (items.length > 0) {
         const newItems = items.map(item => ({
           bom_id: newBom.id,
           sku_id: item.sku_id,
           quantity: item.quantity,
           cost_ex_vat_at_time: item.cost_ex_vat_at_time,
-          sell_price_ex_vat_at_time: item.sell_price_ex_vat_at_time,
-          vat_rate_at_time: item.vat_rate_at_time,
-          sell_price_inc_vat_at_time: item.sell_price_inc_vat_at_time,
-          pricing_source: item.pricing_source,
-          cost: item.cost,
-          sell_price: item.sell_price,
         }));
 
         const { error: itemsError } = await supabase
@@ -237,13 +210,13 @@ const BOMBuilder: React.FC = () => {
     },
   });
 
-  // Add item mutation with VAT-aware snapshot
+  // Add item mutation (scope only - just sku_id, quantity, cost reference)
   const addItemMutation = useMutation({
     mutationFn: async (data: { sku_id: string; quantity: number }) => {
-      // Fetch SKU details with pricing
+      // Fetch SKU cost for internal reference
       const { data: sku, error: skuError } = await supabase
         .from('skus')
-        .select('cost_ex_vat_computed, vat_rate, sell_price_ex_vat, sell_price_inc_vat')
+        .select('cost_ex_vat_computed')
         .eq('id', data.sku_id)
         .single();
       if (skuError) throw skuError;
@@ -252,15 +225,7 @@ const BOMBuilder: React.FC = () => {
         bom_id: id,
         sku_id: data.sku_id,
         quantity: data.quantity,
-        // Snapshot current pricing
         cost_ex_vat_at_time: sku.cost_ex_vat_computed,
-        sell_price_ex_vat_at_time: sku.sell_price_ex_vat,
-        vat_rate_at_time: sku.vat_rate,
-        sell_price_inc_vat_at_time: sku.sell_price_inc_vat,
-        pricing_source: 'sku',
-        // Legacy fields for compatibility
-        cost: sku.cost_ex_vat_computed,
-        sell_price: sku.sell_price_ex_vat,
       }, { onConflict: 'bom_id,sku_id' });
       if (error) throw error;
     },
@@ -315,7 +280,6 @@ const BOMBuilder: React.FC = () => {
           supabase.from('bom_items').update({ quantity }).eq('id', itemId)
         )
       );
-      // Wait for refetch to complete BEFORE clearing local state
       await queryClient.invalidateQueries({ queryKey: ['bom_items', id] });
       setLocalQuantities({});
       toast({ title: t('Ändringar sparade', 'Changes saved') });
@@ -337,74 +301,73 @@ const BOMBuilder: React.FC = () => {
     },
   });
 
-  // Calculate totals using local quantities for live preview
+  // Calculate scope-only totals
   const totals = items.reduce(
     (acc, item) => {
       const qty = localQuantities[item.id] ?? item.quantity;
-      const unitCostEx = item.cost_ex_vat_at_time ?? item.cost ?? 0;
-      const unitSellEx = item.sell_price_ex_vat_at_time ?? item.sell_price ?? 0;
-      const vatRate = item.vat_rate_at_time ?? 0.25;
-      const unitSellInc = item.sell_price_inc_vat_at_time ?? unitSellEx * (1 + vatRate);
-      
+      const unitCostEx = item.cost_ex_vat_at_time ?? 0;
       const costEx = unitCostEx * qty;
-      const sellEx = unitSellEx * qty;
-      const sellInc = unitSellInc * qty;
-      const vatAmount = sellInc - sellEx;
       
       return {
         costEx: acc.costEx + costEx,
-        sellEx: acc.sellEx + sellEx,
-        vatAmount: acc.vatAmount + vatAmount,
-        sellInc: acc.sellInc + sellInc,
-        margin: acc.margin + (sellEx - costEx),
         items: acc.items + qty,
       };
     },
-    { costEx: 0, sellEx: 0, vatAmount: 0, sellInc: 0, margin: 0, items: 0 }
+    { costEx: 0, items: 0 }
   );
 
-  const marginPercent = totals.costEx > 0 ? ((totals.sellEx - totals.costEx) / totals.costEx) * 100 : 0;
-
-  // Create quote from BOM - copies individual items as quote_lines snapshots
+  // Create quote from BOM - fetches current SKU pricing at creation time
   const createQuote = async () => {
     try {
-      // Use current items directly (no pending changes allowed when button is enabled)
       const freshItems = items;
 
-      // Ensure a pricing revision exists (create r1 if none)
-      const revision = await ensureRevisionExists(freshItems);
+      // Fetch current SKU pricing for all items
+      const skuIds = freshItems.map(i => i.sku_id);
+      const { data: skuPricing, error: skuError } = await supabase
+        .from('skus')
+        .select('id, sell_price_ex_vat, sell_price_inc_vat, vat_rate, cost_ex_vat_computed')
+        .in('id', skuIds);
+      if (skuError) throw skuError;
+
+      const skuMap = new Map((skuPricing || []).map(s => [s.id, s]));
 
       const { data: quote, error } = await supabase
         .from('quotes')
         .insert({
           bom_id: id,
           bom_version: bom?.version ?? 1,
-          bom_price_revision_id: revision.id,
           customer_id: bom?.customer_id || null,
         })
         .select()
         .single();
       if (error) throw error;
 
-      // Create individual hardware quote_lines for each BOM item (snapshot)
-      // This ensures quote is independent of BOM - edits to quote don't mutate BOM
-      const hardwareLines = freshItems.map(item => ({
-        quote_id: quote.id,
-        section: 'hardware',
-        description: item.sku.name,
-        quantity: item.quantity,
-        unit_price: item.sell_price_ex_vat_at_time ?? item.sell_price ?? 0,
-        unit_price_ex_vat: item.sell_price_ex_vat_at_time ?? item.sell_price ?? 0,
-        vat_rate: item.vat_rate_at_time ?? 0.25,
-        unit_price_inc_vat: item.sell_price_inc_vat_at_time ?? ((item.sell_price_ex_vat_at_time ?? item.sell_price ?? 0) * 1.25),
-        sku_id: item.sku_id,
-        original_sku_name: item.sku.name,
-        original_sku_code: item.sku.sku,
-        cost_ex_vat_at_time: item.cost_ex_vat_at_time ?? item.cost ?? 0,
-        pricing_source: 'bom',
-        source_bom_id: id,
-        source_bom_item_id: item.id,
-      }));
+      // Create hardware quote_lines with current SKU pricing snapshot
+      const hardwareLines = freshItems.map(item => {
+        const sku = skuMap.get(item.sku_id);
+        const sellExVat = sku?.sell_price_ex_vat ?? 0;
+        const vatRate = sku?.vat_rate ?? 0.25;
+        const sellIncVat = sku?.sell_price_inc_vat ?? (sellExVat * (1 + vatRate));
+
+        return {
+          quote_id: quote.id,
+          section: 'hardware',
+          description: item.sku.name,
+          quantity: item.quantity,
+          unit_price: sellExVat,
+          unit_price_ex_vat: sellExVat,
+          vat_rate: vatRate,
+          unit_price_inc_vat: sellIncVat,
+          sku_id: item.sku_id,
+          original_sku_name: item.sku.name,
+          original_sku_code: item.sku.sku,
+          cost_ex_vat_at_time: sku?.cost_ex_vat_computed ?? item.cost_ex_vat_at_time ?? 0,
+          pricing_source: 'sku',
+          source_bom_id: id,
+          source_bom_item_id: item.id,
+          source_bom_version: bom?.version ?? 1,
+        };
+      });
 
       if (hardwareLines.length > 0) {
         const { error: linesError } = await supabase.from('quote_lines').insert(hardwareLines);
@@ -439,31 +402,11 @@ const BOMBuilder: React.FC = () => {
     }
   };
 
-  // Handle create pricing revision
-  const handleCreatePricingRevision = () => {
-    createRevision(items);
-  };
-
-  // Handle revert pricing revision
-  const handleRevertRevision = (targetRevision: any) => {
-    revertRevision({ targetRevision, currentBomItems: items });
-  };
-
   // Redirect if not staff
   if (!authLoading && !isStaff) {
     navigate('/portal');
     return null;
   }
-
-  // Get margin status
-  const getMarginStatus = () => {
-    if (marginPercent >= 40) return { label: 'Utmärkt', color: 'text-green-600' };
-    if (marginPercent >= 25) return { label: 'Bra', color: 'text-primary' };
-    if (marginPercent >= 15) return { label: 'OK', color: 'text-yellow-600' };
-    return { label: 'Låg', color: 'text-destructive' };
-  };
-
-  const marginStatus = getMarginStatus();
 
   const formatPrice = (value: number) => value.toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 
@@ -481,17 +424,9 @@ const BOMBuilder: React.FC = () => {
           <div className="flex-1">
             <div className="flex items-center gap-3 flex-wrap">
               <h1 className="text-2xl font-bold">BOM Builder</h1>
-              {/* BOM Version Badge */}
               <Badge variant="outline" className="font-mono">
                 BOM v{bom?.version || 1}
               </Badge>
-              {/* Pricing Revision Dropdown */}
-              <PricingRevisionDropdown
-                revisions={revisions}
-                latestRevision={latestRevision}
-                onRevert={handleRevertRevision}
-                isReverting={isReverting}
-              />
             </div>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-1">
               {/* Customer selector */}
@@ -599,7 +534,18 @@ const BOMBuilder: React.FC = () => {
           </div>
         </div>
 
-        {/* Actions - outside grid for proper alignment */}
+        {/* Scope info note */}
+        <Alert>
+          <Info className="h-4 w-4" />
+          <AlertDescription>
+            {t(
+              'BOM beskriver vad som ska installeras. Priser hanteras i offerten.',
+              'BOM describes what will be installed. Prices are managed in the quote.'
+            )}
+          </AlertDescription>
+        </Alert>
+
+        {/* Actions */}
         <div className="flex flex-wrap gap-2 mb-4">
           <Button onClick={() => setIsSKUSelectorOpen(true)}>
             <Plus className="h-4 w-4 mr-2" />
@@ -609,16 +555,6 @@ const BOMBuilder: React.FC = () => {
             <Package className="h-4 w-4 mr-2" />
             {t('Lägg till från mall', 'Add from template')}
           </Button>
-          {items.length > 0 && (
-            <Button 
-              variant="outline" 
-              onClick={handleCreatePricingRevision}
-              disabled={isCreatingRevision}
-            >
-              <BadgePlus className="h-4 w-4 mr-2" />
-              {t('Skapa ny prisrevision', 'Create new pricing revision')}
-            </Button>
-          )}
           <Button
             variant="outline"
             onClick={() => setIsNewVersionDialogOpen(true)}
@@ -630,7 +566,7 @@ const BOMBuilder: React.FC = () => {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-          {/* Main Content - Items Table */}
+          {/* Main Content - Items Table (scope only) */}
           <div className="lg:col-span-2">
             <Card>
               <Table>
@@ -640,29 +576,21 @@ const BOMBuilder: React.FC = () => {
                     <TableHead className="text-xs uppercase">{t('Produktnamn', 'Product Name')}</TableHead>
                     <TableHead className="text-xs uppercase text-center">{t('Antal', 'Qty')}</TableHead>
                     <TableHead className="text-xs uppercase text-right">{t('Kostnad ex', 'Cost ex')}</TableHead>
-                    <TableHead className="text-xs uppercase text-right">{t('Sälj ex', 'Sell ex')}</TableHead>
-                    <TableHead className="text-xs uppercase text-right">{t('Sälj inkl', 'Sell incl')}</TableHead>
-                    <TableHead className="text-xs uppercase text-center">{t('Marginal', 'Margin')}</TableHead>
                     <TableHead></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {items.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                      <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
                         {t('Lägg till SKUs för att börja bygga din BOM', 'Add SKUs to start building your BOM')}
                       </TableCell>
                     </TableRow>
                   ) : (
                     items.map(item => {
                       const qty = localQuantities[item.id] ?? item.quantity;
-                      const unitCostEx = item.cost_ex_vat_at_time ?? item.cost ?? 0;
-                      const unitSellEx = item.sell_price_ex_vat_at_time ?? item.sell_price ?? 0;
-                      const unitSellInc = item.sell_price_inc_vat_at_time ?? unitSellEx * 1.25;
+                      const unitCostEx = item.cost_ex_vat_at_time ?? 0;
                       const costEx = unitCostEx * qty;
-                      const sellEx = unitSellEx * qty;
-                      const sellInc = unitSellInc * qty;
-                      const marginPct = unitCostEx > 0 ? Math.round(((unitSellEx - unitCostEx) / unitCostEx) * 100) : null;
                       
                       return (
                         <TableRow key={item.id}>
@@ -677,17 +605,6 @@ const BOMBuilder: React.FC = () => {
                           </TableCell>
                           <TableCell className="text-right text-muted-foreground">
                             {costEx ? `${formatPrice(costEx)} kr` : '—'}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {sellEx ? `${formatPrice(sellEx)} kr` : '—'}
-                          </TableCell>
-                          <TableCell className="text-right font-medium">
-                            {sellInc ? `${formatPrice(sellInc)} kr` : '—'}
-                          </TableCell>
-                          <TableCell className="text-center">
-                            <span className={marginPct && marginPct >= 25 ? 'text-primary' : 'text-muted-foreground'}>
-                              {marginPct !== null ? `${marginPct}%` : '—'}
-                            </span>
                           </TableCell>
                           <TableCell>
                             <Button
@@ -707,55 +624,14 @@ const BOMBuilder: React.FC = () => {
             </Card>
           </div>
 
-          {/* Summary Sidebar */}
+          {/* Summary Sidebar (scope only) */}
           <div className="space-y-4">
             <Card>
               <CardHeader>
                 <CardTitle>{t('Sammanfattning', 'Summary')}</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">{t('Total kostnad (ex moms)', 'Total cost (ex VAT)')}:</span>
-                  <span className="font-medium">{formatPrice(totals.costEx)} kr</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">{t('Total säljpris (ex moms)', 'Total sell (ex VAT)')}:</span>
-                  <span className="font-medium">{formatPrice(totals.sellEx)} kr</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">{t('Moms (25%)', 'VAT (25%)')}:</span>
-                  <span className="font-medium">{formatPrice(totals.vatAmount)} kr</span>
-                </div>
-                <div className="border-t border-border pt-4 flex justify-between">
-                  <span className="font-medium">{t('Totalt (inkl moms)', 'Total (incl VAT)')}:</span>
-                  <span className="text-xl font-bold text-primary">{formatPrice(totals.sellInc)} kr</span>
-                </div>
-
-                <div className="border-t border-border pt-4 space-y-2">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">{t('Marginal (kr)', 'Margin (kr)')}:</span>
-                    <span className="font-medium text-primary">+{formatPrice(totals.margin)} kr</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">{t('Marginal (%)', 'Margin (%)')}:</span>
-                    <span className="font-medium text-primary">{marginPercent.toFixed(1)}%</span>
-                  </div>
-                </div>
-
-                <div className="border-t border-border pt-4">
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="text-muted-foreground">{t('Marginal status', 'Margin status')}</span>
-                    <span className={`font-medium ${marginStatus.color}`}>{marginStatus.label}</span>
-                  </div>
-                  <div className="w-full bg-muted rounded-full h-2">
-                    <div 
-                      className="bg-primary h-2 rounded-full transition-all"
-                      style={{ width: `${Math.min(100, marginPercent * 2)}%` }}
-                    />
-                  </div>
-                </div>
-
-                <div className="border-t border-border pt-4 space-y-2 text-sm">
+                <div className="space-y-2 text-sm">
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">{t('Antal SKUs', 'SKU count')}:</span>
                     <span>{items.length}</span>
@@ -764,6 +640,11 @@ const BOMBuilder: React.FC = () => {
                     <span className="text-muted-foreground">{t('Totalt antal enheter', 'Total units')}:</span>
                     <span>{totals.items}</span>
                   </div>
+                </div>
+
+                <div className="border-t border-border pt-4 flex justify-between">
+                  <span className="text-muted-foreground">{t('Total kostnad (ex moms)', 'Total cost (ex VAT)')}:</span>
+                  <span className="font-medium">{formatPrice(totals.costEx)} kr</span>
                 </div>
               </CardContent>
             </Card>

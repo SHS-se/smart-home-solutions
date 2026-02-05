@@ -175,9 +175,7 @@ const InvoiceDraftEditor: React.FC = () => {
           id,
           sku_id,
           quantity,
-          sell_price_ex_vat_at_time,
-          sell_price_inc_vat_at_time,
-          vat_rate_at_time,
+          cost_ex_vat_at_time,
           skus!bom_items_sku_id_fkey(sku, name, sell_price_ex_vat, vat_rate)
         `)
         .eq('bom_id', selectedBomId);
@@ -192,8 +190,8 @@ const InvoiceDraftEditor: React.FC = () => {
     if (bomItems && bomItems.length > 0 && !invoiceId) {
       const hardwareItems: LineItem[] = bomItems.map((item, idx) => {
         const sku = item.skus as { sku: string; name: string; sell_price_ex_vat: number | null; vat_rate: number } | null;
-        const unitPrice = item.sell_price_ex_vat_at_time ?? sku?.sell_price_ex_vat ?? 0;
-        const vatRateRaw = item.vat_rate_at_time ?? sku?.vat_rate;
+        const unitPrice = sku?.sell_price_ex_vat ?? 0;
+        const vatRateRaw = sku?.vat_rate;
         const vatRatePct = vatRateRaw == null ? 25 : vatRateRaw <= 1 ? vatRateRaw * 100 : vatRateRaw;
         return {
           id: crypto.randomUUID(),
@@ -490,8 +488,8 @@ const InvoiceDraftEditor: React.FC = () => {
 
     const hardwareItems: LineItem[] = bomItems.map((item, idx) => {
       const sku = item.skus as { sku: string; name: string; sell_price_ex_vat: number | null; vat_rate: number } | null;
-      const unitPrice = item.sell_price_ex_vat_at_time ?? sku?.sell_price_ex_vat ?? 0;
-      const vatRateRaw = item.vat_rate_at_time ?? sku?.vat_rate;
+      const unitPrice = sku?.sell_price_ex_vat ?? 0;
+      const vatRateRaw = sku?.vat_rate;
       const vatRatePct = vatRateRaw == null ? 25 : vatRateRaw <= 1 ? vatRateRaw * 100 : vatRateRaw;
       return {
         id: crypto.randomUUID(),
