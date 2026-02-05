@@ -315,8 +315,9 @@ const BOMBuilder: React.FC = () => {
           supabase.from('bom_items').update({ quantity }).eq('id', itemId)
         )
       );
+      // Wait for refetch to complete BEFORE clearing local state
+      await queryClient.invalidateQueries({ queryKey: ['bom_items', id] });
       setLocalQuantities({});
-      queryClient.invalidateQueries({ queryKey: ['bom_items', id] });
       toast({ title: t('Ändringar sparade', 'Changes saved') });
     } catch (error: any) {
       toast({ title: t('Kunde inte spara', 'Failed to save'), description: error.message, variant: 'destructive' });
