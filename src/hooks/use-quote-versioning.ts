@@ -254,7 +254,6 @@ export function useQuoteVersioning(quoteId: string | undefined) {
       const { data: newQuote, error: createError } = await supabase
         .from('quotes')
         .insert({
-          // New versions don't get a quote_number until sent to Stripe
           version: newVersion,
           parent_quote_id: rootId,
           supersedes_quote_id: currentQuote.id,

@@ -568,10 +568,8 @@ const QuotePreparation: React.FC = () => {
           {quote?.bom?.project_name && (
             <span>{t('Projekt', 'Project')}: <span className="text-foreground">{quote.bom.project_name}</span></span>
           )}
-          {quote?.quote_number ? (
+          {quote?.quote_number && (
             <span>{t('Offert', 'Quote')}: <span className="text-foreground font-mono">{quote.quote_number}</span></span>
-          ) : (
-            <span className="text-muted-foreground italic">{t('Inget offertnummer ännu', 'No quote number yet')}</span>
           )}
         </div>
 
