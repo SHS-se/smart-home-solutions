@@ -454,8 +454,8 @@ const QuotePreparation: React.FC = () => {
   const currentVersion = quoteFamily.find(v => v.id === id);
   const isLatestVersion = currentVersion?.is_latest ?? true;
   const quoteStatus = quote?.status || 'draft';
-  const isEditable = isLatestVersion && quoteStatus === 'draft';
-  const canSend = isLatestVersion && quoteStatus === 'draft' && !!quote?.customer_id && hardwareLines.length > 0;
+  const isEditable = isLatestVersion && (quoteStatus === 'draft' || quoteStatus === 'revision_requested');
+  const canSend = isLatestVersion && (quoteStatus === 'draft' || quoteStatus === 'revision_requested') && !!quote?.customer_id && hardwareLines.length > 0;
   const canCreateInvoice = quoteStatus === 'accepted' && !!quote?.customer_id;
 
   // Status badge helper
