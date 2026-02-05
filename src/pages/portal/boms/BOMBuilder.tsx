@@ -599,38 +599,36 @@ const BOMBuilder: React.FC = () => {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Main Content */}
           <div className="lg:col-span-2 space-y-4">
-            {/* Actions - all in one row */}
+            {/* Actions */}
             <div className="flex flex-wrap gap-2">
-              <Button size="sm" onClick={() => setIsSKUSelectorOpen(true)}>
-                <Plus className="h-4 w-4 mr-1" />
+              <Button onClick={() => setIsSKUSelectorOpen(true)}>
+                <Plus className="h-4 w-4 mr-2" />
                 {t('Lägg till SKU', 'Add SKU')}
               </Button>
-              <Button size="sm" variant="outline" onClick={() => setIsTemplateSelectorOpen(true)}>
-                <Package className="h-4 w-4 mr-1" />
-                {t('Från mall', 'From template')}
+              <Button variant="outline" onClick={() => setIsTemplateSelectorOpen(true)}>
+                <Package className="h-4 w-4 mr-2" />
+                {t('Lägg till från mall', 'Add from template')}
               </Button>
               {items.length > 0 && (
                 <Button 
-                  size="sm"
                   variant="outline" 
                   onClick={handleCreatePricingRevision}
                   disabled={isCreatingRevision}
                 >
-                  <BadgePlus className="h-4 w-4 mr-1" />
-                  {t('Ny prisrevision', 'New pricing rev')}
+                  <BadgePlus className="h-4 w-4 mr-2" />
+                  {t('Skapa ny prisrevision', 'Create new pricing revision')}
                 </Button>
               )}
               <Button
-                size="sm"
                 variant="outline"
                 onClick={() => setIsNewVersionDialogOpen(true)}
                 disabled={createNewVersionMutation.isPending}
               >
-                <Copy className="h-4 w-4 mr-1" />
-                {t('Ny BOM-revision', 'New BOM rev')}
+                <Copy className="h-4 w-4 mr-2" />
+                {t('Skapa ny BOM-revision', 'Create new BOM revision')}
               </Button>
             </div>
 
