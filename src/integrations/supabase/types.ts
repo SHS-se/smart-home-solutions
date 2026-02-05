@@ -244,6 +244,13 @@ export type Database = {
             referencedRelation: "customers"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "boms_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers_with_identity"
+            referencedColumns: ["id"]
+          },
         ]
       }
       contact_messages: {
@@ -326,6 +333,13 @@ export type Database = {
             referencedRelation: "customers"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "contacts_converted_to_customer_id_fkey"
+            columns: ["converted_to_customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers_with_identity"
+            referencedColumns: ["id"]
+          },
         ]
       }
       customers: {
@@ -335,10 +349,11 @@ export type Database = {
           billing_postcode: string | null
           billing_same_as_site: boolean | null
           billing_street: string | null
+          contact_id: string | null
           created_at: string
           id: string
           is_test: boolean
-          org_name: string | null
+          name: string | null
           phone: string | null
           site_city: string | null
           site_postcode: string | null
@@ -351,10 +366,11 @@ export type Database = {
           billing_postcode?: string | null
           billing_same_as_site?: boolean | null
           billing_street?: string | null
+          contact_id?: string | null
           created_at?: string
           id?: string
           is_test?: boolean
-          org_name?: string | null
+          name?: string | null
           phone?: string | null
           site_city?: string | null
           site_postcode?: string | null
@@ -367,17 +383,26 @@ export type Database = {
           billing_postcode?: string | null
           billing_same_as_site?: boolean | null
           billing_street?: string | null
+          contact_id?: string | null
           created_at?: string
           id?: string
           is_test?: boolean
-          org_name?: string | null
+          name?: string | null
           phone?: string | null
           site_city?: string | null
           site_postcode?: string | null
           site_street?: string | null
           user_id?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "customers_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       invoice_events: {
         Row: {
@@ -589,6 +614,13 @@ export type Database = {
             columns: ["customer_id"]
             isOneToOne: false
             referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invoices_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers_with_identity"
             referencedColumns: ["id"]
           },
           {
@@ -896,6 +928,13 @@ export type Database = {
             columns: ["customer_id"]
             isOneToOne: false
             referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "quotes_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers_with_identity"
             referencedColumns: ["id"]
           },
           {
@@ -1360,10 +1399,48 @@ export type Database = {
             referencedRelation: "customers"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "tickets_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers_with_identity"
+            referencedColumns: ["id"]
+          },
         ]
       }
     }
     Views: {
+      customers_with_identity: {
+        Row: {
+          billing_city: string | null
+          billing_email: string | null
+          billing_postcode: string | null
+          billing_same_as_site: boolean | null
+          billing_street: string | null
+          contact_email: string | null
+          contact_id: string | null
+          contact_name: string | null
+          contact_phone: string | null
+          created_at: string | null
+          id: string | null
+          is_test: boolean | null
+          name: string | null
+          phone: string | null
+          site_city: string | null
+          site_postcode: string | null
+          site_street: string | null
+          user_id: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "customers_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       invoice_computed_totals: {
         Row: {
           invoice_id: string | null
@@ -1391,10 +1468,32 @@ export type Database = {
         Args: { storage_path: string }
         Returns: boolean
       }
+      check_contacts_customers_integrity: {
+        Args: never
+        Returns: {
+          check_name: string
+          issue_count: number
+          sample_ids: string
+        }[]
+      }
+      dedupe_contacts_by_email: {
+        Args: never
+        Returns: {
+          contacts_reassigned: number
+          duplicates_removed: number
+        }[]
+      }
       get_customer_id_for_user: { Args: { _user_id: string }; Returns: string }
       is_admin: { Args: { _user_id: string }; Returns: boolean }
       is_staff: { Args: { _user_id: string }; Returns: boolean }
       is_staff_table_empty: { Args: never; Returns: boolean }
+      repair_contacts_customers_integrity: {
+        Args: never
+        Returns: {
+          action_taken: string
+          rows_affected: number
+        }[]
+      }
       sku_compute_pricing: {
         Args: {
           p_category_id: string
