@@ -599,40 +599,39 @@ const BOMBuilder: React.FC = () => {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-          {/* Main Content */}
-          <div className="lg:col-span-2 space-y-4">
-            {/* Actions */}
-            <div className="flex flex-wrap gap-2">
-              <Button onClick={() => setIsSKUSelectorOpen(true)}>
-                <Plus className="h-4 w-4 mr-2" />
-                {t('Lägg till SKU', 'Add SKU')}
-              </Button>
-              <Button variant="outline" onClick={() => setIsTemplateSelectorOpen(true)}>
-                <Package className="h-4 w-4 mr-2" />
-                {t('Lägg till från mall', 'Add from template')}
-              </Button>
-              {items.length > 0 && (
-                <Button 
-                  variant="outline" 
-                  onClick={handleCreatePricingRevision}
-                  disabled={isCreatingRevision}
-                >
-                  <BadgePlus className="h-4 w-4 mr-2" />
-                  {t('Skapa ny prisrevision', 'Create new pricing revision')}
-                </Button>
-              )}
-              <Button
-                variant="outline"
-                onClick={() => setIsNewVersionDialogOpen(true)}
-                disabled={createNewVersionMutation.isPending}
-              >
-                <Copy className="h-4 w-4 mr-2" />
-                {t('Skapa ny BOM-revision', 'Create new BOM revision')}
-              </Button>
-            </div>
+        {/* Actions - outside grid for proper alignment */}
+        <div className="flex flex-wrap gap-2 mb-4">
+          <Button onClick={() => setIsSKUSelectorOpen(true)}>
+            <Plus className="h-4 w-4 mr-2" />
+            {t('Lägg till SKU', 'Add SKU')}
+          </Button>
+          <Button variant="outline" onClick={() => setIsTemplateSelectorOpen(true)}>
+            <Package className="h-4 w-4 mr-2" />
+            {t('Lägg till från mall', 'Add from template')}
+          </Button>
+          {items.length > 0 && (
+            <Button 
+              variant="outline" 
+              onClick={handleCreatePricingRevision}
+              disabled={isCreatingRevision}
+            >
+              <BadgePlus className="h-4 w-4 mr-2" />
+              {t('Skapa ny prisrevision', 'Create new pricing revision')}
+            </Button>
+          )}
+          <Button
+            variant="outline"
+            onClick={() => setIsNewVersionDialogOpen(true)}
+            disabled={createNewVersionMutation.isPending}
+          >
+            <Copy className="h-4 w-4 mr-2" />
+            {t('Skapa ny BOM-revision', 'Create new BOM revision')}
+          </Button>
+        </div>
 
-            {/* Items Table */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+          {/* Main Content - Items Table */}
+          <div className="lg:col-span-2">
             <Card>
               <Table>
                 <TableHeader>
