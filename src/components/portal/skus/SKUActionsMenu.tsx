@@ -1,5 +1,5 @@
 import React from 'react';
-import { MoreHorizontal, TestTube, TestTubeDiagonal, Pencil, Trash2 } from 'lucide-react';
+import { MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -11,19 +11,13 @@ import {
 import { useLanguage } from '@/contexts/LanguageContext';
 
 interface SKUActionsMenuProps {
-  isTest: boolean;
   onEdit: () => void;
   onDelete: () => void;
-  onMarkTest: () => void;
-  onUnmarkTest: () => void;
 }
 
 const SKUActionsMenu: React.FC<SKUActionsMenuProps> = ({
-  isTest,
   onEdit,
   onDelete,
-  onMarkTest,
-  onUnmarkTest,
 }) => {
   const { t } = useLanguage();
 
@@ -40,19 +34,6 @@ const SKUActionsMenu: React.FC<SKUActionsMenuProps> = ({
           <Pencil className="mr-2 h-4 w-4" />
           {t('Redigera', 'Edit')}
         </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        {!isTest && (
-          <DropdownMenuItem onClick={onMarkTest}>
-            <TestTube className="mr-2 h-4 w-4" />
-            {t('Markera som test', 'Mark as test')}
-          </DropdownMenuItem>
-        )}
-        {isTest && (
-          <DropdownMenuItem onClick={onUnmarkTest}>
-            <TestTubeDiagonal className="mr-2 h-4 w-4" />
-            {t('Avmarkera test', 'Unmark test')}
-          </DropdownMenuItem>
-        )}
         <DropdownMenuSeparator />
         <DropdownMenuItem
           onClick={onDelete}
