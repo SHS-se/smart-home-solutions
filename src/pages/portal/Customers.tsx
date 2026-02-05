@@ -35,6 +35,9 @@ interface Customer {
   phone: string | null;
   created_at: string;
   is_test: boolean;
+  contact_name: string | null;
+  contact_email: string | null;
+  contact_phone: string | null;
 }
 
 type SortColumn = 'name' | 'billing_email' | 'phone';
@@ -65,12 +68,12 @@ const Customers: React.FC = () => {
 
     try {
       const { data, error } = await supabase
-        .from('customers')
-        .select('*')
+        .from('customers_with_identity')
+        .select('id, name, billing_email, phone, created_at, is_test, contact_name, contact_email, contact_phone')
         .order('name', { ascending: true });
 
       if (error) throw error;
-      setCustomers(data || []);
+      setCustomers((data || []) as Customer[]);
     } catch (error) {
       console.error('Error fetching customers:', error);
     } finally {
@@ -199,8 +202,8 @@ const Customers: React.FC = () => {
                           )}
                         </div>
                       </TableCell>
-                      <TableCell>{customer.billing_email || '-'}</TableCell>
-                      <TableCell>{customer.phone || '-'}</TableCell>
+                      <TableCell>{customer.contact_email || customer.billing_email || '-'}</TableCell>
+                      <TableCell>{customer.contact_phone || customer.phone || '-'}</TableCell>
                       <TableCell>
                         <CustomerActionsMenu
                           customerId={customer.id}

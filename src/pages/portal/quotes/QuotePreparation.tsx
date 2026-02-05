@@ -87,7 +87,7 @@ const QuotePreparation: React.FC = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('quotes')
-        .select('*, customers(name, billing_email), boms(id, project_name, version), bom_price_revisions(id, revision, note, created_at)')
+        .select('*, customers:customers_with_identity!quotes_customer_id_fkey(name, billing_email, contact_name, contact_email), boms(id, project_name, version), bom_price_revisions(id, revision, note, created_at)')
         .eq('id', id)
         .single();
       if (error) throw error;
