@@ -76,8 +76,6 @@ const PublicQuotePage: React.FC = () => {
 
   // Revision modal
   const [showRevisionModal, setShowRevisionModal] = useState(false);
-  const [revisionName, setRevisionName] = useState('');
-  const [revisionEmail, setRevisionEmail] = useState('');
   const [revisionMessage, setRevisionMessage] = useState('');
   const [isRequesting, setIsRequesting] = useState(false);
 
@@ -176,7 +174,7 @@ const PublicQuotePage: React.FC = () => {
   };
 
   const handleRevision = async () => {
-    if (!revisionName || !revisionEmail || !revisionMessage) return;
+    if (!revisionMessage) return;
     setIsRequesting(true);
     try {
       const response = await fetch(
@@ -187,7 +185,7 @@ const PublicQuotePage: React.FC = () => {
             'Content-Type': 'application/json',
             'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
           },
-          body: JSON.stringify({ quote_id: id, token, message: revisionMessage, name: revisionName, email: revisionEmail }),
+          body: JSON.stringify({ quote_id: id, token, message: revisionMessage }),
         }
       );
       const result = await response.json();
@@ -446,21 +444,13 @@ const PublicQuotePage: React.FC = () => {
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <Label htmlFor="rev-name">Namn</Label>
-              <Input id="rev-name" value={revisionName} onChange={e => setRevisionName(e.target.value)} placeholder="Ditt namn" />
-            </div>
-            <div>
-              <Label htmlFor="rev-email">E-post</Label>
-              <Input id="rev-email" type="email" value={revisionEmail} onChange={e => setRevisionEmail(e.target.value)} placeholder="din@email.se" />
-            </div>
-            <div>
               <Label htmlFor="rev-message">Meddelande</Label>
               <Textarea id="rev-message" value={revisionMessage} onChange={e => setRevisionMessage(e.target.value)} placeholder="Beskriv önskade ändringar..." rows={4} />
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowRevisionModal(false)}>Avbryt</Button>
-            <Button onClick={handleRevision} disabled={isRequesting || !revisionName || !revisionEmail || !revisionMessage}>
+            <Button onClick={handleRevision} disabled={isRequesting || !revisionMessage}>
               {isRequesting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Skicka
             </Button>

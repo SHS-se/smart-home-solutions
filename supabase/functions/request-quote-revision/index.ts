@@ -25,10 +25,10 @@ serve(async (req) => {
   }
 
   try {
-    const { quote_id, token, message, name, email } = await req.json();
+    const { quote_id, token, message } = await req.json();
 
-    if (!quote_id || !token || !message || !name || !email) {
-      return new Response(JSON.stringify({ error: "Missing required fields (quote_id, token, message, name, email)" }), {
+    if (!quote_id || !token || !message) {
+      return new Response(JSON.stringify({ error: "Missing required fields (quote_id, token, message)" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -40,7 +40,7 @@ serve(async (req) => {
 
     const { data: quote, error: quoteError } = await serviceClient
       .from("quotes")
-      .select("id, status, accept_token_hash, accept_token_expires_at, quote_number")
+      .select("id, status, accept_token_hash, accept_token_expires_at, quote_number, customer_id")
       .eq("id", quote_id)
       .single();
 
@@ -72,12 +72,22 @@ serve(async (req) => {
       });
     }
 
+    // Look up customer identity from the quote
+    const { data: customer } = await serviceClient
+      .from("customers_with_identity")
+      .select("name, contact_name, contact_email")
+      .eq("id", quote.customer_id)
+      .single();
+
+    const customerName = customer?.name || customer?.contact_name || "Kund";
+    const customerEmail = customer?.contact_email || "";
+
     // Insert message
     await serviceClient.from("quote_messages").insert({
       quote_id,
       author_type: "customer",
-      author_name: name,
-      author_email: email,
+      author_name: customerName,
+      author_email: customerEmail,
       body_markdown: message,
       source: "portal",
     });
@@ -93,15 +103,15 @@ serve(async (req) => {
         quote_id,
         event_type: "revision_requested",
         actor_type: "customer",
-        actor_email: email,
-        metadata: { name },
+        actor_email: customerEmail,
+        metadata: { name: customerName },
       },
       {
         quote_id,
         event_type: "message_posted",
         actor_type: "customer",
-        actor_email: email,
-        metadata: { name, preview: message.substring(0, 100) },
+        actor_email: customerEmail,
+        metadata: { name: customerName, preview: message.substring(0, 100) },
       },
     ]);
 
@@ -116,17 +126,17 @@ serve(async (req) => {
         subject: `Ändringsförfrågan: Offert ${quote.quote_number || quote_id}`,
         html: `
           <h2>Kunden begär ändring av offert ${quote.quote_number || ""}</h2>
-          <p><strong>Namn:</strong> ${name}</p>
-          <p><strong>E-post:</strong> ${email}</p>
+          <p><strong>Namn:</strong> ${customerName}</p>
+          <p><strong>E-post:</strong> ${customerEmail}</p>
           <p><strong>Meddelande:</strong></p>
           <blockquote style="border-left:3px solid #3b82f6;padding-left:12px;color:#333;">${message.replace(/\n/g, "<br>")}</blockquote>
         `,
-        text: `Ändringsförfrågan för offert ${quote.quote_number || quote_id}\n\nNamn: ${name}\nE-post: ${email}\n\nMeddelande:\n${message}`,
+        text: `Ändringsförfrågan för offert ${quote.quote_number || quote_id}\n\nNamn: ${customerName}\nE-post: ${customerEmail}\n\nMeddelande:\n${message}`,
       });
       logStep("Staff notification sent");
     }
 
-    logStep("Revision requested", { quoteId: quote_id, name });
+    logStep("Revision requested", { quoteId: quote_id, name: customerName });
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
