@@ -85,7 +85,7 @@ const BOMsList: React.FC = () => {
     queryKey: ['customers'],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('customers')
+        .from('customers_with_identity')
         .select('id, name');
       if (error) throw error;
       return naturalSort(data, 'name');

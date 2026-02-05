@@ -83,7 +83,7 @@ serve(async (req) => {
     // Fetch invoice
     const { data: invoice, error: invoiceError } = await supabaseClient
       .from('invoices')
-      .select('*, customer:customers(org_name, billing_email)')
+      .select('*, customer:customers_with_identity!invoices_customer_id_fkey(name, contact_email)')
       .eq('id', invoice_id)
       .single();
 

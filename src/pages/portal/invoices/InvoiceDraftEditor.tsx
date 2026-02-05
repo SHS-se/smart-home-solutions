@@ -91,7 +91,7 @@ const InvoiceDraftEditor: React.FC = () => {
       if (!invoiceId) return null;
       const { data, error } = await supabase
         .from('invoices')
-        .select('*, customer:customers(id, name, billing_email), bom:boms(id, project_name, version)')
+        .select('*, customer:customers_with_identity!invoices_customer_id_fkey(id, name, billing_email), bom:boms(id, project_name, version)')
         .eq('id', invoiceId)
         .single();
       if (error) throw error;

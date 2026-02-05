@@ -97,8 +97,8 @@ const handler = async (req: Request): Promise<Response> => {
 
     // Get customer details
     const { data: customer, error: customerError } = await supabaseAdmin
-      .from("customers")
-      .select("id, org_name, billing_email, user_id")
+      .from("customers_with_identity")
+      .select("id, name, contact_email, user_id")
       .eq("id", customer_id)
       .single();
 
@@ -109,9 +109,9 @@ const handler = async (req: Request): Promise<Response> => {
       );
     }
 
-    if (!customer.billing_email) {
+    if (!customer.contact_email) {
       return new Response(
-        JSON.stringify({ error: "Customer has no billing email set" }),
+        JSON.stringify({ error: "Customer has no email set" }),
         { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } }
       );
     }
@@ -126,7 +126,7 @@ const handler = async (req: Request): Promise<Response> => {
     // Check if user already exists with this email
     const { data: existingUsers } = await supabaseAdmin.auth.admin.listUsers();
     const existingUser = existingUsers?.users?.find(
-      (u) => u.email?.toLowerCase() === customer.billing_email?.toLowerCase()
+      (u) => u.email?.toLowerCase() === customer.contact_email?.toLowerCase()
     );
 
     let userId: string;
@@ -138,7 +138,7 @@ const handler = async (req: Request): Promise<Response> => {
       // Create new user with a random password (they'll reset it)
       const randomPassword = crypto.randomUUID() + crypto.randomUUID();
       const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
-        email: customer.billing_email,
+        email: customer.contact_email,
         password: randomPassword,
         email_confirm: true,
       });
@@ -174,7 +174,7 @@ const handler = async (req: Request): Promise<Response> => {
     
     const { data: linkData, error: linkGenError } = await supabaseAdmin.auth.admin.generateLink({
       type: "recovery",
-      email: customer.billing_email,
+      email: customer.contact_email,
       options: {
         redirectTo: `${appUrl}/reset-password`,
       },
@@ -218,7 +218,7 @@ const handler = async (req: Request): Promise<Response> => {
     // The simplest approach: just use the actionLink as-is since we set redirectTo.
 
     // Send welcome email with password setup link
-    const customerName = escapeHtml(customer.org_name || "Valued Customer");
+    const customerName = escapeHtml(customer.name || "Valued Customer");
 
     const htmlBody = `
       <!DOCTYPE html>
@@ -262,7 +262,7 @@ const handler = async (req: Request): Promise<Response> => {
       },
       body: JSON.stringify({
         from: "Smart Home Solutions <replyonly@mail.smarthomesolutions.se>",
-        to: [customer.billing_email],
+        to: [customer.contact_email],
         subject: "Welcome to the Customer Portal - Set Up Your Account",
         html: htmlBody,
       }),

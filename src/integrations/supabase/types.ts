@@ -345,7 +345,6 @@ export type Database = {
       customers: {
         Row: {
           billing_city: string | null
-          billing_email: string | null
           billing_postcode: string | null
           billing_same_as_site: boolean | null
           billing_street: string | null
@@ -353,8 +352,6 @@ export type Database = {
           created_at: string
           id: string
           is_test: boolean
-          name: string | null
-          phone: string | null
           site_city: string | null
           site_postcode: string | null
           site_street: string | null
@@ -362,7 +359,6 @@ export type Database = {
         }
         Insert: {
           billing_city?: string | null
-          billing_email?: string | null
           billing_postcode?: string | null
           billing_same_as_site?: boolean | null
           billing_street?: string | null
@@ -370,8 +366,6 @@ export type Database = {
           created_at?: string
           id?: string
           is_test?: boolean
-          name?: string | null
-          phone?: string | null
           site_city?: string | null
           site_postcode?: string | null
           site_street?: string | null
@@ -379,7 +373,6 @@ export type Database = {
         }
         Update: {
           billing_city?: string | null
-          billing_email?: string | null
           billing_postcode?: string | null
           billing_same_as_site?: boolean | null
           billing_street?: string | null
@@ -387,8 +380,6 @@ export type Database = {
           created_at?: string
           id?: string
           is_test?: boolean
-          name?: string | null
-          phone?: string | null
           site_city?: string | null
           site_postcode?: string | null
           site_street?: string | null

@@ -23,8 +23,8 @@ const CustomerViewAccount: React.FC = () => {
 
   const [formData, setFormData] = useState({
     name: '',
-    billing_email: '',
-    phone: '',
+    email: '',
+    phone: '' as string | null,
     site_street: '',
     site_postcode: '',
     site_city: '',
@@ -47,9 +47,9 @@ const CustomerViewAccount: React.FC = () => {
   useEffect(() => {
     if (customerData) {
       setFormData({
-        name: customerData.name || '',
-        billing_email: customerData.billing_email || '',
-        phone: customerData.phone || '',
+        name: customerData.contact_name || customerData.name || '',
+        email: customerData.contact_email || customerData.billing_email || '',
+        phone: customerData.contact_phone || customerData.phone || '',
         site_street: customerData.site_street || '',
         site_postcode: customerData.site_postcode || '',
         site_city: customerData.site_city || '',
@@ -74,26 +74,39 @@ const CustomerViewAccount: React.FC = () => {
     setSaving(true);
 
     try {
-      const updateData = {
-        name: formData.name || null,
-        billing_email: formData.billing_email || null,
-        phone: formData.phone || null,
+      // Update the customer's address fields
+      const customerUpdateData = {
         site_street: formData.site_street || null,
         site_postcode: formData.site_postcode || null,
         site_city: formData.site_city || null,
         billing_same_as_site: formData.billing_same_as_site,
-        // Only save billing address if different from site
         billing_street: formData.billing_same_as_site ? null : (formData.billing_street || null),
         billing_postcode: formData.billing_same_as_site ? null : (formData.billing_postcode || null),
         billing_city: formData.billing_same_as_site ? null : (formData.billing_city || null),
       };
 
-      const { error: updateError } = await supabase
+      const { error: customerError } = await supabase
         .from('customers')
-        .update(updateData)
+        .update(customerUpdateData)
         .eq('id', customerId);
 
-      if (updateError) throw updateError;
+      if (customerError) throw customerError;
+
+      // Update the contact's identity fields if we have a contact_id
+      if (customerData?.contact_id) {
+        const contactUpdateData = {
+          name: formData.name || null,
+          email: formData.email || null,
+          phone: formData.phone || null,
+        };
+
+        const { error: contactError } = await supabase
+          .from('contacts')
+          .update(contactUpdateData)
+          .eq('id', customerData.contact_id);
+
+        if (contactError) throw contactError;
+      }
 
       toast({
         title: t('Sparat!', 'Saved!'),
@@ -166,12 +179,12 @@ const CustomerViewAccount: React.FC = () => {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="billing_email">{t('Faktura-e-post', 'Billing email')}</Label>
+                <Label htmlFor="email">{t('E-post', 'Email')}</Label>
                 <Input
-                  id="billing_email"
-                  name="billing_email"
+                  id="email"
+                  name="email"
                   type="email"
-                  value={formData.billing_email}
+                  value={formData.email}
                   onChange={handleChange}
                 />
               </div>
