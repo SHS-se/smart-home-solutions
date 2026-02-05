@@ -175,7 +175,7 @@ const getErdDiagram = (direction: 'TB' | 'LR') => `erDiagram
         uuid customer_id FK
         uuid bom_id FK
         uuid created_by FK
-        text quote_number UK
+        text quote_number
         text status
         text stripe_quote_id UK
         timestamptz created_at

@@ -381,7 +381,7 @@ const BOMBuilder: React.FC = () => {
           bom_version: bom?.version ?? 1,
           bom_price_revision_id: revision.id,
           customer_id: bom?.customer_id || null,
-          quote_number: '',
+          // quote_number will be assigned by Stripe when sent
         })
         .select()
         .single();
@@ -588,7 +588,7 @@ const BOMBuilder: React.FC = () => {
                           variant={quote.is_latest ? "default" : "secondary"}
                           className="font-mono text-xs hover:bg-primary/80 cursor-pointer"
                         >
-                          #{quote.quote_number}
+                          {quote.quote_number ? `#${quote.quote_number}` : `v${quote.version}`}
                           {quote.version > 1 && ` v${quote.version}`}
                         </Badge>
                       </Link>

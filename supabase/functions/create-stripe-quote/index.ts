@@ -45,7 +45,6 @@ const productCache: Map<string, string> = new Map();
 
 /**
  * Get or create a Stripe product using idempotent lookup by SKU/identifier.
- * Caches results to avoid repeated API calls within the same invocation.
  */
 async function getOrCreateProduct(
   stripe: Stripe,
@@ -53,12 +52,10 @@ async function getOrCreateProduct(
   name: string,
   description?: string
 ): Promise<string> {
-  // Check in-memory cache first
   if (productCache.has(identifier)) {
     return productCache.get(identifier)!;
   }
 
-  // Search for existing product by metadata
   const existingProducts = await stripe.products.search({
     query: `metadata['sku_identifier']:'${identifier}'`,
     limit: 1,
@@ -70,7 +67,6 @@ async function getOrCreateProduct(
     return productId;
   }
 
-  // Create new product with metadata for future lookups
   const newProduct = await stripe.products.create({
     name,
     description: description || undefined,
@@ -86,21 +82,17 @@ async function getOrCreateProduct(
 
 /**
  * Get or create a Stripe tax rate for a given VAT percentage.
- * Caches results to avoid repeated API calls within the same invocation.
  */
 async function getOrCreateTaxRate(
   stripe: Stripe,
   vatRate: number
 ): Promise<string> {
-  // Normalize VAT rate to percentage (e.g., 0.25 -> 25)
   const percentage = Math.round(vatRate * 100);
   
-  // Check in-memory cache first
   if (taxRateCache.has(percentage)) {
     return taxRateCache.get(percentage)!;
   }
   
-  // Search for existing tax rate in Stripe
   const existingTaxRates = await stripe.taxRates.list({ 
     limit: 100, 
     active: true 
@@ -118,7 +110,6 @@ async function getOrCreateTaxRate(
     return matchingRate.id;
   }
   
-  // Create new tax rate if not found
   const displayName = percentage === 0 ? "Momsfritt" : `Moms ${percentage}%`;
   const newTaxRate = await stripe.taxRates.create({
     display_name: displayName,
@@ -134,14 +125,12 @@ async function getOrCreateTaxRate(
 
 /**
  * Normalize VAT rate to nearest supported rate.
- * Falls back to 25% if rate is unexpected.
  */
 function normalizeVatRate(rate: number | undefined | null): number {
   if (rate === undefined || rate === null) {
-    return 0.25; // Default to 25%
+    return 0.25;
   }
   
-  // Find closest supported rate
   const closest = SUPPORTED_VAT_RATES.reduce((prev, curr) => 
     Math.abs(curr - rate) < Math.abs(prev - rate) ? curr : prev
   );
@@ -165,7 +154,6 @@ serve(async (req) => {
       throw new Error("No authorization header");
     }
 
-    // Create client with user's auth context for RLS
     const supabaseClient = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_ANON_KEY") ?? "",
@@ -204,24 +192,7 @@ serve(async (req) => {
       travel_total 
     } = body;
 
-    // Fetch quote to get quote_number
-    const { data: quote, error: quoteError } = await supabaseClient
-      .from("quotes")
-      .select("quote_number")
-      .eq("id", quote_id)
-      .single();
-
-    if (quoteError || !quote) {
-      throw new Error("Quote not found");
-    }
-
-    // CRITICAL: quote_number is our legally valid identifier - must be present
-    if (!quote.quote_number) {
-      throw new Error("Quote number is missing - cannot create Stripe quote without a valid quote_number");
-    }
-
-    const quoteNumber = quote.quote_number;
-    console.log(`[CREATE-STRIPE-QUOTE] Creating Stripe quote for ${quoteNumber}`);
+    console.log(`[CREATE-STRIPE-QUOTE] Creating Stripe quote for internal ID ${quote_id}`);
 
     const stripe = new Stripe(stripeKey, {
       apiVersion: "2025-08-27.basil",
@@ -248,10 +219,7 @@ serve(async (req) => {
       quantity: number,
       vatRate: number
     ): Promise<Stripe.QuoteCreateParams.LineItem> {
-      // Get or create product using idempotent lookup
       const productId = await getOrCreateProduct(stripe, identifier, name, description);
-      
-      // Get tax rate ID for this line's VAT rate
       const normalizedVatRate = normalizeVatRate(vatRate);
       const taxRateId = await getOrCreateTaxRate(stripe, normalizedVatRate);
       
@@ -272,7 +240,7 @@ serve(async (req) => {
     // Add itemized hardware items with per-line VAT
     for (const item of hardware_items) {
       const lineItem = await createLineItem(
-        `sku:${item.sku}`, // Use SKU code as unique identifier
+        `sku:${item.sku}`,
         item.name,
         `SKU: ${item.sku}`,
         Math.round((item.unit_price_ex_vat || 0) * 100),
@@ -285,7 +253,7 @@ serve(async (req) => {
     // Add itemized labor lines with per-line VAT
     for (const line of labor_lines) {
       const lineItem = await createLineItem(
-        `service:labor:${line.description || 'installation'}`, // Unique identifier for labor services
+        `service:labor:${line.description || 'installation'}`,
         line.description || "Installation & konfiguration",
         `${line.quantity || 1} timmar`,
         Math.round((line.unit_price_ex_vat || 0) * 100),
@@ -298,7 +266,7 @@ serve(async (req) => {
     // Add itemized travel lines with per-line VAT
     for (const line of travel_lines) {
       const lineItem = await createLineItem(
-        `service:travel:${line.description || 'travel'}`, // Unique identifier for travel services
+        `service:travel:${line.description || 'travel'}`,
         line.description || "Resa & övrigt",
         undefined,
         Math.round((line.unit_price_ex_vat || 0) * 100),
@@ -310,7 +278,6 @@ serve(async (req) => {
 
     // Fallback to summarized totals if no itemized data was provided
     if (lineItems.length === 0) {
-      // Use default 25% VAT for fallback totals
       const defaultVatRate = 0.25;
       
       if (hardware_total > 0) {
@@ -350,27 +317,27 @@ serve(async (req) => {
       }
     }
 
-    // Create Stripe Quote WITHOUT default_tax_rates (using per-line tax_rates instead)
-    // Include our quote number as the visible quote number, description, and in metadata
+    // Create Stripe Quote - let Stripe assign its own number
     const stripeQuote = await stripe.quotes.create({
       customer: stripeCustomer.id,
-      header: quoteNumber,
-      description: `Offert ${quoteNumber}`,
       line_items: lineItems,
-      // No default_tax_rates - each line has its own tax_rates
       expires_at: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60, // 30 days
       metadata: {
         internal_quote_id: quote_id,
-        shs_quote_number: quoteNumber,
       },
     });
 
-    // Finalize the quote so it can be sent
-    await stripe.quotes.finalizeQuote(stripeQuote.id);
+    // Finalize the quote so it can be sent - this assigns the Stripe quote number
+    const finalizedQuote = await stripe.quotes.finalizeQuote(stripeQuote.id);
+
+    // Capture Stripe's auto-generated quote number
+    const stripeQuoteNumber = (finalizedQuote as any).number || null;
+    console.log(`[CREATE-STRIPE-QUOTE] Stripe assigned number: ${stripeQuoteNumber}`);
 
     return new Response(
       JSON.stringify({ 
         stripe_quote_id: stripeQuote.id,
+        stripe_quote_number: stripeQuoteNumber,
         pdf_url: stripeQuote.pdf,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 }

@@ -3,7 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 
 interface QuoteVersion {
   id: string;
-  quote_number: string;
+  quote_number: string | null;
   version: number;
   status: string;
   created_at: string;
@@ -254,7 +254,7 @@ export function useQuoteVersioning(quoteId: string | undefined) {
       const { data: newQuote, error: createError } = await supabase
         .from('quotes')
         .insert({
-          quote_number: currentQuote.quote_number,
+          // New versions don't get a quote_number until sent to Stripe
           version: newVersion,
           parent_quote_id: rootId,
           supersedes_quote_id: currentQuote.id,

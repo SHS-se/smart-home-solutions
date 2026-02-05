@@ -827,7 +827,7 @@ export type Database = {
           is_latest: boolean
           is_test: boolean
           parent_quote_id: string | null
-          quote_number: string
+          quote_number: string | null
           status: string
           status_reason: string | null
           stripe_invoice_id: string | null
@@ -858,7 +858,7 @@ export type Database = {
           is_latest?: boolean
           is_test?: boolean
           parent_quote_id?: string | null
-          quote_number: string
+          quote_number?: string | null
           status?: string
           status_reason?: string | null
           stripe_invoice_id?: string | null
@@ -889,7 +889,7 @@ export type Database = {
           is_latest?: boolean
           is_test?: boolean
           parent_quote_id?: string | null
-          quote_number?: string
+          quote_number?: string | null
           status?: string
           status_reason?: string | null
           stripe_invoice_id?: string | null

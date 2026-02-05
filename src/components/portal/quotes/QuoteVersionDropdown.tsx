@@ -14,7 +14,7 @@ import { format } from 'date-fns';
 
 interface QuoteVersion {
   id: string;
-  quote_number: string;
+  quote_number: string | null;
   version: number;
   status: string;
   created_at: string;

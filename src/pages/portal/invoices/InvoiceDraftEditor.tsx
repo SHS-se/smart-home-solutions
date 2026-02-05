@@ -664,7 +664,7 @@ const InvoiceDraftEditor: React.FC = () => {
                 <span>
                   <span className="text-muted-foreground">{t('Från offert:', 'From quote:')}</span>{' '}
                   <a href={`/portal/quotes/${existingInvoice.quote_id}`} className="text-primary hover:underline">
-                    #{existingInvoice.quote_number}
+                    {existingInvoice.quote_number}
                   </a>
                 </span>
               )}
