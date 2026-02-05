@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Loader2, Building2, FileText, MessageSquare, ArrowLeft, Trash2, FlaskConical } from 'lucide-react';
+import { Loader2, Building2, FileText, MessageSquare, ArrowLeft, Trash2, FlaskConical, ClipboardList, AlertCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -34,6 +34,7 @@ const CustomerViewDashboard: React.FC = () => {
 
   const [ticketStats, setTicketStats] = useState({ open: 0, total: 0 });
   const [invoiceStats, setInvoiceStats] = useState({ total: 0, lastDate: null as string | null });
+  const [quoteStats, setQuoteStats] = useState({ actionRequired: 0, total: 0 });
   const [statsLoading, setStatsLoading] = useState(true);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isTogglingTest, setIsTogglingTest] = useState(false);
@@ -138,6 +139,18 @@ const CustomerViewDashboard: React.FC = () => {
             total: invoices.length,
             lastDate: invoices[0]?.issued_at || null,
           });
+        }
+
+        // Fetch quote stats
+        const { data: quotesData } = await supabase
+          .from('quotes')
+          .select('status')
+          .eq('customer_id', customerId)
+          .eq('is_latest', true);
+
+        if (quotesData) {
+          const actionCount = quotesData.filter(q => q.status === 'revision_requested').length;
+          setQuoteStats({ actionRequired: actionCount, total: quotesData.length });
         }
       } catch (err) {
         console.error('Error fetching stats:', err);
@@ -255,7 +268,7 @@ const CustomerViewDashboard: React.FC = () => {
         </div>
 
         {/* Stats cards */}
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">{t('Konto', 'Account')}</CardTitle>
@@ -319,6 +332,35 @@ const CustomerViewDashboard: React.FC = () => {
                   </p>
                   <Link 
                     to={`/portal/customers/${customerId}/tickets`}
+                    className="text-sm text-primary hover:underline mt-2 inline-block"
+                  >
+                    {t('Visa alla', 'View all')} →
+                  </Link>
+                </>
+              )}
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">{t('Offerter', 'Quotes')}</CardTitle>
+              <ClipboardList className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              {statsLoading ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <>
+                  <div className="flex items-center gap-2">
+                    <span className="text-2xl font-bold">{quoteStats.actionRequired}</span>
+                    {quoteStats.actionRequired > 0 && (
+                      <AlertCircle className="h-5 w-5 text-amber-500" />
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {t('att hantera av', 'to handle of')} {quoteStats.total} {t('totalt', 'total')}
+                  </p>
+                  <Link 
+                    to={`/portal/customers/${customerId}/offers`}
                     className="text-sm text-primary hover:underline mt-2 inline-block"
                   >
                     {t('Visa alla', 'View all')} →
