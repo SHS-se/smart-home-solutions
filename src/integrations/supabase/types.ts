@@ -1459,32 +1459,10 @@ export type Database = {
         Args: { storage_path: string }
         Returns: boolean
       }
-      check_contacts_customers_integrity: {
-        Args: never
-        Returns: {
-          check_name: string
-          issue_count: number
-          sample_ids: string
-        }[]
-      }
-      dedupe_contacts_by_email: {
-        Args: never
-        Returns: {
-          contacts_reassigned: number
-          duplicates_removed: number
-        }[]
-      }
       get_customer_id_for_user: { Args: { _user_id: string }; Returns: string }
       is_admin: { Args: { _user_id: string }; Returns: boolean }
       is_staff: { Args: { _user_id: string }; Returns: boolean }
       is_staff_table_empty: { Args: never; Returns: boolean }
-      repair_contacts_customers_integrity: {
-        Args: never
-        Returns: {
-          action_taken: string
-          rows_affected: number
-        }[]
-      }
       sku_compute_pricing: {
         Args: {
           p_category_id: string
