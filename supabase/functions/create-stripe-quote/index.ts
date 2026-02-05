@@ -354,7 +354,6 @@ serve(async (req) => {
     // Include our quote number as the visible quote number, description, and in metadata
     const stripeQuote = await stripe.quotes.create({
       customer: stripeCustomer.id,
-      number: quoteNumber, // Override Stripe's auto-generated quote number with our internal one
       description: `Offert ${quoteNumber}`,
       line_items: lineItems,
       // No default_tax_rates - each line has its own tax_rates
