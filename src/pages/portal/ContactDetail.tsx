@@ -194,9 +194,7 @@ const ContactDetail: React.FC = () => {
       const { data: newCustomer, error: customerError } = await supabase
         .from('customers')
         .insert({
-          name: contact.name,
-          billing_email: contact.email,
-          phone: contact.phone,
+          contact_id: contact.id,
         })
         .select('id')
         .single();
@@ -213,6 +211,14 @@ const ContactDetail: React.FC = () => {
         .eq('id', contact.id);
 
       if (updateError) throw updateError;
+
+      // Update the customer with the contact_id link
+      const { error: linkError } = await supabase
+        .from('customers')
+        .update({ contact_id: contact.id })
+        .eq('id', newCustomer.id);
+
+      if (linkError) throw linkError;
 
       // Invite customer - creates auth user and sends welcome email
       const { data: session } = await supabase.auth.getSession();

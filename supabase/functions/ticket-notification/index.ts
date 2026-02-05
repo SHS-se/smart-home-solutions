@@ -46,7 +46,7 @@ const handler = async (req: Request): Promise<Response> => {
     // Fetch ticket
     const { data: ticket, error: ticketError } = await supabase
       .from("tickets")
-      .select("*, customers(org_name, billing_email)")
+      .select("*, customers:customers_with_identity!tickets_customer_id_fkey(name, contact_email)")
       .eq("id", ticketId)
       .single();
 
@@ -83,7 +83,7 @@ const handler = async (req: Request): Promise<Response> => {
       isStaffNotification = true;
     } else if (comment?.author_type === "staff") {
       // Staff replied - notify customer
-      toEmail = ticket.customers?.billing_email || "";
+      toEmail = ticket.customers?.contact_email || "";
       subject = `[${ticketNumber}] Re: ${ticket.title}`;
     } else {
       // Customer replied - notify staff
@@ -115,7 +115,7 @@ const handler = async (req: Request): Promise<Response> => {
         <p><strong>Ticket ID:</strong> ${escapeHtml(ticketNumber)}</p>
         <p><strong>Title:</strong> ${escapeHtml(ticket.title)}</p>
         <p><strong>Status:</strong> ${escapeHtml(statusLabel)}</p>
-        <p><strong>Customer:</strong> ${escapeHtml(ticket.customers?.org_name || "N/A")}</p>
+        <p><strong>Customer:</strong> ${escapeHtml(ticket.customers?.name || "N/A")}</p>
         <hr style="border: none; border-top: 1px solid #e5e5e5; margin: 20px 0;" />
         ${comment ? `
           <h3>Latest message:</h3>
