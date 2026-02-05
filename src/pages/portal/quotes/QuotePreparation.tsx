@@ -19,6 +19,13 @@ import QuoteUpdateConfirmDialog from '@/components/portal/quotes/QuoteUpdateConf
 import QuotePdfModal from '@/components/portal/quotes/QuotePdfModal';
 import { useQuoteVersioning } from '@/hooks/use-quote-versioning';
 import BlurCommitInput from '@/components/ui/blur-commit-input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 interface QuoteLine {
   id: string;
@@ -80,6 +87,20 @@ const QuotePreparation: React.FC = () => {
     createNewVersion,
     isCreatingVersion,
   } = useQuoteVersioning(id);
+
+  // Fetch customers for selector
+  const { data: customers = [] } = useQuery({
+    queryKey: ['customers'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('customers_with_identity')
+        .select('id, name, contact_name')
+        .order('name');
+      if (error) throw error;
+      return data;
+    },
+    enabled: isStaff,
+  });
 
   // Fetch quote with BOM version and pricing revision info
   const { data: quote } = useQuery({
@@ -225,6 +246,24 @@ const QuotePreparation: React.FC = () => {
     },
   });
 
+  // Update quote customer mutation
+  const updateQuoteCustomerMutation = useMutation({
+    mutationFn: async (customerId: string | null) => {
+      const { error } = await supabase
+        .from('quotes')
+        .update({ customer_id: customerId })
+        .eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['quote', id] });
+      toast({ title: t('Kund uppdaterad', 'Customer updated') });
+    },
+    onError: (error: any) => {
+      toast({ title: t('Kunde inte uppdatera kund', 'Failed to update customer'), description: error.message, variant: 'destructive' });
+    },
+  });
+
   // Group lines by section - all from quote_lines (single source of truth)
   const hardwareLines = lines.filter(l => l.section === 'hardware');
   const laborLines = lines.filter(l => l.section === 'labor');
@@ -275,8 +314,8 @@ const QuotePreparation: React.FC = () => {
 
   // Send to Stripe - uses quote_lines as source of truth
   const sendToStripe = async () => {
-    if (!quote?.customer?.name) {
-      toast({ title: t('Kund krävs', 'Customer required'), description: t('Offerten måste ha en kund kopplad', 'Quote must have a customer attached'), variant: 'destructive' });
+    if (!quote?.customer_id || !quote?.customer?.name) {
+      toast({ title: t('Kund krävs', 'Customer required'), description: t('Välj en kund innan du skickar till Stripe', 'Select a customer before sending to Stripe'), variant: 'destructive' });
       return;
     }
 
@@ -548,6 +587,17 @@ const QuotePreparation: React.FC = () => {
           </div>
         </div>
 
+        {/* Customer Warning */}
+        {!quote?.customer_id && isEditable && (
+          <Alert variant="destructive">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>
+              {t('Ingen kund vald. Du måste välja en kund innan du kan skicka offerten till Stripe.', 
+                 'No customer selected. You must select a customer before sending the quote to Stripe.')}
+            </AlertDescription>
+          </Alert>
+        )}
+
         {/* Older version warning */}
         {!isLatestVersion && (
           <Alert className="border-amber-500 bg-amber-500/10">
@@ -584,9 +634,29 @@ const QuotePreparation: React.FC = () => {
         {/* Quote Info */}
         <div className="text-sm text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1">
           {quote && getStatusBadge()}
-          {quote?.customer?.name && (
+          {isEditable ? (
+            <div className="flex items-center gap-2">
+              <span>{t('Kund', 'Customer')}:</span>
+              <Select
+                value={quote?.customer_id || 'none'}
+                onValueChange={(value) => updateQuoteCustomerMutation.mutate(value === 'none' ? null : value)}
+              >
+                <SelectTrigger className={`w-56 h-8 ${!quote?.customer_id ? 'border-destructive text-destructive' : ''}`}>
+                  <SelectValue placeholder={t('Välj kund...', 'Select customer...')} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">{t('Ingen kund', 'No customer')}</SelectItem>
+                  {customers.map((customer) => (
+                    <SelectItem key={customer.id} value={customer.id!}>
+                      {customer.name || customer.contact_name || t('Namnlös kund', 'Unnamed customer')}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : quote?.customer?.name ? (
             <span>{t('Kund', 'Customer')}: <span className="text-foreground">{quote.customer.name}</span></span>
-          )}
+          ) : null}
           {quote?.bom?.project_name && (
             <span>{t('Projekt', 'Project')}: <span className="text-foreground">{quote.bom.project_name}</span></span>
           )}
@@ -944,12 +1014,17 @@ const QuotePreparation: React.FC = () => {
                   <Button 
                     className="w-full"
                     onClick={sendToStripe}
-                    disabled={isSending || hardwareLines.length === 0 || quote?.status !== 'draft' || !isLatestVersion}
+                    disabled={isSending || hardwareLines.length === 0 || quote?.status !== 'draft' || !isLatestVersion || !quote?.customer_id}
                   >
                     <Send className="h-4 w-4 mr-2" />
                     {isSending ? t('Skickar...', 'Sending...') : t('Skicka till Stripe offert', 'Send to Stripe quote')}
                   </Button>
-                  {!isLatestVersion && (
+                  {!quote?.customer_id && (
+                    <p className="text-xs text-destructive text-center">
+                      {t('Välj en kund för att skicka', 'Select a customer to send')}
+                    </p>
+                  )}
+                  {quote?.customer_id && !isLatestVersion && (
                     <p className="text-xs text-muted-foreground text-center">
                       {t('Gå till senaste versionen för att skicka', 'Go to latest version to send')}
                     </p>
