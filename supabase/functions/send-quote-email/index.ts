@@ -172,15 +172,9 @@ serve(async (req) => {
     const vatTotal = totals?.vat_total || 0;
     const totalIncVat = totals?.total_inc_vat || 0;
 
-    // Generate quote number if not set
-    let quoteNumber = quote.quote_number;
-    if (!quoteNumber) {
-      await serviceClient.rpc("set_app_environment", { env: appEnv });
-      const { data: numData, error: numError } = await serviceClient.rpc("generate_next_quote_number");
-      if (numError) throw new Error(`Failed to generate quote number: ${numError.message}`);
-      quoteNumber = numData as string;
-      logStep("Generated quote number", { quoteNumber });
-    }
+    // Quote number is auto-assigned on insert via database trigger
+    const quoteNumber = quote.quote_number;
+    if (!quoteNumber) throw new Error("Quote has no quote_number — this should not happen");
 
     // Generate token: 32 random bytes
     const tokenBytes = new Uint8Array(32);
@@ -236,7 +230,6 @@ serve(async (req) => {
     const { error: updateError } = await serviceClient
       .from("quotes")
       .update({
-        quote_number: quoteNumber,
         status: "sent",
         sent_at: new Date().toISOString(),
         expires_at: expiresAt,

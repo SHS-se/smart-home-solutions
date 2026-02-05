@@ -381,7 +381,6 @@ const BOMBuilder: React.FC = () => {
           bom_version: bom?.version ?? 1,
           bom_price_revision_id: revision.id,
           customer_id: bom?.customer_id || null,
-          // quote_number will be assigned by Stripe when sent
         })
         .select()
         .single();

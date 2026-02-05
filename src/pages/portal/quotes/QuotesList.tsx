@@ -341,7 +341,7 @@ const QuotesList: React.FC = () => {
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <span className="font-mono font-medium">
-                            {quote.quote_number ? `#${quote.quote_number}` : <span className="text-muted-foreground italic">Utkast</span>}
+                            {quote.quote_number ? `#${quote.quote_number}` : <span className="text-muted-foreground italic">—</span>}
                           </span>
                           {quote.version > 1 && (
                             <Badge variant="outline" className="font-mono text-xs">
