@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Input } from '@/components/ui/input';
 
 interface QuantityInputProps {
@@ -11,8 +11,8 @@ interface QuantityInputProps {
 
 /**
  * A quantity input that uses local state while typing.
- * Only commits when the user leaves the field (blur) or presses Enter.
- * No processing or mutations occur during typing.
+ * - Arrow button clicks commit immediately
+ * - Keyboard typing only commits on blur or Enter
  */
 const QuantityInput: React.FC<QuantityInputProps> = ({
   value,
@@ -22,6 +22,7 @@ const QuantityInput: React.FC<QuantityInputProps> = ({
   className = '',
 }) => {
   const [localValue, setLocalValue] = useState(String(value));
+  const isSpinnerClickRef = useRef(false);
 
   // Sync local state when external value changes
   useEffect(() => {
@@ -32,12 +33,21 @@ const QuantityInput: React.FC<QuantityInputProps> = ({
     const newValue = e.target.value;
     setLocalValue(newValue);
     
-    // Notify parent of the pending change (for flush-before-navigate patterns)
-    if (onChange) {
-      const parsed = parseInt(newValue, 10);
-      if (!isNaN(parsed) && parsed >= min) {
-        onChange(parsed);
+    const parsed = parseInt(newValue, 10);
+    const finalValue = isNaN(parsed) || parsed < min ? min : parsed;
+    
+    // If this change came from spinner buttons, commit immediately
+    if (isSpinnerClickRef.current) {
+      isSpinnerClickRef.current = false;
+      if (finalValue !== value) {
+        onCommit(finalValue);
       }
+      return;
+    }
+    
+    // Notify parent of the pending change (for flush-before-navigate patterns)
+    if (onChange && !isNaN(parsed) && parsed >= min) {
+      onChange(parsed);
     }
   };
 
@@ -52,6 +62,17 @@ const QuantityInput: React.FC<QuantityInputProps> = ({
     setLocalValue(String(finalValue));
   };
 
+  const handleMouseDown = (e: React.MouseEvent<HTMLInputElement>) => {
+    // Detect if the click is on the spinner buttons (right side of input)
+    const input = e.currentTarget;
+    const rect = input.getBoundingClientRect();
+    const spinnerWidth = 30; // Approximate width of spinner buttons
+    
+    if (e.clientX > rect.right - spinnerWidth) {
+      isSpinnerClickRef.current = true;
+    }
+  };
+
   return (
     <Input
       type="number"
@@ -59,7 +80,12 @@ const QuantityInput: React.FC<QuantityInputProps> = ({
       value={localValue}
       onChange={handleChange}
       onBlur={handleCommit}
+      onMouseDown={handleMouseDown}
       onKeyDown={(e) => {
+        // Arrow keys from keyboard should also commit immediately
+        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+          isSpinnerClickRef.current = true;
+        }
         if (e.key === 'Enter') {
           e.currentTarget.blur();
         }
