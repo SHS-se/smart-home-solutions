@@ -71,7 +71,6 @@ const QuotePreparation: React.FC = () => {
   
   const [isSending, setIsSending] = useState(false);
   const [isCreatingInvoice, setIsCreatingInvoice] = useState(false);
-  const hasInvoice = !!quote?.stripe_invoice_id;
   
   const [showDiffModal, setShowDiffModal] = useState(false);
   const [showUpdateConfirm, setShowUpdateConfirm] = useState(false);
@@ -119,6 +118,8 @@ const QuotePreparation: React.FC = () => {
     },
     enabled: isStaff && !!id,
   });
+
+  const hasInvoice = !!quote?.stripe_invoice_id;
 
   // Fetch ALL quote lines (hardware, labor, travel) - single source of truth
   // Order by created_at + id for stable, deterministic row ordering
