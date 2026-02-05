@@ -65,45 +65,27 @@ export type Database = {
       bom_items: {
         Row: {
           bom_id: string
-          cost: number | null
           cost_ex_vat_at_time: number | null
           created_at: string
           id: string
-          pricing_source: string | null
           quantity: number
-          sell_price: number | null
-          sell_price_ex_vat_at_time: number | null
-          sell_price_inc_vat_at_time: number | null
           sku_id: string
-          vat_rate_at_time: number | null
         }
         Insert: {
           bom_id: string
-          cost?: number | null
           cost_ex_vat_at_time?: number | null
           created_at?: string
           id?: string
-          pricing_source?: string | null
           quantity?: number
-          sell_price?: number | null
-          sell_price_ex_vat_at_time?: number | null
-          sell_price_inc_vat_at_time?: number | null
           sku_id: string
-          vat_rate_at_time?: number | null
         }
         Update: {
           bom_id?: string
-          cost?: number | null
           cost_ex_vat_at_time?: number | null
           created_at?: string
           id?: string
-          pricing_source?: string | null
           quantity?: number
-          sell_price?: number | null
-          sell_price_ex_vat_at_time?: number | null
-          sell_price_inc_vat_at_time?: number | null
           sku_id?: string
-          vat_rate_at_time?: number | null
         }
         Relationships: [
           {
@@ -118,92 +100,6 @@ export type Database = {
             columns: ["sku_id"]
             isOneToOne: false
             referencedRelation: "skus"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      bom_price_revision_items: {
-        Row: {
-          bom_price_revision_id: string
-          cost_ex_vat: number
-          created_at: string
-          id: string
-          margin_pct: number | null
-          quantity: number
-          sell_ex_vat: number
-          sku_id: string
-          vat_rate: number
-        }
-        Insert: {
-          bom_price_revision_id: string
-          cost_ex_vat: number
-          created_at?: string
-          id?: string
-          margin_pct?: number | null
-          quantity?: number
-          sell_ex_vat: number
-          sku_id: string
-          vat_rate?: number
-        }
-        Update: {
-          bom_price_revision_id?: string
-          cost_ex_vat?: number
-          created_at?: string
-          id?: string
-          margin_pct?: number | null
-          quantity?: number
-          sell_ex_vat?: number
-          sku_id?: string
-          vat_rate?: number
-        }
-        Relationships: [
-          {
-            foreignKeyName: "bom_price_revision_items_bom_price_revision_id_fkey"
-            columns: ["bom_price_revision_id"]
-            isOneToOne: false
-            referencedRelation: "bom_price_revisions"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "bom_price_revision_items_sku_id_fkey"
-            columns: ["sku_id"]
-            isOneToOne: false
-            referencedRelation: "skus"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      bom_price_revisions: {
-        Row: {
-          bom_id: string
-          created_at: string
-          created_by: string | null
-          id: string
-          note: string | null
-          revision: number
-        }
-        Insert: {
-          bom_id: string
-          created_at?: string
-          created_by?: string | null
-          id?: string
-          note?: string | null
-          revision?: number
-        }
-        Update: {
-          bom_id?: string
-          created_at?: string
-          created_by?: string | null
-          id?: string
-          note?: string | null
-          revision?: number
-        }
-        Relationships: [
-          {
-            foreignKeyName: "bom_price_revisions_bom_id_fkey"
-            columns: ["bom_id"]
-            isOneToOne: false
-            referencedRelation: "boms"
             referencedColumns: ["id"]
           },
         ]
@@ -791,6 +687,7 @@ export type Database = {
           sku_id: string | null
           source_bom_id: string | null
           source_bom_item_id: string | null
+          source_bom_version: number | null
           unit_price: number
           unit_price_ex_vat: number | null
           unit_price_inc_vat: number | null
@@ -810,6 +707,7 @@ export type Database = {
           sku_id?: string | null
           source_bom_id?: string | null
           source_bom_item_id?: string | null
+          source_bom_version?: number | null
           unit_price?: number
           unit_price_ex_vat?: number | null
           unit_price_inc_vat?: number | null
@@ -829,6 +727,7 @@ export type Database = {
           sku_id?: string | null
           source_bom_id?: string | null
           source_bom_item_id?: string | null
+          source_bom_version?: number | null
           unit_price?: number
           unit_price_ex_vat?: number | null
           unit_price_inc_vat?: number | null
@@ -923,7 +822,6 @@ export type Database = {
           accepted_ip: string | null
           accepted_user_agent: string | null
           bom_id: string | null
-          bom_price_revision_id: string | null
           bom_version: number | null
           cancelled_at: string | null
           cancelled_by_user_id: string | null
@@ -965,7 +863,6 @@ export type Database = {
           accepted_ip?: string | null
           accepted_user_agent?: string | null
           bom_id?: string | null
-          bom_price_revision_id?: string | null
           bom_version?: number | null
           cancelled_at?: string | null
           cancelled_by_user_id?: string | null
@@ -1007,7 +904,6 @@ export type Database = {
           accepted_ip?: string | null
           accepted_user_agent?: string | null
           bom_id?: string | null
-          bom_price_revision_id?: string | null
           bom_version?: number | null
           cancelled_at?: string | null
           cancelled_by_user_id?: string | null
@@ -1046,13 +942,6 @@ export type Database = {
             columns: ["bom_id"]
             isOneToOne: false
             referencedRelation: "boms"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "quotes_bom_price_revision_id_fkey"
-            columns: ["bom_price_revision_id"]
-            isOneToOne: false
-            referencedRelation: "bom_price_revisions"
             referencedColumns: ["id"]
           },
           {

@@ -6,17 +6,13 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import PortalLayout from '@/components/portal/PortalLayout';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { ArrowLeft, ExternalLink, Pencil, Send, Info, Loader2, AlertTriangle, Plus, Trash2 } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { ArrowLeft, ExternalLink, Send, Info, Loader2, AlertTriangle, Plus, Trash2, RefreshCw } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
-import QuotePriceDiffModal from '@/components/portal/quotes/QuotePriceDiffModal';
 import QuoteVersionDropdown from '@/components/portal/quotes/QuoteVersionDropdown';
-import QuoteOutdatedBanner from '@/components/portal/quotes/QuoteOutdatedBanner';
-import QuoteUpdateConfirmDialog from '@/components/portal/quotes/QuoteUpdateConfirmDialog';
-// QuotePdfModal removed - no longer using Stripe PDFs
 import { useQuoteVersioning } from '@/hooks/use-quote-versioning';
 import BlurCommitInput from '@/components/ui/blur-commit-input';
 import {
@@ -43,25 +39,6 @@ interface QuoteLine {
   source_bom_id: string | null;
 }
 
-interface PriceDiffResult {
-  items: Array<{
-    sku_id: string;
-    sku_name: string;
-    sku_code: string;
-    quantity: number;
-    old_unit_price: number;
-    new_unit_price: number;
-    delta_per_unit: number;
-    delta_total: number;
-  }>;
-  old_total_ex_vat: number;
-  new_total_ex_vat: number;
-  delta_total_ex_vat: number;
-  old_total_inc_vat: number;
-  new_total_inc_vat: number;
-  delta_total_inc_vat: number;
-}
-
 const QuotePreparation: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const { t } = useLanguage();
@@ -71,16 +48,11 @@ const QuotePreparation: React.FC = () => {
   
   const [isSending, setIsSending] = useState(false);
   const [isCreatingInvoice, setIsCreatingInvoice] = useState(false);
-  
-  const [showDiffModal, setShowDiffModal] = useState(false);
-  const [showUpdateConfirm, setShowUpdateConfirm] = useState(false);
-  const [priceDiff, setPriceDiff] = useState<PriceDiffResult | null>(null);
+  const [isUpdatingFromBom, setIsUpdatingFromBom] = useState(false);
 
   // Quote versioning hook
   const {
     quoteFamily,
-    pricingStatus,
-    computePriceDiff,
     createNewVersion,
     isCreatingVersion,
   } = useQuoteVersioning(id);
@@ -99,13 +71,13 @@ const QuotePreparation: React.FC = () => {
     enabled: isStaff,
   });
 
-  // Fetch quote with BOM version and pricing revision info
+  // Fetch quote with BOM info (no more bom_price_revisions)
   const { data: quote } = useQuery({
     queryKey: ['quote', id],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('quotes')
-        .select('*, customers:customers_with_identity!quotes_customer_id_fkey(name, billing_email, contact_name, contact_email), boms(id, project_name, version), bom_price_revisions(id, revision, note, created_at)')
+        .select('*, customers:customers_with_identity!quotes_customer_id_fkey(name, billing_email, contact_name, contact_email), boms(id, project_name, version)')
         .eq('id', id)
         .single();
       if (error) throw error;
@@ -113,7 +85,6 @@ const QuotePreparation: React.FC = () => {
         ...data, 
         customer: (data as any).customers, 
         bom: (data as any).boms,
-        price_revision: (data as any).bom_price_revisions 
       };
     },
     enabled: isStaff && !!id,
@@ -121,8 +92,7 @@ const QuotePreparation: React.FC = () => {
 
   const hasInvoice = !!quote?.stripe_invoice_id;
 
-  // Fetch ALL quote lines (hardware, labor, travel) - single source of truth
-  // Order by created_at + id for stable, deterministic row ordering
+  // Fetch ALL quote lines
   const { data: lines = [], isSuccess: linesLoaded } = useQuery({
     queryKey: ['quote_lines', id],
     queryFn: async () => {
@@ -210,12 +180,11 @@ const QuotePreparation: React.FC = () => {
     },
   });
 
-  // Update quote line mutation (works for hardware, labor, travel - all sections)
+  // Update quote line mutation
   const updateQuoteLineMutation = useMutation({
     mutationFn: async ({ lineId, field, value }: { lineId: string; field: string; value: string | number }) => {
       const updateData: Record<string, unknown> = { [field]: value };
       
-      // If updating unit_price, also update related fields
       if (field === 'unit_price') {
         const numValue = typeof value === 'number' ? value : parseFloat(value as string) || 0;
         updateData.unit_price_ex_vat = numValue;
@@ -265,8 +234,7 @@ const QuotePreparation: React.FC = () => {
     },
   });
 
-  // Group lines by section - all from quote_lines (single source of truth)
-  // Hardware lines preserve BOM order via created_at ordering from the query
+  // Group lines by section
   const hardwareLines = lines.filter(l => l.section === 'hardware');
   const laborLines = lines.filter(l => l.section === 'labor');
   const travelLines = lines.filter(l => l.section === 'travel');
@@ -290,7 +258,7 @@ const QuotePreparation: React.FC = () => {
     });
   };
 
-  // Calculate totals from quote_lines (single source of truth)
+  // Calculate totals
   const hardwareTotal = hardwareLines.reduce((acc, l) => {
     return acc + (l.quantity * (l.unit_price_ex_vat ?? l.unit_price));
   }, 0);
@@ -305,7 +273,6 @@ const QuotePreparation: React.FC = () => {
 
   const subtotalExVat = hardwareTotal + laborTotal + travelTotal;
   
-  // Calculate VAT per-line to handle mixed VAT rates correctly
   const vatTotal = lines.reduce((acc, l) => {
     const lineExVat = l.quantity * (l.unit_price_ex_vat ?? l.unit_price);
     const lineVatRate = l.vat_rate ?? 0.25;
@@ -314,7 +281,60 @@ const QuotePreparation: React.FC = () => {
   
   const totalIncVat = subtotalExVat + vatTotal;
 
-  // Send quote via email (replaces Stripe flow)
+  // Margin calculation for hardware
+  const hardwareCostTotal = hardwareLines.reduce((acc, l) => {
+    return acc + (l.quantity * (l.cost_ex_vat_at_time ?? 0));
+  }, 0);
+  const hardwareMarginKr = hardwareTotal - hardwareCostTotal;
+  const hardwareMarginPct = hardwareCostTotal > 0 ? ((hardwareTotal - hardwareCostTotal) / hardwareCostTotal) * 100 : 0;
+
+  const getMarginStatus = () => {
+    if (hardwareMarginPct >= 40) return { label: t('Utmärkt', 'Excellent'), color: 'text-green-600' };
+    if (hardwareMarginPct >= 25) return { label: t('Bra', 'Good'), color: 'text-primary' };
+    if (hardwareMarginPct >= 15) return { label: 'OK', color: 'text-yellow-600' };
+    return { label: t('Låg', 'Low'), color: 'text-destructive' };
+  };
+  const marginStatus = getMarginStatus();
+
+  // "Update from BOM" - re-sync quantities from latest BOM
+  const handleUpdateFromBom = async () => {
+    if (!quote?.bom_id || !id) return;
+
+    setIsUpdatingFromBom(true);
+    try {
+      // Fetch latest BOM items
+      const { data: bomItems, error: bomError } = await supabase
+        .from('bom_items')
+        .select('sku_id, quantity')
+        .eq('bom_id', quote.bom_id);
+      if (bomError) throw bomError;
+
+      // Build quantity map from BOM: sku_id -> quantity
+      const bomQuantityMap: Record<string, number> = {};
+      for (const item of bomItems || []) {
+        bomQuantityMap[item.sku_id] = item.quantity;
+      }
+
+      // Create new version with updated hardware quantities
+      const newQuote = await createNewVersion({ updatedHardwareQuantities: bomQuantityMap });
+      
+      toast({
+        title: t('Offert uppdaterad från BOM', 'Quote updated from BOM'),
+        description: t(`Version ${newQuote.version} skapad med uppdaterade antal.`, `Version ${newQuote.version} created with updated quantities.`),
+      });
+      navigate(`/portal/quotes/${newQuote.id}`);
+    } catch (error: any) {
+      toast({
+        title: t('Kunde inte uppdatera från BOM', 'Failed to update from BOM'),
+        description: error.message,
+        variant: 'destructive',
+      });
+    } finally {
+      setIsUpdatingFromBom(false);
+    }
+  };
+
+  // Send quote via email
   const sendQuoteEmail = async () => {
     if (!quote?.customer_id || !quote?.customer?.name) {
       toast({ title: t('Kund krävs', 'Customer required'), description: t('Välj en kund innan du skickar', 'Select a customer before sending'), variant: 'destructive' });
@@ -349,9 +369,7 @@ const QuotePreparation: React.FC = () => {
     }
   };
 
-  // Preview removed - no longer using Stripe PDFs
-
-  // Create invoice from quote - uses quote_lines as source
+  // Create invoice from quote
   const createInvoiceFromQuote = async () => {
     if (!quote?.customer_id) {
       toast({ title: t('Kund krävs', 'Customer required'), description: t('Offerten måste ha en kund kopplad', 'Quote must have a customer attached'), variant: 'destructive' });
@@ -360,9 +378,7 @@ const QuotePreparation: React.FC = () => {
 
     setIsCreatingInvoice(true);
     try {
-      // Prepare line items from quote_lines (single source of truth)
       const lineItems = [
-        // Hardware items from quote_lines
         ...hardwareLines.map(line => ({
           line_type: 'hardware',
           description: line.description,
@@ -372,14 +388,12 @@ const QuotePreparation: React.FC = () => {
           unit_price: line.unit_price_ex_vat ?? line.unit_price,
           category: 'Hardware',
         })),
-        // Labor lines
         ...laborLines.map(line => ({
           line_type: 'labor',
           description: line.description,
           quantity: line.quantity,
           unit_price: line.unit_price_ex_vat ?? line.unit_price,
         })),
-        // Travel/other lines
         ...travelLines.map(line => ({
           line_type: 'travel_other',
           description: line.description,
@@ -415,32 +429,6 @@ const QuotePreparation: React.FC = () => {
     } finally {
       setIsCreatingInvoice(false);
     }
-  };
-
-  // Handle show diff
-  const handleShowDiff = async () => {
-    const diff = await computePriceDiff();
-    setPriceDiff(diff);
-    setShowDiffModal(true);
-  };
-
-  // Handle update quote to new version
-  const handleUpdateQuote = async () => {
-    try {
-      const newQuote = await createNewVersion();
-      toast({
-        title: t('Ny offertversion skapad!', 'New quote version created!'),
-        description: t(`Version ${newQuote.version} har skapats med uppdaterade priser.`, `Version ${newQuote.version} has been created with updated prices.`),
-      });
-      navigate(`/portal/quotes/${newQuote.id}`);
-    } catch (error: any) {
-      toast({
-        title: t('Kunde inte skapa ny version', 'Failed to create new version'),
-        description: error.message,
-        variant: 'destructive',
-      });
-    }
-    setShowUpdateConfirm(false);
   };
 
   // Redirect if not staff
@@ -528,17 +516,6 @@ const QuotePreparation: React.FC = () => {
           </Alert>
         )}
 
-        {/* Outdated pricing banner */}
-        {pricingStatus?.isOutdated && isLatestVersion && (
-          <QuoteOutdatedBanner
-            quoteRevision={pricingStatus.quoteRevision!}
-            latestRevision={pricingStatus.latestRevision!}
-            onUpdate={() => setShowUpdateConfirm(true)}
-            onShowDiff={handleShowDiff}
-            isUpdating={isCreatingVersion}
-          />
-        )}
-
         {/* Quote Info */}
         <div className="text-sm text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1">
           {quote && getStatusBadge()}
@@ -576,7 +553,7 @@ const QuotePreparation: React.FC = () => {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Main Content */}
           <div className="lg:col-span-2 space-y-4">
-            {/* Hardware Section - from quote_lines (single source of truth) */}
+            {/* Hardware Section */}
             <Card>
               <CardHeader className="flex flex-row items-center justify-between py-4">
                 <CardTitle className="text-lg flex items-center gap-2 flex-wrap">
@@ -586,13 +563,19 @@ const QuotePreparation: React.FC = () => {
                       BOM v{quote.bom_version ?? quote.bom.version}
                     </Badge>
                   )}
-                  {quote?.price_revision && (
-                    <Badge variant="secondary" className="font-mono text-xs">
-                      {t('Prisrev', 'Price rev')} r{quote.price_revision.revision}
-                    </Badge>
-                  )}
                 </CardTitle>
                 <div className="flex items-center gap-3 text-sm">
+                  {quote?.bom_id && isEditable && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleUpdateFromBom}
+                      disabled={isUpdatingFromBom || isCreatingVersion}
+                    >
+                      <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${isUpdatingFromBom ? 'animate-spin' : ''}`} />
+                      {t('Uppdatera från BOM', 'Update from BOM')}
+                    </Button>
+                  )}
                   {quote?.bom_id && (
                     <Link 
                       to={`/portal/boms/${quote.bom_id}`}
@@ -637,14 +620,18 @@ const QuotePreparation: React.FC = () => {
                                 {line.original_sku_code || '—'}
                               </td>
                               <td className="px-4 py-4">
-                                <BlurCommitInput
-                                  type="number"
-                                  value={line.quantity}
-                                  onCommit={(value) => updateQuoteLineMutation.mutate({ lineId: line.id, field: 'quantity', value: parseInt(value) || 0 })}
-                                  className="w-16 text-center h-9"
-                                  min={0}
-                                  disabled={!isEditable}
-                                />
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <div className="w-16 text-center mx-auto px-2 py-1.5 border border-border rounded-md bg-muted/50 text-sm cursor-not-allowed">
+                                        {line.quantity}
+                                      </div>
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                      <p>{t('Ändra antal via BOM (omfattningsändring)', 'Change quantity via BOM (scope change)')}</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
                               </td>
                               <td className="px-4 py-4">
                                 <BlurCommitInput
@@ -685,8 +672,8 @@ const QuotePreparation: React.FC = () => {
                       <div className="flex items-start gap-2 text-sm text-muted-foreground">
                         <Info className="h-4 w-4 mt-0.5 flex-shrink-0" />
                         <span>
-                          {t('Hårdvarulistan är en oberoende kopia från BOM vid offertskapande. Ändringar här påverkar inte BOM.',
-                             'The hardware list is an independent copy from the BOM at quote creation. Changes here do not affect the BOM.')}
+                          {t('Antal ändras via BOM. Priser redigeras här. Använd "Uppdatera från BOM" för att synka antal.',
+                             'Quantities are changed via BOM. Prices are edited here. Use "Update from BOM" to sync quantities.')}
                         </span>
                       </div>
                     </div>
@@ -919,6 +906,35 @@ const QuotePreparation: React.FC = () => {
                   <span className="text-2xl font-bold text-primary">{formatPrice(totalIncVat)} kr</span>
                 </div>
 
+                {/* Margin card - hardware only */}
+                {hardwareLines.length > 0 && (
+                  <div className="border-t border-border pt-4 space-y-2">
+                    <h4 className="text-sm font-medium text-muted-foreground">{t('Marginal (hårdvara)', 'Margin (hardware)')}</h4>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">{t('Kostnad', 'Cost')}:</span>
+                      <span>{formatPrice(hardwareCostTotal)} kr</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">{t('Försäljning', 'Revenue')}:</span>
+                      <span>{formatPrice(hardwareTotal)} kr</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">{t('Marginal (kr)', 'Margin (kr)')}:</span>
+                      <span className="font-medium text-primary">+{formatPrice(hardwareMarginKr)} kr</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-muted-foreground">{t('Marginal (%)', 'Margin (%)')}:</span>
+                      <span className={`font-medium ${marginStatus.color}`}>{hardwareMarginPct.toFixed(1)}% — {marginStatus.label}</span>
+                    </div>
+                    <div className="w-full bg-muted rounded-full h-2">
+                      <div 
+                        className="bg-primary h-2 rounded-full transition-all"
+                        style={{ width: `${Math.min(100, hardwareMarginPct * 2)}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
                 {/* Action buttons */}
                 <div className="pt-4 space-y-3">
                   <Button 
@@ -960,30 +976,8 @@ const QuotePreparation: React.FC = () => {
                 </div>
               </CardContent>
             </Card>
-
           </div>
         </div>
-
-
-        {/* Price diff modal */}
-        <QuotePriceDiffModal
-          open={showDiffModal}
-          onOpenChange={setShowDiffModal}
-          diff={priceDiff}
-          quoteRevision={pricingStatus?.quoteRevision || 1}
-          latestRevision={pricingStatus?.latestRevision || 1}
-        />
-
-        {/* Update confirm dialog */}
-        <QuoteUpdateConfirmDialog
-          open={showUpdateConfirm}
-          onOpenChange={setShowUpdateConfirm}
-          currentVersion={currentVersion?.version || 1}
-          targetRevision={pricingStatus?.latestRevision || 1}
-          onConfirm={handleUpdateQuote}
-        />
-
-        {/* PDF Preview Modal removed - no longer using Stripe PDFs */}
       </div>
     </PortalLayout>
   );
