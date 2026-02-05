@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@18.5.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
+import { getStripeSecretKey, getAppEnvironment } from "../_shared/stripe-env.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -12,28 +13,15 @@ const logStep = (step: string, details?: Record<string, unknown>) => {
   console.log(`[GET-STRIPE-QUOTE-TOTALS] ${step}${detailsStr}`);
 };
 
-/**
- * Get the appropriate Stripe key based on is_test flag
- */
-function getStripeKey(isTest: boolean): string {
-  if (isTest) {
-    const testKey = Deno.env.get("STRIPE_SECRET_KEY");
-    if (!testKey) throw new Error("STRIPE_SECRET_KEY (test) is not set");
-    return testKey;
-  } else {
-    const liveKey = Deno.env.get("STRIPE_SECRET_KEY_LIVE");
-    if (!liveKey) throw new Error("STRIPE_SECRET_KEY_LIVE is not set");
-    return liveKey;
-  }
-}
-
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    logStep("Function started");
+    const appEnv = getAppEnvironment();
+    const stripeKey = getStripeSecretKey();
+    logStep("Function started", { environment: appEnv });
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
     const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
@@ -89,7 +77,7 @@ serve(async (req) => {
     // Fetch quotes with stripe_quote_id
     let query = supabaseAdmin
       .from('quotes')
-      .select('id, stripe_quote_id, is_test')
+      .select('id, stripe_quote_id')
       .in('id', quote_ids)
       .not('stripe_quote_id', 'is', null);
 
@@ -110,49 +98,34 @@ serve(async (req) => {
 
     logStep("Found quotes with Stripe IDs", { count: quotes.length });
 
-    // Group quotes by is_test to batch API calls
-    const testQuotes = quotes.filter(q => q.is_test);
-    const liveQuotes = quotes.filter(q => !q.is_test);
+    const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
 
     const totals: Record<string, { amount_total: number; currency: string; status: string }> = {};
     const statusUpdates: Array<{ id: string; stripe_status: string }> = [];
 
-    // Helper to fetch quote totals from Stripe
-    async function fetchStripeTotals(quoteList: NonNullable<typeof quotes>, isTest: boolean) {
-      if (!quoteList || quoteList.length === 0) return;
-
-      const stripeKey = getStripeKey(isTest);
-      const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
-
-      for (const quote of quoteList) {
-        try {
-          const stripeQuote = await stripe.quotes.retrieve(quote.stripe_quote_id!);
-          const stripeStatus = stripeQuote.status ?? 'draft';
-          
-          totals[quote.id] = {
-            amount_total: stripeQuote.amount_total ?? 0,
-            currency: stripeQuote.currency ?? 'sek',
-            status: stripeStatus,
-          };
-          
-          // Queue status update if status differs
-          statusUpdates.push({ id: quote.id, stripe_status: stripeStatus });
-        } catch (err) {
-          logStep("Error fetching Stripe quote", { 
-            quoteId: quote.id, 
-            stripeQuoteId: quote.stripe_quote_id,
-            error: err instanceof Error ? err.message : String(err)
-          });
-          // Skip this quote on error
-        }
+    // Fetch quote totals from Stripe
+    for (const quote of quotes) {
+      try {
+        const stripeQuote = await stripe.quotes.retrieve(quote.stripe_quote_id!);
+        const stripeStatus = stripeQuote.status ?? 'draft';
+        
+        totals[quote.id] = {
+          amount_total: stripeQuote.amount_total ?? 0,
+          currency: stripeQuote.currency ?? 'sek',
+          status: stripeStatus,
+        };
+        
+        // Queue status update if status differs
+        statusUpdates.push({ id: quote.id, stripe_status: stripeStatus });
+      } catch (err) {
+        logStep("Error fetching Stripe quote", { 
+          quoteId: quote.id, 
+          stripeQuoteId: quote.stripe_quote_id,
+          error: err instanceof Error ? err.message : String(err)
+        });
+        // Skip this quote on error
       }
     }
-
-    // Fetch test and live quotes in parallel
-    await Promise.all([
-      fetchStripeTotals(testQuotes, true),
-      fetchStripeTotals(liveQuotes, false),
-    ]);
 
     logStep("Fetched Stripe totals", { count: Object.keys(totals).length });
 

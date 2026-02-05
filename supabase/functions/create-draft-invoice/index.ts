@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@18.5.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
+import { getStripeSecretKey, getAppEnvironment } from "../_shared/stripe-env.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -24,20 +25,9 @@ serve(async (req) => {
   );
 
   try {
-    logStep("Function started");
-
-    // Helper to get the appropriate Stripe key
-    const getStripeKey = (isTest: boolean): string => {
-      if (isTest) {
-        const testKey = Deno.env.get("STRIPE_SECRET_KEY");
-        if (!testKey) throw new Error("STRIPE_SECRET_KEY (test) is not set");
-        return testKey;
-      } else {
-        const liveKey = Deno.env.get("STRIPE_SECRET_KEY_LIVE");
-        if (!liveKey) throw new Error("STRIPE_SECRET_KEY_LIVE is not set");
-        return liveKey;
-      }
-    };
+    const appEnv = getAppEnvironment();
+    const stripeKey = getStripeSecretKey();
+    logStep("Function started", { environment: appEnv });
 
     // Authenticate staff user
     const authHeader = req.headers.get("Authorization");
@@ -66,7 +56,6 @@ serve(async (req) => {
       bom_id, 
       quote_id,
       due_date,
-      is_test = false,
       line_items = []
     } = await req.json();
 
@@ -81,7 +70,7 @@ serve(async (req) => {
       .single();
 
     if (customerError || !customer) throw new Error("Customer not found");
-    logStep("Customer loaded", { org_name: customer.org_name });
+    logStep("Customer loaded");
 
     // Fetch BOM if provided
     let bom = null;
@@ -115,9 +104,6 @@ serve(async (req) => {
       }
     }
 
-    // Initialize Stripe with the correct key based on is_test flag
-    const stripeKey = getStripeKey(is_test);
-    logStep("Using Stripe mode", { is_test });
     const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
 
     // Find or create Stripe customer
@@ -153,7 +139,6 @@ serve(async (req) => {
         source: quote_id ? 'quote' : bom_id ? 'bom' : 'manual',
         bom_id: bom_id || '',
         quote_id: quote_id || '',
-        is_test: is_test.toString()
       }
     });
 
@@ -173,7 +158,6 @@ serve(async (req) => {
         quote_id: quote_id || null,
         quote_number: quoteNumber,
         status: 'draft',
-        is_test,
         due_date: due_date || null,
         currency: 'SEK',
         created_by: user.id

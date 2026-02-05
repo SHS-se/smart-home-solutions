@@ -1,26 +1,12 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@18.5.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
+import { getStripeSecretKey, getAppEnvironment } from "../_shared/stripe-env.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
-
-/**
- * Get the appropriate Stripe key based on is_test flag
- */
-function getStripeKey(isTest: boolean): string {
-  if (isTest) {
-    const testKey = Deno.env.get("STRIPE_SECRET_KEY");
-    if (!testKey) throw new Error("STRIPE_SECRET_KEY (test) is not set");
-    return testKey;
-  } else {
-    const liveKey = Deno.env.get("STRIPE_SECRET_KEY_LIVE");
-    if (!liveKey) throw new Error("STRIPE_SECRET_KEY_LIVE is not set");
-    return liveKey;
-  }
-}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -28,6 +14,10 @@ serve(async (req) => {
   }
 
   try {
+    const appEnv = getAppEnvironment();
+    const stripeKey = getStripeSecretKey();
+    console.log(`[ACCEPT-STRIPE-QUOTE] Running in ${appEnv} mode`);
+
     // Verify user is authenticated
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
@@ -59,7 +49,7 @@ serve(async (req) => {
     // First check if user is a customer
     const { data: customer } = await supabaseClient
       .from("customers")
-      .select("id, is_test")
+      .select("id")
       .eq("user_id", userData.user.id)
       .maybeSingle();
 
@@ -70,7 +60,7 @@ serve(async (req) => {
     // Fetch the quote ensuring it belongs to this customer
     const { data: quote, error: quoteError } = await supabaseClient
       .from("quotes")
-      .select("id, stripe_quote_id, is_test, customer_id, stripe_status, status")
+      .select("id, stripe_quote_id, customer_id, stripe_status, status")
       .eq("id", quote_id)
       .eq("customer_id", customer.id)
       .single();
@@ -87,10 +77,6 @@ serve(async (req) => {
     if (quote.stripe_status === "accepted" || quote.status === "accepted") {
       throw new Error("Quote is already accepted");
     }
-
-    const isTest = quote.is_test ?? true;
-    const stripeKey = getStripeKey(isTest);
-    console.log(`[ACCEPT-STRIPE-QUOTE] Using ${isTest ? 'TEST' : 'LIVE'} Stripe key for quote ${quote_id}`);
 
     const stripe = new Stripe(stripeKey, {
       apiVersion: "2025-08-27.basil",

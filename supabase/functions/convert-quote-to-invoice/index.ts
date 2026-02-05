@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@18.5.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
+import { getStripeSecretKey, getAppEnvironment } from "../_shared/stripe-env.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -24,20 +25,9 @@ serve(async (req) => {
   );
 
   try {
-    logStep("Function started");
-
-    // Helper to get the appropriate Stripe key
-    const getStripeKey = (isTest: boolean): string => {
-      if (isTest) {
-        const testKey = Deno.env.get("STRIPE_SECRET_KEY");
-        if (!testKey) throw new Error("STRIPE_SECRET_KEY (test) is not set");
-        return testKey;
-      } else {
-        const liveKey = Deno.env.get("STRIPE_SECRET_KEY_LIVE");
-        if (!liveKey) throw new Error("STRIPE_SECRET_KEY_LIVE is not set");
-        return liveKey;
-      }
-    };
+    const appEnv = getAppEnvironment();
+    const stripeKey = getStripeSecretKey();
+    logStep("Function started", { environment: appEnv });
 
     // Authenticate staff user
     const authHeader = req.headers.get("Authorization");
@@ -85,10 +75,6 @@ serve(async (req) => {
       throw new Error("Quote has not been sent to Stripe yet");
     }
 
-    // Initialize Stripe with the correct key based on is_test flag
-    const isTest = quote.is_test ?? true;
-    const stripeKey = getStripeKey(isTest);
-    logStep("Using Stripe mode", { isTest });
     const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
 
     // Get the Stripe quote
@@ -167,7 +153,6 @@ serve(async (req) => {
       bom_version: quote.bom_version,
       quote_number: quote.quote_number,
       created_by: user.id,
-      is_test: quote.is_test || false,
     };
 
     const { data: invoiceRecord, error: invoiceError } = await supabaseClient

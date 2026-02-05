@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@18.5.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
+import { getStripeSecretKey, getAppEnvironment, isTestEnvironment } from "../_shared/stripe-env.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -28,7 +29,10 @@ serve(async (req) => {
   );
 
   try {
-    logStep("Function started");
+    const appEnv = getAppEnvironment();
+    const stripeKey = getStripeSecretKey();
+    const isTest = isTestEnvironment();
+    logStep("Function started", { environment: appEnv });
 
     const authHeader = req.headers.get("Authorization")!;
     const token = authHeader.replace("Bearer ", "");
@@ -37,24 +41,9 @@ serve(async (req) => {
     if (!user?.email) throw new Error("User not authenticated or email not available");
     logStep("User authenticated", { userId: user.id, email: user.email });
 
-    // Check if customer is a test customer
-    const { data: customerData } = await supabaseClient
-      .from('customers')
-      .select('is_test')
-      .eq('user_id', user.id)
-      .single();
-    
-    const isTestCustomer = customerData?.is_test ?? false;
-    logStep("Customer test status", { isTestCustomer });
-
-    // Use appropriate Stripe key and price based on customer test status
-    const stripeKey = isTestCustomer 
-      ? Deno.env.get("STRIPE_SECRET_KEY") 
-      : Deno.env.get("STRIPE_SECRET_KEY_LIVE");
-    if (!stripeKey) throw new Error(isTestCustomer ? "STRIPE_SECRET_KEY is not set" : "STRIPE_SECRET_KEY_LIVE is not set");
-    
-    const priceId = isTestCustomer ? PRICE_ID_TEST : PRICE_ID_LIVE;
-    logStep("Stripe configuration", { mode: isTestCustomer ? "test" : "live", priceId });
+    // Use appropriate price based on environment
+    const priceId = isTest ? PRICE_ID_TEST : PRICE_ID_LIVE;
+    logStep("Stripe configuration", { mode: appEnv, priceId });
 
     const stripe = new Stripe(stripeKey, {
       apiVersion: "2025-08-27.basil",

@@ -81,9 +81,6 @@ const UserMenu = ({ size = "default" }: UserMenuProps) => {
           </div>
           <div className="hidden sm:flex flex-col items-start">
             <span className="text-sm font-medium">{displayName}</span>
-            {isCustomer && customerData?.is_test && (
-              <span className="text-xs font-semibold text-destructive leading-none">TEST</span>
-            )}
           </div>
           <ChevronDown className="h-4 w-4 text-muted-foreground" />
         </Button>
