@@ -1,172 +1,199 @@
 
 
-# Customer Detail: Offerter (Quotes) Integration
+# BOM / Quote Architectural Separation
 
 ## Overview
 
-Add a complete Offers/Quotes section to the internal staff Customer Detail view, including a dashboard card, a customer-scoped offers list, and a full offer detail page with timeline, messaging, and integration with the existing quote editor.
+Refactor the system to enforce a strict separation: **BOM = scope** (what gets installed), **Quote = commercial document** (what the customer pays). Remove all pricing concepts from BOM. Remove the "BOM price revision" concept entirely. Make the Quote page the single home for pricing, margin, and commercial editing.
 
-## What will be built
+## Database Migrations
 
-### 1. "Offerter" Card on Customer Dashboard
+### Migration 1: Drop pricing columns from `bom_items`
 
-Add a fourth card to the existing 3-column grid on `/portal/customers/:customerId/overview`:
+Remove columns that represent pricing ownership from the BOM items table:
 
-- **Title**: "Offerter" / "Quotes"
-- **Primary number**: Count of quotes requiring action (`revision_requested` status)
-- **Subtitle**: "X att hantera av Y totalt" / "X to handle of Y total"
-- **Link**: "Visa alla" -> `/portal/customers/:customerId/offers`
+- `sell_price` (legacy)
+- `sell_price_ex_vat_at_time`
+- `sell_price_inc_vat_at_time`
+- `vat_rate_at_time`
+- `pricing_source`
+- `cost` (legacy duplicate of `cost_ex_vat_at_time`)
 
-Data fetched alongside existing ticket/invoice stats using queries on the `quotes` table filtered by `customer_id`.
+**Keep**: `cost_ex_vat_at_time` (renamed conceptually to "internal cost reference" -- optional estimation field)
 
-### 2. Customer-Scoped Offers List Page
+Before dropping, we will check Live for data in these columns (already confirmed: 12 rows with data). Since this is a deliberate architectural change and the user is aware, the columns will be dropped. A note will be provided about running a backup query on Live before publishing.
 
-**Route**: `/portal/customers/:customerId/offers`
+### Migration 2: Drop `bom_price_revisions` and `bom_price_revision_items` tables
 
-**New file**: `src/pages/portal/customer-view/CustomerViewOffers.tsx`
+These tables are no longer needed since pricing revisions are a concept being removed from BOM.
 
-Following the exact pattern of `CustomerViewTickets.tsx` and `CustomerViewBilling.tsx`:
+Also remove the `bom_price_revision_id` column from `quotes` table (this FK linked quotes to BOM pricing revisions, which is no longer the model).
 
-- Uses `CustomerViewLayout` wrapper
-- Back link to customers list
-- Status filter dropdown (All / Draft / Sent / Revision Requested / Accepted / Declined / etc.)
-- Search by quote number or project name
-- Table columns:
-  - Quote number (mono font, with version badge if v > 1)
-  - Project name (from BOM)
-  - Status badge (reusing existing badge style from `QuotesList.tsx`)
-  - Total inc VAT (from `quote_computed_totals` view)
-  - Last activity (from `updated_at`)
-  - Action indicator: amber dot/badge for `revision_requested`
-- Rows are clickable, navigating to the offer detail page
-- Sorted newest first by default
+### Migration 3: Add `source_bom_version` to `quote_lines` (optional context)
 
-### 3. Offer Detail Page
+Add `source_bom_version integer` to `quote_lines` so we know which BOM version was the source when a quote was created. This is informational only.
 
-**Route**: `/portal/customers/:customerId/offers/:quoteId`
+## File Changes
 
-**New file**: `src/pages/portal/customer-view/CustomerViewOfferDetail.tsx`
+### Files to Delete (4 files)
 
-#### A) Summary Header
-- Quote number + status badge
-- Customer name
-- Project name (from BOM)
-- Key timestamps: Created, Sent, Viewed, Accepted/Declined (only those that exist)
-- Total inc VAT, VAT breakdown, subtotal
+1. `src/hooks/use-bom-pricing-revisions.ts` -- entire pricing revision hook
+2. `src/components/portal/boms/PricingRevisionDropdown.tsx` -- pricing revision UI component
+3. `src/components/portal/quotes/QuoteOutdatedBanner.tsx` -- "BOM prices outdated" banner (no longer relevant)
+4. `src/components/portal/quotes/QuoteUpdateConfirmDialog.tsx` -- "update to latest price revision" dialog
+5. `src/components/portal/quotes/QuotePriceDiffModal.tsx` -- price diff comparison modal
 
-#### B) Action Banner (conditional)
-When `status === 'revision_requested'`:
-- Amber alert banner: "Kunden har begart andringar -- uppdatera offerten och skicka igen."
-- Primary CTA button: "Redigera & skicka igen" -> navigates to `/portal/quotes/:quoteId`
+### Files to Modify
 
-#### C) Staff Action Buttons
-- **"Oppna i offertredigeraren"** -- always available, navigates to existing `/portal/quotes/:quoteId`
-- **"Skicka igen"** -- calls the existing `send-quote-email` edge function, re-logs `sent` event
-- **"Skapa ny revision"** (when status is `accepted`) -- duplicates quote + quote_lines into a new quote with incremented version, `parent_quote_id` set to current quote, status `draft`, then navigates to the new quote in the editor
+#### 1. `src/pages/portal/boms/BOMBuilder.tsx` (major rewrite)
 
-For `declined`/`expired`/`cancelled` quotes: show "Duplicera som ny" which creates a fresh copy as a new draft.
+**Remove:**
+- All pricing revision imports and usage (`PricingRevisionDropdown`, `useBomPricingRevisions`)
+- "Skapa ny prisrevision" button
+- Sell price columns from the table: "Salj ex", "Salj inkl", "Marginal"
+- Summary sidebar: remove sell totals, margin calculations, margin status bar
+- `totals` calculation that computes sell/margin -- replace with scope-only totals
+- Price snapshot logic in `addItemMutation` (remove sell_price_*, vat_rate_at_time, pricing_source fields)
+- Price-related fields in `createNewVersionMutation` item copying
 
-#### D) Timeline (Event Log)
-Reuse the existing `QuoteEventLog` component pattern but embedded directly in this page. Queries `quote_events` for this quote, renders a chronological timeline with icons and Swedish labels (same mapping already in `QuoteEventLog.tsx`).
+**Keep:**
+- SKU, Product Name, Quantity, Cost (optional) columns
+- "Lagg till SKU", "Lagg till fran mall", "Skapa ny BOM-revision" buttons
+- "Skapa offert fran BOM" button (updated logic below)
+- Quantity editing with local state + save flow
 
-#### E) Messages Section
-- Query `quote_messages` for this quote, ordered by `created_at` ascending
-- Render as a threaded conversation:
-  - Customer messages (author_type=customer): left-aligned, distinct styling
-  - Staff messages (author_type=staff): right-aligned
-- Staff can compose and send a new message:
-  - Textarea + Send button
-  - Inserts into `quote_messages` with `author_type='staff'`, `source='portal'`
-  - Also logs a `quote_events` entry with `event_type='message_posted'`
+**Add:**
+- Info note at top: "BOM beskriver vad som ska installeras. Priser hanteras i offerten." / "BOM describes what will be installed. Prices are managed in the quote."
+- Simplified summary sidebar showing only: SKU count, Total units, Total cost (ex VAT) for estimation
 
-### 4. Editing Rules (enforced in UI)
+**Update `createQuote` function:**
+- No longer calls `ensureRevisionExists`
+- Copies BOM items into `quote_lines` with `section: 'hardware'`
+- Fetches **current SKU pricing** at quote creation time (sell_price_ex_vat, vat_rate, cost_ex_vat_computed) and stores in quote_lines
+- Sets `source_bom_id` and `source_bom_version`
+- Does NOT set `bom_price_revision_id` on the quote
 
-| Current Status | Available Actions |
-|---|---|
-| `draft` / `sent` / `viewed` / `revision_requested` | Open editor, Resend email |
-| `accepted` | "Skapa ny revision" (duplicates as new draft) |
-| `invoiced` | View only |
-| `declined` / `expired` / `cancelled` | "Duplicera som ny" (fresh copy) |
+#### 2. `src/pages/portal/quotes/QuotePreparation.tsx` (moderate changes)
 
-### 5. Routing
+**Remove:**
+- Imports: `QuotePriceDiffModal`, `QuoteOutdatedBanner`, `QuoteUpdateConfirmDialog`
+- `useQuoteVersioning` hook usage (pricing status, price diff, version creation from pricing)
+- The outdated pricing banner section
+- The price diff modal and update confirm dialog
+- State variables: `showDiffModal`, `showUpdateConfirm`, `priceDiff`
 
-Add three new routes to `App.tsx` inside the "Staff viewing customer portal" section:
+**Update hardware quantity editing:**
+- Make hardware quantity fields **read-only** (disabled)
+- When user focuses/clicks quantity, show a tooltip or message: "Andra antal via BOM (omfattningsandring)" / "Change quantity via BOM (scope change)"
+
+**Add "Uppdatera fran BOM" button:**
+- Shown in the hardware card header
+- When clicked: fetches latest BOM items for the linked `bom_id`, compares quantities, and creates a new quote version with updated quantities (but preserves current quote prices)
+- Only available when quote is editable (draft/revision_requested)
+
+**Add margin info card:**
+- In the summary sidebar, add a margin section that shows:
+  - Cost vs sell comparison for hardware items (using `cost_ex_vat_at_time` from quote_lines)
+  - Total margin in kr and %
+  - Margin status indicator (same style as currently in BOM)
+
+**Keep:**
+- All price editing for hardware unit prices, labor, travel
+- Send quote button + logic
+- Create invoice button + logic
+- Customer selector
+- Quote version dropdown (for navigating between versions)
+
+#### 3. `src/hooks/use-quote-versioning.ts` (simplify)
+
+**Remove:**
+- All pricing status / outdated pricing detection logic
+- `computePriceDiff` function
+- References to `bom_price_revision_id` and `bom_price_revisions` table
+
+**Keep:**
+- Quote family fetching (versions)
+- The `createNewVersion` mutation but simplify it: instead of pulling from BOM price revisions, it copies the current quote's lines and increments version
+
+#### 4. `src/pages/portal/quotes/QuotesList.tsx`
+
+No significant changes needed -- this page already works with `quote_computed_totals` which is computed from `quote_lines`.
+
+#### 5. `src/pages/portal/customer-view/CustomerViewOfferDetail.tsx`
+
+No changes needed -- this page works with quotes/events/messages and doesn't reference BOM pricing revisions.
+
+#### 6. `src/pages/portal/customer-view/CustomerViewDashboard.tsx`
+
+No changes needed -- the Offerter card queries quotes, not BOM pricing.
+
+## Business Logic Changes
+
+### Quote Creation Flow (from BOM)
 
 ```text
-/portal/customers/:customerId/offers          -> CustomerViewOffers
-/portal/customers/:customerId/offers/:quoteId -> CustomerViewOfferDetail
+User clicks "Skapa offert fran BOM"
+    |
+    v
+Fetch all bom_items for this BOM
+    |
+    v
+For each bom_item, fetch current SKU pricing:
+  - skus.sell_price_ex_vat -> quote_lines.unit_price_ex_vat
+  - skus.vat_rate -> quote_lines.vat_rate
+  - skus.cost_ex_vat_computed -> quote_lines.cost_ex_vat_at_time
+  - bom_items.quantity -> quote_lines.quantity
+    |
+    v
+Insert quote with bom_id, bom_version, customer_id
+Insert quote_lines (hardware) + default labor/travel rows
+    |
+    v
+Navigate to /portal/quotes/:newId
 ```
 
-Both wrapped in `CustomerViewWrapper` (same as existing customer view routes).
+### "Update from BOM" Flow (in Quote editor)
 
-### 6. No Database Migration Needed
-
-- `parent_quote_id` already exists on `quotes` table with FK to `quotes.id`
-- `quote_events` and `quote_messages` tables already exist with proper schema
-- `quote_computed_totals` view already provides aggregated totals
-- RLS policies for `quotes`, `quote_events`, `quote_messages` already allow staff access
-- No new columns or tables required
-
-## Technical Details
-
-### New Files
-1. `src/pages/portal/customer-view/CustomerViewOffers.tsx` -- Offers list page
-2. `src/pages/portal/customer-view/CustomerViewOfferDetail.tsx` -- Offer detail page
-
-### Modified Files
-1. `src/pages/portal/customer-view/CustomerViewDashboard.tsx` -- Add "Offerter" card + stats fetching
-2. `src/App.tsx` -- Add 2 new routes
-
-### Data Queries
-
-**Dashboard stats** (added to existing `fetchStats`):
-```sql
--- Total quotes + revision_requested count
-SELECT status FROM quotes WHERE customer_id = :customerId AND is_latest = true
+```text
+User clicks "Uppdatera fran BOM" on Quote page
+    |
+    v
+Fetch latest bom_items for quote.bom_id
+    |
+    v
+Create new quote version (copy existing quote_lines)
+Update hardware line quantities from BOM
+Keep existing unit prices unchanged
+    |
+    v
+Navigate to new quote version
 ```
 
-**Offers list**:
-```sql
-SELECT q.*, boms(project_name), quote_computed_totals(total_inc_vat)
-FROM quotes q
-WHERE q.customer_id = :customerId
-ORDER BY q.created_at DESC
-```
+### Quantity vs Price Change Rules
 
-**Offer detail**:
-```sql
--- Quote with customer + BOM
-SELECT * FROM quotes WHERE id = :quoteId
+- **Quantity change** = Must be done in BOM, then "Update from BOM" in quote
+- **Price change** = Done directly in Quote editor (unit prices editable)
+- **Hardware quantity in quote** = Read-only, displays message directing to BOM
+- **Labor/Travel quantity** = Editable in quote (these aren't scope items)
 
--- Events timeline
-SELECT * FROM quote_events WHERE quote_id = :quoteId ORDER BY created_at DESC
+## Summary of Columns Dropped
 
--- Messages thread
-SELECT * FROM quote_messages WHERE quote_id = :quoteId ORDER BY created_at ASC
-```
+### `bom_items` -- drop 6 columns:
+- `sell_price`
+- `sell_price_ex_vat_at_time`
+- `sell_price_inc_vat_at_time`
+- `vat_rate_at_time`
+- `pricing_source`
+- `cost` (legacy)
 
-**Staff message insert**:
-```sql
-INSERT INTO quote_messages (quote_id, author_type, author_email, author_name, body_markdown, source)
-VALUES (:quoteId, 'staff', :staffEmail, :staffName, :body, 'portal')
+### `quotes` -- drop 1 column:
+- `bom_price_revision_id`
 
-INSERT INTO quote_events (quote_id, event_type, actor_type, actor_email)
-VALUES (:quoteId, 'message_posted', 'staff', :staffEmail)
-```
+### Tables dropped entirely:
+- `bom_price_revisions`
+- `bom_price_revision_items`
 
-### "Create New Revision" Logic (client-side)
-1. Fetch current quote + quote_lines
-2. Insert new quote row with: `parent_quote_id = current.id`, `version = current.version + 1`, `status = 'draft'`, `customer_id`, `bom_id` carried over, `is_latest = true`
-3. Update current quote: `is_latest = false`
-4. Copy all `quote_lines` from current quote to new quote
-5. Navigate to `/portal/quotes/:newQuoteId`
+## Live Database Considerations
 
-### Resend Logic
-Call `supabase.functions.invoke('send-quote-email', { body: { quote_id } })` -- the existing edge function handles token generation, email sending, status update, and event logging.
-
-### Status Badge Helper
-Extract the `getStatusBadge` function from `QuotesList.tsx` into a shared utility or import pattern to avoid duplication across the new pages.
-
-### Grid Layout Update
-The dashboard card grid changes from `md:grid-cols-3` to `md:grid-cols-2 lg:grid-cols-4` to accommodate the fourth card while remaining responsive.
+There is existing data in Live for `bom_items` pricing columns (12 rows) and `bom_price_revisions` (5 rows). Before publishing, you should run a backup query on Live to preserve this data if needed. The data will be lost on publish since these columns/tables are being dropped.
 
