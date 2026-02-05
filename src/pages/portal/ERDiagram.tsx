@@ -177,7 +177,7 @@ const getErdDiagram = (direction: 'TB' | 'LR') => `erDiagram
         uuid created_by FK
         text quote_number
         text status
-        text stripe_quote_id UK
+        text accept_token_hash
         timestamptz created_at
         timestamptz updated_at
     }
