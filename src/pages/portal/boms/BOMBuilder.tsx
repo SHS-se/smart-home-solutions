@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
@@ -34,19 +34,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { ArrowLeft, Plus, Trash2, FileText, Package, RefreshCw, Pencil, Check, X, Copy, BadgePlus, ScrollText } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, FileText, Package, Pencil, Check, X, Copy, BadgePlus, ScrollText, Save } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import SKUSelector from '@/components/portal/boms/SKUSelector';
 import TemplateSelector from '@/components/portal/boms/TemplateSelector';
 import QuantityInput from '@/components/portal/boms/QuantityInput';
 import PricingRevisionDropdown from '@/components/portal/boms/PricingRevisionDropdown';
 import { useBomPricingRevisions } from '@/hooks/use-bom-pricing-revisions';
-
-// Track pending mutations for flush-before-navigate pattern
-interface PendingMutation {
-  itemId: string;
-  updates: Partial<BOMItem>;
-}
 
 interface BOMItem {
   id: string;
@@ -86,9 +80,9 @@ const BOMBuilder: React.FC = () => {
   const [isEditingProject, setIsEditingProject] = useState(false);
   const [editedProjectName, setEditedProjectName] = useState('');
 
-  // Ref to track pending item updates for flush-before-navigate
-  const pendingMutationsRef = useRef<PendingMutation[]>([]);
-  const isFlushingRef = useRef(false);
+  // Local state for unsaved quantity changes
+  const [localQuantities, setLocalQuantities] = useState<Record<string, number>>({});
+  const [isSaving, setIsSaving] = useState(false);
 
   // Fetch BOM
   const { data: bom } = useQuery({
@@ -289,48 +283,47 @@ const BOMBuilder: React.FC = () => {
     },
   });
 
-  // Flush all pending mutations immediately
-  const flushPendingMutations = useCallback(async () => {
-    if (isFlushingRef.current || pendingMutationsRef.current.length === 0) {
-      return;
-    }
-    
-    isFlushingRef.current = true;
-    const mutations = [...pendingMutationsRef.current];
-    pendingMutationsRef.current = [];
-    
+  // Compute whether there are unsaved changes
+  const hasUnsavedChanges = useMemo(() => {
+    return items.some(item => 
+      localQuantities[item.id] !== undefined && 
+      localQuantities[item.id] !== item.quantity
+    );
+  }, [items, localQuantities]);
+
+  // Handle local quantity change (no DB mutation)
+  const handleLocalQuantityChange = (itemId: string, quantity: number) => {
+    setLocalQuantities(prev => ({
+      ...prev,
+      [itemId]: quantity,
+    }));
+  };
+
+  // Save all changes to database
+  const handleSaveChanges = async () => {
+    const updates = Object.entries(localQuantities).filter(([itemId, qty]) => {
+      const item = items.find(i => i.id === itemId);
+      return item && item.quantity !== qty;
+    });
+
+    if (updates.length === 0) return;
+
+    setIsSaving(true);
     try {
-      // Execute all pending mutations in parallel
       await Promise.all(
-        mutations.map(({ itemId, updates }) =>
-          supabase.from('bom_items').update(updates).eq('id', itemId)
+        updates.map(([itemId, quantity]) =>
+          supabase.from('bom_items').update({ quantity }).eq('id', itemId)
         )
       );
-      // Refetch items to get fresh data
-      await queryClient.refetchQueries({ queryKey: ['bom_items', id] });
+      setLocalQuantities({});
+      queryClient.invalidateQueries({ queryKey: ['bom_items', id] });
+      toast({ title: t('Ändringar sparade', 'Changes saved') });
+    } catch (error: any) {
+      toast({ title: t('Kunde inte spara', 'Failed to save'), description: error.message, variant: 'destructive' });
     } finally {
-      isFlushingRef.current = false;
+      setIsSaving(false);
     }
-  }, [id, queryClient]);
-
-  // Queue an item update (for immediate persistence tracking)
-  const queueItemUpdate = useCallback((itemId: string, updates: Partial<BOMItem>) => {
-    // Remove any existing pending update for this item
-    pendingMutationsRef.current = pendingMutationsRef.current.filter(
-      (m) => m.itemId !== itemId
-    );
-    // Add the new update
-    pendingMutationsRef.current.push({ itemId, updates });
-  }, []);
-
-  // Handle quantity commit from QuantityInput
-  const handleQuantityCommit = useCallback((itemId: string, quantity: number) => {
-    // Remove from pending queue since we're committing now
-    pendingMutationsRef.current = pendingMutationsRef.current.filter(
-      (m) => m.itemId !== itemId
-    );
-    updateItemMutation.mutate({ itemId, updates: { quantity } });
-  }, [updateItemMutation]);
+  };
 
   // Delete item mutation
   const deleteItemMutation = useMutation({
@@ -369,15 +362,8 @@ const BOMBuilder: React.FC = () => {
   // Create quote from BOM - copies individual items as quote_lines snapshots
   const createQuote = async () => {
     try {
-      // Flush any pending mutations before creating quote
-      await flushPendingMutations();
-      
-      // Wait for items to be refetched after flush
-      const freshItemsResult = await queryClient.fetchQuery({
-        queryKey: ['bom_items', id],
-        staleTime: 0,
-      });
-      const freshItems = freshItemsResult as BOMItem[];
+      // Use current items directly (no pending changes allowed when button is enabled)
+      const freshItems = items;
 
       // Ensure a pricing revision exists (create r1 if none)
       const revision = await ensureRevisionExists(freshItems);
@@ -676,9 +662,8 @@ const BOMBuilder: React.FC = () => {
                           <TableCell>{item.sku.name}</TableCell>
                           <TableCell className="text-center">
                             <QuantityInput
-                              value={item.quantity}
-                              onCommit={(qty) => handleQuantityCommit(item.id, qty)}
-                              onChange={(qty) => queueItemUpdate(item.id, { quantity: qty })}
+                              value={localQuantities[item.id] ?? item.quantity}
+                              onCommit={(qty) => handleLocalQuantityChange(item.id, qty)}
                               className="w-16 text-center mx-auto"
                             />
                           </TableCell>
@@ -779,10 +764,21 @@ const BOMBuilder: React.FC = () => {
               className="w-full" 
               size="lg" 
               onClick={createQuote}
-              disabled={items.length === 0}
+              disabled={items.length === 0 || hasUnsavedChanges}
             >
               <FileText className="h-4 w-4 mr-2" />
               {t('Skapa offert från BOM', 'Create quote from BOM')}
+            </Button>
+
+            <Button 
+              className="w-full" 
+              size="lg"
+              variant="outline"
+              onClick={handleSaveChanges}
+              disabled={!hasUnsavedChanges || isSaving}
+            >
+              <Save className="h-4 w-4 mr-2" />
+              {isSaving ? t('Sparar...', 'Saving...') : t('Spara ändringar', 'Save changes')}
             </Button>
           </div>
         </div>
