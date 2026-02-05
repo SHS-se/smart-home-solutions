@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
@@ -42,6 +42,12 @@ import QuantityInput from '@/components/portal/boms/QuantityInput';
 import PricingRevisionDropdown from '@/components/portal/boms/PricingRevisionDropdown';
 import { useBomPricingRevisions } from '@/hooks/use-bom-pricing-revisions';
 
+// Track pending mutations for flush-before-navigate pattern
+interface PendingMutation {
+  itemId: string;
+  updates: Partial<BOMItem>;
+}
+
 interface BOMItem {
   id: string;
   sku_id: string;
@@ -79,6 +85,10 @@ const BOMBuilder: React.FC = () => {
   const [isNewVersionDialogOpen, setIsNewVersionDialogOpen] = useState(false);
   const [isEditingProject, setIsEditingProject] = useState(false);
   const [editedProjectName, setEditedProjectName] = useState('');
+
+  // Ref to track pending item updates for flush-before-navigate
+  const pendingMutationsRef = useRef<PendingMutation[]>([]);
+  const isFlushingRef = useRef(false);
 
   // Fetch BOM
   const { data: bom } = useQuery({
@@ -279,6 +289,49 @@ const BOMBuilder: React.FC = () => {
     },
   });
 
+  // Flush all pending mutations immediately
+  const flushPendingMutations = useCallback(async () => {
+    if (isFlushingRef.current || pendingMutationsRef.current.length === 0) {
+      return;
+    }
+    
+    isFlushingRef.current = true;
+    const mutations = [...pendingMutationsRef.current];
+    pendingMutationsRef.current = [];
+    
+    try {
+      // Execute all pending mutations in parallel
+      await Promise.all(
+        mutations.map(({ itemId, updates }) =>
+          supabase.from('bom_items').update(updates).eq('id', itemId)
+        )
+      );
+      // Refetch items to get fresh data
+      await queryClient.refetchQueries({ queryKey: ['bom_items', id] });
+    } finally {
+      isFlushingRef.current = false;
+    }
+  }, [id, queryClient]);
+
+  // Queue an item update (for immediate persistence tracking)
+  const queueItemUpdate = useCallback((itemId: string, updates: Partial<BOMItem>) => {
+    // Remove any existing pending update for this item
+    pendingMutationsRef.current = pendingMutationsRef.current.filter(
+      (m) => m.itemId !== itemId
+    );
+    // Add the new update
+    pendingMutationsRef.current.push({ itemId, updates });
+  }, []);
+
+  // Handle quantity commit from QuantityInput
+  const handleQuantityCommit = useCallback((itemId: string, quantity: number) => {
+    // Remove from pending queue since we're committing now
+    pendingMutationsRef.current = pendingMutationsRef.current.filter(
+      (m) => m.itemId !== itemId
+    );
+    updateItemMutation.mutate({ itemId, updates: { quantity } });
+  }, [updateItemMutation]);
+
   // Delete item mutation
   const deleteItemMutation = useMutation({
     mutationFn: async (itemId: string) => {
@@ -316,8 +369,18 @@ const BOMBuilder: React.FC = () => {
   // Create quote from BOM - copies individual items as quote_lines snapshots
   const createQuote = async () => {
     try {
+      // Flush any pending mutations before creating quote
+      await flushPendingMutations();
+      
+      // Wait for items to be refetched after flush
+      const freshItemsResult = await queryClient.fetchQuery({
+        queryKey: ['bom_items', id],
+        staleTime: 0,
+      });
+      const freshItems = freshItemsResult as BOMItem[];
+
       // Ensure a pricing revision exists (create r1 if none)
-      const revision = await ensureRevisionExists(items);
+      const revision = await ensureRevisionExists(freshItems);
 
       const { data: quote, error } = await supabase
         .from('quotes')
@@ -334,7 +397,7 @@ const BOMBuilder: React.FC = () => {
 
       // Create individual hardware quote_lines for each BOM item (snapshot)
       // This ensures quote is independent of BOM - edits to quote don't mutate BOM
-      const hardwareLines = items.map(item => ({
+      const hardwareLines = freshItems.map(item => ({
         quote_id: quote.id,
         section: 'hardware',
         description: item.sku.name,
@@ -614,7 +677,8 @@ const BOMBuilder: React.FC = () => {
                           <TableCell className="text-center">
                             <QuantityInput
                               value={item.quantity}
-                              onCommit={(qty) => updateItemMutation.mutate({ itemId: item.id, updates: { quantity: qty } })}
+                              onCommit={(qty) => handleQuantityCommit(item.id, qty)}
+                              onChange={(qty) => queueItemUpdate(item.id, { quantity: qty })}
                               className="w-16 text-center mx-auto"
                             />
                           </TableCell>

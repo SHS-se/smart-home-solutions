@@ -4,6 +4,7 @@ import { Input } from '@/components/ui/input';
 interface QuantityInputProps {
   value: number;
   onCommit: (value: number) => void;
+  onChange?: (value: number) => void;
   min?: number;
   className?: string;
 }
@@ -16,6 +17,7 @@ interface QuantityInputProps {
 const QuantityInput: React.FC<QuantityInputProps> = ({
   value,
   onCommit,
+  onChange,
   min = 1,
   className = '',
 }) => {
@@ -25,6 +27,19 @@ const QuantityInput: React.FC<QuantityInputProps> = ({
   useEffect(() => {
     setLocalValue(String(value));
   }, [value]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newValue = e.target.value;
+    setLocalValue(newValue);
+    
+    // Notify parent of the pending change (for flush-before-navigate patterns)
+    if (onChange) {
+      const parsed = parseInt(newValue, 10);
+      if (!isNaN(parsed) && parsed >= min) {
+        onChange(parsed);
+      }
+    }
+  };
 
   const handleCommit = () => {
     const parsed = parseInt(localValue, 10);
@@ -42,7 +57,7 @@ const QuantityInput: React.FC<QuantityInputProps> = ({
       type="number"
       min={min}
       value={localValue}
-      onChange={(e) => setLocalValue(e.target.value)}
+      onChange={handleChange}
       onBlur={handleCommit}
       onKeyDown={(e) => {
         if (e.key === 'Enter') {
