@@ -23,7 +23,7 @@ interface InvoiceEmailModalProps {
   onOpenChange: (open: boolean) => void;
   quote: {
     id: string;
-    quote_number: string;
+    quote_number: string | null;
     invoice_number: string | null;
     invoice_hosted_url: string | null;
     invoice_pdf_url: string | null;
@@ -64,8 +64,8 @@ const InvoiceEmailModal: React.FC<InvoiceEmailModalProps> = ({
   useEffect(() => {
     if (open) {
       const customerEmail = quote.customer?.billing_email || '';
-      const projectName = quote.bom?.project_name || quote.quote_number;
-      const invoiceNumber = quote.invoice_number || quote.quote_number;
+      const projectName = quote.bom?.project_name || quote.quote_number || '';
+      const invoiceNumber = quote.invoice_number || quote.quote_number || '';
       const total = quote.invoice_total ?? quote.total_inc_vat;
       const dueDate = formatDate(quote.invoice_due_date);
 

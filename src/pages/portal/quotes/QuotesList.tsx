@@ -35,7 +35,7 @@ import QuotePdfModal from '@/components/portal/quotes/QuotePdfModal';
 
 interface Quote {
   id: string;
-  quote_number: string;
+  quote_number: string | null;
   version: number;
   is_latest: boolean;
   is_test: boolean;
@@ -157,7 +157,7 @@ const QuotesList: React.FC = () => {
       // Search filter
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase();
-        const matchesQuoteNumber = quote.quote_number.toLowerCase().includes(query);
+        const matchesQuoteNumber = quote.quote_number?.toLowerCase().includes(query);
         const matchesCustomer = quote.customer?.name?.toLowerCase().includes(query);
         const matchesProject = quote.bom?.project_name?.toLowerCase().includes(query);
         if (!matchesQuoteNumber && !matchesCustomer && !matchesProject) return false;
@@ -279,7 +279,7 @@ const QuotesList: React.FC = () => {
 
       // Set the signed URL and open the modal
       setPdfUrl(data.url);
-      setPdfQuoteNumber(quote.quote_number);
+      setPdfQuoteNumber(quote.quote_number || quote.stripe_quote_id || '');
       setShowPdfModal(true);
       
     } catch (error: unknown) {
@@ -389,7 +389,7 @@ const QuotesList: React.FC = () => {
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <span className="font-mono font-medium">
-                            #{quote.quote_number}
+                            {quote.quote_number ? `#${quote.quote_number}` : <span className="text-muted-foreground italic">Utkast</span>}
                           </span>
                           {quote.version > 1 && (
                             <Badge variant="outline" className="font-mono text-xs">

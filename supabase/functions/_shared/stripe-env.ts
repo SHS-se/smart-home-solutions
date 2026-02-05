@@ -58,10 +58,3 @@ export function getStripeSecretKey(): string {
 export function isTestEnvironment(): boolean {
   return getAppEnvironment() === "test";
 }
-
-/**
- * Get quote number prefix for current environment
- */
-export function getQuotePrefix(): string {
-  return isTestEnvironment() ? "TQ-" : "Q-";
-}

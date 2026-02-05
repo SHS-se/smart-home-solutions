@@ -36,7 +36,7 @@ type QuoteSortColumn = 'created_at' | 'quote_number' | 'total_inc_vat' | 'status
 
 interface Quote {
   id: string;
-  quote_number: string;
+  quote_number: string | null;
   status: string;
   stripe_status: string | null;
   created_at: string;
@@ -319,7 +319,7 @@ const Offers: React.FC = () => {
                         {new Date(quote.created_at).toLocaleDateString('sv-SE')}
                       </TableCell>
                       <TableCell className="text-center font-medium">
-                        {quote.quote_number}
+                        {quote.quote_number || '—'}
                         {quote.version > 1 && (
                           <span className="text-muted-foreground ml-1">v{quote.version}</span>
                         )}
@@ -373,7 +373,7 @@ const Offers: React.FC = () => {
         open={!!previewQuote}
         onOpenChange={(open) => !open && setPreviewQuote(null)}
         quoteId={previewQuote?.id ?? null}
-        quoteNumber={previewQuote?.quote_number ?? ''}
+        quoteNumber={previewQuote?.quote_number ?? previewQuote?.stripe_quote_id ?? ''}
       />
 
       <AlertDialog open={!!confirmQuote} onOpenChange={(open) => !open && setConfirmQuote(null)}>
@@ -384,8 +384,8 @@ const Offers: React.FC = () => {
             </AlertDialogTitle>
             <AlertDialogDescription>
               {t(
-                `Är du säker på att du vill acceptera offert ${confirmQuote?.quote_number}? Denna åtgärd kan inte ångras.`,
-                `Are you sure you want to accept offer ${confirmQuote?.quote_number}? This action cannot be undone.`
+                `Är du säker på att du vill acceptera denna offert${confirmQuote?.quote_number ? ` (${confirmQuote.quote_number})` : ''}? Denna åtgärd kan inte ångras.`,
+                `Are you sure you want to accept this offer${confirmQuote?.quote_number ? ` (${confirmQuote.quote_number})` : ''}? This action cannot be undone.`
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>

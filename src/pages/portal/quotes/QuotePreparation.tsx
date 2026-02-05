@@ -368,6 +368,7 @@ const QuotePreparation: React.FC = () => {
         .from('quotes')
         .update({ 
           stripe_quote_id: data.stripe_quote_id,
+          quote_number: data.stripe_quote_number || null,
           status: 'sent',
           stripe_status: 'open', // Stripe quote is finalized and open for acceptance
         })
@@ -652,7 +653,11 @@ const QuotePreparation: React.FC = () => {
           {quote?.bom?.project_name && (
             <span>{t('Projekt', 'Project')}: <span className="text-foreground">{quote.bom.project_name}</span></span>
           )}
-          <span>{t('Offert ID', 'Quote ID')}: <span className="text-foreground font-mono">#{quote?.quote_number}</span></span>
+          {quote?.quote_number ? (
+            <span>{t('Offert', 'Quote')}: <span className="text-foreground font-mono">{quote.quote_number}</span></span>
+          ) : (
+            <span className="text-muted-foreground italic">{t('Inget offertnummer ännu', 'No quote number yet')}</span>
+          )}
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -1086,7 +1091,7 @@ const QuotePreparation: React.FC = () => {
             if (!open) setPdfUrl(null);
           }}
           pdfUrl={pdfUrl}
-          quoteNumber={quote?.quote_number || ''}
+          quoteNumber={quote?.quote_number || quote?.stripe_quote_id || ''}
         />
       </div>
     </PortalLayout>

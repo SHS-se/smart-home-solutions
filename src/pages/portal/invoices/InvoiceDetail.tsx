@@ -331,7 +331,7 @@ const InvoiceDetail: React.FC = () => {
               <span>
                 <span className="text-muted-foreground">{t('Från offert:', 'From quote:')}</span>{' '}
                 <a href={`/portal/quotes/${invoice.quote_id}`} className="text-primary hover:underline">
-                  #{invoice.quote_number}
+                  {invoice.quote_number}
                 </a>
               </span>
             )}
