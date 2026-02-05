@@ -22,7 +22,7 @@ const CustomerViewAccount: React.FC = () => {
   const { toast } = useToast();
 
   const [formData, setFormData] = useState({
-    org_name: '',
+    name: '',
     billing_email: '',
     phone: '',
     site_street: '',
@@ -47,7 +47,7 @@ const CustomerViewAccount: React.FC = () => {
   useEffect(() => {
     if (customerData) {
       setFormData({
-        org_name: customerData.org_name || '',
+        name: customerData.name || '',
         billing_email: customerData.billing_email || '',
         phone: customerData.phone || '',
         site_street: customerData.site_street || '',
@@ -75,7 +75,7 @@ const CustomerViewAccount: React.FC = () => {
 
     try {
       const updateData = {
-        org_name: formData.org_name || null,
+        name: formData.name || null,
         billing_email: formData.billing_email || null,
         phone: formData.phone || null,
         site_street: formData.site_street || null,
@@ -146,7 +146,7 @@ const CustomerViewAccount: React.FC = () => {
 
         <h1 className="text-3xl font-medium">{t('Kontouppgifter', 'Account details')}</h1>
         <p className="text-muted-foreground">
-          {customerData.org_name || t('Namnlös kund', 'Unnamed customer')}
+          {customerData.name || t('Namnlös kund', 'Unnamed customer')}
         </p>
 
         <Card>
@@ -157,11 +157,11 @@ const CustomerViewAccount: React.FC = () => {
             {/* Basic info */}
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label htmlFor="org_name">{t('Kundnamn', 'Customer name')}</Label>
+                <Label htmlFor="name">{t('Kundnamn', 'Customer name')}</Label>
                 <Input
-                  id="org_name"
-                  name="org_name"
-                  value={formData.org_name}
+                  id="name"
+                  name="name"
+                  value={formData.name}
                   onChange={handleChange}
                 />
               </div>

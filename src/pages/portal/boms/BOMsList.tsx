@@ -45,7 +45,7 @@ interface BOM {
   version: number;
   customer_id: string | null;
   created_at: string;
-  customer?: { org_name: string | null };
+  customer?: { name: string | null };
 }
 
 type SortColumn = 'project_name' | 'customer' | 'version' | 'created_at';
@@ -69,7 +69,7 @@ const BOMsList: React.FC = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('boms')
-        .select('*, customers(org_name)')
+        .select('*, customers(name)')
         .order('created_at', { ascending: false });
       if (error) throw error;
       return data.map(bom => ({
@@ -86,9 +86,9 @@ const BOMsList: React.FC = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('customers')
-        .select('id, org_name');
+        .select('id, name');
       if (error) throw error;
-      return naturalSort(data, 'org_name');
+      return naturalSort(data, 'name');
     },
     enabled: isStaff,
   });
@@ -99,7 +99,7 @@ const BOMsList: React.FC = () => {
       getValue: (bom) => {
         switch (sortColumn) {
           case 'customer':
-            return bom.customer?.org_name ?? '';
+            return bom.customer?.name ?? '';
           case 'created_at':
             return new Date(bom.created_at);
           default:
@@ -213,7 +213,7 @@ const BOMsList: React.FC = () => {
                       <span className="font-medium">{bom.project_name}</span>
                     </TableCell>
                     <TableCell>
-                      {bom.customer?.org_name || <span className="text-muted-foreground">—</span>}
+                      {bom.customer?.name || <span className="text-muted-foreground">—</span>}
                     </TableCell>
                     <TableCell>
                       <Badge variant="secondary">v{bom.version}</Badge>
@@ -272,7 +272,7 @@ const BOMsList: React.FC = () => {
                   <SelectItem value="none">{t('Ingen kund', 'No customer')}</SelectItem>
                   {customers.map(c => (
                     <SelectItem key={c.id} value={c.id}>
-                      {c.org_name || t('Okänd kund', 'Unknown customer')}
+                      {c.name || t('Okänd kund', 'Unknown customer')}
                     </SelectItem>
                   ))}
                 </SelectContent>

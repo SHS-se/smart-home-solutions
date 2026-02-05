@@ -44,7 +44,7 @@ interface Invoice {
   total: number | null;
   created_at: string;
   last_emailed_at: string | null;
-  customer?: { org_name: string | null } | null;
+  customer?: { name: string | null } | null;
   bom?: { project_name: string } | null;
 }
 
@@ -115,7 +115,7 @@ const InvoicesList: React.FC = () => {
       // Fetch invoices
       const { data: invoicesData, error: invoicesError } = await supabase
         .from('invoices')
-        .select('*, customer:customers(org_name), bom:boms(project_name)')
+        .select('*, customer:customers(name), bom:boms(project_name)')
         .order('created_at', { ascending: false });
       if (invoicesError) throw invoicesError;
 
@@ -236,7 +236,7 @@ const InvoicesList: React.FC = () => {
       const query = searchQuery.toLowerCase();
       filtered = filtered.filter(invoice => {
         const matchesInvoiceNumber = invoice.invoice_number?.toLowerCase().includes(query);
-        const matchesCustomer = invoice.customer?.org_name?.toLowerCase().includes(query);
+        const matchesCustomer = invoice.customer?.name?.toLowerCase().includes(query);
         const matchesProject = invoice.bom?.project_name?.toLowerCase().includes(query);
         return matchesInvoiceNumber || matchesCustomer || matchesProject;
       });
@@ -254,7 +254,7 @@ const InvoicesList: React.FC = () => {
       getValue: (invoice) => {
         switch (sortColumn) {
           case 'customer':
-            return invoice.customer?.org_name ?? '';
+            return invoice.customer?.name ?? '';
           case 'project':
             return invoice.bom?.project_name ?? '';
           case 'created_at':
@@ -468,7 +468,7 @@ const InvoicesList: React.FC = () => {
                       </div>
                     </TableCell>
                     <TableCell>
-                      {invoice.customer?.org_name || <span className="text-muted-foreground">—</span>}
+                      {invoice.customer?.name || <span className="text-muted-foreground">—</span>}
                     </TableCell>
                     <TableCell>
                       {invoice.bom?.project_name || <span className="text-muted-foreground">—</span>}

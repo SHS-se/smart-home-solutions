@@ -4,7 +4,7 @@ import { supabase } from '@/integrations/supabase/client';
 
 interface CustomerData {
   id: string;
-  org_name: string | null;
+  name: string | null;
   billing_email: string | null;
   phone: string | null;
   site_street: string | null;
@@ -49,7 +49,7 @@ export const ViewedCustomerProvider: React.FC<ViewedCustomerProviderProps> = ({ 
     try {
       const { data, error: fetchError } = await supabase
         .from('customers')
-        .select('id, org_name, billing_email, phone, site_street, site_postcode, site_city, billing_street, billing_postcode, billing_city, billing_same_as_site, is_test')
+        .select('id, name, billing_email, phone, site_street, site_postcode, site_city, billing_street, billing_postcode, billing_city, billing_same_as_site, is_test')
         .eq('id', customerId)
         .single();
 

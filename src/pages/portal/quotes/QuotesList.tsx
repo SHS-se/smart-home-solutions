@@ -43,7 +43,7 @@ interface Quote {
   stripe_quote_id: string | null;
   status: string;
   created_at: string;
-  customer?: { org_name: string | null };
+  customer?: { name: string | null };
   bom?: { project_name: string };
 }
 
@@ -98,7 +98,7 @@ const QuotesList: React.FC = () => {
       // Fetch quotes
       const { data: quotesData, error: quotesError } = await supabase
         .from('quotes')
-        .select('*, customers(org_name), boms(project_name)')
+        .select('*, customers(name), boms(project_name)')
         .order('created_at', { ascending: false });
       if (quotesError) throw quotesError;
 
@@ -158,7 +158,7 @@ const QuotesList: React.FC = () => {
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase();
         const matchesQuoteNumber = quote.quote_number.toLowerCase().includes(query);
-        const matchesCustomer = quote.customer?.org_name?.toLowerCase().includes(query);
+        const matchesCustomer = quote.customer?.name?.toLowerCase().includes(query);
         const matchesProject = quote.bom?.project_name?.toLowerCase().includes(query);
         if (!matchesQuoteNumber && !matchesCustomer && !matchesProject) return false;
       }
@@ -173,7 +173,7 @@ const QuotesList: React.FC = () => {
       getValue: (quote) => {
         switch (sortColumn) {
           case 'customer':
-            return quote.customer?.org_name ?? '';
+            return quote.customer?.name ?? '';
           case 'project':
             return quote.bom?.project_name ?? '';
           case 'total':
@@ -410,7 +410,7 @@ const QuotesList: React.FC = () => {
                         </div>
                       </TableCell>
                       <TableCell>
-                        {quote.customer?.org_name || <span className="text-muted-foreground">—</span>}
+                        {quote.customer?.name || <span className="text-muted-foreground">—</span>}
                       </TableCell>
                       <TableCell>
                         {quote.bom?.project_name || <span className="text-muted-foreground">—</span>}

@@ -465,7 +465,7 @@ const Dashboard: React.FC = () => {
               </CardHeader>
               <CardContent>
                 <p className="text-muted-foreground mb-1">
-                  {t('Företag:', 'Company:')} <strong>{customerData?.org_name || 'N/A'}</strong>
+                  {t('Företag:', 'Company:')} <strong>{customerData?.name || 'N/A'}</strong>
                 </p>
                 <p className="text-muted-foreground mb-4">
                   {t('Kontakt:', 'Contact:')} {customerData?.billing_email || user?.email}

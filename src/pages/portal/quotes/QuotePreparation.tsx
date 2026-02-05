@@ -87,7 +87,7 @@ const QuotePreparation: React.FC = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('quotes')
-        .select('*, customers(org_name, billing_email), boms(id, project_name, version), bom_price_revisions(id, revision, note, created_at)')
+        .select('*, customers(name, billing_email), boms(id, project_name, version), bom_price_revisions(id, revision, note, created_at)')
         .eq('id', id)
         .single();
       if (error) throw error;
@@ -275,7 +275,7 @@ const QuotePreparation: React.FC = () => {
 
   // Send to Stripe - uses quote_lines as source of truth
   const sendToStripe = async () => {
-    if (!quote?.customer?.org_name) {
+    if (!quote?.customer?.name) {
       toast({ title: t('Kund krävs', 'Customer required'), description: t('Offerten måste ha en kund kopplad', 'Quote must have a customer attached'), variant: 'destructive' });
       return;
     }
@@ -310,7 +310,7 @@ const QuotePreparation: React.FC = () => {
       const { data, error } = await supabase.functions.invoke('create-stripe-quote', {
         body: {
           quote_id: id,
-          customer_name: quote.customer.org_name,
+          customer_name: quote.customer.name,
           hardware_items: hardwareItems,
           labor_lines: laborLinesData,
           travel_lines: travelLinesData,
@@ -584,8 +584,8 @@ const QuotePreparation: React.FC = () => {
         {/* Quote Info */}
         <div className="text-sm text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1">
           {quote && getStatusBadge()}
-          {quote?.customer?.org_name && (
-            <span>{t('Kund', 'Customer')}: <span className="text-foreground">{quote.customer.org_name}</span></span>
+          {quote?.customer?.name && (
+            <span>{t('Kund', 'Customer')}: <span className="text-foreground">{quote.customer.name}</span></span>
           )}
           {quote?.bom?.project_name && (
             <span>{t('Projekt', 'Project')}: <span className="text-foreground">{quote.bom.project_name}</span></span>

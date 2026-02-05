@@ -20,7 +20,7 @@ const Account: React.FC = () => {
   const { toast } = useToast();
 
   const [formData, setFormData] = useState({
-    org_name: '',
+    name: '',
     billing_email: '',
     phone: '',
     site_street: '',
@@ -42,7 +42,7 @@ const Account: React.FC = () => {
   useEffect(() => {
     if (customerData) {
       setFormData({
-        org_name: customerData.org_name || '',
+        name: customerData.name || '',
         billing_email: customerData.billing_email || '',
         phone: customerData.phone || '',
         site_street: customerData.site_street || '',
@@ -70,7 +70,7 @@ const Account: React.FC = () => {
     setSaving(true);
     
     const updateData = {
-      org_name: formData.org_name || null,
+      name: formData.name || null,
       billing_email: formData.billing_email || null,
       phone: formData.phone || null,
       site_street: formData.site_street || null,
@@ -152,11 +152,11 @@ const Account: React.FC = () => {
             {/* Basic info */}
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label htmlFor="org_name">{t('Företagsnamn', 'Company name')}</Label>
+                <Label htmlFor="name">{t('Företagsnamn', 'Company name')}</Label>
                 <Input
-                  id="org_name"
-                  value={formData.org_name}
-                  onChange={(e) => handleChange('org_name', e.target.value)}
+                  id="name"
+                  value={formData.name}
+                  onChange={(e) => handleChange('name', e.target.value)}
                 />
               </div>
               <div className="space-y-2">

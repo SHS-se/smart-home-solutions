@@ -24,7 +24,7 @@ interface Invoice {
   stripe_invoice_id: string | null;
   hosted_invoice_url: string | null;
   invoice_pdf_url: string | null;
-  customer?: { org_name: string | null; billing_email?: string | null } | null;
+  customer?: { name: string | null; billing_email?: string | null } | null;
   bom?: { project_name: string } | null;
 }
 
