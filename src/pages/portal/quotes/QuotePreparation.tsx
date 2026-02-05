@@ -414,7 +414,7 @@ const QuotePreparation: React.FC = () => {
             'Authorization': `Bearer ${token}`,
             'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
           },
-          body: JSON.stringify({ stripe_quote_id: quote.stripe_quote_id }),
+          body: JSON.stringify({ stripe_quote_id: quote.stripe_quote_id, is_test: quote.is_test }),
         }
       );
 
