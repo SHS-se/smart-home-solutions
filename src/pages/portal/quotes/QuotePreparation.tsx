@@ -123,6 +123,7 @@ const QuotePreparation: React.FC = () => {
   });
 
   // Fetch ALL quote lines (hardware, labor, travel) - single source of truth
+  // Order by created_at + id for stable, deterministic row ordering
   const { data: lines = [], isSuccess: linesLoaded } = useQuery({
     queryKey: ['quote_lines', id],
     queryFn: async () => {
@@ -130,7 +131,8 @@ const QuotePreparation: React.FC = () => {
         .from('quote_lines')
         .select('*')
         .eq('quote_id', id)
-        .order('created_at');
+        .order('created_at')
+        .order('id');
       if (error) throw error;
       return data as QuoteLine[];
     },
