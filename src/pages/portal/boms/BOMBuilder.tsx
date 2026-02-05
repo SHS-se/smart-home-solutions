@@ -82,11 +82,11 @@ const BOMBuilder: React.FC = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('boms')
-        .select('*, customers(name)')
+        .select('*')
         .eq('id', id)
         .single();
       if (error) throw error;
-      return { ...data, customer: (data as any).customers };
+      return data;
     },
     enabled: isStaff && !!id,
   });
