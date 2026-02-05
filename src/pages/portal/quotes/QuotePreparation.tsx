@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
@@ -12,6 +12,8 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { ArrowLeft, ExternalLink, Pencil, Send, Eye, Info, Loader2, AlertTriangle, Plus, Trash2 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
+import { useTableSort, sortItems } from '@/hooks/use-table-sort';
+import { SortableTableHead } from '@/components/ui/sortable-table-head';
 import QuotePriceDiffModal from '@/components/portal/quotes/QuotePriceDiffModal';
 import QuoteVersionDropdown from '@/components/portal/quotes/QuoteVersionDropdown';
 import QuoteOutdatedBanner from '@/components/portal/quotes/QuoteOutdatedBanner';
@@ -61,6 +63,8 @@ interface PriceDiffResult {
   new_total_inc_vat: number;
   delta_total_inc_vat: number;
 }
+
+type HardwareSortColumn = 'description' | 'original_sku_code' | 'quantity' | 'unit_price' | 'total';
 
 const QuotePreparation: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -265,9 +269,37 @@ const QuotePreparation: React.FC = () => {
   });
 
   // Group lines by section - all from quote_lines (single source of truth)
-  const hardwareLines = lines.filter(l => l.section === 'hardware');
+  const hardwareLinesRaw = lines.filter(l => l.section === 'hardware');
   const laborLines = lines.filter(l => l.section === 'labor');
   const travelLines = lines.filter(l => l.section === 'travel');
+
+  // Hardware sorting - default by total descending
+  const { sortColumn: hwSortColumn, sortDirection: hwSortDirection, handleSort: handleHwSort } = useTableSort<HardwareSortColumn>({
+    defaultColumn: 'total',
+    defaultDirection: 'desc',
+  });
+
+  const hardwareLines = useMemo(() => {
+    return sortItems(hardwareLinesRaw, hwSortColumn as keyof QuoteLine, hwSortDirection, {
+      getValue: (line) => {
+        const unitPrice = line.unit_price_ex_vat ?? line.unit_price;
+        switch (hwSortColumn) {
+          case 'description':
+            return line.description ?? '';
+          case 'original_sku_code':
+            return line.original_sku_code ?? '';
+          case 'quantity':
+            return line.quantity;
+          case 'unit_price':
+            return unitPrice;
+          case 'total':
+            return line.quantity * unitPrice;
+          default:
+            return null;
+        }
+      },
+    });
+  }, [hardwareLinesRaw, hwSortColumn, hwSortDirection]);
 
   // Add new row handlers
   const handleAddLaborLine = () => {
@@ -688,12 +720,52 @@ const QuotePreparation: React.FC = () => {
                   <>
                     <table className="w-full">
                       <thead>
-                        <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
-                          <th className="px-6 pb-3 font-medium">{t('Produkt', 'Product')}</th>
-                          <th className="px-4 pb-3 font-medium">{t('SKU', 'SKU')}</th>
-                          <th className="px-4 pb-3 font-medium text-center">{t('Antal', 'Qty')}</th>
-                          <th className="px-4 pb-3 font-medium text-right">{t('Å-pris', 'Unit price')}</th>
-                          <th className="px-4 pb-3 font-medium text-right">{t('Summa', 'Total')}</th>
+                        <tr className="border-b border-border text-left">
+                          <SortableTableHead<HardwareSortColumn>
+                            column="description"
+                            currentColumn={hwSortColumn}
+                            currentDirection={hwSortDirection}
+                            onSort={handleHwSort}
+                            className="px-6 pb-3"
+                          >
+                            {t('Produkt', 'Product')}
+                          </SortableTableHead>
+                          <SortableTableHead<HardwareSortColumn>
+                            column="original_sku_code"
+                            currentColumn={hwSortColumn}
+                            currentDirection={hwSortDirection}
+                            onSort={handleHwSort}
+                            className="px-4 pb-3"
+                          >
+                            {t('SKU', 'SKU')}
+                          </SortableTableHead>
+                          <SortableTableHead<HardwareSortColumn>
+                            column="quantity"
+                            currentColumn={hwSortColumn}
+                            currentDirection={hwSortDirection}
+                            onSort={handleHwSort}
+                            className="px-4 pb-3 text-center"
+                          >
+                            {t('Antal', 'Qty')}
+                          </SortableTableHead>
+                          <SortableTableHead<HardwareSortColumn>
+                            column="unit_price"
+                            currentColumn={hwSortColumn}
+                            currentDirection={hwSortDirection}
+                            onSort={handleHwSort}
+                            className="px-4 pb-3 text-right"
+                          >
+                            {t('Å-pris', 'Unit price')}
+                          </SortableTableHead>
+                          <SortableTableHead<HardwareSortColumn>
+                            column="total"
+                            currentColumn={hwSortColumn}
+                            currentDirection={hwSortDirection}
+                            onSort={handleHwSort}
+                            className="px-4 pb-3 text-right"
+                          >
+                            {t('Summa', 'Total')}
+                          </SortableTableHead>
                           <th className="px-4 pb-3 font-medium w-12"></th>
                         </tr>
                       </thead>
