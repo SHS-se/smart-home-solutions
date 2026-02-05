@@ -694,9 +694,9 @@ const QuotePreparation: React.FC = () => {
                         <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
                           <th className="px-6 pb-3 font-medium">{t('Produkt', 'Product')}</th>
                           <th className="px-4 pb-3 font-medium">{t('SKU', 'SKU')}</th>
-                          <th className="px-4 pb-3 font-medium text-center">{t('Antal', 'Qty')}</th>
-                          <th className="px-4 pb-3 font-medium text-right">{t('Å-pris', 'Unit price')}</th>
-                          <th className="px-4 pb-3 font-medium text-right">{t('Summa', 'Total')}</th>
+                          <th className="px-4 pb-3 font-medium text-center" style={{ minWidth: '5rem' }}>{t('Antal', 'Qty')}</th>
+                          <th className="px-4 pb-3 font-medium text-right" style={{ minWidth: '8rem' }}>{t('Å-pris', 'Unit price')}</th>
+                          <th className="px-4 pb-3 font-medium text-right" style={{ minWidth: '8rem' }}>{t('Summa', 'Total')}</th>
                           <th className="px-4 pb-3 font-medium w-12"></th>
                         </tr>
                       </thead>
@@ -801,9 +801,9 @@ const QuotePreparation: React.FC = () => {
                     <thead>
                       <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
                         <th className="px-6 pb-3 pt-2 font-medium">{t('Beskrivning', 'Description')}</th>
-                        <th className="px-4 pb-3 pt-2 font-medium text-center">{t('Timmar', 'Hours')}</th>
-                        <th className="px-4 pb-3 pt-2 font-medium text-right">{t('À-pris', 'Unit price')}</th>
-                        <th className="px-4 pb-3 pt-2 font-medium text-right">{t('Summa', 'Total')}</th>
+                        <th className="px-4 pb-3 pt-2 font-medium text-center" style={{ minWidth: '5rem' }}>{t('Timmar', 'Hours')}</th>
+                        <th className="px-4 pb-3 pt-2 font-medium text-right" style={{ minWidth: '8rem' }}>{t('À-pris', 'Unit price')}</th>
+                        <th className="px-4 pb-3 pt-2 font-medium text-right" style={{ minWidth: '8rem' }}>{t('Summa', 'Total')}</th>
                         <th className="px-4 pb-3 pt-2 font-medium w-12"></th>
                       </tr>
                     </thead>
@@ -891,9 +891,9 @@ const QuotePreparation: React.FC = () => {
                     <thead>
                       <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
                         <th className="px-6 pb-3 pt-2 font-medium">{t('Beskrivning', 'Description')}</th>
-                        <th className="px-4 pb-3 pt-2 font-medium text-center">{t('Antal', 'Qty')}</th>
-                        <th className="px-4 pb-3 pt-2 font-medium text-right">{t('À-pris', 'Unit price')}</th>
-                        <th className="px-4 pb-3 pt-2 font-medium text-right">{t('Summa', 'Total')}</th>
+                        <th className="px-4 pb-3 pt-2 font-medium text-center" style={{ minWidth: '5rem' }}>{t('Antal', 'Qty')}</th>
+                        <th className="px-4 pb-3 pt-2 font-medium text-right" style={{ minWidth: '8rem' }}>{t('À-pris', 'Unit price')}</th>
+                        <th className="px-4 pb-3 pt-2 font-medium text-right" style={{ minWidth: '8rem' }}>{t('Summa', 'Total')}</th>
                         <th className="px-4 pb-3 pt-2 font-medium w-12"></th>
                       </tr>
                     </thead>
