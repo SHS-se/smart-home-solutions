@@ -153,9 +153,20 @@ const BOMBuilder: React.FC = () => {
         .update(updates)
         .eq('id', id);
       if (error) throw error;
+
+      // Propagate customer change to linked draft quotes
+      if ('customer_id' in updates) {
+        const { error: quoteError } = await supabase
+          .from('quotes')
+          .update({ customer_id: updates.customer_id })
+          .eq('bom_id', id!)
+          .in('status', ['draft', 'revision_requested']);
+        if (quoteError) console.error('Failed to update quote customers:', quoteError);
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bom', id] });
+      queryClient.invalidateQueries({ queryKey: ['bom_quotes', id] });
       setIsEditingProject(false);
       toast({ title: t('BOM uppdaterad', 'BOM updated') });
     },
