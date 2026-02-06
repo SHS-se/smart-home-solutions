@@ -531,10 +531,10 @@ const QuotePreparation: React.FC = () => {
     <PortalLayout>
       <div className="space-y-6">
         {/* Header */}
-        <div className="flex items-center gap-4">
+        <div className="flex items-start gap-4">
           <button 
             onClick={() => guardedNavigate('/portal/quotes')}
-            className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
+            className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground mt-1"
           >
             <ArrowLeft className="h-4 w-4 mr-1" />
           </button>
@@ -547,6 +547,37 @@ const QuotePreparation: React.FC = () => {
             <p className="text-muted-foreground">
               {t('Organisera och förhandsgranska offert innan skicka till kund', 'Organize and preview quote before sending to customer')}
             </p>
+            <div className="text-sm text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1 mt-1">
+              {isEditable ? (
+                <div className="flex items-center gap-2">
+                  <span>{t('Kund', 'Customer')}:</span>
+                  <Select
+                    value={quote?.customer_id || 'none'}
+                    onValueChange={(value) => updateQuoteCustomerMutation.mutate(value === 'none' ? null : value)}
+                  >
+                    <SelectTrigger className={`w-56 h-8 ${!quote?.customer_id ? 'border-destructive text-destructive' : ''}`}>
+                      <SelectValue placeholder={t('Välj kund...', 'Select customer...')} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">{t('Ingen kund', 'No customer')}</SelectItem>
+                      {customers.map((customer) => (
+                        <SelectItem key={customer.id} value={customer.id!}>
+                          {customer.name || customer.contact_name || t('Namnlös kund', 'Unnamed customer')}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : quote?.customer?.name ? (
+                <span>{t('Kund', 'Customer')}: <span className="text-foreground">{quote.customer.name}</span></span>
+              ) : null}
+              {quote?.bom?.project_name && (
+                <span>{t('Projekt', 'Project')}: <span className="text-foreground">{quote.bom.project_name}</span></span>
+              )}
+              {quote?.quote_number && (
+                <span>{t('Offert', 'Quote')}: <span className="text-foreground font-mono">{quote.quote_number}</span></span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -571,39 +602,6 @@ const QuotePreparation: React.FC = () => {
             </AlertDescription>
           </Alert>
         )}
-
-        {/* Quote Info */}
-        <div className="text-sm text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1">
-          {isEditable ? (
-            <div className="flex items-center gap-2">
-              <span>{t('Kund', 'Customer')}:</span>
-              <Select
-                value={quote?.customer_id || 'none'}
-                onValueChange={(value) => updateQuoteCustomerMutation.mutate(value === 'none' ? null : value)}
-              >
-                <SelectTrigger className={`w-56 h-8 ${!quote?.customer_id ? 'border-destructive text-destructive' : ''}`}>
-                  <SelectValue placeholder={t('Välj kund...', 'Select customer...')} />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">{t('Ingen kund', 'No customer')}</SelectItem>
-                  {customers.map((customer) => (
-                    <SelectItem key={customer.id} value={customer.id!}>
-                      {customer.name || customer.contact_name || t('Namnlös kund', 'Unnamed customer')}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          ) : quote?.customer?.name ? (
-            <span>{t('Kund', 'Customer')}: <span className="text-foreground">{quote.customer.name}</span></span>
-          ) : null}
-          {quote?.bom?.project_name && (
-            <span>{t('Projekt', 'Project')}: <span className="text-foreground">{quote.bom.project_name}</span></span>
-          )}
-          {quote?.quote_number && (
-            <span>{t('Offert', 'Quote')}: <span className="text-foreground font-mono">{quote.quote_number}</span></span>
-          )}
-        </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Main Content */}
