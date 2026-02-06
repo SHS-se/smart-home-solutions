@@ -18,7 +18,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { ArrowLeft, ExternalLink, Send, Info, Loader2, AlertTriangle, Plus, Trash2, RefreshCw, Save } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Send, Info, Loader2, AlertTriangle, Plus, Trash2, Save } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import QuoteVersionDropdown from '@/components/portal/quotes/QuoteVersionDropdown';
 import { useQuoteVersioning } from '@/hooks/use-quote-versioning';
@@ -57,7 +57,7 @@ const QuotePreparation: React.FC = () => {
   
   const [isSending, setIsSending] = useState(false);
   const [isCreatingInvoice, setIsCreatingInvoice] = useState(false);
-  const [isUpdatingFromBom, setIsUpdatingFromBom] = useState(false);
+  
   const [isSaving, setIsSaving] = useState(false);
 
   // Pending changes: { [lineId]: { field: value, ... } }
@@ -380,40 +380,6 @@ const QuotePreparation: React.FC = () => {
   };
   const marginStatus = getMarginStatus();
 
-  // "Update from BOM" - re-sync quantities from latest BOM
-  const handleUpdateFromBom = async () => {
-    if (!quote?.bom_id || !id) return;
-
-    setIsUpdatingFromBom(true);
-    try {
-      const { data: bomItems, error: bomError } = await supabase
-        .from('bom_items')
-        .select('sku_id, quantity')
-        .eq('bom_id', quote.bom_id);
-      if (bomError) throw bomError;
-
-      const bomQuantityMap: Record<string, number> = {};
-      for (const item of bomItems || []) {
-        bomQuantityMap[item.sku_id] = item.quantity;
-      }
-
-      const newQuote = await createNewVersion({ updatedHardwareQuantities: bomQuantityMap });
-      
-      toast({
-        title: t('Offert uppdaterad från BOM', 'Quote updated from BOM'),
-        description: t(`Version ${newQuote.version} skapad med uppdaterade antal.`, `Version ${newQuote.version} created with updated quantities.`),
-      });
-      navigate(`/portal/quotes/${newQuote.id}`);
-    } catch (error: any) {
-      toast({
-        title: t('Kunde inte uppdatera från BOM', 'Failed to update from BOM'),
-        description: error.message,
-        variant: 'destructive',
-      });
-    } finally {
-      setIsUpdatingFromBom(false);
-    }
-  };
 
   // Send quote via email
   const sendQuoteEmail = async () => {
@@ -618,17 +584,6 @@ const QuotePreparation: React.FC = () => {
                   )}
                 </CardTitle>
                 <div className="flex items-center gap-3 text-sm">
-                  {quote?.bom_id && isEditable && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={handleUpdateFromBom}
-                      disabled={isUpdatingFromBom || isCreatingVersion}
-                    >
-                      <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${isUpdatingFromBom ? 'animate-spin' : ''}`} />
-                      {t('Uppdatera från BOM', 'Update from BOM')}
-                    </Button>
-                  )}
                   {quote?.bom_id && (
                     <Link 
                       to={`/portal/boms/${quote.bom_id}`}
