@@ -22,6 +22,7 @@ import { ArrowLeft, ExternalLink, Send, Info, Loader2, AlertTriangle, Plus, Tras
 import { toast } from '@/hooks/use-toast';
 import QuoteVersionDropdown from '@/components/portal/quotes/QuoteVersionDropdown';
 import { useQuoteVersioning } from '@/hooks/use-quote-versioning';
+import { getQuoteStatusBadge } from '@/lib/quote-status-badge';
 import BlurCommitInput from '@/components/ui/blur-commit-input';
 import {
   Select,
@@ -564,9 +565,10 @@ const QuotePreparation: React.FC = () => {
             <ArrowLeft className="h-4 w-4 mr-1" />
           </button>
           <div className="flex-1">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               <h1 className="text-2xl font-bold">{t('Offertförberedelse', 'Quote Preparation')}</h1>
               <QuoteVersionDropdown versions={quoteFamily} currentQuoteId={id || ''} />
+              {getQuoteStatusBadge(quoteStatus, t)}
             </div>
             <p className="text-muted-foreground">
               {t('Organisera och förhandsgranska offert innan skicka till kund', 'Organize and preview quote before sending to customer')}
