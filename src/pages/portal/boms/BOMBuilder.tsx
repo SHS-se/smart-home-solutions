@@ -120,7 +120,7 @@ const BOMBuilder: React.FC = () => {
         .select('id', { count: 'exact', head: true })
         .eq('bom_id', id!)
         .eq('bom_version', bom!.version)
-        .in('status', ['sent', 'viewed', 'accepted']);
+        .in('status', ['sent', 'viewed', 'accepted', 'revision_requested']);
       if (error) throw error;
       return (count ?? 0) > 0;
     },
