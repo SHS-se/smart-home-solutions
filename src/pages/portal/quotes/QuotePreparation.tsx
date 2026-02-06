@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate, Link, useBlocker } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -260,11 +260,8 @@ const QuotePreparation: React.FC = () => {
 
   const hasUnsavedChanges = Object.keys(pendingChanges).length > 0;
 
-  // Navigation blocker for unsaved changes
-  const blocker = useBlocker(
-    ({ currentLocation, nextLocation }) =>
-      hasUnsavedChanges && currentLocation.pathname !== nextLocation.pathname
-  );
+  const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
+  const [pendingNavigationPath, setPendingNavigationPath] = useState<string | null>(null);
 
   // Browser close/refresh warning
   useEffect(() => {
@@ -276,6 +273,16 @@ const QuotePreparation: React.FC = () => {
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
   }, [hasUnsavedChanges]);
+
+  // Wrap navigate to intercept when unsaved changes exist
+  const guardedNavigate = (path: string) => {
+    if (hasUnsavedChanges) {
+      setPendingNavigationPath(path);
+      setShowUnsavedDialog(true);
+    } else {
+      navigate(path);
+    }
+  };
 
   // Save all pending changes to database
   const handleSaveChanges = async () => {
@@ -550,12 +557,12 @@ const QuotePreparation: React.FC = () => {
       <div className="space-y-6">
         {/* Header */}
         <div className="flex items-center gap-4">
-          <Link 
-            to="/portal/quotes" 
+          <button 
+            onClick={() => guardedNavigate('/portal/quotes')}
             className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
           >
             <ArrowLeft className="h-4 w-4 mr-1" />
-          </Link>
+          </button>
           <div className="flex-1">
             <div className="flex items-center gap-3">
               <h1 className="text-2xl font-bold">{t('Offertförberedelse', 'Quote Preparation')}</h1>
@@ -1064,32 +1071,41 @@ const QuotePreparation: React.FC = () => {
       </div>
 
       {/* Unsaved changes navigation dialog */}
-      {blocker.state === 'blocked' && (
-        <Dialog open onOpenChange={() => blocker.reset()}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>{t('Osparade ändringar', 'Unsaved changes')}</DialogTitle>
-              <DialogDescription>
-                {t(
-                  'Du har osparade ändringar. Vill du spara innan du lämnar?',
-                  'You have unsaved changes. Would you like to save before leaving?'
-                )}
-              </DialogDescription>
-            </DialogHeader>
-            <DialogFooter className="gap-2">
-              <Button variant="outline" onClick={() => blocker.proceed()}>
-                {t('Lämna utan att spara', 'Leave without saving')}
-              </Button>
-              <Button onClick={async () => {
-                await handleSaveChanges();
-                blocker.proceed();
-              }}>
-                {t('Spara och lämna', 'Save and leave')}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
+      <Dialog open={showUnsavedDialog} onOpenChange={(open) => {
+        if (!open) {
+          setShowUnsavedDialog(false);
+          setPendingNavigationPath(null);
+        }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('Osparade ändringar', 'Unsaved changes')}</DialogTitle>
+            <DialogDescription>
+              {t(
+                'Du har osparade ändringar. Vill du spara innan du lämnar?',
+                'You have unsaved changes. Would you like to save before leaving?'
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => {
+              setShowUnsavedDialog(false);
+              if (pendingNavigationPath) navigate(pendingNavigationPath);
+              setPendingNavigationPath(null);
+            }}>
+              {t('Lämna utan att spara', 'Leave without saving')}
+            </Button>
+            <Button onClick={async () => {
+              await handleSaveChanges();
+              setShowUnsavedDialog(false);
+              if (pendingNavigationPath) navigate(pendingNavigationPath);
+              setPendingNavigationPath(null);
+            }}>
+              {t('Spara och lämna', 'Save and leave')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </PortalLayout>
   );
 };
