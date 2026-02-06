@@ -476,12 +476,12 @@ const BOMBuilder: React.FC = () => {
       .eq('quote_id', previousQuote.id);
     if (linesError) throw linesError;
 
-    // Step 3: Separate hardware (source=bom) vs non-hardware lines
+    // Step 3: Separate hardware vs non-hardware lines by section only
     const previousHardwareLines = (previousLines || []).filter(
-      (l: any) => l.section === 'hardware' && l.pricing_source === 'bom'
+      (l: any) => l.section === 'hardware'
     );
     const nonHardwareLines = (previousLines || []).filter(
-      (l: any) => !(l.section === 'hardware' && l.pricing_source === 'bom')
+      (l: any) => l.section !== 'hardware'
     );
 
     // Step 4: Map previous hardware lines by sku_id for lookup
