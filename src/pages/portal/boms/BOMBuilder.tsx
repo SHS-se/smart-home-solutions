@@ -682,18 +682,6 @@ const BOMBuilder: React.FC = () => {
       <div className="space-y-6">
         {/* Locked BOM banner */}
 
-        {/* New revision info banner */}
-        {!isLocked && isNewRevision && (
-          <Alert>
-            <Info className="h-4 w-4" />
-            <AlertDescription>
-              {t(
-                'Ny BOM-revision skapad. Uppdatera omfattningen och skapa sedan en ny offertrevision.',
-                'New BOM revision created. Update the scope and then create a new quote revision.'
-              )}
-            </AlertDescription>
-          </Alert>
-        )}
 
         {/* Header */}
         <div className="flex items-center gap-4">
