@@ -1029,6 +1029,7 @@ const QuotePreparation: React.FC = () => {
                   )}
                   <Button 
                     className="w-full"
+                    size="lg"
                     onClick={sendQuoteEmail}
                     disabled={isSending || !canSend}
                   >
@@ -1048,6 +1049,7 @@ const QuotePreparation: React.FC = () => {
                   <Button 
                     variant="success" 
                     className="w-full"
+                    size="lg"
                     onClick={createInvoiceFromQuote}
                     disabled={isCreatingInvoice || !canCreateInvoice}
                   >
