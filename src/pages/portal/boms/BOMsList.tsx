@@ -34,6 +34,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { Plus, Trash2 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
@@ -61,6 +67,26 @@ const BOMsList: React.FC = () => {
   const { sortColumn, sortDirection, handleSort } = useTableSort<SortColumn>({ 
     defaultColumn: 'created_at', 
     defaultDirection: 'desc' 
+  });
+
+  // Fetch scope-change flags from quotes
+  const { data: scopeChangeMap = new Map<string, string>() } = useQuery({
+    queryKey: ['bom-scope-change-flags'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('quotes')
+        .select('bom_id, bom_version, id')
+        .eq('status', 'revision_requested')
+        .not('bom_id', 'is', null);
+      if (error) throw error;
+      const map = new Map<string, string>();
+      for (const row of data) {
+        const key = `${row.bom_id}:${row.bom_version}`;
+        if (!map.has(key)) map.set(key, row.id);
+      }
+      return map;
+    },
+    enabled: isStaff,
   });
 
   // Fetch BOMs
@@ -216,7 +242,33 @@ const BOMsList: React.FC = () => {
                       {bom.customer?.name || bom.customer?.contact_name || <span className="text-muted-foreground">—</span>}
                     </TableCell>
                     <TableCell>
-                      <Badge variant="secondary">v{bom.version}</Badge>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="secondary">v{bom.version}</Badge>
+                        {scopeChangeMap.has(`${bom.id}:${bom.version}`) && (
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Badge
+                                  className="bg-amber-500/20 text-amber-700 border-0 cursor-pointer hover:bg-amber-500/30"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const quoteId = scopeChangeMap.get(`${bom.id}:${bom.version}`);
+                                    if (quoteId) navigate(`/portal/quotes/${quoteId}`);
+                                  }}
+                                >
+                                  {t('Omfattningsändring begärd', 'Scope change requested')}
+                                </Badge>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>{t(
+                                  'Kunden har begärt ändringar. Skapa en ny BOM-revision för att uppdatera omfattningen.',
+                                  'Customer has requested changes. Create a new BOM revision to update the scope.'
+                                )}</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="text-muted-foreground">
                       {bom.created_at ? format(new Date(bom.created_at), 'yyyy-MM-dd', { locale: sv }) : '—'}
