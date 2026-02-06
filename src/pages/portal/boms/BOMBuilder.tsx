@@ -537,16 +537,6 @@ const BOMBuilder: React.FC = () => {
           </div>
         </div>
 
-        {/* Scope info note */}
-        <Alert>
-          <Info className="h-4 w-4" />
-          <AlertDescription>
-            {t(
-              'BOM beskriver vad som ska installeras. Priser hanteras i offerten.',
-              'BOM describes what will be installed. Prices are managed in the quote.'
-            )}
-          </AlertDescription>
-        </Alert>
 
         {/* Actions */}
         <div className="flex flex-wrap gap-2 mb-4">
