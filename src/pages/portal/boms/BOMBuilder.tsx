@@ -42,6 +42,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { ArrowLeft, Plus, Trash2, FileText, Package, Pencil, Check, X, Copy, Save, Lock, Info } from 'lucide-react';
+import { getQuoteStatusBadge } from '@/lib/quote-status-badge';
 import { toast } from '@/hooks/use-toast';
 import SKUSelector from '@/components/portal/boms/SKUSelector';
 import TemplateSelector from '@/components/portal/boms/TemplateSelector';
@@ -537,6 +538,7 @@ const BOMBuilder: React.FC = () => {
                   {t('Låst', 'Locked')}
                 </Badge>
               )}
+              {existingQuote && getQuoteStatusBadge(existingQuote.status, t)}
             </div>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-1">
               {/* Customer selector */}
@@ -643,14 +645,14 @@ const BOMBuilder: React.FC = () => {
                   <Button
                     variant="outline"
                     onClick={() => setIsRevisionDialogOpen(true)}
-                    disabled={!isLocked || createRevisionMutation.isPending}
+                    disabled={(!isLocked && existingQuote?.status !== 'revision_requested') || createRevisionMutation.isPending}
                   >
                     <Copy className="h-4 w-4 mr-2" />
                     {t('Skapa ny BOM-revision', 'Create new BOM revision')}
                   </Button>
                 </span>
               </TooltipTrigger>
-              {!isLocked && (
+              {!isLocked && existingQuote?.status !== 'revision_requested' && (
                 <TooltipContent>
                   <p>{t(
                     'Skapa BOM-revision först efter att en offert har skickats till kunden.',
