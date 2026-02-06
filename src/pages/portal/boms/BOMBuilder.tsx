@@ -394,62 +394,250 @@ const BOMBuilder: React.FC = () => {
     { costEx: 0, items: 0 }
   );
 
-  // Create quote from BOM - fetches current SKU pricing at creation time
-  const createQuote = async () => {
-    try {
-      const freshItems = items;
+  // Create a FRESH quote from BOM (no previous quote to clone)
+  const createFreshQuote = async () => {
+    const freshItems = items;
+    const skuIds = freshItems.map(i => i.sku_id);
+    const { data: skuPricing, error: skuError } = await supabase
+      .from('skus')
+      .select('id, sell_price_ex_vat, sell_price_inc_vat, vat_rate, cost_ex_vat_computed')
+      .in('id', skuIds);
+    if (skuError) throw skuError;
 
-      const skuIds = freshItems.map(i => i.sku_id);
-      const { data: skuPricing, error: skuError } = await supabase
+    const skuMap = new Map((skuPricing || []).map(s => [s.id, s]));
+
+    const { data: quote, error } = await supabase
+      .from('quotes')
+      .insert({
+        bom_id: id,
+        bom_version: bom?.version ?? 1,
+        customer_id: bom?.customer_id || null,
+        created_by: user?.id,
+      })
+      .select()
+      .single();
+    if (error) throw error;
+
+    const hardwareLines = freshItems.map(item => {
+      const sku = skuMap.get(item.sku_id);
+      const sellExVat = sku?.sell_price_ex_vat ?? 0;
+      const vatRate = sku?.vat_rate ?? 0.25;
+      const sellIncVat = sku?.sell_price_inc_vat ?? (sellExVat * (1 + vatRate));
+
+      return {
+        quote_id: quote.id,
+        section: 'hardware',
+        description: item.sku.name,
+        quantity: item.quantity,
+        unit_price: sellExVat,
+        unit_price_ex_vat: sellExVat,
+        vat_rate: vatRate,
+        unit_price_inc_vat: sellIncVat,
+        sku_id: item.sku_id,
+        original_sku_name: item.sku.name,
+        original_sku_code: item.sku.sku,
+        cost_ex_vat_at_time: sku?.cost_ex_vat_computed ?? item.cost_ex_vat_at_time ?? 0,
+        pricing_source: 'sku',
+        source_bom_id: id,
+        source_bom_item_id: item.id,
+        source_bom_version: bom?.version ?? 1,
+      };
+    });
+
+    if (hardwareLines.length > 0) {
+      const { error: linesError } = await supabase.from('quote_lines').insert(hardwareLines);
+      if (linesError) throw linesError;
+    }
+
+    return quote;
+  };
+
+  // Clone a previous quote and sync hardware lines with new BOM
+  const createQuoteFromPreviousVersion = async (previousQuote: any) => {
+    // Step 1: Create new quote record
+    const { data: newQuote, error: createError } = await supabase
+      .from('quotes')
+      .insert({
+        bom_id: id,
+        bom_version: bom?.version ?? 1,
+        customer_id: bom?.customer_id || previousQuote.customer_id,
+        status: 'draft',
+        is_latest: true,
+        created_by: user?.id,
+      })
+      .select()
+      .single();
+    if (createError) throw createError;
+
+    // Step 2: Fetch previous quote lines
+    const { data: previousLines, error: linesError } = await supabase
+      .from('quote_lines')
+      .select('*')
+      .eq('quote_id', previousQuote.id);
+    if (linesError) throw linesError;
+
+    // Step 3: Separate hardware (source=bom) vs non-hardware lines
+    const previousHardwareLines = (previousLines || []).filter(
+      (l: any) => l.section === 'hardware' && l.pricing_source === 'bom'
+    );
+    const nonHardwareLines = (previousLines || []).filter(
+      (l: any) => !(l.section === 'hardware' && l.pricing_source === 'bom')
+    );
+
+    // Step 4: Map previous hardware lines by sku_id for lookup
+    const previousHardwareBySkuId = new Map<string, any>();
+    for (const line of previousHardwareLines) {
+      if (line.sku_id) {
+        previousHardwareBySkuId.set(line.sku_id, line);
+      }
+    }
+
+    // Step 5: Get current BOM items
+    const bomItems = items;
+
+    // Step 6: Fetch current SKU pricing for any NEW SKUs not in previous quote
+    const newSkuIds = bomItems
+      .map(i => i.sku_id)
+      .filter(skuId => !previousHardwareBySkuId.has(skuId));
+
+    let newSkuPricing = new Map<string, any>();
+    if (newSkuIds.length > 0) {
+      const { data: skuData } = await supabase
         .from('skus')
-        .select('id, sell_price_ex_vat, sell_price_inc_vat, vat_rate, cost_ex_vat_computed')
-        .in('id', skuIds);
-      if (skuError) throw skuError;
+        .select('id, sell_price_ex_vat, sell_price_inc_vat, vat_rate, cost_ex_vat_computed, name, sku')
+        .in('id', newSkuIds);
+      newSkuPricing = new Map((skuData || []).map(s => [s.id, s]));
+    }
 
-      const skuMap = new Map((skuPricing || []).map(s => [s.id, s]));
+    // Step 7: Build hardware lines — existing SKUs keep previous pricing, new SKUs get current pricing
+    const hardwareLines = bomItems.map(bomItem => {
+      const previousLine = previousHardwareBySkuId.get(bomItem.sku_id);
 
-      const { data: quote, error } = await supabase
-        .from('quotes')
-        .insert({
-          bom_id: id,
-          bom_version: bom?.version ?? 1,
-          customer_id: bom?.customer_id || null,
-        })
-        .select()
-        .single();
-      if (error) throw error;
-
-      const hardwareLines = freshItems.map(item => {
-        const sku = skuMap.get(item.sku_id);
+      if (previousLine) {
+        // SKU exists in previous quote → keep negotiated pricing, update quantity from BOM
+        return {
+          quote_id: newQuote.id,
+          section: 'hardware',
+          description: previousLine.description,
+          quantity: bomItem.quantity,
+          unit_price: previousLine.unit_price,
+          unit_price_ex_vat: previousLine.unit_price_ex_vat,
+          vat_rate: previousLine.vat_rate,
+          unit_price_inc_vat: previousLine.unit_price_inc_vat,
+          sku_id: bomItem.sku_id,
+          original_sku_name: previousLine.original_sku_name,
+          original_sku_code: previousLine.original_sku_code,
+          cost_ex_vat_at_time: previousLine.cost_ex_vat_at_time,
+          pricing_source: 'bom',
+          source_bom_id: id,
+          source_bom_item_id: bomItem.id,
+          source_bom_version: bom?.version ?? 1,
+        };
+      } else {
+        // New SKU not in previous quote → use current SKU pricing
+        const sku = newSkuPricing.get(bomItem.sku_id);
         const sellExVat = sku?.sell_price_ex_vat ?? 0;
         const vatRate = sku?.vat_rate ?? 0.25;
         const sellIncVat = sku?.sell_price_inc_vat ?? (sellExVat * (1 + vatRate));
 
         return {
-          quote_id: quote.id,
+          quote_id: newQuote.id,
           section: 'hardware',
-          description: item.sku.name,
-          quantity: item.quantity,
+          description: sku?.name || bomItem.sku.name,
+          quantity: bomItem.quantity,
           unit_price: sellExVat,
           unit_price_ex_vat: sellExVat,
           vat_rate: vatRate,
           unit_price_inc_vat: sellIncVat,
-          sku_id: item.sku_id,
-          original_sku_name: item.sku.name,
-          original_sku_code: item.sku.sku,
-          cost_ex_vat_at_time: sku?.cost_ex_vat_computed ?? item.cost_ex_vat_at_time ?? 0,
+          sku_id: bomItem.sku_id,
+          original_sku_name: sku?.name || bomItem.sku.name,
+          original_sku_code: sku?.sku || bomItem.sku.sku,
+          cost_ex_vat_at_time: sku?.cost_ex_vat_computed ?? bomItem.cost_ex_vat_at_time ?? 0,
           pricing_source: 'sku',
           source_bom_id: id,
-          source_bom_item_id: item.id,
+          source_bom_item_id: bomItem.id,
           source_bom_version: bom?.version ?? 1,
         };
-      });
+      }
+    });
 
-      if (hardwareLines.length > 0) {
-        const { error: linesError } = await supabase.from('quote_lines').insert(hardwareLines);
-        if (linesError) throw linesError;
+    // Step 8: Clone non-hardware lines (labor, travel, manual) — preserve all pricing
+    const clonedNonHardwareLines = nonHardwareLines.map((line: any) => ({
+      quote_id: newQuote.id,
+      section: line.section,
+      description: line.description,
+      quantity: line.quantity,
+      unit_price: line.unit_price,
+      unit_price_ex_vat: line.unit_price_ex_vat,
+      vat_rate: line.vat_rate,
+      unit_price_inc_vat: line.unit_price_inc_vat,
+      sku_id: line.sku_id,
+      original_sku_name: line.original_sku_name,
+      original_sku_code: line.original_sku_code,
+      cost_ex_vat_at_time: line.cost_ex_vat_at_time,
+      pricing_source: line.pricing_source,
+      source_bom_id: line.source_bom_id,
+      source_bom_item_id: line.source_bom_item_id,
+      source_bom_version: line.source_bom_version,
+    }));
+
+    // Step 9: Insert all lines
+    const allNewLines = [...hardwareLines, ...clonedNonHardwareLines];
+    if (allNewLines.length > 0) {
+      const { error: insertError } = await supabase.from('quote_lines').insert(allNewLines);
+      if (insertError) throw insertError;
+    }
+
+    return newQuote;
+  };
+
+  // Main quote creation handler — decides between clone+sync or fresh creation
+  const createQuote = async () => {
+    try {
+      const isRevision = !!(bom as any)?.revision_reason_type;
+
+      if (isRevision) {
+        // Look up source BOM from bom_events
+        const { data: revisionEvent } = await supabase
+          .from('bom_events')
+          .select('metadata')
+          .eq('bom_id', id!)
+          .eq('event_type', 'revision_created')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        const sourceBomId = (revisionEvent?.metadata as any)?.source_bom_id;
+
+        if (sourceBomId) {
+          // Find latest non-cancelled quote for the source BOM
+          const { data: previousQuote } = await supabase
+            .from('quotes')
+            .select('*')
+            .eq('bom_id', sourceBomId)
+            .not('status', 'eq', 'cancelled')
+            .order('version', { ascending: false })
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (previousQuote) {
+            const newQuote = await createQuoteFromPreviousVersion(previousQuote);
+            toast({
+              title: t('Offert skapad', 'Quote created'),
+              description: t(
+                'Ny offert skapad baserat på föregående version med uppdaterad omfattning.',
+                'New quote created based on previous version with updated scope.'
+              ),
+            });
+            navigate(`/portal/quotes/${newQuote.id}`);
+            return;
+          }
+        }
       }
 
+      // Fallback: fresh quote (no previous quote to clone)
+      const quote = await createFreshQuote();
       navigate(`/portal/quotes/${quote.id}`);
     } catch (error: any) {
       toast({ title: t('Kunde inte skapa offert', 'Failed to create quote'), description: error.message, variant: 'destructive' });
