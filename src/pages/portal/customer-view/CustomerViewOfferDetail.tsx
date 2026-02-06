@@ -404,7 +404,7 @@ const CustomerViewOfferDetail: React.FC = () => {
     );
   }
 
-  const isRevisionRequested = quote.status === 'revision_requested';
+  
 
   return (
     <CustomerViewLayout>
@@ -418,23 +418,6 @@ const CustomerViewOfferDetail: React.FC = () => {
           {t('Tillbaka till offerter', 'Back to quotes')}
         </Link>
 
-        {/* ─── Revision requested banner ─── */}
-        {isRevisionRequested && (
-          <Alert className="border-amber-500/50 bg-amber-500/10">
-            <AlertCircle className="h-4 w-4 text-amber-600" />
-            <AlertDescription className="flex flex-col sm:flex-row sm:items-center gap-3">
-              <span className="text-amber-800 dark:text-amber-200 font-medium">
-                {t('Kunden har begärt ändringar — uppdatera offerten och skicka igen.', 'The customer has requested changes — update the quote and resend.')}
-              </span>
-              <Button
-                size="sm"
-                onClick={() => navigate(`/portal/quotes/${quote.id}`)}
-              >
-                {t('Redigera & skicka igen', 'Edit & resend')}
-              </Button>
-            </AlertDescription>
-          </Alert>
-        )}
 
         {/* ─── Summary header ─── */}
         <Card>
