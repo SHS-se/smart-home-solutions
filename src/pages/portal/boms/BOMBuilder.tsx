@@ -493,17 +493,6 @@ const BOMBuilder: React.FC = () => {
     <PortalLayout>
       <div className="space-y-6">
         {/* Locked BOM banner */}
-        {isLocked && (
-          <Alert variant="destructive">
-            <Lock className="h-4 w-4" />
-            <AlertDescription>
-              {t(
-                'Denna BOM-version är låst eftersom en offert har skickats. Skapa en ny BOM-revision för att göra ändringar.',
-                'This BOM version is locked because a quote has been sent. Create a new BOM revision to make changes.'
-              )}
-            </AlertDescription>
-          </Alert>
-        )}
 
         {/* New revision info banner */}
         {!isLocked && isNewRevision && (
