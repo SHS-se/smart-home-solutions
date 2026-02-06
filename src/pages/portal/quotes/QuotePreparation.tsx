@@ -527,32 +527,6 @@ const QuotePreparation: React.FC = () => {
   const canSend = isLatestVersion && (quoteStatus === 'draft' || quoteStatus === 'revision_requested') && !!quote?.customer_id && hardwareLines.length > 0 && !hasUnsavedChanges;
   const canCreateInvoice = quoteStatus === 'accepted' && !!quote?.customer_id;
 
-  // Status badge helper
-  const getStatusBadge = () => {
-    switch (quoteStatus) {
-      case 'draft':
-        return <Badge variant="outline">{t('Utkast', 'Draft')}</Badge>;
-      case 'sent':
-        return <Badge variant="default">{t('Skickad', 'Sent')}</Badge>;
-      case 'viewed':
-        return <Badge className="bg-blue-500/20 text-blue-700 border-0">{t('Visad', 'Viewed')}</Badge>;
-      case 'accepted':
-        return <Badge className="bg-green-500/20 text-green-700 border-0">{t('Accepterad', 'Accepted')}</Badge>;
-      case 'declined':
-        return <Badge variant="destructive">{t('Avvisad', 'Declined')}</Badge>;
-      case 'revision_requested':
-        return <Badge className="bg-amber-500/20 text-amber-700 border-0">{t('Ändring begärd', 'Revision requested')}</Badge>;
-      case 'invoiced':
-        return <Badge className="bg-primary/20 text-primary border-0">{t('Fakturerad', 'Invoiced')}</Badge>;
-      case 'expired':
-        return <Badge variant="secondary">{t('Utgången', 'Expired')}</Badge>;
-      case 'cancelled':
-        return <Badge variant="outline" className="text-muted-foreground">{t('Avbruten', 'Cancelled')}</Badge>;
-      default:
-        return <Badge variant="secondary">{quoteStatus}</Badge>;
-    }
-  };
-
   return (
     <PortalLayout>
       <div className="space-y-6">
@@ -600,7 +574,6 @@ const QuotePreparation: React.FC = () => {
 
         {/* Quote Info */}
         <div className="text-sm text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1">
-          {quote && getStatusBadge()}
           {isEditable ? (
             <div className="flex items-center gap-2">
               <span>{t('Kund', 'Customer')}:</span>
