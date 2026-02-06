@@ -167,33 +167,6 @@ const QuotesList: React.FC = () => {
     });
   }, [filteredQuotes, sortColumn, sortDirection]);
 
-  // Mark/Unmark test mutation
-  const markTestMutation = useMutation({
-    mutationFn: async ({ quoteId, markAsTest }: { quoteId: string; markAsTest: boolean }) => {
-      const { data, error } = await supabase.functions.invoke('mark-quote-test', {
-        body: { quote_id: quoteId, mark_as_test: markAsTest },
-      });
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-      return data;
-    },
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['quotes'] });
-      toast({ 
-        title: variables.markAsTest 
-          ? t('Offert markerad som test', 'Quote marked as test')
-          : t('Testmarkering borttagen', 'Test mark removed')
-      });
-    },
-    onError: (error: Error) => {
-      toast({ 
-        title: t('Fel', 'Error'),
-        description: error.message,
-        variant: 'destructive'
-      });
-    },
-  });
-
   // Cancel quote handler
   const handleCancelQuote = async (reason?: string) => {
     if (!quoteToCancel) return;
@@ -358,10 +331,7 @@ const QuotesList: React.FC = () => {
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-1">
                           <QuoteActionsMenu
-                            isTest={quote.is_test}
                             status={quote.status}
-                            onMarkTest={() => markTestMutation.mutate({ quoteId: quote.id, markAsTest: true })}
-                            onUnmarkTest={() => markTestMutation.mutate({ quoteId: quote.id, markAsTest: false })}
                             onCancel={() => {
                               setQuoteToCancel(quote);
                               setCancelDialogOpen(true);
