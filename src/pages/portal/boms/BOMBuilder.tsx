@@ -115,6 +115,24 @@ const BOMBuilder: React.FC = () => {
     enabled: isStaff && !!id,
   });
 
+  // Fetch existing quote linked to this BOM
+  const { data: existingQuote } = useQuery({
+    queryKey: ['bom_quote', id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('quotes')
+        .select('id, quote_number, status')
+        .eq('bom_id', id!)
+        .not('status', 'eq', 'cancelled')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+    enabled: isStaff && !!id,
+  });
+
   // Fetch customers for selector
   const { data: customers = [] } = useQuery({
     queryKey: ['customers'],
@@ -634,15 +652,26 @@ const BOMBuilder: React.FC = () => {
               </CardContent>
             </Card>
 
-            <Button 
-              className="w-full" 
-              size="lg" 
-              onClick={createQuote}
-              disabled={items.length === 0 || hasUnsavedChanges}
-            >
-              <FileText className="h-4 w-4 mr-2" />
-              {t('Skapa offert från BOM', 'Create quote from BOM')}
-            </Button>
+            {existingQuote ? (
+              <Button 
+                className="w-full" 
+                size="lg" 
+                onClick={() => navigate(`/portal/quotes/${existingQuote.id}`)}
+              >
+                <FileText className="h-4 w-4 mr-2" />
+                {t('Gå till offert', 'Go to offer')}
+              </Button>
+            ) : (
+              <Button 
+                className="w-full" 
+                size="lg" 
+                onClick={createQuote}
+                disabled={items.length === 0 || hasUnsavedChanges}
+              >
+                <FileText className="h-4 w-4 mr-2" />
+                {t('Skapa offert från BOM', 'Create quote from BOM')}
+              </Button>
+            )}
 
             <Button 
               className="w-full bg-[#F6C573] text-foreground hover:bg-[#E5B463] disabled:bg-[#E8DCC4] disabled:text-muted-foreground"
