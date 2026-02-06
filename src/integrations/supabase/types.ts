@@ -62,6 +62,44 @@ export type Database = {
           },
         ]
       }
+      bom_events: {
+        Row: {
+          actor_email: string | null
+          actor_type: string | null
+          bom_id: string
+          created_at: string
+          event_type: string
+          id: string
+          metadata: Json | null
+        }
+        Insert: {
+          actor_email?: string | null
+          actor_type?: string | null
+          bom_id: string
+          created_at?: string
+          event_type: string
+          id?: string
+          metadata?: Json | null
+        }
+        Update: {
+          actor_email?: string | null
+          actor_type?: string | null
+          bom_id?: string
+          created_at?: string
+          event_type?: string
+          id?: string
+          metadata?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bom_events_bom_id_fkey"
+            columns: ["bom_id"]
+            isOneToOne: false
+            referencedRelation: "boms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       bom_items: {
         Row: {
           bom_id: string
@@ -111,6 +149,10 @@ export type Database = {
           customer_id: string | null
           id: string
           project_name: string
+          revision_created_at: string | null
+          revision_created_by: string | null
+          revision_reason_note: string | null
+          revision_reason_type: string | null
           updated_at: string
           version: number
         }
@@ -120,6 +162,10 @@ export type Database = {
           customer_id?: string | null
           id?: string
           project_name: string
+          revision_created_at?: string | null
+          revision_created_by?: string | null
+          revision_reason_note?: string | null
+          revision_reason_type?: string | null
           updated_at?: string
           version?: number
         }
@@ -129,6 +175,10 @@ export type Database = {
           customer_id?: string | null
           id?: string
           project_name?: string
+          revision_created_at?: string | null
+          revision_created_by?: string | null
+          revision_reason_note?: string | null
+          revision_reason_type?: string | null
           updated_at?: string
           version?: number
         }

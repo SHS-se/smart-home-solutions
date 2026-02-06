@@ -19,15 +19,13 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   Select,
   SelectContent,
@@ -35,7 +33,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { ArrowLeft, Plus, Trash2, FileText, Package, Pencil, Check, X, Copy, Save, Info } from 'lucide-react';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
+import { ArrowLeft, Plus, Trash2, FileText, Package, Pencil, Check, X, Copy, Save, Lock, Info } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import SKUSelector from '@/components/portal/boms/SKUSelector';
 import TemplateSelector from '@/components/portal/boms/TemplateSelector';
@@ -59,18 +65,31 @@ interface BOMItem {
   };
 }
 
+const REVISION_REASON_OPTIONS = [
+  { value: 'customer_phone', label: { sv: 'Kundönskemål (telefon)', en: 'Customer request (phone)' } },
+  { value: 'customer_email', label: { sv: 'Kundönskemål (e-post)', en: 'Customer request (email)' } },
+  { value: 'customer_portal', label: { sv: 'Kundönskemål (portal)', en: 'Customer request (portal)' } },
+  { value: 'internal_correction', label: { sv: 'Intern korrigering', en: 'Internal correction' } },
+  { value: 'technical_change', label: { sv: 'Projektering / teknisk ändring', en: 'Design / technical change' } },
+  { value: 'other', label: { sv: 'Annat', en: 'Other' } },
+];
+
 const BOMBuilder: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const { t } = useLanguage();
-  const { isStaff, loading: authLoading } = useAuth();
+  const { isStaff, loading: authLoading, user } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   
   const [isSKUSelectorOpen, setIsSKUSelectorOpen] = useState(false);
   const [isTemplateSelectorOpen, setIsTemplateSelectorOpen] = useState(false);
-  const [isNewVersionDialogOpen, setIsNewVersionDialogOpen] = useState(false);
+  const [isRevisionDialogOpen, setIsRevisionDialogOpen] = useState(false);
   const [isEditingProject, setIsEditingProject] = useState(false);
   const [editedProjectName, setEditedProjectName] = useState('');
+
+  // Revision reason form state
+  const [revisionReasonType, setRevisionReasonType] = useState('');
+  const [revisionReasonNote, setRevisionReasonNote] = useState('');
 
   // Local state for unsaved quantity changes
   const [localQuantities, setLocalQuantities] = useState<Record<string, number>>({});
@@ -91,6 +110,21 @@ const BOMBuilder: React.FC = () => {
     enabled: isStaff && !!id,
   });
 
+  // Detect locked state: locked if any quote for this bom+version has been sent/viewed/accepted
+  const { data: isLocked = false } = useQuery({
+    queryKey: ['bom_locked', id, bom?.version],
+    queryFn: async () => {
+      const { count, error } = await supabase
+        .from('quotes')
+        .select('id', { count: 'exact', head: true })
+        .eq('bom_id', id!)
+        .eq('bom_version', bom!.version)
+        .in('status', ['sent', 'viewed', 'accepted']);
+      if (error) throw error;
+      return (count ?? 0) > 0;
+    },
+    enabled: isStaff && !!id && !!bom,
+  });
 
   // Fetch BOM items with SKU data (scope only - no pricing)
   const { data: items = [] } = useQuery({
@@ -167,24 +201,19 @@ const BOMBuilder: React.FC = () => {
       }
     },
     onMutate: async (updates) => {
-      // Cancel outgoing refetches so they don't overwrite our optimistic update
       await queryClient.cancelQueries({ queryKey: ['bom', id] });
       const previous = queryClient.getQueryData(['bom', id]);
-      // Optimistically update the cached BOM
       queryClient.setQueryData(['bom', id], (old: any) => old ? { ...old, ...updates } : old);
       return { previous };
     },
     onError: (error: any, _updates, context) => {
-      // Roll back on error
       if (context?.previous) {
         queryClient.setQueryData(['bom', id], context.previous);
       }
       toast({ title: t('Kunde inte uppdatera BOM', 'Failed to update BOM'), description: error.message, variant: 'destructive' });
     },
     onSettled: () => {
-      // Always refetch after mutation settles to ensure consistency
       queryClient.invalidateQueries({ queryKey: ['bom', id] });
-      
       setIsEditingProject(false);
     },
     onSuccess: () => {
@@ -192,9 +221,9 @@ const BOMBuilder: React.FC = () => {
     },
   });
 
-  // Create new BOM version mutation
-  const createNewVersionMutation = useMutation({
-    mutationFn: async () => {
+  // Create new BOM revision mutation (with reason)
+  const createRevisionMutation = useMutation({
+    mutationFn: async ({ reasonType, reasonNote }: { reasonType: string; reasonNote: string }) => {
       const newVersion = (bom?.version ?? 1) + 1;
 
       const { data: newBom, error: bomError } = await supabase
@@ -203,7 +232,11 @@ const BOMBuilder: React.FC = () => {
           project_name: bom?.project_name,
           customer_id: bom?.customer_id,
           version: newVersion,
-        })
+          revision_reason_type: reasonType,
+          revision_reason_note: reasonNote || null,
+          revision_created_by: user?.id,
+          revision_created_at: new Date().toISOString(),
+        } as any)
         .select()
         .single();
       if (bomError) throw bomError;
@@ -223,25 +256,41 @@ const BOMBuilder: React.FC = () => {
         if (itemsError) throw itemsError;
       }
 
+      // Log bom_event for audit
+      await supabase.from('bom_events' as any).insert({
+        bom_id: newBom.id,
+        event_type: 'revision_created',
+        actor_email: user?.email,
+        actor_type: 'staff',
+        metadata: {
+          reason_type: reasonType,
+          reason_note: reasonNote || null,
+          from_version: bom?.version ?? 1,
+          to_version: newVersion,
+          source_bom_id: id,
+        },
+      });
+
       return newBom;
     },
     onSuccess: (newBom) => {
-      setIsNewVersionDialogOpen(false);
+      setIsRevisionDialogOpen(false);
+      setRevisionReasonType('');
+      setRevisionReasonNote('');
       toast({ 
-        title: t('Ny BOM-version skapad', 'New BOM version created'),
+        title: t('Ny BOM-revision skapad', 'New BOM revision created'),
         description: `v${newBom.version}`
       });
       navigate(`/portal/boms/${newBom.id}`);
     },
     onError: (error: any) => {
-      toast({ title: t('Kunde inte skapa ny version', 'Failed to create new version'), description: error.message, variant: 'destructive' });
+      toast({ title: t('Kunde inte skapa ny revision', 'Failed to create new revision'), description: error.message, variant: 'destructive' });
     },
   });
 
   // Add item mutation (scope only - just sku_id, quantity, cost reference)
   const addItemMutation = useMutation({
     mutationFn: async (data: { sku_id: string; quantity: number }) => {
-      // Fetch SKU cost for internal reference
       const { data: sku, error: skuError } = await supabase
         .from('skus')
         .select('cost_ex_vat_computed')
@@ -349,7 +398,6 @@ const BOMBuilder: React.FC = () => {
     try {
       const freshItems = items;
 
-      // Fetch current SKU pricing for all items
       const skuIds = freshItems.map(i => i.sku_id);
       const { data: skuPricing, error: skuError } = await supabase
         .from('skus')
@@ -370,7 +418,6 @@ const BOMBuilder: React.FC = () => {
         .single();
       if (error) throw error;
 
-      // Create hardware quote_lines with current SKU pricing snapshot
       const hardwareLines = freshItems.map(item => {
         const sku = skuMap.get(item.sku_id);
         const sellExVat = sku?.sell_price_ex_vat ?? 0;
@@ -436,11 +483,40 @@ const BOMBuilder: React.FC = () => {
     return null;
   }
 
+  // Detect if this is a newly created revision (has revision_reason_type set)
+  const isNewRevision = !!(bom as any)?.revision_reason_type;
+
   const formatPrice = (value: number) => value.toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 
   return (
     <PortalLayout>
       <div className="space-y-6">
+        {/* Locked BOM banner */}
+        {isLocked && (
+          <Alert variant="destructive">
+            <Lock className="h-4 w-4" />
+            <AlertDescription>
+              {t(
+                'Denna BOM-version är låst eftersom en offert har skickats. Skapa en ny BOM-revision för att göra ändringar.',
+                'This BOM version is locked because a quote has been sent. Create a new BOM revision to make changes.'
+              )}
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {/* New revision info banner */}
+        {!isLocked && isNewRevision && (
+          <Alert>
+            <Info className="h-4 w-4" />
+            <AlertDescription>
+              {t(
+                'Ny BOM-revision skapad. Uppdatera omfattningen och skapa sedan en ny offertrevision.',
+                'New BOM revision created. Update the scope and then create a new quote revision.'
+              )}
+            </AlertDescription>
+          </Alert>
+        )}
+
         {/* Header */}
         <div className="flex items-center gap-4">
           <Link 
@@ -455,6 +531,12 @@ const BOMBuilder: React.FC = () => {
               <Badge variant="outline" className="font-mono">
                 BOM v{bom?.version || 1}
               </Badge>
+              {isLocked && (
+                <Badge variant="secondary" className="gap-1">
+                  <Lock className="h-3 w-3" />
+                  {t('Låst', 'Locked')}
+                </Badge>
+              )}
             </div>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-1">
               {/* Customer selector */}
@@ -465,6 +547,7 @@ const BOMBuilder: React.FC = () => {
                   onValueChange={(value) => {
                     updateBOMMutation.mutate({ customer_id: value === 'none' ? null : value });
                   }}
+                  disabled={isLocked}
                 >
                   <SelectTrigger className="w-[200px] h-8 text-sm">
                     <SelectValue placeholder={t('Välj kund', 'Select customer')} />
@@ -480,10 +563,10 @@ const BOMBuilder: React.FC = () => {
                 </Select>
               </div>
               
-              {/* Project name - editable */}
+              {/* Project name - editable only when unlocked */}
               <div className="flex items-center gap-2">
                 <span className="text-muted-foreground text-sm">{t('Projekt', 'Project')}:</span>
-                {isEditingProject ? (
+                {isEditingProject && !isLocked ? (
                   <div className="flex items-center gap-1">
                     <Input
                       value={editedProjectName}
@@ -524,12 +607,17 @@ const BOMBuilder: React.FC = () => {
                   <button
                     className="flex items-center gap-1 text-sm hover:text-primary transition-colors group"
                     onClick={() => {
-                      setEditedProjectName(bom?.project_name || '');
-                      setIsEditingProject(true);
+                      if (!isLocked) {
+                        setEditedProjectName(bom?.project_name || '');
+                        setIsEditingProject(true);
+                      }
                     }}
+                    disabled={isLocked}
                   >
                     <span>{bom?.project_name}</span>
-                    <Pencil className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    {!isLocked && (
+                      <Pencil className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    )}
                   </button>
                 )}
               </div>
@@ -540,22 +628,38 @@ const BOMBuilder: React.FC = () => {
 
         {/* Actions */}
         <div className="flex flex-wrap gap-2 mb-4">
-          <Button onClick={() => setIsSKUSelectorOpen(true)}>
+          <Button onClick={() => setIsSKUSelectorOpen(true)} disabled={isLocked}>
             <Plus className="h-4 w-4 mr-2" />
             {t('Lägg till SKU', 'Add SKU')}
           </Button>
-          <Button variant="outline" onClick={() => setIsTemplateSelectorOpen(true)}>
+          <Button variant="outline" onClick={() => setIsTemplateSelectorOpen(true)} disabled={isLocked}>
             <Package className="h-4 w-4 mr-2" />
             {t('Lägg till från mall', 'Add from template')}
           </Button>
-          <Button
-            variant="outline"
-            onClick={() => setIsNewVersionDialogOpen(true)}
-            disabled={createNewVersionMutation.isPending}
-          >
-            <Copy className="h-4 w-4 mr-2" />
-            {t('Skapa ny BOM-revision', 'Create new BOM revision')}
-          </Button>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span>
+                  <Button
+                    variant="outline"
+                    onClick={() => setIsRevisionDialogOpen(true)}
+                    disabled={!isLocked || createRevisionMutation.isPending}
+                  >
+                    <Copy className="h-4 w-4 mr-2" />
+                    {t('Skapa ny BOM-revision', 'Create new BOM revision')}
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              {!isLocked && (
+                <TooltipContent>
+                  <p>{t(
+                    'Skapa BOM-revision först efter att en offert har skickats till kunden.',
+                    'Create BOM revision only after a quote has been sent to the customer.'
+                  )}</p>
+                </TooltipContent>
+              )}
+            </Tooltip>
+          </TooltipProvider>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
@@ -569,13 +673,13 @@ const BOMBuilder: React.FC = () => {
                     <TableHead className="text-xs uppercase">{t('Produktnamn', 'Product Name')}</TableHead>
                     <TableHead className="text-xs uppercase text-center">{t('Antal', 'Qty')}</TableHead>
                     <TableHead className="text-xs uppercase text-right">{t('Kostnad ex', 'Cost ex')}</TableHead>
-                    <TableHead></TableHead>
+                    {!isLocked && <TableHead></TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {items.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                      <TableCell colSpan={isLocked ? 4 : 5} className="text-center py-8 text-muted-foreground">
                         {t('Lägg till SKUs för att börja bygga din BOM', 'Add SKUs to start building your BOM')}
                       </TableCell>
                     </TableRow>
@@ -590,24 +694,30 @@ const BOMBuilder: React.FC = () => {
                           <TableCell className="font-mono">{item.sku.sku}</TableCell>
                           <TableCell>{item.sku.name}</TableCell>
                           <TableCell className="text-center">
-                            <QuantityInput
-                              value={localQuantities[item.id] ?? item.quantity}
-                              onCommit={(qty) => handleLocalQuantityChange(item.id, qty)}
-                              className="w-16 text-center mx-auto"
-                            />
+                            {isLocked ? (
+                              <span className="text-sm">{item.quantity}</span>
+                            ) : (
+                              <QuantityInput
+                                value={localQuantities[item.id] ?? item.quantity}
+                                onCommit={(qty) => handleLocalQuantityChange(item.id, qty)}
+                                className="w-16 text-center mx-auto"
+                              />
+                            )}
                           </TableCell>
                           <TableCell className="text-right text-muted-foreground">
                             {costEx ? `${formatPrice(costEx)} kr` : '—'}
                           </TableCell>
-                          <TableCell>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => deleteItemMutation.mutate(item.id)}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </TableCell>
+                          {!isLocked && (
+                            <TableCell>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => deleteItemMutation.mutate(item.id)}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </TableCell>
+                          )}
                         </TableRow>
                       );
                     })
@@ -656,7 +766,7 @@ const BOMBuilder: React.FC = () => {
                 className="w-full" 
                 size="lg" 
                 onClick={createQuote}
-                disabled={items.length === 0 || hasUnsavedChanges}
+                disabled={items.length === 0 || hasUnsavedChanges || isLocked}
               >
                 <FileText className="h-4 w-4 mr-2" />
                 {t('Skapa offert från BOM', 'Create quote from BOM')}
@@ -667,7 +777,7 @@ const BOMBuilder: React.FC = () => {
               className="w-full bg-[#F6C573] text-foreground hover:bg-[#E5B463] disabled:bg-[#E8DCC4] disabled:text-muted-foreground"
               size="lg"
               onClick={handleSaveChanges}
-              disabled={!hasUnsavedChanges || isSaving}
+              disabled={!hasUnsavedChanges || isSaving || isLocked}
             >
               <Save className="h-4 w-4 mr-2" />
               {isSaving ? t('Sparar...', 'Saving...') : t('Spara ändringar', 'Save changes')}
@@ -691,24 +801,59 @@ const BOMBuilder: React.FC = () => {
         onSelect={handleAddFromTemplate}
       />
 
-      {/* New BOM Version Confirmation Dialog */}
-      <AlertDialog open={isNewVersionDialogOpen} onOpenChange={setIsNewVersionDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t('Skapa ny BOM-revision?', 'Create new BOM revision?')}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t('Detta skapar en ny version av denna BOM (v' + ((bom?.version ?? 1) + 1) + '). Den nuvarande versionen (v' + (bom?.version ?? 1) + ') behålls som historik.',
-                 'This will create a new version of this BOM (v' + ((bom?.version ?? 1) + 1) + '). The current version (v' + (bom?.version ?? 1) + ') will be kept as history.')}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t('Avbryt', 'Cancel')}</AlertDialogCancel>
-            <AlertDialogAction onClick={() => createNewVersionMutation.mutate()}>
-              {t('Skapa ny version', 'Create new version')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {/* New BOM Revision Dialog with Reason Form */}
+      <Dialog open={isRevisionDialogOpen} onOpenChange={setIsRevisionDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('Skapa ny BOM-revision', 'Create new BOM revision')}</DialogTitle>
+            <DialogDescription>
+              {t(
+                'En ny version (v' + ((bom?.version ?? 1) + 1) + ') skapas med alla nuvarande artiklar. Den nuvarande versionen (v' + (bom?.version ?? 1) + ') behålls som historik.',
+                'A new version (v' + ((bom?.version ?? 1) + 1) + ') will be created with all current items. The current version (v' + (bom?.version ?? 1) + ') will be kept as history.'
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>{t('Anledning till revision *', 'Reason for revision *')}</Label>
+              <Select value={revisionReasonType} onValueChange={setRevisionReasonType}>
+                <SelectTrigger>
+                  <SelectValue placeholder={t('Välj anledning...', 'Select reason...')} />
+                </SelectTrigger>
+                <SelectContent>
+                  {REVISION_REASON_OPTIONS.map(opt => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {t(opt.label.sv, opt.label.en)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>{t('Anteckning (valfritt)', 'Note (optional)')}</Label>
+              <Textarea
+                value={revisionReasonNote}
+                onChange={(e) => setRevisionReasonNote(e.target.value)}
+                placeholder={t('Beskriv ändringen...', 'Describe the change...')}
+                rows={3}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsRevisionDialogOpen(false)}>
+              {t('Avbryt', 'Cancel')}
+            </Button>
+            <Button
+              onClick={() => createRevisionMutation.mutate({ reasonType: revisionReasonType, reasonNote: revisionReasonNote })}
+              disabled={!revisionReasonType || createRevisionMutation.isPending}
+            >
+              {createRevisionMutation.isPending
+                ? t('Skapar...', 'Creating...')
+                : t('Skapa revision', 'Create revision')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </PortalLayout>
   );
 };
