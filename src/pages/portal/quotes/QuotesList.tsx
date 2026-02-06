@@ -338,7 +338,6 @@ const QuotesList: React.FC = () => {
                               {t('Test', 'Test')}
                             </Badge>
                           )}
-                          {quote.status === 'revision_requested' && getStatusBadge(quote.status, t)}
                         </div>
                       </TableCell>
                       <TableCell>
