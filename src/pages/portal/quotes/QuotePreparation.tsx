@@ -598,7 +598,7 @@ const QuotePreparation: React.FC = () => {
                           <th className="px-4 pb-3 font-medium text-center" style={{ minWidth: '5rem' }}>{t('Antal', 'Qty')}</th>
                           <th className="px-4 pb-3 font-medium text-right" style={{ minWidth: '8rem' }}>{t('Å-pris', 'Unit price')}</th>
                           <th className="px-4 pb-3 font-medium text-right" style={{ minWidth: '8rem' }}>{t('Summa', 'Total')}</th>
-                          <th className="px-4 pb-3 font-medium w-12"></th>
+                          <th className="px-4 pb-3 font-medium text-right" style={{ minWidth: '5rem' }}>{t('Marginal', 'Margin')}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -644,16 +644,13 @@ const QuotePreparation: React.FC = () => {
                                 />
                               </td>
                               <td className="px-4 py-4 text-right font-medium">{formatPrice(lineTotal)} kr</td>
-                              <td className="px-4 py-4">
-                                <Button
-                                  size="icon"
-                                  variant="ghost"
-                                  onClick={() => deleteQuoteLineMutation.mutate(line.id)}
-                                  className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                                  disabled={!isEditable}
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
+                              <td className="px-4 py-4 text-right text-sm text-muted-foreground">
+                                {(() => {
+                                  const cost = line.cost_ex_vat_at_time;
+                                  if (cost == null || cost === 0 || unitPrice === 0) return '—';
+                                  const margin = ((unitPrice - cost) / unitPrice) * 100;
+                                  return `${margin.toFixed(1)}%`;
+                                })()}
                               </td>
                             </tr>
                           );
