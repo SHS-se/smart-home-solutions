@@ -14,7 +14,7 @@ export const getQuoteStatusBadge = (status: string, t: (sv: string, en: string) 
     case 'declined':
       return <Badge variant="destructive">{t('Avvisad', 'Declined')}</Badge>;
     case 'revision_requested':
-      return <Badge className="bg-amber-500/20 text-amber-700 border-0">{t('Ändring begärd', 'Revision requested')}</Badge>;
+      return <Badge className="bg-amber-500/20 text-amber-700 border-0">{t('Omfattningsändring begärd', 'Scope change requested')}</Badge>;
     case 'invoiced':
       return <Badge className="bg-primary/20 text-primary border-0">{t('Fakturerad', 'Invoiced')}</Badge>;
     case 'expired':
