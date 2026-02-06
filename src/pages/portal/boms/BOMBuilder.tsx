@@ -35,7 +35,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { ArrowLeft, Plus, Trash2, FileText, Package, Pencil, Check, X, Copy, ScrollText, Save, Info } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, FileText, Package, Pencil, Check, X, Copy, Save, Info } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import SKUSelector from '@/components/portal/boms/SKUSelector';
 import TemplateSelector from '@/components/portal/boms/TemplateSelector';
@@ -91,22 +91,6 @@ const BOMBuilder: React.FC = () => {
     enabled: isStaff && !!id,
   });
 
-  // Fetch associated quotes (only active - not cancelled, not test)
-  const { data: associatedQuotes = [] } = useQuery({
-    queryKey: ['bom_quotes', id],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('quotes')
-        .select('id, quote_number, version, is_latest, status, is_test, created_at')
-        .eq('bom_id', id)
-        .eq('is_test', false)
-        .neq('status', 'cancelled')
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-      return data;
-    },
-    enabled: isStaff && !!id,
-  });
 
   // Fetch BOM items with SKU data (scope only - no pricing)
   const { data: items = [] } = useQuery({
@@ -182,7 +166,7 @@ const BOMBuilder: React.FC = () => {
     onSettled: () => {
       // Always refetch after mutation settles to ensure consistency
       queryClient.invalidateQueries({ queryKey: ['bom', id] });
-      queryClient.invalidateQueries({ queryKey: ['bom_quotes', id] });
+      
       setIsEditingProject(false);
     },
     onSuccess: () => {
@@ -531,31 +515,6 @@ const BOMBuilder: React.FC = () => {
                   </button>
                 )}
               </div>
-              
-              {/* Associated Quotes */}
-              {associatedQuotes.length > 0 && (
-                <div className="flex items-center gap-2">
-                  <ScrollText className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-muted-foreground text-sm">{t('Offerter', 'Quotes')}:</span>
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    {associatedQuotes.map((quote) => (
-                      <Link
-                        key={quote.id}
-                        to={`/portal/quotes/${quote.id}`}
-                        className="inline-flex items-center gap-1"
-                      >
-                        <Badge 
-                          variant={quote.is_latest ? "default" : "secondary"}
-                          className="font-mono text-xs hover:bg-primary/80 cursor-pointer"
-                        >
-                          {quote.quote_number ? `#${quote.quote_number}` : `v${quote.version}`}
-                          {quote.version > 1 && ` v${quote.version}`}
-                        </Badge>
-                      </Link>
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
           </div>
         </div>
