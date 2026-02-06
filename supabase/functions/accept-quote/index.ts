@@ -24,10 +24,10 @@ serve(async (req) => {
   }
 
   try {
-    const { quote_id, token, name, email, consent } = await req.json();
+    const { quote_id, token } = await req.json();
 
-    if (!quote_id || !token || !name || !email || !consent) {
-      return new Response(JSON.stringify({ error: "Missing required fields (quote_id, token, name, email, consent)" }), {
+    if (!quote_id || !token) {
+      return new Response(JSON.stringify({ error: "Missing required fields (quote_id, token)" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -37,10 +37,10 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
-    // Fetch quote
+    // Fetch quote with customer info
     const { data: quote, error: quoteError } = await serviceClient
       .from("quotes")
-      .select("id, status, accept_token_hash, accept_token_expires_at")
+      .select("id, status, accept_token_hash, accept_token_expires_at, customer_id")
       .eq("id", quote_id)
       .single();
 
@@ -77,6 +77,23 @@ serve(async (req) => {
       });
     }
 
+    // Resolve customer identity from the database
+    let customerName = "Unknown";
+    let customerEmail = "unknown";
+
+    if (quote.customer_id) {
+      const { data: customer } = await serviceClient
+        .from("customers_with_identity")
+        .select("name, contact_name, contact_email")
+        .eq("id", quote.customer_id)
+        .single();
+
+      if (customer) {
+        customerName = customer.name || customer.contact_name || "Unknown";
+        customerEmail = customer.contact_email || "unknown";
+      }
+    }
+
     // Extract request metadata
     const clientIp = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
       || req.headers.get("x-real-ip")
@@ -89,8 +106,8 @@ serve(async (req) => {
       .update({
         status: "accepted",
         accepted_at: new Date().toISOString(),
-        accepted_by_name: name,
-        accepted_by_email: email,
+        accepted_by_name: customerName,
+        accepted_by_email: customerEmail,
         accepted_ip: clientIp,
         accepted_user_agent: userAgent,
         accept_token_expires_at: new Date().toISOString(), // Invalidate token
@@ -104,11 +121,11 @@ serve(async (req) => {
       quote_id,
       event_type: "accepted",
       actor_type: "customer",
-      actor_email: email,
-      metadata: { name, ip: clientIp, user_agent: userAgent },
+      actor_email: customerEmail,
+      metadata: { name: customerName, ip: clientIp, user_agent: userAgent },
     });
 
-    logStep("Quote accepted", { quoteId: quote_id, name, email });
+    logStep("Quote accepted", { quoteId: quote_id, name: customerName, email: customerEmail });
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
