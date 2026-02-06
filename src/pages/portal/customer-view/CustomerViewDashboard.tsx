@@ -1,12 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Loader2, Building2, FileText, MessageSquare, ArrowLeft, Trash2, FlaskConical, ClipboardList, AlertCircle } from 'lucide-react';
+import { Loader2, Building2, FileText, MessageSquare, ArrowLeft, Trash2, ClipboardList, AlertCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Switch } from '@/components/ui/switch';
-import { Label } from '@/components/ui/label';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -37,7 +35,7 @@ const CustomerViewDashboard: React.FC = () => {
   const [quoteStats, setQuoteStats] = useState({ actionRequired: 0, total: 0 });
   const [statsLoading, setStatsLoading] = useState(true);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [isTogglingTest, setIsTogglingTest] = useState(false);
+  
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -78,37 +76,6 @@ const CustomerViewDashboard: React.FC = () => {
     }
   };
 
-  const handleToggleTest = async (checked: boolean) => {
-    if (!customerId) return;
-    setIsTogglingTest(true);
-
-    try {
-      const { error: updateError } = await supabase
-        .from('customers')
-        .update({ is_test: checked })
-        .eq('id', customerId);
-
-      if (updateError) throw updateError;
-
-      toast({
-        title: checked ? t('Testkund aktiverad', 'Test customer enabled') : t('Testkund avaktiverad', 'Test customer disabled'),
-        description: checked 
-          ? t('Kunden använder nu Stripe sandbox.', 'Customer now uses Stripe sandbox.')
-          : t('Kunden använder nu Stripe live.', 'Customer now uses Stripe live.'),
-      });
-
-      refetch?.();
-    } catch (err) {
-      console.error('Error toggling test status:', err);
-      toast({
-        title: t('Fel', 'Error'),
-        description: t('Kunde inte uppdatera teststatus.', 'Could not update test status.'),
-        variant: 'destructive',
-      });
-    } finally {
-      setIsTogglingTest(false);
-    }
-  };
 
   useEffect(() => {
     const fetchStats = async () => {
@@ -205,29 +172,12 @@ const CustomerViewDashboard: React.FC = () => {
               <h1 className="text-3xl font-medium">
                 {customerData.name || t('Namnlös kund', 'Unnamed customer')}
               </h1>
-              {customerData.is_test && (
-                <Badge variant="secondary">
-                  <FlaskConical className="w-3 h-3 mr-1" />
-                  Test
-                </Badge>
-              )}
             </div>
             <p className="text-muted-foreground mt-1">
               {t('Visar kundvy', 'Viewing customer portal')}
             </p>
           </div>
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
-            <div className="flex items-center gap-2">
-              <Switch
-                id="test-mode"
-                checked={customerData.is_test ?? false}
-                onCheckedChange={handleToggleTest}
-                disabled={isTogglingTest}
-              />
-              <Label htmlFor="test-mode" className="text-sm text-muted-foreground cursor-pointer">
-                {t('Testkund', 'Test customer')}
-              </Label>
-            </div>
             <AlertDialog>
               <AlertDialogTrigger asChild>
                 <Button variant="destructive" size="sm">
