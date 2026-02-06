@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { useParams, useNavigate, Link, useBlocker } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -10,7 +10,15 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { ArrowLeft, ExternalLink, Send, Info, Loader2, AlertTriangle, Plus, Trash2, RefreshCw } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { ArrowLeft, ExternalLink, Send, Info, Loader2, AlertTriangle, Plus, Trash2, RefreshCw, Save } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import QuoteVersionDropdown from '@/components/portal/quotes/QuoteVersionDropdown';
 import { useQuoteVersioning } from '@/hooks/use-quote-versioning';
@@ -49,6 +57,10 @@ const QuotePreparation: React.FC = () => {
   const [isSending, setIsSending] = useState(false);
   const [isCreatingInvoice, setIsCreatingInvoice] = useState(false);
   const [isUpdatingFromBom, setIsUpdatingFromBom] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Pending changes: { [lineId]: { field: value, ... } }
+  const [pendingChanges, setPendingChanges] = useState<Record<string, Record<string, string | number>>>({});
 
   // Quote versioning hook
   const {
@@ -71,7 +83,7 @@ const QuotePreparation: React.FC = () => {
     enabled: isStaff,
   });
 
-  // Fetch quote with BOM info (no more bom_price_revisions)
+  // Fetch quote with BOM info
   const { data: quote } = useQuery({
     queryKey: ['quote', id],
     queryFn: async () => {
@@ -109,7 +121,7 @@ const QuotePreparation: React.FC = () => {
   });
 
   // Track if we've already initialized default rows
-  const defaultRowsInitialized = useRef(false);
+  const defaultRowsInitialized = React.useRef(false);
 
   // Auto-create default Labor and Travel rows if none exist
   useEffect(() => {
@@ -180,28 +192,6 @@ const QuotePreparation: React.FC = () => {
     },
   });
 
-  // Update quote line mutation
-  const updateQuoteLineMutation = useMutation({
-    mutationFn: async ({ lineId, field, value }: { lineId: string; field: string; value: string | number }) => {
-      const updateData: Record<string, unknown> = { [field]: value };
-      
-      if (field === 'unit_price') {
-        const numValue = typeof value === 'number' ? value : parseFloat(value as string) || 0;
-        updateData.unit_price_ex_vat = numValue;
-        updateData.unit_price_inc_vat = numValue * 1.25;
-      }
-      
-      const { error } = await supabase
-        .from('quote_lines')
-        .update(updateData)
-        .eq('id', lineId);
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['quote_lines', id] });
-    },
-  });
-
   // Delete quote line mutation
   const deleteQuoteLineMutation = useMutation({
     mutationFn: async (lineId: string) => {
@@ -239,6 +229,90 @@ const QuotePreparation: React.FC = () => {
   const laborLines = lines.filter(l => l.section === 'labor');
   const travelLines = lines.filter(l => l.section === 'travel');
 
+  // --- Pending changes helpers ---
+  const handleFieldChange = (lineId: string, field: string, value: string | number) => {
+    setPendingChanges(prev => ({
+      ...prev,
+      [lineId]: { ...prev[lineId], [field]: value },
+    }));
+  };
+
+  const getEffectiveUnitPrice = (line: QuoteLine): number => {
+    if (pendingChanges[line.id]?.unit_price !== undefined) {
+      return Number(pendingChanges[line.id].unit_price);
+    }
+    return line.unit_price_ex_vat ?? line.unit_price;
+  };
+
+  const getEffectiveQuantity = (line: QuoteLine): number => {
+    if (pendingChanges[line.id]?.quantity !== undefined) {
+      return Number(pendingChanges[line.id].quantity);
+    }
+    return line.quantity;
+  };
+
+  const getEffectiveDescription = (line: QuoteLine): string => {
+    if (pendingChanges[line.id]?.description !== undefined) {
+      return String(pendingChanges[line.id].description);
+    }
+    return line.description;
+  };
+
+  const hasUnsavedChanges = Object.keys(pendingChanges).length > 0;
+
+  // Navigation blocker for unsaved changes
+  const blocker = useBlocker(
+    ({ currentLocation, nextLocation }) =>
+      hasUnsavedChanges && currentLocation.pathname !== nextLocation.pathname
+  );
+
+  // Browser close/refresh warning
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (hasUnsavedChanges) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [hasUnsavedChanges]);
+
+  // Save all pending changes to database
+  const handleSaveChanges = async () => {
+    const entries = Object.entries(pendingChanges);
+    if (entries.length === 0) return;
+
+    setIsSaving(true);
+    try {
+      await Promise.all(
+        entries.map(async ([lineId, fields]) => {
+          const updateData: Record<string, unknown> = {};
+          for (const [field, val] of Object.entries(fields)) {
+            updateData[field] = val;
+            if (field === 'unit_price') {
+              const numVal = typeof val === 'number' ? val : parseFloat(val as string) || 0;
+              updateData.unit_price_ex_vat = numVal;
+              updateData.unit_price_inc_vat = numVal * 1.25;
+            }
+          }
+          const { error } = await supabase
+            .from('quote_lines')
+            .update(updateData)
+            .eq('id', lineId);
+          if (error) throw error;
+        })
+      );
+
+      await queryClient.invalidateQueries({ queryKey: ['quote_lines', id] });
+      setPendingChanges({});
+      toast({ title: t('Ändringar sparade', 'Changes saved') });
+    } catch (error: any) {
+      toast({ title: t('Kunde inte spara', 'Failed to save'), description: error.message, variant: 'destructive' });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   // Add new row handlers
   const handleAddLaborLine = () => {
     addQuoteLineMutation.mutate({
@@ -258,23 +332,25 @@ const QuotePreparation: React.FC = () => {
     });
   };
 
-  // Calculate totals
+  // Calculate totals using effective (pending) values
   const hardwareTotal = hardwareLines.reduce((acc, l) => {
-    return acc + (l.quantity * (l.unit_price_ex_vat ?? l.unit_price));
+    return acc + (l.quantity * getEffectiveUnitPrice(l));
   }, 0);
 
   const laborTotal = laborLines.reduce((acc, l) => {
-    return acc + (l.quantity * (l.unit_price_ex_vat ?? l.unit_price));
+    return acc + (getEffectiveQuantity(l) * getEffectiveUnitPrice(l));
   }, 0);
 
   const travelTotal = travelLines.reduce((acc, l) => {
-    return acc + (l.quantity * (l.unit_price_ex_vat ?? l.unit_price));
+    return acc + (getEffectiveQuantity(l) * getEffectiveUnitPrice(l));
   }, 0);
 
   const subtotalExVat = hardwareTotal + laborTotal + travelTotal;
   
   const vatTotal = lines.reduce((acc, l) => {
-    const lineExVat = l.quantity * (l.unit_price_ex_vat ?? l.unit_price);
+    const qty = ['labor', 'travel'].includes(l.section) ? getEffectiveQuantity(l) : l.quantity;
+    const price = getEffectiveUnitPrice(l);
+    const lineExVat = qty * price;
     const lineVatRate = l.vat_rate ?? 0.25;
     return acc + Math.round(lineExVat * lineVatRate * 100) / 100;
   }, 0);
@@ -302,20 +378,17 @@ const QuotePreparation: React.FC = () => {
 
     setIsUpdatingFromBom(true);
     try {
-      // Fetch latest BOM items
       const { data: bomItems, error: bomError } = await supabase
         .from('bom_items')
         .select('sku_id, quantity')
         .eq('bom_id', quote.bom_id);
       if (bomError) throw bomError;
 
-      // Build quantity map from BOM: sku_id -> quantity
       const bomQuantityMap: Record<string, number> = {};
       for (const item of bomItems || []) {
         bomQuantityMap[item.sku_id] = item.quantity;
       }
 
-      // Create new version with updated hardware quantities
       const newQuote = await createNewVersion({ updatedHardwareQuantities: bomQuantityMap });
       
       toast({
@@ -443,7 +516,7 @@ const QuotePreparation: React.FC = () => {
   const isLatestVersion = currentVersion?.is_latest ?? true;
   const quoteStatus = quote?.status || 'draft';
   const isEditable = isLatestVersion && (quoteStatus === 'draft' || quoteStatus === 'revision_requested');
-  const canSend = isLatestVersion && (quoteStatus === 'draft' || quoteStatus === 'revision_requested') && !!quote?.customer_id && hardwareLines.length > 0;
+  const canSend = isLatestVersion && (quoteStatus === 'draft' || quoteStatus === 'revision_requested') && !!quote?.customer_id && hardwareLines.length > 0 && !hasUnsavedChanges;
   const canCreateInvoice = quoteStatus === 'accepted' && !!quote?.customer_id;
 
   // Status badge helper
@@ -603,15 +676,15 @@ const QuotePreparation: React.FC = () => {
                       </thead>
                       <tbody>
                         {hardwareLines.map(line => {
-                          const unitPrice = line.unit_price_ex_vat ?? line.unit_price;
-                          const lineTotal = line.quantity * unitPrice;
+                          const effectivePrice = getEffectiveUnitPrice(line);
+                          const lineTotal = line.quantity * effectivePrice;
                           
                           return (
                             <tr key={line.id} className="border-b border-border">
                               <td className="px-6 py-4">
                                 <BlurCommitInput
-                                  value={line.description}
-                                  onCommit={(value) => updateQuoteLineMutation.mutate({ lineId: line.id, field: 'description', value })}
+                                  value={getEffectiveDescription(line)}
+                                  onCommit={(value) => handleFieldChange(line.id, 'description', value)}
                                   className="h-9"
                                   disabled={!isEditable}
                                 />
@@ -636,8 +709,8 @@ const QuotePreparation: React.FC = () => {
                               <td className="px-4 py-4">
                                 <BlurCommitInput
                                   type="number"
-                                  value={unitPrice}
-                                  onCommit={(value) => updateQuoteLineMutation.mutate({ lineId: line.id, field: 'unit_price', value: parseFloat(value) || 0 })}
+                                  value={effectivePrice}
+                                  onCommit={(value) => handleFieldChange(line.id, 'unit_price', parseFloat(value) || 0)}
                                   className="w-24 text-right h-9"
                                   min={0}
                                   disabled={!isEditable}
@@ -647,8 +720,8 @@ const QuotePreparation: React.FC = () => {
                               <td className="px-4 py-4 text-right text-sm text-muted-foreground">
                                 {(() => {
                                   const cost = line.cost_ex_vat_at_time;
-                                  if (cost == null || cost === 0 || unitPrice === 0) return '—';
-                                  const margin = ((unitPrice - cost) / unitPrice) * 100;
+                                  if (cost == null || cost === 0 || effectivePrice === 0) return '—';
+                                  const margin = ((effectivePrice - cost) / effectivePrice) * 100;
                                   return `${margin.toFixed(1)}%`;
                                 })()}
                               </td>
@@ -711,15 +784,16 @@ const QuotePreparation: React.FC = () => {
                     </thead>
                     <tbody>
                       {laborLines.map(line => {
-                        const unitPrice = line.unit_price_ex_vat ?? line.unit_price;
-                        const lineTotal = line.quantity * unitPrice;
+                        const effectivePrice = getEffectiveUnitPrice(line);
+                        const effectiveQty = getEffectiveQuantity(line);
+                        const lineTotal = effectiveQty * effectivePrice;
                         
                         return (
                           <tr key={line.id} className="border-b border-border">
                             <td className="px-6 py-3">
                               <BlurCommitInput
-                                value={line.description}
-                                onCommit={(value) => updateQuoteLineMutation.mutate({ lineId: line.id, field: 'description', value })}
+                                value={getEffectiveDescription(line)}
+                                onCommit={(value) => handleFieldChange(line.id, 'description', value)}
                                 className="h-9"
                                 disabled={!isEditable}
                               />
@@ -727,8 +801,8 @@ const QuotePreparation: React.FC = () => {
                             <td className="px-4 py-3">
                               <BlurCommitInput
                                 type="number"
-                                value={line.quantity}
-                                onCommit={(value) => updateQuoteLineMutation.mutate({ lineId: line.id, field: 'quantity', value: parseFloat(value) || 0 })}
+                                value={effectiveQty}
+                                onCommit={(value) => handleFieldChange(line.id, 'quantity', parseFloat(value) || 0)}
                                 className="w-20 text-center h-9"
                                 min={0}
                                 disabled={!isEditable}
@@ -737,8 +811,8 @@ const QuotePreparation: React.FC = () => {
                             <td className="px-4 py-3">
                               <BlurCommitInput
                                 type="number"
-                                value={unitPrice}
-                                onCommit={(value) => updateQuoteLineMutation.mutate({ lineId: line.id, field: 'unit_price', value: parseFloat(value) || 0 })}
+                                value={effectivePrice}
+                                onCommit={(value) => handleFieldChange(line.id, 'unit_price', parseFloat(value) || 0)}
                                 className="w-24 text-right h-9"
                                 min={0}
                                 disabled={!isEditable}
@@ -801,15 +875,16 @@ const QuotePreparation: React.FC = () => {
                     </thead>
                     <tbody>
                       {travelLines.map(line => {
-                        const unitPrice = line.unit_price_ex_vat ?? line.unit_price;
-                        const lineTotal = line.quantity * unitPrice;
+                        const effectivePrice = getEffectiveUnitPrice(line);
+                        const effectiveQty = getEffectiveQuantity(line);
+                        const lineTotal = effectiveQty * effectivePrice;
                         
                         return (
                           <tr key={line.id} className="border-b border-border">
                             <td className="px-6 py-3">
                               <BlurCommitInput
-                                value={line.description}
-                                onCommit={(value) => updateQuoteLineMutation.mutate({ lineId: line.id, field: 'description', value })}
+                                value={getEffectiveDescription(line)}
+                                onCommit={(value) => handleFieldChange(line.id, 'description', value)}
                                 className="h-9"
                                 disabled={!isEditable}
                               />
@@ -817,8 +892,8 @@ const QuotePreparation: React.FC = () => {
                             <td className="px-4 py-3">
                               <BlurCommitInput
                                 type="number"
-                                value={line.quantity}
-                                onCommit={(value) => updateQuoteLineMutation.mutate({ lineId: line.id, field: 'quantity', value: parseFloat(value) || 0 })}
+                                value={effectiveQty}
+                                onCommit={(value) => handleFieldChange(line.id, 'quantity', parseFloat(value) || 0)}
                                 className="w-20 text-center h-9"
                                 min={0}
                                 disabled={!isEditable}
@@ -827,8 +902,8 @@ const QuotePreparation: React.FC = () => {
                             <td className="px-4 py-3">
                               <BlurCommitInput
                                 type="number"
-                                value={unitPrice}
-                                onCommit={(value) => updateQuoteLineMutation.mutate({ lineId: line.id, field: 'unit_price', value: parseFloat(value) || 0 })}
+                                value={effectivePrice}
+                                onCommit={(value) => handleFieldChange(line.id, 'unit_price', parseFloat(value) || 0)}
                                 className="w-24 text-right h-9"
                                 min={0}
                                 disabled={!isEditable}
@@ -934,6 +1009,17 @@ const QuotePreparation: React.FC = () => {
 
                 {/* Action buttons */}
                 <div className="pt-4 space-y-3">
+                  {isEditable && (
+                    <Button 
+                      className="w-full bg-[#F6C573] text-foreground hover:bg-[#E5B463] disabled:bg-[#E8DCC4] disabled:text-muted-foreground"
+                      size="lg"
+                      onClick={handleSaveChanges}
+                      disabled={!hasUnsavedChanges || isSaving}
+                    >
+                      <Save className="h-4 w-4 mr-2" />
+                      {isSaving ? t('Sparar...', 'Saving...') : t('Spara ändringar', 'Save changes')}
+                    </Button>
+                  )}
                   <Button 
                     className="w-full"
                     onClick={sendQuoteEmail}
@@ -976,6 +1062,34 @@ const QuotePreparation: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Unsaved changes navigation dialog */}
+      {blocker.state === 'blocked' && (
+        <Dialog open onOpenChange={() => blocker.reset()}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>{t('Osparade ändringar', 'Unsaved changes')}</DialogTitle>
+              <DialogDescription>
+                {t(
+                  'Du har osparade ändringar. Vill du spara innan du lämnar?',
+                  'You have unsaved changes. Would you like to save before leaving?'
+                )}
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="gap-2">
+              <Button variant="outline" onClick={() => blocker.proceed()}>
+                {t('Lämna utan att spara', 'Leave without saving')}
+              </Button>
+              <Button onClick={async () => {
+                await handleSaveChanges();
+                blocker.proceed();
+              }}>
+                {t('Spara och lämna', 'Save and leave')}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </PortalLayout>
   );
 };
