@@ -6,7 +6,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Checkbox } from '@/components/ui/checkbox';
+
 import { Label } from '@/components/ui/label';
 import {
   Dialog,
@@ -64,9 +64,6 @@ const PublicQuotePage: React.FC = () => {
 
   // Accept modal
   const [showAcceptModal, setShowAcceptModal] = useState(false);
-  const [acceptName, setAcceptName] = useState('');
-  const [acceptEmail, setAcceptEmail] = useState('');
-  const [acceptConsent, setAcceptConsent] = useState(false);
   const [isAccepting, setIsAccepting] = useState(false);
 
   // Decline modal
@@ -123,7 +120,6 @@ const PublicQuotePage: React.FC = () => {
   }, [id, token]);
 
   const handleAccept = async () => {
-    if (!acceptName || !acceptEmail || !acceptConsent) return;
     setIsAccepting(true);
     try {
       const response = await fetch(
@@ -134,7 +130,7 @@ const PublicQuotePage: React.FC = () => {
             'Content-Type': 'application/json',
             'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
           },
-          body: JSON.stringify({ quote_id: id, token, name: acceptName, email: acceptEmail, consent: true }),
+          body: JSON.stringify({ quote_id: id, token }),
         }
       );
       const result = await response.json();
@@ -386,30 +382,16 @@ const PublicQuotePage: React.FC = () => {
 
       {/* Accept Modal */}
       <Dialog open={showAcceptModal} onOpenChange={setShowAcceptModal}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Acceptera offert</DialogTitle>
-            <DialogDescription>Fyll i dina uppgifter för att godkänna offerten.</DialogDescription>
+            <DialogDescription>
+              Vill du godkänna offerten? En faktura kommer att skickas.
+            </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label htmlFor="accept-name">Namn</Label>
-              <Input id="accept-name" value={acceptName} onChange={e => setAcceptName(e.target.value)} placeholder="Ditt fullständiga namn" />
-            </div>
-            <div>
-              <Label htmlFor="accept-email">E-post</Label>
-              <Input id="accept-email" type="email" value={acceptEmail} onChange={e => setAcceptEmail(e.target.value)} placeholder="din@email.se" />
-            </div>
-            <div className="flex items-start gap-2">
-              <Checkbox id="accept-consent" checked={acceptConsent} onCheckedChange={(c) => setAcceptConsent(c === true)} />
-              <Label htmlFor="accept-consent" className="text-sm leading-5">
-                Jag godkänner offerten och förstår att en faktura kommer att skickas.
-              </Label>
-            </div>
-          </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowAcceptModal(false)}>Avbryt</Button>
-            <Button onClick={handleAccept} disabled={isAccepting || !acceptName || !acceptEmail || !acceptConsent}>
+            <Button onClick={handleAccept} disabled={isAccepting}>
               {isAccepting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Godkänn
             </Button>
