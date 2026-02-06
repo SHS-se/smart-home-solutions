@@ -534,7 +534,7 @@ const QuotePreparation: React.FC = () => {
         <div className="flex items-start gap-4">
           <button 
             onClick={() => guardedNavigate('/portal/quotes')}
-            className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground mt-3"
+            className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground self-center"
           >
             <ArrowLeft className="h-4 w-4 mr-1" />
           </button>
