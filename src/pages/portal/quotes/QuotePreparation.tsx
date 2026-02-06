@@ -727,8 +727,8 @@ const QuotePreparation: React.FC = () => {
                               <td className="px-4 py-4 text-right text-sm text-muted-foreground">
                                 {(() => {
                                   const cost = line.cost_ex_vat_at_time;
-                                  if (cost == null || cost === 0 || effectivePrice === 0) return '—';
-                                  const margin = ((effectivePrice - cost) / effectivePrice) * 100;
+                                  if (cost == null || cost === 0) return '—';
+                                  const margin = ((effectivePrice - cost) / cost) * 100;
                                   return `${margin.toFixed(1)}%`;
                                 })()}
                               </td>
