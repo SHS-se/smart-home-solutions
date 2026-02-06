@@ -1,199 +1,173 @@
 
 
-# BOM / Quote Architectural Separation
+# BOM Locking and Revision Workflow
 
 ## Overview
 
-Refactor the system to enforce a strict separation: **BOM = scope** (what gets installed), **Quote = commercial document** (what the customer pays). Remove all pricing concepts from BOM. Remove the "BOM price revision" concept entirely. Make the Quote page the single home for pricing, margin, and commercial editing.
+This plan implements a robust BOM versioning workflow where BOM versions become read-only (locked) once a quote derived from them has been sent, viewed, or accepted. Staff can always create a new BOM revision to make scope changes, with a required reason for audit purposes.
 
-## Database Migrations
+## Database Changes
 
-### Migration 1: Drop pricing columns from `bom_items`
+### 1. Add revision audit columns to `boms` table
 
-Remove columns that represent pricing ownership from the BOM items table:
+Add four new nullable columns to track why and by whom a revision was created:
 
-- `sell_price` (legacy)
-- `sell_price_ex_vat_at_time`
-- `sell_price_inc_vat_at_time`
-- `vat_rate_at_time`
-- `pricing_source`
-- `cost` (legacy duplicate of `cost_ex_vat_at_time`)
+- `revision_reason_type` (text, nullable) -- dropdown value
+- `revision_reason_note` (text, nullable) -- optional free-text
+- `revision_created_by` (uuid, nullable) -- staff user who created the revision
+- `revision_created_at` (timestamptz, nullable) -- when the revision was created
 
-**Keep**: `cost_ex_vat_at_time` (renamed conceptually to "internal cost reference" -- optional estimation field)
+### 2. Create `bom_events` table
 
-Before dropping, we will check Live for data in these columns (already confirmed: 12 rows with data). Since this is a deliberate architectural change and the user is aware, the columns will be dropped. A note will be provided about running a backup query on Live before publishing.
+A new audit log table for BOM-level events:
 
-### Migration 2: Drop `bom_price_revisions` and `bom_price_revision_items` tables
+- `id` (uuid, PK, default gen_random_uuid())
+- `bom_id` (uuid, FK to boms.id, NOT NULL)
+- `event_type` (text, NOT NULL) -- e.g. 'revision_created'
+- `actor_email` (text, nullable)
+- `actor_type` (text, nullable) -- e.g. 'staff'
+- `metadata` (jsonb, nullable) -- stores reason_type, reason_note, from_version, to_version
+- `created_at` (timestamptz, default now())
 
-These tables are no longer needed since pricing revisions are a concept being removed from BOM.
+RLS: staff-only access (matching the pattern used by `quote_events`).
 
-Also remove the `bom_price_revision_id` column from `quotes` table (this FK linked quotes to BOM pricing revisions, which is no longer the model).
+## UI and Logic Changes (BOMBuilder.tsx)
 
-### Migration 3: Add `source_bom_version` to `quote_lines` (optional context)
+### 3. Locked state detection
 
-Add `source_bom_version integer` to `quote_lines` so we know which BOM version was the source when a quote was created. This is informational only.
+Add a new query to check if the current BOM version is locked. A BOM is locked when any quote exists with:
 
-## File Changes
-
-### Files to Delete (4 files)
-
-1. `src/hooks/use-bom-pricing-revisions.ts` -- entire pricing revision hook
-2. `src/components/portal/boms/PricingRevisionDropdown.tsx` -- pricing revision UI component
-3. `src/components/portal/quotes/QuoteOutdatedBanner.tsx` -- "BOM prices outdated" banner (no longer relevant)
-4. `src/components/portal/quotes/QuoteUpdateConfirmDialog.tsx` -- "update to latest price revision" dialog
-5. `src/components/portal/quotes/QuotePriceDiffModal.tsx` -- price diff comparison modal
-
-### Files to Modify
-
-#### 1. `src/pages/portal/boms/BOMBuilder.tsx` (major rewrite)
-
-**Remove:**
-- All pricing revision imports and usage (`PricingRevisionDropdown`, `useBomPricingRevisions`)
-- "Skapa ny prisrevision" button
-- Sell price columns from the table: "Salj ex", "Salj inkl", "Marginal"
-- Summary sidebar: remove sell totals, margin calculations, margin status bar
-- `totals` calculation that computes sell/margin -- replace with scope-only totals
-- Price snapshot logic in `addItemMutation` (remove sell_price_*, vat_rate_at_time, pricing_source fields)
-- Price-related fields in `createNewVersionMutation` item copying
-
-**Keep:**
-- SKU, Product Name, Quantity, Cost (optional) columns
-- "Lagg till SKU", "Lagg till fran mall", "Skapa ny BOM-revision" buttons
-- "Skapa offert fran BOM" button (updated logic below)
-- Quantity editing with local state + save flow
-
-**Add:**
-- Info note at top: "BOM beskriver vad som ska installeras. Priser hanteras i offerten." / "BOM describes what will be installed. Prices are managed in the quote."
-- Simplified summary sidebar showing only: SKU count, Total units, Total cost (ex VAT) for estimation
-
-**Update `createQuote` function:**
-- No longer calls `ensureRevisionExists`
-- Copies BOM items into `quote_lines` with `section: 'hardware'`
-- Fetches **current SKU pricing** at quote creation time (sell_price_ex_vat, vat_rate, cost_ex_vat_computed) and stores in quote_lines
-- Sets `source_bom_id` and `source_bom_version`
-- Does NOT set `bom_price_revision_id` on the quote
-
-#### 2. `src/pages/portal/quotes/QuotePreparation.tsx` (moderate changes)
-
-**Remove:**
-- Imports: `QuotePriceDiffModal`, `QuoteOutdatedBanner`, `QuoteUpdateConfirmDialog`
-- `useQuoteVersioning` hook usage (pricing status, price diff, version creation from pricing)
-- The outdated pricing banner section
-- The price diff modal and update confirm dialog
-- State variables: `showDiffModal`, `showUpdateConfirm`, `priceDiff`
-
-**Update hardware quantity editing:**
-- Make hardware quantity fields **read-only** (disabled)
-- When user focuses/clicks quantity, show a tooltip or message: "Andra antal via BOM (omfattningsandring)" / "Change quantity via BOM (scope change)"
-
-**Add "Uppdatera fran BOM" button:**
-- Shown in the hardware card header
-- When clicked: fetches latest BOM items for the linked `bom_id`, compares quantities, and creates a new quote version with updated quantities (but preserves current quote prices)
-- Only available when quote is editable (draft/revision_requested)
-
-**Add margin info card:**
-- In the summary sidebar, add a margin section that shows:
-  - Cost vs sell comparison for hardware items (using `cost_ex_vat_at_time` from quote_lines)
-  - Total margin in kr and %
-  - Margin status indicator (same style as currently in BOM)
-
-**Keep:**
-- All price editing for hardware unit prices, labor, travel
-- Send quote button + logic
-- Create invoice button + logic
-- Customer selector
-- Quote version dropdown (for navigating between versions)
-
-#### 3. `src/hooks/use-quote-versioning.ts` (simplify)
-
-**Remove:**
-- All pricing status / outdated pricing detection logic
-- `computePriceDiff` function
-- References to `bom_price_revision_id` and `bom_price_revisions` table
-
-**Keep:**
-- Quote family fetching (versions)
-- The `createNewVersion` mutation but simplify it: instead of pulling from BOM price revisions, it copies the current quote's lines and increments version
-
-#### 4. `src/pages/portal/quotes/QuotesList.tsx`
-
-No significant changes needed -- this page already works with `quote_computed_totals` which is computed from `quote_lines`.
-
-#### 5. `src/pages/portal/customer-view/CustomerViewOfferDetail.tsx`
-
-No changes needed -- this page works with quotes/events/messages and doesn't reference BOM pricing revisions.
-
-#### 6. `src/pages/portal/customer-view/CustomerViewDashboard.tsx`
-
-No changes needed -- the Offerter card queries quotes, not BOM pricing.
-
-## Business Logic Changes
-
-### Quote Creation Flow (from BOM)
-
-```text
-User clicks "Skapa offert fran BOM"
-    |
-    v
-Fetch all bom_items for this BOM
-    |
-    v
-For each bom_item, fetch current SKU pricing:
-  - skus.sell_price_ex_vat -> quote_lines.unit_price_ex_vat
-  - skus.vat_rate -> quote_lines.vat_rate
-  - skus.cost_ex_vat_computed -> quote_lines.cost_ex_vat_at_time
-  - bom_items.quantity -> quote_lines.quantity
-    |
-    v
-Insert quote with bom_id, bom_version, customer_id
-Insert quote_lines (hardware) + default labor/travel rows
-    |
-    v
-Navigate to /portal/quotes/:newId
+```
+quote.bom_id = bom.id
+AND quote.bom_version = bom.version
+AND quote.status IN ('sent', 'viewed', 'accepted')
 ```
 
-### "Update from BOM" Flow (in Quote editor)
+This query runs alongside the existing BOM data fetch.
 
-```text
-User clicks "Uppdatera fran BOM" on Quote page
-    |
-    v
-Fetch latest bom_items for quote.bom_id
-    |
-    v
-Create new quote version (copy existing quote_lines)
-Update hardware line quantities from BOM
-Keep existing unit prices unchanged
-    |
-    v
-Navigate to new quote version
+### 4. Locked BOM banner
+
+When the BOM is locked, display an alert banner at the top:
+
+> "Denna BOM-version ar last eftersom en offert har skickats. Skapa en ny BOM-revision for att gora andringar."
+
+### 5. Disable editing when locked
+
+When locked:
+- The "Add SKU", "Add from template" buttons become disabled
+- The customer selector and project name editing become disabled
+- Quantity inputs become read-only
+- Delete (trash) buttons on items are hidden/disabled
+- "Save changes" button is disabled
+
+### 6. "Save changes" button behavior
+
+- Enabled only when BOM is **unlocked** AND there are unsaved quantity changes
+- Disabled when BOM is locked (no changes possible)
+
+### 7. "Create new BOM revision" button behavior
+
+- **Disabled** when BOM is NOT locked, with tooltip: "Skapa BOM-revision forst efter att en offert har skickats till kunden."
+- **Enabled** when BOM IS locked
+- On click: opens a modal dialog (not the current simple AlertDialog) with:
+  - Required dropdown for reason type with these options:
+    - Kundonskernal (telefon)
+    - Kundonskernal (e-post)
+    - Kundonskernal (portal)
+    - Intern korrigering
+    - Projektering / teknisk andring
+    - Annat
+  - Optional free-text note field
+  - "Create revision" button (disabled until reason is selected)
+
+### 8. Create revision logic
+
+When creating a new BOM revision:
+
+1. Insert a new `boms` row with:
+   - Same `project_name` and `customer_id`
+   - `version` = current version + 1
+   - `revision_reason_type` = selected reason
+   - `revision_reason_note` = optional note
+   - `revision_created_by` = current user id
+   - `revision_created_at` = now()
+
+2. Copy all `bom_items` from the locked BOM to the new BOM
+
+3. Insert a `bom_events` row with:
+   - `event_type` = 'revision_created'
+   - `metadata` = { reason_type, reason_note, from_version, to_version, source_bom_id }
+
+4. Navigate to the new BOM revision
+
+### 9. New revision banner
+
+After navigating to a newly created revision (detected by `revision_reason_type` being non-null), show an info banner:
+
+> "Ny BOM-revision skapad. Uppdatera omfattningen och skapa sedan en ny offertrevision."
+
+### 10. Existing dialog replacement
+
+The current simple `AlertDialog` for "Create new BOM revision?" is replaced by a full `Dialog` containing the reason form. The old dialog is removed.
+
+## Technical Details
+
+### Migration SQL
+
+```sql
+-- Add revision audit columns to boms
+ALTER TABLE public.boms ADD COLUMN IF NOT EXISTS revision_reason_type text;
+ALTER TABLE public.boms ADD COLUMN IF NOT EXISTS revision_reason_note text;
+ALTER TABLE public.boms ADD COLUMN IF NOT EXISTS revision_created_by uuid;
+ALTER TABLE public.boms ADD COLUMN IF NOT EXISTS revision_created_at timestamptz;
+
+-- Create bom_events table
+CREATE TABLE IF NOT EXISTS public.bom_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  bom_id uuid NOT NULL REFERENCES public.boms(id),
+  event_type text NOT NULL,
+  actor_email text,
+  actor_type text,
+  metadata jsonb,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- RLS for bom_events (staff only)
+ALTER TABLE public.bom_events ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Staff can read bom_events"
+  ON public.bom_events FOR SELECT
+  TO authenticated
+  USING (public.is_staff(auth.uid()));
+CREATE POLICY "Staff can insert bom_events"
+  ON public.bom_events FOR INSERT
+  TO authenticated
+  WITH CHECK (public.is_staff(auth.uid()));
 ```
 
-### Quantity vs Price Change Rules
+### Locked state query
 
-- **Quantity change** = Must be done in BOM, then "Update from BOM" in quote
-- **Price change** = Done directly in Quote editor (unit prices editable)
-- **Hardware quantity in quote** = Read-only, displays message directing to BOM
-- **Labor/Travel quantity** = Editable in quote (these aren't scope items)
+```typescript
+const { data: isLocked } = useQuery({
+  queryKey: ['bom_locked', id, bom?.version],
+  queryFn: async () => {
+    const { count } = await supabase
+      .from('quotes')
+      .select('id', { count: 'exact', head: true })
+      .eq('bom_id', id!)
+      .eq('bom_version', bom!.version)
+      .in('status', ['sent', 'viewed', 'accepted']);
+    return (count ?? 0) > 0;
+  },
+  enabled: !!id && !!bom,
+});
+```
 
-## Summary of Columns Dropped
+### Files modified
 
-### `bom_items` -- drop 6 columns:
-- `sell_price`
-- `sell_price_ex_vat_at_time`
-- `sell_price_inc_vat_at_time`
-- `vat_rate_at_time`
-- `pricing_source`
-- `cost` (legacy)
+- `src/pages/portal/boms/BOMBuilder.tsx` -- all UI and logic changes (locked state, banners, modal, disabled controls)
+- New migration file for schema changes
 
-### `quotes` -- drop 1 column:
-- `bom_price_revision_id`
+### No other files affected
 
-### Tables dropped entirely:
-- `bom_price_revisions`
-- `bom_price_revision_items`
-
-## Live Database Considerations
-
-There is existing data in Live for `bom_items` pricing columns (12 rows) and `bom_price_revisions` (5 rows). Before publishing, you should run a backup query on Live to preserve this data if needed. The data will be lost on publish since these columns/tables are being dropped.
+The changes are fully contained in the BOM Builder page and the database schema. No edge functions or other pages need modification.
 
