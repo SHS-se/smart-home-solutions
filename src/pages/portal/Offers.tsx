@@ -60,7 +60,9 @@ const Offers: React.FC = () => {
       chains.get(chainId)!.push(q);
     });
     return Array.from(chains.values()).map(group =>
-      group.reduce((latest, q) => q.version > latest.version ? q : latest)
+      group.reduce((latest, q) =>
+        new Date(q.created_at) > new Date(latest.created_at) ? q : latest
+      )
     );
   }, [quotes]);
 
