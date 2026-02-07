@@ -13,11 +13,6 @@ const logStep = (step: string, details?: unknown) => {
   console.log(`[FINALIZE-NEW-INVOICE] ${step}${detailsStr}`);
 };
 
-// Generate invoice number
-function generateInvoiceNumber(seq: number): string {
-  const year = new Date().getFullYear();
-  return `INV-${year}-${String(seq).padStart(3, '0')}`;
-}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
