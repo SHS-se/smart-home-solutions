@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Loader2, ArrowLeft, Check, X, MessageSquare,
-  CheckCircle2, XCircle, AlertCircle,
+  CheckCircle2, XCircle, AlertCircle, History,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -11,12 +11,14 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
+import {
   Dialog, DialogContent, DialogDescription,
   DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import PortalLayout from '@/components/portal/PortalLayout';
 import OfferLineBreakdown from '@/components/portal/offers/OfferLineBreakdown';
-import OfferRevisionHistory from '@/components/portal/offers/OfferRevisionHistory';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useToast } from '@/hooks/use-toast';
@@ -267,17 +269,39 @@ const OfferDetail: React.FC = () => {
                     : t('Offert', 'Offer')}
                 </CardTitle>
                 {getQuoteStatusBadge(quote.status, t)}
-                {quote.version > 1 && (
-                  <Badge variant="outline" className="font-mono text-xs">
-                    v{quote.version}
-                  </Badge>
-                )}
                 {!isViewingLatest && (
                   <Badge variant="secondary" className="text-xs">
                     {t('Tidigare version', 'Previous version')}
                   </Badge>
                 )}
               </div>
+              {/* Version selector — only shown when multiple versions exist */}
+              {chainVersions.length > 1 && (
+                <Select
+                  value={quoteId}
+                  onValueChange={(id) => navigate(`/portal/offers/${id}`)}
+                >
+                  <SelectTrigger className="w-auto min-w-[180px] gap-2">
+                    <History className="h-4 w-4 text-muted-foreground shrink-0" />
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {chainVersions
+                      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                      .map((v) => (
+                        <SelectItem key={v.id} value={v.id}>
+                          <span className="font-mono text-sm">{v.quote_number || t('Utkast', 'Draft')}</span>
+                          <span className="text-muted-foreground text-xs ml-2">
+                            {formatDate(v.created_at)}
+                          </span>
+                          {v.id === latestInChain?.id && (
+                            <span className="text-xs text-primary ml-1">({t('senaste', 'latest')})</span>
+                          )}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
           </CardHeader>
           <CardContent>
@@ -365,12 +389,8 @@ const OfferDetail: React.FC = () => {
           </div>
         )}
 
-        {/* ─── Revision history ─── */}
-        <OfferRevisionHistory
-          versions={chainVersions}
-          currentQuoteId={quoteId!}
-          t={t}
-        />
+
+
       </div>
 
       {/* ─── Accept Dialog ─── */}
