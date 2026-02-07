@@ -86,26 +86,10 @@ serve(async (req) => {
       });
     }
 
-    // Generate our invoice number
-    // Get the max invoice number sequence
-    const { data: maxInvoice } = await supabaseClient
-      .from('invoices')
-      .select('invoice_number')
-      .not('invoice_number', 'is', null)
-      .order('invoice_number', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    let nextSeq = 1;
-    if (maxInvoice?.invoice_number) {
-      const match = maxInvoice.invoice_number.match(/INV-\d{4}-(\d+)/);
-      if (match) {
-        nextSeq = parseInt(match[1], 10) + 1;
-      }
-    }
-
-    const invoiceNumber = generateInvoiceNumber(nextSeq);
-    logStep("Generated invoice number", { invoiceNumber });
+    // Use Stripe's invoice number as our canonical number
+    const invoiceNumber = finalizedInvoice.number;
+    if (!invoiceNumber) throw new Error("Stripe did not assign an invoice number");
+    logStep("Using Stripe invoice number", { invoiceNumber });
 
     // Update local invoice (totals are computed via invoice_computed_totals view)
     const { error: updateError } = await supabaseClient
