@@ -11,3 +11,6 @@ verify_jwt = false
 
 [functions.request-quote-revision]
 verify_jwt = false
+
+[functions.customer-quote-action]
+verify_jwt = false

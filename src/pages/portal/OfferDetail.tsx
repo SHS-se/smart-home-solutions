@@ -76,7 +76,7 @@ const OfferDetail: React.FC = () => {
     queryFn: async () => {
       const { data } = await supabase
         .from('boms')
-        .select('project_name')
+        .select('project_name, bom_group_id')
         .eq('id', quote!.bom_id!)
         .single();
       return data;
@@ -111,25 +111,49 @@ const OfferDetail: React.FC = () => {
     enabled: !!quoteId,
   });
 
-  // Fetch all versions in the chain
+  // Fetch all versions in the chain via bom_group_id (preferred) or parent_quote_id fallback
   const { data: chainVersions = [] } = useQuery({
-    queryKey: ['customer-offer-chain', quote?.parent_quote_id, quote?.id],
+    queryKey: ['customer-offer-chain', bomData?.bom_group_id, quote?.parent_quote_id, quote?.id],
     queryFn: async () => {
+      // Strategy 1: Find all quotes sharing the same bom_group_id
+      if (bomData?.bom_group_id) {
+        const { data: bomsInGroup } = await supabase
+          .from('boms')
+          .select('id')
+          .eq('bom_group_id', bomData.bom_group_id);
+
+        const bomIds = (bomsInGroup || []).map(b => b.id);
+        if (bomIds.length > 0) {
+          const { data, error } = await supabase
+            .from('quotes')
+            .select('id, quote_number, version, status, created_at, is_latest')
+            .in('bom_id', bomIds)
+            .neq('status', 'draft')
+            .neq('status', 'cancelled')
+            .order('created_at', { ascending: false });
+          if (error) throw error;
+          return data ?? [];
+        }
+      }
+
+      // Strategy 2: Fallback to parent_quote_id chain
       const rootId = quote!.parent_quote_id || quote!.id;
       const { data, error } = await supabase
         .from('quotes')
         .select('id, quote_number, version, status, created_at, is_latest')
         .or(`id.eq.${rootId},parent_quote_id.eq.${rootId}`)
-        .order('version', { ascending: false });
+        .neq('status', 'draft')
+        .neq('status', 'cancelled')
+        .order('created_at', { ascending: false });
       if (error) throw error;
       return data ?? [];
     },
-    enabled: !!quote,
+    enabled: !!quote && (!!bomData || !quote.bom_id),
   });
 
-  // Determine if viewing the latest version
+  // Determine if viewing the latest version (by created_at since version numbers may not increment across chains)
   const latestInChain = chainVersions.length > 0
-    ? chainVersions.reduce((a, b) => (a.version > b.version ? a : b))
+    ? chainVersions.reduce((a, b) => (new Date(a.created_at) > new Date(b.created_at) ? a : b))
     : null;
   const isViewingLatest = !latestInChain || latestInChain.id === quoteId;
 
