@@ -218,7 +218,7 @@ const InvoiceDraftEditor: React.FC = () => {
     if (existingInvoice) {
       setSelectedCustomerId(existingInvoice.customer_id);
       setSelectedBomId(existingInvoice.bom_id);
-      setDueDate(existingInvoice.due_date || '');
+      setDueDate(existingInvoice.due_date || getDefaultInvoiceDueDate());
       setIsTest(existingInvoice.is_test);
     }
   }, [existingInvoice]);
