@@ -62,16 +62,15 @@ serve(async (req) => {
     if (!customer_id) throw new Error("customer_id is required");
     logStep("Creating draft invoice", { customer_id, bom_id, quote_id });
 
-    // Fetch customer
+    // Fetch customer via identity view (identity columns live in contacts)
     const { data: customer, error: customerError } = await supabaseClient
-      .from('customers')
-      .select('*')
+      .from('customers_with_identity')
+      .select('id, name, billing_email, contact_email, phone')
       .eq('id', customer_id)
       .single();
 
     if (customerError || !customer) throw new Error("Customer not found");
-    logStep("Customer loaded");
-
+    logStep("Customer loaded", { name: customer.name, billing_email: customer.billing_email });
     // Fetch BOM if provided
     let bom = null;
     let bomVersion = null;
@@ -107,7 +106,8 @@ serve(async (req) => {
     const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
 
     // Find or create Stripe customer
-    const email = customer.billing_email || customer.org_name;
+    const email = customer.billing_email || customer.contact_email;
+    if (!email) throw new Error("Customer has no email address configured");
     let stripeCustomerId: string;
     
     const existingCustomers = await stripe.customers.list({
@@ -121,7 +121,7 @@ serve(async (req) => {
     } else {
       const newCustomer = await stripe.customers.create({
         email: email,
-        name: customer.org_name || undefined,
+        name: customer.name || undefined,
         metadata: {
           internal_customer_id: customer_id
         }
