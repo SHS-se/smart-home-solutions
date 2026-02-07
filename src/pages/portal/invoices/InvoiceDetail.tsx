@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -330,9 +330,9 @@ const InvoiceDetail: React.FC = () => {
             {invoice.quote_number && (
               <span>
                 <span className="text-muted-foreground">{t('Från offert:', 'From quote:')}</span>{' '}
-                <a href={`/portal/quotes/${invoice.quote_id}`} className="text-primary hover:underline">
+                <Link to={`/portal/quotes/${invoice.quote_id}`} className="text-primary hover:underline">
                   {invoice.quote_number}
-                </a>
+                </Link>
               </span>
             )}
           </div>
