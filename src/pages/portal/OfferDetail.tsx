@@ -239,24 +239,6 @@ const OfferDetail: React.FC = () => {
           {t('Tillbaka till offerter', 'Back to offers')}
         </Link>
 
-        {/* Older version banner */}
-        {!isViewingLatest && (
-          <Alert>
-            <AlertCircle className="h-4 w-4" />
-            <AlertDescription className="flex items-center justify-between">
-              <span>{t('Du visar en tidigare version av denna offert.', 'You are viewing an older version of this offer.')}</span>
-              {latestInChain && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => navigate(`/portal/offers/${latestInChain.id}`)}
-                >
-                  {t('Visa senaste', 'View latest')}
-                </Button>
-              )}
-            </AlertDescription>
-          </Alert>
-        )}
 
         {/* ─── Summary card ─── */}
         <Card>
