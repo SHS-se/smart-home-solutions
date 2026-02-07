@@ -61,11 +61,12 @@ serve(async (req) => {
     const { data: invoice } = await supabaseClient.from('invoices').select('*').eq('id', invoice_id).single();
     if (!invoice || invoice.status !== 'draft' || !invoice.stripe_invoice_id) throw new Error("Invoice not found or invalid");
 
-    const { data: customer } = await supabaseClient.from('customers').select('billing_email').eq('id', invoice.customer_id).single();
-    if (!customer?.billing_email) throw new Error("Customer has no billing email");
+    const { data: customer } = await supabaseClient.from('customers_with_identity').select('billing_email, contact_email').eq('id', invoice.customer_id).single();
+    const customerEmail = customer?.billing_email || customer?.contact_email;
+    if (!customerEmail) throw new Error("Customer has no email address configured");
 
     const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
-    const stripeCustomers = await stripe.customers.list({ email: customer.billing_email, limit: 1 });
+    const stripeCustomers = await stripe.customers.list({ email: customerEmail, limit: 1 });
     if (stripeCustomers.data.length === 0) throw new Error("No Stripe customer found");
     const stripeCustomerId = stripeCustomers.data[0].id;
 
