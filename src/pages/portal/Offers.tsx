@@ -32,6 +32,7 @@ interface Quote {
   bom_id: string | null;
   bom: {
     project_name: string;
+    bom_group_id: string;
   } | null;
   total_inc_vat: number | null;
 }
@@ -50,11 +51,11 @@ const Offers: React.FC = () => {
     defaultDirection: 'desc',
   });
 
-  // Group by quote chain and pick only the latest revision per chain
+  // Group by offer chain (bom_group_id > parent_quote_id > id) and pick only the latest revision
   const latestPerChain = useMemo(() => {
     const chains = new Map<string, Quote[]>();
     quotes.forEach(q => {
-      const chainId = q.parent_quote_id || q.id;
+      const chainId = q.bom?.bom_group_id || q.parent_quote_id || q.id;
       if (!chains.has(chainId)) chains.set(chainId, []);
       chains.get(chainId)!.push(q);
     });
@@ -107,7 +108,7 @@ const Offers: React.FC = () => {
             is_latest,
             parent_quote_id,
             bom_id,
-            bom:boms(project_name)
+            bom:boms(project_name, bom_group_id)
           `)
           .eq('customer_id', customerData.id)
           .eq('is_test', customerData.is_test ?? false)
