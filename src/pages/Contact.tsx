@@ -242,6 +242,10 @@ const Contact = () => {
                     </div>
                   </div>
                 </div>
+                <div className="mt-4 pt-4 border-t border-border space-y-1">
+                  <p className="text-sm text-muted-foreground">{t('Godkänd för F-skatt', 'Approved for F-tax')}</p>
+                  <p className="text-sm text-muted-foreground">{t('Momsreg.nr', 'VAT reg. no')}: SE790519759101</p>
+                </div>
               </div>
 
               {/* Service Area */}
