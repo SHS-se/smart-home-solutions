@@ -47,6 +47,7 @@ import { toast } from '@/hooks/use-toast';
 import SKUSelector from '@/components/portal/boms/SKUSelector';
 import TemplateSelector from '@/components/portal/boms/TemplateSelector';
 import QuantityInput from '@/components/portal/boms/QuantityInput';
+import BOMVersionSelector from '@/components/portal/boms/BOMVersionSelector';
 
 interface BOMItem {
   id: string;
@@ -233,6 +234,7 @@ const BOMBuilder: React.FC = () => {
           project_name: bom?.project_name,
           customer_id: bom?.customer_id,
           version: newVersion,
+          bom_group_id: (bom as any)?.bom_group_id || id,
           revision_reason_type: reasonType,
           revision_reason_note: reasonNote || null,
           revision_created_by: user?.id,
@@ -694,9 +696,11 @@ const BOMBuilder: React.FC = () => {
           <div className="flex-1">
             <div className="flex items-center gap-3 flex-wrap">
               <h1 className="text-2xl font-bold">BOM Builder</h1>
-              <Badge variant="outline" className="font-mono">
-                BOM v{bom?.version || 1}
-              </Badge>
+              <BOMVersionSelector
+                bomGroupId={(bom as any)?.bom_group_id || id || ''}
+                currentBomId={id || ''}
+                currentVersion={bom?.version || 1}
+              />
               {isLocked && (
                 <Badge variant="secondary" className="gap-1">
                   <Lock className="h-3 w-3" />

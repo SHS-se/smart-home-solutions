@@ -40,7 +40,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, Filter } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 import { sv } from 'date-fns/locale';
@@ -50,11 +50,13 @@ interface BOM {
   project_name: string;
   version: number;
   customer_id: string | null;
+  bom_group_id: string;
   created_at: string;
   customer?: { name: string | null; contact_name: string | null };
 }
 
 type SortColumn = 'project_name' | 'customer' | 'version' | 'created_at';
+type VersionFilter = 'latest' | 'all';
 
 const BOMsList: React.FC = () => {
   const { t } = useLanguage();
@@ -64,6 +66,7 @@ const BOMsList: React.FC = () => {
   
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [formData, setFormData] = useState({ project_name: '', customer_id: '' });
+  const [versionFilter, setVersionFilter] = useState<VersionFilter>('latest');
   const { sortColumn, sortDirection, handleSort } = useTableSort<SortColumn>({ 
     defaultColumn: 'created_at', 
     defaultDirection: 'desc' 
@@ -100,6 +103,7 @@ const BOMsList: React.FC = () => {
       if (error) throw error;
       return data.map(bom => ({
         ...bom,
+        bom_group_id: (bom as any).bom_group_id,
         customer: (bom as any).customers,
       })) as BOM[];
     },
@@ -119,9 +123,23 @@ const BOMsList: React.FC = () => {
     enabled: isStaff,
   });
 
+  // Filter BOMs: latest per group or all
+  const filteredBoms = useMemo(() => {
+    if (versionFilter === 'all') return boms;
+    // Keep only the highest-version BOM per bom_group_id
+    const latestMap = new Map<string, BOM>();
+    for (const bom of boms) {
+      const existing = latestMap.get(bom.bom_group_id);
+      if (!existing || bom.version > existing.version) {
+        latestMap.set(bom.bom_group_id, bom);
+      }
+    }
+    return Array.from(latestMap.values());
+  }, [boms, versionFilter]);
+
   // Sort BOMs
   const sortedBoms = useMemo(() => {
-    return sortItems(boms, sortColumn as keyof BOM, sortDirection, {
+    return sortItems(filteredBoms, sortColumn as keyof BOM, sortDirection, {
       getValue: (bom) => {
         switch (sortColumn) {
           case 'customer':
@@ -133,7 +151,7 @@ const BOMsList: React.FC = () => {
         }
       },
     });
-  }, [boms, sortColumn, sortDirection]);
+  }, [filteredBoms, sortColumn, sortDirection]);
 
   // Create BOM mutation
   const createMutation = useMutation({
@@ -189,10 +207,22 @@ const BOMsList: React.FC = () => {
               {t('Hantera materialkostnadsberäkningar', 'Manage bill of materials')}
             </p>
           </div>
-          <Button onClick={() => setIsDialogOpen(true)}>
-            <Plus className="h-4 w-4 mr-2" />
-            {t('Skapa ny BOM', 'Create new BOM')}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Select value={versionFilter} onValueChange={(v) => setVersionFilter(v as VersionFilter)}>
+              <SelectTrigger className="w-[180px] h-9">
+                <Filter className="h-3.5 w-3.5 mr-2 text-muted-foreground" />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="latest">{t('Senaste (standard)', 'Latest (default)')}</SelectItem>
+                <SelectItem value="all">{t('Alla versioner', 'All versions')}</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button onClick={() => setIsDialogOpen(true)}>
+              <Plus className="h-4 w-4 mr-2" />
+              {t('Skapa ny BOM', 'Create new BOM')}
+            </Button>
+          </div>
         </div>
 
         {/* BOMs Table */}
@@ -222,10 +252,12 @@ const BOMsList: React.FC = () => {
                     {t('Laddar...', 'Loading...')}
                   </TableCell>
                 </TableRow>
-              ) : boms.length === 0 ? (
+              ) : filteredBoms.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
-                    {t('Inga BOMs skapade ännu', 'No BOMs created yet')}
+                    {versionFilter === 'latest' && boms.length > 0
+                      ? t('Inga BOMs matchar filtret', 'No BOMs match the filter')
+                      : t('Inga BOMs skapade ännu', 'No BOMs created yet')}
                   </TableCell>
                 </TableRow>
               ) : (

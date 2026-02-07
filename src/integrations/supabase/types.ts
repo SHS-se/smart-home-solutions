@@ -144,6 +144,7 @@ export type Database = {
       }
       boms: {
         Row: {
+          bom_group_id: string
           created_at: string
           created_by: string | null
           customer_id: string | null
@@ -157,6 +158,7 @@ export type Database = {
           version: number
         }
         Insert: {
+          bom_group_id?: string
           created_at?: string
           created_by?: string | null
           customer_id?: string | null
@@ -170,6 +172,7 @@ export type Database = {
           version?: number
         }
         Update: {
+          bom_group_id?: string
           created_at?: string
           created_by?: string | null
           customer_id?: string | null
