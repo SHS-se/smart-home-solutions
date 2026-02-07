@@ -121,6 +121,10 @@ const Footer = () => {
                   </a>
                 </li>
               </ul>
+              <div className="mt-4 pt-3 border-t border-primary-foreground/10 space-y-1">
+                <p className="text-xs text-primary-foreground/50">{t('Godkänd för F-skatt', 'Approved for F-tax')}</p>
+                <p className="text-xs text-primary-foreground/50">{t('Momsreg.nr', 'VAT reg. no')}: SE790519759101</p>
+              </div>
             </div>
           </div>
         </div>
