@@ -28,6 +28,7 @@ interface Quote {
   created_at: string;
   version: number;
   is_latest: boolean;
+  parent_quote_id: string | null;
   bom_id: string | null;
   bom: {
     project_name: string;
@@ -49,8 +50,21 @@ const Offers: React.FC = () => {
     defaultDirection: 'desc',
   });
 
-  const sortedQuotes = useMemo(() => {
-    return sortItems(quotes, sortColumn as keyof Quote, sortDirection, {
+  // Group by quote chain and pick only the latest revision per chain
+  const latestPerChain = useMemo(() => {
+    const chains = new Map<string, Quote[]>();
+    quotes.forEach(q => {
+      const chainId = q.parent_quote_id || q.id;
+      if (!chains.has(chainId)) chains.set(chainId, []);
+      chains.get(chainId)!.push(q);
+    });
+    return Array.from(chains.values()).map(group =>
+      group.reduce((latest, q) => q.version > latest.version ? q : latest)
+    );
+  }, [quotes]);
+
+  const sortedOffers = useMemo(() => {
+    return sortItems(latestPerChain, sortColumn as keyof Quote, sortDirection, {
       getValue: (quote) => {
         switch (sortColumn) {
           case 'created_at':
@@ -66,7 +80,7 @@ const Offers: React.FC = () => {
         }
       },
     });
-  }, [quotes, sortColumn, sortDirection]);
+  }, [latestPerChain, sortColumn, sortDirection]);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -91,6 +105,7 @@ const Offers: React.FC = () => {
             created_at,
             version,
             is_latest,
+            parent_quote_id,
             bom_id,
             bom:boms(project_name)
           `)
@@ -196,7 +211,7 @@ const Offers: React.FC = () => {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {quotes.length === 0 ? (
+            {sortedOffers.length === 0 ? (
               <p className="text-center text-muted-foreground py-12">
                 {t('Du har inga offerter ännu.', 'You have no offers yet.')}
               </p>
@@ -209,16 +224,19 @@ const Offers: React.FC = () => {
                       currentColumn={sortColumn}
                       currentDirection={sortDirection}
                       onSort={handleSort}
-                      className="text-primary text-center"
+                      className="text-primary"
                     >
                       {t('Datum', 'Date')}
                     </SortableTableHead>
+                    <TableHead className="text-primary">
+                      {t('Projekt', 'Project')}
+                    </TableHead>
                     <SortableTableHead<QuoteSortColumn>
                       column="quote_number"
                       currentColumn={sortColumn}
                       currentDirection={sortDirection}
                       onSort={handleSort}
-                      className="text-primary text-center"
+                      className="text-primary"
                     >
                       {t('Offertnummer', 'Quote Number')}
                     </SortableTableHead>
@@ -227,7 +245,7 @@ const Offers: React.FC = () => {
                       currentColumn={sortColumn}
                       currentDirection={sortDirection}
                       onSort={handleSort}
-                      className="text-primary text-center"
+                      className="text-primary text-right"
                     >
                       {t('Summa', 'Total')}
                     </SortableTableHead>
@@ -236,28 +254,35 @@ const Offers: React.FC = () => {
                       currentColumn={sortColumn}
                       currentDirection={sortDirection}
                       onSort={handleSort}
-                      className="text-primary text-center"
+                      className="text-primary"
                     >
                       {t('Status', 'Status')}
                     </SortableTableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {sortedQuotes.map((quote) => (
-                    <TableRow key={quote.id}>
-                      <TableCell className="text-center">
+                  {sortedOffers.map((quote) => (
+                    <TableRow
+                      key={quote.id}
+                      className="cursor-pointer hover:bg-muted/50"
+                      onClick={() => navigate(`/portal/offers/${quote.id}`)}
+                    >
+                      <TableCell>
                         {new Date(quote.created_at).toLocaleDateString('sv-SE')}
                       </TableCell>
-                      <TableCell className="text-center font-medium">
+                      <TableCell className="text-muted-foreground">
+                        {quote.bom?.project_name || '—'}
+                      </TableCell>
+                      <TableCell className="font-medium font-mono">
                         {quote.quote_number || '—'}
                         {quote.version > 1 && (
-                          <span className="text-muted-foreground ml-1">v{quote.version}</span>
+                          <span className="text-muted-foreground ml-1 text-xs">v{quote.version}</span>
                         )}
                       </TableCell>
-                      <TableCell className="text-center">
+                      <TableCell className="text-right tabular-nums">
                         {formatAmount(quote.total_inc_vat)}
                       </TableCell>
-                      <TableCell className="text-center">
+                      <TableCell>
                         {getStatusBadge(quote.status)}
                       </TableCell>
                     </TableRow>
