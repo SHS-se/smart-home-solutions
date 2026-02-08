@@ -366,6 +366,7 @@ const CustomerViewOfferDetail: React.FC = () => {
       case 'message_posted': return <Mail className="h-4 w-4 text-blue-500" />;
       case 'invoice_created': return <Receipt className="h-4 w-4 text-green-500" />;
       case 'cancelled': return <XCircle className="h-4 w-4 text-muted-foreground" />;
+      case 'superseded': return <Clock className="h-4 w-4 text-muted-foreground" />;
       default: return <Clock className="h-4 w-4 text-muted-foreground" />;
     }
   };
@@ -382,6 +383,7 @@ const CustomerViewOfferDetail: React.FC = () => {
       message_posted: { sv: 'Nytt meddelande', en: 'New message' },
       invoice_created: { sv: 'Faktura skapad', en: 'Invoice created' },
       cancelled: { sv: 'Offert avbruten', en: 'Quote cancelled' },
+      superseded: { sv: 'Ersatt av nyare version', en: 'Superseded by newer version' },
     };
     const label = labels[eventType];
     return label ? t(label.sv, label.en) : eventType.replace(/_/g, ' ');
