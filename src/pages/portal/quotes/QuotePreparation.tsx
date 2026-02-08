@@ -944,11 +944,11 @@ const QuotePreparation: React.FC = () => {
                 )}
 
                 {/* Quote validity */}
-                {isEditable && (
-                  <div className="border-t border-border pt-4 space-y-2">
-                    <label className="text-sm font-medium text-muted-foreground">
-                      {t('Offertens giltighetstid', 'Quote validity')}
-                    </label>
+                <div className="border-t border-border pt-4 space-y-2">
+                  <label className="text-sm font-medium text-muted-foreground">
+                    {t('Offertens giltighetstid', 'Quote validity')}
+                  </label>
+                  {isEditable ? (
                     <div className="flex items-center gap-2">
                       <BlurCommitInput
                         type="number"
@@ -959,8 +959,17 @@ const QuotePreparation: React.FC = () => {
                       />
                       <span className="text-sm text-muted-foreground">{t('dagar', 'days')}</span>
                     </div>
-                  </div>
-                )}
+                  ) : quote?.expires_at ? (
+                    <p className="text-sm">
+                      {t('Giltig till', 'Valid until')}{' '}
+                      <span className="font-medium">
+                        {new Date(quote.expires_at).toLocaleDateString('sv-SE', { year: 'numeric', month: 'short', day: 'numeric' })}
+                      </span>
+                    </p>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">{t('Ej angiven', 'Not set')}</p>
+                  )}
+                </div>
 
                 {/* Action buttons */}
                 <div className="pt-4 space-y-3">
