@@ -490,8 +490,9 @@ const QuotePreparation: React.FC = () => {
   const currentVersion = quoteFamily.find(v => v.id === id);
   const isLatestVersion = currentVersion?.is_latest ?? true;
   const quoteStatus = quote?.status || 'draft';
-  const isEditable = isLatestVersion && (quoteStatus === 'draft' || quoteStatus === 'revision_requested');
-  const canSend = isLatestVersion && (quoteStatus === 'draft' || quoteStatus === 'revision_requested') && !!quote?.customer_id && hardwareLines.length > 0 && !hasUnsavedChanges;
+  const isSuperseded = quoteStatus === 'superseded';
+  const isEditable = isLatestVersion && !isSuperseded && (quoteStatus === 'draft' || quoteStatus === 'revision_requested');
+  const canSend = isLatestVersion && !isSuperseded && (quoteStatus === 'draft' || quoteStatus === 'revision_requested') && !!quote?.customer_id && hardwareLines.length > 0 && !hasUnsavedChanges;
   const canCreateInvoice = quoteStatus === 'accepted' && !!quote?.customer_id;
 
   return (
@@ -548,8 +549,37 @@ const QuotePreparation: React.FC = () => {
           </div>
         </div>
 
+        {/* Superseded banner */}
+        {isSuperseded && (
+          <Alert className="border-muted bg-muted/50">
+            <Info className="h-4 w-4 text-muted-foreground" />
+            <AlertDescription className="flex items-center justify-between">
+              <span className="text-muted-foreground">
+                {t(
+                  `Denna offert har ersatts av en nyare version.`,
+                  `This quote has been superseded by a newer version.`
+                )}
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  if ((quote as any)?.superseded_by_quote_id) {
+                    navigate(`/portal/quotes/${(quote as any).superseded_by_quote_id}`);
+                  } else {
+                    const latest = quoteFamily.find(v => v.is_latest);
+                    if (latest) navigate(`/portal/quotes/${latest.id}`);
+                  }
+                }}
+              >
+                {t('Gå till senaste', 'Go to latest')}
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
+
         {/* Older version warning */}
-        {!isLatestVersion && (
+        {!isLatestVersion && !isSuperseded && (
           <Alert className="border-amber-500 bg-amber-500/10">
             <AlertTriangle className="h-4 w-4 text-amber-600" />
             <AlertDescription className="flex items-center justify-between">

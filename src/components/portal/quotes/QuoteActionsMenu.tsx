@@ -20,7 +20,7 @@ const QuoteActionsMenu: React.FC<QuoteActionsMenuProps> = ({
 }) => {
   const { t } = useLanguage();
 
-  const canCancel = status !== 'cancelled';
+  const canCancel = !['cancelled', 'superseded'].includes(status);
 
   if (!canCancel) return null;
 

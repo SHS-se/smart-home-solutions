@@ -19,6 +19,7 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { getQuoteStatusBadge } from '@/lib/quote-status-badge';
+import { supersedeActiveQuotesInChain } from '@/lib/supersede-quotes';
 
 // ─── Types ───
 interface QuoteDetail {
@@ -280,6 +281,11 @@ const CustomerViewOfferDetail: React.FC = () => {
           .from('quote_lines')
           .insert(newLines);
         if (copyErr) throw copyErr;
+      }
+
+      // 4.5) Supersede active quotes in the chain
+      if (quote.bom_id) {
+        await supersedeActiveQuotesInChain({ newQuoteId: newQuote.id, bomId: quote.bom_id });
       }
 
       // 5) Log event

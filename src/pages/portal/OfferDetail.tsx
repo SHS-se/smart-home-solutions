@@ -132,6 +132,7 @@ const OfferDetail: React.FC = () => {
             .in('bom_id', bomIds)
             .neq('status', 'draft')
             .neq('status', 'cancelled')
+            .neq('status', 'superseded')
             .order('created_at', { ascending: false });
           if (error) throw error;
           return data ?? [];
@@ -146,6 +147,7 @@ const OfferDetail: React.FC = () => {
         .or(`id.eq.${rootId},parent_quote_id.eq.${rootId}`)
         .neq('status', 'draft')
         .neq('status', 'cancelled')
+        .neq('status', 'superseded')
         .order('created_at', { ascending: false });
       if (error) throw error;
       return data ?? [];

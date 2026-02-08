@@ -72,6 +72,11 @@ serve(async (req) => {
           status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
+      if (quote.status === "superseded") {
+        return new Response(JSON.stringify({ error: "Offerten har ersatts av en nyare version" }), {
+          status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
       return new Response(JSON.stringify({ error: `Quote cannot be accepted in status: ${quote.status}` }), {
         status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });

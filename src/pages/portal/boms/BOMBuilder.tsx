@@ -43,6 +43,7 @@ import {
 } from '@/components/ui/tooltip';
 import { ArrowLeft, Plus, Trash2, FileText, Package, Pencil, Check, X, Copy, Save, Lock, Info } from 'lucide-react';
 import { getQuoteStatusBadge } from '@/lib/quote-status-badge';
+import { supersedeActiveQuotesInChain } from '@/lib/supersede-quotes';
 import { toast } from '@/hooks/use-toast';
 import SKUSelector from '@/components/portal/boms/SKUSelector';
 import TemplateSelector from '@/components/portal/boms/TemplateSelector';
@@ -618,6 +619,7 @@ const BOMBuilder: React.FC = () => {
             .select('*')
             .eq('bom_id', sourceBomId)
             .not('status', 'eq', 'cancelled')
+            .not('status', 'eq', 'superseded')
             .order('version', { ascending: false })
             .order('created_at', { ascending: false })
             .limit(1)
@@ -625,6 +627,12 @@ const BOMBuilder: React.FC = () => {
 
           if (previousQuote) {
             const newQuote = await createQuoteFromPreviousVersion(previousQuote);
+
+            // Supersede all active quotes in the chain
+            if (id) {
+              await supersedeActiveQuotesInChain({ newQuoteId: newQuote.id, bomId: id });
+            }
+
             toast({
               title: t('Offert skapad', 'Quote created'),
               description: t(
@@ -640,6 +648,12 @@ const BOMBuilder: React.FC = () => {
 
       // Fallback: fresh quote (no previous quote to clone)
       const quote = await createFreshQuote();
+
+      // Supersede any active quotes in the same chain
+      if (id) {
+        await supersedeActiveQuotesInChain({ newQuoteId: quote.id, bomId: id });
+      }
+
       navigate(`/portal/quotes/${quote.id}`);
     } catch (error: any) {
       toast({ title: t('Kunde inte skapa offert', 'Failed to create quote'), description: error.message, variant: 'destructive' });

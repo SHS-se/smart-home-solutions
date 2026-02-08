@@ -113,12 +113,12 @@ const QuotesList: React.FC = () => {
       // View filter logic
       switch (viewFilter) {
         case 'active':
-          // Hide cancelled quotes, show only latest versions
-          if (quote.status === 'cancelled') return false;
+          // Hide cancelled and superseded quotes, show only latest versions
+          if (quote.status === 'cancelled' || quote.status === 'superseded') return false;
           if (!quote.is_latest) return false;
           break;
         case 'include_cancelled':
-          // Show cancelled, only latest
+          // Show cancelled + superseded, only latest
           if (!quote.is_latest) return false;
           break;
         case 'all':
@@ -224,7 +224,7 @@ const QuotesList: React.FC = () => {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="active">{t('Aktiva (standard)', 'Active (default)')}</SelectItem>
-              <SelectItem value="include_cancelled">{t('Inkl. avbrutna', 'Include cancelled')}</SelectItem>
+              <SelectItem value="include_cancelled">{t('Inkl. avbrutna/ersatta', 'Include cancelled/superseded')}</SelectItem>
               <SelectItem value="all">{t('Visa alla', 'Show all')}</SelectItem>
             </SelectContent>
           </Select>

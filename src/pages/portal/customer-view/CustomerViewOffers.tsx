@@ -191,6 +191,7 @@ const CustomerViewOffers: React.FC = () => {
               <SelectItem value="invoiced">{t('Fakturerad', 'Invoiced')}</SelectItem>
               <SelectItem value="expired">{t('Utgången', 'Expired')}</SelectItem>
               <SelectItem value="cancelled">{t('Avbruten', 'Cancelled')}</SelectItem>
+              <SelectItem value="superseded">{t('Ersatt', 'Superseded')}</SelectItem>
             </SelectContent>
           </Select>
           <div className="flex-1">

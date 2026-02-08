@@ -903,6 +903,8 @@ export type Database = {
           stripe_invoice_id: string | null
           stripe_quote_id: string | null
           stripe_status: string | null
+          superseded_at: string | null
+          superseded_by_quote_id: string | null
           supersedes_quote_id: string | null
           updated_at: string
           version: number
@@ -944,6 +946,8 @@ export type Database = {
           stripe_invoice_id?: string | null
           stripe_quote_id?: string | null
           stripe_status?: string | null
+          superseded_at?: string | null
+          superseded_by_quote_id?: string | null
           supersedes_quote_id?: string | null
           updated_at?: string
           version?: number
@@ -985,6 +989,8 @@ export type Database = {
           stripe_invoice_id?: string | null
           stripe_quote_id?: string | null
           stripe_status?: string | null
+          superseded_at?: string | null
+          superseded_by_quote_id?: string | null
           supersedes_quote_id?: string | null
           updated_at?: string
           version?: number
@@ -1021,6 +1027,20 @@ export type Database = {
           {
             foreignKeyName: "quotes_parent_quote_id_fkey"
             columns: ["parent_quote_id"]
+            isOneToOne: false
+            referencedRelation: "quotes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "quotes_superseded_by_quote_id_fkey"
+            columns: ["superseded_by_quote_id"]
+            isOneToOne: false
+            referencedRelation: "quote_computed_totals"
+            referencedColumns: ["quote_id"]
+          },
+          {
+            foreignKeyName: "quotes_superseded_by_quote_id_fkey"
+            columns: ["superseded_by_quote_id"]
             isOneToOne: false
             referencedRelation: "quotes"
             referencedColumns: ["id"]
