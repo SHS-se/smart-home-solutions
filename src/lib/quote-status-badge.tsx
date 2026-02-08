@@ -21,6 +21,8 @@ export const getQuoteStatusBadge = (status: string, t: (sv: string, en: string) 
       return <Badge variant="secondary">{t('Utgången', 'Expired')}</Badge>;
     case 'cancelled':
       return <Badge variant="outline" className="text-muted-foreground">{t('Avbruten', 'Cancelled')}</Badge>;
+    case 'superseded':
+      return <Badge variant="outline" className="text-muted-foreground">{t('Ersatt', 'Superseded')}</Badge>;
     default:
       return <Badge variant="secondary">{status}</Badge>;
   }

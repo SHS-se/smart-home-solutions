@@ -91,9 +91,9 @@ serve(async (req) => {
       .eq("quote_id", quoteId)
       .single();
 
-    // Log viewed event (only for actionable statuses)
+    // Log viewed event (only for actionable statuses — skip superseded)
     const actionableStatuses = ["sent", "viewed"];
-    if (actionableStatuses.includes(quote.status)) {
+    if (actionableStatuses.includes(quote.status) && quote.status !== "superseded") {
       // Update status to viewed if currently sent
       if (quote.status === "sent") {
         await serviceClient.from("quotes").update({ status: "viewed" }).eq("id", quoteId);

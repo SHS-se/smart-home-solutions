@@ -101,6 +101,14 @@ serve(async (req) => {
     const customerName = identity?.name || identity?.contact_name || "Unknown";
     const customerEmail = identity?.contact_email || user.email || "unknown";
 
+    // Block all actions on superseded quotes
+    if (quote.status === "superseded") {
+      return new Response(
+        JSON.stringify({ error: "Offerten har ersatts av en nyare version" }),
+        { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     // Perform action
     switch (action) {
       case "accept": {

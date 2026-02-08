@@ -66,6 +66,11 @@ serve(async (req) => {
     // Allow declining from sent, viewed, or revision_requested
     const declinableStatuses = ["sent", "viewed", "revision_requested"];
     if (!declinableStatuses.includes(quote.status)) {
+      if (quote.status === "superseded") {
+        return new Response(JSON.stringify({ error: "Offerten har ersatts av en nyare version" }), {
+          status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
       return new Response(JSON.stringify({ error: `Quote cannot be declined in status: ${quote.status}` }), {
         status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });

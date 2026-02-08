@@ -42,6 +42,7 @@ const QuoteVersionDropdown: React.FC<QuoteVersionDropdownProps> = ({
       accepted: 'default',
       invoiced: 'default',
       cancelled: 'destructive',
+      superseded: 'outline',
     };
 
     const labels: Record<string, string> = {
@@ -50,6 +51,7 @@ const QuoteVersionDropdown: React.FC<QuoteVersionDropdownProps> = ({
       accepted: t('Accepterad', 'Accepted'),
       invoiced: t('Fakturerad', 'Invoiced'),
       cancelled: t('Avbruten', 'Cancelled'),
+      superseded: t('Ersatt', 'Superseded'),
     };
 
     return (

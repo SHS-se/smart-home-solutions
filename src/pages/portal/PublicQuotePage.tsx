@@ -226,7 +226,7 @@ const PublicQuotePage: React.FC = () => {
   const totals = quoteData.totals;
 
   // Show completion states
-  if (actionCompleted || quoteData.status === 'accepted' || quoteData.status === 'declined' || quoteData.status === 'revision_requested') {
+  if (actionCompleted || quoteData.status === 'accepted' || quoteData.status === 'declined' || quoteData.status === 'revision_requested' || quoteData.status === 'superseded') {
     const completedStatus = actionCompleted || quoteData.status;
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
@@ -251,6 +251,13 @@ const PublicQuotePage: React.FC = () => {
                 <MessageSquare className="h-16 w-16 text-primary mx-auto" />
                 <h2 className="text-2xl font-bold">Ändringsförfrågan skickad</h2>
                 <p className="text-muted-foreground">Vi har mottagit ditt meddelande och återkommer så snart som möjligt.</p>
+              </>
+            )}
+            {completedStatus === 'superseded' && (
+              <>
+                <AlertTriangle className="h-16 w-16 text-muted-foreground mx-auto" />
+                <h2 className="text-2xl font-bold">Denna offert har ersatts</h2>
+                <p className="text-muted-foreground">En nyare version av denna offert har skickats. Kontrollera din e-post för den senaste versionen.</p>
               </>
             )}
             <p className="text-sm text-muted-foreground pt-4">

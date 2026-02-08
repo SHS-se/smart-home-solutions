@@ -116,6 +116,7 @@ const Offers: React.FC = () => {
           .eq('is_test', customerData.is_test ?? false)
           .neq('status', 'draft')
           .neq('status', 'cancelled')
+          .neq('status', 'superseded')
           .order('created_at', { ascending: false });
 
         if (fetchError) throw fetchError;
@@ -176,6 +177,8 @@ const Offers: React.FC = () => {
         return <Badge className="bg-amber-500/20 text-amber-700 border-0">{t('Ändring begärd', 'Revision requested')}</Badge>;
       case 'invoiced':
         return <Badge className="bg-primary/20 text-primary border-0">{t('Fakturerad', 'Invoiced')}</Badge>;
+      case 'superseded':
+        return <Badge variant="outline" className="text-muted-foreground">{t('Ersatt', 'Superseded')}</Badge>;
       default:
         return <Badge variant="secondary">{status}</Badge>;
     }

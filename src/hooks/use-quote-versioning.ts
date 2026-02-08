@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { supersedeActiveQuotesInChain } from '@/lib/supersede-quotes';
 
 interface QuoteVersion {
   id: string;
@@ -72,7 +73,7 @@ export function useQuoteVersioning(quoteId: string | undefined) {
 
       const newVersion = (maxVersionData?.version || 1) + 1;
 
-      // Mark all existing quotes in family as not latest
+      // Mark all existing quotes in family as not latest (is_latest only, superseding handled after insert)
       await supabase
         .from('quotes')
         .update({ is_latest: false })
@@ -131,6 +132,11 @@ export function useQuoteVersioning(quoteId: string | undefined) {
         });
 
         await supabase.from('quote_lines').insert(copiedLines);
+      }
+
+      // Supersede active quotes in the chain
+      if (currentQuote.bom_id) {
+        await supersedeActiveQuotesInChain({ newQuoteId: newQuote.id, bomId: currentQuote.bom_id });
       }
 
       return newQuote;
