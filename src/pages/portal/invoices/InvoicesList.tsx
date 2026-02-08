@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -26,11 +26,9 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { SortableTableHead } from '@/components/ui/sortable-table-head';
-import { Plus, TestTube, Eye, Mail, Search } from 'lucide-react';
+import { Plus, Eye, Mail, Search } from 'lucide-react';
 import { format } from 'date-fns';
 import { sv } from 'date-fns/locale';
-import { toast } from '@/hooks/use-toast';
-import InvoiceActionsMenu from '@/components/portal/invoices/InvoiceActionsMenu';
 import InvoicePdfModal from '@/components/portal/invoices/InvoicePdfModal';
 import { cn } from '@/lib/utils';
 
@@ -39,7 +37,7 @@ interface Invoice {
   invoice_number: string | null;
   stripe_invoice_id: string | null;
   status: string;
-  is_test: boolean;
+  
   due_date: string | null;
   total: number | null;
   created_at: string;
@@ -50,7 +48,7 @@ interface Invoice {
 
 type SortColumn = 'invoice_number' | 'customer' | 'project' | 'created_at' | 'due_date' | 'total' | 'status';
 type StatusFilter = 'draft' | 'open' | 'paid' | 'overdue' | 'void';
-type ViewFilter = 'active' | 'include_void' | 'include_test' | 'all';
+type ViewFilter = 'active' | 'include_void' | 'all';
 
 const getStatusBadge = (status: string, dueDate: string | null, t: (sv: string, en: string) => string) => {
   // Check for overdue
@@ -96,7 +94,7 @@ const InvoicesList: React.FC = () => {
   const { t } = useLanguage();
   const { isStaff, loading: authLoading } = useAuth();
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
+  
   const { sortColumn, sortDirection, handleSort } = useTableSort<SortColumn>({ 
     defaultColumn: 'created_at', 
     defaultDirection: 'desc' 
@@ -143,32 +141,6 @@ const InvoicesList: React.FC = () => {
     refetchOnWindowFocus: true,
   });
 
-  // Mark/Unmark test mutation
-  const markTestMutation = useMutation({
-    mutationFn: async ({ invoiceId, markAsTest }: { invoiceId: string; markAsTest: boolean }) => {
-      const { error } = await supabase
-        .from('invoices')
-        .update({ is_test: markAsTest })
-        .eq('id', invoiceId);
-      if (error) throw error;
-    },
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['invoices'] });
-      toast({ 
-        title: variables.markAsTest 
-          ? t('Faktura markerad som test', 'Invoice marked as test')
-          : t('Testmarkering borttagen', 'Test mark removed')
-      });
-    },
-    onError: (error: Error) => {
-      toast({ 
-        title: t('Fel', 'Error'),
-        description: error.message,
-        variant: 'destructive'
-      });
-    },
-  });
-
   // Calculate KPI stats
   const stats = useMemo(() => {
     const draft = invoices.filter(i => i.status === 'draft').length;
@@ -208,22 +180,14 @@ const InvoicesList: React.FC = () => {
   const filteredAndSortedInvoices = useMemo(() => {
     let filtered = invoices;
     
-    // Apply view filter (test/void visibility)
+    // Apply view filter (void visibility)
     filtered = filtered.filter(invoice => {
       switch (viewFilter) {
         case 'active':
-          // Hide test and voided invoices
-          if (invoice.is_test) return false;
+          // Hide voided invoices
           if (invoice.status === 'void') return false;
           break;
         case 'include_void':
-          // Show voided but hide test
-          if (invoice.is_test) return false;
-          break;
-        case 'include_test':
-          // Show test but hide voided
-          if (invoice.status === 'void') return false;
-          break;
         case 'all':
           // Show everything
           break;
@@ -318,7 +282,6 @@ const InvoicesList: React.FC = () => {
             <SelectContent>
               <SelectItem value="active">{t('Aktiva (standard)', 'Active (default)')}</SelectItem>
               <SelectItem value="include_void">{t('Inkl. makulerade', 'Include voided')}</SelectItem>
-              <SelectItem value="include_test">{t('Inkl. test', 'Include test')}</SelectItem>
               <SelectItem value="all">{t('Visa alla', 'Show all')}</SelectItem>
             </SelectContent>
           </Select>
@@ -453,12 +416,6 @@ const InvoicesList: React.FC = () => {
                         <span className="font-mono font-medium">
                           {invoice.invoice_number || '—'}
                         </span>
-                        {invoice.is_test && (
-                          <Badge variant="outline" className="text-xs">
-                            <TestTube className="h-3 w-3 mr-1" />
-                            {t('Test', 'Test')}
-                          </Badge>
-                        )}
                         {invoice.last_emailed_at && (
                           <Badge variant="outline" className="text-xs border-primary/50 text-primary">
                             <Mail className="h-3 w-3 mr-1" />
@@ -499,12 +456,6 @@ const InvoicesList: React.FC = () => {
                             <Eye className="h-4 w-4" />
                           </Button>
                         )}
-                        <InvoiceActionsMenu
-                          isTest={invoice.is_test}
-                          status={invoice.status}
-                          onMarkTest={() => markTestMutation.mutate({ invoiceId: invoice.id, markAsTest: true })}
-                          onUnmarkTest={() => markTestMutation.mutate({ invoiceId: invoice.id, markAsTest: false })}
-                        />
                       </div>
                     </TableCell>
                   </TableRow>
