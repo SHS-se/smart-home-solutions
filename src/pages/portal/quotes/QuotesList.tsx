@@ -26,7 +26,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { SortableTableHead } from '@/components/ui/sortable-table-head';
-import { Loader2, Search, TestTube } from 'lucide-react';
+import { Loader2, Search } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 import { sv } from 'date-fns/locale';
@@ -38,7 +38,7 @@ interface Quote {
   quote_number: string | null;
   version: number;
   is_latest: boolean;
-  is_test: boolean;
+  
   computed_total_inc_vat: number;
   status: string;
   created_at: string;
@@ -47,7 +47,7 @@ interface Quote {
 }
 
 type SortColumn = 'quote_number' | 'customer' | 'project' | 'total' | 'status' | 'created_at';
-type ViewFilter = 'active' | 'include_cancelled' | 'include_test' | 'all';
+type ViewFilter = 'active' | 'include_cancelled' | 'all';
 
 // Re-export the shared helper for backward-compatibility
 const getStatusBadge = getQuoteStatusBadge;
@@ -99,7 +99,6 @@ const QuotesList: React.FC = () => {
           bom: (q as any).boms,
           version: q.version ?? 1,
           is_latest: q.is_latest ?? true,
-          is_test: (q as any).is_test ?? false,
           // Use computed totals
           computed_total_inc_vat: computed?.total_inc_vat ?? 0,
         };
@@ -114,19 +113,12 @@ const QuotesList: React.FC = () => {
       // View filter logic
       switch (viewFilter) {
         case 'active':
-          // Hide test and cancelled quotes, show only latest versions
-          if (quote.is_test) return false;
+          // Hide cancelled quotes, show only latest versions
           if (quote.status === 'cancelled') return false;
           if (!quote.is_latest) return false;
           break;
         case 'include_cancelled':
-          // Show cancelled but hide test, only latest
-          if (quote.is_test) return false;
-          if (!quote.is_latest) return false;
-          break;
-        case 'include_test':
-          // Show test but hide cancelled, only latest
-          if (quote.status === 'cancelled') return false;
+          // Show cancelled, only latest
           if (!quote.is_latest) return false;
           break;
         case 'all':
@@ -233,7 +225,6 @@ const QuotesList: React.FC = () => {
             <SelectContent>
               <SelectItem value="active">{t('Aktiva (standard)', 'Active (default)')}</SelectItem>
               <SelectItem value="include_cancelled">{t('Inkl. avbrutna', 'Include cancelled')}</SelectItem>
-              <SelectItem value="include_test">{t('Inkl. test', 'Include test')}</SelectItem>
               <SelectItem value="all">{t('Visa alla', 'Show all')}</SelectItem>
             </SelectContent>
           </Select>
@@ -303,12 +294,6 @@ const QuotesList: React.FC = () => {
                           {!quote.is_latest && (
                             <Badge variant="secondary" className="text-xs">
                               {t('Äldre', 'Old')}
-                            </Badge>
-                          )}
-                          {quote.is_test && (
-                            <Badge variant="outline" className="text-xs">
-                              <TestTube className="h-3 w-3 mr-1" />
-                              {t('Test', 'Test')}
                             </Badge>
                           )}
                         </div>
