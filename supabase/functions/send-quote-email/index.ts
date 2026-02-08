@@ -140,8 +140,9 @@ serve(async (req) => {
     if (!staffCheck) throw new Error("Staff access required");
     logStep("Staff verified");
 
-    const { quote_id } = await req.json();
+    const { quote_id, expires_in_days } = await req.json();
     if (!quote_id) throw new Error("quote_id is required");
+    const validityDays = typeof expires_in_days === "number" && expires_in_days >= 1 ? expires_in_days : 7;
 
     // Load quote with customer info
     const { data: quote, error: quoteError } = await serviceClient
@@ -186,7 +187,9 @@ serve(async (req) => {
     const hashBuffer = await crypto.subtle.digest("SHA-256", encoder.encode(tokenHex));
     const hashHex = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, "0")).join("");
 
-    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    const expiresAt = new Date(Date.now() + validityDays * 24 * 60 * 60 * 1000).toISOString();
+    // Token expiry: 30 days (longer than quote validity to allow viewing after expiry)
+    const tokenExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
     // Determine the base URL for the quote link
     const siteUrl = Deno.env.get("SITE_URL") || (appEnv === "live"
@@ -234,7 +237,7 @@ serve(async (req) => {
         sent_at: new Date().toISOString(),
         expires_at: expiresAt,
         accept_token_hash: hashHex,
-        accept_token_expires_at: expiresAt,
+        accept_token_expires_at: tokenExpiresAt,
       })
       .eq("id", quote_id);
 

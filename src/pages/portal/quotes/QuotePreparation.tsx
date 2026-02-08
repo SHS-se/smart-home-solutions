@@ -57,6 +57,7 @@ const QuotePreparation: React.FC = () => {
   
   const [isSending, setIsSending] = useState(false);
   const [isCreatingInvoice, setIsCreatingInvoice] = useState(false);
+  const [expiryDays, setExpiryDays] = useState(7);
   
   const [isSaving, setIsSaving] = useState(false);
 
@@ -391,7 +392,7 @@ const QuotePreparation: React.FC = () => {
     setIsSending(true);
     try {
       const { data, error } = await supabase.functions.invoke('send-quote-email', {
-        body: { quote_id: id },
+        body: { quote_id: id, expires_in_days: expiryDays },
       });
 
       if (error) throw error;
@@ -938,6 +939,25 @@ const QuotePreparation: React.FC = () => {
                         className="bg-primary h-2 rounded-full transition-all"
                         style={{ width: `${Math.min(100, hardwareMarginPct * 2)}%` }}
                       />
+                    </div>
+                  </div>
+                )}
+
+                {/* Quote validity */}
+                {isEditable && (
+                  <div className="border-t border-border pt-4 space-y-2">
+                    <label className="text-sm font-medium text-muted-foreground">
+                      {t('Offertens giltighetstid', 'Quote validity')}
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <BlurCommitInput
+                        type="number"
+                        value={expiryDays}
+                        onCommit={(value) => setExpiryDays(Math.max(1, parseInt(value) || 7))}
+                        className="w-20 h-9 text-center"
+                        min={1}
+                      />
+                      <span className="text-sm text-muted-foreground">{t('dagar', 'days')}</span>
                     </div>
                   </div>
                 )}
