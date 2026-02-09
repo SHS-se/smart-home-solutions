@@ -202,6 +202,51 @@ export type Database = {
           },
         ]
       }
+      contact_intake_events: {
+        Row: {
+          created_at: string
+          email: string
+          email_normalized: string
+          error: Json | null
+          id: string
+          matched_entity_id: string | null
+          matched_entity_type: string | null
+          name: string
+          payload: Json
+          phone: string | null
+          result: string
+          source: string
+        }
+        Insert: {
+          created_at?: string
+          email: string
+          email_normalized: string
+          error?: Json | null
+          id?: string
+          matched_entity_id?: string | null
+          matched_entity_type?: string | null
+          name: string
+          payload?: Json
+          phone?: string | null
+          result: string
+          source?: string
+        }
+        Update: {
+          created_at?: string
+          email?: string
+          email_normalized?: string
+          error?: Json | null
+          id?: string
+          matched_entity_id?: string | null
+          matched_entity_type?: string | null
+          name?: string
+          payload?: Json
+          phone?: string | null
+          result?: string
+          source?: string
+        }
+        Relationships: []
+      }
       contact_messages: {
         Row: {
           author_email: string
