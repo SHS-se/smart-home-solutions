@@ -283,12 +283,23 @@ const ContactDetail: React.FC = () => {
     if (!contact) return;
     setDeleting(true);
     try {
-      const { error } = await supabase
-        .from('contacts')
-        .delete()
-        .eq('id', contact.id);
+      const { data: session } = await supabase.auth.getSession();
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/delete-contact`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.session?.access_token}`,
+          },
+          body: JSON.stringify({ contact_id: contact.id }),
+        }
+      );
 
-      if (error) throw error;
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || 'Delete failed');
+      }
 
       toast({
         title: t('Kontakt borttagen', 'Contact deleted'),
