@@ -18,6 +18,7 @@ interface Question {
   id: string;
   question_text: string;
   question_text_en: string;
+  question_type: string;
   sort_order: number;
 }
 
@@ -58,7 +59,7 @@ const CustomerViewHomeProfile: React.FC = () => {
       setLoadingData(true);
       try {
         const [qRes, aRes, pRes] = await Promise.all([
-          supabase.from('home_questions').select('id, question_text, question_text_en, sort_order').eq('is_active', true).order('sort_order'),
+          supabase.from('home_questions').select('id, question_text, question_text_en, question_type, sort_order').eq('is_active', true).order('sort_order'),
           supabase.from('home_answers').select('question_id, answer_text').eq('customer_id', customerId),
           supabase.from('home_photos').select('id, storage_path, annotation_text, uploaded_at, visible_to_customer').eq('customer_id', customerId).order('uploaded_at', { ascending: false }),
         ]);
@@ -189,11 +190,24 @@ const CustomerViewHomeProfile: React.FC = () => {
               questions.map(q => (
                 <div key={q.id} className="space-y-2">
                   <label className="text-sm font-medium">{t(q.question_text, q.question_text_en || q.question_text)}</label>
-                  <Textarea
-                    value={answers[q.id] || ''}
-                    onChange={e => setAnswers(prev => ({ ...prev, [q.id]: e.target.value }))}
-                    rows={2}
-                  />
+                  {q.question_type === 'boolean' ? (
+                    <div className="flex items-center gap-3">
+                      <Switch
+                        checked={answers[q.id] === 'true'}
+                        onCheckedChange={(v) => setAnswers(prev => ({ ...prev, [q.id]: v ? 'true' : 'false' }))}
+                      />
+                      <span className="text-sm text-muted-foreground">
+                        {answers[q.id] === 'true' ? t('Ja', 'Yes') : t('Nej', 'No')}
+                      </span>
+                    </div>
+                  ) : (
+                    <Textarea
+                      value={answers[q.id] || ''}
+                      onChange={e => setAnswers(prev => ({ ...prev, [q.id]: e.target.value }))}
+                      rows={1}
+                      className="min-h-[40px] resize-y"
+                    />
+                  )}
                 </div>
               ))
             )}
