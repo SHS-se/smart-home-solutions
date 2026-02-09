@@ -404,6 +404,124 @@ export type Database = {
         }
         Relationships: []
       }
+      home_answers: {
+        Row: {
+          answer_text: string
+          customer_id: string
+          id: string
+          question_id: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          answer_text?: string
+          customer_id: string
+          id?: string
+          question_id: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          answer_text?: string
+          customer_id?: string
+          id?: string
+          question_id?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "home_answers_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "home_answers_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers_with_identity"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "home_answers_question_id_fkey"
+            columns: ["question_id"]
+            isOneToOne: false
+            referencedRelation: "home_questions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      home_photos: {
+        Row: {
+          annotation_text: string | null
+          customer_id: string
+          id: string
+          storage_path: string
+          uploaded_at: string
+          uploaded_by: string | null
+          visible_to_customer: boolean
+        }
+        Insert: {
+          annotation_text?: string | null
+          customer_id: string
+          id?: string
+          storage_path: string
+          uploaded_at?: string
+          uploaded_by?: string | null
+          visible_to_customer?: boolean
+        }
+        Update: {
+          annotation_text?: string | null
+          customer_id?: string
+          id?: string
+          storage_path?: string
+          uploaded_at?: string
+          uploaded_by?: string | null
+          visible_to_customer?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "home_photos_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "home_photos_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers_with_identity"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      home_questions: {
+        Row: {
+          created_at: string
+          id: string
+          is_active: boolean
+          question_text: string
+          sort_order: number
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          question_text: string
+          sort_order?: number
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          question_text?: string
+          sort_order?: number
+        }
+        Relationships: []
+      }
       invoice_events: {
         Row: {
           created_at: string

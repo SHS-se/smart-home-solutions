@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Building2, FileText, MessageSquare, Loader2, Shield, Users, Package, Box, FileCheck, Settings, Database, Receipt, ClipboardList } from 'lucide-react';
+import { Building2, FileText, MessageSquare, Loader2, Shield, Users, Package, Box, FileCheck, Settings, Database, Receipt, ClipboardList, Home } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -26,6 +26,7 @@ const Dashboard: React.FC = () => {
   const [quoteStats, setQuoteStats] = useState({ total: 0, draft: 0 });
   const [customerQuoteStats, setCustomerQuoteStats] = useState({ total: 0 });
   const [invoiceStats2, setInvoiceStats2] = useState({ total: 0, open: 0, paid: 0 });
+  const [homeProfileStats, setHomeProfileStats] = useState({ answered: 0, total: 0, photos: 0 });
   const [canBootstrap, setCanBootstrap] = useState(false);
   const [bootstrapLoading, setBootstrapLoading] = useState(false);
   const [statsLoading, setStatsLoading] = useState(true);
@@ -100,37 +101,34 @@ const Dashboard: React.FC = () => {
           setInvoiceStats2({ total: invoicesResult.count || 0, open: openInvoicesResult.count || 0, paid: paidInvoicesResult.count || 0 });
         } else if (customerData) {
           // Customer sees their tickets
-          const { count: totalTickets } = await supabase
-            .from('tickets')
-            .select('*', { count: 'exact', head: true })
-            .eq('customer_id', customerData.id);
-          
-          const { count: openTickets } = await supabase
-            .from('tickets')
-            .select('*', { count: 'exact', head: true })
-            .eq('customer_id', customerData.id)
-            .neq('status', 'closed');
-          
-          const { data: invoices, count: invoiceCount } = await supabase
-            .from('invoices')
-            .select('issued_at', { count: 'exact' })
-            .eq('customer_id', customerData.id)
-            .order('issued_at', { ascending: false })
-            .limit(1);
-          
-          const { count: quoteCount } = await supabase
-            .from('quotes')
-            .select('*', { count: 'exact', head: true })
-            .eq('customer_id', customerData.id)
-            .eq('is_test', customerData.is_test ?? false)
-            .neq('status', 'draft')
-            .neq('status', 'cancelled');
-          
-          setTicketStats({ open: openTickets || 0, total: totalTickets || 0 });
-          setCustomerQuoteStats({ total: quoteCount || 0 });
+          const [
+            totalTicketsRes,
+            openTicketsRes,
+            invoicesRes,
+            quoteCountRes,
+            homeQuestionsRes,
+            homeAnswersRes,
+            homePhotosRes,
+          ] = await Promise.all([
+            supabase.from('tickets').select('*', { count: 'exact', head: true }).eq('customer_id', customerData.id),
+            supabase.from('tickets').select('*', { count: 'exact', head: true }).eq('customer_id', customerData.id).neq('status', 'closed'),
+            supabase.from('invoices').select('issued_at', { count: 'exact' }).eq('customer_id', customerData.id).order('issued_at', { ascending: false }).limit(1),
+            supabase.from('quotes').select('*', { count: 'exact', head: true }).eq('customer_id', customerData.id).eq('is_test', customerData.is_test ?? false).neq('status', 'draft').neq('status', 'cancelled'),
+            supabase.from('home_questions').select('*', { count: 'exact', head: true }).eq('is_active', true),
+            supabase.from('home_answers').select('*', { count: 'exact', head: true }).eq('customer_id', customerData.id),
+            supabase.from('home_photos').select('*', { count: 'exact', head: true }).eq('customer_id', customerData.id),
+          ]);
+
+          setTicketStats({ open: openTicketsRes.count || 0, total: totalTicketsRes.count || 0 });
+          setCustomerQuoteStats({ total: quoteCountRes.count || 0 });
           setInvoiceStats({
-            total: invoiceCount || 0,
-            lastDate: invoices?.[0]?.issued_at || '',
+            total: invoicesRes.count || 0,
+            lastDate: invoicesRes.data?.[0]?.issued_at || '',
+          });
+          setHomeProfileStats({
+            answered: homeAnswersRes.count || 0,
+            total: homeQuestionsRes.count || 0,
+            photos: homePhotosRes.count || 0,
           });
         }
       } catch (error) {
@@ -413,7 +411,7 @@ const Dashboard: React.FC = () => {
               </div>
             </div>
 
-            {/* Settings */}
+            {/* Settings (includes Questionnaire Manager) */}
             <div>
               <h2 className="text-lg font-medium mb-4 text-muted-foreground">{t('Inställningar', 'Settings')}</h2>
               <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
@@ -450,12 +448,53 @@ const Dashboard: React.FC = () => {
                     </p>
                   </CardContent>
                 </Card>
+
+                <Card 
+                  className="cursor-pointer transition-colors hover:bg-muted/50"
+                  onClick={() => navigate('/portal/customers/questionnaire')}
+                >
+                  <CardHeader className="flex flex-row items-center gap-4">
+                    <div className="p-2 rounded-lg bg-primary/10">
+                      <Home className="w-6 h-6 text-primary" />
+                    </div>
+                    <CardTitle className="text-lg">{t('Hemprofilfrågor', 'Home Profile Questions')}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-muted-foreground">
+                      {t('Hantera frågor som visas på kundens hemprofil', 'Manage questions shown on the customer home profile')}
+                    </p>
+                  </CardContent>
+                </Card>
               </div>
             </div>
           </div>
         ) : (
           // Customer Dashboard
           <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+            {/* Home Profile card - clickable, no button */}
+            <Card 
+              className="cursor-pointer transition-colors hover:bg-muted/50"
+              onClick={() => navigate('/portal/home-profile')}
+            >
+              <CardHeader className="flex flex-row items-center gap-4">
+                <div className="p-2 rounded-lg bg-primary/10">
+                  <Home className="w-6 h-6 text-primary" />
+                </div>
+                <CardTitle className="text-lg">{t('Hemprofil', 'Home Profile')}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-muted-foreground mb-2">
+                  {t('Din bostads tekniska profil, enheter, nätverk och installationsdokumentation.', "Your home's technical profile, devices, networks and installation documentation.")}
+                </p>
+                <p className="text-muted-foreground text-sm">
+                  {t('Besvarade frågor:', 'Questions answered:')} <strong>{homeProfileStats.answered} / {homeProfileStats.total}</strong>
+                </p>
+                <p className="text-muted-foreground text-sm">
+                  {t('Uppladdade foton:', 'Photos uploaded:')} <strong>{homeProfileStats.photos}</strong>
+                </p>
+              </CardContent>
+            </Card>
+
             <Card>
               <CardHeader className="flex flex-row items-center gap-4">
                 <div className="p-2 rounded-lg bg-primary/10">

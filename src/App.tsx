@@ -43,11 +43,13 @@ import BOMBuilder from "./pages/portal/boms/BOMBuilder";
 import QuotesList from "./pages/portal/quotes/QuotesList";
 import QuotePreparation from "./pages/portal/quotes/QuotePreparation";
 import MarginSettings from "./pages/portal/settings/MarginSettings";
+import QuestionnaireManager from "./pages/portal/settings/QuestionnaireManager";
 import ERDiagram from "./pages/portal/ERDiagram";
 import InvoicesList from "./pages/portal/invoices/InvoicesList";
 import InvoiceDraftEditor from "./pages/portal/invoices/InvoiceDraftEditor";
 import InvoiceDetail from "./pages/portal/invoices/InvoiceDetail";
 import PublicQuotePage from "./pages/portal/PublicQuotePage";
+import HomeProfile from "./pages/portal/HomeProfile";
 
 // Staff customer view pages
 import CustomerViewDashboard from "./pages/portal/customer-view/CustomerViewDashboard";
@@ -57,6 +59,7 @@ import CustomerViewTickets from "./pages/portal/customer-view/CustomerViewTicket
 import CustomerViewTicketDetail from "./pages/portal/customer-view/CustomerViewTicketDetail";
 import CustomerViewOffers from "./pages/portal/customer-view/CustomerViewOffers";
 import CustomerViewOfferDetail from "./pages/portal/customer-view/CustomerViewOfferDetail";
+import CustomerViewHomeProfile from "./pages/portal/customer-view/CustomerViewHomeProfile";
 
 const queryClient = new QueryClient();
 
@@ -123,6 +126,7 @@ const App = () => (
                 <Route path="/portal/offers/:quoteId" element={<OfferDetail />} />
                 <Route path="/portal/billing" element={<Billing />} />
                 <Route path="/portal/tickets" element={<TicketsList />} />
+                <Route path="/portal/home-profile" element={<HomeProfile />} />
                 <Route path="/portal/tickets/new" element={<NewTicket />} />
                 <Route path="/portal/tickets/:ticketNumber" element={<TicketDetail />} />
                 <Route path="/portal/customers" element={<Customers />} />
@@ -133,6 +137,7 @@ const App = () => (
                 <Route path="/portal/skus" element={<SKUCatalog />} />
                 <Route path="/portal/skus/import" element={<SKUImport />} />
                 <Route path="/portal/skus/categories" element={<CategoryManager />} />
+                <Route path="/portal/customers/questionnaire" element={<QuestionnaireManager />} />
                 <Route path="/portal/templates" element={<TemplatesList />} />
                 <Route path="/portal/templates/:id" element={<TemplateDetail />} />
                 <Route path="/portal/boms" element={<BOMsList />} />
@@ -154,6 +159,7 @@ const App = () => (
                 <Route path="/portal/customers/:customerId/tickets/:ticketNumber" element={<CustomerViewWrapper><CustomerViewTicketDetail /></CustomerViewWrapper>} />
                 <Route path="/portal/customers/:customerId/offers" element={<CustomerViewWrapper><CustomerViewOffers /></CustomerViewWrapper>} />
                 <Route path="/portal/customers/:customerId/offers/:quoteId" element={<CustomerViewWrapper><CustomerViewOfferDetail /></CustomerViewWrapper>} />
+                <Route path="/portal/customers/:customerId/home-profile" element={<CustomerViewWrapper><CustomerViewHomeProfile /></CustomerViewWrapper>} />
                 
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />

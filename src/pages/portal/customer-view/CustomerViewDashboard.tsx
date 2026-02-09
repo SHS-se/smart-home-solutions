@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Loader2, Building2, FileText, MessageSquare, ArrowLeft, Trash2, ClipboardList, AlertCircle } from 'lucide-react';
+import { Loader2, Building2, FileText, MessageSquare, ArrowLeft, Trash2, ClipboardList, AlertCircle, Home } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -34,6 +34,7 @@ const CustomerViewDashboard: React.FC = () => {
   const [invoiceStats, setInvoiceStats] = useState({ total: 0, lastDate: null as string | null });
   const [quoteStats, setQuoteStats] = useState({ actionRequired: 0, total: 0 });
   const [statsLoading, setStatsLoading] = useState(true);
+  const [homeProfileStats, setHomeProfileStats] = useState({ answered: 0, total: 0, photos: 0 });
   const [isDeleting, setIsDeleting] = useState(false);
   
 
@@ -83,42 +84,31 @@ const CustomerViewDashboard: React.FC = () => {
       setStatsLoading(true);
 
       try {
-        // Fetch ticket stats
-        const { data: tickets } = await supabase
-          .from('tickets')
-          .select('status')
-          .eq('customer_id', customerId);
+        const [ticketsRes, invoicesRes, quotesRes, homeQRes, homeARes, homePRes] = await Promise.all([
+          supabase.from('tickets').select('status').eq('customer_id', customerId),
+          supabase.from('invoices').select('issued_at').eq('customer_id', customerId).order('issued_at', { ascending: false }),
+          supabase.from('quotes').select('status').eq('customer_id', customerId).eq('is_latest', true),
+          supabase.from('home_questions').select('*', { count: 'exact', head: true }).eq('is_active', true),
+          supabase.from('home_answers').select('*', { count: 'exact', head: true }).eq('customer_id', customerId),
+          supabase.from('home_photos').select('*', { count: 'exact', head: true }).eq('customer_id', customerId),
+        ]);
 
-        if (tickets) {
-          const openCount = tickets.filter(t => t.status !== 'closed').length;
-          setTicketStats({ open: openCount, total: tickets.length });
+        if (ticketsRes.data) {
+          const openCount = ticketsRes.data.filter(t => t.status !== 'closed').length;
+          setTicketStats({ open: openCount, total: ticketsRes.data.length });
         }
-
-        // Fetch invoice stats
-        const { data: invoices } = await supabase
-          .from('invoices')
-          .select('issued_at')
-          .eq('customer_id', customerId)
-          .order('issued_at', { ascending: false });
-
-        if (invoices) {
-          setInvoiceStats({
-            total: invoices.length,
-            lastDate: invoices[0]?.issued_at || null,
-          });
+        if (invoicesRes.data) {
+          setInvoiceStats({ total: invoicesRes.data.length, lastDate: invoicesRes.data[0]?.issued_at || null });
         }
-
-        // Fetch quote stats
-        const { data: quotesData } = await supabase
-          .from('quotes')
-          .select('status')
-          .eq('customer_id', customerId)
-          .eq('is_latest', true);
-
-        if (quotesData) {
-          const actionCount = quotesData.filter(q => q.status === 'revision_requested').length;
-          setQuoteStats({ actionRequired: actionCount, total: quotesData.length });
+        if (quotesRes.data) {
+          const actionCount = quotesRes.data.filter(q => q.status === 'revision_requested').length;
+          setQuoteStats({ actionRequired: actionCount, total: quotesRes.data.length });
         }
+        setHomeProfileStats({
+          answered: homeARes.count || 0,
+          total: homeQRes.count || 0,
+          photos: homePRes.count || 0,
+        });
       } catch (err) {
         console.error('Error fetching stats:', err);
       } finally {
@@ -218,7 +208,7 @@ const CustomerViewDashboard: React.FC = () => {
         </div>
 
         {/* Stats cards */}
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">{t('Konto', 'Account')}</CardTitle>
@@ -235,6 +225,30 @@ const CustomerViewDashboard: React.FC = () => {
               >
                 {t('Visa detaljer', 'View details')} →
               </Link>
+            </CardContent>
+          </Card>
+
+          <Card 
+            className="cursor-pointer transition-colors hover:bg-muted/50"
+            onClick={() => navigate(`/portal/customers/${customerId}/home-profile`)}
+          >
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">{t('Hemprofil', 'Home Profile')}</CardTitle>
+              <Home className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              {statsLoading ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <>
+                  <p className="text-xs text-muted-foreground">
+                    {t('Besvarade:', 'Answered:')} <strong>{homeProfileStats.answered} / {homeProfileStats.total}</strong>
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {t('Foton:', 'Photos:')} <strong>{homeProfileStats.photos}</strong>
+                  </p>
+                </>
+              )}
             </CardContent>
           </Card>
 
