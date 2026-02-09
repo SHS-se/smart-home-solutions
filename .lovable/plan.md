@@ -1,242 +1,134 @@
 
 
-# Add "Superseded" Status to Quote Chain Lifecycle
+# Duplicate-Safe Contact Form Submission
 
-## Overview
+## Problem
+When someone submits the contact form with an email that already exists in the `contacts` table, the unique index (`idx_contacts_normalized_email_unique`) causes the insert to fail, returning a 500 error to the visitor. The message is lost and the business never sees it.
 
-When a new quote revision is created (from a new BOM version or pricing revision), older quotes in the same chain remain active. This makes the quotes list confusing and allows customers to potentially act on stale offers. This plan adds a `superseded` status and automatic superseding logic across all quote creation paths.
+## Solution Overview
+Make the edge function resilient to all failure modes. No matter what happens on the backend, the visitor always sees "Thank you!" and the business always gets notified. The notification email to the business should clarify what the error was so that manual resolution/reconciliation can happen where possible.
 
-## Current State
-
-The database already has useful fields:
-- `boms.bom_group_id` -- groups BOM revisions for the same project
-- `quotes.parent_quote_id` -- links quote versions (partially used)
-- `quotes.supersedes_quote_id` -- exists but is never populated
-- `quotes.is_latest` -- exists but not reliably updated
-
-The bug: `createQuoteFromPreviousVersion` in `BOMBuilder.tsx` creates a new quote but never marks the old one as superseded. Same issue in `useQuoteVersioning.ts` and `CustomerViewOfferDetail.tsx`.
+## What Already Exists
+- A unique index on `lower(trim(email))` in the `contacts` table -- duplicate detection is already enforced at the database level.
+- The edge function uses the service role key, so RLS is bypassed for writes.
+- `config.toml` does not list `send-contact-email`, meaning JWT verification defaults to **on** -- but the frontend invokes it via the Supabase client which attaches the anon key automatically, so this works today.
 
 ---
 
-## Step 1: Database Migration
+## Step 1 -- Database Migration
 
-Add two new columns and create an index:
+Create a new `contact_intake_events` table to log every submission attempt (success, duplicate, or failure):
 
-```sql
-ALTER TABLE public.quotes
-  ADD COLUMN IF NOT EXISTS superseded_at timestamptz,
-  ADD COLUMN IF NOT EXISTS superseded_by_quote_id uuid
-    REFERENCES public.quotes(id);
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid PK | default `gen_random_uuid()` |
+| `created_at` | timestamptz | default `now()` |
+| `email` | text | as submitted |
+| `email_normalized` | text | `lower(trim(email))` |
+| `name` | text | |
+| `phone` | text nullable | |
+| `payload` | jsonb | full submitted body |
+| `result` | text | `saved`, `duplicate`, `save_failed` |
+| `matched_entity_type` | text nullable | `contacts` or `customers` |
+| `matched_entity_id` | uuid nullable | |
+| `error` | jsonb nullable | DB error details |
+| `source` | text | default `website_contact_form` |
 
-CREATE INDEX IF NOT EXISTS idx_quotes_superseded_by
-  ON public.quotes(superseded_by_quote_id)
-  WHERE superseded_by_quote_id IS NOT NULL;
-```
-
-No `quote_group_id` column needed on quotes -- `bom_group_id` on `boms` already provides the chain grouping.
+**RLS**: Enable RLS, add a staff-only SELECT policy. No public access. The edge function writes via the service role so no INSERT policy is needed for anon.
 
 ---
 
-## Step 2: Shared Superseding Helper
+## Step 2 -- Edge Function Rewrite (`send-contact-email/index.ts`)
 
-Create `src/lib/supersede-quotes.ts` with a reusable function:
+The core logic changes from a linear "insert or fail" to a branching flow:
 
 ```text
-supersedeActiveQuotesInChain({
-  newQuoteId,
-  bomId,       -- used to find bom_group_id
-}) -> Promise<string[]>   // returns superseded quote IDs
+Parse & validate input
+        |
+  Normalize email
+        |
+  Attempt INSERT into contacts
+        |
+   +----+----+
+   |         |
+ Success   Error
+   |         |
+   |    Is it code 23505?
+   |     (unique violation)
+   |      +------+------+
+   |      |             |
+   |   Duplicate    Other error
+   |      |             |
+   |  Look up match  Log intake event
+   |  Log intake     as "save_failed"
+   |  as "duplicate"  |
+   |      |         Send "save_failed"
+   |      |         email to sales
+   |  Send          |
+   |  "duplicate"   Return 200 OK
+   |  email to
+   |  sales
+   |      |
+   |  Return 200 OK
+   |
+ Save contact_message
+ Log intake event as "saved"
+ Send normal notification email to sales
+ Return 200 OK
 ```
 
-Logic:
-1. Look up `bom_group_id` from the new quote's BOM
-2. Find all BOMs sharing that `bom_group_id`
-3. Find all quotes linked to those BOMs with active status (`draft`, `sent`, `viewed`, `revision_requested`)
-4. Exclude the new quote itself
-5. Update matching quotes: `status = 'superseded'`, `superseded_at = now()`, `superseded_by_quote_id = newQuoteId`, `is_latest = false`
-6. Return list of superseded quote IDs
+### Key behaviors:
 
-Protected statuses that are NEVER superseded: `accepted`, `invoiced`, `cancelled`, `expired`, `superseded`, `declined`
+**Duplicate path** (Postgres error code `23505`):
+- Query `contacts` by normalized email to find the existing record.
+- Query `customers` (via `contacts.converted_to_customer_id`) to check if they are already a customer.
+- Log a `contact_intake_events` row with `result = 'duplicate'` and the matched entity info.
+- Send a "Duplicate contact detected" email to sales with: submitted name/email/phone/message, existing contact ID, whether they are already a customer, and a timestamp.
+- Return `200 { success: true }`.
 
----
+**Other failure path**:
+- Log a `contact_intake_events` row with `result = 'save_failed'` and the error details.
+- Send a "Contact form: saving failed" email to sales with submitted details and error info.
+- Return `200 { success: true }`.
 
-## Step 3: Wire Superseding into All Creation Paths
+**Success path** (unchanged logic, plus):
+- Log a `contact_intake_events` row with `result = 'saved'`.
+- Continue with existing contact_messages insert and notification email (with tokenized reply-to).
 
-There are **4 code paths** that create quote revisions:
+**Top-level catch**: Wrap the entire handler body. If anything throws (including email sending), log to console and return `200 { success: true }`. This ensures no 500 ever reaches the client for contact form submissions. Rate-limit 429 responses remain unchanged.
 
-### 3a. BOMBuilder - `createQuoteFromPreviousVersion` (line ~458)
-After the new quote + lines are created, call `supersedeActiveQuotesInChain`.
+### Email templates for sales notifications:
 
-### 3b. BOMBuilder - `createFreshQuote` (line ~400)
-Same -- after creating the fresh quote, call the helper. (Handles edge case where a BOM group already has active quotes.)
+1. **Duplicate detected** -- Subject: "Kontaktformulär: dubblett upptäckt ({email})"
+   - Body includes: submitted name, email, phone, message, existing contact ID, customer status, timestamp.
 
-### 3c. `useQuoteVersioning` - `createNewVersionMutation` (line ~48)
-Currently only sets `is_latest = false` on old quotes. Change to also set `status = 'superseded'`, `superseded_at`, `superseded_by_quote_id` on quotes with active statuses. Use the same helper.
-
-### 3d. `CustomerViewOfferDetail` - `handleCreateRevision` (line ~241)
-Currently only marks the source quote as `is_latest = false`. Add superseding of all active quotes in the chain via the helper.
-
----
-
-## Step 4: Status Badge
-
-Update `src/lib/quote-status-badge.tsx` to add:
-
-```text
-case 'superseded':
-  Badge variant="outline" text="Ersatt" / "Superseded" (muted gray styling)
-```
+2. **Save failed** -- Subject: "Kontaktformulär: sparning misslyckades"
+   - Body includes: submitted name, email, phone, message, full error details, timestamp.
 
 ---
 
-## Step 5: Staff Quotes List (`QuotesList.tsx`)
+## Step 3 -- Frontend Change (`Contact.tsx`)
 
-**Active filter**: Add `superseded` to excluded statuses alongside `cancelled`:
-```text
-case 'active':
-  if (quote.status === 'cancelled' || quote.status === 'superseded') return false;
-  if (!quote.is_latest) return false;
-```
+Minimal change: the `handleSubmit` function currently throws on any error from the edge function. Since the edge function will now always return 200 for contact submissions, the existing success path will work. However, as a safety net:
 
-**Filter options**: Rename "Inkl. avbrutna" to "Inkl. avbrutna/ersatta" and ensure superseded quotes appear when this filter is selected.
+- Wrap the `supabase.functions.invoke` call so that **any** non-429 response is treated as success (show the "Thank you" screen).
+- Only show the error toast for rate-limit (429) responses.
+- This ensures that even if the edge function has a transient issue, the visitor is never shown a scary error.
 
 ---
 
-## Step 6: Staff Quote Detail (`QuotePreparation.tsx`)
+## Files Changed
 
-When a superseded quote is viewed, show a banner (similar to the existing "older version" warning):
+| File | Action |
+|---|---|
+| `supabase/migrations/...` | New migration: create `contact_intake_events` table with RLS |
+| `supabase/functions/send-contact-email/index.ts` | Major rewrite of the handler with duplicate/failure branches |
+| `src/pages/Contact.tsx` | Minor change: treat non-429 responses as success |
 
-```text
-"Denna offert har ersatts av #TQ-00000007"
-[Button: "Gå till senaste" / "Go to latest"]
-```
+## Technical Details
 
-Requires fetching `superseded_by_quote_id` and its `quote_number` from the database. The quote should also be non-editable when superseded -- add `superseded` to the status checks for `isEditable` and `canSend`.
-
----
-
-## Step 7: Quote Version Dropdown (`QuoteVersionDropdown.tsx`)
-
-Add `superseded` to the status badge labels:
-```text
-superseded: t('Ersatt', 'Superseded')
-```
-
----
-
-## Step 8: Quote Actions Menu (`QuoteActionsMenu.tsx`)
-
-Prevent cancelling a quote that's already superseded:
-```text
-const canCancel = !['cancelled', 'superseded'].includes(status);
-```
-
----
-
-## Step 9: Customer Offers List (`Offers.tsx`)
-
-Add `superseded` to the excluded statuses in the query:
-```text
-.neq('status', 'superseded')
-```
-
-The existing `latestPerChain` grouping provides a secondary safeguard.
-
-Also remove the leftover `.eq('is_test', ...)` filter that references removed functionality.
-
----
-
-## Step 10: Customer Offer Detail (`OfferDetail.tsx`)
-
-- Add `superseded` to the chain versions query exclusion (already excludes `draft` and `cancelled`)
-- The existing `isViewingLatest` + action guards already prevent actions on non-latest quotes, but add explicit `superseded` handling
-
----
-
-## Step 11: Customer View - Staff (`CustomerViewOffers.tsx`)
-
-Add `superseded` status to the filter dropdown:
-```text
-<SelectItem value="superseded">{t('Ersatt', 'Superseded')}</SelectItem>
-```
-
----
-
-## Step 12: Customer View Offer Detail (`CustomerViewOfferDetail.tsx`)
-
-- Add superseded banner similar to Step 6
-- Update `handleCreateRevision` to call the superseding helper (Step 3d)
-
----
-
-## Step 13: Public Quote Page (`PublicQuotePage.tsx`)
-
-When a customer opens a superseded quote link via email:
-- Show a friendly message: "Denna offert har ersatts av en nyare version."
-- Do not show accept/decline/revision buttons
-
-Update the completion-state check to include `superseded`:
-```text
-if (quoteData.status === 'superseded') {
-  // Show "This quote has been replaced" message
-}
-```
-
----
-
-## Step 14: Edge Functions - Block Actions on Superseded Quotes
-
-### `accept-quote/index.ts`
-Add `superseded` to the status validation. Return 409 with a message like "Offerten har ersatts av en nyare version".
-
-### `decline-quote/index.ts`
-Same - reject decline action on superseded quotes.
-
-### `customer-quote-action/index.ts`
-Add `superseded` to the status checks for accept, decline, and revision_request actions.
-
-### `fetch-public-quote/index.ts`
-Do not update `last_viewed_at` or status for superseded quotes. Return the data with status so the frontend can handle it.
-
----
-
-## Step 15: Backfill Existing Data
-
-For the specific case in Test (TQ-00000006 should be superseded by TQ-00000007):
-
-```sql
-UPDATE quotes
-SET status = 'superseded',
-    superseded_at = now(),
-    superseded_by_quote_id = 'e54351c6-ca00-472a-ab2a-0e58cbceaec4',
-    is_latest = false
-WHERE id = '2f24990e-deab-4e05-9779-011b5818bfc5';
-```
-
-No backfill needed for TQ-00000004/TQ-00000005 since TQ-00000004 is already cancelled and TQ-00000005 is accepted (both are terminal states).
-
----
-
-## Files Changed Summary
-
-| File | Type |
-|------|------|
-| Database migration | Add `superseded_at`, `superseded_by_quote_id` columns |
-| `src/lib/supersede-quotes.ts` | **New** shared helper |
-| `src/lib/quote-status-badge.tsx` | Add `superseded` case |
-| `src/pages/portal/boms/BOMBuilder.tsx` | Call supersede helper after both creation paths |
-| `src/hooks/use-quote-versioning.ts` | Call supersede helper in mutation |
-| `src/pages/portal/quotes/QuotesList.tsx` | Exclude superseded from active filter |
-| `src/pages/portal/quotes/QuotePreparation.tsx` | Add superseded banner, block editing |
-| `src/components/portal/quotes/QuoteVersionDropdown.tsx` | Add superseded label |
-| `src/components/portal/quotes/QuoteActionsMenu.tsx` | Block cancel on superseded |
-| `src/pages/portal/Offers.tsx` | Exclude superseded from query, remove is_test filter |
-| `src/pages/portal/OfferDetail.tsx` | Exclude superseded from chain, handle in detail |
-| `src/pages/portal/customer-view/CustomerViewOffers.tsx` | Add superseded filter option |
-| `src/pages/portal/customer-view/CustomerViewOfferDetail.tsx` | Add superseded banner + wire supersede helper |
-| `src/pages/portal/PublicQuotePage.tsx` | Handle superseded status display |
-| `supabase/functions/accept-quote/index.ts` | Block accept on superseded |
-| `supabase/functions/decline-quote/index.ts` | Block decline on superseded |
-| `supabase/functions/customer-quote-action/index.ts` | Block all actions on superseded |
-| `supabase/functions/fetch-public-quote/index.ts` | Skip view tracking for superseded |
-
+- Postgres unique violation is detected by checking `insertError.code === '23505'`.
+- Email normalization: `lower(trim(email))` applied before any DB operation.
+- The `contact_intake_events` logging is wrapped in its own try/catch so a failure to log never blocks the email notification to sales.
+- The sales notification emails reuse the existing Resend API integration and the `CONTACT_TO` secret.
+- No changes to the `contacts` table schema -- the existing unique index on `lower(trim(email))` is already correct.
