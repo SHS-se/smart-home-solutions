@@ -1,134 +1,115 @@
 
 
-# Duplicate-Safe Contact Form Submission
+# Home Profile Feature
 
-## Problem
-When someone submits the contact form with an email that already exists in the `contacts` table, the unique index (`idx_contacts_normalized_email_unique`) causes the insert to fail, returning a 500 error to the visitor. The message is lost and the business never sees it.
+## Overview
+Add a "Home Profile" concept to the portal: a set of staff-defined questions with plain-text answers per customer, plus installation photos with annotations. Both customers and staff can view/edit.
 
-## Solution Overview
-Make the edge function resilient to all failure modes. No matter what happens on the backend, the visitor always sees "Thank you!" and the business always gets notified. The notification email to the business should clarify what the error was so that manual resolution/reconciliation can happen where possible.
+## Database
 
-## What Already Exists
-- A unique index on `lower(trim(email))` in the `contacts` table -- duplicate detection is already enforced at the database level.
-- The edge function uses the service role key, so RLS is bypassed for writes.
-- `config.toml` does not list `send-contact-email`, meaning JWT verification defaults to **on** -- but the frontend invokes it via the Supabase client which attaches the anon key automatically, so this works today.
+### Tables
 
----
+**home_questions** -- staff-managed question list
+- `id` uuid PK
+- `question_text` text NOT NULL
+- `sort_order` int NOT NULL DEFAULT 0
+- `is_active` boolean NOT NULL DEFAULT true
+- `created_at` timestamptz DEFAULT now()
 
-## Step 1 -- Database Migration
+**home_answers** -- one answer per customer per question
+- `id` uuid PK
+- `customer_id` uuid FK -> customers(id) ON DELETE CASCADE
+- `question_id` uuid FK -> home_questions(id) ON DELETE CASCADE
+- `answer_text` text NOT NULL DEFAULT ''
+- `updated_at` timestamptz DEFAULT now()
+- `updated_by` uuid (auth user id)
+- UNIQUE(customer_id, question_id)
 
-Create a new `contact_intake_events` table to log every submission attempt (success, duplicate, or failure):
+**home_photos** -- installation photos
+- `id` uuid PK
+- `customer_id` uuid FK -> customers(id) ON DELETE CASCADE
+- `storage_path` text NOT NULL
+- `annotation_text` text DEFAULT ''
+- `uploaded_at` timestamptz DEFAULT now()
+- `uploaded_by` uuid
+- `visible_to_customer` boolean DEFAULT true
 
-| Column | Type | Notes |
+### Storage
+- New bucket `home-photos` (private)
+- Path pattern: `customers/{customer_id}/{photo_id}.ext`
+- RLS: staff can access all; customers can access their own (where visible_to_customer = true)
+
+### RLS Policies
+- **home_questions**: SELECT for authenticated users; INSERT/UPDATE/DELETE for staff only
+- **home_answers**: SELECT/INSERT/UPDATE for staff + owning customer; DELETE for staff
+- **home_photos**: SELECT for staff + owning customer (with visibility check); INSERT/UPDATE/DELETE for staff + owning customer; staff can toggle visibility
+
+## Routes
+
+| Route | Component | Who |
 |---|---|---|
-| `id` | uuid PK | default `gen_random_uuid()` |
-| `created_at` | timestamptz | default `now()` |
-| `email` | text | as submitted |
-| `email_normalized` | text | `lower(trim(email))` |
-| `name` | text | |
-| `phone` | text nullable | |
-| `payload` | jsonb | full submitted body |
-| `result` | text | `saved`, `duplicate`, `save_failed` |
-| `matched_entity_type` | text nullable | `contacts` or `customers` |
-| `matched_entity_id` | uuid nullable | |
-| `error` | jsonb nullable | DB error details |
-| `source` | text | default `website_contact_form` |
+| `/portal/home-profile` | CustomerHomeProfile | Customer |
+| `/portal/customers/questionnaire` | QuestionnaireManager | Staff |
+| `/portal/customers/:customerId/home-profile` | CustomerViewHomeProfile | Staff (customer view) |
 
-**RLS**: Enable RLS, add a staff-only SELECT policy. No public access. The edge function writes via the service role so no INSERT policy is needed for anon.
+## UI Components
 
----
+### 1. Customer Dashboard Card (Dashboard.tsx)
+Add a "Home Profile" card in the customer dashboard grid (between Account and Billing). The entire card is clickable and navigates to `/portal/home-profile`. Shows:
+- Title with Home icon
+- Description text
+- "Questions answered: X / Y"
+- "Photos uploaded: N"
+- No button -- whole card is the click target
 
-## Step 2 -- Edge Function Rewrite (`send-contact-email/index.ts`)
+### 2. Staff Customer View Card (CustomerViewDashboard.tsx)
+Add a "Home Profile" card in the staff customer view grid. Clickable, navigates to `/portal/customers/:customerId/home-profile`. Same stats.
 
-The core logic changes from a linear "insert or fail" to a branching flow:
+### 3. Customer Home Profile Page (`/portal/home-profile`)
+Two stacked cards:
 
-```text
-Parse & validate input
-        |
-  Normalize email
-        |
-  Attempt INSERT into contacts
-        |
-   +----+----+
-   |         |
- Success   Error
-   |         |
-   |    Is it code 23505?
-   |     (unique violation)
-   |      +------+------+
-   |      |             |
-   |   Duplicate    Other error
-   |      |             |
-   |  Look up match  Log intake event
-   |  Log intake     as "save_failed"
-   |  as "duplicate"  |
-   |      |         Send "save_failed"
-   |      |         email to sales
-   |  Send          |
-   |  "duplicate"   Return 200 OK
-   |  email to
-   |  sales
-   |      |
-   |  Return 200 OK
-   |
- Save contact_message
- Log intake event as "saved"
- Send normal notification email to sales
- Return 200 OK
-```
+**Card 1 -- Your Home & Devices**
+- Lists all active questions ordered by sort_order
+- Each question: label + textarea for the answer
+- "Save answers" button at the bottom
+- Upserts into home_answers
 
-### Key behaviors:
+**Card 2 -- Installation Photos**
+- "Upload photo" button in card header
+- 3-column grid of photo cards
+- Each card: thumbnail (signed URL), annotation text, upload date, edit (pencil) icon for annotation
+- Upload flow: file picker -> upload to storage -> insert home_photos row
 
-**Duplicate path** (Postgres error code `23505`):
-- Query `contacts` by normalized email to find the existing record.
-- Query `customers` (via `contacts.converted_to_customer_id`) to check if they are already a customer.
-- Log a `contact_intake_events` row with `result = 'duplicate'` and the matched entity info.
-- Send a "Duplicate contact detected" email to sales with: submitted name/email/phone/message, existing contact ID, whether they are already a customer, and a timestamp.
-- Return `200 { success: true }`.
+### 4. Staff Question Manager (`/portal/customers/questionnaire`)
+- List of all questions with drag-to-reorder or up/down arrows
+- Each row: question text (editable inline or via modal), active/inactive toggle
+- "Add question" button
+- Staff-only page (redirect non-staff)
 
-**Other failure path**:
-- Log a `contact_intake_events` row with `result = 'save_failed'` and the error details.
-- Send a "Contact form: saving failed" email to sales with submitted details and error info.
-- Return `200 { success: true }`.
+### 5. Staff Customer View Home Profile (`/portal/customers/:customerId/home-profile`)
+Same layout as customer page but:
+- Staff can edit answers
+- Staff can toggle `visible_to_customer` per photo
+- Wrapped in CustomerViewLayout with back navigation
 
-**Success path** (unchanged logic, plus):
-- Log a `contact_intake_events` row with `result = 'saved'`.
-- Continue with existing contact_messages insert and notification email (with tokenized reply-to).
-
-**Top-level catch**: Wrap the entire handler body. If anything throws (including email sending), log to console and return `200 { success: true }`. This ensures no 500 ever reaches the client for contact form submissions. Rate-limit 429 responses remain unchanged.
-
-### Email templates for sales notifications:
-
-1. **Duplicate detected** -- Subject: "Kontaktformulär: dubblett upptäckt ({email})"
-   - Body includes: submitted name, email, phone, message, existing contact ID, customer status, timestamp.
-
-2. **Save failed** -- Subject: "Kontaktformulär: sparning misslyckades"
-   - Body includes: submitted name, email, phone, message, full error details, timestamp.
-
----
-
-## Step 3 -- Frontend Change (`Contact.tsx`)
-
-Minimal change: the `handleSubmit` function currently throws on any error from the edge function. Since the edge function will now always return 200 for contact submissions, the existing success path will work. However, as a safety net:
-
-- Wrap the `supabase.functions.invoke` call so that **any** non-429 response is treated as success (show the "Thank you" screen).
-- Only show the error toast for rate-limit (429) responses.
-- This ensures that even if the edge function has a transient issue, the visitor is never shown a scary error.
-
----
-
-## Files Changed
+## Files to Create/Modify
 
 | File | Action |
 |---|---|
-| `supabase/migrations/...` | New migration: create `contact_intake_events` table with RLS |
-| `supabase/functions/send-contact-email/index.ts` | Major rewrite of the handler with duplicate/failure branches |
-| `src/pages/Contact.tsx` | Minor change: treat non-429 responses as success |
+| `supabase/migrations/...` | New migration: 3 tables + bucket + RLS |
+| `src/pages/portal/HomeProfile.tsx` | New: customer home profile page |
+| `src/pages/portal/customer-view/CustomerViewHomeProfile.tsx` | New: staff view of customer home profile |
+| `src/pages/portal/settings/QuestionnaireManager.tsx` | New: staff question management |
+| `src/pages/portal/Dashboard.tsx` | Add Home Profile card to customer grid + fetch stats |
+| `src/pages/portal/customer-view/CustomerViewDashboard.tsx` | Add Home Profile card + fetch stats |
+| `src/App.tsx` | Add 3 new routes |
 
 ## Technical Details
 
-- Postgres unique violation is detected by checking `insertError.code === '23505'`.
-- Email normalization: `lower(trim(email))` applied before any DB operation.
-- The `contact_intake_events` logging is wrapped in its own try/catch so a failure to log never blocks the email notification to sales.
-- The sales notification emails reuse the existing Resend API integration and the `CONTACT_TO` secret.
-- No changes to the `contacts` table schema -- the existing unique index on `lower(trim(email))` is already correct.
+- Photos use signed URLs via `supabase.storage.from('home-photos').createSignedUrl(path, 3600)`
+- Answer save uses upsert with `onConflict: 'customer_id,question_id'`
+- Question reordering updates `sort_order` for affected rows
+- The `updated_at` trigger on home_answers uses the existing `update_simple_updated_at` function
+- Stats queries for the dashboard cards: count active questions, count answers for the customer, count photos for the customer
+- All text is bilingual using the existing `t()` pattern
+
