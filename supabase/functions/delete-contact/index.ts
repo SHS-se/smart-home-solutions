@@ -88,13 +88,33 @@ serve(async (req: Request) => {
       await supabase.auth.admin.deleteUser(authUser.id);
     }
 
-    // 3. Delete contact messages
+    // 3. Delete linked customer records (and their dependent data)
+    const { data: linkedCustomers } = await supabase
+      .from("customers")
+      .select("id")
+      .eq("contact_id", contact_id);
+
+    if (linkedCustomers && linkedCustomers.length > 0) {
+      const customerIds = linkedCustomers.map(c => c.id);
+      // Delete home_answers, home_photos, tickets etc. for these customers
+      for (const cid of customerIds) {
+        await supabase.from("home_answers").delete().eq("customer_id", cid);
+        await supabase.from("home_photos").delete().eq("customer_id", cid);
+      }
+      // Delete the customer records themselves
+      await supabase
+        .from("customers")
+        .delete()
+        .eq("contact_id", contact_id);
+    }
+
+    // 4. Delete contact messages
     await supabase
       .from("contact_messages")
       .delete()
       .eq("contact_id", contact_id);
 
-    // 4. Delete the contact record
+    // 5. Delete the contact record
     const { error: deleteError } = await supabase
       .from("contacts")
       .delete()
