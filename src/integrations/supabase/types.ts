@@ -504,6 +504,7 @@ export type Database = {
           id: string
           is_active: boolean
           question_text: string
+          question_text_en: string
           sort_order: number
         }
         Insert: {
@@ -511,6 +512,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           question_text: string
+          question_text_en?: string
           sort_order?: number
         }
         Update: {
@@ -518,6 +520,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           question_text?: string
+          question_text_en?: string
           sort_order?: number
         }
         Relationships: []
