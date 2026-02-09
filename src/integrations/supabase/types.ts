@@ -498,29 +498,67 @@ export type Database = {
           },
         ]
       }
+      home_profile_draft_answers: {
+        Row: {
+          answer_text: string
+          created_at: string
+          email: string
+          id: string
+          question_id: string
+        }
+        Insert: {
+          answer_text: string
+          created_at?: string
+          email: string
+          id?: string
+          question_id: string
+        }
+        Update: {
+          answer_text?: string
+          created_at?: string
+          email?: string
+          id?: string
+          question_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "home_profile_draft_answers_question_id_fkey"
+            columns: ["question_id"]
+            isOneToOne: false
+            referencedRelation: "home_questions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       home_questions: {
         Row: {
           created_at: string
+          display_on_contact_form: boolean
           id: string
           is_active: boolean
           question_text: string
           question_text_en: string
+          question_type: string
           sort_order: number
         }
         Insert: {
           created_at?: string
+          display_on_contact_form?: boolean
           id?: string
           is_active?: boolean
           question_text: string
           question_text_en?: string
+          question_type?: string
           sort_order?: number
         }
         Update: {
           created_at?: string
+          display_on_contact_form?: boolean
           id?: string
           is_active?: boolean
           question_text?: string
           question_text_en?: string
+          question_type?: string
           sort_order?: number
         }
         Relationships: []

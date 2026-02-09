@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Home, Loader2, Save, Upload, Pencil, Camera, X, Check } from 'lucide-react';
+import { Home, Loader2, Save, Upload, Pencil, Camera, X, Check, Info } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
@@ -46,6 +47,7 @@ const HomeProfile: React.FC = () => {
   const [uploading, setUploading] = useState(false);
   const [editingAnnotation, setEditingAnnotation] = useState<string | null>(null);
   const [annotationDraft, setAnnotationDraft] = useState('');
+  const [bannerDismissed, setBannerDismissed] = useState(() => localStorage.getItem('home_profile_banner_dismissed') === 'true');
 
   useEffect(() => {
     if (!authLoading && !user) navigate('/login');
@@ -161,6 +163,14 @@ const HomeProfile: React.FC = () => {
     );
   }
 
+  const answeredCount = Object.values(answers).filter(a => a && a.trim() !== '').length;
+  const bannerVisible = answeredCount < 2 && !bannerDismissed;
+
+  const dismissBanner = () => {
+    localStorage.setItem('home_profile_banner_dismissed', 'true');
+    setBannerDismissed(true);
+  };
+
   return (
     <PortalLayout>
       <div className="space-y-8 max-w-4xl mx-auto">
@@ -168,6 +178,23 @@ const HomeProfile: React.FC = () => {
           <Home className="w-7 h-7 text-primary" />
           <h1 className="text-3xl font-medium">{t('Hemprofil', 'Home Profile')}</h1>
         </div>
+
+        {bannerVisible && (
+          <Alert className="bg-primary/5 border-primary/20">
+            <Info className="w-4 h-4" />
+            <AlertDescription className="flex items-center justify-between">
+              <span>
+                {t(
+                  'Tack! Om du fyller i hemprofilen och lägger till bilder kan vi hjälpa dig mycket snabbare.',
+                  'Thanks! Filling in your home profile and adding photos helps us help you much faster.'
+                )}
+              </span>
+              <Button variant="ghost" size="sm" onClick={dismissBanner} className="shrink-0 ml-4">
+                {t('Stäng', 'Dismiss')}
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
 
         {/* Card 1: Questions & Answers */}
         <Card>

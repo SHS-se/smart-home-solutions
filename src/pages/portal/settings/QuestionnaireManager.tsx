@@ -23,6 +23,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import PortalLayout from '@/components/portal/PortalLayout';
 import { useAuth } from '@/contexts/AuthContext';
@@ -33,6 +34,8 @@ interface Question {
   id: string;
   question_text: string;
   question_text_en: string;
+  question_type: string;
+  display_on_contact_form: boolean;
   sort_order: number;
   is_active: boolean;
 }
@@ -42,11 +45,14 @@ interface SortableQuestionProps {
   editingId: string | null;
   editDraftSv: string;
   editDraftEn: string;
+  editDraftType: string;
   setEditingId: (id: string | null) => void;
   setEditDraftSv: (text: string) => void;
   setEditDraftEn: (text: string) => void;
+  setEditDraftType: (type: string) => void;
   onSaveEdit: (id: string) => void;
   onToggleActive: (id: string, active: boolean) => void;
+  onToggleContactForm: (id: string, show: boolean) => void;
   t: (sv: string, en: string) => string;
 }
 
@@ -55,11 +61,14 @@ const SortableQuestion: React.FC<SortableQuestionProps> = ({
   editingId,
   editDraftSv,
   editDraftEn,
+  editDraftType,
   setEditingId,
   setEditDraftSv,
   setEditDraftEn,
+  setEditDraftType,
   onSaveEdit,
   onToggleActive,
+  onToggleContactForm,
   t,
 }) => {
   const {
@@ -111,6 +120,18 @@ const SortableQuestion: React.FC<SortableQuestionProps> = ({
                 onKeyDown={e => e.key === 'Enter' && onSaveEdit(question.id)}
               />
             </div>
+            <div>
+              <Label className="text-xs text-muted-foreground">{t('Typ', 'Type')}</Label>
+              <Select value={editDraftType} onValueChange={setEditDraftType}>
+                <SelectTrigger className="w-[140px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="text">{t('Text', 'Text')}</SelectItem>
+                  <SelectItem value="boolean">{t('Ja/Nej', 'Yes/No')}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             <div className="flex gap-2">
               <Button size="sm" variant="ghost" onClick={() => onSaveEdit(question.id)}>
                 <Check className="w-4 h-4 mr-1" /> {t('Spara', 'Save')}
@@ -124,6 +145,9 @@ const SortableQuestion: React.FC<SortableQuestionProps> = ({
           <div className="space-y-1">
             <div className="flex items-center gap-2">
               <span className="text-sm">{question.question_text}</span>
+              <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                {question.question_type === 'boolean' ? t('Ja/Nej', 'Yes/No') : t('Text', 'Text')}
+              </span>
               <Button
                 size="icon"
                 variant="ghost"
@@ -132,6 +156,7 @@ const SortableQuestion: React.FC<SortableQuestionProps> = ({
                   setEditingId(question.id);
                   setEditDraftSv(question.question_text);
                   setEditDraftEn(question.question_text_en);
+                  setEditDraftType(question.question_type);
                 }}
               >
                 <Pencil className="w-3.5 h-3.5" />
@@ -144,11 +169,21 @@ const SortableQuestion: React.FC<SortableQuestionProps> = ({
         )}
       </div>
 
-      <Switch
-        checked={question.is_active}
-        onCheckedChange={v => onToggleActive(question.id, v)}
-        className="mt-1"
-      />
+      <div className="flex flex-col items-center gap-1 shrink-0">
+        <span className="text-[10px] text-muted-foreground">{t('Aktiv', 'Active')}</span>
+        <Switch
+          checked={question.is_active}
+          onCheckedChange={v => onToggleActive(question.id, v)}
+        />
+      </div>
+
+      <div className="flex flex-col items-center gap-1 shrink-0">
+        <span className="text-[10px] text-muted-foreground">{t('Kontaktformulär', 'Contact form')}</span>
+        <Switch
+          checked={question.display_on_contact_form}
+          onCheckedChange={v => onToggleContactForm(question.id, v)}
+        />
+      </div>
     </div>
   );
 };
@@ -163,10 +198,12 @@ const QuestionnaireManager: React.FC = () => {
   const [loadingData, setLoadingData] = useState(true);
   const [newQuestionSv, setNewQuestionSv] = useState('');
   const [newQuestionEn, setNewQuestionEn] = useState('');
+  const [newQuestionType, setNewQuestionType] = useState('text');
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraftSv, setEditDraftSv] = useState('');
   const [editDraftEn, setEditDraftEn] = useState('');
+  const [editDraftType, setEditDraftType] = useState('text');
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -181,7 +218,7 @@ const QuestionnaireManager: React.FC = () => {
   const fetchQuestions = async () => {
     setLoadingData(true);
     const { data } = await supabase.from('home_questions').select('*').order('sort_order');
-    if (data) setQuestions(data);
+    if (data) setQuestions(data as Question[]);
     setLoadingData(false);
   };
 
@@ -195,11 +232,13 @@ const QuestionnaireManager: React.FC = () => {
       const { error } = await supabase.from('home_questions').insert({
         question_text: newQuestionSv.trim(),
         question_text_en: newQuestionEn.trim(),
+        question_type: newQuestionType,
         sort_order: maxSort,
       });
       if (error) throw error;
       setNewQuestionSv('');
       setNewQuestionEn('');
+      setNewQuestionType('text');
       await fetchQuestions();
     } catch (err: any) {
       toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
@@ -214,9 +253,10 @@ const QuestionnaireManager: React.FC = () => {
       const { error } = await supabase.from('home_questions').update({
         question_text: editDraftSv.trim(),
         question_text_en: editDraftEn.trim(),
+        question_type: editDraftType,
       }).eq('id', id);
       if (error) throw error;
-      setQuestions(prev => prev.map(q => q.id === id ? { ...q, question_text: editDraftSv.trim(), question_text_en: editDraftEn.trim() } : q));
+      setQuestions(prev => prev.map(q => q.id === id ? { ...q, question_text: editDraftSv.trim(), question_text_en: editDraftEn.trim(), question_type: editDraftType } : q));
       setEditingId(null);
     } catch (err: any) {
       toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
@@ -228,6 +268,16 @@ const QuestionnaireManager: React.FC = () => {
       const { error } = await supabase.from('home_questions').update({ is_active: active }).eq('id', id);
       if (error) throw error;
       setQuestions(prev => prev.map(q => q.id === id ? { ...q, is_active: active } : q));
+    } catch (err: any) {
+      toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
+    }
+  };
+
+  const handleToggleContactForm = async (id: string, show: boolean) => {
+    try {
+      const { error } = await supabase.from('home_questions').update({ display_on_contact_form: show }).eq('id', id);
+      if (error) throw error;
+      setQuestions(prev => prev.map(q => q.id === id ? { ...q, display_on_contact_form: show } : q));
     } catch (err: any) {
       toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
     }
@@ -292,14 +342,35 @@ const QuestionnaireManager: React.FC = () => {
                   value={newQuestionEn}
                   onChange={e => setNewQuestionEn(e.target.value)}
                   placeholder={t('Ny fråga (engelska)...', 'New question (English)...')}
-                  onKeyDown={e => e.key === 'Enter' && handleAdd()}
                 />
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground">{t('Typ', 'Type')}</Label>
+                <Select value={newQuestionType} onValueChange={setNewQuestionType}>
+                  <SelectTrigger className="w-[140px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="text">{t('Text', 'Text')}</SelectItem>
+                    <SelectItem value="boolean">{t('Ja/Nej', 'Yes/No')}</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
               <Button onClick={handleAdd} disabled={adding || !newQuestionSv.trim()} size="sm">
                 {adding ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Plus className="w-4 h-4 mr-1" />}
                 {t('Lägg till', 'Add')}
               </Button>
             </div>
+
+            {/* Column headers */}
+            {questions.length > 0 && (
+              <div className="flex items-center gap-3 px-3 text-xs text-muted-foreground">
+                <div className="w-5" /> {/* drag handle spacer */}
+                <div className="flex-1">{t('Fråga', 'Question')}</div>
+                <div className="w-[70px] text-center shrink-0">{t('Aktiv', 'Active')}</div>
+                <div className="w-[90px] text-center shrink-0">{t('Kontaktformulär', 'Contact form')}</div>
+              </div>
+            )}
 
             {/* List */}
             {questions.length === 0 ? (
@@ -315,11 +386,14 @@ const QuestionnaireManager: React.FC = () => {
                         editingId={editingId}
                         editDraftSv={editDraftSv}
                         editDraftEn={editDraftEn}
+                        editDraftType={editDraftType}
                         setEditingId={setEditingId}
                         setEditDraftSv={setEditDraftSv}
                         setEditDraftEn={setEditDraftEn}
+                        setEditDraftType={setEditDraftType}
                         onSaveEdit={handleSaveEdit}
                         onToggleActive={handleToggleActive}
+                        onToggleContactForm={handleToggleContactForm}
                         t={t}
                       />
                     ))}

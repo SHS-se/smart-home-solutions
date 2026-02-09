@@ -12,7 +12,8 @@ interface ContactEmailRequest {
   email: string;
   phone?: string;
   message: string;
-  website?: string; // Honeypot field - should always be empty
+  website?: string;
+  draft_answers?: Array<{ question_id: string; answer_text: string }>;
 }
 
 interface RateLimitRecord {
@@ -20,7 +21,6 @@ interface RateLimitRecord {
   window_start: string;
 }
 
-// Rate limiting configuration
 const RATE_LIMIT = 5;
 const RATE_WINDOW_MINUTES = 60;
 
@@ -89,9 +89,6 @@ async function checkRateLimit(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Intake event logging (best-effort, never throws)
-// ---------------------------------------------------------------------------
 async function logIntakeEvent(
   supabase: SupabaseClient,
   data: {
@@ -124,9 +121,6 @@ async function logIntakeEvent(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Sales notification helpers
-// ---------------------------------------------------------------------------
 async function sendSalesEmail(
   resendApiKey: string,
   toAddress: string,
@@ -216,6 +210,148 @@ function buildSaveFailedEmailHtml(
 }
 
 // ---------------------------------------------------------------------------
+// Save draft answers (best-effort, never throws)
+// ---------------------------------------------------------------------------
+async function saveDraftAnswers(
+  supabase: SupabaseClient,
+  email: string,
+  draftAnswers: Array<{ question_id: string; answer_text: string }>
+) {
+  if (!draftAnswers || draftAnswers.length === 0) return;
+
+  try {
+    // Validate question_ids exist and are displayable on contact form
+    const questionIds = draftAnswers.map(d => d.question_id);
+    const { data: validQuestions } = await supabase
+      .from('home_questions')
+      .select('id')
+      .in('id', questionIds)
+      .eq('is_active', true)
+      .eq('display_on_contact_form', true);
+
+    const validIds = new Set((validQuestions || []).map(q => q.id));
+
+    const validDrafts = draftAnswers
+      .filter(d => validIds.has(d.question_id))
+      .map(d => ({
+        email: email.toLowerCase().trim(),
+        question_id: d.question_id,
+        answer_text: d.answer_text.substring(0, 500), // Length limit
+      }));
+
+    if (validDrafts.length > 0) {
+      const { error } = await supabase
+        .from('home_profile_draft_answers')
+        .upsert(validDrafts, { onConflict: 'email,question_id' });
+
+      if (error) {
+        console.error('Error saving draft answers:', error);
+      } else {
+        console.log(`Saved ${validDrafts.length} draft answers for ${email}`);
+      }
+    }
+  } catch (err) {
+    console.error('Failed to save draft answers:', err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Onboarding: check auth.users and send magic link
+// ---------------------------------------------------------------------------
+async function handleOnboarding(
+  supabase: SupabaseClient,
+  resendApiKey: string,
+  email: string,
+  name: string,
+  appUrl: string
+): Promise<boolean> {
+  try {
+    // Check if email already exists in auth.users
+    const { data: { users }, error: listError } = await supabase.auth.admin.listUsers();
+
+    if (listError) {
+      console.error('Error listing users:', listError);
+      return false;
+    }
+
+    const emailNorm = email.toLowerCase().trim();
+    const existingUser = (users || []).find(u => u.email?.toLowerCase() === emailNorm);
+
+    if (existingUser) {
+      console.log(`User already exists for ${emailNorm}, skipping onboarding`);
+      return false;
+    }
+
+    // Generate magic link (this creates the auth user automatically)
+    const redirectTo = `${appUrl}/onboarding/set-password`;
+    const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({
+      type: 'magiclink',
+      email: emailNorm,
+      options: {
+        redirectTo,
+      },
+    });
+
+    if (linkError || !linkData?.properties?.hashed_token) {
+      console.error('Error generating magic link:', linkError);
+      return false;
+    }
+
+    // Build the actual magic link URL
+    const magicLinkUrl = linkData.properties.action_link;
+
+    // Send branded onboarding email via Resend
+    const safeName = escapeHtml(name);
+    const emailHtml = `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+        <h2 style="color: #1a1a1a; margin-bottom: 16px;">Hej ${safeName}!</h2>
+        <p style="color: #4a4a4a; font-size: 16px; line-height: 1.6;">
+          Tack för att du kontaktade oss! Vill du spara tid? Bekräfta din e-post för att fylla i din hemprofil och ladda upp bilder. Det hjälper oss hjälpa dig snabbare.
+        </p>
+        <div style="margin: 32px 0; text-align: center;">
+          <a href="${magicLinkUrl}" style="background-color: #2563eb; color: white; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: 500; font-size: 16px; display: inline-block;">
+            Fyll i din hemprofil
+          </a>
+        </div>
+        <p style="color: #6b6b6b; font-size: 14px; line-height: 1.5;">
+          Länken är giltig i 24 timmar. Om du inte begärde detta kan du bortse från mejlet.
+        </p>
+        <hr style="border: none; border-top: 1px solid #e5e5e5; margin: 32px 0;" />
+        <p style="color: #999; font-size: 12px;">
+          Smart Home Solutions · Täby, Sverige
+        </p>
+      </div>
+    `;
+
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${resendApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: "Smart Home Solutions <replyonly@mail.smarthomesolutions.se>",
+        to: [emailNorm],
+        subject: "Fyll i din hemprofil – Smart Home Solutions",
+        html: emailHtml,
+      }),
+    });
+
+    if (!res.ok) {
+      const errData = await res.json();
+      console.error("Error sending onboarding email:", errData);
+      return false;
+    }
+
+    console.log(`Onboarding magic link sent to ${emailNorm}`);
+    return true;
+  } catch (err) {
+    console.error('Onboarding error:', err);
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main handler
 // ---------------------------------------------------------------------------
 const handler = async (req: Request): Promise<Response> => {
@@ -236,8 +372,6 @@ const handler = async (req: Request): Promise<Response> => {
 
   const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
 
-  // Top-level try: ensures we NEVER return 500 for contact form submissions
-  // (except for the env-var check above, which is a true server misconfiguration).
   try {
     const clientIP = getClientIP(req);
 
@@ -260,7 +394,7 @@ const handler = async (req: Request): Promise<Response> => {
       );
     }
 
-    const { name, email, phone, message, website }: ContactEmailRequest = await req.json();
+    const { name, email, phone, message, website, draft_answers }: ContactEmailRequest = await req.json();
 
     // ---- Honeypot ----
     if (website && website.trim() !== '') {
@@ -309,7 +443,11 @@ const handler = async (req: Request): Promise<Response> => {
 
     if (!resendApiKey) {
       console.error("Missing RESEND_API_KEY");
-      // Still log the intake and notify if possible, but we can't send email
+    }
+
+    // ---- Save draft answers (regardless of contact insert result) ----
+    if (draft_answers && draft_answers.length > 0) {
+      await saveDraftAnswers(supabase, emailNormalized, draft_answers);
     }
 
     // ---- Attempt INSERT into contacts ----
@@ -328,7 +466,6 @@ const handler = async (req: Request): Promise<Response> => {
     if (insertError && insertError.code === '23505') {
       console.log("Duplicate contact detected for email:", emailNormalized);
 
-      // Look up existing contact
       let matchedEntityType: string | null = 'contacts';
       let matchedEntityId: string | null = null;
       let isCustomer = false;
@@ -350,7 +487,6 @@ const handler = async (req: Request): Promise<Response> => {
         }
       }
 
-      // Log intake event
       await logIntakeEvent(supabase, {
         email: trimmedEmail,
         emailNormalized,
@@ -363,7 +499,6 @@ const handler = async (req: Request): Promise<Response> => {
         error: { code: insertError.code, message: insertError.message },
       });
 
-      // Send duplicate notification to sales
       if (resendApiKey) {
         await sendSalesEmail(
           resendApiKey,
@@ -378,7 +513,13 @@ const handler = async (req: Request): Promise<Response> => {
         );
       }
 
-      return new Response(JSON.stringify({ success: true }), {
+      // For duplicates: still try onboarding if user doesn't exist in auth
+      let onboardingSent = false;
+      if (resendApiKey) {
+        onboardingSent = await handleOnboarding(supabase, resendApiKey, emailNormalized, trimmedName, supabaseUrl.replace('.supabase.co', '').includes('http') ? 'https://smarthomesolutions.lovable.app' : 'https://smarthomesolutions.lovable.app');
+      }
+
+      return new Response(JSON.stringify({ success: true, onboarding: onboardingSent }), {
         status: 200,
         headers: { "Content-Type": "application/json", "X-RateLimit-Remaining": String(remaining), ...corsHeaders },
       });
@@ -392,7 +533,6 @@ const handler = async (req: Request): Promise<Response> => {
         ? { code: insertError.code, message: insertError.message, details: insertError.details, hint: insertError.hint }
         : { message: 'Insert returned no data' };
 
-      // Log intake event
       await logIntakeEvent(supabase, {
         email: trimmedEmail,
         emailNormalized,
@@ -403,7 +543,6 @@ const handler = async (req: Request): Promise<Response> => {
         error: errorDetails,
       });
 
-      // Send failure notification to sales
       if (resendApiKey) {
         await sendSalesEmail(
           resendApiKey,
@@ -501,7 +640,14 @@ const handler = async (req: Request): Promise<Response> => {
       }
     }
 
-    return new Response(JSON.stringify({ success: true }), {
+    // ---- Onboarding: check if new user and send magic link ----
+    let onboardingSent = false;
+    if (resendApiKey) {
+      const appUrl = 'https://smarthomesolutions.lovable.app';
+      onboardingSent = await handleOnboarding(supabase, resendApiKey, emailNormalized, trimmedName, appUrl);
+    }
+
+    return new Response(JSON.stringify({ success: true, onboarding: onboardingSent }), {
       status: 200,
       headers: {
         "Content-Type": "application/json",
@@ -510,7 +656,6 @@ const handler = async (req: Request): Promise<Response> => {
       },
     });
   } catch (error: any) {
-    // Top-level catch: log and return 200 so the visitor never sees an error
     console.error("Unhandled error in send-contact-email:", error);
     return new Response(
       JSON.stringify({ success: true }),
