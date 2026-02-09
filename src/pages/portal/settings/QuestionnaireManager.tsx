@@ -1,6 +1,23 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, Plus, ArrowUp, ArrowDown, Pencil, Check, X } from 'lucide-react';
+import { Loader2, Plus, GripVertical, Pencil, Check, X } from 'lucide-react';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -18,6 +35,97 @@ interface Question {
   is_active: boolean;
 }
 
+interface SortableQuestionProps {
+  question: Question;
+  editingId: string | null;
+  editDraft: string;
+  setEditingId: (id: string | null) => void;
+  setEditDraft: (text: string) => void;
+  onSaveEdit: (id: string) => void;
+  onToggleActive: (id: string, active: boolean) => void;
+  t: (sv: string, en: string) => string;
+}
+
+const SortableQuestion: React.FC<SortableQuestionProps> = ({
+  question,
+  editingId,
+  editDraft,
+  setEditingId,
+  setEditDraft,
+  onSaveEdit,
+  onToggleActive,
+  t,
+}) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: question.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`flex items-center gap-3 p-3 rounded-lg border ${!question.is_active ? 'opacity-50' : ''} ${isDragging ? 'opacity-70 shadow-lg bg-muted' : 'bg-card'}`}
+    >
+      <button
+        className="cursor-grab active:cursor-grabbing touch-none text-muted-foreground hover:text-foreground"
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical className="w-5 h-5" />
+      </button>
+
+      <div className="flex-1 min-w-0">
+        {editingId === question.id ? (
+          <div className="flex gap-2">
+            <Input
+              value={editDraft}
+              onChange={e => setEditDraft(e.target.value)}
+              className="text-sm"
+              onKeyDown={e => e.key === 'Enter' && onSaveEdit(question.id)}
+            />
+            <Button size="icon" variant="ghost" onClick={() => onSaveEdit(question.id)}>
+              <Check className="w-4 h-4" />
+            </Button>
+            <Button size="icon" variant="ghost" onClick={() => setEditingId(null)}>
+              <X className="w-4 h-4" />
+            </Button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <span className="text-sm truncate">{question.question_text}</span>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="shrink-0 h-7 w-7"
+              onClick={() => {
+                setEditingId(question.id);
+                setEditDraft(question.question_text);
+              }}
+            >
+              <Pencil className="w-3.5 h-3.5" />
+            </Button>
+          </div>
+        )}
+      </div>
+
+      <Switch
+        checked={question.is_active}
+        onCheckedChange={v => onToggleActive(question.id, v)}
+      />
+    </div>
+  );
+};
+
 const QuestionnaireManager: React.FC = () => {
   const { user, isStaff, loading: authLoading } = useAuth();
   const navigate = useNavigate();
@@ -30,6 +138,11 @@ const QuestionnaireManager: React.FC = () => {
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState('');
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
 
   useEffect(() => {
     if (!authLoading && !user) navigate('/login');
@@ -83,23 +196,24 @@ const QuestionnaireManager: React.FC = () => {
     }
   };
 
-  const handleReorder = async (index: number, direction: 'up' | 'down') => {
-    const swapIndex = direction === 'up' ? index - 1 : index + 1;
-    if (swapIndex < 0 || swapIndex >= questions.length) return;
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
 
-    const updated = [...questions];
-    const tempSort = updated[index].sort_order;
-    updated[index].sort_order = updated[swapIndex].sort_order;
-    updated[swapIndex].sort_order = tempSort;
-    [updated[index], updated[swapIndex]] = [updated[swapIndex], updated[index]];
+    const oldIndex = questions.findIndex(q => q.id === active.id);
+    const newIndex = questions.findIndex(q => q.id === over.id);
+    const reordered = arrayMove(questions, oldIndex, newIndex);
 
+    // Assign new sort_order values based on position
+    const updated = reordered.map((q, idx) => ({ ...q, sort_order: idx }));
     setQuestions(updated);
 
     try {
-      await Promise.all([
-        supabase.from('home_questions').update({ sort_order: updated[index].sort_order }).eq('id', updated[index].id),
-        supabase.from('home_questions').update({ sort_order: updated[swapIndex].sort_order }).eq('id', updated[swapIndex].id),
-      ]);
+      await Promise.all(
+        updated.map(q =>
+          supabase.from('home_questions').update({ sort_order: q.sort_order }).eq('id', q.id)
+        )
+      );
     } catch (err: any) {
       toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
       await fetchQuestions();
@@ -144,39 +258,25 @@ const QuestionnaireManager: React.FC = () => {
             {questions.length === 0 ? (
               <p className="text-muted-foreground text-sm">{t('Inga frågor ännu.', 'No questions yet.')}</p>
             ) : (
-              <div className="space-y-2">
-                {questions.map((q, idx) => (
-                  <div key={q.id} className={`flex items-center gap-3 p-3 rounded-lg border ${!q.is_active ? 'opacity-50' : ''}`}>
-                    <div className="flex flex-col gap-1">
-                      <Button size="icon" variant="ghost" className="h-6 w-6" disabled={idx === 0} onClick={() => handleReorder(idx, 'up')}>
-                        <ArrowUp className="w-3.5 h-3.5" />
-                      </Button>
-                      <Button size="icon" variant="ghost" className="h-6 w-6" disabled={idx === questions.length - 1} onClick={() => handleReorder(idx, 'down')}>
-                        <ArrowDown className="w-3.5 h-3.5" />
-                      </Button>
-                    </div>
-
-                    <div className="flex-1 min-w-0">
-                      {editingId === q.id ? (
-                        <div className="flex gap-2">
-                          <Input value={editDraft} onChange={e => setEditDraft(e.target.value)} className="text-sm" onKeyDown={e => e.key === 'Enter' && handleSaveEdit(q.id)} />
-                          <Button size="icon" variant="ghost" onClick={() => handleSaveEdit(q.id)}><Check className="w-4 h-4" /></Button>
-                          <Button size="icon" variant="ghost" onClick={() => setEditingId(null)}><X className="w-4 h-4" /></Button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm truncate">{q.question_text}</span>
-                          <Button size="icon" variant="ghost" className="shrink-0 h-7 w-7" onClick={() => { setEditingId(q.id); setEditDraft(q.question_text); }}>
-                            <Pencil className="w-3.5 h-3.5" />
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-
-                    <Switch checked={q.is_active} onCheckedChange={v => handleToggleActive(q.id, v)} />
+              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                <SortableContext items={questions.map(q => q.id)} strategy={verticalListSortingStrategy}>
+                  <div className="space-y-2">
+                    {questions.map(q => (
+                      <SortableQuestion
+                        key={q.id}
+                        question={q}
+                        editingId={editingId}
+                        editDraft={editDraft}
+                        setEditingId={setEditingId}
+                        setEditDraft={setEditDraft}
+                        onSaveEdit={handleSaveEdit}
+                        onToggleActive={handleToggleActive}
+                        t={t}
+                      />
+                    ))}
                   </div>
-                ))}
-              </div>
+                </SortableContext>
+              </DndContext>
             )}
           </CardContent>
         </Card>
