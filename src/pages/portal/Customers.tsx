@@ -1,6 +1,8 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, Building2 } from 'lucide-react';
+import { Loader2, Building2, ClipboardList } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -113,6 +115,12 @@ const Customers: React.FC = () => {
       <div className="space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <h1 className="text-3xl font-medium">{t('Kunder', 'Customers')}</h1>
+          <Button variant="outline" asChild>
+            <Link to="/portal/customers/questionnaire">
+              <ClipboardList className="w-4 h-4" />
+              {t('Frågeformulär', 'Questionnaire')}
+            </Link>
+          </Button>
         </div>
 
         {/* Search */}
