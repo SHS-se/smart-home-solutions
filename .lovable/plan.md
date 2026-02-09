@@ -1,115 +1,130 @@
 
 
-# Home Profile Feature
+# Progressive Onboarding Flow
 
 ## Overview
-Add a "Home Profile" concept to the portal: a set of staff-defined questions with plain-text answers per customer, plus installation photos with annotations. Both customers and staff can view/edit.
+Transform the Contact page into the start of a low-friction onboarding funnel. New visitors submit their inquiry (plus optional home-profile questions), receive a magic link email to verify, set a password on first login, and land directly in the Home Profile page -- all without jargon or "account created" messaging.
 
-## Database
+## New Database Table
 
-### Tables
+**home_profile_draft_answers** -- temporarily holds pre-verification answers keyed by email
 
-**home_questions** -- staff-managed question list
-- `id` uuid PK
-- `question_text` text NOT NULL
-- `sort_order` int NOT NULL DEFAULT 0
-- `is_active` boolean NOT NULL DEFAULT true
-- `created_at` timestamptz DEFAULT now()
-
-**home_answers** -- one answer per customer per question
-- `id` uuid PK
-- `customer_id` uuid FK -> customers(id) ON DELETE CASCADE
-- `question_id` uuid FK -> home_questions(id) ON DELETE CASCADE
-- `answer_text` text NOT NULL DEFAULT ''
-- `updated_at` timestamptz DEFAULT now()
-- `updated_by` uuid (auth user id)
-- UNIQUE(customer_id, question_id)
-
-**home_photos** -- installation photos
-- `id` uuid PK
-- `customer_id` uuid FK -> customers(id) ON DELETE CASCADE
-- `storage_path` text NOT NULL
-- `annotation_text` text DEFAULT ''
-- `uploaded_at` timestamptz DEFAULT now()
-- `uploaded_by` uuid
-- `visible_to_customer` boolean DEFAULT true
-
-### Storage
-- New bucket `home-photos` (private)
-- Path pattern: `customers/{customer_id}/{photo_id}.ext`
-- RLS: staff can access all; customers can access their own (where visible_to_customer = true)
-
-### RLS Policies
-- **home_questions**: SELECT for authenticated users; INSERT/UPDATE/DELETE for staff only
-- **home_answers**: SELECT/INSERT/UPDATE for staff + owning customer; DELETE for staff
-- **home_photos**: SELECT for staff + owning customer (with visibility check); INSERT/UPDATE/DELETE for staff + owning customer; staff can toggle visibility
-
-## Routes
-
-| Route | Component | Who |
+| Column | Type | Notes |
 |---|---|---|
-| `/portal/home-profile` | CustomerHomeProfile | Customer |
-| `/portal/customers/questionnaire` | QuestionnaireManager | Staff |
-| `/portal/customers/:customerId/home-profile` | CustomerViewHomeProfile | Staff (customer view) |
+| id | uuid PK | gen_random_uuid() |
+| email | text NOT NULL | Normalized email (not unique) |
+| question_id | uuid NOT NULL FK → home_questions.id | links directly to real question
+| answer_text| text NOT NULL | plain text answer
+| created_at | timestamptz DEFAULT now() | |
 
-## UI Components
+- UNIQUE constraint on `email`, `question_id`
+- RLS: no public access. Only the edge function (service role) reads/writes this table. Staff can SELECT for diagnostics.
 
-### 1. Customer Dashboard Card (Dashboard.tsx)
-Add a "Home Profile" card in the customer dashboard grid (between Account and Billing). The entire card is clickable and navigates to `/portal/home-profile`. Shows:
-- Title with Home icon
-- Description text
-- "Questions answered: X / Y"
-- "Photos uploaded: N"
-- No button -- whole card is the click target
+## New / Modified Edge Functions
 
-### 2. Staff Customer View Card (CustomerViewDashboard.tsx)
-Add a "Home Profile" card in the staff customer view grid. Clickable, navigates to `/portal/customers/:customerId/home-profile`. Same stats.
+### 1. `send-contact-email` (modify)
+Add to the existing handler:
+- Accept optional array from the request body: [{ question_id, answer_text }] and upsert directly into home_profile_draft_answers.
+- After successfully inserting the contact (success path), check if the email exists in `auth.users` using service role
+- **If email already exists**: do nothing extra (existing user, normal success message)
+- **If email is new**:
+  - Save draft answers to `home_profile_draft_answers` (upsert by email)
+  - Generate a magic link using `supabase.auth.admin.generateLink({ type: 'magiclink', email, options: { redirectTo: appUrl + '/onboarding/set-password' } })`
+  - Send a branded email via Resend with the magic link, using soft onboarding copy (no "account created" language)
+  - Return `{ success: true, onboarding: true }` so the frontend knows to show the onboarding prompt
+- For duplicate contacts: also check if email is in auth.users. If not, still offer onboarding (they submitted before but never verified)
 
-### 3. Customer Home Profile Page (`/portal/home-profile`)
-Two stacked cards:
+### 2. `migrate-draft-profile` (new edge function)
+Called after a user sets their password (authenticated request):
+Behavior:
+- Require authenticated user (JWT verified)
+- Get auth.user.email
+- Fetch all rows from home_profile_draft_answers where email = user.email
+- Look up or create the customers row linked to this user
+- For each draft row:
+  - Upsert into home_answers using:
+(customer_id, question_id, answer_text)
+- Delete all draft rows for that email
+- Return success
 
-**Card 1 -- Your Home & Devices**
-- Lists all active questions ordered by sort_order
-- Each question: label + textarea for the answer
-- "Save answers" button at the bottom
-- Upserts into home_answers
+There is no mapping by text or keys. Draft answers already belong to real questions.
 
-**Card 2 -- Installation Photos**
-- "Upload photo" button in card header
-- 3-column grid of photo cards
-- Each card: thumbnail (signed URL), annotation text, upload date, edit (pencil) icon for annotation
-- Upload flow: file picker -> upload to storage -> insert home_photos row
+## New Pages
 
-### 4. Staff Question Manager (`/portal/customers/questionnaire`)
-- List of all questions with drag-to-reorder or up/down arrows
-- Each row: question text (editable inline or via modal), active/inactive toggle
-- "Add question" button
-- Staff-only page (redirect non-staff)
+### `/onboarding/set-password` (new page)
+Simple centered card (similar to ResetPassword.tsx):
+- Title: "Valj ett losenord for ditt konto" / "Choose a password for your account"
+- Two fields: Password, Confirm password
+- On submit: `supabase.auth.updateUser({ password })`
+- Then call `migrate-draft-profile` edge function
+- Then redirect to `/portal/home-profile`
+- Detects: user arrived via magic link (has session but is onboarding). Uses a flag in URL or session metadata.
+- No "account created" language -- framed as "save your progress"
 
-### 5. Staff Customer View Home Profile (`/portal/customers/:customerId/home-profile`)
-Same layout as customer page but:
-- Staff can edit answers
-- Staff can toggle `visible_to_customer` per photo
-- Wrapped in CustomerViewLayout with back navigation
+## Contact Page Changes
+
+### Qustionnaire modifications
+Make this modifications to questions here /portal/customers/questionnaire 
+- Add a question "type" toggle which can be "boolean" or "text". 
+  - boolean should make the answer appear as a checkbox
+  - text should allow free form text (safely validate to prevent sql injection)
+- Add a toggle to "display on contact form".
+- Add column titles so that the "show/hide" toggle and new "display on contact form" can be differentiated.
+
+### Form additions
+Add a collapsible/visible section below the message field:
+- Heading: "Hjalp oss forsta ditt hem (valfritt)" / "Help us understand your home (optional)"
+- When rendering the optional “Help us understand your home” section:
+  - Fetch questions from home_questions
+  - where display_on_contact_form = true AND is_active = true
+  - Before inserting draft answers, validate that avoiding SQL injection means only accepting question_id values that exist in home_questions where display_on_contact_form = true and is_active = true.
+  - ordered by sort_order
+- On submit, send: [{ question_id, answer_text }]
+The send-contact-email edge function must upsert these directly into home_profile_draft_answers.
+
+### Post-submit behavior
+- If response includes `onboarding: true`: show a different success screen:
+  - "Vill du spara tid? Kolla din e-post for att fylla i din hemprofil." / "Want to save time? Check your email to fill in your home profile."
+  - Soft, encouraging copy -- no auth jargon
+- If response does not include `onboarding` (existing user or duplicate): show normal "Tack for ditt meddelande!" message as today
+
+## Auth Callback Handling
+Update `AuthCallbackHandler` in App.tsx to handle magic link tokens:
+- When `type=magiclink` is detected in hash params, redirect to `/onboarding/set-password`
+
+## Route Additions
+- `/onboarding/set-password` -- new SetPassword page
+
+## Home Profile Banner
+Add a conditional banner at the top of `HomeProfile.tsx`:
+- Shown when the user has very few answers filled in (e.g. less than 2)
+- Text: "Tack! Om du fyller i hemprofilen och lagger till bilder kan vi hjalpa dig mycket snabbare." / "Thanks! Filling in your home profile and adding photos helps us help you much faster."
+- Dismissable (stored in localStorage)
+
+## Security Rules
+- **Before magic link verification**: no photo uploads, no home profile access, only minimal draft data stored server-side via service role
+- **After verification + password set**: full authenticated access via existing RLS policies
+- Draft data is email-keyed and only accessible by the edge function (service role); never exposed to the client
+- Honeypot field remains active on the contact form
+- Rate limiting remains active
 
 ## Files to Create/Modify
 
 | File | Action |
 |---|---|
-| `supabase/migrations/...` | New migration: 3 tables + bucket + RLS |
-| `src/pages/portal/HomeProfile.tsx` | New: customer home profile page |
-| `src/pages/portal/customer-view/CustomerViewHomeProfile.tsx` | New: staff view of customer home profile |
-| `src/pages/portal/settings/QuestionnaireManager.tsx` | New: staff question management |
-| `src/pages/portal/Dashboard.tsx` | Add Home Profile card to customer grid + fetch stats |
-| `src/pages/portal/customer-view/CustomerViewDashboard.tsx` | Add Home Profile card + fetch stats |
-| `src/App.tsx` | Add 3 new routes |
+| Migration SQL | New: `home_profile_draft_answers` table + RLS |
+| `supabase/functions/send-contact-email/index.ts` | Modify: add draft save + magic link for new emails |
+| `supabase/functions/migrate-draft-profile/index.ts` | New: migrate drafts to real answers on first login |
+| `src/pages/Contact.tsx` | Modify: add optional home fields + onboarding success screen |
+| `src/pages/onboarding/SetPassword.tsx` | New: password setup page for onboarding |
+| `src/pages/portal/HomeProfile.tsx` | Modify: add welcome banner for new users |
+| `src/App.tsx` | Modify: add route + update AuthCallbackHandler for magiclink type |
+| `supabase/config.toml` | Modify: add `[functions.migrate-draft-profile]` (JWT verified, default) |
 
-## Technical Details
-
-- Photos use signed URLs via `supabase.storage.from('home-photos').createSignedUrl(path, 3600)`
-- Answer save uses upsert with `onConflict: 'customer_id,question_id'`
-- Question reordering updates `sort_order` for affected rows
-- The `updated_at` trigger on home_answers uses the existing `update_simple_updated_at` function
-- Stats queries for the dashboard cards: count active questions, count answers for the customer, count photos for the customer
-- All text is bilingual using the existing `t()` pattern
+## Technical Notes
+- Magic links use `supabase.auth.admin.generateLink({ type: 'magiclink' })` on the server side, which creates an auth user automatically if one doesn't exist (with email confirmed)
+- The `send-contact-email` function already uses service role, so it can check auth.users and generate links
+- The existing `AuthContext` auto-link logic (matching customer by email) will handle linking the new auth user to the customer record that staff creates later -- or the `migrate-draft-profile` function can create a customer record proactively
+list, the migration function will skip them gracefully
+- No changes to existing user flows -- existing customers with accounts see no difference
 
