@@ -52,14 +52,9 @@ serve(async (req: Request) => {
       });
     }
 
-    if (!drafts || drafts.length === 0) {
-      return new Response(JSON.stringify({ success: true, migrated: 0 }), {
-        status: 200,
-        headers: { "Content-Type": "application/json", ...corsHeaders },
-      });
-    }
+    const hasDrafts = drafts && drafts.length > 0;
 
-    // Look up or create customer linked to this user
+    // Look up or create customer linked to this user (always, even without drafts)
     let customerId: string | null = null;
 
     // Check if customer already linked by user_id
@@ -119,39 +114,42 @@ serve(async (req: Request) => {
       }
     }
 
-    // Upsert draft answers into home_answers
-    const upserts = drafts.map(d => ({
-      customer_id: customerId!,
-      question_id: d.question_id,
-      answer_text: d.answer_text,
-      updated_by: user.id,
-    }));
+    // Upsert draft answers into home_answers (only if there are drafts)
+    if (hasDrafts) {
+      const upserts = drafts.map(d => ({
+        customer_id: customerId!,
+        question_id: d.question_id,
+        answer_text: d.answer_text,
+        updated_by: user.id,
+      }));
 
-    const { error: upsertError } = await supabase
-      .from("home_answers")
-      .upsert(upserts, { onConflict: "customer_id,question_id" });
+      const { error: upsertError } = await supabase
+        .from("home_answers")
+        .upsert(upserts, { onConflict: "customer_id,question_id" });
 
-    if (upsertError) {
-      console.error("Error upserting answers:", upsertError);
-      return new Response(JSON.stringify({ error: "Failed to migrate answers" }), {
-        status: 500,
-        headers: { "Content-Type": "application/json", ...corsHeaders },
-      });
+      if (upsertError) {
+        console.error("Error upserting answers:", upsertError);
+        return new Response(JSON.stringify({ error: "Failed to migrate answers" }), {
+          status: 500,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      // Delete draft rows
+      const { error: deleteError } = await supabase
+        .from("home_profile_draft_answers")
+        .delete()
+        .eq("email", email);
+
+      if (deleteError) {
+        console.error("Error deleting drafts:", deleteError);
+      }
     }
 
-    // Delete draft rows
-    const { error: deleteError } = await supabase
-      .from("home_profile_draft_answers")
-      .delete()
-      .eq("email", email);
+    const migratedCount = hasDrafts ? drafts.length : 0;
+    console.log(`Migrated ${migratedCount} draft answers for ${email} to customer ${customerId}`);
 
-    if (deleteError) {
-      console.error("Error deleting drafts:", deleteError);
-    }
-
-    console.log(`Migrated ${drafts.length} draft answers for ${email} to customer ${customerId}`);
-
-    return new Response(JSON.stringify({ success: true, migrated: drafts.length }), {
+    return new Response(JSON.stringify({ success: true, migrated: migratedCount }), {
       status: 200,
       headers: { "Content-Type": "application/json", ...corsHeaders },
     });
