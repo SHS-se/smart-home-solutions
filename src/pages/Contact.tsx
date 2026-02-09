@@ -58,16 +58,33 @@ const Contact = () => {
         body: formData
       });
       
-      if (error) throw error;
+      // Only show error for rate-limiting (429). All other responses
+      // (including edge-function errors) are treated as success so the
+      // visitor is never shown a scary error for contact submissions.
+      if (error) {
+        const is429 = error.message?.includes('429') ||
+          (error as any)?.status === 429 ||
+          error.message?.includes('Too many requests');
+        if (is429) {
+          toast({
+            title: t('För många förfrågningar', 'Too many requests'),
+            description: t('Vänta en stund och försök igen.', 'Please wait a moment and try again.'),
+            variant: 'destructive'
+          });
+          setIsLoading(false);
+          return;
+        }
+        // Non-429 error: treat as success (the edge function already
+        // notified sales about the issue).
+        console.warn('Contact form edge-function returned error (treated as success):', error.message);
+      }
       
       setSubmitted(true);
     } catch (error: any) {
-      console.error('Error sending email:', error);
-      toast({
-        title: t('Fel', 'Error'),
-        description: t('Det gick inte att skicka meddelandet. Försök igen senare.', 'Failed to send message. Please try again later.'),
-        variant: 'destructive'
-      });
+      // Network failures etc. — still show success to the visitor.
+      // The edge function may or may not have processed the request.
+      console.error('Contact form submission error (treated as success):', error);
+      setSubmitted(true);
     } finally {
       setIsLoading(false);
     }
