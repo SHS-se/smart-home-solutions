@@ -14,3 +14,6 @@ verify_jwt = false
 
 [functions.customer-quote-action]
 verify_jwt = false
+
+[functions.migrate-draft-profile]
+verify_jwt = false

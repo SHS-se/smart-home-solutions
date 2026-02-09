@@ -1,11 +1,12 @@
-import { useState } from 'react';
-import { MapPin, Mail, Phone, Send, CheckCircle, Loader2 } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { MapPin, Mail, Phone, Send, CheckCircle, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import Layout from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 import { z } from 'zod';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -16,15 +17,24 @@ const contactSchema = z.object({
   email: z.string().trim().email("Invalid email address").max(255, "Email must be less than 255 characters"),
   phone: z.string().trim().min(1, "Phone is required").max(20, "Phone must be less than 20 characters"),
   message: z.string().trim().min(10, "Message must be at least 10 characters").max(5000, "Message must be less than 5000 characters"),
-  website: z.string().max(0, "").optional() // Honeypot field - should always be empty
+  website: z.string().max(0, "").optional()
 });
 
 type ContactFormData = z.infer<typeof contactSchema>;
+
+interface HomeQuestion {
+  id: string;
+  question_text: string;
+  question_text_en: string;
+  question_type: string;
+  sort_order: number;
+}
 
 const Contact = () => {
   const { t } = useLanguage();
   const { toast } = useToast();
   const [submitted, setSubmitted] = useState(false);
+  const [onboarding, setOnboarding] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<keyof ContactFormData, string>>>({});
   const [formData, setFormData] = useState({
@@ -32,14 +42,33 @@ const Contact = () => {
     email: '',
     phone: '',
     message: '',
-    website: '' // Honeypot field
+    website: ''
   });
+
+  // Home questions
+  const [homeQuestions, setHomeQuestions] = useState<HomeQuestion[]>([]);
+  const [homeAnswers, setHomeAnswers] = useState<Record<string, string>>({});
+  const [showHomeSection, setShowHomeSection] = useState(true);
+
+  useEffect(() => {
+    const fetchQuestions = async () => {
+      const { data } = await supabase
+        .from('home_questions')
+        .select('id, question_text, question_text_en, question_type, sort_order')
+        .eq('is_active', true)
+        .eq('display_on_contact_form', true)
+        .order('sort_order');
+      if (data) setHomeQuestions(data as HomeQuestion[]);
+    };
+    fetchQuestions();
+  }, []);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrors({});
-    
+
     const result = contactSchema.safeParse(formData);
-    
+
     if (!result.success) {
       const fieldErrors: Partial<Record<keyof ContactFormData, string>> = {};
       result.error.errors.forEach((err) => {
@@ -50,17 +79,25 @@ const Contact = () => {
       setErrors(fieldErrors);
       return;
     }
-    
+
     setIsLoading(true);
-    
+
     try {
-      const { error } = await supabase.functions.invoke('send-contact-email', {
-        body: formData
+      // Build draft_answers array from answered questions
+      const draftAnswers = homeQuestions
+        .filter(q => homeAnswers[q.id] && homeAnswers[q.id].trim() !== '')
+        .map(q => ({
+          question_id: q.id,
+          answer_text: homeAnswers[q.id].trim(),
+        }));
+
+      const { data, error } = await supabase.functions.invoke('send-contact-email', {
+        body: {
+          ...formData,
+          draft_answers: draftAnswers.length > 0 ? draftAnswers : undefined,
+        }
       });
-      
-      // Only show error for rate-limiting (429). All other responses
-      // (including edge-function errors) are treated as success so the
-      // visitor is never shown a scary error for contact submissions.
+
       if (error) {
         const is429 = error.message?.includes('429') ||
           (error as any)?.status === 429 ||
@@ -74,15 +111,12 @@ const Contact = () => {
           setIsLoading(false);
           return;
         }
-        // Non-429 error: treat as success (the edge function already
-        // notified sales about the issue).
         console.warn('Contact form edge-function returned error (treated as success):', error.message);
       }
-      
+
+      setOnboarding(data?.onboarding === true);
       setSubmitted(true);
     } catch (error: any) {
-      // Network failures etc. — still show success to the visitor.
-      // The edge function may or may not have processed the request.
       console.error('Contact form submission error (treated as success):', error);
       setSubmitted(true);
     } finally {
@@ -96,11 +130,11 @@ const Contact = () => {
       ...prev,
       [name]: value
     }));
-    // Clear error when user starts typing
     if (errors[name as keyof ContactFormData]) {
       setErrors(prev => ({ ...prev, [name]: undefined }));
     }
   };
+
   return <Layout>
       {/* Hero */}
       <section className="py-16 md:py-24 hero-gradient">
@@ -118,17 +152,38 @@ const Contact = () => {
           <div className="grid lg:grid-cols-2 gap-12">
             {/* Form */}
             <div className="bg-card rounded-2xl p-8 border border-border">
-              {submitted ? <div className="text-center py-12">
+              {submitted ? (
+                <div className="text-center py-12">
                   <div className="w-16 h-16 rounded-full bg-energy/30 flex items-center justify-center mx-auto mb-6">
                     <CheckCircle className="w-8 h-8 text-energy-darker" />
                   </div>
-                  <h2 className="text-2xl font-medium text-foreground mb-4">
-                    {t('Tack för ditt meddelande!', 'Thank you for your message!')}
-                  </h2>
-                  <p className="text-muted-foreground">
-                    {t('Vi återkommer inom 24 timmar med mer information.', "We'll get back to you within 24 hours with more information.")}
-                  </p>
-                </div> : <>
+                  {onboarding ? (
+                    <>
+                      <h2 className="text-2xl font-medium text-foreground mb-4">
+                        {t('Vill du spara tid?', 'Want to save time?')}
+                      </h2>
+                      <p className="text-muted-foreground mb-2">
+                        {t(
+                          'Kolla din e-post för att fylla i din hemprofil och ladda upp bilder. Det hjälper oss hjälpa dig snabbare.',
+                          'Check your email to fill in your home profile and upload photos. It helps us help you faster.'
+                        )}
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        {t('Vi återkommer också inom 24 timmar.', "We'll also get back to you within 24 hours.")}
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <h2 className="text-2xl font-medium text-foreground mb-4">
+                        {t('Tack för ditt meddelande!', 'Thank you for your message!')}
+                      </h2>
+                      <p className="text-muted-foreground">
+                        {t('Vi återkommer inom 24 timmar med mer information.', "We'll get back to you within 24 hours with more information.")}
+                      </p>
+                    </>
+                  )}
+                </div>
+              ) : <>
                   <h2 className="text-2xl font-medium text-foreground mb-6">
                     {t('Skicka ett meddelande', 'Send a Message')}
                   </h2>
@@ -190,6 +245,70 @@ const Contact = () => {
                       />
                       {errors.message && <p className="text-xs text-destructive">{errors.message}</p>}
                     </div>
+
+                    {/* Optional home questions */}
+                    {homeQuestions.length > 0 && (
+                      <div className="border border-border rounded-lg overflow-hidden">
+                        <button
+                          type="button"
+                          className="w-full flex items-center justify-between p-4 text-left hover:bg-muted/50 transition-colors"
+                          onClick={() => setShowHomeSection(!showHomeSection)}
+                        >
+                          <span className="text-sm font-medium text-foreground">
+                            {t('Hjälp oss förstå ditt hem (valfritt)', 'Help us understand your home (optional)')}
+                          </span>
+                          {showHomeSection ? (
+                            <ChevronUp className="w-4 h-4 text-muted-foreground" />
+                          ) : (
+                            <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                          )}
+                        </button>
+                        {showHomeSection && (
+                          <div className="p-4 pt-0 space-y-4">
+                            {homeQuestions.map(q => (
+                              <div key={q.id} className="space-y-1">
+                                {q.question_type === 'boolean' ? (
+                                  <div className="flex items-center gap-3">
+                                    <Checkbox
+                                      id={`hq-${q.id}`}
+                                      checked={homeAnswers[q.id] === 'yes'}
+                                      onCheckedChange={(checked) =>
+                                        setHomeAnswers(prev => ({
+                                          ...prev,
+                                          [q.id]: checked ? 'yes' : '',
+                                        }))
+                                      }
+                                    />
+                                    <Label htmlFor={`hq-${q.id}`} className="text-sm cursor-pointer">
+                                      {t(q.question_text, q.question_text_en || q.question_text)}
+                                    </Label>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <Label htmlFor={`hq-${q.id}`} className="text-sm">
+                                      {t(q.question_text, q.question_text_en || q.question_text)}
+                                    </Label>
+                                    <Input
+                                      id={`hq-${q.id}`}
+                                      value={homeAnswers[q.id] || ''}
+                                      onChange={e =>
+                                        setHomeAnswers(prev => ({
+                                          ...prev,
+                                          [q.id]: e.target.value,
+                                        }))
+                                      }
+                                      maxLength={500}
+                                      placeholder={t('Ditt svar...', 'Your answer...')}
+                                    />
+                                  </>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {/* Honeypot field - hidden from users, catches bots */}
                     <div className="hidden" aria-hidden="true">
                       <Label htmlFor="website">Website</Label>

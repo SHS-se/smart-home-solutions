@@ -50,6 +50,7 @@ import InvoiceDraftEditor from "./pages/portal/invoices/InvoiceDraftEditor";
 import InvoiceDetail from "./pages/portal/invoices/InvoiceDetail";
 import PublicQuotePage from "./pages/portal/PublicQuotePage";
 import HomeProfile from "./pages/portal/HomeProfile";
+import SetPassword from "./pages/onboarding/SetPassword";
 
 // Staff customer view pages
 import CustomerViewDashboard from "./pages/portal/customer-view/CustomerViewDashboard";
@@ -82,6 +83,12 @@ const AuthCallbackHandler = () => {
     // If this is a recovery link, redirect to reset-password page
     if (type === 'recovery' && accessToken) {
       navigate('/reset-password' + window.location.hash, { replace: true });
+      return;
+    }
+
+    // If this is a magic link (onboarding), redirect to set-password page
+    if (type === 'magiclink' && accessToken) {
+      navigate('/onboarding/set-password' + window.location.hash, { replace: true });
       return;
     }
 
@@ -120,6 +127,7 @@ const App = () => (
                 {/* Customer Portal */}
                 <Route path="/login" element={<Login />} />
                 <Route path="/reset-password" element={<ResetPassword />} />
+                <Route path="/onboarding/set-password" element={<SetPassword />} />
                 <Route path="/portal" element={<Dashboard />} />
                 <Route path="/portal/account" element={<Account />} />
                 <Route path="/portal/offers" element={<Offers />} />
