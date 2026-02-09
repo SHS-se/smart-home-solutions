@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useAuth } from '@/contexts/AuthContext';
 import LanguageToggle from '@/components/LanguageToggle';
 
 const SetPassword: React.FC = () => {
@@ -19,6 +20,7 @@ const SetPassword: React.FC = () => {
   const { toast } = useToast();
   const navigate = useNavigate();
   const { t } = useLanguage();
+  const { refreshUserData } = useAuth();
 
   useEffect(() => {
     const checkSession = async () => {
@@ -62,12 +64,15 @@ const SetPassword: React.FC = () => {
       const { error } = await supabase.auth.updateUser({ password });
       if (error) throw error;
 
-      // Migrate draft profile answers
+      // Migrate draft profile answers and refresh auth context
       try {
         await supabase.functions.invoke('migrate-draft-profile');
       } catch (migrationErr) {
         console.warn('Draft profile migration failed (may be empty):', migrationErr);
       }
+
+      // Refresh auth context so customerData is available before navigating
+      await refreshUserData();
 
       toast({
         title: t('Lösenord sparat!', 'Password saved!'),
