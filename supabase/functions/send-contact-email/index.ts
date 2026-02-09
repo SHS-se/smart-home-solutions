@@ -33,6 +33,14 @@ function escapeHtml(unsafe: string): string {
     .replace(/'/g, "&#039;");
 }
 
+function getAppUrl(): string {
+  const env = Deno.env.get("APP_ENV");
+  if (env === "live") {
+    return "https://smarthomesolutions.lovable.app";
+  }
+  return "https://id-preview--f333950d-a4c9-4f4e-b82f-25cfcd289f20.lovable.app";
+}
+
 function getClientIP(req: Request): string {
   return req.headers.get('x-forwarded-for')?.split(',')[0].trim()
     || req.headers.get('x-real-ip')
@@ -516,7 +524,7 @@ const handler = async (req: Request): Promise<Response> => {
       // For duplicates: still try onboarding if user doesn't exist in auth
       let onboardingSent = false;
       if (resendApiKey) {
-        onboardingSent = await handleOnboarding(supabase, resendApiKey, emailNormalized, trimmedName, supabaseUrl.replace('.supabase.co', '').includes('http') ? 'https://smarthomesolutions.lovable.app' : 'https://smarthomesolutions.lovable.app');
+        onboardingSent = await handleOnboarding(supabase, resendApiKey, emailNormalized, trimmedName, getAppUrl());
       }
 
       return new Response(JSON.stringify({ success: true, onboarding: onboardingSent }), {
@@ -643,8 +651,7 @@ const handler = async (req: Request): Promise<Response> => {
     // ---- Onboarding: check if new user and send magic link ----
     let onboardingSent = false;
     if (resendApiKey) {
-      const appUrl = 'https://smarthomesolutions.lovable.app';
-      onboardingSent = await handleOnboarding(supabase, resendApiKey, emailNormalized, trimmedName, appUrl);
+      onboardingSent = await handleOnboarding(supabase, resendApiKey, emailNormalized, trimmedName, getAppUrl());
     }
 
     return new Response(JSON.stringify({ success: true, onboarding: onboardingSent }), {
