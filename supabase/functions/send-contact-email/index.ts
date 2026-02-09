@@ -165,25 +165,25 @@ function buildDuplicateEmailHtml(
   const ts = new Date().toISOString();
   const safeName = escapeHtml(submitted.name);
   const safeEmail = escapeHtml(submitted.email);
-  const safePhone = escapeHtml(submitted.phone || 'Ej angiven');
+  const safePhone = escapeHtml(submitted.phone || 'Not provided');
   const safeMessage = escapeHtml(submitted.message).replace(/\n/g, '<br>');
 
   return `
-    <h2>Kontaktformulär: dubblett upptäckt</h2>
-    <p>Någon har skickat in kontaktformuläret med en e-post som redan finns i systemet.</p>
+    <h2>Contact form: duplicate detected</h2>
+    <p>Someone submitted the contact form with an email that already exists in the system.</p>
     <hr />
-    <h3>Inskickade uppgifter</h3>
-    <p><strong>Namn:</strong> ${safeName}</p>
-    <p><strong>E-post:</strong> ${safeEmail}</p>
-    <p><strong>Telefon:</strong> ${safePhone}</p>
-    <h3>Meddelande:</h3>
+    <h3>Submitted details</h3>
+    <p><strong>Name:</strong> ${safeName}</p>
+    <p><strong>Email:</strong> ${safeEmail}</p>
+    <p><strong>Phone:</strong> ${safePhone}</p>
+    <h3>Message:</h3>
     <p>${safeMessage}</p>
     <hr />
-    <h3>Matchad post</h3>
-    <p><strong>Befintlig kontakt-ID:</strong> ${escapeHtml(existingContactId)}</p>
-    <p><strong>Redan kund:</strong> ${isCustomer ? `Ja (kund-ID: ${escapeHtml(customerId || 'okänt')})` : 'Nej'}</p>
+    <h3>Matched record</h3>
+    <p><strong>Existing contact ID:</strong> ${escapeHtml(existingContactId)}</p>
+    <p><strong>Already a customer:</strong> ${isCustomer ? `Yes (customer ID: ${escapeHtml(customerId || 'unknown')})` : 'No'}</p>
     <hr />
-    <p><em>Tidpunkt: ${ts}</em></p>
+    <p><em>Timestamp: ${ts}</em></p>
   `;
 }
 
@@ -194,24 +194,24 @@ function buildSaveFailedEmailHtml(
   const ts = new Date().toISOString();
   const safeName = escapeHtml(submitted.name);
   const safeEmail = escapeHtml(submitted.email);
-  const safePhone = escapeHtml(submitted.phone || 'Ej angiven');
+  const safePhone = escapeHtml(submitted.phone || 'Not provided');
   const safeMessage = escapeHtml(submitted.message).replace(/\n/g, '<br>');
 
   return `
-    <h2>Kontaktformulär: sparning misslyckades</h2>
-    <p>Kontaktformuläret kunde inte sparas i databasen. Uppgifterna finns nedan så att ärendet kan hanteras manuellt.</p>
+    <h2>Contact form: save failed</h2>
+    <p>The contact form submission could not be saved to the database. Details are included below for manual handling.</p>
     <hr />
-    <h3>Inskickade uppgifter</h3>
-    <p><strong>Namn:</strong> ${safeName}</p>
-    <p><strong>E-post:</strong> ${safeEmail}</p>
-    <p><strong>Telefon:</strong> ${safePhone}</p>
-    <h3>Meddelande:</h3>
+    <h3>Submitted details</h3>
+    <p><strong>Name:</strong> ${safeName}</p>
+    <p><strong>Email:</strong> ${safeEmail}</p>
+    <p><strong>Phone:</strong> ${safePhone}</p>
+    <h3>Message:</h3>
     <p>${safeMessage}</p>
     <hr />
-    <h3>Feldetaljer</h3>
+    <h3>Error details</h3>
     <pre>${escapeHtml(JSON.stringify(errorDetails, null, 2))}</pre>
     <hr />
-    <p><em>Tidpunkt: ${ts}</em></p>
+    <p><em>Timestamp: ${ts}</em></p>
   `;
 }
 
@@ -368,7 +368,7 @@ const handler = async (req: Request): Promise<Response> => {
         await sendSalesEmail(
           resendApiKey,
           toAddress,
-          `Kontaktformulär: dubblett upptäckt (${escapeHtml(trimmedEmail)})`,
+          `Contact form: duplicate detected (${escapeHtml(trimmedEmail)})`,
           buildDuplicateEmailHtml(
             { name: trimmedName, email: trimmedEmail, phone: trimmedPhone || undefined, message: trimmedMessage },
             existingContact?.id || 'okänt',
@@ -408,7 +408,7 @@ const handler = async (req: Request): Promise<Response> => {
         await sendSalesEmail(
           resendApiKey,
           toAddress,
-          'Kontaktformulär: sparning misslyckades',
+          'Contact form: save failed',
           buildSaveFailedEmailHtml(
             { name: trimmedName, email: trimmedEmail, phone: trimmedPhone || undefined, message: trimmedMessage },
             errorDetails
@@ -458,16 +458,16 @@ const handler = async (req: Request): Promise<Response> => {
     if (resendApiKey) {
       const safeName = escapeHtml(trimmedName);
       const safeEmail = escapeHtml(trimmedEmail);
-      const safePhone = escapeHtml(trimmedPhone || "Ej angiven");
+      const safePhone = escapeHtml(trimmedPhone || "Not provided");
       const safeMessage = escapeHtml(trimmedMessage).replace(/\n/g, "<br>");
 
       const htmlBody = `
-        <h2>Nytt meddelande från kontaktformuläret</h2>
-        <p><strong>Namn:</strong> ${safeName}</p>
-        <p><strong>E-post:</strong> ${safeEmail}</p>
-        <p><strong>Telefon:</strong> ${safePhone}</p>
+        <h2>New message from the contact form</h2>
+        <p><strong>Name:</strong> ${safeName}</p>
+        <p><strong>Email:</strong> ${safeEmail}</p>
+        <p><strong>Phone:</strong> ${safePhone}</p>
         <hr />
-        <h3>Meddelande:</h3>
+        <h3>Message:</h3>
         <p>${safeMessage}</p>
       `;
 
@@ -484,7 +484,7 @@ const handler = async (req: Request): Promise<Response> => {
             from: "Smart Home Solutions <replyonly@mail.smarthomesolutions.se>",
             to: [toAddress],
             reply_to: replyToAddress,
-            subject: `Kontaktförfrågan: ${safeName}`,
+            subject: `Contact form inquiry: ${safeName}`,
             html: htmlBody,
           }),
         });
