@@ -1,0 +1,1 @@
+ALTER TABLE public.home_questions ADD COLUMN question_text_en text NOT NULL DEFAULT '';

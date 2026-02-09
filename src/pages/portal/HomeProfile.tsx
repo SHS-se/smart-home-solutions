@@ -14,6 +14,7 @@ import { supabase } from '@/integrations/supabase/client';
 interface Question {
   id: string;
   question_text: string;
+  question_text_en: string;
   sort_order: number;
 }
 
@@ -57,7 +58,7 @@ const HomeProfile: React.FC = () => {
       setLoadingData(true);
       try {
         const [qRes, aRes, pRes] = await Promise.all([
-          supabase.from('home_questions').select('id, question_text, sort_order').eq('is_active', true).order('sort_order'),
+          supabase.from('home_questions').select('id, question_text, question_text_en, sort_order').eq('is_active', true).order('sort_order'),
           supabase.from('home_answers').select('question_id, answer_text').eq('customer_id', customerData.id),
           supabase.from('home_photos').select('id, storage_path, annotation_text, uploaded_at').eq('customer_id', customerData.id).order('uploaded_at', { ascending: false }),
         ]);
@@ -179,7 +180,7 @@ const HomeProfile: React.FC = () => {
             ) : (
               questions.map(q => (
                 <div key={q.id} className="space-y-2">
-                  <label className="text-sm font-medium">{q.question_text}</label>
+                  <label className="text-sm font-medium">{t(q.question_text, q.question_text_en || q.question_text)}</label>
                   <Textarea
                     value={answers[q.id] || ''}
                     onChange={e => setAnswers(prev => ({ ...prev, [q.id]: e.target.value }))}
