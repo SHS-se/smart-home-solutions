@@ -226,6 +226,12 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
           <CardTitle>{t('Installationsfoton', 'Installation Photos')}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            {t(
+              'För bäst resultat, ladda upp originalfotot. Vi formaterar om det för bästa visning. För foton som innehåller text, se till att de är tagna på nära håll, är i fokus och väl belysta. Undvik skärmdumpar eller bilder skickade via meddelandeappar, eftersom de försämrar kvaliteten.',
+              'For best results, upload the original photo. We will reformat it for best viewing. For photos that contain text, make sure they are taken up close, are in focus and well lit. Avoid screenshots or images sent through messaging apps, as they reduce quality.'
+            )}
+          </p>
           <PhotoUploadZone onFileProcessed={handleFileProcessed} />
 
           {photos.length > 0 && (
