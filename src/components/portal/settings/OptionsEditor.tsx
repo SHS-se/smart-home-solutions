@@ -83,14 +83,8 @@ const OptionsEditor: React.FC<OptionsEditorProps> = ({ questionId, options, onCh
       </Label>
 
       {options.sort((a, b) => a.order_index - b.order_index).map(opt => (
-        <div key={opt.id} className="flex items-center gap-2">
+      <div key={opt.id} className="flex items-center gap-2">
           <GripVertical className="w-4 h-4 text-muted-foreground shrink-0" />
-          <Input
-            value={opt.value}
-            onChange={e => handleUpdate(opt.id, 'value', e.target.value)}
-            className="w-24 text-xs"
-            placeholder="value"
-          />
           <Input
             value={opt.label_sv}
             onChange={e => handleUpdate(opt.id, 'label_sv', e.target.value)}
