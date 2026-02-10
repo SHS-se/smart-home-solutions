@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Home, Loader2, Save, Upload, Pencil, Camera, X, Check, Eye, EyeOff } from 'lucide-react';
+import { Loader2, Save, Pencil, X, Check, Eye, EyeOff } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -8,6 +8,8 @@ import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
+import PhotoUploadZone from './PhotoUploadZone';
+import PhotoLightbox from './PhotoLightbox';
 
 interface Question {
   id: string;
@@ -36,25 +38,22 @@ interface HomeProfileFormProps {
 const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, isStaffView = false }) => {
   const { toast } = useToast();
   const { t } = useLanguage();
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [questions, setQuestions] = useState<Question[]>([]);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [uploading, setUploading] = useState(false);
   const [editingAnnotation, setEditingAnnotation] = useState<string | null>(null);
   const [annotationDraft, setAnnotationDraft] = useState('');
+  const [lightboxPhoto, setLightboxPhoto] = useState<Photo | null>(null);
 
   useEffect(() => {
     if (!customerId) return;
     const fetchData = async () => {
       setLoading(true);
       try {
-        const photoSelect = isStaffView
-          ? 'id, storage_path, annotation_text, uploaded_at, visible_to_customer'
-          : 'id, storage_path, annotation_text, uploaded_at, visible_to_customer';
+        const photoSelect = 'id, storage_path, annotation_text, uploaded_at, visible_to_customer';
 
         const photoQuery = isStaffView
           ? supabase.from('home_photos').select(photoSelect).eq('customer_id', customerId).order('uploaded_at', { ascending: false })
@@ -110,27 +109,37 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
     }
   };
 
-  const handleUploadPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !customerId || !userId) return;
-    setUploading(true);
-    try {
-      const photoId = crypto.randomUUID();
-      const ext = file.name.split('.').pop() || 'jpg';
-      const storagePath = `customers/${customerId}/${photoId}.${ext}`;
-      const { error: uploadError } = await supabase.storage.from('home-photos').upload(storagePath, file);
-      if (uploadError) throw uploadError;
-      const { error: insertError } = await supabase.from('home_photos').insert({ customer_id: customerId, storage_path: storagePath, uploaded_by: userId });
-      if (insertError) throw insertError;
-      const { data } = await supabase.storage.from('home-photos').createSignedUrl(storagePath, 3600);
-      setPhotos(prev => [{ id: photoId, storage_path: storagePath, annotation_text: '', uploaded_at: new Date().toISOString(), visible_to_customer: true, signedUrl: data?.signedUrl || '' }, ...prev]);
-      toast({ title: t('Uppladdad!', 'Uploaded!') });
-    } catch (err: any) {
-      toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }
+  const handleFileProcessed = async (blob: Blob, width: number, height: number, originalFilename: string) => {
+    if (!customerId || !userId) return;
+    const photoId = crypto.randomUUID();
+    const storagePath = `customers/${customerId}/${photoId}.webp`;
+
+    const { error: uploadError } = await supabase.storage.from('home-photos').upload(storagePath, blob, {
+      contentType: 'image/webp',
+    });
+    if (uploadError) throw uploadError;
+
+    const { error: insertError } = await supabase.from('home_photos').insert({
+      customer_id: customerId,
+      storage_path: storagePath,
+      uploaded_by: userId,
+      width,
+      height,
+      original_filename: originalFilename,
+    });
+    if (insertError) throw insertError;
+
+    const { data } = await supabase.storage.from('home-photos').createSignedUrl(storagePath, 3600);
+    setPhotos(prev => [{
+      id: photoId,
+      storage_path: storagePath,
+      annotation_text: '',
+      uploaded_at: new Date().toISOString(),
+      visible_to_customer: true,
+      signedUrl: data?.signedUrl || '',
+    }, ...prev]);
+
+    toast({ title: t('Uppladdad!', 'Uploaded!') });
   };
 
   const handleSaveAnnotation = async (photoId: string) => {
@@ -209,28 +218,23 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
 
       {/* Photos */}
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
+        <CardHeader>
           <CardTitle>{t('Installationsfoton', 'Installation Photos')}</CardTitle>
-          <div>
-            <input type="file" accept="image/*" ref={fileInputRef} className="hidden" onChange={handleUploadPhoto} />
-            <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
-              {uploading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Upload className="w-4 h-4 mr-2" />}
-              {t('Ladda upp foto', 'Upload photo')}
-            </Button>
-          </div>
         </CardHeader>
-        <CardContent>
-          {photos.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              <Camera className="w-12 h-12 mx-auto mb-2 opacity-50" />
-              <p>{t('Inga foton uppladdade ännu.', 'No photos uploaded yet.')}</p>
-            </div>
-          ) : (
+        <CardContent className="space-y-4">
+          <PhotoUploadZone onFileProcessed={handleFileProcessed} />
+
+          {photos.length > 0 && (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {photos.map(photo => (
                 <div key={photo.id} className="rounded-lg border bg-card overflow-hidden">
                   {photo.signedUrl && (
-                    <img src={photo.signedUrl} alt={photo.annotation_text || 'Photo'} className="w-full h-48 object-cover" />
+                    <img
+                      src={photo.signedUrl}
+                      alt={photo.annotation_text || 'Photo'}
+                      className="w-full h-48 object-cover cursor-pointer hover:opacity-90 transition-opacity"
+                      onClick={() => setLightboxPhoto(photo)}
+                    />
                   )}
                   <div className="p-3 space-y-2">
                     {editingAnnotation === photo.id ? (
@@ -266,6 +270,16 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
           )}
         </CardContent>
       </Card>
+
+      {/* Lightbox */}
+      {lightboxPhoto && (
+        <PhotoLightbox
+          src={lightboxPhoto.signedUrl || ''}
+          alt={lightboxPhoto.annotation_text || 'Photo'}
+          open={!!lightboxPhoto}
+          onOpenChange={(open) => { if (!open) setLightboxPhoto(null); }}
+        />
+      )}
     </div>
   );
 };

@@ -457,29 +457,38 @@ export type Database = {
         Row: {
           annotation_text: string | null
           customer_id: string
+          height: number | null
           id: string
+          original_filename: string | null
           storage_path: string
           uploaded_at: string
           uploaded_by: string | null
           visible_to_customer: boolean
+          width: number | null
         }
         Insert: {
           annotation_text?: string | null
           customer_id: string
+          height?: number | null
           id?: string
+          original_filename?: string | null
           storage_path: string
           uploaded_at?: string
           uploaded_by?: string | null
           visible_to_customer?: boolean
+          width?: number | null
         }
         Update: {
           annotation_text?: string | null
           customer_id?: string
+          height?: number | null
           id?: string
+          original_filename?: string | null
           storage_path?: string
           uploaded_at?: string
           uploaded_by?: string | null
           visible_to_customer?: boolean
+          width?: number | null
         }
         Relationships: [
           {
