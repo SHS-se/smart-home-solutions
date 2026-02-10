@@ -6,6 +6,22 @@ import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 export interface QuestionOption {
   id: string;
@@ -25,11 +41,84 @@ interface OptionsEditorProps {
 const slugify = (text: string) =>
   text.toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 
+interface SortableOptionProps {
+  opt: QuestionOption;
+  onUpdate: (optionId: string, field: keyof QuestionOption, value: string) => void;
+  onDelete: (optionId: string) => void;
+}
+
+const SortableOption: React.FC<SortableOptionProps> = ({ opt, onUpdate, onDelete }) => {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: opt.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} className="flex items-center gap-2">
+      <button type="button" className="cursor-grab touch-none shrink-0" {...attributes} {...listeners}>
+        <GripVertical className="w-4 h-4 text-muted-foreground" />
+      </button>
+      <Input
+        value={opt.label_sv}
+        onChange={e => onUpdate(opt.id, 'label_sv', e.target.value)}
+        className="flex-1 text-xs"
+        placeholder="🇸🇪 Label"
+      />
+      <Input
+        value={opt.label_en}
+        onChange={e => onUpdate(opt.id, 'label_en', e.target.value)}
+        className="flex-1 text-xs"
+        placeholder="🇬🇧 Label"
+      />
+      <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => onDelete(opt.id)}>
+        <Trash2 className="w-3.5 h-3.5 text-destructive" />
+      </Button>
+    </div>
+  );
+};
+
 const OptionsEditor: React.FC<OptionsEditorProps> = ({ questionId, options, onChange }) => {
   const { toast } = useToast();
   const { t } = useLanguage();
   const [newLabelSv, setNewLabelSv] = useState('');
   const [newLabelEn, setNewLabelEn] = useState('');
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const sorted = [...options].sort((a, b) => a.order_index - b.order_index);
+
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const oldIndex = sorted.findIndex(o => o.id === active.id);
+    const newIndex = sorted.findIndex(o => o.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+
+    const reordered = [...sorted];
+    const [moved] = reordered.splice(oldIndex, 1);
+    reordered.splice(newIndex, 0, moved);
+
+    const updated = reordered.map((o, i) => ({ ...o, order_index: i }));
+    onChange(updated);
+
+    // Persist order updates
+    const promises = updated
+      .filter((o, i) => sorted[i]?.id !== o.id)
+      .map(o => supabase.from('home_question_options').update({ order_index: o.order_index }).eq('id', o.id));
+
+    const results = await Promise.all(promises);
+    const failed = results.find(r => r.error);
+    if (failed?.error) {
+      toast({ title: t('Fel', 'Error'), description: failed.error.message, variant: 'destructive' });
+    }
+  };
 
   const handleAdd = async () => {
     const trimmedValue = slugify(newLabelEn) || slugify(newLabelSv);
@@ -82,26 +171,13 @@ const OptionsEditor: React.FC<OptionsEditorProps> = ({ questionId, options, onCh
         {t('Svarsalternativ', 'Answer Options')}
       </Label>
 
-      {options.sort((a, b) => a.order_index - b.order_index).map(opt => (
-      <div key={opt.id} className="flex items-center gap-2">
-          <GripVertical className="w-4 h-4 text-muted-foreground shrink-0" />
-          <Input
-            value={opt.label_sv}
-            onChange={e => handleUpdate(opt.id, 'label_sv', e.target.value)}
-            className="flex-1 text-xs"
-            placeholder="🇸🇪 Label"
-          />
-          <Input
-            value={opt.label_en}
-            onChange={e => handleUpdate(opt.id, 'label_en', e.target.value)}
-            className="flex-1 text-xs"
-            placeholder="🇬🇧 Label"
-          />
-          <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => handleDelete(opt.id)}>
-            <Trash2 className="w-3.5 h-3.5 text-destructive" />
-          </Button>
-        </div>
-      ))}
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <SortableContext items={sorted.map(o => o.id)} strategy={verticalListSortingStrategy}>
+          {sorted.map(opt => (
+            <SortableOption key={opt.id} opt={opt} onUpdate={handleUpdate} onDelete={handleDelete} />
+          ))}
+        </SortableContext>
+      </DndContext>
 
       {/* Add new option */}
       <div className="flex items-center gap-2">
