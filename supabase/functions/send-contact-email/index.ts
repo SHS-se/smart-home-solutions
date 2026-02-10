@@ -13,7 +13,7 @@ interface ContactEmailRequest {
   phone?: string;
   message: string;
   website?: string;
-  draft_answers?: Array<{ question_id: string; answer_text: string }>;
+  draft_answers?: Array<{ question_id: string; answer_text: string; answer_value?: unknown }>;
 }
 
 interface RateLimitRecord {
@@ -223,7 +223,7 @@ function buildSaveFailedEmailHtml(
 async function saveDraftAnswers(
   supabase: SupabaseClient,
   email: string,
-  draftAnswers: Array<{ question_id: string; answer_text: string }>
+  draftAnswers: Array<{ question_id: string; answer_text: string; answer_value?: unknown }>
 ) {
   if (!draftAnswers || draftAnswers.length === 0) return;
 
@@ -244,7 +244,8 @@ async function saveDraftAnswers(
       .map(d => ({
         email: email.toLowerCase().trim(),
         question_id: d.question_id,
-        answer_text: d.answer_text.substring(0, 500), // Length limit
+        answer_text: d.answer_text.substring(0, 500),
+        answer_value: d.answer_value !== undefined ? d.answer_value : null,
       }));
 
     if (validDrafts.length > 0) {

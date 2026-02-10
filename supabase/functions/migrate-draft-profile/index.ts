@@ -41,7 +41,7 @@ serve(async (req: Request) => {
     // Fetch draft answers for this email
     const { data: drafts, error: draftsError } = await supabase
       .from("home_profile_draft_answers")
-      .select("question_id, answer_text")
+      .select("question_id, answer_text, answer_value")
       .eq("email", email);
 
     if (draftsError) {
@@ -120,6 +120,7 @@ serve(async (req: Request) => {
         customer_id: customerId!,
         question_id: d.question_id,
         answer_text: d.answer_text,
+        answer_value: d.answer_value ?? null,
         updated_by: user.id,
       }));
 

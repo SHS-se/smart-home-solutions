@@ -8,6 +8,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Switch } from '@/components/ui/switch';
 import { z } from 'zod';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -44,6 +45,122 @@ interface QuestionOption {
   label_en: string;
   order_index: number;
 }
+
+/* ─── Home Questions Section (collapsible) ─── */
+interface HomeQuestionsSectionProps {
+  questions: HomeQuestion[];
+  options: Record<string, QuestionOption[]>;
+  rules: DisplayRule[];
+  answers: AnswerMap;
+  setAnswers: React.Dispatch<React.SetStateAction<AnswerMap>>;
+  showSection: boolean;
+  toggleSection: () => void;
+  t: (sv: string, en: string) => string;
+}
+
+const HomeQuestionsSection = ({
+  questions, options, rules, answers, setAnswers, showSection, toggleSection, t
+}: HomeQuestionsSectionProps) => {
+  const { language } = useLanguage();
+  const flat = useMemo(() => flattenTree(questions), [questions]);
+  const visibleQuestions = useMemo(
+    () => flat.filter(q => evaluateVisibility(q.id, rules, answers, questions)),
+    [flat, rules, answers, questions]
+  );
+
+  const handleAnswer = (qId: string, value: unknown) => {
+    setAnswers(prev => {
+      const next = { ...prev, [qId]: value };
+      // Clear children that become hidden
+      for (const q of flat) {
+        if (q.id !== qId && !evaluateVisibility(q.id, rules, next, questions)) {
+          delete next[q.id];
+        }
+      }
+      return next;
+    });
+  };
+
+  return (
+    <div className="border border-border rounded-lg">
+      <button
+        type="button"
+        onClick={toggleSection}
+        className="w-full flex items-center justify-between p-4 text-left"
+      >
+        <span className="font-medium text-foreground text-sm">
+          {t('Berätta mer om ditt hem (valfritt)', 'Tell us more about your home (optional)')}
+        </span>
+        {showSection ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+      </button>
+      {showSection && (
+        <div className="px-4 pb-4 space-y-4">
+          {visibleQuestions.map(q => {
+            const label = language === 'en' ? q.question_text_en || q.question_text : q.question_text;
+            const qOptions = options[q.id] || [];
+            const val = answers[q.id];
+            return (
+              <div key={q.id} className="space-y-1.5" style={{ marginLeft: (q as any).depth ? (q as any).depth * 16 : 0 }}>
+                <Label className="text-sm">{String(label)}</Label>
+                {q.question_type === 'text' && (
+                  <Input
+                    value={(val as string) || ''}
+                    onChange={e => handleAnswer(q.id, e.target.value)}
+                    placeholder={String(label)}
+                  />
+                )}
+                {q.question_type === 'boolean' && (
+                  <div className="flex items-center gap-2">
+                    <Switch checked={val === true} onCheckedChange={v => handleAnswer(q.id, v)} />
+                    <span className="text-sm text-muted-foreground">{val === true ? t('Ja', 'Yes') : t('Nej', 'No')}</span>
+                  </div>
+                )}
+                {q.question_type === 'number' && (
+                  <Input
+                    type="number"
+                    value={val !== undefined && val !== null ? String(val) : ''}
+                    onChange={e => handleAnswer(q.id, e.target.value ? Number(e.target.value) : undefined)}
+                  />
+                )}
+                {q.question_type === 'single_choice' && qOptions.length > 0 && (
+                  <RadioGroup value={(val as string) || ''} onValueChange={v => handleAnswer(q.id, v)}>
+                    {qOptions.map(o => (
+                      <div key={o.id} className="flex items-center gap-2">
+                        <RadioGroupItem value={o.value} id={`contact-${q.id}-${o.value}`} />
+                        <Label htmlFor={`contact-${q.id}-${o.value}`} className="text-sm font-normal">
+                          {language === 'en' ? o.label_en || o.label_sv : o.label_sv}
+                        </Label>
+                      </div>
+                    ))}
+                  </RadioGroup>
+                )}
+                {q.question_type === 'multi_choice' && qOptions.length > 0 && (
+                  <div className="space-y-2">
+                    {qOptions.map(o => {
+                      const selected = Array.isArray(val) ? (val as string[]).includes(o.value) : false;
+                      return (
+                        <div key={o.id} className="flex items-center gap-2">
+                          <Checkbox
+                            checked={selected}
+                            onCheckedChange={checked => {
+                              const prev = Array.isArray(val) ? (val as string[]) : [];
+                              handleAnswer(q.id, checked ? [...prev, o.value] : prev.filter(v => v !== o.value));
+                            }}
+                          />
+                          <span className="text-sm">{language === 'en' ? o.label_en || o.label_sv : o.label_sv}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const Contact = () => {
   const { t } = useLanguage();
