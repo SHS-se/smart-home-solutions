@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Loader2, Save, Pencil, X, Check, Eye, EyeOff } from 'lucide-react';
+import { Loader2, Save, Pencil, X, Check, Trash2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -153,11 +153,15 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
     }
   };
 
-  const handleToggleVisibility = async (photoId: string, visible: boolean) => {
+  const handleDeletePhoto = async (photoId: string, storagePath: string) => {
+    if (!confirm(t('Vill du ta bort detta foto?', 'Delete this photo?'))) return;
     try {
-      const { error } = await supabase.from('home_photos').update({ visible_to_customer: visible }).eq('id', photoId);
-      if (error) throw error;
-      setPhotos(prev => prev.map(p => p.id === photoId ? { ...p, visible_to_customer: visible } : p));
+      const { error: storageError } = await supabase.storage.from('home-photos').remove([storagePath]);
+      if (storageError) throw storageError;
+      const { error: dbError } = await supabase.from('home_photos').delete().eq('id', photoId);
+      if (dbError) throw dbError;
+      setPhotos(prev => prev.filter(p => p.id !== photoId));
+      toast({ title: t('Borttagen!', 'Deleted!') });
     } catch (err: any) {
       toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
     }
@@ -253,15 +257,9 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
                     )}
                     <div className="flex items-center justify-between">
                       <p className="text-xs text-muted-foreground">{new Date(photo.uploaded_at).toLocaleDateString()}</p>
-                      {isStaffView && (
-                        <div className="flex items-center gap-2">
-                          {photo.visible_to_customer ? <Eye className="w-3.5 h-3.5 text-muted-foreground" /> : <EyeOff className="w-3.5 h-3.5 text-muted-foreground" />}
-                          <Switch
-                            checked={photo.visible_to_customer}
-                            onCheckedChange={(v) => handleToggleVisibility(photo.id, v)}
-                          />
-                        </div>
-                      )}
+                      <Button size="icon" variant="ghost" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => handleDeletePhoto(photo.id, photo.storage_path)}>
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
                     </div>
                   </div>
                 </div>
