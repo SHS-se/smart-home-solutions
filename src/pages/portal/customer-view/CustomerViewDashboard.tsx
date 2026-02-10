@@ -77,7 +77,7 @@ const CustomerViewDashboard: React.FC = () => {
           supabase.from('invoices').select('issued_at').eq('customer_id', customerId).order('issued_at', { ascending: false }),
           supabase.from('quotes').select('status').eq('customer_id', customerId).eq('is_latest', true),
           supabase.from('home_questions').select('*', { count: 'exact', head: true }).eq('is_active', true),
-          supabase.from('home_answers').select('*', { count: 'exact', head: true }).eq('customer_id', customerId),
+          supabase.from('home_answers').select('*', { count: 'exact', head: true }).eq('customer_id', customerId).neq('answer_text', ''),
           supabase.from('home_photos').select('*', { count: 'exact', head: true }).eq('customer_id', customerId),
         ]);
         if (ticketsRes.data) {

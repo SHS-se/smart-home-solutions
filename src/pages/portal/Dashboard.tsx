@@ -116,7 +116,7 @@ const Dashboard: React.FC = () => {
             supabase.from('invoices').select('issued_at', { count: 'exact' }).eq('customer_id', customerData.id).order('issued_at', { ascending: false }).limit(1),
             supabase.from('quotes').select('*', { count: 'exact', head: true }).eq('customer_id', customerData.id).eq('is_test', customerData.is_test ?? false).neq('status', 'draft').neq('status', 'cancelled'),
             supabase.from('home_questions').select('*', { count: 'exact', head: true }).eq('is_active', true),
-            supabase.from('home_answers').select('*', { count: 'exact', head: true }).eq('customer_id', customerData.id),
+            supabase.from('home_answers').select('*', { count: 'exact', head: true }).eq('customer_id', customerData.id).neq('answer_text', ''),
             supabase.from('home_photos').select('*', { count: 'exact', head: true }).eq('customer_id', customerData.id),
           ]);
 
