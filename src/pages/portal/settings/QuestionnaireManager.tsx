@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, Plus, GripVertical, Pencil, Check, X } from 'lucide-react';
+import { Loader2, Plus, GripVertical, Pencil, Check, X, ChevronRight, ChevronDown, Eye, ArrowRight, ArrowLeft, Filter } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -23,170 +23,250 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useToast } from '@/hooks/use-toast';
 import PortalLayout from '@/components/portal/PortalLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
+import { flattenTree, TYPE_LABELS, type TreeQuestion, type DisplayRule, type QuestionType } from '@/lib/questionnaire-engine';
+import OptionsEditor, { type QuestionOption } from '@/components/portal/settings/OptionsEditor';
+import ConditionsEditor from '@/components/portal/settings/ConditionsEditor';
+import QuestionnairePreview from '@/components/portal/settings/QuestionnairePreview';
 
-interface Question {
-  id: string;
+interface Question extends TreeQuestion {
   question_text: string;
   question_text_en: string;
-  question_type: string;
   display_on_contact_form: boolean;
   sort_order: number;
-  is_active: boolean;
 }
 
-interface SortableQuestionProps {
-  question: Question;
+// ── Sortable Row ────────────────────────────────────────────────────────────
+
+interface SortableRowProps {
+  question: Question & { depth: number };
   editingId: string | null;
-  editDraftSv: string;
-  editDraftEn: string;
-  editDraftType: string;
+  editDraft: { sv: string; en: string; type: string };
   setEditingId: (id: string | null) => void;
-  setEditDraftSv: (text: string) => void;
-  setEditDraftEn: (text: string) => void;
-  setEditDraftType: (type: string) => void;
+  setEditDraft: (d: { sv: string; en: string; type: string }) => void;
   onSaveEdit: (id: string) => void;
   onToggleActive: (id: string, active: boolean) => void;
   onToggleContactForm: (id: string, show: boolean) => void;
+  collapsed: Set<string>;
+  toggleCollapse: (id: string) => void;
+  hasChildren: boolean;
+  onIndent: (id: string) => void;
+  onOutdent: (id: string) => void;
+  canIndent: boolean;
+  canOutdent: boolean;
+  options: QuestionOption[];
+  onOptionsChange: (questionId: string, opts: QuestionOption[]) => void;
+  rules: DisplayRule[];
+  allQuestions: Question[];
+  allOptions: Record<string, QuestionOption[]>;
+  allRules: DisplayRule[];
+  onRulesChange: (questionId: string, rules: DisplayRule[]) => void;
   t: (sv: string, en: string) => string;
 }
 
-const SortableQuestion: React.FC<SortableQuestionProps> = ({
+const SortableRow: React.FC<SortableRowProps> = ({
   question,
   editingId,
-  editDraftSv,
-  editDraftEn,
-  editDraftType,
+  editDraft,
   setEditingId,
-  setEditDraftSv,
-  setEditDraftEn,
-  setEditDraftType,
+  setEditDraft,
   onSaveEdit,
   onToggleActive,
   onToggleContactForm,
+  collapsed,
+  toggleCollapse,
+  hasChildren,
+  onIndent,
+  onOutdent,
+  canIndent,
+  canOutdent,
+  options,
+  onOptionsChange,
+  rules,
+  allQuestions,
+  allOptions,
+  allRules,
+  onRulesChange,
   t,
 }) => {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: question.id });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: question.id });
+  const [showOptions, setShowOptions] = useState(false);
+  const [showConditions, setShowConditions] = useState(false);
+  const isChoiceType = question.question_type === 'single_choice' || question.question_type === 'multi_choice';
 
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
+    paddingLeft: `${question.depth * 24}px`,
   };
+
+  const typeLabel = TYPE_LABELS[question.question_type as QuestionType];
 
   return (
     <div
       ref={setNodeRef}
       style={style}
-      className={`flex items-start gap-3 p-3 rounded-lg border ${!question.is_active ? 'opacity-50' : ''} ${isDragging ? 'opacity-70 shadow-lg bg-muted' : 'bg-card'}`}
+      className={`rounded-lg border ${!question.is_active ? 'opacity-50' : ''} ${isDragging ? 'opacity-70 shadow-lg bg-muted' : 'bg-card'}`}
     >
-      <button
-        className="cursor-grab active:cursor-grabbing touch-none text-muted-foreground hover:text-foreground mt-1"
-        {...attributes}
-        {...listeners}
-      >
-        <GripVertical className="w-5 h-5" />
-      </button>
+      <div className="flex items-start gap-2 p-3">
+        <button
+          className="cursor-grab active:cursor-grabbing touch-none text-muted-foreground hover:text-foreground mt-1"
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className="w-5 h-5" />
+        </button>
 
-      <div className="flex-1 min-w-0">
-        {editingId === question.id ? (
-          <div className="space-y-2">
-            <div>
-              <Label className="text-xs text-muted-foreground">🇸🇪 Svenska</Label>
-              <Input
-                value={editDraftSv}
-                onChange={e => setEditDraftSv(e.target.value)}
-                className="text-sm"
-                onKeyDown={e => e.key === 'Enter' && onSaveEdit(question.id)}
-              />
-            </div>
-            <div>
-              <Label className="text-xs text-muted-foreground">🇬🇧 English</Label>
-              <Input
-                value={editDraftEn}
-                onChange={e => setEditDraftEn(e.target.value)}
-                className="text-sm"
-                onKeyDown={e => e.key === 'Enter' && onSaveEdit(question.id)}
-              />
-            </div>
-            <div>
-              <Label className="text-xs text-muted-foreground">{t('Typ', 'Type')}</Label>
-              <Select value={editDraftType} onValueChange={setEditDraftType}>
-                <SelectTrigger className="w-[140px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="text">{t('Text', 'Text')}</SelectItem>
-                  <SelectItem value="boolean">{t('Ja/Nej', 'Yes/No')}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex gap-2">
-              <Button size="sm" variant="ghost" onClick={() => onSaveEdit(question.id)}>
-                <Check className="w-4 h-4 mr-1" /> {t('Spara', 'Save')}
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => setEditingId(null)}>
-                <X className="w-4 h-4 mr-1" /> {t('Avbryt', 'Cancel')}
-              </Button>
-            </div>
-          </div>
+        {hasChildren ? (
+          <button
+            className="mt-1 text-muted-foreground hover:text-foreground"
+            onClick={() => toggleCollapse(question.id)}
+          >
+            {collapsed.has(question.id) ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </button>
         ) : (
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <span className="text-sm">{question.question_text}</span>
-              <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
-                {question.question_type === 'boolean' ? t('Ja/Nej', 'Yes/No') : t('Text', 'Text')}
-              </span>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="shrink-0 h-7 w-7"
-                onClick={() => {
-                  setEditingId(question.id);
-                  setEditDraftSv(question.question_text);
-                  setEditDraftEn(question.question_text_en);
-                  setEditDraftType(question.question_type);
-                }}
-              >
-                <Pencil className="w-3.5 h-3.5" />
-              </Button>
-            </div>
-            {question.question_text_en && (
-              <span className="text-xs text-muted-foreground">{question.question_text_en}</span>
-            )}
-          </div>
+          <div className="w-4 mt-1" />
         )}
+
+        <div className="flex-1 min-w-0">
+          {editingId === question.id ? (
+            <div className="space-y-2">
+              <div>
+                <Label className="text-xs text-muted-foreground">🇸🇪 Svenska</Label>
+                <Input
+                  value={editDraft.sv}
+                  onChange={e => setEditDraft({ ...editDraft, sv: e.target.value })}
+                  className="text-sm"
+                  onKeyDown={e => e.key === 'Enter' && onSaveEdit(question.id)}
+                />
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground">🇬🇧 English</Label>
+                <Input
+                  value={editDraft.en}
+                  onChange={e => setEditDraft({ ...editDraft, en: e.target.value })}
+                  className="text-sm"
+                  onKeyDown={e => e.key === 'Enter' && onSaveEdit(question.id)}
+                />
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground">{t('Typ', 'Type')}</Label>
+                <Select value={editDraft.type} onValueChange={v => setEditDraft({ ...editDraft, type: v })}>
+                  <SelectTrigger className="w-[160px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(TYPE_LABELS).map(([key, label]) => (
+                      <SelectItem key={key} value={key}>{t(label.sv, label.en)}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex gap-2">
+                <Button size="sm" variant="ghost" onClick={() => onSaveEdit(question.id)}>
+                  <Check className="w-4 h-4 mr-1" /> {t('Spara', 'Save')}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setEditingId(null)}>
+                  <X className="w-4 h-4 mr-1" /> {t('Avbryt', 'Cancel')}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm">{question.question_text}</span>
+                <Badge variant="secondary" className="text-[10px]">
+                  {typeLabel ? t(typeLabel.sv, typeLabel.en) : question.question_type}
+                </Badge>
+                {rules.length > 0 && (
+                  <Badge variant="outline" className="text-[10px] gap-1">
+                    <Filter className="w-3 h-3" /> {rules.length}
+                  </Badge>
+                )}
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="shrink-0 h-7 w-7"
+                  onClick={() => {
+                    setEditingId(question.id);
+                    setEditDraft({ sv: question.question_text, en: question.question_text_en, type: question.question_type });
+                  }}
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+              {question.question_text_en && (
+                <span className="text-xs text-muted-foreground">{question.question_text_en}</span>
+              )}
+              <div className="flex gap-1 mt-1">
+                {canIndent && (
+                  <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px]" onClick={() => onIndent(question.id)}>
+                    <ArrowRight className="w-3 h-3 mr-0.5" /> {t('Indrag', 'Indent')}
+                  </Button>
+                )}
+                {canOutdent && (
+                  <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px]" onClick={() => onOutdent(question.id)}>
+                    <ArrowLeft className="w-3 h-3 mr-0.5" /> {t('Utdrag', 'Outdent')}
+                  </Button>
+                )}
+                {isChoiceType && (
+                  <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px]" onClick={() => setShowOptions(!showOptions)}>
+                    {showOptions ? t('Dölj alternativ', 'Hide options') : t('Alternativ', 'Options')} ({options.length})
+                  </Button>
+                )}
+                <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px]" onClick={() => setShowConditions(!showConditions)}>
+                  {showConditions ? t('Dölj villkor', 'Hide conditions') : t('Villkor', 'Conditions')} ({rules.length})
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-col items-center gap-1 shrink-0">
+          <span className="text-[10px] text-muted-foreground">{t('Aktiv', 'Active')}</span>
+          <Switch checked={question.is_active} onCheckedChange={v => onToggleActive(question.id, v)} />
+        </div>
+
+        <div className="flex flex-col items-center gap-1 shrink-0">
+          <span className="text-[10px] text-muted-foreground">{t('Kontakt', 'Contact')}</span>
+          <Switch checked={question.display_on_contact_form} onCheckedChange={v => onToggleContactForm(question.id, v)} />
+        </div>
       </div>
 
-      <div className="flex flex-col items-center gap-1 shrink-0">
-        <span className="text-[10px] text-muted-foreground">{t('Aktiv', 'Active')}</span>
-        <Switch
-          checked={question.is_active}
-          onCheckedChange={v => onToggleActive(question.id, v)}
-        />
-      </div>
-
-      <div className="flex flex-col items-center gap-1 shrink-0">
-        <span className="text-[10px] text-muted-foreground">{t('Kontaktformulär', 'Contact form')}</span>
-        <Switch
-          checked={question.display_on_contact_form}
-          onCheckedChange={v => onToggleContactForm(question.id, v)}
-        />
-      </div>
+      {/* Expandable sections */}
+      {showOptions && isChoiceType && (
+        <div className="px-3 pb-3">
+          <OptionsEditor
+            questionId={question.id}
+            options={options}
+            onChange={opts => onOptionsChange(question.id, opts)}
+          />
+        </div>
+      )}
+      {showConditions && (
+        <div className="px-3 pb-3">
+          <ConditionsEditor
+            questionId={question.id}
+            rules={rules}
+            allQuestions={allQuestions as TreeQuestion[]}
+            allOptions={allOptions}
+            allRules={allRules}
+            onChange={r => onRulesChange(question.id, r)}
+          />
+        </div>
+      )}
     </div>
   );
 };
+
+// ── Main Component ──────────────────────────────────────────────────────────
 
 const QuestionnaireManager: React.FC = () => {
   const { user, isStaff, loading: authLoading } = useAuth();
@@ -195,15 +275,21 @@ const QuestionnaireManager: React.FC = () => {
   const { t } = useLanguage();
 
   const [questions, setQuestions] = useState<Question[]>([]);
+  const [options, setOptions] = useState<Record<string, QuestionOption[]>>({});
+  const [rules, setRules] = useState<DisplayRule[]>([]);
   const [loadingData, setLoadingData] = useState(true);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [showPreview, setShowPreview] = useState(false);
+
+  // Add question form
   const [newQuestionSv, setNewQuestionSv] = useState('');
   const [newQuestionEn, setNewQuestionEn] = useState('');
-  const [newQuestionType, setNewQuestionType] = useState('text');
+  const [newQuestionType, setNewQuestionType] = useState<string>('text');
   const [adding, setAdding] = useState(false);
+
+  // Edit state
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editDraftSv, setEditDraftSv] = useState('');
-  const [editDraftEn, setEditDraftEn] = useState('');
-  const [editDraftType, setEditDraftType] = useState('text');
+  const [editDraft, setEditDraft] = useState({ sv: '', en: '', type: 'text' });
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -215,31 +301,82 @@ const QuestionnaireManager: React.FC = () => {
     if (!authLoading && !isStaff) navigate('/portal');
   }, [user, isStaff, authLoading, navigate]);
 
-  const fetchQuestions = async () => {
+  const fetchAll = async () => {
     setLoadingData(true);
-    const { data } = await supabase.from('home_questions').select('*').order('sort_order');
-    if (data) setQuestions(data as Question[]);
+    const [qRes, oRes, rRes] = await Promise.all([
+      supabase.from('home_questions').select('*').order('order_index'),
+      supabase.from('home_question_options').select('*').order('order_index'),
+      supabase.from('home_question_display_rules').select('*'),
+    ]);
+
+    if (qRes.data) setQuestions(qRes.data as Question[]);
+    if (oRes.data) {
+      const grouped: Record<string, QuestionOption[]> = {};
+      for (const o of oRes.data as QuestionOption[]) {
+        if (!grouped[o.question_id]) grouped[o.question_id] = [];
+        grouped[o.question_id].push(o);
+      }
+      setOptions(grouped);
+    }
+    if (rRes.data) setRules(rRes.data as DisplayRule[]);
     setLoadingData(false);
   };
 
-  useEffect(() => { fetchQuestions(); }, []);
+  useEffect(() => { fetchAll(); }, []);
+
+  // Build flat tree for display
+  const flatQuestions = useMemo(() => {
+    const flat = flattenTree(questions);
+    // Filter out collapsed children
+    const visible: typeof flat = [];
+    const collapsedAncestors = new Set<string>();
+    for (const q of flat) {
+      if (q.parent_question_id && collapsedAncestors.has(q.parent_question_id)) {
+        collapsedAncestors.add(q.id);
+        continue;
+      }
+      if (collapsed.has(q.id)) {
+        collapsedAncestors.add(q.id);
+      }
+      visible.push(q);
+    }
+    return visible;
+  }, [questions, collapsed]);
+
+  const childrenMap = useMemo(() => {
+    const map = new Set<string>();
+    for (const q of questions) {
+      if (q.parent_question_id) map.add(q.parent_question_id);
+    }
+    return map;
+  }, [questions]);
+
+  const toggleCollapse = (id: string) => {
+    setCollapsed(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   const handleAdd = async () => {
     if (!newQuestionSv.trim()) return;
     setAdding(true);
     try {
-      const maxSort = questions.length > 0 ? Math.max(...questions.map(q => q.sort_order)) + 1 : 0;
+      const maxOrder = questions.length > 0 ? Math.max(...questions.map(q => q.order_index)) + 1 : 0;
       const { error } = await supabase.from('home_questions').insert({
         question_text: newQuestionSv.trim(),
         question_text_en: newQuestionEn.trim(),
         question_type: newQuestionType,
-        sort_order: maxSort,
+        sort_order: maxOrder,
+        order_index: maxOrder,
       });
       if (error) throw error;
       setNewQuestionSv('');
       setNewQuestionEn('');
       setNewQuestionType('text');
-      await fetchQuestions();
+      await fetchAll();
     } catch (err: any) {
       toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
     } finally {
@@ -248,15 +385,15 @@ const QuestionnaireManager: React.FC = () => {
   };
 
   const handleSaveEdit = async (id: string) => {
-    if (!editDraftSv.trim()) return;
+    if (!editDraft.sv.trim()) return;
     try {
       const { error } = await supabase.from('home_questions').update({
-        question_text: editDraftSv.trim(),
-        question_text_en: editDraftEn.trim(),
-        question_type: editDraftType,
+        question_text: editDraft.sv.trim(),
+        question_text_en: editDraft.en.trim(),
+        question_type: editDraft.type,
       }).eq('id', id);
       if (error) throw error;
-      setQuestions(prev => prev.map(q => q.id === id ? { ...q, question_text: editDraftSv.trim(), question_text_en: editDraftEn.trim(), question_type: editDraftType } : q));
+      setQuestions(prev => prev.map(q => q.id === id ? { ...q, question_text: editDraft.sv.trim(), question_text_en: editDraft.en.trim(), question_type: editDraft.type as QuestionType } : q));
       setEditingId(null);
     } catch (err: any) {
       toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
@@ -264,45 +401,87 @@ const QuestionnaireManager: React.FC = () => {
   };
 
   const handleToggleActive = async (id: string, active: boolean) => {
-    try {
-      const { error } = await supabase.from('home_questions').update({ is_active: active }).eq('id', id);
-      if (error) throw error;
-      setQuestions(prev => prev.map(q => q.id === id ? { ...q, is_active: active } : q));
-    } catch (err: any) {
-      toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
-    }
+    const { error } = await supabase.from('home_questions').update({ is_active: active }).eq('id', id);
+    if (error) { toast({ title: t('Fel', 'Error'), description: error.message, variant: 'destructive' }); return; }
+    setQuestions(prev => prev.map(q => q.id === id ? { ...q, is_active: active } : q));
   };
 
   const handleToggleContactForm = async (id: string, show: boolean) => {
-    try {
-      const { error } = await supabase.from('home_questions').update({ display_on_contact_form: show }).eq('id', id);
-      if (error) throw error;
-      setQuestions(prev => prev.map(q => q.id === id ? { ...q, display_on_contact_form: show } : q));
-    } catch (err: any) {
-      toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
-    }
+    const { error } = await supabase.from('home_questions').update({ display_on_contact_form: show }).eq('id', id);
+    if (error) { toast({ title: t('Fel', 'Error'), description: error.message, variant: 'destructive' }); return; }
+    setQuestions(prev => prev.map(q => q.id === id ? { ...q, display_on_contact_form: show } : q));
+  };
+
+  const handleIndent = async (id: string) => {
+    // Make this question a child of the previous sibling at the same level
+    const q = questions.find(x => x.id === id);
+    if (!q) return;
+    const siblings = questions.filter(x => x.parent_question_id === q.parent_question_id).sort((a, b) => a.order_index - b.order_index);
+    const idx = siblings.findIndex(x => x.id === id);
+    if (idx <= 0) return;
+    const newParent = siblings[idx - 1].id;
+    const { error } = await supabase.from('home_questions').update({ parent_question_id: newParent }).eq('id', id);
+    if (error) { toast({ title: t('Fel', 'Error'), description: error.message, variant: 'destructive' }); return; }
+    setQuestions(prev => prev.map(x => x.id === id ? { ...x, parent_question_id: newParent } : x));
+  };
+
+  const handleOutdent = async (id: string) => {
+    const q = questions.find(x => x.id === id);
+    if (!q || !q.parent_question_id) return;
+    const parent = questions.find(x => x.id === q.parent_question_id);
+    const newParent = parent?.parent_question_id ?? null;
+    const { error } = await supabase.from('home_questions').update({ parent_question_id: newParent }).eq('id', id);
+    if (error) { toast({ title: t('Fel', 'Error'), description: error.message, variant: 'destructive' }); return; }
+    setQuestions(prev => prev.map(x => x.id === id ? { ...x, parent_question_id: newParent } : x));
   };
 
   const handleDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
 
-    const oldIndex = questions.findIndex(q => q.id === active.id);
-    const newIndex = questions.findIndex(q => q.id === over.id);
-    const reordered = arrayMove(questions, oldIndex, newIndex);
-    const updated = reordered.map((q, idx) => ({ ...q, sort_order: idx }));
-    setQuestions(updated);
+    const oldIndex = flatQuestions.findIndex(q => q.id === active.id);
+    const newIndex = flatQuestions.findIndex(q => q.id === over.id);
+    if (oldIndex < 0 || newIndex < 0) return;
+
+    // Get siblings of the dragged item's parent
+    const draggedQ = questions.find(q => q.id === active.id);
+    if (!draggedQ) return;
+
+    const siblings = questions
+      .filter(q => q.parent_question_id === draggedQ.parent_question_id)
+      .sort((a, b) => a.order_index - b.order_index);
+
+    const sibOldIdx = siblings.findIndex(q => q.id === active.id);
+    const sibNewIdx = siblings.findIndex(q => q.id === over.id);
+    if (sibOldIdx < 0 || sibNewIdx < 0) return; // Only reorder within same parent
+
+    const reordered = arrayMove(siblings, sibOldIdx, sibNewIdx);
+    const updates = reordered.map((q, idx) => ({ id: q.id, order_index: idx }));
+
+    setQuestions(prev => prev.map(q => {
+      const update = updates.find(u => u.id === q.id);
+      return update ? { ...q, order_index: update.order_index } : q;
+    }));
 
     try {
       await Promise.all(
-        updated.map(q =>
-          supabase.from('home_questions').update({ sort_order: q.sort_order }).eq('id', q.id)
-        )
+        updates.map(u => supabase.from('home_questions').update({ order_index: u.order_index, sort_order: u.order_index }).eq('id', u.id))
       );
     } catch (err: any) {
       toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
-      await fetchQuestions();
+      await fetchAll();
     }
+  };
+
+  const handleOptionsChange = (questionId: string, opts: QuestionOption[]) => {
+    setOptions(prev => ({ ...prev, [questionId]: opts }));
+  };
+
+  const handleRulesChange = (questionId: string, questionRules: DisplayRule[]) => {
+    setRules(prev => [
+      ...prev.filter(r => r.question_id !== questionId),
+      ...questionRules,
+    ]);
   };
 
   if (authLoading || loadingData) {
@@ -317,9 +496,16 @@ const QuestionnaireManager: React.FC = () => {
 
   return (
     <PortalLayout>
-      <div className="space-y-6 max-w-3xl mx-auto">
-        <h1 className="text-3xl font-medium">{t('Hantera frågor', 'Manage Questions')}</h1>
-        <p className="text-muted-foreground">{t('Dessa frågor visas på kundens hemprofil.', 'These questions appear on the customer home profile.')}</p>
+      <div className="space-y-6 max-w-4xl mx-auto">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-medium">{t('Hantera frågor', 'Manage Questions')}</h1>
+            <p className="text-muted-foreground">{t('Bygg ett frågeträd med villkorlig synlighet.', 'Build a question tree with conditional visibility.')}</p>
+          </div>
+          <Button variant="outline" onClick={() => setShowPreview(true)}>
+            <Eye className="w-4 h-4 mr-2" /> {t('Förhandsgranska', 'Preview')}
+          </Button>
+        </div>
 
         <Card>
           <CardHeader>
@@ -347,12 +533,13 @@ const QuestionnaireManager: React.FC = () => {
               <div>
                 <Label className="text-xs text-muted-foreground">{t('Typ', 'Type')}</Label>
                 <Select value={newQuestionType} onValueChange={setNewQuestionType}>
-                  <SelectTrigger className="w-[140px]">
+                  <SelectTrigger className="w-[160px]">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="text">{t('Text', 'Text')}</SelectItem>
-                    <SelectItem value="boolean">{t('Ja/Nej', 'Yes/No')}</SelectItem>
+                    {Object.entries(TYPE_LABELS).map(([key, label]) => (
+                      <SelectItem key={key} value={key}>{t(label.sv, label.en)}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -362,41 +549,47 @@ const QuestionnaireManager: React.FC = () => {
               </Button>
             </div>
 
-            {/* Column headers */}
-            {questions.length > 0 && (
-              <div className="flex items-center gap-3 px-3 text-xs text-muted-foreground">
-                <div className="w-5" /> {/* drag handle spacer */}
-                <div className="flex-1">{t('Fråga', 'Question')}</div>
-                <div className="w-[70px] text-center shrink-0">{t('Aktiv', 'Active')}</div>
-                <div className="w-[90px] text-center shrink-0">{t('Kontaktformulär', 'Contact form')}</div>
-              </div>
-            )}
-
             {/* List */}
-            {questions.length === 0 ? (
+            {flatQuestions.length === 0 ? (
               <p className="text-muted-foreground text-sm">{t('Inga frågor ännu.', 'No questions yet.')}</p>
             ) : (
               <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                <SortableContext items={questions.map(q => q.id)} strategy={verticalListSortingStrategy}>
+                <SortableContext items={flatQuestions.map(q => q.id)} strategy={verticalListSortingStrategy}>
                   <div className="space-y-2">
-                    {questions.map(q => (
-                      <SortableQuestion
-                        key={q.id}
-                        question={q}
-                        editingId={editingId}
-                        editDraftSv={editDraftSv}
-                        editDraftEn={editDraftEn}
-                        editDraftType={editDraftType}
-                        setEditingId={setEditingId}
-                        setEditDraftSv={setEditDraftSv}
-                        setEditDraftEn={setEditDraftEn}
-                        setEditDraftType={setEditDraftType}
-                        onSaveEdit={handleSaveEdit}
-                        onToggleActive={handleToggleActive}
-                        onToggleContactForm={handleToggleContactForm}
-                        t={t}
-                      />
-                    ))}
+                    {flatQuestions.map(q => {
+                      const questionObj = q as Question & { depth: number };
+                      const siblings = questions.filter(x => x.parent_question_id === questionObj.parent_question_id).sort((a, b) => a.order_index - b.order_index);
+                      const sibIdx = siblings.findIndex(x => x.id === questionObj.id);
+
+                      return (
+                        <SortableRow
+                          key={questionObj.id}
+                          question={questionObj}
+                          editingId={editingId}
+                          editDraft={editDraft}
+                          setEditingId={setEditingId}
+                          setEditDraft={setEditDraft}
+                          onSaveEdit={handleSaveEdit}
+                          onToggleActive={handleToggleActive}
+                          onToggleContactForm={handleToggleContactForm}
+                          collapsed={collapsed}
+                          toggleCollapse={toggleCollapse}
+                          hasChildren={childrenMap.has(questionObj.id)}
+                          onIndent={handleIndent}
+                          onOutdent={handleOutdent}
+                          canIndent={sibIdx > 0}
+                          canOutdent={!!questionObj.parent_question_id}
+                          options={options[questionObj.id] || []}
+                          onOptionsChange={handleOptionsChange}
+                          rules={rules.filter(r => r.question_id === questionObj.id)}
+                          allQuestions={questions}
+                          allOptions={options}
+                          allRules={rules}
+                          onRulesChange={handleRulesChange}
+                          t={t}
+                        />
+                      );
+                    })}
                   </div>
                 </SortableContext>
               </DndContext>
@@ -404,6 +597,14 @@ const QuestionnaireManager: React.FC = () => {
           </CardContent>
         </Card>
       </div>
+
+      <QuestionnairePreview
+        open={showPreview}
+        onOpenChange={setShowPreview}
+        questions={questions as TreeQuestion[]}
+        rules={rules}
+        options={options}
+      />
     </PortalLayout>
   );
 };

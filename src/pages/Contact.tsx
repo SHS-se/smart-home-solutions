@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { MapPin, Mail, Phone, Send, CheckCircle, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import Layout from '@/components/Layout';
@@ -7,10 +7,19 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { z } from 'zod';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import ObfuscatedEmail from '@/components/ObfuscatedEmail';
+import {
+  flattenTree,
+  evaluateVisibility,
+  type TreeQuestion,
+  type DisplayRule,
+  type AnswerMap,
+  type QuestionType,
+} from '@/lib/questionnaire-engine';
 
 const contactSchema = z.object({
   name: z.string().trim().min(1, "Name is required").max(100, "Name must be less than 100 characters"),
@@ -22,12 +31,18 @@ const contactSchema = z.object({
 
 type ContactFormData = z.infer<typeof contactSchema>;
 
-interface HomeQuestion {
-  id: string;
+interface HomeQuestion extends TreeQuestion {
   question_text: string;
   question_text_en: string;
-  question_type: string;
-  sort_order: number;
+}
+
+interface QuestionOption {
+  id: string;
+  question_id: string;
+  value: string;
+  label_sv: string;
+  label_en: string;
+  order_index: number;
 }
 
 const Contact = () => {
@@ -47,18 +62,33 @@ const Contact = () => {
 
   // Home questions
   const [homeQuestions, setHomeQuestions] = useState<HomeQuestion[]>([]);
-  const [homeAnswers, setHomeAnswers] = useState<Record<string, string>>({});
+  const [homeOptions, setHomeOptions] = useState<Record<string, QuestionOption[]>>({});
+  const [homeRules, setHomeRules] = useState<DisplayRule[]>([]);
+  const [homeAnswers, setHomeAnswers] = useState<AnswerMap>({});
   const [showHomeSection, setShowHomeSection] = useState(true);
 
   useEffect(() => {
     const fetchQuestions = async () => {
-      const { data } = await supabase
-        .from('home_questions')
-        .select('id, question_text, question_text_en, question_type, sort_order')
-        .eq('is_active', true)
-        .eq('display_on_contact_form', true)
-        .order('sort_order');
-      if (data) setHomeQuestions(data as HomeQuestion[]);
+      const [qRes, oRes, rRes] = await Promise.all([
+        supabase
+          .from('home_questions')
+          .select('id, question_text, question_text_en, question_type, order_index, parent_question_id, is_active, display_on_contact_form')
+          .eq('is_active', true)
+          .eq('display_on_contact_form', true)
+          .order('order_index'),
+        supabase.from('home_question_options').select('*').order('order_index'),
+        supabase.from('home_question_display_rules').select('*'),
+      ]);
+      if (qRes.data) setHomeQuestions(qRes.data as HomeQuestion[]);
+      if (oRes.data) {
+        const grouped: Record<string, QuestionOption[]> = {};
+        for (const o of oRes.data as QuestionOption[]) {
+          if (!grouped[o.question_id]) grouped[o.question_id] = [];
+          grouped[o.question_id].push(o);
+        }
+        setHomeOptions(grouped);
+      }
+      if (rRes.data) setHomeRules(rRes.data as DisplayRule[]);
     };
     fetchQuestions();
   }, []);
@@ -85,10 +115,14 @@ const Contact = () => {
     try {
       // Build draft_answers array from answered questions
       const draftAnswers = homeQuestions
-        .filter(q => homeAnswers[q.id] && homeAnswers[q.id].trim() !== '')
+        .filter(q => {
+          const a = homeAnswers[q.id];
+          return a !== undefined && a !== null && a !== '';
+        })
         .map(q => ({
           question_id: q.id,
-          answer_text: homeAnswers[q.id].trim(),
+          answer_text: typeof homeAnswers[q.id] === 'string' ? (homeAnswers[q.id] as string).trim() : JSON.stringify(homeAnswers[q.id]),
+          answer_value: homeAnswers[q.id],
         }));
 
       const { data, error } = await supabase.functions.invoke('send-contact-email', {
@@ -248,65 +282,16 @@ const Contact = () => {
 
                     {/* Optional home questions */}
                     {homeQuestions.length > 0 && (
-                      <div className="border border-border rounded-lg overflow-hidden">
-                        <button
-                          type="button"
-                          className="w-full flex items-center justify-between p-4 text-left hover:bg-muted/50 transition-colors"
-                          onClick={() => setShowHomeSection(!showHomeSection)}
-                        >
-                          <span className="text-sm font-medium text-foreground">
-                            {t('Hjälp oss förstå ditt hem (valfritt)', 'Help us understand your home (optional)')}
-                          </span>
-                          {showHomeSection ? (
-                            <ChevronUp className="w-4 h-4 text-muted-foreground" />
-                          ) : (
-                            <ChevronDown className="w-4 h-4 text-muted-foreground" />
-                          )}
-                        </button>
-                        {showHomeSection && (
-                          <div className="p-4 pt-0 space-y-4">
-                            {homeQuestions.map(q => (
-                              <div key={q.id} className="space-y-1">
-                                {q.question_type === 'boolean' ? (
-                                  <div className="flex items-center gap-3">
-                                    <Checkbox
-                                      id={`hq-${q.id}`}
-                                      checked={homeAnswers[q.id] === 'yes'}
-                                      onCheckedChange={(checked) =>
-                                        setHomeAnswers(prev => ({
-                                          ...prev,
-                                          [q.id]: checked ? 'yes' : '',
-                                        }))
-                                      }
-                                    />
-                                    <Label htmlFor={`hq-${q.id}`} className="text-sm cursor-pointer">
-                                      {t(q.question_text, q.question_text_en || q.question_text)}
-                                    </Label>
-                                  </div>
-                                ) : (
-                                  <>
-                                    <Label htmlFor={`hq-${q.id}`} className="text-sm">
-                                      {t(q.question_text, q.question_text_en || q.question_text)}
-                                    </Label>
-                                    <Input
-                                      id={`hq-${q.id}`}
-                                      value={homeAnswers[q.id] || ''}
-                                      onChange={e =>
-                                        setHomeAnswers(prev => ({
-                                          ...prev,
-                                          [q.id]: e.target.value,
-                                        }))
-                                      }
-                                      maxLength={500}
-                                      placeholder={t('Ditt svar...', 'Your answer...')}
-                                    />
-                                  </>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
+                      <HomeQuestionsSection
+                        questions={homeQuestions}
+                        options={homeOptions}
+                        rules={homeRules}
+                        answers={homeAnswers}
+                        setAnswers={setHomeAnswers}
+                        showSection={showHomeSection}
+                        toggleSection={() => setShowHomeSection(!showHomeSection)}
+                        t={t}
+                      />
                     )}
 
                     {/* Honeypot field - hidden from users, catches bots */}

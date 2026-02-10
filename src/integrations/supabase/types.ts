@@ -407,6 +407,7 @@ export type Database = {
       home_answers: {
         Row: {
           answer_text: string
+          answer_value: Json | null
           customer_id: string
           id: string
           question_id: string
@@ -415,6 +416,7 @@ export type Database = {
         }
         Insert: {
           answer_text?: string
+          answer_value?: Json | null
           customer_id: string
           id?: string
           question_id: string
@@ -423,6 +425,7 @@ export type Database = {
         }
         Update: {
           answer_text?: string
+          answer_value?: Json | null
           customer_id?: string
           id?: string
           question_id?: string
@@ -510,6 +513,7 @@ export type Database = {
       home_profile_draft_answers: {
         Row: {
           answer_text: string
+          answer_value: Json | null
           created_at: string
           email: string
           id: string
@@ -517,6 +521,7 @@ export type Database = {
         }
         Insert: {
           answer_text: string
+          answer_value?: Json | null
           created_at?: string
           email: string
           id?: string
@@ -524,6 +529,7 @@ export type Database = {
         }
         Update: {
           answer_text?: string
+          answer_value?: Json | null
           created_at?: string
           email?: string
           id?: string
@@ -539,12 +545,97 @@ export type Database = {
           },
         ]
       }
+      home_question_display_rules: {
+        Row: {
+          compare_value: Json | null
+          created_at: string
+          depends_on_question_id: string
+          id: string
+          logic_group: number
+          operator: string
+          question_id: string
+        }
+        Insert: {
+          compare_value?: Json | null
+          created_at?: string
+          depends_on_question_id: string
+          id?: string
+          logic_group?: number
+          operator: string
+          question_id: string
+        }
+        Update: {
+          compare_value?: Json | null
+          created_at?: string
+          depends_on_question_id?: string
+          id?: string
+          logic_group?: number
+          operator?: string
+          question_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "home_question_display_rules_depends_on_question_id_fkey"
+            columns: ["depends_on_question_id"]
+            isOneToOne: false
+            referencedRelation: "home_questions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "home_question_display_rules_question_id_fkey"
+            columns: ["question_id"]
+            isOneToOne: false
+            referencedRelation: "home_questions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      home_question_options: {
+        Row: {
+          created_at: string
+          id: string
+          label_en: string
+          label_sv: string
+          order_index: number
+          question_id: string
+          value: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          label_en?: string
+          label_sv: string
+          order_index?: number
+          question_id: string
+          value: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          label_en?: string
+          label_sv?: string
+          order_index?: number
+          question_id?: string
+          value?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "home_question_options_question_id_fkey"
+            columns: ["question_id"]
+            isOneToOne: false
+            referencedRelation: "home_questions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       home_questions: {
         Row: {
           created_at: string
           display_on_contact_form: boolean
           id: string
           is_active: boolean
+          order_index: number
+          parent_question_id: string | null
           question_text: string
           question_text_en: string
           question_type: string
@@ -555,6 +646,8 @@ export type Database = {
           display_on_contact_form?: boolean
           id?: string
           is_active?: boolean
+          order_index?: number
+          parent_question_id?: string | null
           question_text: string
           question_text_en?: string
           question_type?: string
@@ -565,12 +658,22 @@ export type Database = {
           display_on_contact_form?: boolean
           id?: string
           is_active?: boolean
+          order_index?: number
+          parent_question_id?: string | null
           question_text?: string
           question_text_en?: string
           question_type?: string
           sort_order?: number
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "home_questions_parent_question_id_fkey"
+            columns: ["parent_question_id"]
+            isOneToOne: false
+            referencedRelation: "home_questions"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       invoice_events: {
         Row: {
