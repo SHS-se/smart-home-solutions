@@ -23,6 +23,7 @@ import type { QuestionOption } from './OptionsEditor';
 
 interface ConditionsEditorProps {
   questionId: string;
+  parentQuestionId?: string | null;
   rules: DisplayRule[];
   allQuestions: TreeQuestion[];
   allOptions: Record<string, QuestionOption[]>;
@@ -32,6 +33,7 @@ interface ConditionsEditorProps {
 
 const ConditionsEditor: React.FC<ConditionsEditorProps> = ({
   questionId,
+  parentQuestionId,
   rules,
   allQuestions,
   allOptions,
@@ -57,12 +59,30 @@ const ConditionsEditor: React.FC<ConditionsEditorProps> = ({
     }
   };
 
-  const handleAddRule = async () => {
-    // Find a valid question to depend on (not self)
-    const available = allQuestions.filter(q => q.id !== questionId);
-    if (available.length === 0) return;
+  // Build ancestor chain for filtering
+  const getAncestorIds = (qId: string): string[] => {
+    const ancestors: string[] = [];
+    let current = allQuestions.find(q => q.id === qId);
+    while (current?.parent_question_id) {
+      ancestors.push(current.parent_question_id);
+      current = allQuestions.find(q => q.id === current!.parent_question_id);
+    }
+    return ancestors;
+  };
 
-    const dependsOn = available[0];
+  const ancestorIds = parentQuestionId ? getAncestorIds(questionId) : [];
+  // If question has a parent, only show ancestors; otherwise show all other questions
+  const availableQuestions = parentQuestionId
+    ? allQuestions.filter(q => ancestorIds.includes(q.id))
+    : allQuestions.filter(q => q.id !== questionId);
+
+  const handleAddRule = async () => {
+    if (availableQuestions.length === 0) return;
+
+    // Default to parent question if available
+    const dependsOn = parentQuestionId
+      ? availableQuestions.find(q => q.id === parentQuestionId) || availableQuestions[0]
+      : availableQuestions[0];
     const operators = getOperatorsForType(dependsOn.question_type as QuestionType);
     const defaultOp = operators[0] || 'equals';
     const maxGroup = rules.length > 0 ? Math.max(...rules.map(r => r.logic_group)) : 0;
@@ -219,7 +239,7 @@ const ConditionsEditor: React.FC<ConditionsEditorProps> = ({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {allQuestions.filter(q => q.id !== questionId).map(q => (
+                      {availableQuestions.map(q => (
                         <SelectItem key={q.id} value={q.id}>
                           {(q as any).question_text?.substring(0, 40) || q.id.substring(0, 8)}
                         </SelectItem>

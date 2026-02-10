@@ -254,6 +254,7 @@ const SortableRow: React.FC<SortableRowProps> = ({
         <div className="px-3 pb-3">
           <ConditionsEditor
             questionId={question.id}
+            parentQuestionId={question.parent_question_id}
             rules={rules}
             allQuestions={allQuestions as TreeQuestion[]}
             allOptions={allOptions}
