@@ -22,15 +22,17 @@ interface OptionsEditorProps {
   onChange: (options: QuestionOption[]) => void;
 }
 
+const slugify = (text: string) =>
+  text.toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+
 const OptionsEditor: React.FC<OptionsEditorProps> = ({ questionId, options, onChange }) => {
   const { toast } = useToast();
   const { t } = useLanguage();
-  const [newValue, setNewValue] = useState('');
   const [newLabelSv, setNewLabelSv] = useState('');
   const [newLabelEn, setNewLabelEn] = useState('');
 
   const handleAdd = async () => {
-    const trimmedValue = newValue.trim();
+    const trimmedValue = slugify(newLabelEn) || slugify(newLabelSv);
     if (!trimmedValue || !newLabelSv.trim()) return;
     if (options.some(o => o.value === trimmedValue)) {
       toast({ title: t('Duplikat', 'Duplicate'), description: t('Värdet måste vara unikt.', 'Value must be unique.'), variant: 'destructive' });
@@ -52,7 +54,6 @@ const OptionsEditor: React.FC<OptionsEditorProps> = ({ questionId, options, onCh
     }
 
     onChange([...options, data as QuestionOption]);
-    setNewValue('');
     setNewLabelSv('');
     setNewLabelEn('');
   };
@@ -112,12 +113,6 @@ const OptionsEditor: React.FC<OptionsEditorProps> = ({ questionId, options, onCh
       <div className="flex items-center gap-2">
         <div className="w-4" />
         <Input
-          value={newValue}
-          onChange={e => setNewValue(e.target.value)}
-          className="w-24 text-xs"
-          placeholder="value"
-        />
-        <Input
           value={newLabelSv}
           onChange={e => setNewLabelSv(e.target.value)}
           className="flex-1 text-xs"
@@ -133,7 +128,7 @@ const OptionsEditor: React.FC<OptionsEditorProps> = ({ questionId, options, onCh
           size="icon"
           variant="ghost"
           className="h-7 w-7 shrink-0"
-          disabled={!newValue.trim() || !newLabelSv.trim()}
+          disabled={!newLabelSv.trim()}
           onClick={handleAdd}
         >
           <Plus className="w-3.5 h-3.5" />
