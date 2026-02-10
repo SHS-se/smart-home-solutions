@@ -1,22 +1,41 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { Loader2, Save, Pencil, X, Check, Trash2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { useToast } from '@/hooks/use-toast';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
 import PhotoUploadZone from './PhotoUploadZone';
 import PhotoLightbox from './PhotoLightbox';
+import {
+  flattenTree,
+  evaluateVisibility,
+  parseAnswerText,
+  type TreeQuestion,
+  type DisplayRule,
+  type AnswerMap,
+  type QuestionType,
+} from '@/lib/questionnaire-engine';
 
-interface Question {
-  id: string;
+interface Question extends TreeQuestion {
   question_text: string;
   question_text_en: string;
-  question_type: string;
-  sort_order: number;
+  display_on_contact_form: boolean;
+}
+
+interface QuestionOption {
+  id: string;
+  question_id: string;
+  value: string;
+  label_sv: string;
+  label_en: string;
+  order_index: number;
 }
 
 interface Photo {
@@ -31,7 +50,6 @@ interface Photo {
 interface HomeProfileFormProps {
   customerId: string;
   userId: string;
-  /** Staff mode shows visibility toggles on photos */
   isStaffView?: boolean;
 }
 
@@ -40,7 +58,9 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
   const { t } = useLanguage();
 
   const [questions, setQuestions] = useState<Question[]>([]);
-  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [questionOptions, setQuestionOptions] = useState<Record<string, QuestionOption[]>>({});
+  const [displayRules, setDisplayRules] = useState<DisplayRule[]>([]);
+  const [answers, setAnswers] = useState<AnswerMap>({});
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -54,21 +74,34 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
       setLoading(true);
       try {
         const photoSelect = 'id, storage_path, annotation_text, uploaded_at, visible_to_customer';
-
         const photoQuery = isStaffView
           ? supabase.from('home_photos').select(photoSelect).eq('customer_id', customerId).order('uploaded_at', { ascending: false })
           : supabase.from('home_photos').select(photoSelect).eq('customer_id', customerId).eq('visible_to_customer', true).order('uploaded_at', { ascending: false });
 
-        const [qRes, aRes, pRes] = await Promise.all([
-          supabase.from('home_questions').select('id, question_text, question_text_en, question_type, sort_order').eq('is_active', true).order('sort_order'),
-          supabase.from('home_answers').select('question_id, answer_text').eq('customer_id', customerId),
+        const [qRes, aRes, pRes, oRes, rRes] = await Promise.all([
+          supabase.from('home_questions').select('id, question_text, question_text_en, question_type, order_index, parent_question_id, is_active, display_on_contact_form').eq('is_active', true).order('order_index'),
+          supabase.from('home_answers').select('question_id, answer_text, answer_value').eq('customer_id', customerId),
           photoQuery,
+          supabase.from('home_question_options').select('*').order('order_index'),
+          supabase.from('home_question_display_rules').select('*'),
         ]);
 
-        if (qRes.data) setQuestions(qRes.data);
+        if (qRes.data) setQuestions(qRes.data as Question[]);
         if (aRes.data) {
-          const map: Record<string, string> = {};
-          aRes.data.forEach(a => { map[a.question_id] = a.answer_text; });
+          const map: AnswerMap = {};
+          for (const a of aRes.data) {
+            if (a.answer_value !== null && a.answer_value !== undefined) {
+              map[a.question_id] = a.answer_value;
+            } else if (a.answer_text) {
+              // Lazy migration: parse answer_text
+              const q = qRes.data?.find((q: any) => q.id === a.question_id);
+              if (q) {
+                map[a.question_id] = parseAnswerText(a.answer_text, (q as any).question_type);
+              } else {
+                map[a.question_id] = a.answer_text;
+              }
+            }
+          }
           setAnswers(map);
         }
         if (pRes.data) {
@@ -80,6 +113,15 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
           );
           setPhotos(withUrls);
         }
+        if (oRes.data) {
+          const grouped: Record<string, QuestionOption[]> = {};
+          for (const o of oRes.data as QuestionOption[]) {
+            if (!grouped[o.question_id]) grouped[o.question_id] = [];
+            grouped[o.question_id].push(o);
+          }
+          setQuestionOptions(grouped);
+        }
+        if (rRes.data) setDisplayRules(rRes.data as DisplayRule[]);
       } catch (err) {
         console.error('Error fetching home profile:', err);
       } finally {
@@ -89,14 +131,31 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
     fetchData();
   }, [customerId, isStaffView]);
 
+  const flattened = useMemo(() => flattenTree(questions), [questions]);
+
+  const setAnswer = (qId: string, value: unknown) => {
+    setAnswers(prev => {
+      const next = { ...prev, [qId]: value };
+      // Clear children answers if this question's answer changes and makes children invisible
+      // (handled reactively during render - just set the answer)
+      return next;
+    });
+  };
+
   const handleSaveAnswers = async () => {
     if (!customerId || !userId) return;
     setSaving(true);
     try {
+      // Only save visible questions
+      const visibleIds = new Set(
+        flattened.filter(q => evaluateVisibility(q.id, displayRules, answers, questions)).map(q => q.id)
+      );
+
       const upserts = questions.map(q => ({
         customer_id: customerId,
         question_id: q.id,
-        answer_text: answers[q.id] || '',
+        answer_text: visibleIds.has(q.id) ? stringifyAnswer(answers[q.id]) : '',
+        answer_value: visibleIds.has(q.id) ? (answers[q.id] as any) ?? null : null,
         updated_by: userId,
       }));
       const { error } = await supabase.from('home_answers').upsert(upserts, { onConflict: 'customer_id,question_id' });
@@ -114,9 +173,7 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
     const photoId = crypto.randomUUID();
     const storagePath = `customers/${customerId}/${photoId}.webp`;
 
-    const { error: uploadError } = await supabase.storage.from('home-photos').upload(storagePath, blob, {
-      contentType: 'image/webp',
-    });
+    const { error: uploadError } = await supabase.storage.from('home-photos').upload(storagePath, blob, { contentType: 'image/webp' });
     if (uploadError) throw uploadError;
 
     const { error: insertError } = await supabase.from('home_photos').insert({
@@ -167,6 +224,109 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
     }
   };
 
+  const renderQuestionInput = (q: Question) => {
+    const type = q.question_type as QuestionType;
+    const opts = questionOptions[q.id] || [];
+
+    switch (type) {
+      case 'boolean':
+        return (
+          <div className="flex items-center gap-3">
+            <Switch
+              checked={answers[q.id] === true}
+              onCheckedChange={v => setAnswer(q.id, v)}
+            />
+            <span className="text-sm text-muted-foreground">
+              {answers[q.id] === true ? t('Ja', 'Yes') : t('Nej', 'No')}
+            </span>
+          </div>
+        );
+
+      case 'number':
+        return (
+          <Input
+            type="number"
+            value={typeof answers[q.id] === 'number' ? answers[q.id] as number : ''}
+            onChange={e => setAnswer(q.id, e.target.value ? Number(e.target.value) : null)}
+            placeholder="0"
+            className="max-w-[200px]"
+          />
+        );
+
+      case 'single_choice':
+        if (opts.length > 0) {
+          return (
+            <RadioGroup
+              value={typeof answers[q.id] === 'string' ? answers[q.id] as string : ''}
+              onValueChange={v => setAnswer(q.id, v)}
+            >
+              {opts.sort((a, b) => a.order_index - b.order_index).map(opt => (
+                <div key={opt.id} className="flex items-center gap-2">
+                  <RadioGroupItem value={opt.value} id={`hp-${q.id}-${opt.value}`} />
+                  <Label htmlFor={`hp-${q.id}-${opt.value}`} className="text-sm cursor-pointer">
+                    {t(opt.label_sv, opt.label_en || opt.label_sv)}
+                  </Label>
+                </div>
+              ))}
+            </RadioGroup>
+          );
+        }
+        return (
+          <Input
+            value={typeof answers[q.id] === 'string' ? answers[q.id] as string : ''}
+            onChange={e => setAnswer(q.id, e.target.value)}
+            placeholder={!isStaffView ? t('Ditt svar...', 'Your answer...') : undefined}
+          />
+        );
+
+      case 'multi_choice': {
+        const current = Array.isArray(answers[q.id]) ? answers[q.id] as string[] : [];
+        if (opts.length > 0) {
+          return (
+            <div className="space-y-2">
+              {opts.sort((a, b) => a.order_index - b.order_index).map(opt => (
+                <div key={opt.id} className="flex items-center gap-2">
+                  <Checkbox
+                    id={`hp-${q.id}-${opt.value}`}
+                    checked={current.includes(opt.value)}
+                    onCheckedChange={checked => {
+                      const next = checked
+                        ? [...current, opt.value]
+                        : current.filter(v => v !== opt.value);
+                      setAnswer(q.id, next);
+                    }}
+                  />
+                  <Label htmlFor={`hp-${q.id}-${opt.value}`} className="text-sm cursor-pointer">
+                    {t(opt.label_sv, opt.label_en || opt.label_sv)}
+                  </Label>
+                </div>
+              ))}
+            </div>
+          );
+        }
+        return (
+          <Input
+            value={current.join(', ')}
+            onChange={e => setAnswer(q.id, e.target.value.split(',').map(s => s.trim()).filter(Boolean))}
+            placeholder={!isStaffView ? t('Ditt svar...', 'Your answer...') : undefined}
+          />
+        );
+      }
+
+      case 'text':
+      default:
+        return (
+          <Textarea
+            value={typeof answers[q.id] === 'string' ? answers[q.id] as string : (answers[q.id] != null ? String(answers[q.id]) : '')}
+            onChange={e => setAnswer(q.id, e.target.value)}
+            placeholder={!isStaffView ? t('Ditt svar...', 'Your answer...') : undefined}
+            rows={1}
+            className="min-h-[40px] resize-y"
+          />
+        );
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[300px]">
@@ -183,35 +343,23 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
           <CardTitle>{isStaffView ? t('Bostad & enheter', 'Home & Devices') : t('Din bostad & enheter', 'Your Home & Devices')}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-6">
-          {questions.length === 0 ? (
+          {flattened.length === 0 ? (
             <p className="text-muted-foreground">{t('Inga frågor har lagts till ännu.', 'No questions have been added yet.')}</p>
           ) : (
-            questions.map(q => (
-              <div key={q.id} className="space-y-2">
-                <label className="text-sm font-medium">{t(q.question_text, q.question_text_en || q.question_text)}</label>
-                {q.question_type === 'boolean' ? (
-                  <div className="flex items-center gap-3">
-                    <Switch
-                      checked={answers[q.id] === 'true'}
-                      onCheckedChange={(v) => setAnswers(prev => ({ ...prev, [q.id]: v ? 'true' : 'false' }))}
-                    />
-                    <span className="text-sm text-muted-foreground">
-                      {answers[q.id] === 'true' ? t('Ja', 'Yes') : t('Nej', 'No')}
-                    </span>
-                  </div>
-                ) : (
-                  <Textarea
-                    value={answers[q.id] || ''}
-                    onChange={e => setAnswers(prev => ({ ...prev, [q.id]: e.target.value }))}
-                    placeholder={!isStaffView ? t('Ditt svar...', 'Your answer...') : undefined}
-                    rows={1}
-                    className="min-h-[40px] resize-y"
-                  />
-                )}
-              </div>
-            ))
+            flattened.map(q => {
+              const visible = evaluateVisibility(q.id, displayRules, answers, questions);
+              if (!visible) return null;
+              const questionObj = q as unknown as Question;
+
+              return (
+                <div key={q.id} className="space-y-2" style={{ paddingLeft: `${q.depth * 20}px` }}>
+                  <label className="text-sm font-medium">{t(questionObj.question_text, questionObj.question_text_en || questionObj.question_text)}</label>
+                  {renderQuestionInput(questionObj)}
+                </div>
+              );
+            })
           )}
-          {questions.length > 0 && (
+          {flattened.length > 0 && (
             <Button onClick={handleSaveAnswers} disabled={saving}>
               {saving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
               {t('Spara svar', 'Save answers')}
@@ -287,5 +435,14 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
     </div>
   );
 };
+
+// Helper: convert answer_value back to a string for legacy answer_text
+function stringifyAnswer(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (typeof value === 'number') return String(value);
+  if (Array.isArray(value)) return JSON.stringify(value);
+  return String(value);
+}
 
 export default HomeProfileForm;
