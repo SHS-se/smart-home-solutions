@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
 import PortalLayout from '@/components/portal/PortalLayout';
+import CustomerDashboardCards from '@/components/portal/CustomerDashboardCards';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -470,111 +471,16 @@ const Dashboard: React.FC = () => {
           </div>
         ) : (
           // Customer Dashboard
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {/* Home Profile card - clickable, no button */}
-            <Card 
-              className="cursor-pointer transition-colors hover:bg-muted/50"
-              onClick={() => navigate('/portal/home-profile')}
-            >
-              <CardHeader className="flex flex-row items-center gap-4">
-                <div className="p-2 rounded-lg bg-primary/10">
-                  <Home className="w-6 h-6 text-primary" />
-                </div>
-                <CardTitle className="text-lg">{t('Hemprofil', 'Home Profile')}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-muted-foreground mb-2">
-                  {t('Din bostads tekniska profil, enheter, nätverk och installationsdokumentation.', "Your home's technical profile, devices, networks and installation documentation.")}
-                </p>
-                <p className="text-muted-foreground text-sm">
-                  {t('Besvarade frågor:', 'Questions answered:')} <strong>{homeProfileStats.answered} / {homeProfileStats.total}</strong>
-                </p>
-                <p className="text-muted-foreground text-sm">
-                  {t('Uppladdade foton:', 'Photos uploaded:')} <strong>{homeProfileStats.photos}</strong>
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center gap-4">
-                <div className="p-2 rounded-lg bg-primary/10">
-                  <Building2 className="w-6 h-6 text-primary" />
-                </div>
-                <CardTitle className="text-lg">{t('Konto', 'Account')}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-muted-foreground mb-1">
-                  {t('Kund:', 'Customer:')} <strong>{customerData?.name || 'N/A'}</strong>
-                </p>
-                <p className="text-muted-foreground mb-4">
-                  {t('Kontakt:', 'Contact:')} {customerData?.billing_email || user?.email}
-                </p>
-                <Button asChild variant="outline" className="w-full">
-                  <Link to="/portal/account">{t('Visa konto', 'View account')}</Link>
-                </Button>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center gap-4">
-                <div className="p-2 rounded-lg bg-primary/10">
-                  <ClipboardList className="w-6 h-6 text-primary" />
-                </div>
-                <CardTitle className="text-lg">{t('Offerter', 'Offers')}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-muted-foreground mb-1">
-                  {t('Offerter:', 'Offers:')} <strong>{customerQuoteStats.total} {t('totalt', 'total')}</strong>
-                </p>
-                <p className="text-muted-foreground mb-4">
-                  {t('Se och ladda ner offerter', 'View and download offers')}
-                </p>
-                <Button asChild variant="outline" className="w-full">
-                  <Link to="/portal/offers">{t('Visa offerter', 'View offers')}</Link>
-                </Button>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center gap-4">
-                <div className="p-2 rounded-lg bg-primary/10">
-                  <FileText className="w-6 h-6 text-primary" />
-                </div>
-                <CardTitle className="text-lg">{t('Fakturor', 'Billing')}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-muted-foreground mb-1">
-                  {t('Fakturor:', 'Invoices:')} <strong>{invoiceStats.total} {t('totalt', 'total')}</strong>
-                </p>
-                <p className="text-muted-foreground mb-4">
-                  {t('Senaste faktura:', 'Last invoice:')} {invoiceStats.lastDate || 'N/A'}
-                </p>
-                <Button asChild variant="outline" className="w-full">
-                  <Link to="/portal/billing">{t('Visa fakturor', 'View billing')}</Link>
-                </Button>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center gap-4">
-                <div className="p-2 rounded-lg bg-primary/10">
-                  <MessageSquare className="w-6 h-6 text-primary" />
-                </div>
-                <CardTitle className="text-lg">{t('Supportärenden', 'Support Tickets')}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-muted-foreground mb-1">
-                  {t('Öppna ärenden:', 'Open tickets:')} <strong>{ticketStats.open}</strong>
-                </p>
-                <p className="text-muted-foreground mb-4">
-                  {t('Totalt ärenden:', 'Total tickets:')} {ticketStats.total}
-                </p>
-                <Button asChild variant="outline" className="w-full">
-                  <Link to="/portal/tickets">{t('Visa ärenden', 'View tickets')}</Link>
-                </Button>
-              </CardContent>
-            </Card>
-          </div>
+          <CustomerDashboardCards
+              basePath="/portal"
+              customerName={customerData?.name || undefined}
+              billingEmail={customerData?.billing_email || user?.email}
+              statsLoading={statsLoading}
+              homeProfileStats={homeProfileStats}
+              invoiceStats={{ total: invoiceStats.total, lastDate: invoiceStats.lastDate || null }}
+              ticketStats={ticketStats}
+              quoteStats={{ total: customerQuoteStats.total }}
+            />
         )}
       </div>
     </PortalLayout>
