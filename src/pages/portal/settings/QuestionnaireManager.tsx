@@ -174,7 +174,7 @@ const SortableRow: React.FC<SortableRowProps> = ({
 
       {/* Collapsible detail content */}
       {!isCollapsed && (
-        <div className="px-3 pb-2 space-y-1.5" style={{ marginLeft: `${44 + question.depth * 24}px` }}>
+        <div className="pb-2 space-y-1.5" style={{ marginLeft: '52px', paddingRight: '12px' }}>
           {editingId === question.id && (
             <div className="space-y-2">
               <div>
