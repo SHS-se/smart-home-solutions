@@ -630,6 +630,7 @@ export type Database = {
       }
       home_questions: {
         Row: {
+          allow_other: boolean
           created_at: string
           display_on_contact_form: boolean
           id: string
@@ -642,6 +643,7 @@ export type Database = {
           sort_order: number
         }
         Insert: {
+          allow_other?: boolean
           created_at?: string
           display_on_contact_form?: boolean
           id?: string
@@ -654,6 +656,7 @@ export type Database = {
           sort_order?: number
         }
         Update: {
+          allow_other?: boolean
           created_at?: string
           display_on_contact_form?: boolean
           id?: string

@@ -27,6 +27,7 @@ interface Question extends TreeQuestion {
   question_text: string;
   question_text_en: string;
   display_on_contact_form: boolean;
+  allow_other?: boolean;
 }
 
 interface QuestionOption {
@@ -79,7 +80,7 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
           : supabase.from('home_photos').select(photoSelect).eq('customer_id', customerId).eq('visible_to_customer', true).order('uploaded_at', { ascending: false });
 
         const [qRes, aRes, pRes, oRes, rRes] = await Promise.all([
-          supabase.from('home_questions').select('id, question_text, question_text_en, question_type, order_index, parent_question_id, is_active, display_on_contact_form').eq('is_active', true).order('order_index'),
+          supabase.from('home_questions').select('id, question_text, question_text_en, question_type, order_index, parent_question_id, is_active, display_on_contact_form, allow_other').eq('is_active', true).order('order_index'),
           supabase.from('home_answers').select('question_id, answer_text, answer_value').eq('customer_id', customerId),
           photoQuery,
           supabase.from('home_question_options').select('*').order('order_index'),
@@ -255,20 +256,48 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
 
       case 'single_choice':
         if (opts.length > 0) {
+          const currentVal = typeof answers[q.id] === 'string' ? answers[q.id] as string : '';
+          const isOtherSelected = currentVal.startsWith('__other:');
+          const otherText = isOtherSelected ? currentVal.slice(8) : '';
+
           return (
-            <RadioGroup
-              value={typeof answers[q.id] === 'string' ? answers[q.id] as string : ''}
-              onValueChange={v => setAnswer(q.id, v)}
-            >
-              {opts.sort((a, b) => a.order_index - b.order_index).map(opt => (
-                <div key={opt.id} className="flex items-center gap-2">
-                  <RadioGroupItem value={opt.value} id={`hp-${q.id}-${opt.value}`} />
-                  <Label htmlFor={`hp-${q.id}-${opt.value}`} className="text-sm cursor-pointer">
-                    {t(opt.label_sv, opt.label_en || opt.label_sv)}
-                  </Label>
-                </div>
-              ))}
-            </RadioGroup>
+            <div className="space-y-2">
+              <RadioGroup
+                value={isOtherSelected ? '__other' : currentVal}
+                onValueChange={v => {
+                  if (v === '__other') {
+                    setAnswer(q.id, '__other:');
+                  } else {
+                    setAnswer(q.id, v);
+                  }
+                }}
+              >
+                {opts.sort((a, b) => a.order_index - b.order_index).map(opt => (
+                  <div key={opt.id} className="flex items-center gap-2">
+                    <RadioGroupItem value={opt.value} id={`hp-${q.id}-${opt.value}`} />
+                    <Label htmlFor={`hp-${q.id}-${opt.value}`} className="text-sm cursor-pointer">
+                      {t(opt.label_sv, opt.label_en || opt.label_sv)}
+                    </Label>
+                  </div>
+                ))}
+                {(q as Question).allow_other && (
+                  <div className="flex items-center gap-2">
+                    <RadioGroupItem value="__other" id={`hp-${q.id}-__other`} />
+                    <Label htmlFor={`hp-${q.id}-__other`} className="text-sm cursor-pointer">
+                      {t('Annat', 'Other')}
+                    </Label>
+                  </div>
+                )}
+              </RadioGroup>
+              {isOtherSelected && (
+                <Input
+                  value={otherText}
+                  onChange={e => setAnswer(q.id, `__other:${e.target.value}`)}
+                  placeholder={t('Ange ditt svar...', 'Enter your answer...')}
+                  className="max-w-xs ml-6"
+                />
+              )}
+            </div>
           );
         }
         return (
@@ -281,6 +310,11 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
 
       case 'multi_choice': {
         const current = Array.isArray(answers[q.id]) ? answers[q.id] as string[] : [];
+        const otherEntry = current.find(v => v.startsWith('__other:'));
+        const isOtherChecked = !!otherEntry;
+        const otherText = otherEntry ? otherEntry.slice(8) : '';
+        const regularValues = current.filter(v => !v.startsWith('__other:'));
+
         if (opts.length > 0) {
           return (
             <div className="space-y-2">
@@ -288,12 +322,12 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
                 <div key={opt.id} className="flex items-center gap-2">
                   <Checkbox
                     id={`hp-${q.id}-${opt.value}`}
-                    checked={current.includes(opt.value)}
+                    checked={regularValues.includes(opt.value)}
                     onCheckedChange={checked => {
-                      const next = checked
-                        ? [...current, opt.value]
-                        : current.filter(v => v !== opt.value);
-                      setAnswer(q.id, next);
+                      const nextRegular = checked
+                        ? [...regularValues, opt.value]
+                        : regularValues.filter(v => v !== opt.value);
+                      setAnswer(q.id, otherEntry ? [...nextRegular, otherEntry] : nextRegular);
                     }}
                   />
                   <Label htmlFor={`hp-${q.id}-${opt.value}`} className="text-sm cursor-pointer">
@@ -301,6 +335,37 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
                   </Label>
                 </div>
               ))}
+              {(q as Question).allow_other && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id={`hp-${q.id}-__other`}
+                      checked={isOtherChecked}
+                      onCheckedChange={checked => {
+                        if (checked) {
+                          setAnswer(q.id, [...regularValues, '__other:']);
+                        } else {
+                          setAnswer(q.id, regularValues);
+                        }
+                      }}
+                    />
+                    <Label htmlFor={`hp-${q.id}-__other`} className="text-sm cursor-pointer">
+                      {t('Annat', 'Other')}
+                    </Label>
+                  </div>
+                  {isOtherChecked && (
+                    <Input
+                      value={otherText}
+                      onChange={e => {
+                        const newOther = `__other:${e.target.value}`;
+                        setAnswer(q.id, [...regularValues, newOther]);
+                      }}
+                      placeholder={t('Ange ditt svar...', 'Enter your answer...')}
+                      className="max-w-xs ml-6"
+                    />
+                  )}
+                </div>
+              )}
             </div>
           );
         }
