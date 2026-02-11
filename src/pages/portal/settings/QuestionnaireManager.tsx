@@ -174,7 +174,7 @@ const SortableRow: React.FC<SortableRowProps> = ({
 
       {/* Collapsible detail content */}
       {!isCollapsed && (
-        <div className="px-3 pb-2 space-y-1.5" style={{ paddingLeft: `${40 + question.depth * 24}px` }}>
+        <div className="px-3 pb-2 space-y-1.5" style={{ marginLeft: `${44 + question.depth * 24}px` }}>
           {editingId === question.id && (
             <div className="space-y-2">
               <div>
@@ -224,35 +224,37 @@ const SortableRow: React.FC<SortableRowProps> = ({
               {question.question_text_en && (
                 <p className="text-xs text-muted-foreground -mt-1 mb-1">{question.question_text_en}</p>
               )}
-              <div className="flex gap-1 flex-wrap">
-                {canIndent && (
-                  <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px]" onClick={() => onIndent(question.id)}>
-                    <ArrowRight className="w-3 h-3 mr-0.5" /> {t('Indrag', 'Indent')}
+              <div className="flex items-center gap-1 flex-wrap">
+                <div className="flex gap-1 flex-wrap flex-1">
+                  {canIndent && (
+                    <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px]" onClick={() => onIndent(question.id)}>
+                      <ArrowRight className="w-3 h-3 mr-0.5" /> {t('Indrag', 'Indent')}
+                    </Button>
+                  )}
+                  {canOutdent && (
+                    <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px]" onClick={() => onOutdent(question.id)}>
+                      <ArrowLeft className="w-3 h-3 mr-0.5" /> {t('Utdrag', 'Outdent')}
+                    </Button>
+                  )}
+                  {isChoiceType && (
+                    <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px]" onClick={() => setShowOptions(!showOptions)}>
+                      {showOptions ? t('Dölj alternativ', 'Hide options') : t('Alternativ', 'Options')} ({options.length})
+                    </Button>
+                  )}
+                  <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px]" onClick={() => setShowConditions(!showConditions)}>
+                    {showConditions ? t('Dölj villkor', 'Hide conditions') : t('Villkor', 'Conditions')} ({rules.length})
                   </Button>
-                )}
-                {canOutdent && (
-                  <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px]" onClick={() => onOutdent(question.id)}>
-                    <ArrowLeft className="w-3 h-3 mr-0.5" /> {t('Utdrag', 'Outdent')}
-                  </Button>
-                )}
-                {isChoiceType && (
-                  <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px]" onClick={() => setShowOptions(!showOptions)}>
-                    {showOptions ? t('Dölj alternativ', 'Hide options') : t('Alternativ', 'Options')} ({options.length})
-                  </Button>
-                )}
-                <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px]" onClick={() => setShowConditions(!showConditions)}>
-                  {showConditions ? t('Dölj villkor', 'Hide conditions') : t('Villkor', 'Conditions')} ({rules.length})
-                </Button>
-                {isChoiceType && (
-                  <Button
-                    size="sm"
-                    variant={question.allow_other ? 'default' : 'ghost'}
-                    className="h-6 px-1.5 text-[10px]"
-                    onClick={() => onToggleAllowOther(question.id, !question.allow_other)}
-                  >
-                    {t('Annat', 'Other')}
-                  </Button>
-                )}
+                  {isChoiceType && (
+                    <Button
+                      size="sm"
+                      variant={question.allow_other ? 'default' : 'ghost'}
+                      className="h-6 px-1.5 text-[10px]"
+                      onClick={() => onToggleAllowOther(question.id, !question.allow_other)}
+                    >
+                      {t('Annat', 'Other')}
+                    </Button>
+                  )}
+                </div>
                 {!confirmDelete ? (
                   <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px] text-destructive hover:text-destructive" onClick={() => setConfirmDelete(true)}>
                     <Trash2 className="w-3 h-3 mr-0.5" /> {t('Radera', 'Delete')}
