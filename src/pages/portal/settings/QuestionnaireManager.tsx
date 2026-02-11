@@ -41,6 +41,7 @@ interface Question extends TreeQuestion {
   question_text_en: string;
   display_on_contact_form: boolean;
   sort_order: number;
+  allow_other: boolean;
 }
 
 // ── Sortable Row ────────────────────────────────────────────────────────────
@@ -54,6 +55,7 @@ interface SortableRowProps {
   onSaveEdit: (id: string) => void;
   onToggleActive: (id: string, active: boolean) => void;
   onToggleContactForm: (id: string, show: boolean) => void;
+  onToggleAllowOther: (id: string, allow: boolean) => void;
   collapsed: Set<string>;
   toggleCollapse: (id: string) => void;
   hasChildren: boolean;
@@ -80,6 +82,7 @@ const SortableRow: React.FC<SortableRowProps> = ({
   onSaveEdit,
   onToggleActive,
   onToggleContactForm,
+  onToggleAllowOther,
   collapsed,
   toggleCollapse,
   hasChildren,
@@ -238,6 +241,13 @@ const SortableRow: React.FC<SortableRowProps> = ({
           <span className="text-[10px] text-muted-foreground">{t('Kontakt', 'Contact')}</span>
           <Switch checked={question.display_on_contact_form} onCheckedChange={v => onToggleContactForm(question.id, v)} />
         </div>
+
+        {isChoiceType && (
+          <div className="flex flex-col items-center gap-1 shrink-0">
+            <span className="text-[10px] text-muted-foreground">{t('Annat', 'Other')}</span>
+            <Switch checked={question.allow_other === true} onCheckedChange={v => onToggleAllowOther(question.id, v)} />
+          </div>
+        )}
       </div>
 
       {/* Expandable sections */}
@@ -413,6 +423,12 @@ const QuestionnaireManager: React.FC = () => {
     setQuestions(prev => prev.map(q => q.id === id ? { ...q, display_on_contact_form: show } : q));
   };
 
+  const handleToggleAllowOther = async (id: string, allow: boolean) => {
+    const { error } = await supabase.from('home_questions').update({ allow_other: allow } as any).eq('id', id);
+    if (error) { toast({ title: t('Fel', 'Error'), description: error.message, variant: 'destructive' }); return; }
+    setQuestions(prev => prev.map(q => q.id === id ? { ...q, allow_other: allow } : q));
+  };
+
   const handleIndent = async (id: string) => {
     // Make this question a child of the previous sibling at the same level
     const q = questions.find(x => x.id === id);
@@ -573,6 +589,7 @@ const QuestionnaireManager: React.FC = () => {
                           onSaveEdit={handleSaveEdit}
                           onToggleActive={handleToggleActive}
                           onToggleContactForm={handleToggleContactForm}
+                          onToggleAllowOther={handleToggleAllowOther}
                           collapsed={collapsed}
                           toggleCollapse={toggleCollapse}
                           hasChildren={childrenMap.has(questionObj.id)}

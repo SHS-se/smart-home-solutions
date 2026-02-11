@@ -1,0 +1,1 @@
+ALTER TABLE public.home_questions ADD COLUMN allow_other boolean NOT NULL DEFAULT false;

@@ -79,26 +79,61 @@ const QuestionnairePreview: React.FC<QuestionnairePreviewProps> = ({
 
       case 'single_choice':
         if (qOptions.length > 0) {
+          const currentVal = typeof answers[q.id] === 'string' ? answers[q.id] as string : '';
+          const isOtherSelected = currentVal.startsWith('__other:');
+          const otherText = isOtherSelected ? currentVal.slice(8) : '';
+          const showOther = (q as any).allow_other === true;
+
           return (
-            <RadioGroup
-              value={typeof answers[q.id] === 'string' ? answers[q.id] as string : ''}
-              onValueChange={v => setAnswer(q.id, v)}
-            >
-              {qOptions.sort((a, b) => a.order_index - b.order_index).map(opt => (
-                <div key={opt.id} className="flex items-center gap-2">
-                  <RadioGroupItem value={opt.value} id={`preview-${q.id}-${opt.value}`} />
-                  <Label htmlFor={`preview-${q.id}-${opt.value}`} className="text-sm cursor-pointer">
-                    {t(opt.label_sv, opt.label_en || opt.label_sv)}
-                  </Label>
-                </div>
-              ))}
-            </RadioGroup>
+            <div className="space-y-2">
+              <RadioGroup
+                value={isOtherSelected ? '__other' : currentVal}
+                onValueChange={v => {
+                  if (v === '__other') {
+                    setAnswer(q.id, '__other:');
+                  } else {
+                    setAnswer(q.id, v);
+                  }
+                }}
+              >
+                {qOptions.sort((a, b) => a.order_index - b.order_index).map(opt => (
+                  <div key={opt.id} className="flex items-center gap-2">
+                    <RadioGroupItem value={opt.value} id={`preview-${q.id}-${opt.value}`} />
+                    <Label htmlFor={`preview-${q.id}-${opt.value}`} className="text-sm cursor-pointer">
+                      {t(opt.label_sv, opt.label_en || opt.label_sv)}
+                    </Label>
+                  </div>
+                ))}
+                {showOther && (
+                  <div className="flex items-center gap-2">
+                    <RadioGroupItem value="__other" id={`preview-${q.id}-__other`} />
+                    <Label htmlFor={`preview-${q.id}-__other`} className="text-sm cursor-pointer">
+                      {t('Annat', 'Other')}
+                    </Label>
+                  </div>
+                )}
+              </RadioGroup>
+              {isOtherSelected && (
+                <Input
+                  value={otherText}
+                  onChange={e => setAnswer(q.id, `__other:${e.target.value}`)}
+                  placeholder={t('Ange ditt svar...', 'Enter your answer...')}
+                  className="max-w-xs ml-6"
+                />
+              )}
+            </div>
           );
         }
         return <Input value={typeof answers[q.id] === 'string' ? answers[q.id] as string : ''} onChange={e => setAnswer(q.id, e.target.value)} />;
 
       case 'multi_choice': {
         const current = Array.isArray(answers[q.id]) ? answers[q.id] as string[] : [];
+        const otherEntry = current.find(v => v.startsWith('__other:'));
+        const isOtherChecked = !!otherEntry;
+        const otherText = otherEntry ? otherEntry.slice(8) : '';
+        const regularValues = current.filter(v => !v.startsWith('__other:'));
+        const showOther = (q as any).allow_other === true;
+
         if (qOptions.length > 0) {
           return (
             <div className="space-y-2">
@@ -106,12 +141,12 @@ const QuestionnairePreview: React.FC<QuestionnairePreviewProps> = ({
                 <div key={opt.id} className="flex items-center gap-2">
                   <Checkbox
                     id={`preview-${q.id}-${opt.value}`}
-                    checked={current.includes(opt.value)}
+                    checked={regularValues.includes(opt.value)}
                     onCheckedChange={checked => {
-                      const next = checked
-                        ? [...current, opt.value]
-                        : current.filter(v => v !== opt.value);
-                      setAnswer(q.id, next);
+                      const nextRegular = checked
+                        ? [...regularValues, opt.value]
+                        : regularValues.filter(v => v !== opt.value);
+                      setAnswer(q.id, otherEntry ? [...nextRegular, otherEntry] : nextRegular);
                     }}
                   />
                   <Label htmlFor={`preview-${q.id}-${opt.value}`} className="text-sm cursor-pointer">
@@ -119,6 +154,37 @@ const QuestionnairePreview: React.FC<QuestionnairePreviewProps> = ({
                   </Label>
                 </div>
               ))}
+              {showOther && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id={`preview-${q.id}-__other`}
+                      checked={isOtherChecked}
+                      onCheckedChange={checked => {
+                        if (checked) {
+                          setAnswer(q.id, [...regularValues, '__other:']);
+                        } else {
+                          setAnswer(q.id, regularValues);
+                        }
+                      }}
+                    />
+                    <Label htmlFor={`preview-${q.id}-__other`} className="text-sm cursor-pointer">
+                      {t('Annat', 'Other')}
+                    </Label>
+                  </div>
+                  {isOtherChecked && (
+                    <Input
+                      value={otherText}
+                      onChange={e => {
+                        const newOther = `__other:${e.target.value}`;
+                        setAnswer(q.id, [...regularValues, newOther]);
+                      }}
+                      placeholder={t('Ange ditt svar...', 'Enter your answer...')}
+                      className="max-w-xs ml-6"
+                    />
+                  )}
+                </div>
+              )}
             </div>
           );
         }
