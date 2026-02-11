@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, Plus, GripVertical, Pencil, Check, X, ChevronRight, ChevronDown, Eye, ArrowRight, ArrowLeft, Filter } from 'lucide-react';
+import { Loader2, Plus, GripVertical, Pencil, Check, X, ChevronRight, ChevronDown, Eye, ArrowRight, ArrowLeft, Filter, Trash2 } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -56,6 +56,7 @@ interface SortableRowProps {
   onToggleActive: (id: string, active: boolean) => void;
   onToggleContactForm: (id: string, show: boolean) => void;
   onToggleAllowOther: (id: string, allow: boolean) => void;
+  onDelete: (id: string) => void;
   collapsed: Set<string>;
   toggleCollapse: (id: string) => void;
   hasChildren: boolean;
@@ -83,6 +84,7 @@ const SortableRow: React.FC<SortableRowProps> = ({
   onToggleActive,
   onToggleContactForm,
   onToggleAllowOther,
+  onDelete,
   collapsed,
   toggleCollapse,
   hasChildren,
@@ -102,7 +104,9 @@ const SortableRow: React.FC<SortableRowProps> = ({
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: question.id });
   const [showOptions, setShowOptions] = useState(false);
   const [showConditions, setShowConditions] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const isChoiceType = question.question_type === 'single_choice' || question.question_type === 'multi_choice';
+  const isCollapsed = collapsed.has(question.id);
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -118,28 +122,60 @@ const SortableRow: React.FC<SortableRowProps> = ({
       style={style}
       className={`rounded-lg border ${!question.is_active ? 'opacity-50' : ''} ${isDragging ? 'opacity-70 shadow-lg bg-muted' : 'bg-card'}`}
     >
-      <div className="flex items-start gap-2 p-3">
+      <div className="flex items-center gap-2 p-3">
         <button
-          className="cursor-grab active:cursor-grabbing touch-none text-muted-foreground hover:text-foreground mt-1"
+          className="cursor-grab active:cursor-grabbing touch-none text-muted-foreground hover:text-foreground"
           {...attributes}
           {...listeners}
         >
           <GripVertical className="w-5 h-5" />
         </button>
 
-        {hasChildren ? (
-          <button
-            className="mt-1 text-muted-foreground hover:text-foreground"
-            onClick={() => toggleCollapse(question.id)}
-          >
-            {collapsed.has(question.id) ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-          </button>
-        ) : (
-          <div className="w-4 mt-1" />
-        )}
+        <button
+          className="text-muted-foreground hover:text-foreground"
+          onClick={() => toggleCollapse(question.id)}
+        >
+          {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+        </button>
 
-        <div className="flex-1 min-w-0">
-          {editingId === question.id ? (
+        <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
+          <span className="text-sm">{question.question_text}</span>
+          <Badge variant="secondary" className="text-[10px]">
+            {typeLabel ? t(typeLabel.sv, typeLabel.en) : question.question_type}
+          </Badge>
+          {rules.length > 0 && (
+            <Badge variant="outline" className="text-[10px] gap-1">
+              <Filter className="w-3 h-3" /> {rules.length}
+            </Badge>
+          )}
+          <Button
+            size="icon"
+            variant="ghost"
+            className="shrink-0 h-7 w-7"
+            onClick={() => {
+              setEditingId(question.id);
+              setEditDraft({ sv: question.question_text, en: question.question_text_en, type: question.question_type });
+            }}
+          >
+            <Pencil className="w-3.5 h-3.5" />
+          </Button>
+        </div>
+
+        <div className="flex flex-col items-center gap-1 shrink-0">
+          <span className="text-[10px] text-muted-foreground">{t('Aktiv', 'Active')}</span>
+          <Switch checked={question.is_active} onCheckedChange={v => onToggleActive(question.id, v)} />
+        </div>
+
+        <div className="flex flex-col items-center gap-1 shrink-0">
+          <span className="text-[10px] text-muted-foreground">{t('Kontakt', 'Contact')}</span>
+          <Switch checked={question.display_on_contact_form} onCheckedChange={v => onToggleContactForm(question.id, v)} />
+        </div>
+      </div>
+
+      {/* Collapsible detail content */}
+      {!isCollapsed && (
+        <div className="px-3 pb-3 space-y-3" style={{ paddingLeft: `${40 + question.depth * 24}px` }}>
+          {editingId === question.id && (
             <div className="space-y-2">
               <div>
                 <Label className="text-xs text-muted-foreground">🇸🇪 Svenska</Label>
@@ -181,34 +217,14 @@ const SortableRow: React.FC<SortableRowProps> = ({
                 </Button>
               </div>
             </div>
-          ) : (
-            <div className="space-y-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-sm">{question.question_text}</span>
-                <Badge variant="secondary" className="text-[10px]">
-                  {typeLabel ? t(typeLabel.sv, typeLabel.en) : question.question_type}
-                </Badge>
-                {rules.length > 0 && (
-                  <Badge variant="outline" className="text-[10px] gap-1">
-                    <Filter className="w-3 h-3" /> {rules.length}
-                  </Badge>
-                )}
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="shrink-0 h-7 w-7"
-                  onClick={() => {
-                    setEditingId(question.id);
-                    setEditDraft({ sv: question.question_text, en: question.question_text_en, type: question.question_type });
-                  }}
-                >
-                  <Pencil className="w-3.5 h-3.5" />
-                </Button>
-              </div>
+          )}
+
+          {editingId !== question.id && (
+            <>
               {question.question_text_en && (
                 <span className="text-xs text-muted-foreground">{question.question_text_en}</span>
               )}
-              <div className="flex gap-1 mt-1">
+              <div className="flex gap-1 flex-wrap">
                 {canIndent && (
                   <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px]" onClick={() => onIndent(question.id)}>
                     <ArrowRight className="w-3 h-3 mr-0.5" /> {t('Indrag', 'Indent')}
@@ -237,44 +253,43 @@ const SortableRow: React.FC<SortableRowProps> = ({
                     {t('Annat', 'Other')}
                   </Button>
                 )}
+                {!confirmDelete ? (
+                  <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px] text-destructive hover:text-destructive" onClick={() => setConfirmDelete(true)}>
+                    <Trash2 className="w-3 h-3 mr-0.5" /> {t('Radera', 'Delete')}
+                  </Button>
+                ) : (
+                  <div className="flex gap-1 items-center">
+                    <span className="text-[10px] text-destructive">{t('Säker?', 'Sure?')}</span>
+                    <Button size="sm" variant="destructive" className="h-6 px-1.5 text-[10px]" onClick={() => { onDelete(question.id); setConfirmDelete(false); }}>
+                      {t('Ja', 'Yes')}
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px]" onClick={() => setConfirmDelete(false)}>
+                      {t('Nej', 'No')}
+                    </Button>
+                  </div>
+                )}
               </div>
-            </div>
+            </>
           )}
-        </div>
 
-        <div className="flex flex-col items-center gap-1 shrink-0">
-          <span className="text-[10px] text-muted-foreground">{t('Aktiv', 'Active')}</span>
-          <Switch checked={question.is_active} onCheckedChange={v => onToggleActive(question.id, v)} />
-        </div>
-
-        <div className="flex flex-col items-center gap-1 shrink-0">
-          <span className="text-[10px] text-muted-foreground">{t('Kontakt', 'Contact')}</span>
-          <Switch checked={question.display_on_contact_form} onCheckedChange={v => onToggleContactForm(question.id, v)} />
-        </div>
-
-      </div>
-
-      {/* Expandable sections */}
-      {showOptions && isChoiceType && (
-        <div className="px-3 pb-3">
-          <OptionsEditor
-            questionId={question.id}
-            options={options}
-            onChange={opts => onOptionsChange(question.id, opts)}
-          />
-        </div>
-      )}
-      {showConditions && (
-        <div className="px-3 pb-3">
-          <ConditionsEditor
-            questionId={question.id}
-            parentQuestionId={question.parent_question_id}
-            rules={rules}
-            allQuestions={allQuestions as TreeQuestion[]}
-            allOptions={allOptions}
-            allRules={allRules}
-            onChange={r => onRulesChange(question.id, r)}
-          />
+          {showOptions && isChoiceType && (
+            <OptionsEditor
+              questionId={question.id}
+              options={options}
+              onChange={opts => onOptionsChange(question.id, opts)}
+            />
+          )}
+          {showConditions && (
+            <ConditionsEditor
+              questionId={question.id}
+              parentQuestionId={question.parent_question_id}
+              rules={rules}
+              allQuestions={allQuestions as TreeQuestion[]}
+              allOptions={allOptions}
+              allRules={allRules}
+              onChange={r => onRulesChange(question.id, r)}
+            />
+          )}
         </div>
       )}
     </div>
@@ -431,6 +446,35 @@ const QuestionnaireManager: React.FC = () => {
     const { error } = await supabase.from('home_questions').update({ allow_other: allow } as any).eq('id', id);
     if (error) { toast({ title: t('Fel', 'Error'), description: error.message, variant: 'destructive' }); return; }
     setQuestions(prev => prev.map(q => q.id === id ? { ...q, allow_other: allow } : q));
+  };
+
+  const handleDelete = async (id: string) => {
+    try {
+      // Delete options, rules, and answers first
+      await Promise.all([
+        supabase.from('home_question_options').delete().eq('question_id', id),
+        supabase.from('home_question_display_rules').delete().eq('question_id', id),
+        supabase.from('home_question_display_rules').delete().eq('depends_on_question_id', id),
+        supabase.from('home_answers').delete().eq('question_id', id),
+        supabase.from('home_profile_draft_answers').delete().eq('question_id', id),
+      ]);
+      // Re-parent children to this question's parent
+      const q = questions.find(x => x.id === id);
+      if (q) {
+        const children = questions.filter(x => x.parent_question_id === id);
+        if (children.length > 0) {
+          await Promise.all(
+            children.map(c => supabase.from('home_questions').update({ parent_question_id: q.parent_question_id }).eq('id', c.id))
+          );
+        }
+      }
+      const { error } = await supabase.from('home_questions').delete().eq('id', id);
+      if (error) throw error;
+      await fetchAll();
+      toast({ title: t('Borttagen', 'Deleted'), description: t('Frågan har raderats.', 'Question has been deleted.') });
+    } catch (err: any) {
+      toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
+    }
   };
 
   const handleIndent = async (id: string) => {
@@ -594,6 +638,7 @@ const QuestionnaireManager: React.FC = () => {
                           onToggleActive={handleToggleActive}
                           onToggleContactForm={handleToggleContactForm}
                           onToggleAllowOther={handleToggleAllowOther}
+                          onDelete={handleDelete}
                           collapsed={collapsed}
                           toggleCollapse={toggleCollapse}
                           hasChildren={childrenMap.has(questionObj.id)}
