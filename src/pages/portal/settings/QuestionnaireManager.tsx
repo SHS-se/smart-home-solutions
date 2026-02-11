@@ -227,6 +227,16 @@ const SortableRow: React.FC<SortableRowProps> = ({
                 <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px]" onClick={() => setShowConditions(!showConditions)}>
                   {showConditions ? t('Dölj villkor', 'Hide conditions') : t('Villkor', 'Conditions')} ({rules.length})
                 </Button>
+                {isChoiceType && (
+                  <Button
+                    size="sm"
+                    variant={question.allow_other ? 'default' : 'ghost'}
+                    className="h-6 px-1.5 text-[10px]"
+                    onClick={() => onToggleAllowOther(question.id, !question.allow_other)}
+                  >
+                    {t('Annat', 'Other')}
+                  </Button>
+                )}
               </div>
             </div>
           )}
@@ -242,12 +252,6 @@ const SortableRow: React.FC<SortableRowProps> = ({
           <Switch checked={question.display_on_contact_form} onCheckedChange={v => onToggleContactForm(question.id, v)} />
         </div>
 
-        {isChoiceType && (
-          <div className="flex flex-col items-center gap-1 shrink-0">
-            <span className="text-[10px] text-muted-foreground">{t('Annat', 'Other')}</span>
-            <Switch checked={question.allow_other === true} onCheckedChange={v => onToggleAllowOther(question.id, v)} />
-          </div>
-        )}
       </div>
 
       {/* Expandable sections */}
