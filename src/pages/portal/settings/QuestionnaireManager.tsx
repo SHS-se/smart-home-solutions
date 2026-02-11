@@ -174,7 +174,7 @@ const SortableRow: React.FC<SortableRowProps> = ({
 
       {/* Collapsible detail content */}
       {!isCollapsed && (
-        <div className="px-3 pb-3 space-y-3" style={{ paddingLeft: `${40 + question.depth * 24}px` }}>
+        <div className="px-3 pb-2 space-y-1.5" style={{ paddingLeft: `${40 + question.depth * 24}px` }}>
           {editingId === question.id && (
             <div className="space-y-2">
               <div>
@@ -222,7 +222,7 @@ const SortableRow: React.FC<SortableRowProps> = ({
           {editingId !== question.id && (
             <>
               {question.question_text_en && (
-                <span className="text-xs text-muted-foreground">{question.question_text_en}</span>
+                <p className="text-xs text-muted-foreground -mt-1 mb-1">{question.question_text_en}</p>
               )}
               <div className="flex gap-1 flex-wrap">
                 {canIndent && (
