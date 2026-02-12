@@ -281,6 +281,8 @@ async function handleOnboarding(
   appUrl: string
 ): Promise<boolean> {
   try {
+    const emailNorm = email.toLowerCase().trim();
+
     // Check if email already exists in auth.users
     const { data: { users }, error: listError } = await supabase.auth.admin.listUsers();
 
@@ -289,12 +291,25 @@ async function handleOnboarding(
       return false;
     }
 
-    const emailNorm = email.toLowerCase().trim();
     const existingUser = (users || []).find(u => u.email?.toLowerCase() === emailNorm);
 
     if (existingUser) {
-      console.log(`User already exists for ${emailNorm}, skipping onboarding`);
-      return false;
+      // Check if this auth user is actually linked to a customer
+      const { data: linkedCustomer } = await supabase
+        .from('customers')
+        .select('id')
+        .eq('user_id', existingUser.id)
+        .maybeSingle();
+
+      if (linkedCustomer) {
+        console.log(`User already exists AND has customer for ${emailNorm}, skipping onboarding`);
+        return false;
+      }
+
+      // Auth user exists but no customer linked — delete the orphan auth user
+      // so we can cleanly re-create via generateLink below
+      console.log(`Orphan auth user found for ${emailNorm}, deleting and re-creating`);
+      await supabase.auth.admin.deleteUser(existingUser.id);
     }
 
     // Generate magic link (this creates the auth user automatically)
