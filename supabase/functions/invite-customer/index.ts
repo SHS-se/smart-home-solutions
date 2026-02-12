@@ -21,6 +21,17 @@ function escapeHtml(unsafe: string): string {
     .replace(/'/g, "&#039;");
 }
 
+// Generate a cryptographically random URL-safe code (>=128 bits entropy)
+function generateSecureCode(): string {
+  const bytes = new Uint8Array(24); // 192 bits
+  crypto.getRandomValues(bytes);
+  // Base64url encoding (no padding)
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
 const handler = async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -56,11 +67,8 @@ const handler = async (req: Request): Promise<Response> => {
   }
 
   const supabaseAdmin = createClient(supabaseUrl, supabaseServiceRoleKey);
-  // IMPORTANT: validate the caller JWT using the ANON key (signing-keys compatible).
   const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey);
 
-  // Check if caller is staff
-  // In edge/runtime there is no persisted session, so pass the token explicitly.
   const { data: { user }, error: userError } = await supabaseAuth.auth.getUser(token);
   if (userError) {
     console.warn("invite-customer: auth.getUser() failed:", userError.message);
@@ -132,10 +140,8 @@ const handler = async (req: Request): Promise<Response> => {
     let userId: string;
 
     if (existingUser) {
-      // User exists, just link them
       userId = existingUser.id;
     } else {
-      // Create new user with a random password (they'll reset it)
       const randomPassword = crypto.randomUUID() + crypto.randomUUID();
       const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
         email: customer.contact_email,
@@ -168,16 +174,10 @@ const handler = async (req: Request): Promise<Response> => {
       );
     }
 
-    // Generate password reset link with redirect to our app
-    // We need to build a custom URL that points to our app's reset-password page
-    const appUrl = "https://smarthomesolutions.lovable.app";
-    
+    // Generate recovery link via admin API
     const { data: linkData, error: linkGenError } = await supabaseAdmin.auth.admin.generateLink({
       type: "recovery",
       email: customer.contact_email,
-      options: {
-        redirectTo: `${appUrl}/reset-password`,
-      },
     });
 
     if (linkGenError || !linkData) {
@@ -188,36 +188,42 @@ const handler = async (req: Request): Promise<Response> => {
       );
     }
 
-    // The generateLink returns a Supabase verify URL. We need to extract the token
-    // and build a URL that goes directly to our app with the token in the hash.
-    // The action_link format: https://<project>.supabase.co/auth/v1/verify?token=...&type=recovery&redirect_to=...
-    const actionLink = linkData.properties?.action_link;
-    if (!actionLink) {
+    // Extract hashed_token from the generated link
+    const hashedToken = linkData.properties?.hashed_token;
+    if (!hashedToken) {
       return new Response(
-        JSON.stringify({ error: "Failed to generate action link" }),
+        JSON.stringify({ error: "Failed to extract verification token" }),
         { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } }
       );
     }
 
-    // Parse the action link to extract the token
-    const actionUrl = new URL(actionLink);
-    const recoveryToken = actionUrl.searchParams.get("token");
-    const tokenType = actionUrl.searchParams.get("type");
-    
-    if (!recoveryToken) {
+    // Create a branded verification code
+    const verificationCode = generateSecureCode();
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24 hours
+
+    const { error: insertError } = await supabaseAdmin
+      .from("verification_tokens")
+      .insert({
+        code: verificationCode,
+        token_hash: hashedToken,
+        type: "recovery",
+        redirect_path: "/onboarding/set-password",
+        expires_at: expiresAt,
+      });
+
+    if (insertError) {
+      console.error("Error storing verification token:", insertError);
       return new Response(
-        JSON.stringify({ error: "Failed to extract recovery token" }),
+        JSON.stringify({ error: "Failed to create verification link" }),
         { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } }
       );
     }
 
-    // Build the password reset URL that goes directly to our app
-    // Format: https://app.com/reset-password#access_token=...&type=recovery
-    // But actually, the verify endpoint needs to be called first to exchange the token.
-    // So we'll use the Supabase verify URL but ensure redirect_to is set correctly.
-    // The simplest approach: just use the actionLink as-is since we set redirectTo.
+    // Build branded verification URL
+    const appUrl = "https://smarthomesolutions.lovable.app";
+    const verifyUrl = `${appUrl}/verify?code=${verificationCode}`;
 
-    // Send welcome email with password setup link
+    // Send welcome email with branded link
     const customerName = escapeHtml(customer.name || "Valued Customer");
 
     const htmlBody = `
@@ -237,7 +243,7 @@ const handler = async (req: Request): Promise<Response> => {
         <p>Your customer portal account has been created. Click the button below to set your password and access your account:</p>
         
         <div style="text-align: center; margin: 30px 0;">
-          <a href="${actionLink}" style="background-color: #2D5F8D; color: white; padding: 14px 28px; text-decoration: none; border-radius: 6px; font-weight: 500; display: inline-block;">Set Your Password</a>
+          <a href="${verifyUrl}" style="background-color: #2D5F8D; color: white; padding: 14px 28px; text-decoration: none; border-radius: 6px; font-weight: 500; display: inline-block;">Set Your Password</a>
         </div>
         
         <p>This link will expire in 24 hours. If you didn't expect this email, you can safely ignore it.</p>
@@ -271,7 +277,6 @@ const handler = async (req: Request): Promise<Response> => {
     if (!emailResponse.ok) {
       const errorData = await emailResponse.json();
       console.error("Resend API error:", errorData);
-      // Don't fail the whole operation if email fails - user is still linked
       return new Response(
         JSON.stringify({ 
           success: true, 
