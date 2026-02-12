@@ -339,6 +339,7 @@ async function handleOnboarding(
         type: 'magiclink',
         redirect_path: '/onboarding/set-password',
         expires_at: expiresAt,
+        email: emailNorm,
       });
 
     if (insertError) {

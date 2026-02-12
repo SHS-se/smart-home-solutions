@@ -209,6 +209,7 @@ const handler = async (req: Request): Promise<Response> => {
         type: "recovery",
         redirect_path: "/onboarding/set-password",
         expires_at: expiresAt,
+        email: customer.contact_email,
       });
 
     if (insertError) {
