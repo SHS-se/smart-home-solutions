@@ -41,6 +41,12 @@ function getAppUrl(): string {
   return "https://id-preview--f333950d-a4c9-4f4e-b82f-25cfcd289f20.lovable.app";
 }
 
+function generateSecureCode(): string {
+  const bytes = new Uint8Array(24);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 function getClientIP(req: Request): string {
   return req.headers.get('x-forwarded-for')?.split(',')[0].trim()
     || req.headers.get('x-real-ip')
@@ -306,8 +312,27 @@ async function handleOnboarding(
       return false;
     }
 
-    // Build the actual magic link URL
-    const magicLinkUrl = linkData.properties.action_link;
+    // Create branded verification code (same pattern as invite-customer)
+    const verificationCode = generateSecureCode();
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+    const { error: insertError } = await supabase
+      .from('verification_tokens')
+      .insert({
+        code: verificationCode,
+        token_hash: linkData.properties.hashed_token,
+        type: 'magiclink',
+        redirect_path: '/onboarding/set-password',
+        expires_at: expiresAt,
+      });
+
+    if (insertError) {
+      console.error('Error storing verification token:', insertError);
+      return false;
+    }
+
+    // Build branded verification URL
+    const verifyUrl = `${appUrl}/verify?code=${verificationCode}`;
 
     // Send branded onboarding email via Resend
     const safeName = escapeHtml(name);
@@ -318,7 +343,7 @@ async function handleOnboarding(
           Tack för att du kontaktade oss! Vill du spara tid? Bekräfta din e-post för att fylla i din hemprofil och ladda upp bilder. Det hjälper oss hjälpa dig snabbare.
         </p>
         <div style="margin: 32px 0; text-align: center;">
-          <a href="${magicLinkUrl}" style="background-color: #2563eb; color: white; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: 500; font-size: 16px; display: inline-block;">
+          <a href="${verifyUrl}" style="background-color: #2563eb; color: white; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: 500; font-size: 16px; display: inline-block;">
             Fyll i din hemprofil
           </a>
         </div>
@@ -352,7 +377,7 @@ async function handleOnboarding(
       return false;
     }
 
-    console.log(`Onboarding magic link sent to ${emailNorm}`);
+    console.log(`Onboarding branded verification link sent to ${emailNorm}`);
     return true;
   } catch (err) {
     console.error('Onboarding error:', err);
