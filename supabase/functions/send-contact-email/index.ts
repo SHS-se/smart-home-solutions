@@ -336,7 +336,7 @@ async function handleOnboarding(
       .insert({
         code: verificationCode,
         token_hash: linkData.properties.hashed_token,
-        type: 'email',
+        type: 'magiclink',
         redirect_path: '/onboarding/set-password',
         expires_at: expiresAt,
       });
