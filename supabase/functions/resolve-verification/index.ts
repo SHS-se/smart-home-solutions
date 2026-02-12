@@ -25,8 +25,9 @@ const handler = async (req: Request): Promise<Response> => {
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const supabaseServiceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY");
 
-  if (!supabaseUrl || !supabaseServiceRoleKey) {
+  if (!supabaseUrl || !supabaseServiceRoleKey || !supabaseAnonKey) {
     return new Response(
       JSON.stringify({ error: "Server configuration error" }),
       { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } }
@@ -45,7 +46,6 @@ const handler = async (req: Request): Promise<Response> => {
     // Rate limit check (DB-backed)
     const windowStart = new Date(Date.now() - RATE_LIMIT_WINDOW_MS).toISOString();
 
-    // Upsert rate limit record
     const { data: rateData } = await supabaseAdmin
       .from("rate_limits")
       .select("id, request_count, window_start")
@@ -82,7 +82,6 @@ const handler = async (req: Request): Promise<Response> => {
     const code = typeof body?.code === "string" ? body.code.trim() : "";
 
     if (!code || code.length < 20) {
-      // Generic error — don't reveal why
       return new Response(
         JSON.stringify({ error: "This link is invalid or has expired." }),
         { status: 410, headers: { "Content-Type": "application/json", ...corsHeaders } }
@@ -124,7 +123,7 @@ const handler = async (req: Request): Promise<Response> => {
       .from("verification_tokens")
       .update({ used_at: new Date().toISOString() })
       .eq("id", token.id)
-      .is("used_at", null); // Atomic: only succeeds if still null
+      .is("used_at", null);
 
     if (updateError) {
       return new Response(
@@ -133,17 +132,55 @@ const handler = async (req: Request): Promise<Response> => {
       );
     }
 
-    // Return token_hash and type (never log these)
-    return new Response(
-      JSON.stringify({
+    // Verify OTP server-side to get session tokens
+    // This bypasses client-side verifyOtp which was failing with "one-time token not found"
+    console.log("[resolve-verification] Verifying OTP server-side, type:", token.type);
+
+    const verifyResponse = await fetch(`${supabaseUrl}/auth/v1/verify`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "apikey": supabaseAnonKey,
+      },
+      body: JSON.stringify({
         token_hash: token.token_hash,
         type: token.type,
+      }),
+    });
+
+    const verifyResult = await verifyResponse.json();
+    console.log("[resolve-verification] Verify result status:", verifyResponse.status, "has session:", !!verifyResult?.session);
+
+    if (!verifyResponse.ok || !verifyResult?.session) {
+      console.error("[resolve-verification] Server-side verify failed:", verifyResponse.status, JSON.stringify(verifyResult));
+
+      // Reset used_at so the user can retry
+      await supabaseAdmin
+        .from("verification_tokens")
+        .update({ used_at: null })
+        .eq("id", token.id);
+
+      return new Response(
+        JSON.stringify({
+          error: "This link is invalid or has expired.",
+          // Include debug info for troubleshooting
+          _debug_verify_status: verifyResponse.status,
+          _debug_verify_error: verifyResult?.error_code || verifyResult?.msg || null,
+        }),
+        { status: 410, headers: { "Content-Type": "application/json", ...corsHeaders } }
+      );
+    }
+
+    // Return session tokens and redirect path
+    return new Response(
+      JSON.stringify({
+        access_token: verifyResult.session.access_token,
+        refresh_token: verifyResult.session.refresh_token,
         redirect_path: token.redirect_path,
       }),
       { status: 200, headers: { "Content-Type": "application/json", ...corsHeaders } }
     );
   } catch (error: any) {
-    // Never log the code or token_hash in error handlers
     console.error("resolve-verification error (details redacted)");
     return new Response(
       JSON.stringify({ error: "This link is invalid or has expired." }),

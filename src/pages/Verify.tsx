@@ -31,15 +31,22 @@ const Verify: React.FC = () => {
 
   const verifyCode = async (code: string) => {
     try {
-      // Step 1: Resolve the short code to token_hash via edge function
-      console.log('[Verify] Step 1: Resolving code...');
+      // Step 1: Resolve code and verify OTP server-side (returns session tokens)
+      console.log('[Verify] Step 1: Resolving code and verifying server-side...');
       const { data, error } = await supabase.functions.invoke('resolve-verification', {
         body: { code },
       });
 
-      console.log('[Verify] Step 1 result:', { data: data ? { ...data, token_hash: data.token_hash ? '***' : undefined } : null, error: error?.message || error });
+      console.log('[Verify] Step 1 result:', {
+        hasAccessToken: !!data?.access_token,
+        hasRefreshToken: !!data?.refresh_token,
+        redirectPath: data?.redirect_path,
+        error: error?.message || error,
+        debugStatus: data?._debug_verify_status,
+        debugError: data?._debug_verify_error,
+      });
 
-      if (error || !data?.token_hash) {
+      if (error || !data?.access_token) {
         console.error('[Verify] Step 1 failed. error:', error, 'data:', data);
         setStatus('error');
         setErrorMessage(
@@ -49,19 +56,23 @@ const Verify: React.FC = () => {
         return;
       }
 
-      const { token_hash, type, redirect_path } = data;
-      console.log('[Verify] Step 2: Calling verifyOtp with type:', type);
+      const { access_token, refresh_token, redirect_path } = data;
 
-      // Step 2: Verify OTP client-side to establish session
-      const { data: otpData, error: otpError } = await supabase.auth.verifyOtp({
-        token_hash,
-        type: type as 'recovery' | 'signup' | 'magiclink',
+      // Step 2: Establish session client-side using returned tokens
+      console.log('[Verify] Step 2: Setting session from server-verified tokens...');
+      const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
+        access_token,
+        refresh_token,
       });
 
-      console.log('[Verify] Step 2 result:', { session: !!otpData?.session, user: !!otpData?.user, error: otpError?.message });
+      console.log('[Verify] Step 2 result:', {
+        session: !!sessionData?.session,
+        user: !!sessionData?.user,
+        error: sessionError?.message,
+      });
 
-      if (otpError) {
-        console.error('[Verify] verifyOtp failed:', otpError.message, otpError);
+      if (sessionError) {
+        console.error('[Verify] setSession failed:', sessionError.message, sessionError);
         setStatus('error');
         setErrorMessage(
           t('Länken är ogiltig eller har gått ut.', 'This link is invalid or has expired.')
