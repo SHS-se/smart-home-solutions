@@ -91,7 +91,7 @@ const handler = async (req: Request): Promise<Response> => {
     // Look up token — must be unused and not expired
     const { data: token, error: lookupError } = await supabaseAdmin
       .from("verification_tokens")
-      .select("id, token_hash, type, redirect_path, expires_at, used_at")
+      .select("id, token_hash, type, redirect_path, expires_at, used_at, email")
       .eq("code", code)
       .maybeSingle();
 
@@ -132,9 +132,42 @@ const handler = async (req: Request): Promise<Response> => {
       );
     }
 
-    // Verify OTP server-side to get session tokens
-    // This bypasses client-side verifyOtp which was failing with "one-time token not found"
-    console.log("[resolve-verification] Verifying OTP server-side, type:", token.type);
+    // Generate a FRESH magic link and verify it immediately
+    // The pre-generated token_hash from email-send time often expires before the user clicks
+    console.log("[resolve-verification] Generating fresh magic link for email:", token.email, "type:", token.type);
+
+    if (!token.email) {
+      console.error("[resolve-verification] No email stored on verification token");
+      await supabaseAdmin
+        .from("verification_tokens")
+        .update({ used_at: null })
+        .eq("id", token.id);
+      return new Response(
+        JSON.stringify({ error: "This link is invalid or has expired." }),
+        { status: 410, headers: { "Content-Type": "application/json", ...corsHeaders } }
+      );
+    }
+
+    // Generate fresh link via admin API
+    const { data: freshLink, error: freshLinkError } = await supabaseAdmin.auth.admin.generateLink({
+      type: token.type === "recovery" ? "recovery" : "magiclink",
+      email: token.email,
+    });
+
+    if (freshLinkError || !freshLink?.properties?.hashed_token) {
+      console.error("[resolve-verification] Failed to generate fresh link:", freshLinkError);
+      await supabaseAdmin
+        .from("verification_tokens")
+        .update({ used_at: null })
+        .eq("id", token.id);
+      return new Response(
+        JSON.stringify({ error: "This link is invalid or has expired." }),
+        { status: 410, headers: { "Content-Type": "application/json", ...corsHeaders } }
+      );
+    }
+
+    const freshTokenHash = freshLink.properties.hashed_token;
+    console.log("[resolve-verification] Fresh token generated, verifying immediately...");
 
     const verifyResponse = await fetch(`${supabaseUrl}/auth/v1/verify`, {
       method: "POST",
@@ -143,7 +176,7 @@ const handler = async (req: Request): Promise<Response> => {
         "apikey": supabaseAnonKey,
       },
       body: JSON.stringify({
-        token_hash: token.token_hash,
+        token_hash: freshTokenHash,
         type: token.type,
       }),
     });
@@ -163,7 +196,6 @@ const handler = async (req: Request): Promise<Response> => {
       return new Response(
         JSON.stringify({
           error: "This link is invalid or has expired.",
-          // Include debug info for troubleshooting
           _debug_verify_status: verifyResponse.status,
           _debug_verify_error: verifyResult?.error_code || verifyResult?.msg || null,
         }),

@@ -1825,6 +1825,7 @@ export type Database = {
         Row: {
           code: string
           created_at: string
+          email: string | null
           expires_at: string
           id: string
           redirect_path: string
@@ -1835,6 +1836,7 @@ export type Database = {
         Insert: {
           code: string
           created_at?: string
+          email?: string | null
           expires_at: string
           id?: string
           redirect_path: string
@@ -1845,6 +1847,7 @@ export type Database = {
         Update: {
           code?: string
           created_at?: string
+          email?: string | null
           expires_at?: string
           id?: string
           redirect_path?: string
