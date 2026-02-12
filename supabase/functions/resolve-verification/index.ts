@@ -182,9 +182,12 @@ const handler = async (req: Request): Promise<Response> => {
     });
 
     const verifyResult = await verifyResponse.json();
-    console.log("[resolve-verification] Verify result status:", verifyResponse.status, "has session:", !!verifyResult?.session);
+    // /auth/v1/verify returns session fields at top level (access_token, refresh_token, user), NOT nested under .session
+    const accessToken = verifyResult?.access_token || verifyResult?.session?.access_token;
+    const refreshToken = verifyResult?.refresh_token || verifyResult?.session?.refresh_token;
+    console.log("[resolve-verification] Verify result status:", verifyResponse.status, "has access_token:", !!accessToken);
 
-    if (!verifyResponse.ok || !verifyResult?.session) {
+    if (!verifyResponse.ok || !accessToken) {
       console.error("[resolve-verification] Server-side verify failed:", verifyResponse.status, JSON.stringify(verifyResult));
 
       // Reset used_at so the user can retry
@@ -206,8 +209,8 @@ const handler = async (req: Request): Promise<Response> => {
     // Return session tokens and redirect path
     return new Response(
       JSON.stringify({
-        access_token: verifyResult.session.access_token,
-        refresh_token: verifyResult.session.refresh_token,
+        access_token: accessToken,
+        refresh_token: refreshToken,
         redirect_path: token.redirect_path,
       }),
       { status: 200, headers: { "Content-Type": "application/json", ...corsHeaders } }
