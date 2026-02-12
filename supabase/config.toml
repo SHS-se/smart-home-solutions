@@ -17,3 +17,6 @@ verify_jwt = false
 
 [functions.migrate-draft-profile]
 verify_jwt = false
+
+[functions.resolve-verification]
+verify_jwt = false

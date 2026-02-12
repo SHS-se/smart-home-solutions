@@ -51,6 +51,7 @@ import InvoiceDetail from "./pages/portal/invoices/InvoiceDetail";
 import PublicQuotePage from "./pages/portal/PublicQuotePage";
 import HomeProfile from "./pages/portal/HomeProfile";
 import SetPassword from "./pages/onboarding/SetPassword";
+import Verify from "./pages/Verify";
 
 // Staff customer view pages
 import CustomerViewDashboard from "./pages/portal/customer-view/CustomerViewDashboard";
@@ -127,6 +128,7 @@ const App = () => (
                 {/* Customer Portal */}
                 <Route path="/login" element={<Login />} />
                 <Route path="/reset-password" element={<ResetPassword />} />
+                <Route path="/verify" element={<Verify />} />
                 <Route path="/onboarding/set-password" element={<SetPassword />} />
                 <Route path="/portal" element={<Dashboard />} />
                 <Route path="/portal/account" element={<Account />} />

@@ -1821,6 +1821,39 @@ export type Database = {
           },
         ]
       }
+      verification_tokens: {
+        Row: {
+          code: string
+          created_at: string
+          expires_at: string
+          id: string
+          redirect_path: string
+          token_hash: string
+          type: string
+          used_at: string | null
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          expires_at: string
+          id?: string
+          redirect_path: string
+          token_hash: string
+          type: string
+          used_at?: string | null
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          expires_at?: string
+          id?: string
+          redirect_path?: string
+          token_hash?: string
+          type?: string
+          used_at?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       customers_with_identity: {
