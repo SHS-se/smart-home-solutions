@@ -32,11 +32,15 @@ const Verify: React.FC = () => {
   const verifyCode = async (code: string) => {
     try {
       // Step 1: Resolve the short code to token_hash via edge function
+      console.log('[Verify] Step 1: Resolving code...');
       const { data, error } = await supabase.functions.invoke('resolve-verification', {
         body: { code },
       });
 
+      console.log('[Verify] Step 1 result:', { data: data ? { ...data, token_hash: data.token_hash ? '***' : undefined } : null, error: error?.message || error });
+
       if (error || !data?.token_hash) {
+        console.error('[Verify] Step 1 failed. error:', error, 'data:', data);
         setStatus('error');
         setErrorMessage(
           data?.error ||
@@ -46,15 +50,18 @@ const Verify: React.FC = () => {
       }
 
       const { token_hash, type, redirect_path } = data;
+      console.log('[Verify] Step 2: Calling verifyOtp with type:', type);
 
       // Step 2: Verify OTP client-side to establish session
-      const { error: otpError } = await supabase.auth.verifyOtp({
+      const { data: otpData, error: otpError } = await supabase.auth.verifyOtp({
         token_hash,
         type: type as 'recovery' | 'signup' | 'magiclink',
       });
 
+      console.log('[Verify] Step 2 result:', { session: !!otpData?.session, user: !!otpData?.user, error: otpError?.message });
+
       if (otpError) {
-        console.error('verifyOtp failed:', otpError.message);
+        console.error('[Verify] verifyOtp failed:', otpError.message, otpError);
         setStatus('error');
         setErrorMessage(
           t('Länken är ogiltig eller har gått ut.', 'This link is invalid or has expired.')
@@ -63,8 +70,10 @@ const Verify: React.FC = () => {
       }
 
       // Step 3: Redirect to the intended path
+      console.log('[Verify] Step 3: Redirecting to', redirect_path || '/portal');
       navigate(redirect_path || '/portal', { replace: true });
     } catch (err: any) {
+      console.error('[Verify] Unexpected error:', err);
       setStatus('error');
       setErrorMessage(
         t('Något gick fel. Försök igen.', 'Something went wrong. Please try again.')
