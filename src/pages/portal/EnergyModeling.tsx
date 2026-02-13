@@ -40,18 +40,18 @@ const EnergyModeling: React.FC = () => {
             <TabsContent value="calibration"><PlaceholderTab name="Calibration" /></TabsContent>
           </Tabs>
         ) : (
-          <Tabs defaultValue="roi">
+          <Tabs defaultValue="device-manager">
             <TabsList>
+              <TabsTrigger value="device-manager">{t('Enhetshanterare', 'Device Manager')}</TabsTrigger>
               <TabsTrigger value="roi">{t('Lönsamhet', 'ROI')}</TabsTrigger>
               <TabsTrigger value="simulator">{t('Simulator', 'Simulator')}</TabsTrigger>
               <TabsTrigger value="house-setup">{t('Husinställningar', 'House Setup')}</TabsTrigger>
-              <TabsTrigger value="device-manager">{t('Enhetshanterare', 'Device Manager')}</TabsTrigger>
               <TabsTrigger value="tariff">{t('Tariff & Pris', 'Tariff & Pricing')}</TabsTrigger>
             </TabsList>
+            <TabsContent value="device-manager"><PlaceholderTab name="Device Manager" /></TabsContent>
             <TabsContent value="roi"><PlaceholderTab name="ROI" /></TabsContent>
             <TabsContent value="simulator"><PlaceholderTab name="Simulator" /></TabsContent>
             <TabsContent value="house-setup"><PlaceholderTab name="House Setup" /></TabsContent>
-            <TabsContent value="device-manager"><PlaceholderTab name="Device Manager" /></TabsContent>
             <TabsContent value="tariff"><PlaceholderTab name="Tariff & Pricing" /></TabsContent>
           </Tabs>
         )}
