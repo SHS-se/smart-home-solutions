@@ -50,6 +50,7 @@ import InvoiceDraftEditor from "./pages/portal/invoices/InvoiceDraftEditor";
 import InvoiceDetail from "./pages/portal/invoices/InvoiceDetail";
 import PublicQuotePage from "./pages/portal/PublicQuotePage";
 import HomeProfile from "./pages/portal/HomeProfile";
+import EnergyModeling from "./pages/portal/EnergyModeling";
 import SetPassword from "./pages/onboarding/SetPassword";
 import Verify from "./pages/Verify";
 
@@ -62,6 +63,7 @@ import CustomerViewTicketDetail from "./pages/portal/customer-view/CustomerViewT
 import CustomerViewOffers from "./pages/portal/customer-view/CustomerViewOffers";
 import CustomerViewOfferDetail from "./pages/portal/customer-view/CustomerViewOfferDetail";
 import CustomerViewHomeProfile from "./pages/portal/customer-view/CustomerViewHomeProfile";
+import CustomerViewEnergyModeling from "./pages/portal/customer-view/CustomerViewEnergyModeling";
 
 const queryClient = new QueryClient();
 
@@ -137,6 +139,7 @@ const App = () => (
                 <Route path="/portal/billing" element={<Billing />} />
                 <Route path="/portal/tickets" element={<TicketsList />} />
                 <Route path="/portal/home-profile" element={<HomeProfile />} />
+                <Route path="/portal/energy-modeling" element={<EnergyModeling />} />
                 <Route path="/portal/tickets/new" element={<NewTicket />} />
                 <Route path="/portal/tickets/:ticketNumber" element={<TicketDetail />} />
                 <Route path="/portal/customers" element={<Customers />} />
@@ -170,6 +173,7 @@ const App = () => (
                 <Route path="/portal/customers/:customerId/offers" element={<CustomerViewWrapper><CustomerViewOffers /></CustomerViewWrapper>} />
                 <Route path="/portal/customers/:customerId/offers/:quoteId" element={<CustomerViewWrapper><CustomerViewOfferDetail /></CustomerViewWrapper>} />
                 <Route path="/portal/customers/:customerId/home-profile" element={<CustomerViewWrapper><CustomerViewHomeProfile /></CustomerViewWrapper>} />
+                <Route path="/portal/customers/:customerId/energy-modeling" element={<CustomerViewWrapper><CustomerViewEnergyModeling /></CustomerViewWrapper>} />
                 
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />

@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Building2, FileText, MessageSquare, ClipboardList, Home, Loader2, AlertCircle } from 'lucide-react';
+import { Building2, FileText, MessageSquare, ClipboardList, Home, Loader2, AlertCircle, Zap } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useLanguage } from '@/contexts/LanguageContext';
 
@@ -45,6 +45,16 @@ const CustomerDashboardCards: React.FC<CustomerDashboardCardsProps> = ({
             {t('Uppladdade foton:', 'Photos uploaded:')} <strong>{homeProfileStats.photos}</strong>
           </p>
         </>
+      ),
+    },
+    {
+      title: t('Energimodellering', 'Energy Modeling'),
+      icon: Zap,
+      path: `${basePath}/energy-modeling`,
+      content: (
+        <p className="text-muted-foreground">
+          {t('Simulera energiförbrukning, optimera effekttoppar och beräkna besparingar.', 'Simulate energy consumption, optimize peak demand and calculate savings.')}
+        </p>
       ),
     },
     {
