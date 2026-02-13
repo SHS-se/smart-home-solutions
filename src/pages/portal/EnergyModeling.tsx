@@ -4,17 +4,20 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import PortalLayout from '@/components/portal/PortalLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
-
-// Placeholder tab components – will be implemented in Phase 3
-const PlaceholderTab = ({ name }: { name: string }) => (
-  <div className="flex items-center justify-center min-h-[300px] text-muted-foreground">
-    <p>{name} – coming soon</p>
-  </div>
-);
+import HouseSetupTab from '@/components/portal/energy/HouseSetupTab';
+import DeviceManagerTab from '@/components/portal/energy/DeviceManagerTab';
+import TariffPricingTab from '@/components/portal/energy/TariffPricingTab';
+import SimulatorTab from '@/components/portal/energy/SimulatorTab';
+import ROITab from '@/components/portal/energy/ROITab';
+import DeviceTemplatesTab from '@/components/portal/energy/DeviceTemplatesTab';
+import CalibrationTab from '@/components/portal/energy/CalibrationTab';
 
 const EnergyModeling: React.FC = () => {
-  const { isStaff } = useAuth();
+  const { isStaff, customerData } = useAuth();
   const { t } = useLanguage();
+
+  // For customer view, we need their customer ID
+  const customerId = customerData?.id || '';
 
   return (
     <PortalLayout>
@@ -35,9 +38,15 @@ const EnergyModeling: React.FC = () => {
               <TabsTrigger value="device-templates">{t('Enhetsmallar', 'Device Templates')}</TabsTrigger>
               <TabsTrigger value="calibration">{t('Kalibrering', 'Calibration')}</TabsTrigger>
             </TabsList>
-            <TabsContent value="device-manager"><PlaceholderTab name="Device Manager" /></TabsContent>
-            <TabsContent value="device-templates"><PlaceholderTab name="Device Templates" /></TabsContent>
-            <TabsContent value="calibration"><PlaceholderTab name="Calibration" /></TabsContent>
+            <TabsContent value="device-manager">
+              {customerId ? <DeviceManagerTab customerId={customerId} /> : (
+                <div className="flex items-center justify-center min-h-[300px] text-muted-foreground">
+                  <p>{t('Välj en kund för att hantera enheter', 'Select a customer to manage devices')}</p>
+                </div>
+              )}
+            </TabsContent>
+            <TabsContent value="device-templates"><DeviceTemplatesTab /></TabsContent>
+            <TabsContent value="calibration"><CalibrationTab /></TabsContent>
           </Tabs>
         ) : (
           <Tabs defaultValue="device-manager">
@@ -48,11 +57,11 @@ const EnergyModeling: React.FC = () => {
               <TabsTrigger value="house-setup">{t('Husinställningar', 'House Setup')}</TabsTrigger>
               <TabsTrigger value="tariff">{t('Tariff & Pris', 'Tariff & Pricing')}</TabsTrigger>
             </TabsList>
-            <TabsContent value="device-manager"><PlaceholderTab name="Device Manager" /></TabsContent>
-            <TabsContent value="roi"><PlaceholderTab name="ROI" /></TabsContent>
-            <TabsContent value="simulator"><PlaceholderTab name="Simulator" /></TabsContent>
-            <TabsContent value="house-setup"><PlaceholderTab name="House Setup" /></TabsContent>
-            <TabsContent value="tariff"><PlaceholderTab name="Tariff & Pricing" /></TabsContent>
+            <TabsContent value="device-manager"><DeviceManagerTab customerId={customerId} /></TabsContent>
+            <TabsContent value="roi"><ROITab customerId={customerId} /></TabsContent>
+            <TabsContent value="simulator"><SimulatorTab customerId={customerId} /></TabsContent>
+            <TabsContent value="house-setup"><HouseSetupTab customerId={customerId} /></TabsContent>
+            <TabsContent value="tariff"><TariffPricingTab customerId={customerId} /></TabsContent>
           </Tabs>
         )}
       </div>
