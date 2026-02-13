@@ -3,15 +3,16 @@ import { Zap } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import CustomerViewLayout from '@/components/portal/CustomerViewLayout';
 import { useLanguage } from '@/contexts/LanguageContext';
-
-const PlaceholderTab = ({ name }: { name: string }) => (
-  <div className="flex items-center justify-center min-h-[300px] text-muted-foreground">
-    <p>{name} – coming soon</p>
-  </div>
-);
+import { useViewedCustomer } from '@/contexts/ViewedCustomerContext';
+import HouseSetupTab from '@/components/portal/energy/HouseSetupTab';
+import DeviceManagerTab from '@/components/portal/energy/DeviceManagerTab';
+import TariffPricingTab from '@/components/portal/energy/TariffPricingTab';
+import SimulatorTab from '@/components/portal/energy/SimulatorTab';
+import ROITab from '@/components/portal/energy/ROITab';
 
 const CustomerViewEnergyModeling: React.FC = () => {
   const { t } = useLanguage();
+  const { customerId } = useViewedCustomer();
 
   return (
     <CustomerViewLayout>
@@ -33,11 +34,11 @@ const CustomerViewEnergyModeling: React.FC = () => {
             <TabsTrigger value="house-setup">{t('Husinställningar', 'House Setup')}</TabsTrigger>
             <TabsTrigger value="tariff">{t('Tariff & Pris', 'Tariff & Pricing')}</TabsTrigger>
           </TabsList>
-          <TabsContent value="device-manager"><PlaceholderTab name="Device Manager" /></TabsContent>
-          <TabsContent value="roi"><PlaceholderTab name="ROI" /></TabsContent>
-          <TabsContent value="simulator"><PlaceholderTab name="Simulator" /></TabsContent>
-          <TabsContent value="house-setup"><PlaceholderTab name="House Setup" /></TabsContent>
-          <TabsContent value="tariff"><PlaceholderTab name="Tariff & Pricing" /></TabsContent>
+          <TabsContent value="device-manager">{customerId ? <DeviceManagerTab customerId={customerId} /> : null}</TabsContent>
+          <TabsContent value="roi">{customerId ? <ROITab customerId={customerId} /> : null}</TabsContent>
+          <TabsContent value="simulator">{customerId ? <SimulatorTab customerId={customerId} /> : null}</TabsContent>
+          <TabsContent value="house-setup">{customerId ? <HouseSetupTab customerId={customerId} /> : null}</TabsContent>
+          <TabsContent value="tariff">{customerId ? <TariffPricingTab customerId={customerId} /> : null}</TabsContent>
         </Tabs>
       </div>
     </CustomerViewLayout>
