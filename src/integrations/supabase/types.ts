@@ -389,6 +389,104 @@ export type Database = {
           },
         ]
       }
+      device_template_profiles: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          data: Json
+          device_template_id: string
+          id: string
+          is_active: boolean
+          notes: string | null
+          profile_kind: string
+          resolution_seconds: number
+          source: string | null
+          unit_power: string
+          version: number
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          data?: Json
+          device_template_id: string
+          id?: string
+          is_active?: boolean
+          notes?: string | null
+          profile_kind: string
+          resolution_seconds?: number
+          source?: string | null
+          unit_power?: string
+          version?: number
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          data?: Json
+          device_template_id?: string
+          id?: string
+          is_active?: boolean
+          notes?: string | null
+          profile_kind?: string
+          resolution_seconds?: number
+          source?: string | null
+          unit_power?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "device_template_profiles_device_template_id_fkey"
+            columns: ["device_template_id"]
+            isOneToOne: false
+            referencedRelation: "device_templates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      device_templates: {
+        Row: {
+          category: string
+          controllable_default: boolean
+          created_at: string
+          created_by: string | null
+          device_type: string
+          id: string
+          is_deleted: boolean
+          max_electrical_power_w: number
+          min_operating_temp_c: number | null
+          name: string
+          scop: number | null
+          shiftable_default: boolean
+        }
+        Insert: {
+          category: string
+          controllable_default?: boolean
+          created_at?: string
+          created_by?: string | null
+          device_type: string
+          id?: string
+          is_deleted?: boolean
+          max_electrical_power_w: number
+          min_operating_temp_c?: number | null
+          name: string
+          scop?: number | null
+          shiftable_default?: boolean
+        }
+        Update: {
+          category?: string
+          controllable_default?: boolean
+          created_at?: string
+          created_by?: string | null
+          device_type?: string
+          id?: string
+          is_deleted?: boolean
+          max_electrical_power_w?: number
+          min_operating_temp_c?: number | null
+          name?: string
+          scop?: number | null
+          shiftable_default?: boolean
+        }
+        Relationships: []
+      }
       document_sequences: {
         Row: {
           key: string
@@ -401,6 +499,204 @@ export type Database = {
         Update: {
           key?: string
           next_value?: number
+        }
+        Relationships: []
+      }
+      energy_devices: {
+        Row: {
+          controllable: boolean
+          created_at: string
+          device_template_id: string
+          energy_home_settings_id: string
+          id: string
+          max_power_override_w: number | null
+          name: string
+          priority: number
+          quantity: number
+          shiftable: boolean
+          updated_at: string
+        }
+        Insert: {
+          controllable?: boolean
+          created_at?: string
+          device_template_id: string
+          energy_home_settings_id: string
+          id?: string
+          max_power_override_w?: number | null
+          name: string
+          priority?: number
+          quantity?: number
+          shiftable?: boolean
+          updated_at?: string
+        }
+        Update: {
+          controllable?: boolean
+          created_at?: string
+          device_template_id?: string
+          energy_home_settings_id?: string
+          id?: string
+          max_power_override_w?: number | null
+          name?: string
+          priority?: number
+          quantity?: number
+          shiftable?: boolean
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "energy_devices_device_template_id_fkey"
+            columns: ["device_template_id"]
+            isOneToOne: false
+            referencedRelation: "device_templates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_devices_energy_home_settings_id_fkey"
+            columns: ["energy_home_settings_id"]
+            isOneToOne: false
+            referencedRelation: "energy_home_settings"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      energy_home_settings: {
+        Row: {
+          created_at: string
+          customer_id: string
+          derived: Json
+          id: string
+          overrides: Json
+          tariff_instance_id: string | null
+          thermal_capacity_class: string | null
+          ua_w_per_k: number | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          customer_id: string
+          derived?: Json
+          id?: string
+          overrides?: Json
+          tariff_instance_id?: string | null
+          thermal_capacity_class?: string | null
+          ua_w_per_k?: number | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          customer_id?: string
+          derived?: Json
+          id?: string
+          overrides?: Json
+          tariff_instance_id?: string | null
+          thermal_capacity_class?: string | null
+          ua_w_per_k?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "energy_home_settings_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: true
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_home_settings_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: true
+            referencedRelation: "customers_with_identity"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_home_settings_tariff_instance_id_fkey"
+            columns: ["tariff_instance_id"]
+            isOneToOne: false
+            referencedRelation: "tariff_instances"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      energy_normalized_series: {
+        Row: {
+          created_at: string
+          end_ts: string
+          id: string
+          quality: Json | null
+          raw_upload_id: string | null
+          series_kind: string
+          start_ts: string
+          step_seconds: number
+          timezone: string
+          values_w: Json
+        }
+        Insert: {
+          created_at?: string
+          end_ts: string
+          id?: string
+          quality?: Json | null
+          raw_upload_id?: string | null
+          series_kind: string
+          start_ts: string
+          step_seconds?: number
+          timezone?: string
+          values_w?: Json
+        }
+        Update: {
+          created_at?: string
+          end_ts?: string
+          id?: string
+          quality?: Json | null
+          raw_upload_id?: string | null
+          series_kind?: string
+          start_ts?: string
+          step_seconds?: number
+          timezone?: string
+          values_w?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "energy_normalized_series_raw_upload_id_fkey"
+            columns: ["raw_upload_id"]
+            isOneToOne: false
+            referencedRelation: "energy_raw_uploads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      energy_raw_uploads: {
+        Row: {
+          created_at: string
+          detected_columns: Json | null
+          device_id: string | null
+          file_path: string
+          file_type: string | null
+          house_id: string | null
+          id: string
+          template_id: string | null
+          uploaded_by: string
+        }
+        Insert: {
+          created_at?: string
+          detected_columns?: Json | null
+          device_id?: string | null
+          file_path: string
+          file_type?: string | null
+          house_id?: string | null
+          id?: string
+          template_id?: string | null
+          uploaded_by: string
+        }
+        Update: {
+          created_at?: string
+          detected_columns?: Json | null
+          device_id?: string | null
+          file_path?: string
+          file_type?: string | null
+          house_id?: string | null
+          id?: string
+          template_id?: string | null
+          uploaded_by?: string
         }
         Relationships: []
       }
@@ -640,6 +936,7 @@ export type Database = {
           question_text: string
           question_text_en: string
           question_type: string
+          semantic_key: string | null
           sort_order: number
         }
         Insert: {
@@ -653,6 +950,7 @@ export type Database = {
           question_text: string
           question_text_en?: string
           question_type?: string
+          semantic_key?: string | null
           sort_order?: number
         }
         Update: {
@@ -666,6 +964,7 @@ export type Database = {
           question_text?: string
           question_text_en?: string
           question_type?: string
+          semantic_key?: string | null
           sort_order?: number
         }
         Relationships: [
@@ -944,6 +1243,70 @@ export type Database = {
             columns: ["category_id"]
             isOneToOne: true
             referencedRelation: "sku_categories"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      model_runs: {
+        Row: {
+          created_at: string
+          customer_id: string
+          energy_home_settings_id: string | null
+          id: string
+          inputs_snapshot: Json
+          mode: string
+          results_summary: Json
+          scenario: string
+          step_seconds: number
+          tariff_snapshot: Json
+          timeseries: Json | null
+        }
+        Insert: {
+          created_at?: string
+          customer_id: string
+          energy_home_settings_id?: string | null
+          id?: string
+          inputs_snapshot?: Json
+          mode: string
+          results_summary?: Json
+          scenario: string
+          step_seconds?: number
+          tariff_snapshot?: Json
+          timeseries?: Json | null
+        }
+        Update: {
+          created_at?: string
+          customer_id?: string
+          energy_home_settings_id?: string | null
+          id?: string
+          inputs_snapshot?: Json
+          mode?: string
+          results_summary?: Json
+          scenario?: string
+          step_seconds?: number
+          tariff_snapshot?: Json
+          timeseries?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "model_runs_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "model_runs_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers_with_identity"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "model_runs_energy_home_settings_id_fkey"
+            columns: ["energy_home_settings_id"]
+            isOneToOne: false
+            referencedRelation: "energy_home_settings"
             referencedColumns: ["id"]
           },
         ]
@@ -1612,6 +1975,103 @@ export type Database = {
           created_at?: string
           role?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      tariff_instances: {
+        Row: {
+          created_at: string
+          customer_id: string
+          energy_price_model: string
+          energy_price_sek_per_kwh: number
+          fixed_monthly_fee_sek: number
+          id: string
+          is_active: boolean
+          network_price_sek_per_w_month: number
+          tariff_rule_id: string | null
+          title: string | null
+        }
+        Insert: {
+          created_at?: string
+          customer_id: string
+          energy_price_model?: string
+          energy_price_sek_per_kwh?: number
+          fixed_monthly_fee_sek?: number
+          id?: string
+          is_active?: boolean
+          network_price_sek_per_w_month?: number
+          tariff_rule_id?: string | null
+          title?: string | null
+        }
+        Update: {
+          created_at?: string
+          customer_id?: string
+          energy_price_model?: string
+          energy_price_sek_per_kwh?: number
+          fixed_monthly_fee_sek?: number
+          id?: string
+          is_active?: boolean
+          network_price_sek_per_w_month?: number
+          tariff_rule_id?: string | null
+          title?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tariff_instances_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tariff_instances_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers_with_identity"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tariff_instances_tariff_rule_id_fkey"
+            columns: ["tariff_rule_id"]
+            isOneToOne: false
+            referencedRelation: "tariff_rules"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tariff_rules: {
+        Row: {
+          created_at: string
+          effective_from: string | null
+          effective_to: string | null
+          id: string
+          is_active: boolean
+          name: string
+          params: Json
+          provider: string
+          rule_type: string
+        }
+        Insert: {
+          created_at?: string
+          effective_from?: string | null
+          effective_to?: string | null
+          id?: string
+          is_active?: boolean
+          name: string
+          params?: Json
+          provider: string
+          rule_type: string
+        }
+        Update: {
+          created_at?: string
+          effective_from?: string | null
+          effective_to?: string | null
+          id?: string
+          is_active?: boolean
+          name?: string
+          params?: Json
+          provider?: string
+          rule_type?: string
         }
         Relationships: []
       }
