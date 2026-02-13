@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Building2, FileText, MessageSquare, Loader2, Shield, Users, Package, Box, FileCheck, Settings, Database, Receipt, ClipboardList, Home } from 'lucide-react';
+import { Building2, FileText, MessageSquare, Loader2, Shield, Users, Package, Box, FileCheck, Settings, Database, Receipt, ClipboardList, Home, Zap } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -463,6 +463,23 @@ const Dashboard: React.FC = () => {
                   <CardContent>
                     <p className="text-muted-foreground">
                       {t('Hantera frågor som visas på kundens hemprofil', 'Manage questions shown on the customer home profile')}
+                    </p>
+                  </CardContent>
+                </Card>
+
+                <Card 
+                  className="cursor-pointer transition-colors hover:bg-muted/50"
+                  onClick={() => navigate('/portal/energy-modeling')}
+                >
+                  <CardHeader className="flex flex-row items-center gap-4">
+                    <div className="p-2 rounded-lg bg-primary/10">
+                      <Zap className="w-6 h-6 text-primary" />
+                    </div>
+                    <CardTitle className="text-lg">{t('Energimodellering', 'Energy Modeling')}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-muted-foreground">
+                      {t('Enhetsmallar, kalibrering och simuleringsverktyg', 'Device templates, calibration and simulation tools')}
                     </p>
                   </CardContent>
                 </Card>
