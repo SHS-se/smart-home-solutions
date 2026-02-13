@@ -52,9 +52,14 @@ const CustomerDashboardCards: React.FC<CustomerDashboardCardsProps> = ({
       icon: Zap,
       path: `${basePath}/energy-modeling`,
       content: (
-        <p className="text-muted-foreground">
-          {t('Simulera energiförbrukning, optimera effekttoppar och beräkna besparingar.', 'Simulate energy consumption, optimize peak demand and calculate savings.')}
-        </p>
+        <>
+          <p className="text-muted-foreground mb-2">
+            {t('Effekttoppar, nätavgifter och besparingar med smart styrning.', 'Peak power, network fees, and savings with smart control.')}
+          </p>
+          <p className="text-muted-foreground text-sm">
+            {t('Simulera energiförbrukning och beräkna lönsamhet.', 'Simulate energy consumption and calculate ROI.')}
+          </p>
+        </>
       ),
     },
     {
