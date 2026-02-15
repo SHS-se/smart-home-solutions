@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import mermaid from 'mermaid';
+import { toPng } from 'html-to-image';
 import PortalLayout from '@/components/portal/PortalLayout';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -104,76 +105,21 @@ const ERDiagram = () => {
 
   const handleExport = async () => {
     if (!diagramRef.current) return;
-    const svgElement = diagramRef.current.querySelector('svg');
-    if (!svgElement) return;
     
     setIsExporting(true);
     try {
-      const clonedSvg = svgElement.cloneNode(true) as SVGSVGElement;
-      
-      // Replace foreignObject elements with plain SVG text
-      const foreignObjects = clonedSvg.querySelectorAll('foreignObject');
-      foreignObjects.forEach((fo) => {
-        const textContent = fo.textContent?.trim() || '';
-        const svgText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        svgText.setAttribute('x', fo.getAttribute('x') || '0');
-        svgText.setAttribute('y', String(Number(fo.getAttribute('y') || '0') + 14));
-        svgText.setAttribute('fill', '#ffffff');
-        svgText.setAttribute('font-size', '12');
-        svgText.setAttribute('font-family', 'sans-serif');
-        svgText.textContent = textContent;
-        fo.parentNode?.replaceChild(svgText, fo);
+      const dataUrl = await toPng(diagramRef.current, {
+        backgroundColor: '#1e1e2e',
+        pixelRatio: 2,
       });
-
-      // Ensure all text is white
-      const allTextElements = clonedSvg.querySelectorAll('text, tspan, .entityLabel, .attributeBoxEven, .attributeBoxOdd');
-      allTextElements.forEach((el) => {
-        (el as SVGElement).setAttribute('fill', '#ffffff');
-        (el as SVGElement).style.fill = '#ffffff';
-      });
-      
-      const bbox = svgElement.getBBox();
-      const padding = 40;
-      clonedSvg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-      clonedSvg.setAttribute('viewBox', `${bbox.x - padding} ${bbox.y - padding} ${bbox.width + padding * 2} ${bbox.height + padding * 2}`);
-      clonedSvg.setAttribute('width', String(bbox.width + padding * 2));
-      clonedSvg.setAttribute('height', String(bbox.height + padding * 2));
-      
-      // Add background
-      const bgRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-      bgRect.setAttribute('x', String(bbox.x - padding));
-      bgRect.setAttribute('y', String(bbox.y - padding));
-      bgRect.setAttribute('width', String(bbox.width + padding * 2));
-      bgRect.setAttribute('height', String(bbox.height + padding * 2));
-      bgRect.setAttribute('fill', '#1e1e2e');
-      clonedSvg.insertBefore(bgRect, clonedSvg.firstChild);
-      
-      // Use Blob URL instead of base64 to avoid encoding issues
-      const svgData = new XMLSerializer().serializeToString(clonedSvg);
-      const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-      const url = URL.createObjectURL(svgBlob);
-      
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const s = 2;
-        canvas.width = (bbox.width + padding * 2) * s;
-        canvas.height = (bbox.height + padding * 2) * s;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.scale(s, s);
-          ctx.drawImage(img, 0, 0);
-          const link = document.createElement('a');
-          link.download = 'database-erd.png';
-          link.href = canvas.toDataURL('image/png');
-          link.click();
-        }
-        URL.revokeObjectURL(url);
-        setIsExporting(false);
-      };
-      img.onerror = () => { URL.revokeObjectURL(url); setIsExporting(false); };
-      img.src = url;
-    } catch {
+      const link = document.createElement('a');
+      link.download = 'database-erd.png';
+      link.href = dataUrl;
+      link.click();
+    } catch (err) {
+      console.error('Export failed:', err);
+      toast.error(t('Export misslyckades', 'Export failed'));
+    } finally {
       setIsExporting(false);
     }
   };
