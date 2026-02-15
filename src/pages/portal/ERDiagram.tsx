@@ -59,6 +59,8 @@ const ERDiagram = () => {
       theme: 'dark',
       securityLevel: 'loose',
       er: { useMaxWidth: false },
+      // Use native SVG text instead of foreignObject HTML so PNG export works
+      htmlLabels: false,
     });
 
     const renderDiagram = async () => {
