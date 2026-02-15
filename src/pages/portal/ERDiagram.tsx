@@ -110,9 +110,26 @@ const ERDiagram = () => {
     
     setIsExporting(true);
     try {
-      // Temporarily reset transform so we capture full-size diagram
+      // Temporarily reset transform
       const origTransform = diagramRef.current.style.transform;
       diagramRef.current.style.transform = 'none';
+
+      // Force all foreignObject text to be white so it's visible in the export
+      const foElements = svgEl.querySelectorAll('foreignObject div, foreignObject span, foreignObject p');
+      const origStyles: { el: HTMLElement; color: string }[] = [];
+      foElements.forEach((el) => {
+        const htmlEl = el as HTMLElement;
+        origStyles.push({ el: htmlEl, color: htmlEl.style.color });
+        htmlEl.style.color = '#ffffff';
+      });
+      // Also force SVG text elements
+      const textEls = svgEl.querySelectorAll('text, tspan');
+      const origTextFills: { el: SVGElement; fill: string }[] = [];
+      textEls.forEach((el) => {
+        const svgTextEl = el as SVGElement;
+        origTextFills.push({ el: svgTextEl, fill: svgTextEl.getAttribute('fill') || '' });
+        svgTextEl.setAttribute('fill', '#ffffff');
+      });
 
       const dataUrl = await toPng(diagramRef.current, {
         backgroundColor: '#1e1e2e',
@@ -120,8 +137,10 @@ const ERDiagram = () => {
         style: { transform: 'none' },
       });
 
-      // Restore transform
+      // Restore everything
       diagramRef.current.style.transform = origTransform;
+      origStyles.forEach(({ el, color }) => { el.style.color = color; });
+      origTextFills.forEach(({ el, fill }) => { el.setAttribute('fill', fill); });
 
       const link = document.createElement('a');
       link.download = 'database-erd.png';
