@@ -1,354 +1,93 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import mermaid from 'mermaid';
-import { toPng } from 'html-to-image';
 import PortalLayout from '@/components/portal/PortalLayout';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { ZoomIn, ZoomOut, RotateCcw, Download, ArrowRightLeft, ArrowDownUp } from 'lucide-react';
-
-const getErdDiagram = (direction: 'TB' | 'LR') => `erDiagram
-    direction ${direction}
-    %% Staff & Auth
-    staff_users {
-        uuid user_id PK
-        text role
-        timestamptz created_at
-    }
-
-    %% Customers & Contacts
-    customers {
-        uuid id PK
-        uuid user_id FK
-        text name
-        uuid contact_id FK
-        text billing_email
-        text phone
-        text address
-        text site_address
-        timestamptz created_at
-    }
-
-    contacts {
-        uuid id PK
-        text name
-        text email
-        text phone
-        text message
-        text email_token
-        uuid converted_to_customer_id FK
-        timestamptz converted_at
-        timestamptz created_at
-    }
-
-    contact_messages {
-        uuid id PK
-        uuid contact_id FK
-        text body
-        text author_email
-        text author_type
-        text source
-        timestamptz created_at
-    }
-
-    %% Ticketing System
-    tickets {
-        uuid id PK
-        uuid customer_id FK
-        uuid created_by FK
-        text ticket_number
-        text title
-        text status
-        text email_token
-        timestamptz last_activity_at
-        timestamptz created_at
-        timestamptz updated_at
-    }
-
-    ticket_comments {
-        uuid id PK
-        uuid ticket_id FK
-        uuid author_user_id FK
-        text author_email
-        text author_type
-        text body_markdown
-        text source
-        timestamptz created_at
-    }
-
-    ticket_attachments {
-        uuid id PK
-        uuid ticket_id FK
-        uuid comment_id FK
-        text filename
-        text storage_path
-        text content_type
-        bigint size_bytes
-        timestamptz created_at
-    }
-
-    %% SKU Catalog
-    skus {
-        uuid id PK
-        uuid category_id FK
-        text sku
-        text name
-        text supplier
-        text supplier_url
-        numeric purchase_price
-        boolean purchase_includes_vat
-        numeric vat_rate
-        numeric cost_ex_vat_computed
-        numeric sell_price_ex_vat
-        numeric sell_price_inc_vat
-        numeric effective_margin_percent
-        int effective_rounding_sek
-        numeric margin_override_percent
-        int rounding_override_sek
-        text image_path
-        text notes
-        timestamptz pricing_updated_at
-        timestamptz created_at
-        timestamptz updated_at
-    }
-
-    sku_categories {
-        uuid id PK
-        text key UK "machine identifier"
-        text name
-        text description
-        int sort_order
-        timestamptz created_at
-        timestamptz updated_at
-    }
-
-    margin_rules {
-        uuid category_id PK,FK
-        numeric margin_percent
-        int rounding
-        text description
-        timestamptz created_at
-        timestamptz updated_at
-    }
-
-    %% Templates
-    templates {
-        uuid id PK
-        text name
-        text description
-        timestamptz created_at
-        timestamptz updated_at
-    }
-
-    template_items {
-        uuid id PK
-        uuid template_id FK
-        uuid sku_id FK
-        int quantity
-        timestamptz created_at
-    }
-
-    %% BOMs (Bill of Materials)
-    boms {
-        uuid id PK
-        uuid customer_id FK
-        uuid created_by FK
-        text project_name
-        int version
-        timestamptz created_at
-        timestamptz updated_at
-    }
-
-    bom_items {
-        uuid id PK
-        uuid bom_id FK
-        uuid sku_id FK
-        int quantity
-        numeric cost
-        numeric sell_price
-        timestamptz created_at
-    }
-
-    %% Quotes - LINE ITEMS ARE SOURCE OF TRUTH
-    quotes {
-        uuid id PK
-        uuid customer_id FK
-        uuid bom_id FK
-        uuid created_by FK
-        text quote_number
-        text status
-        text accept_token_hash
-        timestamptz created_at
-        timestamptz updated_at
-    }
-
-    quote_lines {
-        uuid id PK
-        uuid quote_id FK
-        text section "hardware|labor|travel"
-        text description
-        numeric quantity "SOURCE OF TRUTH"
-        numeric unit_price_ex_vat "SOURCE OF TRUTH"
-        numeric vat_rate "SOURCE OF TRUTH"
-        uuid sku_id FK
-        timestamptz created_at
-    }
-
-    quote_computed_totals {
-        uuid quote_id FK "VIEW - derived"
-        numeric hardware_total "computed"
-        numeric labor_total "computed"
-        numeric travel_total "computed"
-        numeric subtotal_ex_vat "computed"
-        numeric vat_total "computed"
-        numeric total_inc_vat "computed"
-    }
-
-    %% Invoices - LINE ITEMS ARE SOURCE OF TRUTH
-    invoices {
-        uuid id PK
-        uuid customer_id FK
-        uuid bom_id FK
-        uuid quote_id FK "nullable"
-        uuid created_by FK
-        text stripe_invoice_id UK "nullable"
-        text invoice_number UK
-        text currency
-        text status
-        boolean is_test
-        text hosted_invoice_url
-        text invoice_pdf_url
-        timestamptz issued_at
-        date due_date
-        timestamptz finalized_at
-        timestamptz paid_at
-        timestamptz voided_at
-        timestamptz created_at
-        timestamptz updated_at
-    }
-
-    invoice_line_items {
-        uuid id PK
-        uuid invoice_id FK
-        uuid sku_id FK
-        text line_type
-        text description
-        numeric quantity "SOURCE OF TRUTH"
-        numeric unit_price "SOURCE OF TRUTH"
-        numeric tax_rate "SOURCE OF TRUTH"
-        int sort_order
-        timestamptz created_at
-    }
-
-    invoice_computed_totals {
-        uuid invoice_id FK "VIEW - derived"
-        numeric subtotal "computed"
-        numeric tax "computed"
-        numeric total "computed"
-    }
-
-    invoice_events {
-        uuid id PK
-        uuid invoice_id FK
-        uuid created_by FK
-        text event_type
-        jsonb metadata
-        timestamptz created_at
-    }
-
-    %% Relationships
-    customers ||--o{ tickets : "has"
-    customers ||--o{ invoices : "billed"
-    customers ||--o{ boms : "owns"
-    customers ||--o{ quotes : "receives"
-    
-    quotes |o--o{ invoices : "converts to"
-    quotes ||--o{ quote_lines : "contains"
-    quote_lines }o--|| quote_computed_totals : "aggregates to"
-    
-    invoices ||--o{ invoice_line_items : "contains"
-    invoices ||--o{ invoice_events : "logs"
-    invoice_line_items }o--|| invoice_computed_totals : "aggregates to"
-    invoice_line_items }o--o| skus : "references"
-    
-    sku_categories ||--o{ skus : "categorizes"
-    sku_categories ||--o{ margin_rules : "defines margin"
-
-    contacts ||--o{ contact_messages : "has"
-    contacts }o--o| customers : "converts to"
-
-    tickets ||--o{ ticket_comments : "has"
-    tickets ||--o{ ticket_attachments : "has"
-    ticket_comments ||--o{ ticket_attachments : "has"
-
-    templates ||--o{ template_items : "contains"
-    template_items }o--|| skus : "references"
-
-    boms ||--o{ bom_items : "contains"
-    bom_items }o--|| skus : "references"
-
-    quotes }o--o| boms : "from"
-    quote_lines }o--o| skus : "references"
-`;
+import { ZoomIn, ZoomOut, RotateCcw, Download, ArrowRightLeft, ArrowDownUp, Loader2, RefreshCw } from 'lucide-react';
+import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
 
 const ERDiagram = () => {
   const { t } = useLanguage();
   const containerRef = useRef<HTMLDivElement>(null);
   const diagramRef = useRef<HTMLDivElement>(null);
   
-  // Zoom and pan state
   const [scale, setScale] = useState(0.8);
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [isExporting, setIsExporting] = useState(false);
   const [layoutDirection, setLayoutDirection] = useState<'TB' | 'LR'>('TB');
+  const [isLoading, setIsLoading] = useState(true);
+  const [erdSource, setErdSource] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Fetch ERD from edge function
+  const fetchErd = useCallback(async (direction: 'TB' | 'LR') => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const response = await supabase.functions.invoke('get-schema-erd', {
+        body: { direction },
+      });
+
+      if (response.error) throw new Error(response.error.message);
+      if (response.data?.error) throw new Error(response.data.error);
+      
+      setErdSource(response.data.erd);
+    } catch (err: any) {
+      console.error('Failed to fetch ERD:', err);
+      setError(err.message || 'Failed to load schema');
+      toast.error(t('Kunde inte hämta schema', 'Failed to fetch schema'));
+    } finally {
+      setIsLoading(false);
+    }
+  }, [t]);
 
   useEffect(() => {
+    fetchErd(layoutDirection);
+  }, [layoutDirection, fetchErd]);
+
+  // Render mermaid when source changes
+  useEffect(() => {
+    if (!erdSource || !diagramRef.current) return;
+
     mermaid.initialize({
       startOnLoad: false,
       theme: 'dark',
       securityLevel: 'loose',
-      er: {
-        useMaxWidth: false,
-      },
+      er: { useMaxWidth: false },
     });
 
     const renderDiagram = async () => {
-      if (diagramRef.current) {
-        diagramRef.current.innerHTML = '';
-        try {
-          const diagramId = `erd-diagram-${layoutDirection}-${Date.now()}`;
-          const { svg } = await mermaid.render(diagramId, getErdDiagram(layoutDirection));
-          diagramRef.current.innerHTML = svg;
-        } catch (error) {
-          console.error('Failed to render Mermaid diagram:', error);
-          diagramRef.current.innerHTML = '<p class="text-destructive">Failed to render diagram</p>';
-        }
+      if (!diagramRef.current) return;
+      diagramRef.current.innerHTML = '';
+      try {
+        const diagramId = `erd-diagram-${Date.now()}`;
+        const { svg } = await mermaid.render(diagramId, erdSource);
+        diagramRef.current.innerHTML = svg;
+      } catch (err) {
+        console.error('Failed to render Mermaid diagram:', err);
+        diagramRef.current.innerHTML = '<p class="text-destructive">Failed to render diagram</p>';
       }
     };
 
     renderDiagram();
-  }, [layoutDirection]);
+  }, [erdSource]);
 
-  // Zoom handlers
   const handleZoomIn = () => setScale(prev => Math.min(prev + 0.2, 3));
   const handleZoomOut = () => setScale(prev => Math.max(prev - 0.2, 0.2));
-  const handleReset = () => {
-    setScale(0.8);
-    setPosition({ x: 0, y: 0 });
-  };
+  const handleReset = () => { setScale(0.8); setPosition({ x: 0, y: 0 }); };
 
-  // Mouse wheel zoom
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();
     const delta = e.deltaY > 0 ? -0.1 : 0.1;
     setScale(prev => Math.min(Math.max(prev + delta, 0.2), 3));
   }, []);
 
-  // Pan handlers
   const handleMouseDown = (e: React.MouseEvent) => {
-    if (e.button === 0) { // Left click only
+    if (e.button === 0) {
       setIsDragging(true);
       setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y });
     }
@@ -356,51 +95,35 @@ const ERDiagram = () => {
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     if (isDragging) {
-      setPosition({
-        x: e.clientX - dragStart.x,
-        y: e.clientY - dragStart.y,
-      });
+      setPosition({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y });
     }
   }, [isDragging, dragStart]);
 
   const handleMouseUp = () => setIsDragging(false);
   const handleMouseLeave = () => setIsDragging(false);
 
-  // Export to PNG
   const handleExport = async () => {
     if (!diagramRef.current) return;
-    
     const svgElement = diagramRef.current.querySelector('svg');
     if (!svgElement) return;
     
     setIsExporting(true);
     try {
-      // Clone the SVG to avoid modifying the original
       const clonedSvg = svgElement.cloneNode(true) as SVGSVGElement;
-      
-      // Force all text to be white - Mermaid uses various text elements
       const allTextElements = clonedSvg.querySelectorAll('text, tspan, .entityLabel, .attributeBoxEven, .attributeBoxOdd');
       allTextElements.forEach((el) => {
         (el as SVGElement).setAttribute('fill', '#ffffff');
         (el as SVGElement).style.fill = '#ffffff';
       });
-      
-      // Also target any text inside foreignObject
       const foreignTexts = clonedSvg.querySelectorAll('foreignObject *');
-      foreignTexts.forEach((el) => {
-        (el as HTMLElement).style.color = '#ffffff';
-      });
+      foreignTexts.forEach((el) => { (el as HTMLElement).style.color = '#ffffff'; });
       
-      // Get the actual bounding box of the SVG content
       const bbox = svgElement.getBBox();
       const padding = 40;
-      
-      // Set viewBox to crop to actual content
       clonedSvg.setAttribute('viewBox', `${bbox.x - padding} ${bbox.y - padding} ${bbox.width + padding * 2} ${bbox.height + padding * 2}`);
       clonedSvg.setAttribute('width', String(bbox.width + padding * 2));
       clonedSvg.setAttribute('height', String(bbox.height + padding * 2));
       
-      // Add background rect
       const bgRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
       bgRect.setAttribute('x', String(bbox.x - padding));
       bgRect.setAttribute('y', String(bbox.y - padding));
@@ -409,7 +132,6 @@ const ERDiagram = () => {
       bgRect.setAttribute('fill', '#1e1e2e');
       clonedSvg.insertBefore(bgRect, clonedSvg.firstChild);
       
-      // Convert SVG to data URL (avoids tainted canvas issue)
       const svgData = new XMLSerializer().serializeToString(clonedSvg);
       const svgBase64 = btoa(unescape(encodeURIComponent(svgData)));
       const svgDataUrl = `data:image/svg+xml;base64,${svgBase64}`;
@@ -417,32 +139,23 @@ const ERDiagram = () => {
       const img = new Image();
       img.onload = () => {
         const canvas = document.createElement('canvas');
-        const scale = 2; // High resolution
-        canvas.width = (bbox.width + padding * 2) * scale;
-        canvas.height = (bbox.height + padding * 2) * scale;
-        
+        const s = 2;
+        canvas.width = (bbox.width + padding * 2) * s;
+        canvas.height = (bbox.height + padding * 2) * s;
         const ctx = canvas.getContext('2d');
         if (ctx) {
-          ctx.scale(scale, scale);
+          ctx.scale(s, s);
           ctx.drawImage(img, 0, 0);
-          
           const link = document.createElement('a');
           link.download = 'database-erd.png';
           link.href = canvas.toDataURL('image/png');
           link.click();
         }
-        
         setIsExporting(false);
       };
-      
-      img.onerror = () => {
-        console.error('Failed to load SVG for export');
-        setIsExporting(false);
-      };
-      
+      img.onerror = () => { setIsExporting(false); };
       img.src = svgDataUrl;
-    } catch (error) {
-      console.error('Failed to export diagram:', error);
+    } catch {
       setIsExporting(false);
     }
   };
@@ -456,8 +169,8 @@ const ERDiagram = () => {
           </h1>
           <p className="text-muted-foreground">
             {t(
-              'Visuell representation av databasstrukturen och relationer.',
-              'Visual representation of the database structure and relationships.'
+              'Visuell representation av databasstrukturen och relationer — hämtas live från databasen.',
+              'Visual representation of the database structure and relationships — fetched live from the database.'
             )}
           </p>
         </div>
@@ -474,7 +187,10 @@ const ERDiagram = () => {
                   )}
                 </CardDescription>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button variant="outline" size="icon" onClick={() => fetchErd(layoutDirection)} disabled={isLoading} title={t('Uppdatera', 'Refresh')}>
+                  <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+                </Button>
                 <Button variant="outline" size="icon" onClick={handleZoomOut} title={t('Zooma ut', 'Zoom out')}>
                   <ZoomOut className="h-4 w-4" />
                 </Button>
@@ -492,14 +208,10 @@ const ERDiagram = () => {
                   onClick={() => setLayoutDirection(prev => prev === 'TB' ? 'LR' : 'TB')}
                   title={layoutDirection === 'TB' ? t('Byt till horisontell layout', 'Switch to horizontal layout') : t('Byt till vertikal layout', 'Switch to vertical layout')}
                 >
-                  {layoutDirection === 'TB' ? (
-                    <ArrowRightLeft className="h-4 w-4 mr-2" />
-                  ) : (
-                    <ArrowDownUp className="h-4 w-4 mr-2" />
-                  )}
+                  {layoutDirection === 'TB' ? <ArrowRightLeft className="h-4 w-4 mr-2" /> : <ArrowDownUp className="h-4 w-4 mr-2" />}
                   {layoutDirection === 'TB' ? t('Horisontell', 'Horizontal') : t('Vertikal', 'Vertical')}
                 </Button>
-                <Button variant="outline" onClick={handleExport} disabled={isExporting}>
+                <Button variant="outline" onClick={handleExport} disabled={isExporting || isLoading}>
                   <Download className="h-4 w-4 mr-2" />
                   {isExporting ? t('Exporterar...', 'Exporting...') : t('Exportera PNG', 'Export PNG')}
                 </Button>
@@ -516,13 +228,25 @@ const ERDiagram = () => {
               onMouseUp={handleMouseUp}
               onMouseLeave={handleMouseLeave}
             >
-              <div
-                ref={diagramRef}
-                className="inline-block origin-top-left transition-transform duration-75"
-                style={{
-                  transform: `translate(${position.x}px, ${position.y}px) scale(${scale})`,
-                }}
-              />
+              {isLoading ? (
+                <div className="flex items-center justify-center h-full">
+                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                  <span className="ml-3 text-muted-foreground">{t('Hämtar schema...', 'Fetching schema...')}</span>
+                </div>
+              ) : error ? (
+                <div className="flex flex-col items-center justify-center h-full gap-4">
+                  <p className="text-destructive">{error}</p>
+                  <Button variant="outline" onClick={() => fetchErd(layoutDirection)}>
+                    {t('Försök igen', 'Try again')}
+                  </Button>
+                </div>
+              ) : (
+                <div
+                  ref={diagramRef}
+                  className="inline-block origin-top-left transition-transform duration-75"
+                  style={{ transform: `translate(${position.x}px, ${position.y}px) scale(${scale})` }}
+                />
+              )}
             </div>
           </CardContent>
         </Card>
