@@ -105,13 +105,24 @@ const ERDiagram = () => {
 
   const handleExport = async () => {
     if (!diagramRef.current) return;
+    const svgEl = diagramRef.current.querySelector('svg');
+    if (!svgEl) return;
     
     setIsExporting(true);
     try {
+      // Temporarily reset transform so we capture full-size diagram
+      const origTransform = diagramRef.current.style.transform;
+      diagramRef.current.style.transform = 'none';
+
       const dataUrl = await toPng(diagramRef.current, {
         backgroundColor: '#1e1e2e',
         pixelRatio: 2,
+        style: { transform: 'none' },
       });
+
+      // Restore transform
+      diagramRef.current.style.transform = origTransform;
+
       const link = document.createElement('a');
       link.download = 'database-erd.png';
       link.href = dataUrl;
