@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import mermaid from 'mermaid';
-import { toPng } from 'html-to-image';
 import PortalLayout from '@/components/portal/PortalLayout';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -18,8 +17,8 @@ const ERDiagram = () => {
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-  const [isExporting, setIsExporting] = useState(false);
   const [layoutDirection, setLayoutDirection] = useState<'TB' | 'LR'>('TB');
+  const [renderedSvg, setRenderedSvg] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [erdSource, setErdSource] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -70,6 +69,7 @@ const ERDiagram = () => {
         const diagramId = `erd-diagram-${Date.now()}`;
         const { svg } = await mermaid.render(diagramId, erdSource);
         diagramRef.current.innerHTML = svg;
+        setRenderedSvg(svg);
       } catch (err) {
         console.error('Failed to render Mermaid diagram:', err);
         diagramRef.current.innerHTML = '<p class="text-destructive">Failed to render diagram</p>';
@@ -105,55 +105,18 @@ const ERDiagram = () => {
   const handleMouseUp = () => setIsDragging(false);
   const handleMouseLeave = () => setIsDragging(false);
 
-  const handleExport = async () => {
-    if (!diagramRef.current) return;
-    const svgEl = diagramRef.current.querySelector('svg');
-    if (!svgEl) return;
-    
-    setIsExporting(true);
-    try {
-      // Temporarily reset transform
-      const origTransform = diagramRef.current.style.transform;
-      diagramRef.current.style.transform = 'none';
+  const handleExportSvg = () => {
+    if (!renderedSvg) return;
 
-      // Force all foreignObject text to be white so it's visible in the export
-      const foElements = svgEl.querySelectorAll('foreignObject div, foreignObject span, foreignObject p');
-      const origStyles: { el: HTMLElement; color: string }[] = [];
-      foElements.forEach((el) => {
-        const htmlEl = el as HTMLElement;
-        origStyles.push({ el: htmlEl, color: htmlEl.style.color });
-        htmlEl.style.color = '#ffffff';
-      });
-      // Also force SVG text elements
-      const textEls = svgEl.querySelectorAll('text, tspan');
-      const origTextFills: { el: SVGElement; fill: string }[] = [];
-      textEls.forEach((el) => {
-        const svgTextEl = el as SVGElement;
-        origTextFills.push({ el: svgTextEl, fill: svgTextEl.getAttribute('fill') || '' });
-        svgTextEl.setAttribute('fill', '#ffffff');
-      });
+    const blob = new Blob([renderedSvg], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
 
-      const dataUrl = await toPng(diagramRef.current, {
-        backgroundColor: '#1e1e2e',
-        pixelRatio: 2,
-        style: { transform: 'none' },
-      });
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'database-erd.svg';
+    link.click();
 
-      // Restore everything
-      diagramRef.current.style.transform = origTransform;
-      origStyles.forEach(({ el, color }) => { el.style.color = color; });
-      origTextFills.forEach(({ el, fill }) => { el.setAttribute('fill', fill); });
-
-      const link = document.createElement('a');
-      link.download = 'database-erd.png';
-      link.href = dataUrl;
-      link.click();
-    } catch (err) {
-      console.error('Export failed:', err);
-      toast.error(t('Export misslyckades', 'Export failed'));
-    } finally {
-      setIsExporting(false);
-    }
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -207,9 +170,9 @@ const ERDiagram = () => {
                   {layoutDirection === 'TB' ? <ArrowRightLeft className="h-4 w-4 mr-2" /> : <ArrowDownUp className="h-4 w-4 mr-2" />}
                   {layoutDirection === 'TB' ? t('Horisontell', 'Horizontal') : t('Vertikal', 'Vertical')}
                 </Button>
-                <Button variant="outline" onClick={handleExport} disabled={isExporting || isLoading}>
+                <Button variant="outline" onClick={handleExportSvg} disabled={!renderedSvg || isLoading}>
                   <Download className="h-4 w-4 mr-2" />
-                  {isExporting ? t('Exporterar...', 'Exporting...') : t('Exportera PNG', 'Export PNG')}
+                  {t('Exportera SVG', 'Export SVG')}
                 </Button>
               </div>
             </div>
