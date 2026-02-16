@@ -448,42 +448,57 @@ export type Database = {
           controllable_default: boolean
           created_at: string
           created_by: string | null
+          device_kind: string
           device_type: string
+          display_name: string
           id: string
           is_deleted: boolean
+          make: string
           max_electrical_power_w: number
           min_operating_temp_c: number | null
+          model: string
           name: string
           scop: number | null
           shiftable_default: boolean
+          specs: Json
         }
         Insert: {
           category: string
           controllable_default?: boolean
           created_at?: string
           created_by?: string | null
+          device_kind?: string
           device_type: string
+          display_name?: string
           id?: string
           is_deleted?: boolean
+          make?: string
           max_electrical_power_w: number
           min_operating_temp_c?: number | null
+          model?: string
           name: string
           scop?: number | null
           shiftable_default?: boolean
+          specs?: Json
         }
         Update: {
           category?: string
           controllable_default?: boolean
           created_at?: string
           created_by?: string | null
+          device_kind?: string
           device_type?: string
+          display_name?: string
           id?: string
           is_deleted?: boolean
+          make?: string
           max_electrical_power_w?: number
           min_operating_temp_c?: number | null
+          model?: string
           name?: string
           scop?: number | null
           shiftable_default?: boolean
+          specs?: Json
         }
         Relationships: []
       }
@@ -507,7 +522,7 @@ export type Database = {
           controllable: boolean
           created_at: string
           device_template_id: string
-          energy_home_settings_id: string
+          home_id: string
           id: string
           max_power_override_w: number | null
           name: string
@@ -520,7 +535,7 @@ export type Database = {
           controllable?: boolean
           created_at?: string
           device_template_id: string
-          energy_home_settings_id: string
+          home_id: string
           id?: string
           max_power_override_w?: number | null
           name: string
@@ -533,7 +548,7 @@ export type Database = {
           controllable?: boolean
           created_at?: string
           device_template_id?: string
-          energy_home_settings_id?: string
+          home_id?: string
           id?: string
           max_power_override_w?: number | null
           name?: string
@@ -551,10 +566,10 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "energy_devices_energy_home_settings_id_fkey"
-            columns: ["energy_home_settings_id"]
+            foreignKeyName: "energy_devices_home_id_fkey"
+            columns: ["home_id"]
             isOneToOne: false
-            referencedRelation: "energy_home_settings"
+            referencedRelation: "homes"
             referencedColumns: ["id"]
           },
         ]
@@ -564,6 +579,7 @@ export type Database = {
           created_at: string
           customer_id: string
           derived: Json
+          home_id: string
           id: string
           overrides: Json
           tariff_instance_id: string | null
@@ -575,6 +591,7 @@ export type Database = {
           created_at?: string
           customer_id: string
           derived?: Json
+          home_id: string
           id?: string
           overrides?: Json
           tariff_instance_id?: string | null
@@ -586,6 +603,7 @@ export type Database = {
           created_at?: string
           customer_id?: string
           derived?: Json
+          home_id?: string
           id?: string
           overrides?: Json
           tariff_instance_id?: string | null
@@ -597,15 +615,22 @@ export type Database = {
           {
             foreignKeyName: "energy_home_settings_customer_id_fkey"
             columns: ["customer_id"]
-            isOneToOne: true
+            isOneToOne: false
             referencedRelation: "customers"
             referencedColumns: ["id"]
           },
           {
             foreignKeyName: "energy_home_settings_customer_id_fkey"
             columns: ["customer_id"]
-            isOneToOne: true
+            isOneToOne: false
             referencedRelation: "customers_with_identity"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_home_settings_home_id_fkey"
+            columns: ["home_id"]
+            isOneToOne: true
+            referencedRelation: "homes"
             referencedColumns: ["id"]
           },
           {
@@ -977,6 +1002,45 @@ export type Database = {
           },
         ]
       }
+      homes: {
+        Row: {
+          address_text: string | null
+          created_at: string
+          customer_id: string
+          id: string
+          name: string
+        }
+        Insert: {
+          address_text?: string | null
+          created_at?: string
+          customer_id: string
+          id?: string
+          name: string
+        }
+        Update: {
+          address_text?: string | null
+          created_at?: string
+          customer_id?: string
+          id?: string
+          name?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "homes_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "homes_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers_with_identity"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       invoice_events: {
         Row: {
           created_at: string
@@ -1251,10 +1315,12 @@ export type Database = {
         Row: {
           created_at: string
           customer_id: string
-          energy_home_settings_id: string | null
+          device_snapshot: Json
+          home_id: string | null
           id: string
           inputs_snapshot: Json
           mode: string
+          profile_snapshot: Json
           results_summary: Json
           scenario: string
           step_seconds: number
@@ -1264,10 +1330,12 @@ export type Database = {
         Insert: {
           created_at?: string
           customer_id: string
-          energy_home_settings_id?: string | null
+          device_snapshot?: Json
+          home_id?: string | null
           id?: string
           inputs_snapshot?: Json
           mode: string
+          profile_snapshot?: Json
           results_summary?: Json
           scenario: string
           step_seconds?: number
@@ -1277,10 +1345,12 @@ export type Database = {
         Update: {
           created_at?: string
           customer_id?: string
-          energy_home_settings_id?: string | null
+          device_snapshot?: Json
+          home_id?: string | null
           id?: string
           inputs_snapshot?: Json
           mode?: string
+          profile_snapshot?: Json
           results_summary?: Json
           scenario?: string
           step_seconds?: number
@@ -1303,10 +1373,10 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "model_runs_energy_home_settings_id_fkey"
-            columns: ["energy_home_settings_id"]
+            foreignKeyName: "model_runs_home_id_fkey"
+            columns: ["home_id"]
             isOneToOne: false
-            referencedRelation: "energy_home_settings"
+            referencedRelation: "homes"
             referencedColumns: ["id"]
           },
         ]

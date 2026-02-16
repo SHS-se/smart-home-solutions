@@ -8,15 +8,16 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 
 interface ROITabProps {
   customerId: string;
+  homeId: string | null;
 }
 
-const ROITab: React.FC<ROITabProps> = ({ customerId }) => {
+const ROITab: React.FC<ROITabProps> = ({ customerId, homeId }) => {
   const { t } = useLanguage();
   const [hardwareCost, setHardwareCost] = useState(50000);
   const [installCost, setInstallCost] = useState(15000);
   const [monthlySubscription, setMonthlySubscription] = useState(299);
 
-  // TODO: Pull from latest model_runs – using demo values for now
+  // TODO: Pull from latest model_runs for this homeId
   const annualCostDumb = 45000;
   const annualCostSmart = 32000;
   const annualSavings = annualCostDumb - annualCostSmart;
@@ -39,6 +40,14 @@ const ROITab: React.FC<ROITabProps> = ({ customerId }) => {
     { label: t('Nettobesparing/år', 'Net Savings/yr'), value: `${netAnnualSavings.toLocaleString()} SEK` },
     { label: t('Återbetalningstid', 'Payback Period'), value: paybackYears === Infinity ? '—' : `${paybackYears.toFixed(1)} ${t('år', 'years')}` },
   ];
+
+  if (!homeId) {
+    return (
+      <div className="flex items-center justify-center min-h-[300px] text-muted-foreground">
+        <p>{t('Välj ett hem för att se lönsamhet.', 'Select a home to view ROI.')}</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

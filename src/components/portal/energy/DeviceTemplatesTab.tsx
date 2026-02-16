@@ -19,6 +19,11 @@ interface DeviceTemplate {
   name: string;
   category: string;
   device_type: string;
+  make: string;
+  model: string;
+  display_name: string;
+  device_kind: string;
+  specs: Record<string, any>;
   max_electrical_power_w: number;
   controllable_default: boolean;
   shiftable_default: boolean;
@@ -27,11 +32,19 @@ interface DeviceTemplate {
   is_deleted: boolean;
 }
 
-const CATEGORIES = ['heating', 'ev', 'hot_water', 'appliance', 'base_load'];
-const DEVICE_TYPES = ['resistive_heater', 'heat_pump_air_air', 'heat_pump_air_water', 'ev_charger', 'appliance', 'base_load'];
+const DEVICE_KINDS = [
+  'air_to_air_heat_pump', 'air_to_water_heat_pump', 'direct_electric_heater',
+  'ev_charger', 'appliance', 'base_load', 'hot_water_heater',
+];
 
-const CATEGORY_LABELS: Record<string, string> = {
-  heating: 'Heating', ev: 'EV', hot_water: 'Hot Water', appliance: 'Appliance', base_load: 'Base Load',
+const KIND_LABELS: Record<string, string> = {
+  air_to_air_heat_pump: 'Air-Air Heat Pump',
+  air_to_water_heat_pump: 'Air-Water Heat Pump',
+  direct_electric_heater: 'Electric Heater',
+  ev_charger: 'EV Charger',
+  appliance: 'Appliance',
+  base_load: 'Base Load',
+  hot_water_heater: 'Hot Water Heater',
 };
 
 const DeviceTemplatesTab: React.FC = () => {
@@ -43,11 +56,10 @@ const DeviceTemplatesTab: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [selected, setSelected] = useState<DeviceTemplate | null>(null);
 
-  // Form state
   const [form, setForm] = useState({
-    name: '', category: 'heating', device_type: 'resistive_heater',
-    max_electrical_power_w: 2000, controllable_default: false,
-    shiftable_default: false, scop: '', min_operating_temp_c: '',
+    make: '', model: '', display_name: '', device_kind: 'direct_electric_heater',
+    max_electrical_power_w: 2000, controllable_default: false, shiftable_default: false,
+    scop: '', min_operating_temp_c: '',
   });
 
   const fetchTemplates = useCallback(async () => {
@@ -56,9 +68,9 @@ const DeviceTemplatesTab: React.FC = () => {
       .from('device_templates')
       .select('*')
       .eq('is_deleted', false)
-      .order('category')
-      .order('name');
-    if (data) setTemplates(data);
+      .order('device_kind')
+      .order('display_name');
+    if (data) setTemplates(data as unknown as DeviceTemplate[]);
     setLoading(false);
   }, []);
 
@@ -67,34 +79,36 @@ const DeviceTemplatesTab: React.FC = () => {
   const handleSelect = (tpl: DeviceTemplate) => {
     setSelected(tpl);
     setForm({
-      name: tpl.name,
-      category: tpl.category,
-      device_type: tpl.device_type,
-      max_electrical_power_w: tpl.max_electrical_power_w,
-      controllable_default: tpl.controllable_default,
-      shiftable_default: tpl.shiftable_default,
-      scop: tpl.scop ? String(tpl.scop) : '',
-      min_operating_temp_c: tpl.min_operating_temp_c ? String(tpl.min_operating_temp_c) : '',
+      make: tpl.make, model: tpl.model, display_name: tpl.display_name,
+      device_kind: tpl.device_kind, max_electrical_power_w: tpl.max_electrical_power_w,
+      controllable_default: tpl.controllable_default, shiftable_default: tpl.shiftable_default,
+      scop: tpl.scop ? String(tpl.scop) : '', min_operating_temp_c: tpl.min_operating_temp_c ? String(tpl.min_operating_temp_c) : '',
     });
   };
 
   const handleNew = () => {
     setSelected(null);
     setForm({
-      name: '', category: 'heating', device_type: 'resistive_heater',
-      max_electrical_power_w: 2000, controllable_default: false,
-      shiftable_default: false, scop: '', min_operating_temp_c: '',
+      make: '', model: '', display_name: '', device_kind: 'direct_electric_heater',
+      max_electrical_power_w: 2000, controllable_default: false, shiftable_default: false,
+      scop: '', min_operating_temp_c: '',
     });
   };
 
   const handleSave = async () => {
-    if (!form.name.trim()) return;
+    if (!form.make.trim() || !form.model.trim()) return;
     setSaving(true);
     try {
+      const derivedDisplayName = form.display_name.trim() || `${form.make.trim()} ${form.model.trim()}`;
       const payload = {
-        name: form.name.trim(),
-        category: form.category,
-        device_type: form.device_type,
+        make: form.make.trim(),
+        model: form.model.trim(),
+        display_name: derivedDisplayName,
+        device_kind: form.device_kind,
+        // Keep legacy fields in sync
+        name: derivedDisplayName,
+        category: form.device_kind.includes('heat_pump') ? 'heating' : form.device_kind === 'direct_electric_heater' ? 'heating' : form.device_kind === 'ev_charger' ? 'ev' : form.device_kind === 'base_load' ? 'base_load' : 'appliance',
+        device_type: form.device_kind.includes('heat_pump') ? 'heat_pump_air_air' : form.device_kind === 'ev_charger' ? 'ev_charger' : form.device_kind === 'direct_electric_heater' ? 'resistive_heater' : form.device_kind,
         max_electrical_power_w: form.max_electrical_power_w,
         controllable_default: form.controllable_default,
         shiftable_default: form.shiftable_default,
@@ -132,7 +146,6 @@ const DeviceTemplatesTab: React.FC = () => {
     }
   };
 
-  // COP curve for selected heat pump
   const copData = selected?.scop
     ? Array.from({ length: 13 }, (_, i) => {
         const temp = -20 + i * 5;
@@ -147,7 +160,6 @@ const DeviceTemplatesTab: React.FC = () => {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      {/* Template list */}
       <Card>
         <CardHeader className="pb-2">
           <div className="flex items-center justify-between">
@@ -163,44 +175,42 @@ const DeviceTemplatesTab: React.FC = () => {
               onClick={() => handleSelect(tpl)}
             >
               <div>
-                <p className="text-sm font-medium">{tpl.name}</p>
+                <p className="text-sm font-medium">{tpl.make} {tpl.model}</p>
                 <p className="text-xs text-muted-foreground">{formatPower(tpl.max_electrical_power_w).display}</p>
               </div>
-              <Badge variant="outline" className="text-xs">{CATEGORY_LABELS[tpl.category] || tpl.category}</Badge>
+              <Badge variant="outline" className="text-xs">{KIND_LABELS[tpl.device_kind] || tpl.device_kind}</Badge>
             </div>
           ))}
         </CardContent>
       </Card>
 
-      {/* Template form */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base">{selected ? t('Redigera mall', 'Edit Template') : t('Ny mall', 'New Template')}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div>
-            <Label className="text-sm">{t('Namn', 'Name')}</Label>
-            <Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
-          </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label className="text-sm">{t('Kategori', 'Category')}</Label>
-              <Select value={form.category} onValueChange={v => setForm(f => ({ ...f, category: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {CATEGORIES.map(c => <SelectItem key={c} value={c}>{CATEGORY_LABELS[c]}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <Label className="text-sm">{t('Tillverkare', 'Make')}</Label>
+              <Input value={form.make} onChange={e => setForm(f => ({ ...f, make: e.target.value }))} />
             </div>
             <div>
-              <Label className="text-sm">{t('Enhetstyp', 'Device Type')}</Label>
-              <Select value={form.device_type} onValueChange={v => setForm(f => ({ ...f, device_type: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {DEVICE_TYPES.map(dt => <SelectItem key={dt} value={dt}>{dt.replace(/_/g, ' ')}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <Label className="text-sm">{t('Modell', 'Model')}</Label>
+              <Input value={form.model} onChange={e => setForm(f => ({ ...f, model: e.target.value }))} />
             </div>
+          </div>
+          <div>
+            <Label className="text-sm">{t('Visningsnamn', 'Display Name')}</Label>
+            <Input value={form.display_name} onChange={e => setForm(f => ({ ...f, display_name: e.target.value }))} placeholder={`${form.make} ${form.model}`.trim() || '—'} />
+          </div>
+          <div>
+            <Label className="text-sm">{t('Enhetstyp', 'Device Kind')}</Label>
+            <Select value={form.device_kind} onValueChange={v => setForm(f => ({ ...f, device_kind: v }))}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {DEVICE_KINDS.map(dk => <SelectItem key={dk} value={dk}>{KIND_LABELS[dk] || dk}</SelectItem>)}
+              </SelectContent>
+            </Select>
           </div>
           <div>
             <Label className="text-sm">{t('Max eleffekt (W)', 'Max Electrical Power (W)')}</Label>
@@ -225,7 +235,7 @@ const DeviceTemplatesTab: React.FC = () => {
             <Switch checked={form.shiftable_default} onCheckedChange={v => setForm(f => ({ ...f, shiftable_default: v }))} />
           </div>
           <div className="flex gap-2">
-            <Button onClick={handleSave} disabled={saving} className="flex-1">
+            <Button onClick={handleSave} disabled={saving || !form.make.trim() || !form.model.trim()} className="flex-1">
               {saving && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
               <Save className="w-4 h-4 mr-2" /> {t('Spara', 'Save')}
             </Button>
@@ -238,16 +248,9 @@ const DeviceTemplatesTab: React.FC = () => {
         </CardContent>
       </Card>
 
-      {/* Curve editor / preview */}
       <div className="space-y-4">
         {copData ? (
-          <PerformanceCurveChart
-            title={t('COP vs Utomhustemp', 'COP vs Outdoor Temp')}
-            data={copData}
-            xLabel="°C"
-            yLabel="COP"
-            height={250}
-          />
+          <PerformanceCurveChart title={t('COP vs Utomhustemp', 'COP vs Outdoor Temp')} data={copData} xLabel="°C" yLabel="COP" height={250} />
         ) : (
           <Card>
             <CardContent className="flex items-center justify-center min-h-[250px] text-muted-foreground text-sm">

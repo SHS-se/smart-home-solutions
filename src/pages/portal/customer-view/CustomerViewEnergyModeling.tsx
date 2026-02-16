@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Zap } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import CustomerViewLayout from '@/components/portal/CustomerViewLayout';
@@ -9,10 +9,12 @@ import DeviceManagerTab from '@/components/portal/energy/DeviceManagerTab';
 import TariffPricingTab from '@/components/portal/energy/TariffPricingTab';
 import SimulatorTab from '@/components/portal/energy/SimulatorTab';
 import ROITab from '@/components/portal/energy/ROITab';
+import HomeSelector from '@/components/portal/energy/HomeSelector';
 
 const CustomerViewEnergyModeling: React.FC = () => {
   const { t } = useLanguage();
   const { customerId } = useViewedCustomer();
+  const [selectedHomeId, setSelectedHomeId] = useState<string | null>(null);
 
   return (
     <CustomerViewLayout>
@@ -26,18 +28,22 @@ const CustomerViewEnergyModeling: React.FC = () => {
           </h1>
         </div>
 
-        <Tabs defaultValue="device-manager">
+        {customerId && (
+          <HomeSelector customerId={customerId} selectedHomeId={selectedHomeId} onHomeChange={setSelectedHomeId} />
+        )}
+
+        <Tabs defaultValue="home-setup">
           <TabsList>
+            <TabsTrigger value="home-setup">{t('Heminställningar', 'Home Setup')}</TabsTrigger>
             <TabsTrigger value="device-manager">{t('Enhetshanterare', 'Device Manager')}</TabsTrigger>
             <TabsTrigger value="roi">{t('Lönsamhet', 'ROI')}</TabsTrigger>
             <TabsTrigger value="simulator">{t('Simulator', 'Simulator')}</TabsTrigger>
-            <TabsTrigger value="house-setup">{t('Husinställningar', 'House Setup')}</TabsTrigger>
             <TabsTrigger value="tariff">{t('Tariff & Pris', 'Tariff & Pricing')}</TabsTrigger>
           </TabsList>
-          <TabsContent value="device-manager">{customerId ? <DeviceManagerTab customerId={customerId} /> : null}</TabsContent>
-          <TabsContent value="roi">{customerId ? <ROITab customerId={customerId} /> : null}</TabsContent>
-          <TabsContent value="simulator">{customerId ? <SimulatorTab customerId={customerId} /> : null}</TabsContent>
-          <TabsContent value="house-setup">{customerId ? <HouseSetupTab customerId={customerId} /> : null}</TabsContent>
+          <TabsContent value="home-setup">{customerId ? <HouseSetupTab customerId={customerId} homeId={selectedHomeId} /> : null}</TabsContent>
+          <TabsContent value="device-manager">{customerId ? <DeviceManagerTab customerId={customerId} homeId={selectedHomeId} /> : null}</TabsContent>
+          <TabsContent value="roi">{customerId ? <ROITab customerId={customerId} homeId={selectedHomeId} /> : null}</TabsContent>
+          <TabsContent value="simulator">{customerId ? <SimulatorTab customerId={customerId} homeId={selectedHomeId} /> : null}</TabsContent>
           <TabsContent value="tariff">{customerId ? <TariffPricingTab customerId={customerId} /> : null}</TabsContent>
         </Tabs>
       </div>
