@@ -13,9 +13,10 @@ import { formatPower } from '@/lib/energy-units';
 
 interface DeviceTemplate {
   id: string;
-  name: string;
-  category: string;
-  device_type: string;
+  display_name: string;
+  make: string;
+  model: string;
+  device_kind: string;
   max_electrical_power_w: number;
   controllable_default: boolean;
   shiftable_default: boolean;
@@ -36,12 +37,12 @@ interface DeviceInstance {
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  settingsId: string;
+  homeId: string;
   device?: DeviceInstance | null;
   onSaved: () => void;
 }
 
-const DeviceAddEditDialog: React.FC<Props> = ({ open, onOpenChange, settingsId, device, onSaved }) => {
+const DeviceAddEditDialog: React.FC<Props> = ({ open, onOpenChange, homeId, device, onSaved }) => {
   const { t } = useLanguage();
   const { toast } = useToast();
   const [templates, setTemplates] = useState<DeviceTemplate[]>([]);
@@ -61,10 +62,10 @@ const DeviceAddEditDialog: React.FC<Props> = ({ open, onOpenChange, settingsId, 
       setLoading(true);
       const { data } = await supabase
         .from('device_templates')
-        .select('id, name, category, device_type, max_electrical_power_w, controllable_default, shiftable_default, scop')
+        .select('id, display_name, make, model, device_kind, max_electrical_power_w, controllable_default, shiftable_default, scop')
         .eq('is_deleted', false)
-        .order('category')
-        .order('name');
+        .order('device_kind')
+        .order('display_name');
       if (data) setTemplates(data);
       setLoading(false);
     };
@@ -95,7 +96,7 @@ const DeviceAddEditDialog: React.FC<Props> = ({ open, onOpenChange, settingsId, 
     setTemplateId(id);
     const tpl = templates.find(t => t.id === id);
     if (tpl && !device) {
-      setName(tpl.name);
+      setName(tpl.display_name);
       setControllable(tpl.controllable_default);
       setShiftable(tpl.shiftable_default);
     }
@@ -108,7 +109,7 @@ const DeviceAddEditDialog: React.FC<Props> = ({ open, onOpenChange, settingsId, 
     setSaving(true);
     try {
       const payload = {
-        energy_home_settings_id: settingsId,
+        home_id: homeId,
         name: name.trim(),
         device_template_id: templateId,
         quantity,
@@ -154,7 +155,7 @@ const DeviceAddEditDialog: React.FC<Props> = ({ open, onOpenChange, settingsId, 
                 <SelectContent>
                   {templates.map(tpl => (
                     <SelectItem key={tpl.id} value={tpl.id}>
-                      {tpl.name} ({formatPower(tpl.max_electrical_power_w).display})
+                      {tpl.make} {tpl.model} ({formatPower(tpl.max_electrical_power_w).display})
                     </SelectItem>
                   ))}
                 </SelectContent>
