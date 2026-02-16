@@ -32,12 +32,12 @@ const EnergyModeling: React.FC = () => {
         </div>
 
         {isStaff ? (
-          <Tabs defaultValue="device-templates">
+          <Tabs defaultValue="device-manager">
             <TabsList>
-              <TabsTrigger value="device-templates">{t('Enhetsmallar', 'Device Templates')}</TabsTrigger>
+              <TabsTrigger value="device-manager">{t('Enhetshanterare', 'Device Manager')}</TabsTrigger>
               <TabsTrigger value="calibration">{t('Kalibrering', 'Calibration')}</TabsTrigger>
             </TabsList>
-            <TabsContent value="device-templates"><DeviceTemplatesTab /></TabsContent>
+            <TabsContent value="device-manager"><DeviceTemplatesTab /></TabsContent>
             <TabsContent value="calibration"><CalibrationTab /></TabsContent>
           </Tabs>
         ) : (
@@ -45,17 +45,17 @@ const EnergyModeling: React.FC = () => {
             {customerId && (
               <HomeSelector customerId={customerId} selectedHomeId={selectedHomeId} onHomeChange={setSelectedHomeId} />
             )}
-            <Tabs defaultValue="home-setup">
+            <Tabs defaultValue="roi">
               <TabsList>
+                <TabsTrigger value="roi">{t('Lönsamhet', 'ROI')}</TabsTrigger>
                 <TabsTrigger value="home-setup">{t('Heminställningar', 'Home Setup')}</TabsTrigger>
                 <TabsTrigger value="device-manager">{t('Enhetshanterare', 'Device Manager')}</TabsTrigger>
-                <TabsTrigger value="roi">{t('Lönsamhet', 'ROI')}</TabsTrigger>
                 <TabsTrigger value="simulator">{t('Simulator', 'Simulator')}</TabsTrigger>
                 <TabsTrigger value="tariff">{t('Tariff & Pris', 'Tariff & Pricing')}</TabsTrigger>
               </TabsList>
+              <TabsContent value="roi"><ROITab customerId={customerId} homeId={selectedHomeId} /></TabsContent>
               <TabsContent value="home-setup"><HouseSetupTab customerId={customerId} homeId={selectedHomeId} /></TabsContent>
               <TabsContent value="device-manager"><DeviceManagerTab customerId={customerId} homeId={selectedHomeId} /></TabsContent>
-              <TabsContent value="roi"><ROITab customerId={customerId} homeId={selectedHomeId} /></TabsContent>
               <TabsContent value="simulator"><SimulatorTab customerId={customerId} homeId={selectedHomeId} /></TabsContent>
               <TabsContent value="tariff">{customerId ? <TariffPricingTab customerId={customerId} /> : null}</TabsContent>
             </Tabs>
