@@ -1,196 +1,147 @@
-# Energy Modeling -- Implementation Plan
 
-This is a large feature spanning database schema, edge functions, and many UI components. The plan is organized into **4 phases** to keep each step reviewable and testable.
+# Energy Modeling Refactor: Multi-Home, Make/Model Templates, and Simulator Improvements
 
----
+## Overview
 
-Phase 0:  **Questionnaire power values must be converted to W at ingestion**
-
-Right now:
-
-- EV charger power is entered in kW
-- peak power is entered in kW
-
-### **Required fix**
-
-When Home Profile answers are saved:
-
-- convert kW → W immediately
-- store W in DB
-- mark original unit if needed for display
-
-If that’s not already done, add a migration to:
-
-- convert existing stored kW answers to W
-- update any dependent logic
-
-  
-Phase 1: Database Schema + Seed Data
-
-Create all 10 new tables, RLS policies, storage bucket, and seed data in a single migration.
-
-### Tables to create:
-
-- **energy_home_settings** -- per-user overrides/derived values, links to home profile via customer_id
-- **device_templates** -- staff-managed canonical device definitions
-- **device_template_profiles** -- versioned performance curves (COP, capacity, daily profiles)
-- **energy_devices** -- customer device instances referencing templates
-- **tariff_rules** -- network tariff engine rules (seeded with Ellevio villa)
-- **tariff_instances** -- customer-specific pricing configuration
-- **model_runs** -- simulation history with snapshotted inputs/results
-- **energy_raw_uploads** -- staff CSV upload metadata
-- **energy_normalized_series** -- 15-min normalized power data
-
-### RLS policies:
-
-- Staff: full CRUD on all energy tables
-- Customers: read/write own energy_home_settings, energy_devices, tariff_instances, model_runs
-- Customers: read-only on device_templates, tariff_rules
-
-### Seed data (in same migration):
-
-- 6 device templates: Air-air heat pump 12kW (3500W electrical), Electric radiator 2kW, EV charger 11kW, Dishwasher 2kW, Washing machine 2.2kW, Constant power 500W
-- Default COP/capacity curves for heat pump template profile
-- Ellevio villa tariff rule with top-3 daily peaks, night factor 0.5x, 0.045 SEK/W/month
-
-### Storage bucket:
-
-- `energy-raw-uploads` (staff-only access)
+This refactor introduces multi-home support, restructures device templates as a global make/model catalog, moves device assignment to "Home Setup", updates the Simulator to use Outdoor Temperature, and fixes schema constraints for reproducible model runs.
 
 ---
 
-## Phase 2: Routing, Page Shell, and Dashboard Card
+## Phase 1: Database Migration
 
-### New files:
+The energy tables don't exist in the Live environment yet, so all schema changes are safe to apply in Test without data preservation concerns for Live.
 
-- `src/pages/portal/EnergyModeling.tsx` -- main page with role-based tabs
-- `src/pages/portal/customer-view/CustomerViewEnergyModeling.tsx` -- staff viewing customer's energy page
+### 1.1 Create `homes` table
 
-### Changes to existing files:
+New table linking customers to one or more homes:
+- `id`, `customer_id` (FK customers), `name`, `address_text`, `created_at`
+- Index on `customer_id`
+- RLS: customers CRUD own homes, staff full access
 
-- **App.tsx** -- add routes `/portal/energy-modeling` and `/portal/customers/:customerId/energy-modeling`
-- **Dashboard.tsx** -- add Energy Modeling card to customer dashboard (with Zap icon)
-- **CustomerDashboardCards.tsx** -- add Energy Modeling card with device count stats
-- **CustomerViewDashboard.tsx** -- add Energy Modeling card for staff customer view
+### 1.2 Refactor `energy_home_settings` to per-home
 
-### Utility module:
+- Add `home_id` (FK homes, NOT NULL, UNIQUE)
+- Data migration: for each existing row, create a `homes` entry named "Home", then set `home_id`
+- Drop the `UNIQUE(customer_id)` constraint (keep `customer_id` for backward compat but it's no longer the primary anchor)
+- RLS updated to check via `home_id -> homes.customer_id`
 
-- `src/lib/energy-units.ts` -- power unit helper:
-  - `formatPower(watts)` returns `{ value, unit, display }` -- shows kW when >= 1000W
-  - `toWatts(kw)` and `toKw(w)` converters
+### 1.3 Refactor `energy_devices` to attach to `home_id`
 
----
+- Add `home_id` (FK homes, NOT NULL)
+- Migrate existing rows: set `home_id` from `energy_home_settings.home_id` via join
+- Drop `energy_home_settings_id` FK after migration
+- RLS updated to check via `home_id -> homes.customer_id`
 
-## Phase 3: Tab Components (UI)
+### 1.4 Add `make`, `model`, `display_name`, `device_kind`, `specs` to `device_templates`
 
-Each tab is a separate component file under `src/components/portal/energy/`:
+- Add columns: `make` (text NOT NULL default ''), `model` (text NOT NULL default ''), `display_name` (text NOT NULL default ''), `device_kind` (text NOT NULL default ''), `specs` (jsonb NOT NULL default '{}')
+- Backfill existing 6 templates with sensible make/model/display_name/device_kind values derived from their current `name` and `device_type`
+- RLS stays the same (customers SELECT, staff full)
 
-### Customer tabs:
+### 1.5 Fix `device_template_profiles` constraints
 
-1. **HouseSetupTab.tsx** -- reads home_answers via existing questionnaire system, displays as read-only with "Source: Home Profile" badges, collapsible overrides panel, Heat Demand vs delta-T chart (Recharts line chart using UA value)
-2. **DeviceManagerTab.tsx** -- CRUD list of energy_devices with Add/Edit dialog, category filter pills, search, right-panel detail graphs (COP curve for heat pumps, power profile for appliances)
-3. **TariffPricingTab.tsx** -- tariff rule selector, energy pricing model radio group, price inputs, monthly peak comparison bar chart
-4. **SimulatorTab.tsx** -- mode/scenario toggles, sliders for delta-T/indoor temp/comfort band, target peak input, load curve + composition charts, metrics sidebar, "Run" button
-5. **ROITab.tsx** -- summary cards (annual cost dumb/smart, savings, payback), cost breakdown bar chart, scenario comparison table, system cost inputs
+- Add `UNIQUE(device_template_id, profile_kind, version)` for version uniqueness
+- Add partial unique index: `UNIQUE(device_template_id, profile_kind) WHERE is_active = true` for single active profile per kind
 
-### Staff-only tabs:
+### 1.6 Fix `model_runs` for reproducibility
 
-6. **DeviceTemplatesTab.tsx** -- three-column layout: template list, template form, curve editor (interactive COP/capacity charts)
-7. **CalibrationTab.tsx** -- CSV upload zone, normalization preview, measured vs modeled overlay chart, calibration sliders (UA, COP scale, capacity scale)
-
-### Shared components:
-
-- `DeviceAddEditDialog.tsx` -- modal form for adding/editing device instances
-- `PerformanceCurveChart.tsx` -- reusable Recharts component for COP/capacity curves
-- `LoadCurveChart.tsx` -- 15-min interval line chart with peak markers
-
----
-
-## Phase 4: Edge Functions + Simulation Engine
-
-### Edge functions:
-
-1. **energy-ensure-home-settings** -- POST: creates energy_home_settings row if missing, computes UA from home profile answers (area, year built, heating type), determines thermal capacity class, returns settings
-2. **energy-get-effective-house-inputs** -- GET: merges home_answers + energy_home_settings overrides + derived values + energy_devices + tariff_instance into a single JSON object for simulation
-3. **energy-run-model** -- POST: accepts mode (design/typical/year), scenario (dumb/smart), parameters. Generates synthetic 15-min W time series:
-  - Heating demand via UA x delta-T
-  - Allocates across devices by priority
-  - Dumb: all loads concurrent; Smart: shifts shiftable loads off peak
-  - Computes tariff peak (top-3 daily peaks method)
-  - Computes energy cost
-  - Saves to model_runs with input/tariff snapshots
-4. **energy-upload-csv** -- POST: staff uploads CSV to storage bucket, normalizes to 15-min mean W buckets, stores in energy_normalized_series
-5. **energy-profile-validate-and-save** -- POST: validates device template profile data, creates new versioned profile
-
-### Stockholm temperature dataset:
-
-- Hardcoded typical year hourly temperatures (8760 values) embedded in the edge function as a constant array, interpolated to 15-min for year mode simulations
+- Add `home_id` (FK homes, NOT NULL after migration)
+- Add `device_snapshot` (jsonb, default '[]')
+- Add `profile_snapshot` (jsonb, default '{}')
+- Migrate existing rows (0 rows currently, so this is safe)
+- Drop `energy_home_settings_id` FK after migration
 
 ---
 
-## Technical Details
+## Phase 2: UI Changes
 
-### Home Profile mapping layer
+### 2.1 Home Selector Component
 
-The `energy-get-effective-house-inputs` function maps question IDs to semantic fields. This requires knowing which home_questions correspond to dwelling type, heated area, etc. The mapping will be done by adding a `semantic_key` to questions. The simpler approach: store a mapping config in the edge function that maps question text patterns to field names.
+Create a reusable `HomeSelector` dropdown component:
+- Fetches homes for the current customer
+- Shows dropdown with home names
+- "Create Home" button/modal (name + optional address)
+- Empty state when no homes exist
+- Used in: Home Setup, Simulator, ROI, Device Manager
 
-Add a semantic_key column to your existing home_questions table.
+### 2.2 Rename "House Setup" to "Home Setup"
 
-Example keys:
+- Update tab labels in `EnergyModeling.tsx` and `CustomerViewEnergyModeling.tsx`
+- "Husinstellningar" becomes "Heminstellningar" (sv), "House Setup" becomes "Home Setup" (en)
 
-- dwelling_type
-- heated_area_m2
-- year_built
-- occupants
-- heating_types
-- hot_water_type
-- has_ev
-- ev_charger_power_kw
-- annual_kwh
-- annual_peak_kw
-- contract_type
-- winter_indoor_temp_c (or comfort proxy)
+### 2.3 Refactor Home Setup Tab
 
-Edge function must read by semantic_key, not text.  
-  
-UA estimation formula
+Current behavior: shows Home Profile data read-only + overrides.
+New behavior: **also shows devices assigned to selected home** and lets users assign devices from the global catalog.
 
-```
-UA (W/K) = heated_area * U_factor_by_era * form_factor_by_type
-```
+- Add home selector at top
+- Keep existing Home Profile data display
+- Add "Devices in this home" section with device list
+- "Add device" button opens modal to pick from `device_templates` catalog
+- Edit per-home instance values: name, quantity, advanced max_power_override_w
 
-Where U_factor_by_era is derived from year_built (pre-1960: ~1.5, 1960-1980: ~1.0, 1980-2000: ~0.6, post-2000: ~0.4 W/m2K) and form_factor accounts for dwelling type surface-to-volume ratio.
+### 2.4 Refactor Device Manager Tab
 
-### Thermal capacity classes
+**Customer view changes:**
+- Default: "My Devices" -- shows only templates assigned to at least one of the customer's homes
+- Toggle: "All Devices" -- read-only browse of full global catalog
+- Remove the "Add" button from customer view (adding is done via Home Setup)
 
-- Light (wooden frame, poorly insulated): fast response
-- Medium (standard Swedish construction): moderate
-- Heavy (masonry, concrete): slow response
+**Staff view stays the same** (full CRUD on templates)
 
-### File count estimate
+### 2.5 Refactor DeviceAddEditDialog
 
-- ~1 migration file
-- ~12 new component files
-- ~5 edge function directories
-- ~2 utility/lib files
-- ~3 modified existing files
+- Change from accepting `settingsId` to accepting `homeId`
+- Insert `energy_devices` with `home_id` instead of `energy_home_settings_id`
 
-### Dependencies
+### 2.6 Refactor DeviceTemplatesTab (Staff)
 
-- Recharts (already installed) for all charts
-- No new npm packages needed
+- Add `make`, `model`, `display_name`, `device_kind`, `specs` fields to the template form
+- Remove old `name`, `category`, `device_type` fields (or map them)
+- Keep profile management (COP curve preview)
+
+### 2.7 Simulator: Replace deltaT with Outdoor Temperature
+
+- Remove "deltaT" slider
+- Add "Outdoor Temp (°C)" slider (range: -25 to +15, default: -5)
+- Keep "Indoor Temp (°C)" slider
+- Compute `deltaT = indoorTemp - outdoorTemp` (clamped >= 0)
+- Store in `inputs_snapshot`: `indoor_temp_c`, `outdoor_temp_c`, `delta_t_c`, `comfort_band_c`, `target_peak_w`, `home_id`
+- On "Run Simulation": load devices for selected home, build snapshots, insert `model_runs` row, run simulation
+
+### 2.8 Update EnergyModeling.tsx and CustomerViewEnergyModeling.tsx
+
+- Pass `homeId` (from home selector state) down to child tabs
+- Update tab labels
 
 ---
 
-## Implementation Order
+## Phase 3: Seed Data
 
-1. **Migration** -- create all tables, RLS, seed data, storage bucket
-2. **Utility + routing** -- energy-units.ts, page shell, routes, dashboard card
-3. **House Setup + Device Manager tabs** -- core data display
-4. **Device Templates + Calibration tabs** -- staff tools
-5. **Tariff & Pricing tab** -- tariff configuration
-6. **Edge functions** -- ensure-home-settings, get-effective-inputs, run-model
-7. **Simulator + ROI tabs** -- connect to edge functions
-8. **CSV upload edge function + Calibration integration**
+Backfill the 6 existing device templates with make/model info:
+- "Luft-luft varmepump 12kW" -> make: "Generic", model: "AA-12", device_kind: "air_to_air_heat_pump"
+- "Elradiator 2kW" -> make: "Generic", model: "RH-2000", device_kind: "direct_electric_heater"
+- "Elbilsladdare 11kW" -> make: "Generic", model: "EVC-11", device_kind: "ev_charger"
+- "Diskmaskin" -> make: "Generic", model: "DW-2000", device_kind: "appliance"
+- "Tvattmaskin" -> make: "Generic", model: "WM-2200", device_kind: "appliance"
+- "Baslast" -> make: "Generic", model: "BL-500", device_kind: "base_load"
 
-Due to the size of this feature, implementation will require multiple messages. The first message will cover Phase 1 (database) and Phase 2 (routing + shell).
+---
+
+## Files to Create/Modify
+
+### New files
+- `src/components/portal/energy/HomeSelector.tsx` -- reusable home dropdown + create modal
+
+### Modified files
+- `src/pages/portal/EnergyModeling.tsx` -- home selector state, rename tabs, pass homeId
+- `src/pages/portal/customer-view/CustomerViewEnergyModeling.tsx` -- same
+- `src/components/portal/energy/HouseSetupTab.tsx` -- rename, add device assignment, accept homeId
+- `src/components/portal/energy/DeviceManagerTab.tsx` -- customer "My Devices" vs "All" toggle, accept homeId
+- `src/components/portal/energy/DeviceAddEditDialog.tsx` -- use homeId instead of settingsId
+- `src/components/portal/energy/DeviceTemplatesTab.tsx` -- add make/model/kind/specs fields
+- `src/components/portal/energy/SimulatorTab.tsx` -- outdoor temp slider, home selector, model_runs insert
+- `src/components/portal/energy/ROITab.tsx` -- accept homeId prop (future-ready)
+
+### Database
+- One migration with: `homes` table, `energy_home_settings` refactor, `energy_devices` refactor, `device_templates` columns, `device_template_profiles` constraints, `model_runs` columns, data backfill, RLS policies
