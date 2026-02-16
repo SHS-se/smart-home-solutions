@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -36,6 +37,10 @@ const SEMANTIC_LABELS: Record<string, { sv: string; en: string }> = {
   has_solar: { sv: 'Solpaneler', en: 'Solar Panels' },
   has_battery: { sv: 'Batterilagring', en: 'Battery Storage' },
 };
+
+const BOOLEAN_KEYS = ['has_ev', 'has_solar', 'has_battery'];
+const NUMBER_KEYS = ['year_built', 'heated_area_m2', 'occupants', 'ev_charger_power_kw', 'annual_kwh', 'annual_peak_kw'];
+const READONLY_KEYS = ['heating_types']; // complex multi-select, keep read-only
 
 function estimateUA(heatedArea: number, yearBuilt: number, dwellingType: string): number {
   let uFactor: number;
@@ -85,6 +90,8 @@ const HouseSetupTab: React.FC<HouseSetupTabProps> = ({ customerId, homeId }) => 
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [profileValues, setProfileValues] = useState<Record<string, unknown>>({});
+  const [questionMap, setQuestionMap] = useState<Record<string, string>>({}); // semantic_key -> question_id
+  const [profileOpen, setProfileOpen] = useState(false);
   const [overridesOpen, setOverridesOpen] = useState(false);
   const [overrides, setOverrides] = useState<Record<string, number | null>>({
     indoor_temp_c: null, comfort_band_c: null, ua_w_per_k: null,
@@ -93,7 +100,6 @@ const HouseSetupTab: React.FC<HouseSetupTabProps> = ({ customerId, homeId }) => 
   const [settings, setSettings] = useState<{ id: string; ua_w_per_k: number | null; thermal_capacity_class: string | null } | null>(null);
   const [saving, setSaving] = useState(false);
 
-  // Devices assigned to this home
   const [devices, setDevices] = useState<DeviceWithTemplate[]>([]);
   const [devicesLoading, setDevicesLoading] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -113,14 +119,17 @@ const HouseSetupTab: React.FC<HouseSetupTabProps> = ({ customerId, homeId }) => 
           .select('question_id, answer_text, answer_value')
           .eq('customer_id', customerId);
         const values: Record<string, unknown> = {};
+        const qMap: Record<string, string> = {};
         if (questions && answers) {
           for (const q of questions) {
             if (!q.semantic_key) continue;
+            qMap[q.semantic_key] = q.id;
             const answer = answers.find(a => a.question_id === q.id);
             if (answer) values[q.semantic_key] = answer.answer_value ?? answer.answer_text;
           }
         }
         setProfileValues(values);
+        setQuestionMap(qMap);
 
         if (homeId) {
           let { data: existingSettings } = await supabase
@@ -176,6 +185,30 @@ const HouseSetupTab: React.FC<HouseSetupTabProps> = ({ customerId, homeId }) => 
     fetchDevices();
   };
 
+  const handleProfileValueChange = useCallback(async (key: string, newValue: unknown) => {
+    setProfileValues(prev => ({ ...prev, [key]: newValue }));
+    const questionId = questionMap[key];
+    if (!questionId) return;
+    try {
+      const answerValue = newValue;
+      const answerText = String(newValue ?? '');
+      // Upsert: try update first, then insert
+      const { data: existing } = await supabase
+        .from('home_answers')
+        .select('id')
+        .eq('customer_id', customerId)
+        .eq('question_id', questionId)
+        .maybeSingle();
+      if (existing) {
+        await supabase.from('home_answers').update({ answer_value: answerValue as any, answer_text: answerText }).eq('id', existing.id);
+      } else {
+        await supabase.from('home_answers').insert({ customer_id: customerId, question_id: questionId, answer_value: answerValue as any, answer_text: answerText });
+      }
+    } catch (err) {
+      console.error('Failed to sync profile value:', err);
+    }
+  }, [customerId, questionMap]);
+
   const effectiveUA = overrides.ua_w_per_k ?? settings?.ua_w_per_k ?? 200;
 
   const chartData = useMemo(() => {
@@ -207,6 +240,45 @@ const HouseSetupTab: React.FC<HouseSetupTabProps> = ({ customerId, homeId }) => 
     return String(value);
   };
 
+  const renderEditableField = (key: string, value: unknown) => {
+    if (READONLY_KEYS.includes(key)) {
+      return <span className="text-sm text-muted-foreground">{formatValue(key, value)}</span>;
+    }
+    if (BOOLEAN_KEYS.includes(key)) {
+      return (
+        <Switch
+          checked={!!value}
+          onCheckedChange={(checked) => handleProfileValueChange(key, checked)}
+        />
+      );
+    }
+    if (NUMBER_KEYS.includes(key)) {
+      return (
+        <Input
+          type="number"
+          className="w-28 h-8 text-sm text-right"
+          value={value != null ? String(value) : ''}
+          onChange={e => {
+            const v = e.target.value === '' ? null : Number(e.target.value);
+            setProfileValues(prev => ({ ...prev, [key]: v }));
+          }}
+          onBlur={() => handleProfileValueChange(key, profileValues[key])}
+          onKeyDown={e => { if (e.key === 'Enter') handleProfileValueChange(key, profileValues[key]); }}
+        />
+      );
+    }
+    // text fields
+    return (
+      <Input
+        className="w-36 h-8 text-sm text-right"
+        value={String(value ?? '')}
+        onChange={e => setProfileValues(prev => ({ ...prev, [key]: e.target.value }))}
+        onBlur={() => handleProfileValueChange(key, profileValues[key])}
+        onKeyDown={e => { if (e.key === 'Enter') handleProfileValueChange(key, profileValues[key]); }}
+      />
+    );
+  };
+
   if (!homeId) {
     return (
       <div className="flex items-center justify-center min-h-[300px] text-muted-foreground">
@@ -222,50 +294,61 @@ const HouseSetupTab: React.FC<HouseSetupTabProps> = ({ customerId, homeId }) => 
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Left: Home Profile values */}
         <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Home className="w-5 h-5" />
-                {t('Hemprofil', 'Home Profile')}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {ENERGY_SEMANTIC_KEYS.map(key => {
-                const value = profileValues[key];
-                if (value === undefined) return null;
-                const label = SEMANTIC_LABELS[key];
-                return (
-                  <div key={key} className="flex items-center justify-between py-2 border-b border-border last:border-0">
-                    <div>
-                      <span className="text-sm font-medium">{t(label.sv, label.en)}</span>
-                      <Badge variant="outline" className="ml-2 text-xs">{t('Källa: Hemprofil', 'Source: Home Profile')}</Badge>
-                    </div>
-                    <span className="text-sm text-muted-foreground">{formatValue(key, value)}</span>
-                  </div>
-                );
-              })}
-              {settings && (
-                <>
-                  <div className="flex items-center justify-between py-2 border-b border-border">
-                    <div>
-                      <span className="text-sm font-medium">UA (W/K)</span>
-                      <Badge variant="secondary" className="ml-2 text-xs">{t('Beräknat', 'Computed')}</Badge>
-                    </div>
-                    <span className="text-sm text-muted-foreground">{effectiveUA.toFixed(0)} W/K</span>
-                  </div>
-                  <div className="flex items-center justify-between py-2">
-                    <div>
-                      <span className="text-sm font-medium">{t('Termisk klass', 'Thermal Class')}</span>
-                      <Badge variant="secondary" className="ml-2 text-xs">{t('Beräknat', 'Computed')}</Badge>
-                    </div>
-                    <span className="text-sm text-muted-foreground capitalize">{settings.thermal_capacity_class || '—'}</span>
-                  </div>
-                </>
-              )}
-            </CardContent>
-          </Card>
+          {/* Home Profile - Collapsible */}
+          <Collapsible open={profileOpen} onOpenChange={setProfileOpen}>
+            <Card>
+              <CollapsibleTrigger asChild>
+                <CardHeader className="cursor-pointer">
+                  <CardTitle className="flex items-center justify-between">
+                    <span className="flex items-center gap-2">
+                      <Home className="w-5 h-5" />
+                      {t('Hemprofil', 'Home Profile')}
+                    </span>
+                    {profileOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  </CardTitle>
+                </CardHeader>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <CardContent className="space-y-4">
+                  {ENERGY_SEMANTIC_KEYS.map(key => {
+                    const value = profileValues[key];
+                    if (value === undefined && !questionMap[key]) return null;
+                    const label = SEMANTIC_LABELS[key];
+                    return (
+                      <div key={key} className="flex items-center justify-between py-2 border-b border-border last:border-0">
+                        <div>
+                          <span className="text-sm font-medium">{t(label.sv, label.en)}</span>
+                          <Badge variant="outline" className="ml-2 text-xs">{t('Källa: Hemprofil', 'Source: Home Profile')}</Badge>
+                        </div>
+                        {renderEditableField(key, value)}
+                      </div>
+                    );
+                  })}
+                  {settings && (
+                    <>
+                      <div className="flex items-center justify-between py-2 border-b border-border">
+                        <div>
+                          <span className="text-sm font-medium">UA (W/K)</span>
+                          <Badge variant="secondary" className="ml-2 text-xs">{t('Beräknat', 'Computed')}</Badge>
+                        </div>
+                        <span className="text-sm text-muted-foreground">{effectiveUA.toFixed(0)} W/K</span>
+                      </div>
+                      <div className="flex items-center justify-between py-2">
+                        <div>
+                          <span className="text-sm font-medium">{t('Termisk klass', 'Thermal Class')}</span>
+                          <Badge variant="secondary" className="ml-2 text-xs">{t('Beräknat', 'Computed')}</Badge>
+                        </div>
+                        <span className="text-sm text-muted-foreground capitalize">{settings.thermal_capacity_class || '—'}</span>
+                      </div>
+                    </>
+                  )}
+                </CardContent>
+              </CollapsibleContent>
+            </Card>
+          </Collapsible>
+
+          {/* Overrides - Collapsible */}
           <Collapsible open={overridesOpen} onOpenChange={setOverridesOpen}>
             <Card>
               <CollapsibleTrigger asChild>

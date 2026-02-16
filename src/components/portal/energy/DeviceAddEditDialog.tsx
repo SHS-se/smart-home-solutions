@@ -1,11 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Search } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -48,14 +47,17 @@ const DeviceAddEditDialog: React.FC<Props> = ({ open, onOpenChange, homeId, devi
   const [templates, setTemplates] = useState<DeviceTemplate[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState('');
 
+  // Edit mode state
   const [name, setName] = useState('');
-  const [templateId, setTemplateId] = useState('');
   const [quantity, setQuantity] = useState(1);
   const [maxPowerOverride, setMaxPowerOverride] = useState<string>('');
   const [controllable, setControllable] = useState(false);
   const [shiftable, setShiftable] = useState(false);
   const [priority, setPriority] = useState(5);
+
+  const isEditMode = !!device;
 
   useEffect(() => {
     const fetchTemplates = async () => {
@@ -69,63 +71,59 @@ const DeviceAddEditDialog: React.FC<Props> = ({ open, onOpenChange, homeId, devi
       if (data) setTemplates(data);
       setLoading(false);
     };
-    if (open) fetchTemplates();
+    if (open) {
+      fetchTemplates();
+      setSearch('');
+    }
   }, [open]);
 
   useEffect(() => {
     if (device) {
       setName(device.name);
-      setTemplateId(device.device_template_id);
       setQuantity(device.quantity);
       setMaxPowerOverride(device.max_power_override_w ? String(device.max_power_override_w) : '');
       setControllable(device.controllable);
       setShiftable(device.shiftable);
       setPriority(device.priority);
-    } else {
-      setName('');
-      setTemplateId('');
-      setQuantity(1);
-      setMaxPowerOverride('');
-      setControllable(false);
-      setShiftable(false);
-      setPriority(5);
     }
   }, [device, open]);
 
-  const handleTemplateChange = (id: string) => {
-    setTemplateId(id);
-    const tpl = templates.find(t => t.id === id);
-    if (tpl && !device) {
-      setName(tpl.display_name);
-      setControllable(tpl.controllable_default);
-      setShiftable(tpl.shiftable_default);
+  const handleQuickAdd = async (tpl: DeviceTemplate) => {
+    setSaving(true);
+    try {
+      const { error } = await supabase.from('energy_devices').insert({
+        home_id: homeId,
+        name: tpl.display_name,
+        device_template_id: tpl.id,
+        quantity: 1,
+        controllable: tpl.controllable_default,
+        shiftable: tpl.shiftable_default,
+        priority: 5,
+      });
+      if (error) throw error;
+      toast({ title: t('Tillagd!', 'Added!') });
+      onSaved();
+      onOpenChange(false);
+    } catch (err: any) {
+      toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
+    } finally {
+      setSaving(false);
     }
   };
 
-  const selectedTemplate = templates.find(t => t.id === templateId);
-
-  const handleSave = async () => {
-    if (!templateId || !name.trim()) return;
+  const handleSaveEdit = async () => {
+    if (!device || !name.trim()) return;
     setSaving(true);
     try {
-      const payload = {
-        home_id: homeId,
+      const { error } = await supabase.from('energy_devices').update({
         name: name.trim(),
-        device_template_id: templateId,
         quantity,
         max_power_override_w: maxPowerOverride ? Number(maxPowerOverride) : null,
         controllable,
         shiftable,
         priority,
-      };
-
-      if (device) {
-        const { error } = await supabase.from('energy_devices').update(payload).eq('id', device.id);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.from('energy_devices').insert(payload);
-        if (error) throw error;
-      }
+      }).eq('id', device.id);
+      if (error) throw error;
       toast({ title: t('Sparat!', 'Saved!') });
       onSaved();
       onOpenChange(false);
@@ -136,31 +134,26 @@ const DeviceAddEditDialog: React.FC<Props> = ({ open, onOpenChange, homeId, devi
     }
   };
 
+  const filteredTemplates = templates.filter(tpl => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return tpl.display_name.toLowerCase().includes(q) || tpl.make.toLowerCase().includes(q) || tpl.model.toLowerCase().includes(q) || tpl.device_kind.toLowerCase().includes(q);
+  });
+
+  const selectedTemplate = isEditMode ? templates.find(t => t.id === device.device_template_id) : null;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className={isEditMode ? 'max-w-md' : 'max-w-lg'}>
         <DialogHeader>
-          <DialogTitle>{device ? t('Redigera enhet', 'Edit Device') : t('Lägg till enhet', 'Add Device')}</DialogTitle>
+          <DialogTitle>{isEditMode ? t('Redigera enhet', 'Edit Device') : t('Lägg till enhet', 'Add Device')}</DialogTitle>
         </DialogHeader>
+
         {loading ? (
           <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin" /></div>
-        ) : (
+        ) : isEditMode ? (
+          /* Edit mode: full form */
           <div className="space-y-4">
-            <div>
-              <Label>{t('Mall', 'Template')}</Label>
-              <Select value={templateId} onValueChange={handleTemplateChange}>
-                <SelectTrigger>
-                  <SelectValue placeholder={t('Välj mall...', 'Select template...')} />
-                </SelectTrigger>
-                <SelectContent>
-                  {templates.map(tpl => (
-                    <SelectItem key={tpl.id} value={tpl.id}>
-                      {tpl.make} {tpl.model} ({formatPower(tpl.max_electrical_power_w).display})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
             <div>
               <Label>{t('Namn', 'Name')}</Label>
               <Input value={name} onChange={e => setName(e.target.value)} />
@@ -192,15 +185,48 @@ const DeviceAddEditDialog: React.FC<Props> = ({ open, onOpenChange, homeId, devi
               <Label>{t('Förskjutbar', 'Shiftable')}</Label>
               <Switch checked={shiftable} onCheckedChange={setShiftable} />
             </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => onOpenChange(false)}>{t('Avbryt', 'Cancel')}</Button>
+              <Button onClick={handleSaveEdit} disabled={saving || !name.trim()}>
+                {saving && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
+                {t('Spara', 'Save')}
+              </Button>
+            </DialogFooter>
+          </div>
+        ) : (
+          /* Add mode: searchable template picker */
+          <div className="space-y-3">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                className="pl-9"
+                placeholder={t('Sök enhet...', 'Search device...')}
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+              />
+            </div>
+            <div className="max-h-[400px] overflow-y-auto space-y-1">
+              {filteredTemplates.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-4">{t('Inga enheter hittades.', 'No devices found.')}</p>
+              ) : (
+                filteredTemplates.map(tpl => (
+                  <button
+                    key={tpl.id}
+                    className="w-full flex items-center justify-between px-3 py-2 rounded-md hover:bg-accent text-left transition-colors disabled:opacity-50"
+                    onClick={() => handleQuickAdd(tpl)}
+                    disabled={saving}
+                  >
+                    <div>
+                      <span className="text-sm font-medium">{tpl.make} {tpl.model}</span>
+                      <span className="text-xs text-muted-foreground ml-2">{tpl.device_kind}</span>
+                    </div>
+                    <span className="text-sm text-muted-foreground">{formatPower(tpl.max_electrical_power_w).display}</span>
+                  </button>
+                ))
+              )}
+            </div>
           </div>
         )}
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>{t('Avbryt', 'Cancel')}</Button>
-          <Button onClick={handleSave} disabled={saving || !templateId || !name.trim()}>
-            {saving && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
-            {t('Spara', 'Save')}
-          </Button>
-        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

@@ -32,17 +32,17 @@ const CustomerViewEnergyModeling: React.FC = () => {
           <HomeSelector customerId={customerId} selectedHomeId={selectedHomeId} onHomeChange={setSelectedHomeId} />
         )}
 
-        <Tabs defaultValue="home-setup">
+        <Tabs defaultValue="roi">
           <TabsList>
+            <TabsTrigger value="roi">{t('Lönsamhet', 'ROI')}</TabsTrigger>
             <TabsTrigger value="home-setup">{t('Heminställningar', 'Home Setup')}</TabsTrigger>
             <TabsTrigger value="device-manager">{t('Enhetshanterare', 'Device Manager')}</TabsTrigger>
-            <TabsTrigger value="roi">{t('Lönsamhet', 'ROI')}</TabsTrigger>
             <TabsTrigger value="simulator">{t('Simulator', 'Simulator')}</TabsTrigger>
             <TabsTrigger value="tariff">{t('Tariff & Pris', 'Tariff & Pricing')}</TabsTrigger>
           </TabsList>
+          <TabsContent value="roi">{customerId ? <ROITab customerId={customerId} homeId={selectedHomeId} /> : null}</TabsContent>
           <TabsContent value="home-setup">{customerId ? <HouseSetupTab customerId={customerId} homeId={selectedHomeId} /> : null}</TabsContent>
           <TabsContent value="device-manager">{customerId ? <DeviceManagerTab customerId={customerId} homeId={selectedHomeId} /> : null}</TabsContent>
-          <TabsContent value="roi">{customerId ? <ROITab customerId={customerId} homeId={selectedHomeId} /> : null}</TabsContent>
           <TabsContent value="simulator">{customerId ? <SimulatorTab customerId={customerId} homeId={selectedHomeId} /> : null}</TabsContent>
           <TabsContent value="tariff">{customerId ? <TariffPricingTab customerId={customerId} /> : null}</TabsContent>
         </Tabs>
