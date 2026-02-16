@@ -1,147 +1,83 @@
 
-# Energy Modeling Refactor: Multi-Home, Make/Model Templates, and Simulator Improvements
+
+# Home Setup UX Improvements
 
 ## Overview
 
-This refactor introduces multi-home support, restructures device templates as a global make/model catalog, moves device assignment to "Home Setup", updates the Simulator to use Outdoor Temperature, and fixes schema constraints for reproducible model runs.
+Five changes: make Home Profile collapsible and editable (syncing back to questionnaire), simplify the "Add" dialog to pick from existing templates, move device creation to Device Manager, reorder tabs so ROI is first for customers, and add Device Manager tab to staff view.
 
 ---
 
-## Phase 1: Database Migration
+## 1. Make Home Profile Collapsible
 
-The energy tables don't exist in the Live environment yet, so all schema changes are safe to apply in Test without data preservation concerns for Live.
+In `HouseSetupTab.tsx`, wrap the Home Profile card in a `Collapsible` component (same pattern as the existing Overrides section). Default state: collapsed.
 
-### 1.1 Create `homes` table
+## 2. Make Home Profile Fields Editable + Sync to Questionnaire
 
-New table linking customers to one or more homes:
-- `id`, `customer_id` (FK customers), `name`, `address_text`, `created_at`
-- Index on `customer_id`
-- RLS: customers CRUD own homes, staff full access
+Each field row currently shows a read-only value. Change each to an inline-editable field:
+- For text/number fields: show the value as text, but allow clicking or focusing to edit via an Input.
+- For boolean fields (has_ev, has_solar, has_battery): show a Switch.
+- For array fields (heating_types): keep read-only for now (complex multi-select).
 
-### 1.2 Refactor `energy_home_settings` to per-home
+On value change:
+- Update local `profileValues` state immediately.
+- Upsert `home_answers` row: find the `question_id` from the loaded questions list (already fetched), then upsert `{ customer_id, question_id, answer_value }`.
+- This ensures the Home Profile questionnaire stays in sync -- no duplicate data.
 
-- Add `home_id` (FK homes, NOT NULL, UNIQUE)
-- Data migration: for each existing row, create a `homes` entry named "Home", then set `home_id`
-- Drop the `UNIQUE(customer_id)` constraint (keep `customer_id` for backward compat but it's no longer the primary anchor)
-- RLS updated to check via `home_id -> homes.customer_id`
+The component already fetches `home_questions` with `semantic_key` and `home_answers`. We'll store the question map (semantic_key -> question_id) in state so we can write back.
 
-### 1.3 Refactor `energy_devices` to attach to `home_id`
+Keep the "Source: Home Profile" badge and the "Computed" badge for UA/Thermal Class (those remain read-only).
 
-- Add `home_id` (FK homes, NOT NULL)
-- Migrate existing rows: set `home_id` from `energy_home_settings.home_id` via join
-- Drop `energy_home_settings_id` FK after migration
-- RLS updated to check via `home_id -> homes.customer_id`
+## 3. Simplify "Add Device" Dialog in Home Setup
 
-### 1.4 Add `make`, `model`, `display_name`, `device_kind`, `specs` to `device_templates`
+The current `DeviceAddEditDialog` is a full form with template selector, name, quantity, priority, power override, controllable, shiftable toggles. 
 
-- Add columns: `make` (text NOT NULL default ''), `model` (text NOT NULL default ''), `display_name` (text NOT NULL default ''), `device_kind` (text NOT NULL default ''), `specs` (jsonb NOT NULL default '{}')
-- Backfill existing 6 templates with sensible make/model/display_name/device_kind values derived from their current `name` and `device_type`
-- RLS stays the same (customers SELECT, staff full)
+Change the **Add** flow (when `device` prop is null) to be a simple picker:
+- Show a searchable list of `device_templates` (make, model, power).
+- Clicking a template immediately inserts an `energy_devices` row with defaults (name = display_name, quantity = 1, priority = 5) and closes the dialog.
+- The **Edit** flow (when `device` prop is set) keeps the full form for adjusting name, quantity, priority, overrides.
 
-### 1.5 Fix `device_template_profiles` constraints
+This means the "+ Add" button on Home Setup just lists existing devices from the catalog to pick from.
 
-- Add `UNIQUE(device_template_id, profile_kind, version)` for version uniqueness
-- Add partial unique index: `UNIQUE(device_template_id, profile_kind) WHERE is_active = true` for single active profile per kind
+## 4. Add "Create New Device" to Device Manager Tab (Staff)
 
-### 1.6 Fix `model_runs` for reproducibility
+Currently Device Manager for customers is read-only. For **staff**, the Device Templates tab already has full CRUD. But the user wants a create button on the Device Manager tab itself.
 
-- Add `home_id` (FK homes, NOT NULL after migration)
-- Add `device_snapshot` (jsonb, default '[]')
-- Add `profile_snapshot` (jsonb, default '{}')
-- Migrate existing rows (0 rows currently, so this is safe)
-- Drop `energy_home_settings_id` FK after migration
+Add a "+ New Device" button to the Device Manager tab that opens the DeviceTemplatesTab creation form in a dialog, or simply navigates/switches to the Device Templates tab. Since staff already sees Device Templates as their primary tab, the simplest approach:
+- On the staff Energy Modeling page, rename "Device Templates" to "Device Manager" to consolidate naming.
 
----
+## 5. Reorder Tabs
 
-## Phase 2: UI Changes
+**Customer tabs** (in `EnergyModeling.tsx` and `CustomerViewEnergyModeling.tsx`):
+- Change `defaultValue` from `"home-setup"` to `"roi"`
+- Reorder TabsTrigger: ROI, Home Setup, Device Manager, Simulator, Tariff & Pricing
 
-### 2.1 Home Selector Component
-
-Create a reusable `HomeSelector` dropdown component:
-- Fetches homes for the current customer
-- Shows dropdown with home names
-- "Create Home" button/modal (name + optional address)
-- Empty state when no homes exist
-- Used in: Home Setup, Simulator, ROI, Device Manager
-
-### 2.2 Rename "House Setup" to "Home Setup"
-
-- Update tab labels in `EnergyModeling.tsx` and `CustomerViewEnergyModeling.tsx`
-- "Husinstellningar" becomes "Heminstellningar" (sv), "House Setup" becomes "Home Setup" (en)
-
-### 2.3 Refactor Home Setup Tab
-
-Current behavior: shows Home Profile data read-only + overrides.
-New behavior: **also shows devices assigned to selected home** and lets users assign devices from the global catalog.
-
-- Add home selector at top
-- Keep existing Home Profile data display
-- Add "Devices in this home" section with device list
-- "Add device" button opens modal to pick from `device_templates` catalog
-- Edit per-home instance values: name, quantity, advanced max_power_override_w
-
-### 2.4 Refactor Device Manager Tab
-
-**Customer view changes:**
-- Default: "My Devices" -- shows only templates assigned to at least one of the customer's homes
-- Toggle: "All Devices" -- read-only browse of full global catalog
-- Remove the "Add" button from customer view (adding is done via Home Setup)
-
-**Staff view stays the same** (full CRUD on templates)
-
-### 2.5 Refactor DeviceAddEditDialog
-
-- Change from accepting `settingsId` to accepting `homeId`
-- Insert `energy_devices` with `home_id` instead of `energy_home_settings_id`
-
-### 2.6 Refactor DeviceTemplatesTab (Staff)
-
-- Add `make`, `model`, `display_name`, `device_kind`, `specs` fields to the template form
-- Remove old `name`, `category`, `device_type` fields (or map them)
-- Keep profile management (COP curve preview)
-
-### 2.7 Simulator: Replace deltaT with Outdoor Temperature
-
-- Remove "deltaT" slider
-- Add "Outdoor Temp (°C)" slider (range: -25 to +15, default: -5)
-- Keep "Indoor Temp (°C)" slider
-- Compute `deltaT = indoorTemp - outdoorTemp` (clamped >= 0)
-- Store in `inputs_snapshot`: `indoor_temp_c`, `outdoor_temp_c`, `delta_t_c`, `comfort_band_c`, `target_peak_w`, `home_id`
-- On "Run Simulation": load devices for selected home, build snapshots, insert `model_runs` row, run simulation
-
-### 2.8 Update EnergyModeling.tsx and CustomerViewEnergyModeling.tsx
-
-- Pass `homeId` (from home selector state) down to child tabs
-- Update tab labels
+**Staff tabs** (in `EnergyModeling.tsx`):
+- Add Device Manager tab back (using `DeviceManagerTab` or merging with `DeviceTemplatesTab`)
+- Change `defaultValue` to `"device-manager"` (or `"device-templates"`)
+- Tabs: Device Manager (templates CRUD), Calibration
 
 ---
 
-## Phase 3: Seed Data
+## Technical Details
 
-Backfill the 6 existing device templates with make/model info:
-- "Luft-luft varmepump 12kW" -> make: "Generic", model: "AA-12", device_kind: "air_to_air_heat_pump"
-- "Elradiator 2kW" -> make: "Generic", model: "RH-2000", device_kind: "direct_electric_heater"
-- "Elbilsladdare 11kW" -> make: "Generic", model: "EVC-11", device_kind: "ev_charger"
-- "Diskmaskin" -> make: "Generic", model: "DW-2000", device_kind: "appliance"
-- "Tvattmaskin" -> make: "Generic", model: "WM-2200", device_kind: "appliance"
-- "Baslast" -> make: "Generic", model: "BL-500", device_kind: "base_load"
+### Files Modified
 
----
+1. **`src/components/portal/energy/HouseSetupTab.tsx`**
+   - Wrap Home Profile card in Collapsible (default collapsed)
+   - Store question_id map from fetched questions
+   - Make each profile field inline-editable with upsert to `home_answers`
+   - Keep UA and Thermal Class as read-only computed values
 
-## Files to Create/Modify
+2. **`src/components/portal/energy/DeviceAddEditDialog.tsx`**
+   - When `device` is null (add mode): render a simple searchable template picker list instead of the full form
+   - On click, insert `energy_devices` with defaults and call `onSaved()`
+   - When `device` is set (edit mode): keep existing full form
 
-### New files
-- `src/components/portal/energy/HomeSelector.tsx` -- reusable home dropdown + create modal
+3. **`src/pages/portal/EnergyModeling.tsx`**
+   - Customer: reorder tabs with ROI first, `defaultValue="roi"`
+   - Staff: add Device Manager tab (using DeviceTemplatesTab), set `defaultValue="device-templates"`, rename tab label to "Device Manager"
 
-### Modified files
-- `src/pages/portal/EnergyModeling.tsx` -- home selector state, rename tabs, pass homeId
-- `src/pages/portal/customer-view/CustomerViewEnergyModeling.tsx` -- same
-- `src/components/portal/energy/HouseSetupTab.tsx` -- rename, add device assignment, accept homeId
-- `src/components/portal/energy/DeviceManagerTab.tsx` -- customer "My Devices" vs "All" toggle, accept homeId
-- `src/components/portal/energy/DeviceAddEditDialog.tsx` -- use homeId instead of settingsId
-- `src/components/portal/energy/DeviceTemplatesTab.tsx` -- add make/model/kind/specs fields
-- `src/components/portal/energy/SimulatorTab.tsx` -- outdoor temp slider, home selector, model_runs insert
-- `src/components/portal/energy/ROITab.tsx` -- accept homeId prop (future-ready)
+4. **`src/pages/portal/customer-view/CustomerViewEnergyModeling.tsx`**
+   - Same tab reordering: ROI first, `defaultValue="roi"`
 
-### Database
-- One migration with: `homes` table, `energy_home_settings` refactor, `energy_devices` refactor, `device_templates` columns, `device_template_profiles` constraints, `model_runs` columns, data backfill, RLS policies
