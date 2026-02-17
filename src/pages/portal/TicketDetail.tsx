@@ -29,6 +29,7 @@ import {
 import { Separator } from '@/components/ui/separator';
 import { useToast } from '@/hooks/use-toast';
 import PortalLayout from '@/components/portal/PortalLayout';
+import CustomerViewLayout from '@/components/portal/CustomerViewLayout';
 import SubscriptionRequiredAlert from '@/components/portal/SubscriptionRequiredAlert';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -75,7 +76,12 @@ interface PendingFile {
   id: string;
 }
 
-const TicketDetail: React.FC = () => {
+interface TicketDetailProps {
+  customerId?: string;
+  isStaffView?: boolean;
+}
+
+const TicketDetail: React.FC<TicketDetailProps> = ({ customerId: propCustomerId, isStaffView = false }) => {
   const { ticketNumber } = useParams<{ ticketNumber: string }>();
   const { user, isStaff, customerData, loading } = useAuth();
   const { isSubscribed, loading: subscriptionLoading } = useSubscription();
@@ -83,6 +89,12 @@ const TicketDetail: React.FC = () => {
   const { toast } = useToast();
   const { t } = useLanguage();
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Determine the effective role for this view
+  const effectiveIsStaff = isStaffView || isStaff;
+  const authorType = effectiveIsStaff ? 'staff' : 'customer';
+  // Default status after reply: opposite of the logged-in user's role
+  const defaultStatusAfterReply = effectiveIsStaff ? 'awaiting_customer' : 'awaiting_response';
 
   const [ticket, setTicket] = useState<Ticket | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
@@ -93,6 +105,11 @@ const TicketDetail: React.FC = () => {
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [newStatus, setNewStatus] = useState<string>('');
+
+  // Back link destination
+  const backLink = isStaffView && propCustomerId
+    ? `/portal/customers/${propCustomerId}/tickets`
+    : '/portal/tickets';
 
   const getStatusBadge = (status: string) => {
     const statusLabels: Record<string, string> = {
@@ -117,8 +134,8 @@ const TicketDetail: React.FC = () => {
     }
   };
 
-  const getAuthorIcon = (authorType: string) => {
-    switch (authorType) {
+  const getAuthorIcon = (aType: string) => {
+    switch (aType) {
       case 'customer':
         return <User className="w-4 h-4" />;
       case 'staff':
@@ -142,20 +159,27 @@ const TicketDetail: React.FC = () => {
       setTicketLoading(true);
 
       try {
-        const { data: ticketData, error: ticketError } = await supabase
+        let query = supabase
           .from('tickets')
           .select('*, customers:customers_with_identity!tickets_customer_id_fkey(name, billing_email, contact_name, contact_email)')
-          .eq('ticket_number', ticketNumber)
-          .maybeSingle();
+          .eq('ticket_number', ticketNumber);
+
+        // Scope to customer if viewing as staff for a specific customer
+        if (isStaffView && propCustomerId) {
+          query = query.eq('customer_id', propCustomerId);
+        }
+
+        const { data: ticketData, error: ticketError } = await query.maybeSingle();
 
         if (ticketError) throw ticketError;
         if (!ticketData) {
-          navigate('/portal/tickets');
+          navigate(backLink);
           return;
         }
         
         setTicket(ticketData);
-        setNewStatus(ticketData.status);
+        // Set default status: if closed keep closed, otherwise use role-appropriate default
+        setNewStatus(ticketData.status === 'closed' ? 'closed' : defaultStatusAfterReply);
 
         const { data: commentsData, error: commentsError } = await supabase
           .from('ticket_comments')
@@ -188,7 +212,7 @@ const TicketDetail: React.FC = () => {
     if (!loading) {
       fetchTicket();
     }
-  }, [ticketNumber, loading, navigate, toast, t]);
+  }, [ticketNumber, propCustomerId, isStaffView, loading, navigate, toast, t, backLink, defaultStatusAfterReply]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
@@ -216,13 +240,15 @@ const TicketDetail: React.FC = () => {
     try {
       let updatedStatus = ticket.status;
       
-      if (isStaff) {
+      if (effectiveIsStaff) {
+        // Staff: use the selected status, or default to awaiting_customer
         if (newStatus && newStatus !== ticket.status) {
           updatedStatus = newStatus;
         } else if (ticket.status !== 'closed') {
           updatedStatus = 'awaiting_customer';
         }
       } else {
+        // Customer: always set to awaiting_response (unless closed)
         if (ticket.status === 'closed') {
           updatedStatus = 'awaiting_response';
         } else if (ticket.status !== 'submitted') {
@@ -236,7 +262,7 @@ const TicketDetail: React.FC = () => {
           ticket_id: ticket.id,
           author_user_id: user.id,
           author_email: user.email,
-          author_type: isStaff ? 'staff' : 'customer',
+          author_type: authorType,
           source: 'portal',
           body_markdown: newComment.trim(),
         })
@@ -252,10 +278,10 @@ const TicketDetail: React.FC = () => {
 
       if (updateError) throw updateError;
 
-      const customerId = ticket.customer_id;
+      const ticketCustomerId = ticket.customer_id;
       for (const { file } of pendingFiles) {
         const fileName = `${crypto.randomUUID()}-${file.name}`;
-        const storagePath = `customer/${customerId}/ticket/${ticket.id}/${fileName}`;
+        const storagePath = `customer/${ticketCustomerId}/ticket/${ticket.id}/${fileName}`;
 
         const { error: uploadError } = await supabase.storage
           .from('ticket-attachments')
@@ -315,7 +341,7 @@ const TicketDetail: React.FC = () => {
   };
 
   const handleCloseTicket = async () => {
-    if (!ticket || !isStaff) return;
+    if (!ticket) return;
 
     try {
       const { error } = await supabase
@@ -360,24 +386,29 @@ const TicketDetail: React.FC = () => {
     return attachments.filter((a) => a.comment_id === commentId);
   };
 
+  const Layout = isStaffView ? CustomerViewLayout : PortalLayout;
+
   if (loading || ticketLoading) {
     return (
-      <PortalLayout>
+      <Layout>
         <div className="flex items-center justify-center min-h-[400px]">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-      </PortalLayout>
+      </Layout>
     );
   }
 
   if (!ticket) return null;
 
+  // Determine if reply form should be gated behind subscription (customer only)
+  const showSubscriptionGate = !effectiveIsStaff && !subscriptionLoading && !isSubscribed;
+
   return (
-    <PortalLayout>
+    <Layout>
       <div className="space-y-6">
         <div className="flex items-start gap-4">
           <Button variant="ghost" size="sm" asChild>
-            <Link to="/portal/tickets">
+            <Link to={backLink}>
               <ArrowLeft className="w-4 h-4 mr-2" />
               {t('Tillbaka', 'Back')}
             </Link>
@@ -392,14 +423,14 @@ const TicketDetail: React.FC = () => {
             <h1 className="text-2xl font-medium">{ticket.title}</h1>
             <p className="text-muted-foreground mt-1">
               {t('Skapad', 'Created')} {formatDate(ticket.created_at)}
-              {isStaff && ticket.customers && (
-                        <> · {ticket.customers.name || ticket.customers.contact_name || ticket.customers.contact_email || ticket.customers.billing_email}</>
+              {effectiveIsStaff && ticket.customers && (
+                <> · {ticket.customers.name || ticket.customers.contact_name || ticket.customers.contact_email || ticket.customers.billing_email}</>
               )}
             </p>
           </div>
           <div className="flex items-center gap-4">
             {getStatusBadge(ticket.status)}
-            {isStaff && ticket.status !== 'closed' && (
+            {ticket.status !== 'closed' && (
               <Button variant="outline" onClick={handleCloseTicket}>
                 {t('Stäng ärende', 'Close ticket')}
               </Button>
@@ -457,8 +488,8 @@ const TicketDetail: React.FC = () => {
           </CardContent>
         </Card>
 
-        {/* Show subscription required alert for customers without subscription */}
-        {!isStaff && !subscriptionLoading && !isSubscribed ? (
+        {/* Reply form */}
+        {showSubscriptionGate ? (
           <Card>
             <CardHeader>
               <CardTitle className="text-lg">{t('Lägg till svar', 'Add a reply')}</CardTitle>
@@ -474,7 +505,7 @@ const TicketDetail: React.FC = () => {
             </CardHeader>
             <CardContent>
               <form onSubmit={handleSubmitComment} className="space-y-4">
-                {isStaff && ticket.status !== 'closed' && (
+                {effectiveIsStaff && ticket.status !== 'closed' && (
                   <div className="space-y-2">
                     <Label>{t('Status efter svar', 'Status after reply')}</Label>
                     <Select value={newStatus} onValueChange={setNewStatus}>
@@ -533,7 +564,7 @@ const TicketDetail: React.FC = () => {
           </Card>
         )}
       </div>
-    </PortalLayout>
+    </Layout>
   );
 };
 
