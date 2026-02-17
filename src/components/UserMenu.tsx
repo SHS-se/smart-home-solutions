@@ -57,12 +57,16 @@ const UserMenu = ({ size = "default" }: UserMenuProps) => {
     { href: "/portal/quotes", label: t("Offerter", "Quotes") },
     { href: "/portal/invoices", label: t("Fakturor", "Invoices") },
     { href: "/portal/settings/margins", label: t("Marginalregler", "Margin Rules") },
+    { href: "/portal/settings/questionnaire", label: t("Hemprofilfrågor", "Home Profile Questions") },
+    { href: "/portal/energy", label: t("Energimodellering", "Energy Modeling") },
     { href: "/portal/erd", label: t("Databas ERD", "Database ERD") },
   ];
 
   const customerNavItems = [
     { href: "/portal", label: t("Översikt", "Overview") },
     { href: "/portal/account", label: t("Konto", "Account") },
+    { href: "/portal/home-profile", label: t("Hemprofil", "Home Profile") },
+    { href: "/portal/energy", label: t("Energimodellering", "Energy Modeling") },
     { href: "/portal/offers", label: t("Offerter", "Offers") },
     { href: "/portal/billing", label: t("Fakturor", "Billing") },
     { href: "/portal/tickets", label: t("Mina ärenden", "My Tickets") },
