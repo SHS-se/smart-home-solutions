@@ -1,83 +1,231 @@
 
 
-# Home Setup UX Improvements
+# Multi-Home Scoping for Energy Modeling + ROI
 
 ## Overview
 
-Five changes: make Home Profile collapsible and editable (syncing back to questionnaire), simplify the "Add" dialog to pick from existing templates, move device creation to Device Manager, reorder tabs so ROI is first for customers, and add Device Manager tab to staff view.
+Scope all questionnaire answers, energy settings, tariffs, devices, and model runs per-home. Keep onboarding frictionless (single home, no selector). Reveal multi-home only after 2+ homes exist.
 
 ---
 
-## 1. Make Home Profile Collapsible
+## Phase 1: Database Migration
 
-In `HouseSetupTab.tsx`, wrap the Home Profile card in a `Collapsible` component (same pattern as the existing Overrides section). Default state: collapsed.
+### 1.1 Add `primary_home_id` to `customers`
 
-## 2. Make Home Profile Fields Editable + Sync to Questionnaire
+```text
+customers
+  + primary_home_id uuid NULL REFERENCES homes(id)
+```
 
-Each field row currently shows a read-only value. Change each to an inline-editable field:
-- For text/number fields: show the value as text, but allow clicking or focusing to edit via an Input.
-- For boolean fields (has_ev, has_solar, has_battery): show a Switch.
-- For array fields (heating_types): keep read-only for now (complex multi-select).
+Backfill for existing customers that already have a home:
+- Set `primary_home_id` to their first `homes.id`.
 
-On value change:
-- Update local `profileValues` state immediately.
-- Upsert `home_answers` row: find the `question_id` from the loaded questions list (already fetched), then upsert `{ customer_id, question_id, answer_value }`.
-- This ensures the Home Profile questionnaire stays in sync -- no duplicate data.
+For customers without a home (3 customers):
+- Create a `homes` row named "My home".
+- Set `primary_home_id`.
 
-The component already fetches `home_questions` with `semantic_key` and `home_answers`. We'll store the question map (semantic_key -> question_id) in state so we can write back.
+### 1.2 Add `home_id` to `home_answers`
 
-Keep the "Source: Home Profile" badge and the "Computed" badge for UA/Thermal Class (those remain read-only).
+```text
+home_answers
+  + home_id uuid NOT NULL REFERENCES homes(id) ON DELETE CASCADE
+```
 
-## 3. Simplify "Add Device" Dialog in Home Setup
+Steps:
+1. Add column as nullable first.
+2. Backfill: set `home_id = (SELECT primary_home_id FROM customers WHERE customers.id = home_answers.customer_id)`.
+3. Set NOT NULL.
+4. Drop existing UNIQUE(customer_id, question_id).
+5. Add UNIQUE(home_id, question_id).
+6. Update RLS policies: customer access checks via `home_id -> homes.customer_id`.
 
-The current `DeviceAddEditDialog` is a full form with template selector, name, quantity, priority, power override, controllable, shiftable toggles. 
+### 1.3 Add `home_id` to `tariff_instances`
 
-Change the **Add** flow (when `device` prop is null) to be a simple picker:
-- Show a searchable list of `device_templates` (make, model, power).
-- Clicking a template immediately inserts an `energy_devices` row with defaults (name = display_name, quantity = 1, priority = 5) and closes the dialog.
-- The **Edit** flow (when `device` prop is set) keeps the full form for adjusting name, quantity, priority, overrides.
+```text
+tariff_instances
+  + home_id uuid NULL REFERENCES homes(id) ON DELETE CASCADE
+```
 
-This means the "+ Add" button on Home Setup just lists existing devices from the catalog to pick from.
+Currently 0 rows, so no backfill needed. Keep nullable for now (tariffs may be created before home context is set, and existing code references customer_id).
 
-## 4. Add "Create New Device" to Device Manager Tab (Staff)
+### 1.4 Update RLS on `home_answers`
 
-Currently Device Manager for customers is read-only. For **staff**, the Device Templates tab already has full CRUD. But the user wants a create button on the Device Manager tab itself.
+Replace customer policies to filter through `home_id`:
+- SELECT: `EXISTS (SELECT 1 FROM homes WHERE homes.id = home_answers.home_id AND homes.customer_id = get_customer_id_for_user(auth.uid()))`
+- INSERT: same check via WITH CHECK
+- UPDATE: same
 
-Add a "+ New Device" button to the Device Manager tab that opens the DeviceTemplatesTab creation form in a dialog, or simply navigates/switches to the Device Templates tab. Since staff already sees Device Templates as their primary tab, the simplest approach:
-- On the staff Energy Modeling page, rename "Device Templates" to "Device Manager" to consolidate naming.
+Staff policies remain unchanged.
 
-## 5. Reorder Tabs
+### 1.5 Backfill summary
 
-**Customer tabs** (in `EnergyModeling.tsx` and `CustomerViewEnergyModeling.tsx`):
-- Change `defaultValue` from `"home-setup"` to `"roi"`
-- Reorder TabsTrigger: ROI, Home Setup, Device Manager, Simulator, Tariff & Pricing
+| Table | Existing rows | Action |
+|-------|--------------|--------|
+| customers | 5 | Add primary_home_id, create homes for 3 missing |
+| home_answers | 63 | Set home_id from customer's primary_home_id |
+| tariff_instances | 0 | Add column only |
+| energy_devices | 4 | Already has home_id |
+| energy_home_settings | 2 | Already has home_id |
+| model_runs | 2 | Already has home_id |
 
-**Staff tabs** (in `EnergyModeling.tsx`):
-- Add Device Manager tab back (using `DeviceManagerTab` or merging with `DeviceTemplatesTab`)
-- Change `defaultValue` to `"device-manager"` (or `"device-templates"`)
-- Tabs: Device Manager (templates CRUD), Calibration
+---
+
+## Phase 2: Frontend - Home Context System
+
+### 2.1 HomeSelector visibility rules
+
+Modify `HomeSelector` component:
+- If customer has only 1 home: render nothing (completely hidden).
+- If customer has 2+ homes: show the existing dropdown + "+" button.
+- The parent component auto-selects `primary_home_id` as default.
+
+### 2.2 Update `EnergyModeling.tsx` (customer view)
+
+- Fetch `primary_home_id` from customer record on mount.
+- Auto-set `selectedHomeId = primary_home_id` if no selection exists.
+- Only show HomeSelector when 2+ homes exist.
+- All tabs receive `homeId` (already the case for most).
+
+### 2.3 Update `CustomerViewEnergyModeling.tsx` (staff view)
+
+Same pattern: fetch customer's homes, auto-select primary, show selector only when 2+ homes.
+
+---
+
+## Phase 3: Questionnaire Per-Home Scoping
+
+### 3.1 Update `HomeProfileForm.tsx`
+
+- Accept optional `homeId` prop.
+- All queries for `home_answers` filter by `home_id` (not just `customer_id`).
+- Upserts use `onConflict: 'home_id,question_id'`.
+- When `homeId` is provided and 2+ homes exist, show a subtle header: "Property: {home_name}" with small dropdown.
+- When only 1 home or no `homeId`, show no selector.
+- Add helper text "Answers apply only to this property." when multiple homes exist.
+
+### 3.2 Update `HomeProfile.tsx` (customer page)
+
+- On mount, fetch customer's primary_home_id.
+- Pass `homeId={primaryHomeId}` to `HomeProfileForm`.
+- Support `?home=<uuid>` query param to override (used when adding a second home).
+
+### 3.3 Update `CustomerViewHomeProfile.tsx` (staff page)
+
+- Same: fetch customer homes, pass homeId, show selector when 2+.
+
+### 3.4 Update `HouseSetupTab.tsx` inline edits
+
+- Change `handleProfileValueChange` to upsert with `home_id` instead of `customer_id` only.
+- Query `home_answers` filtered by `home_id`.
+
+---
+
+## Phase 4: "Add Another Property" Flow
+
+### 4.1 ROI page CTA
+
+Add to `ROITab.tsx`:
+- A secondary button/link: "Calculate ROI for another property" (Swedish: "Berakna lonsamhet for en annan fastighet").
+- Positioned below the KPI summary cards.
+- Opens a small dialog.
+
+### 4.2 "Add another property" dialog
+
+Small modal:
+- Title: "Add another property" / "Lagg till en annan fastighet"
+- Single field: Property name (required), placeholder examples: "Summer house", "Rental apartment"
+- Primary button: "Start setup" / "Borja installning"
+- Secondary: Cancel
+
+On submit:
+- Insert into `homes` table.
+- Navigate to `/portal/home-profile?home=<new_home_id>` (or staff equivalent).
+
+### 4.3 Home context label on ROI
+
+When only 1 home: show subtle label "ROI for: My home" near the top.
+When 2+ homes: the global HomeSelector handles context.
+
+---
+
+## Phase 5: Missing Fields Gating on ROI
+
+### 5.1 Required fields check
+
+Define a list of required semantic keys for ROI calculation (e.g., `heated_area_m2`, `year_built`, `dwelling_type`).
+
+On ROI page load:
+- Fetch `home_answers` for current `home_id`.
+- Check which required fields are missing.
+- If any missing: show a friendly checklist panel at the top of ROI.
+
+### 5.2 Checklist panel UI
+
+- Card with title: "A few details needed to calculate ROI" / "Nagra detaljer behovs for att berakna lonsamhet"
+- List missing items in plain language (using SEMANTIC_LABELS).
+- Primary button: "Continue setup" -> navigates to `/portal/home-profile?home=<homeId>`.
+- ROI content below is shown but in a muted/disabled state (reduced opacity, no interaction).
+
+---
+
+## Phase 6: Property Context Indicator
+
+On all Energy Modeling tabs (ROI, Home Setup, Device Manager, Simulator, Tariff), show the current home name subtly:
+- When 1 home: small muted text "My home" near the tab header area.
+- When 2+ homes: the HomeSelector dropdown already shows the name; no additional indicator needed.
+
+---
+
+## Files to Create/Modify
+
+### Database
+- 1 migration: `customers.primary_home_id`, `home_answers.home_id`, `tariff_instances.home_id`, backfill, RLS updates
+
+### Modified files
+- `src/components/portal/energy/HomeSelector.tsx` -- hide when 1 home, expose home count
+- `src/components/portal/energy/ROITab.tsx` -- add home label, "add property" CTA + dialog, missing fields panel
+- `src/components/portal/energy/HouseSetupTab.tsx` -- query/upsert home_answers by home_id
+- `src/components/portal/home-profile/HomeProfileForm.tsx` -- accept homeId prop, scope queries by home_id, show property context when 2+ homes
+- `src/pages/portal/HomeProfile.tsx` -- fetch primary_home_id, support ?home= param
+- `src/pages/portal/EnergyModeling.tsx` -- auto-select primary home, conditional HomeSelector
+- `src/pages/portal/customer-view/CustomerViewEnergyModeling.tsx` -- same
+- `src/pages/portal/customer-view/CustomerViewHomeProfile.tsx` -- pass homeId
+- `src/components/portal/energy/TariffPricingTab.tsx` -- accept homeId prop, scope queries
+- `src/integrations/supabase/types.ts` -- auto-updated after migration
 
 ---
 
 ## Technical Details
 
-### Files Modified
+### Home context resolution (frontend)
 
-1. **`src/components/portal/energy/HouseSetupTab.tsx`**
-   - Wrap Home Profile card in Collapsible (default collapsed)
-   - Store question_id map from fetched questions
-   - Make each profile field inline-editable with upsert to `home_answers`
-   - Keep UA and Thermal Class as read-only computed values
+```text
+1. Check URL ?home=<uuid>  ->  use that
+2. Else fetch homes for customer
+3. If homes.length == 1  ->  use that home's id, hide selector
+4. If homes.length > 1   ->  use primary_home_id as default, show selector
+5. If homes.length == 0   ->  auto-create "My home", use it
+```
 
-2. **`src/components/portal/energy/DeviceAddEditDialog.tsx`**
-   - When `device` is null (add mode): render a simple searchable template picker list instead of the full form
-   - On click, insert `energy_devices` with defaults and call `onSaved()`
-   - When `device` is set (edit mode): keep existing full form
+### Upsert conflict key change
 
-3. **`src/pages/portal/EnergyModeling.tsx`**
-   - Customer: reorder tabs with ROI first, `defaultValue="roi"`
-   - Staff: add Device Manager tab (using DeviceTemplatesTab), set `defaultValue="device-templates"`, rename tab label to "Device Manager"
+`home_answers` upsert changes from:
+```
+onConflict: 'customer_id,question_id'
+```
+to:
+```
+onConflict: 'home_id,question_id'
+```
 
-4. **`src/pages/portal/customer-view/CustomerViewEnergyModeling.tsx`**
-   - Same tab reordering: ROI first, `defaultValue="roi"`
+### RLS pattern for home-scoped tables
+
+All customer access policies check ownership through the `homes` table:
+```sql
+EXISTS (
+  SELECT 1 FROM homes
+  WHERE homes.id = <table>.home_id
+  AND homes.customer_id = get_customer_id_for_user(auth.uid())
+)
+```
 
