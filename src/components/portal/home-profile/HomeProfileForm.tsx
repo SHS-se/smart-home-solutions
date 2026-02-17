@@ -76,9 +76,12 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
       setLoading(true);
       try {
         const photoSelect = 'id, storage_path, annotation_text, uploaded_at, visible_to_customer';
+        const basePhotoQuery = homeId
+          ? supabase.from('home_photos').select(photoSelect).eq('home_id', homeId)
+          : supabase.from('home_photos').select(photoSelect).eq('customer_id', customerId);
         const photoQuery = isStaffView
-          ? supabase.from('home_photos').select(photoSelect).eq('customer_id', customerId).order('uploaded_at', { ascending: false })
-          : supabase.from('home_photos').select(photoSelect).eq('customer_id', customerId).eq('visible_to_customer', true).order('uploaded_at', { ascending: false });
+          ? basePhotoQuery.order('uploaded_at', { ascending: false })
+          : basePhotoQuery.eq('visible_to_customer', true).order('uploaded_at', { ascending: false });
 
         const [qRes, aRes, pRes, oRes, rRes] = await Promise.all([
           supabase.from('home_questions').select('id, question_text, question_text_en, question_type, order_index, parent_question_id, is_active, display_on_contact_form, allow_other').eq('is_active', true).order('order_index'),
@@ -182,14 +185,17 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
     const { error: uploadError } = await supabase.storage.from('home-photos').upload(storagePath, blob, { contentType: 'image/webp' });
     if (uploadError) throw uploadError;
 
-    const { error: insertError } = await supabase.from('home_photos').insert({
+    const insertPayload: any = {
       customer_id: customerId,
       storage_path: storagePath,
       uploaded_by: userId,
       width,
       height,
       original_filename: originalFilename,
-    });
+    };
+    if (homeId) insertPayload.home_id = homeId;
+
+    const { error: insertError } = await supabase.from('home_photos').insert(insertPayload);
     if (insertError) throw insertError;
 
     const { data } = await supabase.storage.from('home-photos').createSignedUrl(storagePath, 3600);

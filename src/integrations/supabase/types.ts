@@ -802,6 +802,7 @@ export type Database = {
           annotation_text: string | null
           customer_id: string
           height: number | null
+          home_id: string | null
           id: string
           original_filename: string | null
           storage_path: string
@@ -814,6 +815,7 @@ export type Database = {
           annotation_text?: string | null
           customer_id: string
           height?: number | null
+          home_id?: string | null
           id?: string
           original_filename?: string | null
           storage_path: string
@@ -826,6 +828,7 @@ export type Database = {
           annotation_text?: string | null
           customer_id?: string
           height?: number | null
+          home_id?: string | null
           id?: string
           original_filename?: string | null
           storage_path?: string
@@ -847,6 +850,13 @@ export type Database = {
             columns: ["customer_id"]
             isOneToOne: false
             referencedRelation: "customers_with_identity"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "home_photos_home_id_fkey"
+            columns: ["home_id"]
+            isOneToOne: false
+            referencedRelation: "homes"
             referencedColumns: ["id"]
           },
         ]
