@@ -19,9 +19,10 @@ interface HomeSelectorProps {
   customerId: string;
   selectedHomeId: string | null;
   onHomeChange: (homeId: string) => void;
+  onHomeCountChange?: (count: number) => void;
 }
 
-const HomeSelector: React.FC<HomeSelectorProps> = ({ customerId, selectedHomeId, onHomeChange }) => {
+const HomeSelector: React.FC<HomeSelectorProps> = ({ customerId, selectedHomeId, onHomeChange, onHomeCountChange }) => {
   const { t } = useLanguage();
   const { toast } = useToast();
   const [homes, setHomes] = useState<HomeEntry[]>([]);
@@ -40,12 +41,13 @@ const HomeSelector: React.FC<HomeSelectorProps> = ({ customerId, selectedHomeId,
       .order('created_at');
     if (data) {
       setHomes(data);
+      onHomeCountChange?.(data.length);
       if (data.length > 0 && !selectedHomeId) {
         onHomeChange(data[0].id);
       }
     }
     setLoading(false);
-  }, [customerId, selectedHomeId, onHomeChange]);
+  }, [customerId, selectedHomeId, onHomeChange, onHomeCountChange]);
 
   useEffect(() => { fetchHomes(); }, [fetchHomes]);
 
@@ -78,26 +80,9 @@ const HomeSelector: React.FC<HomeSelectorProps> = ({ customerId, selectedHomeId,
     return <div className="flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /><span className="text-sm text-muted-foreground">{t('Laddar hem...', 'Loading homes...')}</span></div>;
   }
 
-  if (homes.length === 0) {
-    return (
-      <div className="flex items-center gap-3">
-        <span className="text-sm text-muted-foreground">{t('Inget hem skapat ännu.', 'No homes created yet.')}</span>
-        <Button size="sm" variant="outline" onClick={() => setCreateOpen(true)}>
-          <Plus className="w-4 h-4 mr-1" /> {t('Skapa hem', 'Create Home')}
-        </Button>
-        <CreateHomeDialog
-          open={createOpen}
-          onOpenChange={setCreateOpen}
-          newName={newName}
-          setNewName={setNewName}
-          newAddress={newAddress}
-          setNewAddress={setNewAddress}
-          creating={creating}
-          onSave={handleCreate}
-          t={t}
-        />
-      </div>
-    );
+  // Hide entirely when only 1 home (frictionless onboarding)
+  if (homes.length <= 1) {
+    return null;
   }
 
   return (

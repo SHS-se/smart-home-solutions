@@ -114,10 +114,10 @@ const HouseSetupTab: React.FC<HouseSetupTabProps> = ({ customerId, homeId }) => 
           .from('home_questions')
           .select('id, semantic_key, question_text, question_text_en, question_type')
           .in('semantic_key', ENERGY_SEMANTIC_KEYS);
-        const { data: answers } = await supabase
-          .from('home_answers')
-          .select('question_id, answer_text, answer_value')
-          .eq('customer_id', customerId);
+        const answersQuery = homeId
+          ? supabase.from('home_answers').select('question_id, answer_text, answer_value').eq('home_id', homeId)
+          : supabase.from('home_answers').select('question_id, answer_text, answer_value').eq('customer_id', customerId);
+        const { data: answers } = await answersQuery;
         const values: Record<string, unknown> = {};
         const qMap: Record<string, string> = {};
         if (questions && answers) {
@@ -192,22 +192,36 @@ const HouseSetupTab: React.FC<HouseSetupTabProps> = ({ customerId, homeId }) => 
     try {
       const answerValue = newValue;
       const answerText = String(newValue ?? '');
-      // Upsert: try update first, then insert
-      const { data: existing } = await supabase
-        .from('home_answers')
-        .select('id')
-        .eq('customer_id', customerId)
-        .eq('question_id', questionId)
-        .maybeSingle();
-      if (existing) {
-        await supabase.from('home_answers').update({ answer_value: answerValue as any, answer_text: answerText }).eq('id', existing.id);
+      if (homeId) {
+        // Use home_id scoped upsert
+        const { data: existing } = await supabase
+          .from('home_answers')
+          .select('id')
+          .eq('home_id', homeId)
+          .eq('question_id', questionId)
+          .maybeSingle();
+        if (existing) {
+          await supabase.from('home_answers').update({ answer_value: answerValue as any, answer_text: answerText }).eq('id', existing.id);
+        } else {
+          await supabase.from('home_answers').insert({ customer_id: customerId, home_id: homeId, question_id: questionId, answer_value: answerValue as any, answer_text: answerText });
+        }
       } else {
-        await supabase.from('home_answers').insert({ customer_id: customerId, question_id: questionId, answer_value: answerValue as any, answer_text: answerText });
+        const { data: existing } = await supabase
+          .from('home_answers')
+          .select('id')
+          .eq('customer_id', customerId)
+          .eq('question_id', questionId)
+          .maybeSingle();
+        if (existing) {
+          await supabase.from('home_answers').update({ answer_value: answerValue as any, answer_text: answerText }).eq('id', existing.id);
+        } else {
+          await supabase.from('home_answers').insert({ customer_id: customerId, home_id: homeId || '', question_id: questionId, answer_value: answerValue as any, answer_text: answerText } as any);
+        }
       }
     } catch (err) {
       console.error('Failed to sync profile value:', err);
     }
-  }, [customerId, questionMap]);
+  }, [customerId, homeId, questionMap]);
 
   const effectiveUA = overrides.ua_w_per_k ?? settings?.ua_w_per_k ?? 200;
 

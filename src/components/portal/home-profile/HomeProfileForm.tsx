@@ -52,9 +52,10 @@ interface HomeProfileFormProps {
   customerId: string;
   userId: string;
   isStaffView?: boolean;
+  homeId?: string | null;
 }
 
-const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, isStaffView = false }) => {
+const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, isStaffView = false, homeId }) => {
   const { toast } = useToast();
   const { t } = useLanguage();
 
@@ -81,7 +82,9 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
 
         const [qRes, aRes, pRes, oRes, rRes] = await Promise.all([
           supabase.from('home_questions').select('id, question_text, question_text_en, question_type, order_index, parent_question_id, is_active, display_on_contact_form, allow_other').eq('is_active', true).order('order_index'),
-          supabase.from('home_answers').select('question_id, answer_text, answer_value').eq('customer_id', customerId),
+          homeId
+            ? supabase.from('home_answers').select('question_id, answer_text, answer_value').eq('home_id', homeId)
+            : supabase.from('home_answers').select('question_id, answer_text, answer_value').eq('customer_id', customerId),
           photoQuery,
           supabase.from('home_question_options').select('*').order('order_index'),
           supabase.from('home_question_display_rules').select('*'),
@@ -130,7 +133,7 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
       }
     };
     fetchData();
-  }, [customerId, isStaffView]);
+  }, [customerId, isStaffView, homeId]);
 
   const flattened = useMemo(() => flattenTree(questions), [questions]);
 
@@ -158,8 +161,10 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
         answer_text: visibleIds.has(q.id) ? stringifyAnswer(answers[q.id]) : '',
         answer_value: visibleIds.has(q.id) ? (answers[q.id] as any) ?? null : null,
         updated_by: userId,
+        home_id: homeId || '',
       }));
-      const { error } = await supabase.from('home_answers').upsert(upserts, { onConflict: 'customer_id,question_id' });
+      const conflictKey = homeId ? 'home_id,question_id' : 'customer_id,question_id';
+      const { error } = await supabase.from('home_answers').upsert(upserts as any, { onConflict: conflictKey });
       if (error) throw error;
       toast({ title: t('Sparat!', 'Saved!') });
     } catch (err: any) {

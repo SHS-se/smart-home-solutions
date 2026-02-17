@@ -1,22 +1,55 @@
-import React, { useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import React, { useEffect, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Home, ArrowLeft } from 'lucide-react';
 import CustomerViewLayout from '@/components/portal/CustomerViewLayout';
 import HomeProfileForm from '@/components/portal/home-profile/HomeProfileForm';
 import { useAuth } from '@/contexts/AuthContext';
 import { useViewedCustomer } from '@/contexts/ViewedCustomerContext';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { supabase } from '@/integrations/supabase/client';
 
 const CustomerViewHomeProfile: React.FC = () => {
   const { user, isStaff, loading: authLoading } = useAuth();
   const { customerId, customerData, loading: customerLoading } = useViewedCustomer();
   const navigate = useNavigate();
   const { t } = useLanguage();
+  const [searchParams] = useSearchParams();
+  const [homeId, setHomeId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!authLoading && !user) navigate('/login');
     if (!authLoading && !isStaff) navigate('/portal');
   }, [user, isStaff, authLoading, navigate]);
+
+  useEffect(() => {
+    if (!customerId) return;
+    const resolveHome = async () => {
+      const queryHomeId = searchParams.get('home');
+      if (queryHomeId) {
+        setHomeId(queryHomeId);
+        return;
+      }
+      const { data: customer } = await supabase
+        .from('customers')
+        .select('primary_home_id')
+        .eq('id', customerId)
+        .single();
+      const primaryId = (customer as any)?.primary_home_id;
+      if (primaryId) {
+        setHomeId(primaryId);
+      } else {
+        // Fallback: first home
+        const { data: homes } = await supabase
+          .from('homes')
+          .select('id')
+          .eq('customer_id', customerId)
+          .order('created_at')
+          .limit(1);
+        if (homes?.[0]) setHomeId(homes[0].id);
+      }
+    };
+    resolveHome();
+  }, [customerId, searchParams]);
 
   if (authLoading || customerLoading || !customerId || !user) return null;
 
@@ -36,7 +69,7 @@ const CustomerViewHomeProfile: React.FC = () => {
           </div>
         </div>
 
-        <HomeProfileForm customerId={customerId} userId={user.id} isStaffView />
+        <HomeProfileForm customerId={customerId} userId={user.id} isStaffView homeId={homeId} />
       </div>
     </CustomerViewLayout>
   );
