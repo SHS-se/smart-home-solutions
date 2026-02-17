@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Loader2, Plus, Search } from 'lucide-react';
+import { Loader2, Plus, Search, ArrowLeft } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/table';
 import { SortableTableHead } from '@/components/ui/sortable-table-head';
 import PortalLayout from '@/components/portal/PortalLayout';
+import CustomerViewLayout from '@/components/portal/CustomerViewLayout';
 import SubscriptionRequiredAlert from '@/components/portal/SubscriptionRequiredAlert';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -42,7 +43,13 @@ interface Ticket {
 
 type SortColumn = 'ticket_number' | 'title' | 'customer' | 'status' | 'last_activity_at';
 
-const TicketsList: React.FC = () => {
+interface TicketsListProps {
+  customerId?: string;
+  isStaffView?: boolean;
+  customerName?: string;
+}
+
+const TicketsList: React.FC<TicketsListProps> = ({ customerId: propCustomerId, isStaffView = false, customerName }) => {
   const { user, customerData, loading, isStaff } = useAuth();
   const { isSubscribed, loading: subscriptionLoading } = useSubscription();
   const navigate = useNavigate();
@@ -55,6 +62,10 @@ const TicketsList: React.FC = () => {
     defaultColumn: 'last_activity_at', 
     defaultDirection: 'desc' 
   });
+
+  // For staff viewing a specific customer, hide the customer column and scope to that customer
+  const scopedCustomerId = propCustomerId || (!isStaff ? customerData?.id : undefined);
+  const showCustomerColumn = isStaff && !propCustomerId;
 
   const getStatusBadge = (status: string) => {
     const statusLabels: Record<string, string> = {
@@ -97,9 +108,9 @@ const TicketsList: React.FC = () => {
           .select('*, customers:customers_with_identity!tickets_customer_id_fkey(name, contact_name)')
           .order('last_activity_at', { ascending: false });
 
-        // Filter by customer if not staff
-        if (!isStaff && customerData) {
-          query = query.eq('customer_id', customerData.id);
+        // Scope to specific customer
+        if (scopedCustomerId) {
+          query = query.eq('customer_id', scopedCustomerId);
         }
 
         const { data, error } = await query;
@@ -116,7 +127,7 @@ const TicketsList: React.FC = () => {
     if (!loading) {
       fetchTickets();
     }
-  }, [user, customerData, isStaff, loading]);
+  }, [user, customerData, isStaff, loading, scopedCustomerId]);
 
   const filteredTickets = useMemo(() => {
     const filtered = tickets.filter((ticket) => {
@@ -127,7 +138,6 @@ const TicketsList: React.FC = () => {
       return matchesStatus && matchesSearch;
     });
 
-    // Apply sorting
     return sortItems(filtered, sortColumn as keyof Ticket, sortDirection, {
       getValue: (ticket) => {
         switch (sortColumn) {
@@ -146,22 +156,49 @@ const TicketsList: React.FC = () => {
     return new Date(dateString).toLocaleDateString('sv-SE');
   };
 
+  const handleRowClick = (ticket: Ticket) => {
+    if (isStaffView && propCustomerId) {
+      navigate(`/portal/customers/${propCustomerId}/tickets/${ticket.ticket_number}`);
+    } else {
+      navigate(`/portal/tickets/${ticket.ticket_number}`);
+    }
+  };
+
+  const Layout = isStaffView ? CustomerViewLayout : PortalLayout;
+
   if (loading) {
     return (
-      <PortalLayout>
+      <Layout>
         <div className="flex items-center justify-center min-h-[400px]">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-      </PortalLayout>
+      </Layout>
     );
   }
 
   return (
-    <PortalLayout>
+    <Layout>
       <div className="space-y-6">
+        {isStaffView && (
+          <Link
+            to="/portal/customers"
+            className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            {t('Tillbaka till kunder', 'Back to customers')}
+          </Link>
+        )}
+
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <h1 className="text-3xl font-medium">{t('Supportärenden', 'Support tickets')}</h1>
-          {!isStaff && customerData && (
+          <div>
+            <h1 className="text-3xl font-medium">
+              {isStaffView ? t('Ärenden', 'Tickets') : t('Supportärenden', 'Support tickets')}
+            </h1>
+            {isStaffView && customerName && (
+              <p className="text-muted-foreground">{customerName}</p>
+            )}
+          </div>
+          {!isStaff && !isStaffView && customerData && (
             !isSubscribed || subscriptionLoading ? (
               <Button disabled>
                 <Plus className="w-4 h-4 mr-2" />
@@ -179,7 +216,7 @@ const TicketsList: React.FC = () => {
         </div>
 
         {/* Show subscription required alert for customers without subscription */}
-        {!isStaff && !subscriptionLoading && !isSubscribed && (
+        {!isStaff && !isStaffView && !subscriptionLoading && !isSubscribed && (
           <SubscriptionRequiredAlert />
         )}
 
@@ -219,7 +256,7 @@ const TicketsList: React.FC = () => {
             ) : filteredTickets.length === 0 ? (
               <div className="text-center py-12">
                 <p className="text-muted-foreground mb-4">{t('Inga ärenden hittades.', 'No tickets found.')}</p>
-                {!isStaff && customerData && (
+                {!isStaff && !isStaffView && customerData && (
                   <Button asChild variant="outline">
                     <Link to="/portal/tickets/new">{t('Skapa ditt första ärende', 'Create your first ticket')}</Link>
                   </Button>
@@ -235,7 +272,7 @@ const TicketsList: React.FC = () => {
                     <SortableTableHead column="title" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>
                       {t('Rubrik', 'Title')}
                     </SortableTableHead>
-                    {isStaff && (
+                    {showCustomerColumn && (
                       <SortableTableHead column="customer" currentColumn={sortColumn} currentDirection={sortDirection} onSort={handleSort}>
                         {t('Kund', 'Customer')}
                       </SortableTableHead>
@@ -253,11 +290,11 @@ const TicketsList: React.FC = () => {
                     <TableRow 
                       key={ticket.id}
                       className="cursor-pointer"
-                      onClick={() => navigate(`/portal/tickets/${ticket.ticket_number}`)}
+                      onClick={() => handleRowClick(ticket)}
                     >
                       <TableCell className="font-medium">{ticket.ticket_number}</TableCell>
                       <TableCell className="max-w-md truncate">{ticket.title}</TableCell>
-                      {isStaff && (
+                      {showCustomerColumn && (
                         <TableCell>{ticket.customers?.name || ticket.customers?.contact_name || t('Okänd', 'Unknown')}</TableCell>
                       )}
                       <TableCell>{getStatusBadge(ticket.status)}</TableCell>
@@ -270,7 +307,7 @@ const TicketsList: React.FC = () => {
           </CardContent>
         </Card>
       </div>
-    </PortalLayout>
+    </Layout>
   );
 };
 

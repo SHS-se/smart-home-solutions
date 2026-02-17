@@ -1,9 +1,10 @@
-import React, { useEffect, useState, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Loader2 } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Loader2, FileText, Search, AlertCircle, ArrowLeft } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import {
   Table,
   TableBody,
@@ -12,284 +13,288 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { SortableTableHead } from '@/components/ui/sortable-table-head';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import PortalLayout from '@/components/portal/PortalLayout';
+import CustomerViewLayout from '@/components/portal/CustomerViewLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
-import { useTableSort, sortItems } from '@/hooks/use-table-sort';
+import { getQuoteStatusBadge } from '@/lib/quote-status-badge';
 
-type QuoteSortColumn = 'created_at' | 'quote_number' | 'total_inc_vat' | 'status';
-
-interface Quote {
+interface QuoteRow {
   id: string;
   quote_number: string | null;
-  status: string;
-  created_at: string;
   version: number;
   is_latest: boolean;
-  parent_quote_id: string | null;
-  bom_id: string | null;
-  bom: {
-    project_name: string;
-    bom_group_id: string;
-  } | null;
-  total_inc_vat: number | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  bom_project_name: string | null;
+  total_inc_vat: number;
 }
 
-const Offers: React.FC = () => {
-  const { user, customerData, loading: authLoading } = useAuth();
+interface OffersProps {
+  customerId?: string;
+  isStaffView?: boolean;
+  customerName?: string;
+}
+
+const Offers: React.FC<OffersProps> = ({ customerId: propCustomerId, isStaffView = false, customerName }) => {
+  const { user, customerData, loading: authLoading, isStaff } = useAuth();
   const navigate = useNavigate();
   const { t } = useLanguage();
 
-  const [quotes, setQuotes] = useState<Quote[]>([]);
-  const [loading, setLoading] = useState(true);
+  const resolvedCustomerId = propCustomerId || customerData?.id;
+
+  const [quotes, setQuotes] = useState<QuoteRow[]>([]);
+  const [quotesLoading, setQuotesLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  const { sortColumn, sortDirection, handleSort } = useTableSort<QuoteSortColumn>({
-    defaultColumn: 'created_at',
-    defaultDirection: 'desc',
-  });
-
-  // Group by offer chain (bom_group_id > parent_quote_id > id) and pick only the latest revision
-  const latestPerChain = useMemo(() => {
-    const chains = new Map<string, Quote[]>();
-    quotes.forEach(q => {
-      const chainId = q.bom?.bom_group_id || q.parent_quote_id || q.id;
-      if (!chains.has(chainId)) chains.set(chainId, []);
-      chains.get(chainId)!.push(q);
-    });
-    return Array.from(chains.values()).map(group =>
-      group.reduce((latest, q) =>
-        new Date(q.created_at) > new Date(latest.created_at) ? q : latest
-      )
-    );
-  }, [quotes]);
-
-  const sortedOffers = useMemo(() => {
-    return sortItems(latestPerChain, sortColumn as keyof Quote, sortDirection, {
-      getValue: (quote) => {
-        switch (sortColumn) {
-          case 'created_at':
-            return quote.created_at ? new Date(quote.created_at) : null;
-          case 'quote_number':
-            return quote.quote_number ?? '';
-          case 'total_inc_vat':
-            return quote.total_inc_vat ?? 0;
-          case 'status':
-            return quote.status ?? '';
-          default:
-            return null;
-        }
-      },
-    });
-  }, [latestPerChain, sortColumn, sortDirection]);
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
-    if (!authLoading && !user) {
-      navigate('/login');
-    }
+    if (!authLoading && !user) navigate('/login');
   }, [user, authLoading, navigate]);
 
   useEffect(() => {
     const fetchQuotes = async () => {
-      if (!customerData?.id) return;
-      setLoading(true);
+      if (!resolvedCustomerId) return;
+      setQuotesLoading(true);
       setError(null);
 
       try {
-        // Fetch quotes
-        const { data, error: fetchError } = await supabase
+        let query = supabase
           .from('quotes')
-          .select(`
-            id,
-            quote_number,
-            status,
-            created_at,
-            version,
-            is_latest,
-            parent_quote_id,
-            bom_id,
-            bom:boms(project_name, bom_group_id)
-          `)
-          .eq('customer_id', customerData.id)
-          .eq('is_test', customerData.is_test ?? false)
-          .neq('status', 'draft')
-          .neq('status', 'cancelled')
-          .neq('status', 'superseded')
+          .select('id, quote_number, version, is_latest, status, created_at, updated_at, boms(project_name)')
+          .eq('customer_id', resolvedCustomerId)
           .order('created_at', { ascending: false });
 
-        if (fetchError) throw fetchError;
+        // Customer view: hide draft/cancelled/superseded
+        if (!isStaffView && !isStaff) {
+          query = query
+            .neq('status', 'draft')
+            .neq('status', 'cancelled')
+            .neq('status', 'superseded');
+        }
+
+        const { data: quotesData, error: quotesError } = await query;
+
+        if (quotesError) throw quotesError;
 
         // Fetch computed totals
-        const quoteIds = (data || []).map((q: any) => q.id);
+        const quoteIds = (quotesData || []).map(q => q.id);
         let totalsMap = new Map<string, number>();
-        
         if (quoteIds.length > 0) {
-          const { data: totals } = await supabase
+          const { data: totalsData } = await supabase
             .from('quote_computed_totals')
             .select('quote_id, total_inc_vat')
             .in('quote_id', quoteIds);
-          
-          if (totals) {
-            totals.forEach(t => {
-              if (t.quote_id) totalsMap.set(t.quote_id, t.total_inc_vat || 0);
-            });
+          if (totalsData) {
+            totalsMap = new Map(totalsData.map(t => [t.quote_id!, t.total_inc_vat ?? 0]));
           }
         }
 
-        const mappedQuotes: Quote[] = (data || []).map((q: any) => ({
-          ...q,
-          total_inc_vat: totalsMap.get(q.id) ?? null,
-        }));
-
-        setQuotes(mappedQuotes);
+        setQuotes((quotesData || []).map(q => ({
+          id: q.id,
+          quote_number: q.quote_number,
+          version: q.version ?? 1,
+          is_latest: q.is_latest ?? true,
+          status: q.status,
+          created_at: q.created_at,
+          updated_at: q.updated_at,
+          bom_project_name: (q as any).boms?.project_name || null,
+          total_inc_vat: totalsMap.get(q.id) ?? 0,
+        })));
       } catch (err) {
         console.error('Error fetching quotes:', err);
         setError(t('Kunde inte hämta offerter.', 'Could not fetch offers.'));
       } finally {
-        setLoading(false);
+        setQuotesLoading(false);
       }
     };
 
-    if (!authLoading && customerData) {
+    if (!authLoading && resolvedCustomerId) {
       fetchQuotes();
     }
-  }, [customerData, authLoading, t]);
+  }, [resolvedCustomerId, authLoading, isStaffView, isStaff, t]);
 
-  const formatAmount = (amount: number | null) => {
-    if (amount === null || amount === undefined) return '-';
-    const formatted = new Intl.NumberFormat('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
-    return `${formatted} kr`;
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString('sv-SE', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    });
   };
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'sent':
-        return <Badge variant="default">{t('Skickad', 'Sent')}</Badge>;
-      case 'viewed':
-        return <Badge className="bg-blue-500/20 text-blue-700 border-0">{t('Visad', 'Viewed')}</Badge>;
-      case 'accepted':
-        return <Badge className="bg-green-500/20 text-green-700 border-0">{t('Accepterad', 'Accepted')}</Badge>;
-      case 'declined':
-        return <Badge variant="destructive">{t('Avvisad', 'Declined')}</Badge>;
-      case 'revision_requested':
-        return <Badge className="bg-amber-500/20 text-amber-700 border-0">{t('Ändring begärd', 'Revision requested')}</Badge>;
-      case 'invoiced':
-        return <Badge className="bg-primary/20 text-primary border-0">{t('Fakturerad', 'Invoiced')}</Badge>;
-      case 'superseded':
-        return <Badge variant="outline" className="text-muted-foreground">{t('Ersatt', 'Superseded')}</Badge>;
-      default:
-        return <Badge variant="secondary">{status}</Badge>;
+  const formatAmount = (amount: number) => {
+    return amount.toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + ' kr';
+  };
+
+  const filteredQuotes = quotes.filter((quote) => {
+    if (statusFilter !== 'all' && quote.status !== statusFilter) return false;
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      const matchesNumber = quote.quote_number?.toLowerCase().includes(query);
+      const matchesProject = quote.bom_project_name?.toLowerCase().includes(query);
+      if (!matchesNumber && !matchesProject) return false;
+    }
+    return true;
+  });
+
+  const handleRowClick = (quote: QuoteRow) => {
+    if (isStaffView && propCustomerId) {
+      navigate(`/portal/customers/${propCustomerId}/offers/${quote.id}`);
+    } else {
+      navigate(`/portal/offers/${quote.id}`);
     }
   };
 
-  if (authLoading || loading) {
+  const Layout = isStaffView ? CustomerViewLayout : PortalLayout;
+
+  if (authLoading || quotesLoading) {
     return (
-      <PortalLayout>
+      <Layout>
         <div className="flex items-center justify-center min-h-[400px]">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-      </PortalLayout>
+      </Layout>
     );
   }
 
   if (error) {
     return (
-      <PortalLayout>
+      <Layout>
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
-      </PortalLayout>
+      </Layout>
     );
   }
 
+  // Status filter options: staff sees all, customer sees limited
+  const showAllStatuses = isStaffView || isStaff;
+
   return (
-    <PortalLayout>
+    <Layout>
       <div className="space-y-6">
-        <h1 className="text-3xl font-medium">{t('Mina offerter', 'My Offers')}</h1>
+        {isStaffView && (
+          <Link
+            to={`/portal/customers/${propCustomerId}/overview`}
+            className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            {t('Tillbaka till kundöversikt', 'Back to customer overview')}
+          </Link>
+        )}
+
+        <div>
+          <h1 className="text-3xl font-medium">
+            {isStaffView ? t('Offerter', 'Quotes') : t('Mina offerter', 'My Offers')}
+          </h1>
+          {isStaffView && customerName && (
+            <p className="text-muted-foreground">{customerName}</p>
+          )}
+        </div>
+
+        {/* Filters */}
+        <div className="flex flex-col sm:flex-row gap-4">
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="w-[200px]">
+              <SelectValue placeholder={t('Alla statusar', 'All statuses')} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t('Alla statusar', 'All statuses')}</SelectItem>
+              {showAllStatuses && <SelectItem value="draft">{t('Utkast', 'Draft')}</SelectItem>}
+              <SelectItem value="sent">{t('Skickad', 'Sent')}</SelectItem>
+              <SelectItem value="viewed">{t('Visad', 'Viewed')}</SelectItem>
+              <SelectItem value="revision_requested">{t('Ändring begärd', 'Revision requested')}</SelectItem>
+              <SelectItem value="accepted">{t('Accepterad', 'Accepted')}</SelectItem>
+              <SelectItem value="declined">{t('Avvisad', 'Declined')}</SelectItem>
+              <SelectItem value="invoiced">{t('Fakturerad', 'Invoiced')}</SelectItem>
+              <SelectItem value="expired">{t('Utgången', 'Expired')}</SelectItem>
+              {showAllStatuses && <SelectItem value="cancelled">{t('Avbruten', 'Cancelled')}</SelectItem>}
+              {showAllStatuses && <SelectItem value="superseded">{t('Ersatt', 'Superseded')}</SelectItem>}
+            </SelectContent>
+          </Select>
+          <div className="flex-1">
+            <div className="relative max-w-md">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder={t('Sök på offertnummer eller projekt...', 'Search by quote number or project...')}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9"
+              />
+            </div>
+          </div>
+        </div>
 
         <Card>
-          <CardHeader>
-            <CardTitle>{t('Offerter', 'Offers')}</CardTitle>
-            <CardDescription>
-              {t('Dina offerter och prisförslag.', 'Your offers and price proposals.')}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {sortedOffers.length === 0 ? (
-              <p className="text-center text-muted-foreground py-12">
-                {t('Du har inga offerter ännu.', 'You have no offers yet.')}
-              </p>
+          <CardContent className="pt-6">
+            {filteredQuotes.length === 0 ? (
+              <div className="text-center py-12">
+                <FileText className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+                <p className="text-muted-foreground">
+                  {t('Inga offerter hittades.', 'No quotes found.')}
+                </p>
+              </div>
             ) : (
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <SortableTableHead<QuoteSortColumn>
-                      column="created_at"
-                      currentColumn={sortColumn}
-                      currentDirection={sortDirection}
-                      onSort={handleSort}
-                      className="text-primary"
-                    >
-                      {t('Datum', 'Date')}
-                    </SortableTableHead>
-                    <TableHead className="text-primary">
-                      {t('Projekt', 'Project')}
-                    </TableHead>
-                    <SortableTableHead<QuoteSortColumn>
-                      column="quote_number"
-                      currentColumn={sortColumn}
-                      currentDirection={sortDirection}
-                      onSort={handleSort}
-                      className="text-primary"
-                    >
-                      {t('Offertnummer', 'Quote Number')}
-                    </SortableTableHead>
-                    <SortableTableHead<QuoteSortColumn>
-                      column="total_inc_vat"
-                      currentColumn={sortColumn}
-                      currentDirection={sortDirection}
-                      onSort={handleSort}
-                      className="text-primary text-right"
-                    >
-                      {t('Summa', 'Total')}
-                    </SortableTableHead>
-                    <SortableTableHead<QuoteSortColumn>
-                      column="status"
-                      currentColumn={sortColumn}
-                      currentDirection={sortDirection}
-                      onSort={handleSort}
-                      className="text-primary"
-                    >
-                      {t('Status', 'Status')}
-                    </SortableTableHead>
+                    <TableHead className="text-primary">{t('Offert', 'Quote')}</TableHead>
+                    <TableHead className="text-primary">{t('Projekt', 'Project')}</TableHead>
+                    <TableHead className="text-primary">{t('Status', 'Status')}</TableHead>
+                    <TableHead className="text-primary text-right">{t('Total ink. moms', 'Total inc. VAT')}</TableHead>
+                    <TableHead className="text-primary">{t('Senaste aktivitet', 'Last activity')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {sortedOffers.map((quote) => (
+                  {filteredQuotes.map((quote) => (
                     <TableRow
                       key={quote.id}
-                      className="cursor-pointer hover:bg-muted/50"
-                      onClick={() => navigate(`/portal/offers/${quote.id}`)}
+                      className={`cursor-pointer hover:bg-muted/50 ${quote.status === 'revision_requested' ? 'bg-amber-500/5' : ''}`}
+                      onClick={() => handleRowClick(quote)}
                     >
                       <TableCell>
-                        {new Date(quote.created_at).toLocaleDateString('sv-SE')}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {quote.bom?.project_name || '—'}
-                      </TableCell>
-                      <TableCell className="font-medium font-mono">
-                        {quote.quote_number || '—'}
-                        {quote.version > 1 && (
-                          <span className="text-muted-foreground ml-1 text-xs">v{quote.version}</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {formatAmount(quote.total_inc_vat)}
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-medium">
+                            {quote.quote_number ? `#${quote.quote_number}` : <span className="text-muted-foreground italic">—</span>}
+                          </span>
+                          {quote.version > 1 && (
+                            <Badge variant="outline" className="font-mono text-xs">
+                              v{quote.version}
+                            </Badge>
+                          )}
+                          {!quote.is_latest && (
+                            <Badge variant="secondary" className="text-xs">
+                              {t('Äldre', 'Old')}
+                            </Badge>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell>
-                        {getStatusBadge(quote.status)}
+                        {quote.bom_project_name || <span className="text-muted-foreground">—</span>}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          {getQuoteStatusBadge(quote.status, t)}
+                          {quote.status === 'revision_requested' && (
+                            <AlertCircle className="h-4 w-4 text-amber-500" />
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right font-medium">
+                        {formatAmount(quote.total_inc_vat)}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {formatDate(quote.updated_at)}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -299,7 +304,7 @@ const Offers: React.FC = () => {
           </CardContent>
         </Card>
       </div>
-    </PortalLayout>
+    </Layout>
   );
 };
 

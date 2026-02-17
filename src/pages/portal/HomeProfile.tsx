@@ -1,16 +1,23 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Home, Info } from 'lucide-react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Home, Info, ArrowLeft } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import PortalLayout from '@/components/portal/PortalLayout';
+import CustomerViewLayout from '@/components/portal/CustomerViewLayout';
 import HomeProfileForm from '@/components/portal/home-profile/HomeProfileForm';
 import HomeSelector from '@/components/portal/energy/HomeSelector';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
 
-const HomeProfile: React.FC = () => {
+interface HomeProfileProps {
+  customerId?: string;
+  isStaffView?: boolean;
+  customerName?: string;
+}
+
+const HomeProfile: React.FC<HomeProfileProps> = ({ customerId: propCustomerId, isStaffView = false, customerName }) => {
   const { user, customerData, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const { t } = useLanguage();
@@ -21,36 +28,40 @@ const HomeProfile: React.FC = () => {
   const [homeCount, setHomeCount] = useState(0);
   const [loadingHome, setLoadingHome] = useState(true);
 
-  useEffect(() => {
-    if (!authLoading && !user) navigate('/login');
-    if (!authLoading && !customerData) navigate('/portal');
-  }, [user, authLoading, customerData, navigate]);
+  const resolvedCustomerId = propCustomerId || customerData?.id;
+  const userId = user?.id;
 
   useEffect(() => {
-    if (!customerData) return;
+    if (!authLoading && !user) navigate('/login');
+    if (!isStaffView && !authLoading && !customerData) navigate('/portal');
+  }, [user, authLoading, customerData, navigate, isStaffView]);
+
+  useEffect(() => {
+    if (!resolvedCustomerId) return;
     const resolveHome = async () => {
       setLoadingHome(true);
       const queryHomeId = searchParams.get('home');
 
-      // Fetch all homes for count
       const { data: homes } = await supabase
         .from('homes')
         .select('id, name')
-        .eq('customer_id', customerData.id)
+        .eq('customer_id', resolvedCustomerId)
         .order('created_at');
 
       if (!homes || homes.length === 0) {
-        // Auto-create primary home
-        const { data: newHome } = await supabase
-          .from('homes')
-          .insert({ customer_id: customerData.id, name: 'My home' })
-          .select('id, name')
-          .single();
-        if (newHome) {
-          await supabase.from('customers').update({ primary_home_id: newHome.id } as any).eq('id', customerData.id);
-          setHomeId(newHome.id);
-          setHomeName(newHome.name);
-          setHomeCount(1);
+        // Auto-create primary home (only for customer self-view)
+        if (!isStaffView) {
+          const { data: newHome } = await supabase
+            .from('homes')
+            .insert({ customer_id: resolvedCustomerId, name: 'My home' })
+            .select('id, name')
+            .single();
+          if (newHome) {
+            await supabase.from('customers').update({ primary_home_id: newHome.id } as any).eq('id', resolvedCustomerId);
+            setHomeId(newHome.id);
+            setHomeName(newHome.name);
+            setHomeCount(1);
+          }
         }
       } else {
         setHomeCount(homes.length);
@@ -64,11 +75,10 @@ const HomeProfile: React.FC = () => {
             setHomeName(homes[0].name);
           }
         } else {
-          // Use primary_home_id or first home
           const { data: customer } = await supabase
             .from('customers')
             .select('primary_home_id')
-            .eq('id', customerData.id)
+            .eq('id', resolvedCustomerId)
             .single();
           const primaryId = (customer as any)?.primary_home_id;
           const match = primaryId ? homes.find(h => h.id === primaryId) : null;
@@ -79,26 +89,40 @@ const HomeProfile: React.FC = () => {
       setLoadingHome(false);
     };
     resolveHome();
-  }, [customerData, searchParams]);
+  }, [resolvedCustomerId, searchParams, isStaffView]);
 
-  if (authLoading || !customerData || !user || loadingHome) return null;
+  if (authLoading || !resolvedCustomerId || !userId || loadingHome) return null;
 
   const dismissBanner = () => {
     localStorage.setItem('home_profile_banner_dismissed', 'true');
     setBannerDismissed(true);
   };
 
+  const Layout = isStaffView ? CustomerViewLayout : PortalLayout;
+
   return (
-    <PortalLayout>
+    <Layout>
       <div className="space-y-8 max-w-4xl mx-auto">
+        {isStaffView && (
+          <Link to={`/portal/customers/${resolvedCustomerId}/overview`} className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground transition-colors">
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            {t('Tillbaka till kundvy', 'Back to customer view')}
+          </Link>
+        )}
+
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <Home className="w-7 h-7 text-primary" />
-            <h1 className="text-3xl font-medium">{t('Hemprofil', 'Home Profile')}</h1>
+            <div>
+              <h1 className="text-3xl font-medium">{t('Hemprofil', 'Home Profile')}</h1>
+              {isStaffView && customerName && (
+                <p className="text-muted-foreground">{customerName}</p>
+              )}
+            </div>
           </div>
           {homeId && (
             <HomeSelector
-              customerId={customerData.id}
+              customerId={resolvedCustomerId}
               selectedHomeId={homeId}
               onHomeChange={(newId) => {
                 setHomeId(newId);
@@ -115,7 +139,7 @@ const HomeProfile: React.FC = () => {
           </p>
         )}
 
-        {!bannerDismissed && (
+        {!isStaffView && !bannerDismissed && (
           <Alert className="bg-primary/5 border-primary/20">
             <Info className="w-4 h-4" />
             <AlertDescription className="flex items-center justify-between">
@@ -132,9 +156,9 @@ const HomeProfile: React.FC = () => {
           </Alert>
         )}
 
-        <HomeProfileForm customerId={customerData.id} userId={user.id} homeId={homeId} />
+        <HomeProfileForm customerId={resolvedCustomerId} userId={userId} isStaffView={isStaffView} homeId={homeId} />
       </div>
-    </PortalLayout>
+    </Layout>
   );
 };
 

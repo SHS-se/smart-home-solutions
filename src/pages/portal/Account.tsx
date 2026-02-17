@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Loader2, Save } from 'lucide-react';
-import { Card, CardContent } from '@/components/ui/card';
+import { Link, useNavigate } from 'react-router-dom';
+import { Loader2, Save, ArrowLeft } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,20 +9,30 @@ import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
 import PortalLayout from '@/components/portal/PortalLayout';
+import CustomerViewLayout from '@/components/portal/CustomerViewLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
 
-const Account: React.FC = () => {
-  const { user, customerData, loading, isStaff, refreshUserData } = useAuth();
+interface AccountProps {
+  customerId?: string;
+  isStaffView?: boolean;
+  customerData?: any;
+}
+
+const Account: React.FC<AccountProps> = ({ customerId: propCustomerId, isStaffView = false, customerData: propCustomerData }) => {
+  const { user, customerData: authCustomerData, loading, isStaff, refreshUserData } = useAuth();
   const navigate = useNavigate();
   const { t } = useLanguage();
   const { toast } = useToast();
 
+  const resolvedCustomerData = propCustomerData || authCustomerData;
+  const resolvedCustomerId = propCustomerId || resolvedCustomerData?.id;
+
   const [formData, setFormData] = useState({
     name: '',
-    billing_email: '',
-    phone: '',
+    email: '',
+    phone: '' as string | null,
     site_street: '',
     site_postcode: '',
     site_city: '',
@@ -40,21 +50,38 @@ const Account: React.FC = () => {
   }, [user, loading, navigate]);
 
   useEffect(() => {
-    if (customerData) {
-      setFormData({
-        name: customerData.name || '',
-        billing_email: customerData.billing_email || '',
-        phone: customerData.phone || '',
-        site_street: customerData.site_street || '',
-        site_postcode: customerData.site_postcode || '',
-        site_city: customerData.site_city || '',
-        billing_street: customerData.billing_street || '',
-        billing_postcode: customerData.billing_postcode || '',
-        billing_city: customerData.billing_city || '',
-        billing_same_as_site: customerData.billing_same_as_site ?? true,
-      });
+    if (resolvedCustomerData) {
+      if (isStaffView) {
+        // Staff view: use contact fields for name/email/phone
+        setFormData({
+          name: resolvedCustomerData.contact_name || resolvedCustomerData.name || '',
+          email: resolvedCustomerData.contact_email || resolvedCustomerData.billing_email || '',
+          phone: resolvedCustomerData.contact_phone || resolvedCustomerData.phone || '',
+          site_street: resolvedCustomerData.site_street || '',
+          site_postcode: resolvedCustomerData.site_postcode || '',
+          site_city: resolvedCustomerData.site_city || '',
+          billing_street: resolvedCustomerData.billing_street || '',
+          billing_postcode: resolvedCustomerData.billing_postcode || '',
+          billing_city: resolvedCustomerData.billing_city || '',
+          billing_same_as_site: resolvedCustomerData.billing_same_as_site ?? true,
+        });
+      } else {
+        // Customer view: use billing_email
+        setFormData({
+          name: resolvedCustomerData.name || '',
+          email: resolvedCustomerData.billing_email || '',
+          phone: resolvedCustomerData.phone || '',
+          site_street: resolvedCustomerData.site_street || '',
+          site_postcode: resolvedCustomerData.site_postcode || '',
+          site_city: resolvedCustomerData.site_city || '',
+          billing_street: resolvedCustomerData.billing_street || '',
+          billing_postcode: resolvedCustomerData.billing_postcode || '',
+          billing_city: resolvedCustomerData.billing_city || '',
+          billing_same_as_site: resolvedCustomerData.billing_same_as_site ?? true,
+        });
+      }
     }
-  }, [customerData]);
+  }, [resolvedCustomerData, isStaffView]);
 
   const handleChange = (field: string, value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
@@ -65,57 +92,84 @@ const Account: React.FC = () => {
   };
 
   const handleSave = async () => {
-    if (!customerData) return;
+    if (!resolvedCustomerId) return;
 
     setSaving(true);
-    
-    const updateData = {
-      name: formData.name || null,
-      billing_email: formData.billing_email || null,
-      phone: formData.phone || null,
-      site_street: formData.site_street || null,
-      site_postcode: formData.site_postcode || null,
-      site_city: formData.site_city || null,
-      billing_same_as_site: formData.billing_same_as_site,
-      // Only save billing address if different from site
-      billing_street: formData.billing_same_as_site ? null : (formData.billing_street || null),
-      billing_postcode: formData.billing_same_as_site ? null : (formData.billing_postcode || null),
-      billing_city: formData.billing_same_as_site ? null : (formData.billing_city || null),
-    };
 
-    const { error } = await supabase
-      .from('customers')
-      .update(updateData)
-      .eq('id', customerData.id);
+    try {
+      // Update the customer's address fields
+      const customerUpdateData: any = {
+        site_street: formData.site_street || null,
+        site_postcode: formData.site_postcode || null,
+        site_city: formData.site_city || null,
+        billing_same_as_site: formData.billing_same_as_site,
+        billing_street: formData.billing_same_as_site ? null : (formData.billing_street || null),
+        billing_postcode: formData.billing_same_as_site ? null : (formData.billing_postcode || null),
+        billing_city: formData.billing_same_as_site ? null : (formData.billing_city || null),
+      };
 
-    setSaving(false);
+      // For customer self-view, also update name/billing_email/phone directly on customers
+      if (!isStaffView) {
+        customerUpdateData.name = formData.name || null;
+        customerUpdateData.billing_email = formData.email || null;
+        customerUpdateData.phone = formData.phone || null;
+      }
 
-    if (error) {
+      const { error: customerError } = await supabase
+        .from('customers')
+        .update(customerUpdateData)
+        .eq('id', resolvedCustomerId);
+
+      if (customerError) throw customerError;
+
+      // For staff view, update the contact's identity fields if we have a contact_id
+      if (isStaffView && resolvedCustomerData?.contact_id) {
+        const contactUpdateData = {
+          name: formData.name || null,
+          email: formData.email || null,
+          phone: formData.phone || null,
+        };
+
+        const { error: contactError } = await supabase
+          .from('contacts')
+          .update(contactUpdateData)
+          .eq('id', resolvedCustomerData.contact_id);
+
+        if (contactError) throw contactError;
+      }
+
       toast({
-        title: t('Fel', 'Error'),
-        description: t('Kunde inte spara ändringar.', 'Could not save changes.'),
-        variant: 'destructive',
-      });
-    } else {
-      toast({
-        title: t('Sparat', 'Saved'),
+        title: t('Sparat!', 'Saved!'),
         description: t('Kontouppgifterna har uppdaterats.', 'Account details have been updated.'),
       });
-      refreshUserData();
+
+      if (!isStaffView) {
+        refreshUserData();
+      }
+    } catch (err: any) {
+      toast({
+        title: t('Fel', 'Error'),
+        description: err.message || t('Kunde inte spara ändringar.', 'Could not save changes.'),
+        variant: 'destructive',
+      });
+    } finally {
+      setSaving(false);
     }
   };
 
+  const Layout = isStaffView ? CustomerViewLayout : PortalLayout;
+
   if (loading) {
     return (
-      <PortalLayout>
+      <Layout>
         <div className="flex items-center justify-center min-h-[400px]">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-      </PortalLayout>
+      </Layout>
     );
   }
 
-  if (isStaff) {
+  if (!isStaffView && isStaff) {
     return (
       <PortalLayout>
         <Alert>
@@ -130,25 +184,47 @@ const Account: React.FC = () => {
     );
   }
 
-  if (!customerData) {
+  if (!resolvedCustomerData) {
     return (
-      <PortalLayout>
+      <Layout>
         <Alert>
           <AlertDescription>
             {t('Ingen kunddata hittades. Kontakta support.', 'No customer data found. Please contact support.')}
           </AlertDescription>
         </Alert>
-      </PortalLayout>
+      </Layout>
     );
   }
 
-  return (
-    <PortalLayout>
-      <div className="space-y-6">
-        <h1 className="text-3xl font-medium">{t('Kontouppgifter', 'Account details')}</h1>
+  const emailLabel = isStaffView ? t('E-post', 'Email') : t('Faktureringse-post', 'Billing email');
 
-        <Card className="max-w-2xl">
-          <CardContent className="pt-6 space-y-6">
+  return (
+    <Layout>
+      <div className="space-y-6">
+        {isStaffView && (
+          <Link
+            to="/portal/customers"
+            className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            {t('Tillbaka till kunder', 'Back to customers')}
+          </Link>
+        )}
+
+        <h1 className="text-3xl font-medium">{t('Kontouppgifter', 'Account details')}</h1>
+        {isStaffView && (
+          <p className="text-muted-foreground">
+            {resolvedCustomerData.name || t('Namnlös kund', 'Unnamed customer')}
+          </p>
+        )}
+
+        <Card className={isStaffView ? undefined : 'max-w-2xl'}>
+          {isStaffView && (
+            <CardHeader>
+              <CardTitle>{t('Kundinformation', 'Customer information')}</CardTitle>
+            </CardHeader>
+          )}
+          <CardContent className={isStaffView ? 'space-y-6' : 'pt-6 space-y-6'}>
             {/* Basic info */}
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
@@ -160,19 +236,19 @@ const Account: React.FC = () => {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="billing_email">{t('Faktureringse-post', 'Billing email')}</Label>
+                <Label htmlFor="email">{emailLabel}</Label>
                 <Input
-                  id="billing_email"
+                  id="email"
                   type="email"
-                  value={formData.billing_email}
-                  onChange={(e) => handleChange('billing_email', e.target.value)}
+                  value={formData.email}
+                  onChange={(e) => handleChange('email', e.target.value)}
                 />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="phone">{t('Telefon', 'Phone')}</Label>
                 <Input
                   id="phone"
-                  value={formData.phone}
+                  value={formData.phone || ''}
                   onChange={(e) => handleChange('phone', e.target.value)}
                 />
               </div>
@@ -277,7 +353,7 @@ const Account: React.FC = () => {
           </CardContent>
         </Card>
       </div>
-    </PortalLayout>
+    </Layout>
   );
 };
 

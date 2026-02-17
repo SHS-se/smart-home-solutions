@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Loader2, CreditCard, Settings, CheckCircle, AlertCircle, Eye } from 'lucide-react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Loader2, CreditCard, Settings, CheckCircle, AlertCircle, Eye, ArrowLeft } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/table';
 import { SortableTableHead } from '@/components/ui/sortable-table-head';
 import PortalLayout from '@/components/portal/PortalLayout';
+import CustomerViewLayout from '@/components/portal/CustomerViewLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -44,12 +45,20 @@ interface SubscriptionStatus {
   cancel_at_period_end?: boolean;
 }
 
-const Billing: React.FC = () => {
+interface BillingProps {
+  customerId?: string;
+  isStaffView?: boolean;
+  customerName?: string;
+}
+
+const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffView = false, customerName }) => {
   const { user, customerData, loading, isStaff } = useAuth();
   const navigate = useNavigate();
   const { t } = useLanguage();
   const { toast } = useToast();
   const [searchParams] = useSearchParams();
+  
+  const resolvedCustomerId = propCustomerId || customerData?.id;
   
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [invoicesLoading, setInvoicesLoading] = useState(true);
@@ -92,16 +101,15 @@ const Billing: React.FC = () => {
     }
   }, [user, loading, navigate]);
 
-  // Show toast for checkout result
+  // Show toast for checkout result (customer view only)
   useEffect(() => {
+    if (isStaffView) return;
     if (searchParams.get('success') === 'true') {
       toast({
         title: t('Prenumeration aktiverad!', 'Subscription activated!'),
         description: t('Tack för din prenumeration.', 'Thank you for subscribing.'),
       });
-      // Clear URL params
       window.history.replaceState({}, '', '/portal/billing');
-      // Refresh subscription status
       checkSubscription();
       syncInvoices();
     } else if (searchParams.get('canceled') === 'true') {
@@ -112,9 +120,13 @@ const Billing: React.FC = () => {
       });
       window.history.replaceState({}, '', '/portal/billing');
     }
-  }, [searchParams]);
+  }, [searchParams, isStaffView]);
 
   const checkSubscription = async () => {
+    if (isStaffView) {
+      setSubscriptionLoading(false);
+      return;
+    }
     setSubscriptionLoading(true);
     try {
       const { data, error } = await supabase.functions.invoke('check-subscription');
@@ -128,7 +140,7 @@ const Billing: React.FC = () => {
   };
 
   const fetchInvoices = async () => {
-    if (!customerData) return;
+    if (!resolvedCustomerId) return;
     setInvoicesLoading(true);
 
     try {
@@ -146,7 +158,7 @@ const Billing: React.FC = () => {
           pdf_url,
           is_test
         `)
-        .eq('customer_id', customerData.id)
+        .eq('customer_id', resolvedCustomerId)
         .order('issued_at', { ascending: false });
 
       if (error) throw error;
@@ -154,7 +166,6 @@ const Billing: React.FC = () => {
       const invoicesData = (data || []) as any[];
       const invoiceIds = invoicesData.map((inv) => inv.id).filter(Boolean);
 
-      // Optional: fetch computed totals (for locally generated invoices with line items)
       const totalsByInvoiceId = new Map<string, number>();
       if (invoiceIds.length > 0) {
         const { data: totalsData, error: totalsError } = await supabase
@@ -163,7 +174,6 @@ const Billing: React.FC = () => {
           .in('invoice_id', invoiceIds);
 
         if (totalsError) {
-          // Non-fatal: fall back to invoices.amount
           console.warn('Could not fetch invoice_computed_totals:', totalsError);
         } else {
           (totalsData || []).forEach((row: any) => {
@@ -175,12 +185,8 @@ const Billing: React.FC = () => {
       }
 
       const mappedInvoices: Invoice[] = invoicesData.map((inv: any) => {
-        // For Stripe-synced invoices, use the amount from Stripe directly
-        // For locally-created invoices without stripe_invoice_id, use computed totals
         const stripeAmount = typeof inv.amount === 'number' ? inv.amount : null;
         const computed = totalsByInvoiceId.get(inv.id) ?? null;
-        
-        // Prefer Stripe amount for synced invoices, fall back to computed for local invoices
         const total = inv.stripe_invoice_id ? stripeAmount : (computed ?? stripeAmount);
         
         return {
@@ -206,6 +212,7 @@ const Billing: React.FC = () => {
   };
 
   const syncInvoices = async () => {
+    if (isStaffView) return;
     try {
       const { data, error } = await supabase.functions.invoke('sync-invoices');
       if (error) throw error;
@@ -218,12 +225,14 @@ const Billing: React.FC = () => {
   };
 
   useEffect(() => {
-    if (!loading && customerData) {
+    if (!loading && resolvedCustomerId) {
       fetchInvoices();
       checkSubscription();
-      syncInvoices();
+      if (!isStaffView) {
+        syncInvoices();
+      }
     }
-  }, [customerData, loading]);
+  }, [resolvedCustomerId, loading, isStaffView]);
 
   const handleCheckout = async () => {
     setCheckoutLoading(true);
@@ -265,17 +274,20 @@ const Billing: React.FC = () => {
     }
   };
 
+  const Layout = isStaffView ? CustomerViewLayout : PortalLayout;
+
   if (loading) {
     return (
-      <PortalLayout>
+      <Layout>
         <div className="flex items-center justify-center min-h-[400px]">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-      </PortalLayout>
+      </Layout>
     );
   }
 
-  if (isStaff) {
+  // Staff viewing their own billing page (not customer view) - show info message
+  if (!isStaffView && isStaff) {
     return (
       <PortalLayout>
         <Alert>
@@ -290,15 +302,15 @@ const Billing: React.FC = () => {
     );
   }
 
-  if (!customerData) {
+  if (!resolvedCustomerId) {
     return (
-      <PortalLayout>
+      <Layout>
         <Alert>
           <AlertDescription>
             {t('Ingen kunddata hittades. Kontakta support.', 'No customer data found. Please contact support.')}
           </AlertDescription>
         </Alert>
-      </PortalLayout>
+      </Layout>
     );
   }
 
@@ -335,7 +347,6 @@ const Billing: React.FC = () => {
     return <Badge variant="secondary">{label}</Badge>;
   };
 
-  // Determine if invoice can be previewed/downloaded (open, paid, overdue - not void)
   const canDownloadInvoice = (status: string | null) => {
     if (!status) return false;
     const lower = status.toLowerCase();
@@ -348,106 +359,125 @@ const Billing: React.FC = () => {
   };
 
   return (
-    <PortalLayout>
+    <Layout>
       <div className="space-y-6">
-        <h1 className="text-3xl font-medium">{t('Fakturering', 'Billing & invoices')}</h1>
+        {isStaffView && (
+          <Link
+            to="/portal/customers"
+            className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            {t('Tillbaka till kunder', 'Back to customers')}
+          </Link>
+        )}
 
-        {/* Subscription Card */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <CreditCard className="w-5 h-5" />
-              {t('Prenumeration', 'Subscription')}
-            </CardTitle>
-            <CardDescription>
-              {t('Din månatliga prenumeration på Smart Home Solutions-tjänster.', 'Your monthly Smart Home Solutions service subscription.')}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {subscriptionLoading ? (
-              <div className="flex items-center gap-2 text-muted-foreground">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                {t('Laddar...', 'Loading...')}
-              </div>
-            ) : subscriptionStatus?.subscribed ? (
-              <div className="space-y-4">
-                <div className="flex items-center gap-3">
-                  {subscriptionStatus.cancel_at_period_end ? (
-                    <Badge variant="outline" className="flex items-center gap-1 border-warning text-warning">
-                      <AlertCircle className="w-3 h-3" />
-                      {t('Avbryts', 'Cancels')}
-                    </Badge>
-                  ) : (
-                    <Badge className="bg-energy/30 text-energy-darker border-0 flex items-center gap-1">
-                      <CheckCircle className="w-3 h-3" />
-                      {t('Aktiv', 'Active')}
-                    </Badge>
-                  )}
-                  <span className="text-sm text-muted-foreground">
-                    {subscriptionStatus.cancel_at_period_end 
-                      ? t('Avslutas', 'Ends')
-                      : t('Förnyas', 'Renews')}: {subscriptionStatus.subscription_end 
-                      ? new Date(subscriptionStatus.subscription_end).toLocaleDateString('sv-SE') 
-                      : '-'}
-                  </span>
+        <h1 className="text-3xl font-medium">
+          {isStaffView ? t('Fakturor', 'Invoices') : t('Fakturering', 'Billing & invoices')}
+        </h1>
+        {isStaffView && customerName && (
+          <p className="text-muted-foreground">{customerName}</p>
+        )}
+
+        {/* Subscription Card - only for customer self-view */}
+        {!isStaffView && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <CreditCard className="w-5 h-5" />
+                {t('Prenumeration', 'Subscription')}
+              </CardTitle>
+              <CardDescription>
+                {t('Din månatliga prenumeration på Smart Home Solutions-tjänster.', 'Your monthly Smart Home Solutions service subscription.')}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {subscriptionLoading ? (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  {t('Laddar...', 'Loading...')}
                 </div>
-                {subscriptionStatus.cancel_at_period_end && (
-                  <Alert variant="default" className="border-warning/50 bg-warning/10">
-                    <AlertCircle className="h-4 w-4 text-warning" />
-                    <AlertDescription className="text-foreground">
-                      {t(
-                        'Din prenumeration är schemalagd att avslutas. Du har tillgång till tjänsten fram till slutdatumet.',
-                        'Your subscription is scheduled to cancel. You will have access until the end date.'
-                      )}
-                    </AlertDescription>
-                  </Alert>
-                )}
-                <p className="text-2xl font-semibold">249 kr<span className="text-sm font-normal text-muted-foreground">/{t('månad', 'month')}</span></p>
-                <Button 
-                  variant="outline" 
-                  onClick={handleManageSubscription} 
-                  disabled={portalLoading}
-                >
-                  {portalLoading ? (
-                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                  ) : (
-                    <Settings className="w-4 h-4 mr-2" />
+              ) : subscriptionStatus?.subscribed ? (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-3">
+                    {subscriptionStatus.cancel_at_period_end ? (
+                      <Badge variant="outline" className="flex items-center gap-1 border-warning text-warning">
+                        <AlertCircle className="w-3 h-3" />
+                        {t('Avbryts', 'Cancels')}
+                      </Badge>
+                    ) : (
+                      <Badge className="bg-energy/30 text-energy-darker border-0 flex items-center gap-1">
+                        <CheckCircle className="w-3 h-3" />
+                        {t('Aktiv', 'Active')}
+                      </Badge>
+                    )}
+                    <span className="text-sm text-muted-foreground">
+                      {subscriptionStatus.cancel_at_period_end 
+                        ? t('Avslutas', 'Ends')
+                        : t('Förnyas', 'Renews')}: {subscriptionStatus.subscription_end 
+                        ? new Date(subscriptionStatus.subscription_end).toLocaleDateString('sv-SE') 
+                        : '-'}
+                    </span>
+                  </div>
+                  {subscriptionStatus.cancel_at_period_end && (
+                    <Alert variant="default" className="border-warning/50 bg-warning/10">
+                      <AlertCircle className="h-4 w-4 text-warning" />
+                      <AlertDescription className="text-foreground">
+                        {t(
+                          'Din prenumeration är schemalagd att avslutas. Du har tillgång till tjänsten fram till slutdatumet.',
+                          'Your subscription is scheduled to cancel. You will have access until the end date.'
+                        )}
+                      </AlertDescription>
+                    </Alert>
                   )}
-                  {subscriptionStatus.cancel_at_period_end 
-                    ? t('Återuppta prenumeration', 'Resume subscription')
-                    : t('Hantera prenumeration', 'Manage subscription')}
-                </Button>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <p className="text-muted-foreground">
-                  {t('Du har ingen aktiv prenumeration.', "You don't have an active subscription.")}
-                </p>
-                <div className="p-4 border rounded-lg bg-muted/30">
                   <p className="text-2xl font-semibold">249 kr<span className="text-sm font-normal text-muted-foreground">/{t('månad', 'month')}</span></p>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    {t('Smart Home Solutions månadsabonnemang', 'Smart Home Solutions monthly subscription')}
-                  </p>
+                  <Button 
+                    variant="outline" 
+                    onClick={handleManageSubscription} 
+                    disabled={portalLoading}
+                  >
+                    {portalLoading ? (
+                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                    ) : (
+                      <Settings className="w-4 h-4 mr-2" />
+                    )}
+                    {subscriptionStatus.cancel_at_period_end 
+                      ? t('Återuppta prenumeration', 'Resume subscription')
+                      : t('Hantera prenumeration', 'Manage subscription')}
+                  </Button>
                 </div>
-                <Button onClick={handleCheckout} disabled={checkoutLoading}>
-                  {checkoutLoading ? (
-                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                  ) : (
-                    <CreditCard className="w-4 h-4 mr-2" />
-                  )}
-                  {t('Prenumerera nu', 'Subscribe now')}
-                </Button>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+              ) : (
+                <div className="space-y-4">
+                  <p className="text-muted-foreground">
+                    {t('Du har ingen aktiv prenumeration.', "You don't have an active subscription.")}
+                  </p>
+                  <div className="p-4 border rounded-lg bg-muted/30">
+                    <p className="text-2xl font-semibold">249 kr<span className="text-sm font-normal text-muted-foreground">/{t('månad', 'month')}</span></p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      {t('Smart Home Solutions månadsabonnemang', 'Smart Home Solutions monthly subscription')}
+                    </p>
+                  </div>
+                  <Button onClick={handleCheckout} disabled={checkoutLoading}>
+                    {checkoutLoading ? (
+                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                    ) : (
+                      <CreditCard className="w-4 h-4 mr-2" />
+                    )}
+                    {t('Prenumerera nu', 'Subscribe now')}
+                  </Button>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* Invoices Card */}
         <Card>
           <CardHeader>
             <CardTitle>{t('Fakturor', 'Invoices')}</CardTitle>
             <CardDescription>
-              {t('Dina betalningshistorik och fakturor.', 'Your payment history and invoices.')}
+              {isStaffView
+                ? t('Kundens fakturor.', "Customer's invoices.")
+                : t('Dina betalningshistorik och fakturor.', 'Your payment history and invoices.')}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -547,7 +577,7 @@ const Billing: React.FC = () => {
           invoiceNumber={selectedInvoice?.invoice_number || selectedInvoice?.id.slice(0, 8) || ''}
         />
       </div>
-    </PortalLayout>
+    </Layout>
   );
 };
 
