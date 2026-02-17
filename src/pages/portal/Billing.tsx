@@ -1,10 +1,18 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Loader2, CreditCard, Settings, CheckCircle, AlertCircle, Eye, ArrowLeft } from 'lucide-react';
+import { Loader2, CreditCard, Settings, CheckCircle, AlertCircle, Eye, ArrowLeft, Search } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   Table,
   TableBody,
@@ -69,13 +77,45 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
   const [pdfModalOpen, setPdfModalOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
 
+  // Search & filter state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [viewFilter, setViewFilter] = useState<string>('default');
+
   const { sortColumn, sortDirection, handleSort } = useTableSort<InvoiceSortColumn>({
     defaultColumn: 'issued_at',
     defaultDirection: 'desc',
   });
 
+  // Filter invoices by status and search query
+  const filteredInvoices = useMemo(() => {
+    let filtered = invoices;
+
+    // Apply status filter
+    if (viewFilter === 'default') {
+      // Default: show open, paid, overdue only
+      filtered = filtered.filter((inv) => {
+        const s = inv.status?.toLowerCase();
+        return s === 'open' || s === 'paid' || s === 'overdue';
+      });
+    } else if (viewFilter !== 'all') {
+      // Specific status filter
+      filtered = filtered.filter((inv) => inv.status?.toLowerCase() === viewFilter);
+    }
+    // 'all' → no status filter
+
+    // Apply search
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      filtered = filtered.filter((inv) =>
+        (inv.invoice_number && inv.invoice_number.toLowerCase().includes(q))
+      );
+    }
+
+    return filtered;
+  }, [invoices, viewFilter, searchQuery]);
+
   const sortedInvoices = useMemo(() => {
-    return sortItems(invoices, sortColumn as keyof Invoice, sortDirection, {
+    return sortItems(filteredInvoices, sortColumn as keyof Invoice, sortDirection, {
       getValue: (inv) => {
         switch (sortColumn) {
           case 'issued_at':
@@ -93,7 +133,7 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
         }
       },
     });
-  }, [invoices, sortColumn, sortDirection]);
+  }, [filteredInvoices, sortColumn, sortDirection]);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -123,13 +163,15 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
   }, [searchParams, isStaffView]);
 
   const checkSubscription = async () => {
-    if (isStaffView) {
-      setSubscriptionLoading(false);
-      return;
-    }
     setSubscriptionLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke('check-subscription');
+      const body = isStaffView && resolvedCustomerId
+        ? { customer_id: resolvedCustomerId }
+        : undefined;
+      const { data, error } = await supabase.functions.invoke('check-subscription', {
+        body: body ? JSON.stringify(body) : undefined,
+        headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      });
       if (error) throw error;
       setSubscriptionStatus(data);
     } catch (error) {
@@ -331,6 +373,7 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
       overdue: t('Förfallen', 'Overdue'),
       open: t('Öppen', 'Open'),
       draft: t('Utkast', 'Draft'),
+      void: t('Makulerad', 'Void'),
     };
     
     const label = statusLabels[lowerStatus] || status;
@@ -372,64 +415,71 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
         )}
 
         <h1 className="text-3xl font-medium">
-          {isStaffView ? t('Fakturor', 'Invoices') : t('Fakturering', 'Billing & invoices')}
+          {isStaffView ? t('Fakturering', 'Billing') : t('Fakturering', 'Billing & invoices')}
         </h1>
         {isStaffView && customerName && (
           <p className="text-muted-foreground">{customerName}</p>
         )}
 
-        {/* Subscription Card - only for customer self-view */}
-        {!isStaffView && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <CreditCard className="w-5 h-5" />
-                {t('Prenumeration', 'Subscription')}
-              </CardTitle>
-              <CardDescription>
-                {t('Din månatliga prenumeration på Smart Home Solutions-tjänster.', 'Your monthly Smart Home Solutions service subscription.')}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {subscriptionLoading ? (
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  {t('Laddar...', 'Loading...')}
-                </div>
-              ) : subscriptionStatus?.subscribed ? (
-                <div className="space-y-4">
-                  <div className="flex items-center gap-3">
-                    {subscriptionStatus.cancel_at_period_end ? (
-                      <Badge variant="outline" className="flex items-center gap-1 border-warning text-warning">
-                        <AlertCircle className="w-3 h-3" />
-                        {t('Avbryts', 'Cancels')}
-                      </Badge>
-                    ) : (
-                      <Badge className="bg-energy/30 text-energy-darker border-0 flex items-center gap-1">
-                        <CheckCircle className="w-3 h-3" />
-                        {t('Aktiv', 'Active')}
-                      </Badge>
-                    )}
-                    <span className="text-sm text-muted-foreground">
-                      {subscriptionStatus.cancel_at_period_end 
-                        ? t('Avslutas', 'Ends')
-                        : t('Förnyas', 'Renews')}: {subscriptionStatus.subscription_end 
-                        ? new Date(subscriptionStatus.subscription_end).toLocaleDateString('sv-SE') 
-                        : '-'}
-                    </span>
-                  </div>
-                  {subscriptionStatus.cancel_at_period_end && (
-                    <Alert variant="default" className="border-warning/50 bg-warning/10">
-                      <AlertCircle className="h-4 w-4 text-warning" />
-                      <AlertDescription className="text-foreground">
-                        {t(
-                          'Din prenumeration är schemalagd att avslutas. Du har tillgång till tjänsten fram till slutdatumet.',
-                          'Your subscription is scheduled to cancel. You will have access until the end date.'
-                        )}
-                      </AlertDescription>
-                    </Alert>
+        {/* Subscription Card */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <CreditCard className="w-5 h-5" />
+              {t('Prenumeration', 'Subscription')}
+            </CardTitle>
+            <CardDescription>
+              {isStaffView
+                ? t('Kundens prenumerationsstatus.', "Customer's subscription status.")
+                : t('Din månatliga prenumeration på Smart Home Solutions-tjänster.', 'Your monthly Smart Home Solutions service subscription.')}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {subscriptionLoading ? (
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                {t('Laddar...', 'Loading...')}
+              </div>
+            ) : subscriptionStatus?.subscribed ? (
+              <div className="space-y-4">
+                <div className="flex items-center gap-3">
+                  {subscriptionStatus.cancel_at_period_end ? (
+                    <Badge variant="outline" className="flex items-center gap-1 border-warning text-warning">
+                      <AlertCircle className="w-3 h-3" />
+                      {t('Avbryts', 'Cancels')}
+                    </Badge>
+                  ) : (
+                    <Badge className="bg-energy/30 text-energy-darker border-0 flex items-center gap-1">
+                      <CheckCircle className="w-3 h-3" />
+                      {t('Aktiv', 'Active')}
+                    </Badge>
                   )}
-                  <p className="text-2xl font-semibold">249 kr<span className="text-sm font-normal text-muted-foreground">/{t('månad', 'month')}</span></p>
+                  <span className="text-sm text-muted-foreground">
+                    {subscriptionStatus.cancel_at_period_end 
+                      ? t('Avslutas', 'Ends')
+                      : t('Förnyas', 'Renews')}: {subscriptionStatus.subscription_end 
+                      ? new Date(subscriptionStatus.subscription_end).toLocaleDateString('sv-SE') 
+                      : '-'}
+                  </span>
+                </div>
+                {subscriptionStatus.cancel_at_period_end && (
+                  <Alert variant="default" className="border-warning/50 bg-warning/10">
+                    <AlertCircle className="h-4 w-4 text-warning" />
+                    <AlertDescription className="text-foreground">
+                      {isStaffView
+                        ? t(
+                            'Kundens prenumeration är schemalagd att avslutas.',
+                            "The customer's subscription is scheduled to cancel."
+                          )
+                        : t(
+                            'Din prenumeration är schemalagd att avslutas. Du har tillgång till tjänsten fram till slutdatumet.',
+                            'Your subscription is scheduled to cancel. You will have access until the end date.'
+                          )}
+                    </AlertDescription>
+                  </Alert>
+                )}
+                <p className="text-2xl font-semibold">249 kr<span className="text-sm font-normal text-muted-foreground">/{t('månad', 'month')}</span></p>
+                {!isStaffView && (
                   <Button 
                     variant="outline" 
                     onClick={handleManageSubscription} 
@@ -444,31 +494,37 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
                       ? t('Återuppta prenumeration', 'Resume subscription')
                       : t('Hantera prenumeration', 'Manage subscription')}
                   </Button>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <p className="text-muted-foreground">
-                    {t('Du har ingen aktiv prenumeration.', "You don't have an active subscription.")}
-                  </p>
-                  <div className="p-4 border rounded-lg bg-muted/30">
-                    <p className="text-2xl font-semibold">249 kr<span className="text-sm font-normal text-muted-foreground">/{t('månad', 'month')}</span></p>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      {t('Smart Home Solutions månadsabonnemang', 'Smart Home Solutions monthly subscription')}
-                    </p>
-                  </div>
-                  <Button onClick={handleCheckout} disabled={checkoutLoading}>
-                    {checkoutLoading ? (
-                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                    ) : (
-                      <CreditCard className="w-4 h-4 mr-2" />
-                    )}
-                    {t('Prenumerera nu', 'Subscribe now')}
-                  </Button>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        )}
+                )}
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <p className="text-muted-foreground">
+                  {isStaffView
+                    ? t('Kunden har ingen aktiv prenumeration.', "The customer doesn't have an active subscription.")
+                    : t('Du har ingen aktiv prenumeration.', "You don't have an active subscription.")}
+                </p>
+                {!isStaffView && (
+                  <>
+                    <div className="p-4 border rounded-lg bg-muted/30">
+                      <p className="text-2xl font-semibold">249 kr<span className="text-sm font-normal text-muted-foreground">/{t('månad', 'month')}</span></p>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        {t('Smart Home Solutions månadsabonnemang', 'Smart Home Solutions monthly subscription')}
+                      </p>
+                    </div>
+                    <Button onClick={handleCheckout} disabled={checkoutLoading}>
+                      {checkoutLoading ? (
+                        <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                      ) : (
+                        <CreditCard className="w-4 h-4 mr-2" />
+                      )}
+                      {t('Prenumerera nu', 'Subscribe now')}
+                    </Button>
+                  </>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Invoices Card */}
         <Card>
@@ -481,11 +537,42 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
             </CardDescription>
           </CardHeader>
           <CardContent>
+            {/* Search & filter bar */}
+            <div className="flex flex-col sm:flex-row gap-3 mb-4">
+              <div className="relative max-w-md flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder={t('Sök fakturanummer...', 'Search invoice number...')}
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-9"
+                />
+              </div>
+              <Select value={viewFilter} onValueChange={setViewFilter}>
+                <SelectTrigger className="w-[200px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="default">{t('Aktiva', 'Active')}</SelectItem>
+                  <SelectItem value="open">{t('Öppna', 'Open')}</SelectItem>
+                  <SelectItem value="paid">{t('Betalda', 'Paid')}</SelectItem>
+                  <SelectItem value="overdue">{t('Förfallna', 'Overdue')}</SelectItem>
+                  {isStaffView && (
+                    <>
+                      <SelectItem value="void">{t('Makulerade', 'Voided')}</SelectItem>
+                      <SelectItem value="draft">{t('Utkast', 'Draft')}</SelectItem>
+                    </>
+                  )}
+                  <SelectItem value="all">{t('Visa alla', 'Show all')}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
             {invoicesLoading ? (
               <div className="flex items-center justify-center py-12">
                 <Loader2 className="w-6 h-6 animate-spin text-primary" />
               </div>
-            ) : invoices.length === 0 ? (
+            ) : sortedInvoices.length === 0 ? (
               <p className="text-center text-muted-foreground py-12">
                 {t('Inga fakturor hittades.', 'No invoices found.')}
               </p>
