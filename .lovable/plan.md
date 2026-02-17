@@ -1,152 +1,82 @@
+# Show Subscription Status for Staff + Add Invoice Search/Filter
 
+## Overview
 
-# Consolidate Duplicated Portal Pages
+Two changes to the Billing page:
 
-## Summary
-Merge 7 duplicated page pairs into single components that serve both customer and staff views, using layout/auth wrappers to handle the differences.
-
-## Strategy
-Create a lightweight wrapper pattern: each route gets a thin wrapper that resolves `customerId`, `isStaffView`, and the correct layout component, then passes them to the shared page component.
-
----
-
-## 1. HomeProfile (merge into one)
-
-**File**: Keep `src/pages/portal/HomeProfile.tsx` as the shared component.
-**Delete**: `src/pages/portal/customer-view/CustomerViewHomeProfile.tsx`
-
-Changes to `HomeProfile.tsx`:
-- Accept optional `customerId` and `isStaffView` props
-- When `isStaffView`: use `CustomerViewLayout`, show back-link and customer name subtitle
-- When customer: use `PortalLayout`, show dismissible info banner
-- Home resolution logic already exists in `HomeProfile.tsx` (the more complete version with auto-creation)
-
-**Route wiring**: Staff route wraps `HomeProfile` with `customerId` from `useViewedCustomer()`.
+1. Show the subscription status card when staff views a customer's billing page (read-only, no manage/checkout buttons)
+2. Add a search and filter bar above the invoices table, matching the Quotes page pattern
 
 ---
 
-## 2. EnergyModeling (merge into one)
+## 1. Subscription Status for Staff View
 
-**File**: Keep `src/pages/portal/EnergyModeling.tsx` as the shared component.
-**Delete**: `src/pages/portal/customer-view/CustomerViewEnergyModeling.tsx`
+### Problem
 
-Changes to `EnergyModeling.tsx`:
-- Accept optional `customerId` prop override
-- When staff views a customer: use `CustomerViewLayout`, show customer-specific tabs (ROI, Home Setup, etc.)
-- When staff views `/portal/energy-modeling` directly (no customer): show staff-only tabs (Device Templates, Calibration) -- this behavior already exists
-- When customer views: use `PortalLayout`, show customer tabs -- already exists
+The `check-subscription` edge function currently uses the **logged-in user's email** to look up Stripe. When staff views a customer's billing page, it checks the staff's own subscription -- not the customer's.
 
----
+### Solution
 
-## 3. Account (merge, keep CustomerViewAccount logic)
+- Modify the `check-subscription` edge function to accept an optional `customer_id` in the request body
+- When provided, verify the caller is staff (via a `contacts` table lookup with `is_staff = true`), then look up the customer's `billing_email` or `email` from the `customers` table to query Stripe
+- On the frontend, when `isStaffView` is true, call `check-subscription` with the customer's ID
+- Show the subscription card but **without** the "Manage subscription", "Resume subscription", or "Subscribe now" buttons
+- The card will be read-only: just the status badge (Active / Cancels / No subscription), renewal date, and price
 
-**File**: Create new shared `src/pages/portal/Account.tsx` combining both.
-**Delete**: `src/pages/portal/customer-view/CustomerViewAccount.tsx`
+### Edge Function Changes (`supabase/functions/check-subscription/index.ts`)
 
-Key difference: `CustomerViewAccount` updates both `customers` and `contacts` tables (via `contact_id`), while `Account.tsx` only updates `customers`. The merged version will use the more complete CustomerViewAccount logic for save, and add the `billing_email` field for customer self-view. Staff view shows name/email/phone from contact; customer view shows `billing_email` instead.
+- Accept optional `customer_id` from request body
+- If `customer_id` is provided:
+  - Verify caller is staff by checking `contacts.is_staff`
+  - Look up customer email from `customers` table
+  - Use that email for the Stripe lookup instead of the auth user's email
+- If not provided: existing behavior (use auth user's email)
 
----
+### Frontend Changes (`src/pages/portal/Billing.tsx`)
 
-## 4. TicketsList (keep TicketsList.tsx, delete CustomerViewTickets)
-
-**File**: Keep `src/pages/portal/TicketsList.tsx` (already handles both staff and customer via `isStaff` checks).
-**Delete**: `src/pages/portal/customer-view/CustomerViewTickets.tsx`
-
-`TicketsList.tsx` already:
-- Shows customer column only for staff
-- Filters by `customer_id` for non-staff
-- Has sortable headers, search icon, subscription gating
-
-Changes: When used in staff customer-view, pass `customerId` to scope the query. Wrap with `CustomerViewLayout` instead of `PortalLayout`.
+- Remove the `if (isStaffView) { setSubscriptionLoading(false); return; }` early exit in `checkSubscription()`
+- When `isStaffView`, pass `{ customer_id: resolvedCustomerId }` to the edge function call
+- Change the subscription card from `{!isStaffView && (...)}` to always render
+- Inside the card, hide the checkout/manage buttons when `isStaffView`
+- Adjust the card description text for staff ("Kundens prenumerationsstatus" / "Customer's subscription status")
 
 ---
 
-## 5. Billing (keep Billing.tsx, delete CustomerViewBilling)
+## 2. Invoice Search and Filter Bar
 
-**File**: Keep `src/pages/portal/Billing.tsx` (much more complete).
-**Delete**: `src/pages/portal/customer-view/CustomerViewBilling.tsx`
+### Pattern
 
-Changes to `Billing.tsx`:
-- Accept optional `customerId` and `isStaffView` props
-- When `isStaffView`: use `CustomerViewLayout`, hide subscription management card (staff should not manage customer subscriptions), show invoices only
-- When customer: show full page (subscription + invoices) as-is
-- Remove the existing "staff accounts don't have billing" guard, replace with staff-customer-view mode
+Match the existing Quotes page: a search input + a dropdown filter, placed between the card header and the table.
 
----
+### Filter Options
 
-## 6. Offers (replace Offers.tsx with CustomerViewOffers logic)
+- **Visa alla** / Show all (standard): no status filter (only staff should see invoices in all states incl `draft`and `void.`Customers should only see `open`, `paid`, `overdue`)
+- `open`
+- `paid`
+- `overdue`
+- `void`(staff only)
+- `draft`(staff only)
+  &nbsp;
 
-**File**: Rewrite `src/pages/portal/Offers.tsx` with the more complete `CustomerViewOffers` logic.
-**Delete**: `src/pages/portal/customer-view/CustomerViewOffers.tsx`
+### Search
 
-`CustomerViewOffers` is more feature-rich:
-- Shows all statuses including draft, cancelled, superseded (staff needs these)
-- Has search by quote number or project name
-- Shows version badges and "old" indicators
-- Uses `getQuoteStatusBadge` shared utility
+- Search by invoice number (text match)
+- Client-side filtering on the already-fetched invoices array
 
-Changes:
-- Accept optional `customerId` and `isStaffView` props
-- Customer view: filter out draft/cancelled/superseded (current Offers.tsx behavior) 
-- Staff view: show all statuses, use `CustomerViewLayout`
-- Navigation: customer goes to `/portal/offers/:id`, staff goes to `/portal/customers/:id/offers/:id`
+### Frontend Changes (`src/pages/portal/Billing.tsx`)
+
+- Add `searchQuery` and `viewFilter` state variables
+- Add a `filteredInvoices` memo that applies status filter + search before sorting
+- Update `sortedInvoices` to sort `filteredInvoices` instead of raw `invoices`
+- Add the search input + select dropdown UI between the CardHeader and the table, matching the Quotes page layout (Search icon, `pl-9`, `max-w-md`, select with `w-[200px]`)
 
 ---
 
-## 7. TicketDetail (replace TicketDetail.tsx with CustomerViewTicketDetail logic)
+## Technical Details
 
-**File**: Rewrite `src/pages/portal/TicketDetail.tsx` using the more complete `CustomerViewTicketDetail` logic.
-**Delete**: `src/pages/portal/customer-view/CustomerViewTicketDetail.tsx`
+### Files Modified
 
-Key differences to handle:
-- **Status default after reply**: Staff defaults to `awaiting_customer`, Customer defaults to `awaiting_response` (opposite of logged-in user role)
-- **Author type**: Staff always posts as `staff`, Customer always posts as `customer`
-- **Subscription gating**: Customer view checks subscription before allowing replies; staff always can reply
-- **Back link**: Staff goes to `/portal/customers/:id/tickets`, Customer goes to `/portal/tickets`
-- **Close ticket**: Both can close, but customer view in TicketDetail gates behind subscription
+- `supabase/functions/check-subscription/index.ts` -- add optional `customer_id` param with staff verification
+- `src/pages/portal/Billing.tsx` -- subscription card visibility, search/filter UI and logic
 
----
-
-## Route Changes in App.tsx
-
-Staff customer-view routes will use thin wrapper components that:
-1. Pull `customerId` from URL params via `useViewedCustomer()`
-2. Pass `isStaffView={true}` and `customerId` to the shared component
-3. Wrap in `CustomerViewWrapper` (for `ViewedCustomerProvider`)
-
-Example pattern:
-```text
-/portal/billing        -> <Billing />                    (customer mode)
-/portal/customers/:id/billing -> <CustomerViewWrapper><BillingStaffView /></CustomerViewWrapper>
-```
-
-Where `BillingStaffView` is a ~5-line wrapper:
-```typescript
-const BillingStaffView = () => {
-  const { customerId } = useViewedCustomer();
-  return <Billing customerId={customerId} isStaffView />;
-};
-```
-
----
-
-## Files Created
-- Small wrapper components in `src/pages/portal/customer-view/` (one per merged page, ~5-10 lines each) that just pass props
-
-## Files Deleted
-- `CustomerViewHomeProfile.tsx`
-- `CustomerViewEnergyModeling.tsx`  
-- `CustomerViewAccount.tsx`
-- `CustomerViewTickets.tsx`
-- `CustomerViewBilling.tsx`
-- `CustomerViewOffers.tsx`
-- `CustomerViewTicketDetail.tsx`
-
-These get replaced by thin wrappers that import the shared page.
-
-## Risk Mitigation
-- Each merged page will check `isStaffView` for layout, auth guards, navigation links, and role-specific features
-- The "Status efter svar" default will explicitly use `isStaff` to pick the opposite status
-- Subscription gating only applies to customer view (not staff)
-- Back-links differ by context (staff goes to customer view, customer goes to portal root)
-
+### No New Files Created
