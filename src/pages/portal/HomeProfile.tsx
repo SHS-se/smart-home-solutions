@@ -5,6 +5,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import PortalLayout from '@/components/portal/PortalLayout';
 import HomeProfileForm from '@/components/portal/home-profile/HomeProfileForm';
+import HomeSelector from '@/components/portal/energy/HomeSelector';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -13,7 +14,7 @@ const HomeProfile: React.FC = () => {
   const { user, customerData, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const { t } = useLanguage();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [bannerDismissed, setBannerDismissed] = useState(() => localStorage.getItem('home_profile_banner_dismissed') === 'true');
   const [homeId, setHomeId] = useState<string | null>(null);
   const [homeName, setHomeName] = useState<string | null>(null);
@@ -90,14 +91,22 @@ const HomeProfile: React.FC = () => {
   return (
     <PortalLayout>
       <div className="space-y-8 max-w-4xl mx-auto">
-        <div className="flex items-center gap-3">
-          <Home className="w-7 h-7 text-primary" />
-          <div>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <Home className="w-7 h-7 text-primary" />
             <h1 className="text-3xl font-medium">{t('Hemprofil', 'Home Profile')}</h1>
-            {homeCount > 1 && homeName && (
-              <p className="text-sm text-muted-foreground">{t('Fastighet', 'Property')}: {homeName}</p>
-            )}
           </div>
+          {homeId && (
+            <HomeSelector
+              customerId={customerData.id}
+              selectedHomeId={homeId}
+              onHomeChange={(newId) => {
+                setHomeId(newId);
+                setSearchParams({ home: newId });
+              }}
+              onHomeCountChange={setHomeCount}
+            />
+          )}
         </div>
 
         {homeCount > 1 && (
