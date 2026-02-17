@@ -40,8 +40,54 @@ serve(async (req) => {
     if (!user?.email) throw new Error("User not authenticated or email not available");
     logStep("User authenticated", { userId: user.id, email: user.email });
 
+    // Parse optional customer_id from request body
+    let customerIdParam: string | null = null;
+    try {
+      const body = await req.json();
+      customerIdParam = body?.customer_id || null;
+    } catch {
+      // No body or invalid JSON — use default behavior
+    }
+
+    let lookupEmail = user.email;
+
+    if (customerIdParam) {
+      // Verify caller is staff
+      const { data: staffRow, error: staffError } = await supabaseClient
+        .from("staff_users")
+        .select("user_id")
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      if (staffError || !staffRow) {
+        throw new Error("Only staff can look up customer subscriptions");
+      }
+      logStep("Staff verified", { userId: user.id });
+
+      // Look up customer email from customers_with_identity view
+      const { data: custRow, error: custError } = await supabaseClient
+        .from("customers_with_identity")
+        .select("billing_email, contact_email")
+        .eq("id", customerIdParam)
+        .maybeSingle();
+
+      if (custError || !custRow) {
+        throw new Error("Customer not found");
+      }
+
+      lookupEmail = custRow.billing_email || custRow.contact_email;
+      if (!lookupEmail) {
+        logStep("No email found for customer", { customerIdParam });
+        return new Response(JSON.stringify({ subscribed: false }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 200,
+        });
+      }
+      logStep("Using customer email for lookup", { lookupEmail });
+    }
+
     const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
-    const customers = await stripe.customers.list({ email: user.email, limit: 1 });
+    const customers = await stripe.customers.list({ email: lookupEmail, limit: 1 });
 
     if (customers.data.length === 0) {
       logStep("No Stripe customer found");
