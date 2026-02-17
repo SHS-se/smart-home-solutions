@@ -346,6 +346,7 @@ export type Database = {
           created_at: string
           id: string
           is_test: boolean
+          primary_home_id: string | null
           site_city: string | null
           site_postcode: string | null
           site_street: string | null
@@ -360,6 +361,7 @@ export type Database = {
           created_at?: string
           id?: string
           is_test?: boolean
+          primary_home_id?: string | null
           site_city?: string | null
           site_postcode?: string | null
           site_street?: string | null
@@ -374,6 +376,7 @@ export type Database = {
           created_at?: string
           id?: string
           is_test?: boolean
+          primary_home_id?: string | null
           site_city?: string | null
           site_postcode?: string | null
           site_street?: string | null
@@ -385,6 +388,13 @@ export type Database = {
             columns: ["contact_id"]
             isOneToOne: false
             referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "customers_primary_home_id_fkey"
+            columns: ["primary_home_id"]
+            isOneToOne: false
+            referencedRelation: "homes"
             referencedColumns: ["id"]
           },
         ]
@@ -730,6 +740,7 @@ export type Database = {
           answer_text: string
           answer_value: Json | null
           customer_id: string
+          home_id: string
           id: string
           question_id: string
           updated_at: string
@@ -739,6 +750,7 @@ export type Database = {
           answer_text?: string
           answer_value?: Json | null
           customer_id: string
+          home_id: string
           id?: string
           question_id: string
           updated_at?: string
@@ -748,6 +760,7 @@ export type Database = {
           answer_text?: string
           answer_value?: Json | null
           customer_id?: string
+          home_id?: string
           id?: string
           question_id?: string
           updated_at?: string
@@ -766,6 +779,13 @@ export type Database = {
             columns: ["customer_id"]
             isOneToOne: false
             referencedRelation: "customers_with_identity"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "home_answers_home_id_fkey"
+            columns: ["home_id"]
+            isOneToOne: false
+            referencedRelation: "homes"
             referencedColumns: ["id"]
           },
           {
@@ -2055,6 +2075,7 @@ export type Database = {
           energy_price_model: string
           energy_price_sek_per_kwh: number
           fixed_monthly_fee_sek: number
+          home_id: string | null
           id: string
           is_active: boolean
           network_price_sek_per_w_month: number
@@ -2067,6 +2088,7 @@ export type Database = {
           energy_price_model?: string
           energy_price_sek_per_kwh?: number
           fixed_monthly_fee_sek?: number
+          home_id?: string | null
           id?: string
           is_active?: boolean
           network_price_sek_per_w_month?: number
@@ -2079,6 +2101,7 @@ export type Database = {
           energy_price_model?: string
           energy_price_sek_per_kwh?: number
           fixed_monthly_fee_sek?: number
+          home_id?: string | null
           id?: string
           is_active?: boolean
           network_price_sek_per_w_month?: number
@@ -2098,6 +2121,13 @@ export type Database = {
             columns: ["customer_id"]
             isOneToOne: false
             referencedRelation: "customers_with_identity"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tariff_instances_home_id_fkey"
+            columns: ["home_id"]
+            isOneToOne: false
+            referencedRelation: "homes"
             referencedColumns: ["id"]
           },
           {
