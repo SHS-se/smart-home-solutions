@@ -64,7 +64,7 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
         </div>
 
         {showStaffOnlyTabs ? (
-          <Tabs defaultValue="device-types">
+          <Tabs defaultValue="device-instances">
             <TabsList>
               <TabsTrigger value="device-types">{t('Enhetstyper', 'Device Types')}</TabsTrigger>
               <TabsTrigger value="device-manager">{t('Enhetsmallar', 'Device Templates')}</TabsTrigger>
