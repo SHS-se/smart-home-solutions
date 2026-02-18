@@ -79,7 +79,7 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
 
   // Search & filter state
   const [searchQuery, setSearchQuery] = useState('');
-  const [viewFilter, setViewFilter] = useState<string>('default');
+  const [viewFilter, setViewFilter] = useState<string>('all');
 
   const { sortColumn, sortDirection, handleSort } = useTableSort<InvoiceSortColumn>({
     defaultColumn: 'issued_at',
@@ -91,17 +91,15 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
     let filtered = invoices;
 
     // Apply status filter
-    if (viewFilter === 'default') {
-      // Default: show open, paid, overdue only
-      filtered = filtered.filter((inv) => {
-        const s = inv.status?.toLowerCase();
-        return s === 'open' || s === 'paid' || s === 'overdue';
-      });
-    } else if (viewFilter !== 'all') {
+    if (viewFilter === 'all') {
+      // For customers, hide voided invoices even in "all" view
+      if (!isStaffView) {
+        filtered = filtered.filter((inv) => inv.status?.toLowerCase() !== 'void');
+      }
+    } else {
       // Specific status filter
       filtered = filtered.filter((inv) => inv.status?.toLowerCase() === viewFilter);
     }
-    // 'all' → no status filter
 
     // Apply search
     if (searchQuery.trim()) {
@@ -553,7 +551,7 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="default">{t('Aktiva', 'Active')}</SelectItem>
+                  <SelectItem value="all">{t('Visa alla', 'Show all')}</SelectItem>
                   <SelectItem value="open">{t('Öppna', 'Open')}</SelectItem>
                   <SelectItem value="paid">{t('Betalda', 'Paid')}</SelectItem>
                   <SelectItem value="overdue">{t('Förfallna', 'Overdue')}</SelectItem>
@@ -563,7 +561,6 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
                       <SelectItem value="draft">{t('Utkast', 'Draft')}</SelectItem>
                     </>
                   )}
-                  <SelectItem value="all">{t('Visa alla', 'Show all')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
