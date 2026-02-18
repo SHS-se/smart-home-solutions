@@ -1,17 +1,9 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Loader2, Plus, Search, ArrowLeft } from 'lucide-react';
+import { Loader2, Plus, ArrowLeft } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import {
   Table,
   TableBody,
@@ -21,6 +13,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { SortableTableHead } from '@/components/ui/sortable-table-head';
+import TableFilterBar from '@/components/portal/TableFilterBar';
 import PortalLayout from '@/components/portal/PortalLayout';
 import CustomerViewLayout from '@/components/portal/CustomerViewLayout';
 import SubscriptionRequiredAlert from '@/components/portal/SubscriptionRequiredAlert';
@@ -221,30 +214,20 @@ const TicketsList: React.FC<TicketsListProps> = ({ customerId: propCustomerId, i
         )}
 
         {/* Filters */}
-        <div className="flex flex-col sm:flex-row gap-4">
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-full sm:w-48">
-              <SelectValue placeholder={t('Filtrera på status', 'Filter by status')} />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{t('Alla statusar', 'All statuses')}</SelectItem>
-              <SelectItem value="submitted">{t('Öppen', 'Open')}</SelectItem>
-              <SelectItem value="awaiting_response">{t('Väntar på personal', 'Awaiting staff')}</SelectItem>
-              <SelectItem value="awaiting_customer">{t('Väntar på kund', 'Awaiting customer')}</SelectItem>
-              <SelectItem value="closed">{t('Stängd', 'Closed')}</SelectItem>
-            </SelectContent>
-          </Select>
-          
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input
-              placeholder={t('Sök på ID eller rubrik...', 'Search by ID or title...')}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10"
-            />
-          </div>
-        </div>
+        <TableFilterBar
+          filterValue={statusFilter}
+          onFilterChange={setStatusFilter}
+          filterOptions={[
+            { value: 'all', label: t('Alla statusar', 'All statuses') },
+            { value: 'submitted', label: t('Öppen', 'Open') },
+            { value: 'awaiting_response', label: t('Väntar på personal', 'Awaiting staff') },
+            { value: 'awaiting_customer', label: t('Väntar på kund', 'Awaiting customer') },
+            { value: 'closed', label: t('Stängd', 'Closed') },
+          ]}
+          searchQuery={searchQuery}
+          onSearchChange={setSearchQuery}
+          searchPlaceholder={t('Sök på ID eller rubrik...', 'Search by ID or title...')}
+        />
 
         {/* Tickets Table */}
         <Card>

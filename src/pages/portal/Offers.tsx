@@ -1,10 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Loader2, FileText, Search, AlertCircle, ArrowLeft } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Loader2, FileText, AlertCircle, ArrowLeft } from 'lucide-react';
+import { Card, CardContent } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
 import {
   Table,
   TableBody,
@@ -13,14 +12,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import PortalLayout from '@/components/portal/PortalLayout';
+import TableFilterBar from '@/components/portal/TableFilterBar';
 import CustomerViewLayout from '@/components/portal/CustomerViewLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -203,37 +196,28 @@ const Offers: React.FC<OffersProps> = ({ customerId: propCustomerId, isStaffView
         </div>
 
         {/* Filters */}
-        <div className="flex flex-col sm:flex-row gap-4">
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-[200px]">
-              <SelectValue placeholder={t('Alla statusar', 'All statuses')} />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{t('Alla statusar', 'All statuses')}</SelectItem>
-              {showAllStatuses && <SelectItem value="draft">{t('Utkast', 'Draft')}</SelectItem>}
-              <SelectItem value="sent">{t('Skickad', 'Sent')}</SelectItem>
-              <SelectItem value="viewed">{t('Visad', 'Viewed')}</SelectItem>
-              <SelectItem value="revision_requested">{t('Ändring begärd', 'Revision requested')}</SelectItem>
-              <SelectItem value="accepted">{t('Accepterad', 'Accepted')}</SelectItem>
-              <SelectItem value="declined">{t('Avvisad', 'Declined')}</SelectItem>
-              <SelectItem value="invoiced">{t('Fakturerad', 'Invoiced')}</SelectItem>
-              <SelectItem value="expired">{t('Utgången', 'Expired')}</SelectItem>
-              {showAllStatuses && <SelectItem value="cancelled">{t('Avbruten', 'Cancelled')}</SelectItem>}
-              {showAllStatuses && <SelectItem value="superseded">{t('Ersatt', 'Superseded')}</SelectItem>}
-            </SelectContent>
-          </Select>
-          <div className="flex-1">
-            <div className="relative max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder={t('Sök på offertnummer eller projekt...', 'Search by quote number or project...')}
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9"
-              />
-            </div>
-          </div>
-        </div>
+        <TableFilterBar
+          filterValue={statusFilter}
+          onFilterChange={setStatusFilter}
+          filterOptions={[
+            { value: 'all', label: t('Alla statusar', 'All statuses') },
+            ...(showAllStatuses ? [{ value: 'draft', label: t('Utkast', 'Draft') }] : []),
+            { value: 'sent', label: t('Skickad', 'Sent') },
+            { value: 'viewed', label: t('Visad', 'Viewed') },
+            { value: 'revision_requested', label: t('Ändring begärd', 'Revision requested') },
+            { value: 'accepted', label: t('Accepterad', 'Accepted') },
+            { value: 'declined', label: t('Avvisad', 'Declined') },
+            { value: 'invoiced', label: t('Fakturerad', 'Invoiced') },
+            { value: 'expired', label: t('Utgången', 'Expired') },
+            ...(showAllStatuses ? [
+              { value: 'cancelled', label: t('Avbruten', 'Cancelled') },
+              { value: 'superseded', label: t('Ersatt', 'Superseded') },
+            ] : []),
+          ]}
+          searchQuery={searchQuery}
+          onSearchChange={setSearchQuery}
+          searchPlaceholder={t('Sök på offertnummer eller projekt...', 'Search by quote number or project...')}
+        />
 
         <Card>
           <CardContent className="pt-6">

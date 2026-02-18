@@ -1,18 +1,10 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Loader2, CreditCard, Settings, CheckCircle, AlertCircle, Eye, ArrowLeft, Search } from 'lucide-react';
+import { Loader2, CreditCard, Settings, CheckCircle, AlertCircle, Eye, ArrowLeft } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import {
   Table,
   TableBody,
@@ -22,6 +14,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { SortableTableHead } from '@/components/ui/sortable-table-head';
+import TableFilterBar from '@/components/portal/TableFilterBar';
 import PortalLayout from '@/components/portal/PortalLayout';
 import CustomerViewLayout from '@/components/portal/CustomerViewLayout';
 import { useAuth } from '@/contexts/AuthContext';
@@ -536,33 +529,24 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
           </CardHeader>
           <CardContent>
             {/* Search & filter bar */}
-            <div className="flex flex-col sm:flex-row gap-3 mb-4">
-              <div className="relative max-w-md flex-1">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder={t('Sök fakturanummer...', 'Search invoice number...')}
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-9"
-                />
-              </div>
-              <Select value={viewFilter} onValueChange={setViewFilter}>
-                <SelectTrigger className="w-[200px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">{t('Visa alla', 'Show all')}</SelectItem>
-                  <SelectItem value="open">{t('Öppna', 'Open')}</SelectItem>
-                  <SelectItem value="paid">{t('Betalda', 'Paid')}</SelectItem>
-                  <SelectItem value="overdue">{t('Förfallna', 'Overdue')}</SelectItem>
-                  {isStaffView && (
-                    <>
-                      <SelectItem value="void">{t('Makulerade', 'Voided')}</SelectItem>
-                      <SelectItem value="draft">{t('Utkast', 'Draft')}</SelectItem>
-                    </>
-                  )}
-                </SelectContent>
-              </Select>
+            <div className="mb-4">
+              <TableFilterBar
+                filterValue={viewFilter}
+                onFilterChange={setViewFilter}
+                filterOptions={[
+                  { value: 'all', label: t('Visa alla', 'Show all') },
+                  { value: 'open', label: t('Öppna', 'Open') },
+                  { value: 'paid', label: t('Betalda', 'Paid') },
+                  { value: 'overdue', label: t('Förfallna', 'Overdue') },
+                  ...(isStaffView ? [
+                    { value: 'void', label: t('Makulerade', 'Voided') },
+                    { value: 'draft', label: t('Utkast', 'Draft') },
+                  ] : []),
+                ]}
+                searchQuery={searchQuery}
+                onSearchChange={setSearchQuery}
+                searchPlaceholder={t('Sök fakturanummer...', 'Search invoice number...')}
+              />
             </div>
 
             {invoicesLoading ? (
