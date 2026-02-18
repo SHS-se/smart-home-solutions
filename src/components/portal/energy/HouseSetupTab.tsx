@@ -14,7 +14,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { formatPower } from '@/lib/energy-units';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import DeviceAddEditDialog from './DeviceAddEditDialog';
+import DeviceInstanceDialog from './DeviceInstanceDialog';
 
 const ENERGY_SEMANTIC_KEYS = [
   'dwelling_type', 'year_built', 'heated_area_m2', 'occupants',
@@ -66,16 +66,16 @@ interface DeviceWithTemplate {
   name: string;
   device_template_id: string;
   quantity: number;
-  max_power_override_w: number | null;
+  field_values: Record<string, any>;
   controllable: boolean;
   shiftable: boolean;
   priority: number;
   device_templates: {
     display_name: string;
-    make: string;
-    model: string;
     device_kind: string;
-    max_electrical_power_w: number;
+    device_types: {
+      display_name: string;
+    } | null;
   };
 }
 
@@ -169,8 +169,8 @@ const HouseSetupTab: React.FC<HouseSetupTabProps> = ({ customerId, homeId }) => 
     if (!homeId) { setDevices([]); return; }
     setDevicesLoading(true);
     const { data } = await supabase
-      .from('energy_devices')
-      .select('id, name, device_template_id, quantity, max_power_override_w, controllable, shiftable, priority, device_templates(display_name, make, model, device_kind, max_electrical_power_w)')
+      .from('device_instances')
+      .select('id, name, device_template_id, quantity, field_values, controllable, shiftable, priority, device_templates(display_name, device_kind, device_types(display_name))')
       .eq('home_id', homeId)
       .order('priority');
     if (data) setDevices(data as unknown as DeviceWithTemplate[]);
@@ -181,7 +181,7 @@ const HouseSetupTab: React.FC<HouseSetupTabProps> = ({ customerId, homeId }) => 
 
   const handleDeleteDevice = async (deviceId: string) => {
     if (!confirm(t('Ta bort enhet?', 'Delete device?'))) return;
-    await supabase.from('energy_devices').delete().eq('id', deviceId);
+    await supabase.from('device_instances').delete().eq('id', deviceId);
     fetchDevices();
   };
 
@@ -457,8 +457,11 @@ const HouseSetupTab: React.FC<HouseSetupTabProps> = ({ customerId, homeId }) => 
                 {devices.map(d => (
                   <TableRow key={d.id}>
                     <TableCell className="font-medium">{d.name}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{d.device_templates.display_name}</TableCell>
-                    <TableCell className="text-right">{formatPower(d.max_power_override_w ?? d.device_templates.max_electrical_power_w).display}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {d.device_templates.display_name}
+                      <Badge variant="outline" className="ml-1 text-xs">{d.device_templates.device_types?.display_name || d.device_templates.device_kind}</Badge>
+                    </TableCell>
+                    <TableCell className="text-right">{formatPower(Number(d.field_values?.max_power_w) || 0).display}</TableCell>
                     <TableCell className="text-center">{d.quantity}</TableCell>
                     <TableCell>
                       <div className="flex gap-1">
@@ -479,11 +482,11 @@ const HouseSetupTab: React.FC<HouseSetupTabProps> = ({ customerId, homeId }) => 
       </Card>
 
       {homeId && (
-        <DeviceAddEditDialog
+        <DeviceInstanceDialog
           open={dialogOpen}
           onOpenChange={setDialogOpen}
           homeId={homeId}
-          device={editingDevice}
+          device={editingDevice as any}
           onSaved={fetchDevices}
         />
       )}

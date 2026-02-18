@@ -41,22 +41,24 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
     if (!homeId) return;
     setRunning(true);
 
-    // Load devices for this home
+    // Load device instances for this home
     const { data: devices } = await supabase
-      .from('energy_devices')
-      .select('id, name, device_template_id, quantity, max_power_override_w, controllable, shiftable, priority, device_templates(id, display_name, make, model, device_kind, max_electrical_power_w, scop, specs)')
+      .from('device_instances')
+      .select('id, name, device_template_id, quantity, field_values, controllable, shiftable, priority, device_templates(id, display_name, device_kind, device_type_id, device_types(key, simulation_model_key))')
       .eq('home_id', homeId);
 
-    const deviceSnapshot = (devices || []).map(d => ({
-      energy_device_id: d.id,
+    const deviceSnapshot = (devices || []).map((d: any) => ({
+      instance_id: d.id,
       device_template_id: d.device_template_id,
       name: d.name,
       quantity: d.quantity,
-      max_power_override_w: d.max_power_override_w,
+      field_values: d.field_values,
       controllable: d.controllable,
       shiftable: d.shiftable,
       priority: d.priority,
-      template: d.device_templates,
+      type_key: d.device_templates?.device_types?.key,
+      simulation_model_key: d.device_templates?.device_types?.simulation_model_key,
+      template_display_name: d.device_templates?.display_name,
     }));
 
     const inputsSnapshot = {
