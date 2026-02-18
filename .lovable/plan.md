@@ -1,82 +1,137 @@
-# Show Subscription Status for Staff + Add Invoice Search/Filter
+
+# Device Modeling Hierarchy Refactor: Type, Template, Instance
 
 ## Overview
 
-Two changes to the Billing page:
+Introduce a three-level device hierarchy replacing the current flat "device_kind" approach:
 
-1. Show the subscription status card when staff views a customer's billing page (read-only, no manage/checkout buttons)
-2. Add a search and filter bar above the invoices table, matching the Quotes page pattern
+- **Device Type** -- defines schema, simulation model, and allowed profile kinds (staff-managed)
+- **Device Template** -- catalog entry belonging to one type, with optional field defaults (staff-managed, customer-readable)
+- **Device Instance** -- concrete device with actual values, assigned to a home (customer-created)
 
----
-
-## 1. Subscription Status for Staff View
-
-### Problem
-
-The `check-subscription` edge function currently uses the **logged-in user's email** to look up Stripe. When staff views a customer's billing page, it checks the staff's own subscription -- not the customer's.
-
-### Solution
-
-- Modify the `check-subscription` edge function to accept an optional `customer_id` in the request body
-- When provided, verify the caller is staff (via a `contacts` table lookup with `is_staff = true`), then look up the customer's `billing_email` or `email` from the `customers` table to query Stripe
-- On the frontend, when `isStaffView` is true, call `check-subscription` with the customer's ID
-- Show the subscription card but **without** the "Manage subscription", "Resume subscription", or "Subscribe now" buttons
-- The card will be read-only: just the status badge (Active / Cancels / No subscription), renewal date, and price
-
-### Edge Function Changes (`supabase/functions/check-subscription/index.ts`)
-
-- Accept optional `customer_id` from request body
-- If `customer_id` is provided:
-  - Verify caller is staff by checking `contacts.is_staff`
-  - Look up customer email from `customers` table
-  - Use that email for the Stripe lookup instead of the auth user's email
-- If not provided: existing behavior (use auth user's email)
-
-### Frontend Changes (`src/pages/portal/Billing.tsx`)
-
-- Remove the `if (isStaffView) { setSubscriptionLoading(false); return; }` early exit in `checkSubscription()`
-- When `isStaffView`, pass `{ customer_id: resolvedCustomerId }` to the edge function call
-- Change the subscription card from `{!isStaffView && (...)}` to always render
-- Inside the card, hide the checkout/manage buttons when `isStaffView`
-- Adjust the card description text for staff ("Kundens prenumerationsstatus" / "Customer's subscription status")
+No data exists in Live for these tables, so all changes are safe.
 
 ---
 
-## 2. Invoice Search and Filter Bar
+## What Changes
 
-### Pattern
+### For Staff
+- New "Device Types" management section (create/edit types with field schemas)
+- Template form now selects a type first, then shows dynamic fields
+- Existing template management adapts to the new structure
 
-Match the existing Quotes page: a search input + a dropdown filter, placed between the card header and the table.
-
-### Filter Options
-
-- **Visa alla** / Show all (standard): no status filter (only staff should see invoices in all states incl `draft`and `void.`Customers should only see `open`, `paid`, `overdue`)
-- `open`
-- `paid`
-- `overdue`
-- `void`(staff only)
-- `draft`(staff only)
-  &nbsp;
-
-### Search
-
-- Search by invoice number (text match)
-- Client-side filtering on the already-fetched invoices array
-
-### Frontend Changes (`src/pages/portal/Billing.tsx`)
-
-- Add `searchQuery` and `viewFilter` state variables
-- Add a `filteredInvoices` memo that applies status filter + search before sorting
-- Update `sortedInvoices` to sort `filteredInvoices` instead of raw `invoices`
-- Add the search input + select dropdown UI between the CardHeader and the table, matching the Quotes page layout (Search icon, `pl-9`, `max-w-md`, select with `w-[200px]`)
+### For Customers
+- "Add Device" flow now renders a dynamic form based on the template's type schema
+- Device instances store concrete values in a `field_values` JSON column
+- Read-only access to types and templates (unchanged)
 
 ---
 
 ## Technical Details
 
-### Files Modified
+### Phase 1: Database Migrations
 
-- `supabase/functions/check-subscription/index.ts` -- add optional `customer_id` param with staff verification
-- `src/pages/portal/Billing.tsx` -- subscription card visibility, search/filter UI and logic
+**1a. Create `device_types` table**
 
-### No New Files Created
+```text
+Columns:
+  id          uuid PK
+  key         text UNIQUE NOT NULL (e.g. 'air_to_air_heat_pump')
+  display_name text NOT NULL
+  field_schema jsonb NOT NULL (array of field definitions)
+  supported_profile_kinds jsonb NOT NULL DEFAULT '[]'
+  simulation_model_key text NOT NULL
+  created_at  timestamptz DEFAULT now()
+
+RLS:
+  Staff: full CRUD
+  Customers: SELECT only (authenticated)
+```
+
+**1b. Seed initial device types** (6 types matching existing device_kinds):
+- air_to_air_heat_pump (fields: make, model, max_power_w, scop, cop, min_temp_c; profiles: cop_curve, capacity_curve; sim: heat_pump_aa)
+- direct_electric_heater (fields: make, model, max_power_w; sim: resistive)
+- ev_charger (fields: make, model, max_power_w; sim: ev_charger)
+- appliance (fields: make, model, max_power_w; sim: fixed_schedule)
+- base_load (fields: make, model, max_power_w; sim: constant)
+- hot_water_heater (fields: make, model, max_power_w; sim: hot_water)
+
+**1c. Add `device_type_id` FK to `device_templates`**
+
+- Add column `device_type_id uuid REFERENCES device_types(id)`
+- Add column `field_defaults jsonb NOT NULL DEFAULT '{}'`
+- Backfill from existing `device_kind` values
+- Make `device_type_id` NOT NULL after backfill
+
+**1d. Create `device_instances` table** (replaces `energy_devices`)
+
+```text
+Columns:
+  id                  uuid PK
+  home_id             uuid NOT NULL FK -> homes(id) ON DELETE CASCADE
+  device_template_id  uuid NOT NULL FK -> device_templates(id)
+  name                text NOT NULL
+  quantity            int NOT NULL DEFAULT 1
+  field_values        jsonb NOT NULL DEFAULT '{}'
+  controllable        boolean NOT NULL DEFAULT false
+  shiftable           boolean NOT NULL DEFAULT false
+  priority            int NOT NULL DEFAULT 0
+  created_at          timestamptz DEFAULT now()
+  updated_at          timestamptz DEFAULT now()
+
+RLS:
+  Staff: full CRUD
+  Customers: CRUD own (via home_id -> homes.customer_id)
+```
+
+**1e. Migrate data from `energy_devices` to `device_instances`**
+
+- Copy all rows, building `field_values` from the linked template's current values (make, model, max_power_w = template's max_electrical_power_w, scop from template, plus any max_power_override_w)
+- Preserve IDs so existing `model_runs.device_snapshot` references remain valid
+
+**1f. Drop `energy_devices` table** (after code migration complete)
+
+### Phase 2: Frontend Changes
+
+**Files to create:**
+- `src/components/portal/energy/DeviceTypesManager.tsx` -- staff-only CRUD for device types with field_schema editor
+- `src/components/portal/energy/DeviceInstanceDialog.tsx` -- dynamic form that renders fields from the type's field_schema, pre-filled with template defaults
+
+**Files to modify:**
+- `src/pages/portal/EnergyModeling.tsx` -- add "Device Types" tab for staff-only view
+- `src/components/portal/energy/DeviceTemplatesTab.tsx` -- refactor to select device_type first, show dynamic fields from type schema, save field_defaults
+- `src/components/portal/energy/DeviceManagerTab.tsx` -- query `device_instances` instead of `energy_devices`, show type badge, display key field_values
+- `src/components/portal/energy/DeviceAddEditDialog.tsx` -- replace with `DeviceInstanceDialog` that renders dynamic form from type schema
+- `src/components/portal/energy/HouseSetupTab.tsx` -- update all `energy_devices` references to `device_instances`, use field_values for display
+- `src/components/portal/energy/SimulatorTab.tsx` -- query `device_instances`, build device_snapshot from field_values + type key
+
+### Phase 3: Validation
+
+- On instance save: validate all required fields from type schema exist in `field_values` and match expected types
+- On template save: validate `field_defaults` keys match type schema
+
+### Phase 4: Simulator Integration
+
+- Update snapshot building to include: instance id, template id, type key, resolved field_values, quantity
+- Load profiles only if the template's type lists that profile_kind in `supported_profile_kinds`
+
+---
+
+## Migration Sequence
+
+1. Create `device_types` table + seed data
+2. Alter `device_templates` to add `device_type_id` + backfill
+3. Create `device_instances` table
+4. Migrate `energy_devices` data to `device_instances`
+5. Update all frontend code to use new tables
+6. Drop `energy_devices` (separate migration after code is stable)
+
+---
+
+## MVP Guardrails
+
+- Seed 6 device types matching existing device_kinds
+- Keep all 6 existing templates, linked to their types
+- Field schema validation: presence + type checks only (no range validation yet)
+- No customer-facing "create device type" UI
+- Existing `device_template_profiles` table stays as-is, just filtered by `supported_profile_kinds`
