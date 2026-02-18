@@ -1,13 +1,16 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Loader2, Search } from 'lucide-react';
+import { Loader2, Search, Plus } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
 import { formatPower } from '@/lib/energy-units';
 import PerformanceCurveChart from './PerformanceCurveChart';
+import DeviceInstanceDialog from './DeviceInstanceDialog';
 
 const TYPE_LABELS: Record<string, { sv: string; en: string }> = {
   air_to_air_heat_pump: { sv: 'Luft-luft VP', en: 'Air-Air HP' },
@@ -62,6 +65,7 @@ const DeviceManagerTab: React.FC<DeviceManagerTabProps> = ({ customerId, homeId 
   const [search, setSearch] = useState('');
   const [kindFilter, setKindFilter] = useState<string | null>(null);
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateEntry | null>(null);
+  const [addDialogOpen, setAddDialogOpen] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -135,6 +139,24 @@ const DeviceManagerTab: React.FC<DeviceManagerTabProps> = ({ customerId, homeId 
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input value={search} onChange={e => setSearch(e.target.value)} placeholder={t('Sök enheter...', 'Search devices...')} className="pl-9" />
           </div>
+          {homeId ? (
+            <Button size="sm" onClick={() => setAddDialogOpen(true)}>
+              <Plus className="w-4 h-4 mr-1" />
+              {t('Lägg till', 'Add Device')}
+            </Button>
+          ) : (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span>
+                  <Button size="sm" disabled>
+                    <Plus className="w-4 h-4 mr-1" />
+                    {t('Lägg till', 'Add Device')}
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>{t('Välj ett hem först', 'Select a home first')}</TooltipContent>
+            </Tooltip>
+          )}
           <div className="flex gap-1">
             <Badge variant={viewMode === 'my' ? 'default' : 'outline'} className="cursor-pointer" onClick={() => setViewMode('my')}>
               {t('Mina', 'My Devices')}
@@ -226,6 +248,15 @@ const DeviceManagerTab: React.FC<DeviceManagerTabProps> = ({ customerId, homeId 
           </Card>
         )}
       </div>
+
+      {homeId && (
+        <DeviceInstanceDialog
+          open={addDialogOpen}
+          onOpenChange={setAddDialogOpen}
+          homeId={homeId}
+          onSaved={fetchData}
+        />
+      )}
     </div>
   );
 };
