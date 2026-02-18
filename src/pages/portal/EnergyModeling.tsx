@@ -68,10 +68,12 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
             <TabsList>
               <TabsTrigger value="device-types">{t('Enhetstyper', 'Device Types')}</TabsTrigger>
               <TabsTrigger value="device-manager">{t('Enhetsmallar', 'Device Templates')}</TabsTrigger>
+              <TabsTrigger value="device-instances">{t('Enhetshanterare', 'Device Manager')}</TabsTrigger>
               <TabsTrigger value="calibration">{t('Kalibrering', 'Calibration')}</TabsTrigger>
             </TabsList>
             <TabsContent value="device-types"><DeviceTypesManager /></TabsContent>
             <TabsContent value="device-manager"><DeviceTemplatesTab /></TabsContent>
+            <TabsContent value="device-instances"><DeviceManagerTab customerId="" homeId={null} /></TabsContent>
             <TabsContent value="calibration"><CalibrationTab /></TabsContent>
           </Tabs>
         ) : (

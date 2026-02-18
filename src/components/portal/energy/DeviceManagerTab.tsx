@@ -74,17 +74,25 @@ const DeviceManagerTab: React.FC<DeviceManagerTabProps> = ({ customerId, homeId 
       .order('display_name');
     if (templates) setAllTemplates(templates as unknown as TemplateEntry[]);
 
-    // Fetch my device instances
-    const { data: homes } = await supabase
-      .from('homes')
-      .select('id')
-      .eq('customer_id', customerId);
-    if (homes && homes.length > 0) {
-      const homeIds = homes.map(h => h.id);
+    // Fetch device instances
+    if (customerId) {
+      const { data: homes } = await supabase
+        .from('homes')
+        .select('id')
+        .eq('customer_id', customerId);
+      if (homes && homes.length > 0) {
+        const homeIds = homes.map(h => h.id);
+        const { data: instances } = await supabase
+          .from('device_instances')
+          .select('id, name, field_values, quantity, device_template_id, device_templates(display_name, device_kind, device_types(key, display_name))')
+          .in('home_id', homeIds);
+        if (instances) setMyInstances(instances as unknown as DeviceInstanceEntry[]);
+      }
+    } else {
+      // Staff global view: fetch all instances
       const { data: instances } = await supabase
         .from('device_instances')
-        .select('id, name, field_values, quantity, device_template_id, device_templates(display_name, device_kind, device_types(key, display_name))')
-        .in('home_id', homeIds);
+        .select('id, name, field_values, quantity, device_template_id, device_templates(display_name, device_kind, device_types(key, display_name))');
       if (instances) setMyInstances(instances as unknown as DeviceInstanceEntry[]);
     }
     setLoading(false);
