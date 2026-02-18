@@ -138,15 +138,16 @@ const DeviceInstanceDialog: React.FC<Props> = ({ open, onOpenChange, customerId,
         }).eq('id', device.id);
         if (error) throw error;
       } else {
-        const { error } = await supabase.from('device_instances').insert({
-          customer_id: customerId,
+        const insertData: any = {
           device_template_id: selectedTemplate.id,
           name: name.trim(),
           field_values: fieldValues,
           controllable,
           shiftable,
           priority,
-        });
+        };
+        if (customerId) insertData.customer_id = customerId;
+        const { error } = await supabase.from('device_instances').insert(insertData);
         if (error) throw error;
       }
       toast({ title: t('Sparat!', 'Saved!') });

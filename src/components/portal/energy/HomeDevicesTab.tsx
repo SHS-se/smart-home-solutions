@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Loader2, Search, Plus, Trash2, Pencil, ArrowRight } from 'lucide-react';
+import { Loader2, Search, Plus, Trash2, Pencil, ArrowRight, Globe } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -14,7 +14,7 @@ import DeviceInstanceDialog from './DeviceInstanceDialog';
 interface DeviceInstanceEntry {
   id: string;
   name: string;
-  customer_id: string;
+  customer_id: string | null;
   field_values: Record<string, any>;
   device_template_id: string;
   controllable: boolean;
@@ -55,12 +55,12 @@ const HomeDevicesTab: React.FC<HomeDevicesTabProps> = ({ customerId, homeId }) =
 
   const fetchData = useCallback(async () => {
     setLoading(true);
-    // Fetch customer's device instances
+    // Fetch customer's own + global device instances
     if (customerId) {
       const { data: instances } = await supabase
         .from('device_instances')
         .select('id, name, customer_id, field_values, device_template_id, controllable, shiftable, priority, device_templates(display_name, device_kind, device_types(key, display_name))')
-        .eq('customer_id', customerId)
+        .or(`customer_id.eq.${customerId},customer_id.is.null`)
         .order('name');
       if (instances) setMyDevices(instances as unknown as DeviceInstanceEntry[]);
     }
@@ -201,7 +201,12 @@ const HomeDevicesTab: React.FC<HomeDevicesTabProps> = ({ customerId, homeId }) =
                 ) : (
                   filteredDevices.map(d => (
                     <TableRow key={d.id}>
-                      <TableCell className="font-medium">{d.name}</TableCell>
+                      <TableCell className="font-medium">
+                        <div className="flex items-center gap-1.5">
+                          {d.customer_id === null && <Globe className="w-3.5 h-3.5 text-primary shrink-0" />}
+                          {d.name}
+                        </div>
+                      </TableCell>
                       <TableCell>
                         <Badge variant="outline" className="text-xs">
                           {d.device_templates?.device_types?.display_name || d.device_templates?.device_kind}

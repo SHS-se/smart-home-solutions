@@ -7,6 +7,7 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import DeviceTemplatesTab from '@/components/portal/energy/DeviceTemplatesTab';
 import DeviceTypesManager from '@/components/portal/energy/DeviceTypesManager';
 import CalibrationTab from '@/components/portal/energy/CalibrationTab';
+import GlobalDeviceManagerTab from '@/components/portal/energy/GlobalDeviceManagerTab';
 
 const DeviceCatalog: React.FC = () => {
   const { isStaff } = useAuth();
@@ -29,6 +30,7 @@ const DeviceCatalog: React.FC = () => {
             <TabsTrigger value="templates">{t('Mallar', 'Templates')}</TabsTrigger>
             {isStaff && (
               <>
+                <TabsTrigger value="devices">{t('Enheter', 'Devices')}</TabsTrigger>
                 <TabsTrigger value="device-types">{t('Enhetstyper', 'Device Types')}</TabsTrigger>
                 <TabsTrigger value="calibration">{t('Kalibrering', 'Calibration')}</TabsTrigger>
               </>
@@ -37,6 +39,7 @@ const DeviceCatalog: React.FC = () => {
           <TabsContent value="templates"><DeviceTemplatesTab /></TabsContent>
           {isStaff && (
             <>
+              <TabsContent value="devices"><GlobalDeviceManagerTab /></TabsContent>
               <TabsContent value="device-types"><DeviceTypesManager /></TabsContent>
               <TabsContent value="calibration"><CalibrationTab /></TabsContent>
             </>
