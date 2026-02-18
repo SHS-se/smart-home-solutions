@@ -1,221 +1,116 @@
 
 
-# Device Catalog, Customer-Owned Instances, and Home Assignments Refactor
+# Add Global Device Manager to Device Catalog
 
-## Overview
+## Summary
 
-This refactor restructures the device architecture into three clear ownership layers: a global **Device Catalog** (templates), customer-owned **Device Instances**, and home-scoped **Device Assignments**. The Device Catalog becomes a top-level portal module, and device-to-home assignment moves to a dedicated "Home Devices" tab in Energy Modeling.
+Add a "Device Manager" tab to the Device Catalog page that shows a global list of device instances (not tied to any customer). Staff can create, edit, and delete global devices. Customers can browse global devices and add them to their homes alongside their own custom devices. Staff can also "promote" a customer-created device to a global device.
 
 ---
 
-## 1. Database Migration
+## 1. Database Changes
 
-### 1.1 Alter `device_instances`: remove `home_id`, add `customer_id`
+### 1.1 Make `device_instances.customer_id` nullable
 
-The current `device_instances` table has `home_id` as a required FK. We need to:
+Currently `customer_id` is `NOT NULL`. Global devices will have `customer_id = NULL`.
 
-- Add `customer_id uuid NOT NULL` FK to `customers.id` ON DELETE CASCADE
-- Backfill `customer_id` from `homes.customer_id` via the existing `home_id`
-- Drop the `home_id` column (after creating the assignments table and migrating data)
-- Remove `quantity` column (quantity moves to the assignment)
-- Drop columns: `controllable`, `shiftable`, `priority` (these move to the assignment level or stay as instance-level defaults -- per the spec, they stay on the instance)
-
-Actually, per the spec, `device_instances` keeps: `id`, `customer_id`, `device_template_id`, `name`, `field_values`, `created_at`, `updated_at`. The scheduling flags (`controllable`, `shiftable`, `priority`) can remain on the instance as defaults.
-
-Migration steps:
-1. Add `customer_id` column (nullable initially)
-2. Backfill from `homes` join
-3. Make `customer_id` NOT NULL
-4. Create `home_device_assignments` table (see 1.2)
-5. Migrate existing rows: for each `device_instance`, create an assignment row linking `home_id` to the instance with the existing `quantity`
-6. Drop `home_id` column from `device_instances`
-7. Remove `quantity` from `device_instances` (quantity lives on assignment now)
-
-### 1.2 Create `home_device_assignments` table
-
-```
-home_device_assignments
-  id            uuid PK default gen_random_uuid()
-  home_id       uuid NOT NULL FK -> homes.id ON DELETE CASCADE
-  device_instance_id uuid NOT NULL FK -> device_instances.id ON DELETE CASCADE
-  quantity      int NOT NULL default 1
-  created_at    timestamptz NOT NULL default now()
-  UNIQUE(home_id, device_instance_id)
-```
-
-Validation trigger: `CHECK(quantity > 0)` -- use a trigger instead of CHECK per project conventions.
-
-### 1.3 Cross-customer protection trigger
-
-Create a trigger on `home_device_assignments` INSERT/UPDATE that verifies:
 ```sql
-device_instances.customer_id = homes.customer_id
+ALTER TABLE public.device_instances ALTER COLUMN customer_id DROP NOT NULL;
 ```
-Raises an exception if mismatched.
 
-### 1.4 RLS Policies
+### 1.2 Update the cross-customer trigger
 
-**device_instances** (updated):
-- Customers: CRUD where `customer_id = get_customer_id_for_user(auth.uid())`
-- Staff: full CRUD
+The `validate_assignment_customer_match` trigger currently checks `v_dc IS DISTINCT FROM v_hc`, which would block global devices (`v_dc = NULL`). Update it to allow global devices (NULL customer_id) to be assigned to any home:
 
-**home_device_assignments**:
-- Customers: CRUD via join `home_id -> homes.customer_id = get_customer_id_for_user(auth.uid())`
-- Staff: full CRUD
+```sql
+-- Only block if device has a customer_id AND it doesn't match the home's customer_id
+IF v_dc IS NOT NULL AND v_dc IS DISTINCT FROM v_hc THEN
+  RAISE EXCEPTION '...';
+END IF;
+```
 
-### 1.5 Drop old `energy_devices` table
+### 1.3 Update RLS policies on `device_instances`
 
-Since the plan.md marks this as pending, include it in this migration.
+- Customers can SELECT global devices (`customer_id IS NULL`) in addition to their own
+- Staff retains full CRUD (no change needed)
+- Customer INSERT/UPDATE/DELETE policies remain scoped to their own devices only
 
----
+### 1.4 Update RLS on `home_device_assignments`
 
-## 2. New Route and Page: Device Catalog
-
-### 2.1 Route: `/portal/device-catalog`
-
-New page `src/pages/portal/DeviceCatalog.tsx` using `PortalLayout`.
-
-### 2.2 Tabs
-
-- **Templates** (visible to all): Browse device templates with type filter, search by make/model. Read-only for customers.
-- **Device Types** (staff-only): Reuse existing `DeviceTypesManager` component.
-- **Calibration** (staff-only): Reuse existing `CalibrationTab` component.
-
-This consolidates the staff-only tabs currently in the Energy Modeling page.
-
-### 2.3 Staff customer-view route
-
-Add `/portal/customers/:customerId/device-catalog` with thin wrapper, though since the catalog is global (not customer-specific), this may just link to `/portal/device-catalog`. The dashboard card will link to the global catalog route.
+No changes needed -- the existing policies check home ownership, which is correct regardless of whether the device is global or customer-owned.
 
 ---
 
-## 3. Dashboard Card
+## 2. Device Catalog Page -- Add "Device Manager" Tab
 
-### 3.1 Update `CustomerDashboardCards.tsx`
+### 2.1 New tab in `DeviceCatalog.tsx`
 
-Add a new card:
-- Title: "Device Catalog" / "Enhetskatalog"
-- Icon: `Cpu` or `Box` from lucide
-- Path: `${basePath}/device-catalog` (for customers: `/portal/device-catalog`)
-- Description: "Browse the shared device catalog and available device models."
+Add a **"Device Manager"** tab (staff-only) between Templates and Device Types:
 
----
+```
+Tabs: Templates | Device Manager (staff) | Device Types (staff) | Calibration (staff)
+```
 
-## 4. Energy Modeling UI Changes
+### 2.2 New component: `GlobalDeviceManagerTab.tsx`
 
-### 4.1 Remove staff-only Device Types/Templates/Calibration tabs
+A staff-only component that shows all device instances in a master-detail layout similar to the screenshot:
 
-These move to the Device Catalog page. The staff Energy Modeling view will show the same tabs as customers when viewing a specific customer.
+**Left panel (device list):**
+- Search bar
+- Toggle: "My Devices" (customer-owned) / "All Devices" (global + customer-owned) / "Global" (customer_id IS NULL)
+- Device type filter badges (All Types, Air-Air HP, Appliance, etc.)
+- Table: Make, Model, Type badge, Power
+- Clicking a row selects it for detail view
 
-### 4.2 Replace "Device Manager" tab with "Home Devices"
-
-Rename and refactor the tab:
-
-**Customer/Staff tabs become:**
-- ROI
-- Home Setup
-- **Home Devices** (new, replaces Device Manager)
-- Simulator
-- Tariff and Pricing
-
-### 4.3 Staff global Energy Modeling page
-
-When staff navigate to `/portal/energy-modeling` (no customer context), redirect to Device Catalog or show a prompt to select a customer. Since the catalog tabs moved, the global page can simply show a message directing staff to use per-customer views.
+**Right panel (device detail):**
+- When a device is selected, show its full details (name, field_values, template info)
+- Staff actions: Edit, Delete
+- For customer-owned devices: "Promote to Global" button (sets `customer_id = NULL`)
+- "+ Add Device" button that opens `DeviceInstanceDialog` with `customerId = null` for global devices
 
 ---
 
-## 5. Home Devices Tab (new component)
+## 3. Update HomeDevicesTab (Energy Modeling)
 
-### 5.1 `HomeDevicesTab.tsx`
+### 3.1 Show global devices alongside customer devices
 
-Layout (two-panel):
+In the "My Devices" left panel, fetch both:
+- `device_instances` where `customer_id = customerId` (customer's own)
+- `device_instances` where `customer_id IS NULL` (global catalog)
 
-**Left panel: "My Devices"** (`device_instances` for this customer)
-- Filter by device type, search
-- "New Device" button opens `DeviceInstanceDialog` (modified to use `customer_id` instead of `home_id`)
-- Each row shows: name, template, type badge, key field values
-- Actions: Edit, Delete, "Add to Home" button
+Combine and display with a badge distinguishing "Global" vs "My Device".
 
-**Right panel: "Devices in This Home"** (`home_device_assignments` for selected `home_id`)
-- Table: device name, template, field values summary, quantity
-- Actions: Edit quantity, Remove assignment
-- If no home selected, show placeholder message
+### 3.2 "Add Device" creates a customer-owned instance
 
-### 5.2 Assign flow
-
-- "Add to Home" on a device instance creates a `home_device_assignments` row with quantity=1
-- If already assigned (unique constraint), show toast or increment quantity
-- Quantity editable inline
+The existing "New Device" button continues to create customer-owned instances (with `customer_id = customerId`). Global devices are created only from the Device Catalog.
 
 ---
 
-## 6. Component Changes
+## 4. Update DeviceInstanceDialog
 
-### 6.1 `DeviceInstanceDialog.tsx`
+### 4.1 Support null customerId
 
-- Change `homeId` prop to `customerId: string`
-- Insert uses `customer_id` instead of `home_id`
-- Remove `quantity` field from the form (quantity is per-assignment now)
-- Keep `controllable`, `shiftable`, `priority` fields
+When `customerId` is empty/null (staff creating global device from Device Catalog), insert with `customer_id: null`.
 
-### 6.2 `HouseSetupTab.tsx`
-
-- Remove the entire "Devices in This Home" section (lines 428-492)
-- Remove device-related state and fetch logic (lines 103-106, 168-186)
-- Remove `DeviceInstanceDialog` import and usage
-
-### 6.3 `DeviceManagerTab.tsx`
-
-- Rename/replace with `HomeDevicesTab.tsx` or refactor in-place
-- Adapt to query `device_instances` by `customer_id` (left panel) and `home_device_assignments` by `home_id` (right panel)
-
-### 6.4 `SimulatorTab.tsx`
-
-- Change device loading: query `home_device_assignments` for the home, join to `device_instances` for field_values, join to templates/types
-- `device_snapshot` now includes assignment `quantity` from the join table instead of from the instance
-
-### 6.5 `EnergyModeling.tsx`
-
-- Remove staff-only tabs (Device Types, Device Templates, Device Manager, Calibration) -- these move to Device Catalog
-- Staff global view: show message or redirect
-- Customer/staff-per-customer view: show ROI, Home Setup, Home Devices, Simulator, Tariff
-
-### 6.6 `DeviceTemplatesTab.tsx`
-
-- Move to Device Catalog page (already a standalone component, just re-mount it there)
+When `customerId` is set (customer or staff-per-customer context), insert with `customer_id: customerId` as before.
 
 ---
 
-## 7. Routing Changes (`App.tsx`)
-
-Add:
-- `/portal/device-catalog` -> `DeviceCatalog`
-- (Optional) `/portal/customers/:customerId/device-catalog` -> redirect or wrapper
-
----
-
-## 8. File Summary
+## 5. File Changes Summary
 
 | File | Action |
 |------|--------|
-| Migration SQL | Create: add customer_id to device_instances, create home_device_assignments, triggers, RLS, drop home_id, drop energy_devices |
-| `src/pages/portal/DeviceCatalog.tsx` | **Create**: new page with Templates/Types/Calibration tabs |
-| `src/components/portal/energy/HomeDevicesTab.tsx` | **Create**: two-panel My Devices + Home Assignments |
-| `src/components/portal/energy/DeviceInstanceDialog.tsx` | **Modify**: use customer_id, remove quantity |
-| `src/components/portal/energy/HouseSetupTab.tsx` | **Modify**: remove device section |
-| `src/components/portal/energy/SimulatorTab.tsx` | **Modify**: load via assignments join |
-| `src/pages/portal/EnergyModeling.tsx` | **Modify**: replace tabs, remove staff-only catalog tabs |
-| `src/components/portal/CustomerDashboardCards.tsx` | **Modify**: add Device Catalog card |
-| `src/App.tsx` | **Modify**: add device-catalog route |
-| `.lovable/plan.md` | **Update**: mark completed items |
-| `src/components/portal/energy/DeviceAddEditDialog.tsx` | **Delete**: dead code |
+| Migration SQL | Make `customer_id` nullable, update trigger, update RLS |
+| `src/components/portal/energy/GlobalDeviceManagerTab.tsx` | **Create**: staff-only global device list with search, type filters, detail panel |
+| `src/pages/portal/DeviceCatalog.tsx` | **Modify**: add Device Manager tab |
+| `src/components/portal/energy/HomeDevicesTab.tsx` | **Modify**: fetch global devices alongside customer devices |
+| `src/components/portal/energy/DeviceInstanceDialog.tsx` | **Modify**: support null customerId for global devices |
 
 ---
 
-## Technical Notes
+## 6. Technical Details
 
-- The cross-customer trigger is critical: it prevents staff or application bugs from assigning Customer A's device to Customer B's home.
-- The `UNIQUE(home_id, device_instance_id)` constraint means one assignment row per device per home; multiplicity is expressed via the `quantity` column.
-- Existing `device_instances` data (8 rows) will be migrated: `customer_id` backfilled from `homes`, then assignment rows created preserving the original `home_id` + `quantity`.
-- The `controllable`, `shiftable`, `priority` fields stay on `device_instances` as instance-level properties (not per-assignment).
-
+- The "Promote to Global" action simply runs `UPDATE device_instances SET customer_id = NULL WHERE id = ?`. Existing home assignments remain valid because the trigger allows NULL customer_id.
+- Global devices can be assigned to any customer's home without violating the cross-customer check.
+- The UI distinguishes global vs customer-owned with a subtle badge or icon.
+- When a customer creates a device from a template, it remains customer-owned unless staff promotes it.
