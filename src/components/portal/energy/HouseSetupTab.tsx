@@ -1,12 +1,11 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
-import { Loader2, Home, ChevronDown, ChevronUp, Plus, Pencil, Trash2 } from 'lucide-react';
+import { Loader2, Home, ChevronDown, ChevronUp } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -14,7 +13,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { formatPower } from '@/lib/energy-units';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import DeviceInstanceDialog from './DeviceInstanceDialog';
+
 
 const ENERGY_SEMANTIC_KEYS = [
   'dwelling_type', 'year_built', 'heated_area_m2', 'occupants',
@@ -61,23 +60,6 @@ function estimateThermalClass(yearBuilt: number, dwellingType: string): string {
   return 'medium';
 }
 
-interface DeviceWithTemplate {
-  id: string;
-  name: string;
-  device_template_id: string;
-  quantity: number;
-  field_values: Record<string, any>;
-  controllable: boolean;
-  shiftable: boolean;
-  priority: number;
-  device_templates: {
-    display_name: string;
-    device_kind: string;
-    device_types: {
-      display_name: string;
-    } | null;
-  };
-}
 
 interface HouseSetupTabProps {
   customerId: string;
@@ -100,10 +82,6 @@ const HouseSetupTab: React.FC<HouseSetupTabProps> = ({ customerId, homeId }) => 
   const [settings, setSettings] = useState<{ id: string; ua_w_per_k: number | null; thermal_capacity_class: string | null } | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const [devices, setDevices] = useState<DeviceWithTemplate[]>([]);
-  const [devicesLoading, setDevicesLoading] = useState(false);
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [editingDevice, setEditingDevice] = useState<DeviceWithTemplate | null>(null);
 
   useEffect(() => {
     if (!customerId) return;
@@ -165,25 +143,6 @@ const HouseSetupTab: React.FC<HouseSetupTabProps> = ({ customerId, homeId }) => 
     fetchData();
   }, [customerId, homeId]);
 
-  const fetchDevices = useCallback(async () => {
-    if (!homeId) { setDevices([]); return; }
-    setDevicesLoading(true);
-    const { data } = await supabase
-      .from('device_instances')
-      .select('id, name, device_template_id, quantity, field_values, controllable, shiftable, priority, device_templates(display_name, device_kind, device_types(display_name))')
-      .eq('home_id', homeId)
-      .order('priority');
-    if (data) setDevices(data as unknown as DeviceWithTemplate[]);
-    setDevicesLoading(false);
-  }, [homeId]);
-
-  useEffect(() => { fetchDevices(); }, [fetchDevices]);
-
-  const handleDeleteDevice = async (deviceId: string) => {
-    if (!confirm(t('Ta bort enhet?', 'Delete device?'))) return;
-    await supabase.from('device_instances').delete().eq('id', deviceId);
-    fetchDevices();
-  };
 
   const handleProfileValueChange = useCallback(async (key: string, newValue: unknown) => {
     setProfileValues(prev => ({ ...prev, [key]: newValue }));
@@ -425,71 +384,6 @@ const HouseSetupTab: React.FC<HouseSetupTabProps> = ({ customerId, homeId }) => 
         </Card>
       </div>
 
-      {/* Devices assigned to this home */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-base">{t('Enheter i detta hem', 'Devices in This Home')}</CardTitle>
-            <Button size="sm" onClick={() => { setEditingDevice(null); setDialogOpen(true); }}>
-              <Plus className="w-4 h-4 mr-1" /> {t('Lägg till', 'Add')}
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="p-0">
-          {devicesLoading ? (
-            <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin" /></div>
-          ) : devices.length === 0 ? (
-            <div className="text-center text-muted-foreground py-8 text-sm">
-              {t('Inga enheter tillagda ännu. Lägg till från enhetskatalogen.', 'No devices added yet. Add from the device catalog.')}
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t('Namn', 'Name')}</TableHead>
-                  <TableHead>{t('Mall', 'Template')}</TableHead>
-                  <TableHead className="text-right">{t('Effekt', 'Power')}</TableHead>
-                  <TableHead className="text-center">{t('Antal', 'Qty')}</TableHead>
-                  <TableHead className="w-[80px]"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {devices.map(d => (
-                  <TableRow key={d.id}>
-                    <TableCell className="font-medium">{d.name}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {d.device_templates.display_name}
-                      <Badge variant="outline" className="ml-1 text-xs">{d.device_templates.device_types?.display_name || d.device_templates.device_kind}</Badge>
-                    </TableCell>
-                    <TableCell className="text-right">{formatPower(Number(d.field_values?.max_power_w) || 0).display}</TableCell>
-                    <TableCell className="text-center">{d.quantity}</TableCell>
-                    <TableCell>
-                      <div className="flex gap-1">
-                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setEditingDevice(d); setDialogOpen(true); }}>
-                          <Pencil className="w-3.5 h-3.5" />
-                        </Button>
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => handleDeleteDevice(d.id)}>
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-
-      {homeId && (
-        <DeviceInstanceDialog
-          open={dialogOpen}
-          onOpenChange={setDialogOpen}
-          homeId={homeId}
-          device={editingDevice as any}
-          onSaved={fetchDevices}
-        />
-      )}
     </div>
   );
 };

@@ -36,7 +36,6 @@ interface DeviceInstance {
   id: string;
   name: string;
   device_template_id: string;
-  quantity: number;
   field_values: Record<string, any>;
   controllable: boolean;
   shiftable: boolean;
@@ -46,12 +45,12 @@ interface DeviceInstance {
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  homeId: string;
+  customerId: string;
   device?: DeviceInstance | null;
   onSaved: () => void;
 }
 
-const DeviceInstanceDialog: React.FC<Props> = ({ open, onOpenChange, homeId, device, onSaved }) => {
+const DeviceInstanceDialog: React.FC<Props> = ({ open, onOpenChange, customerId, device, onSaved }) => {
   const { t } = useLanguage();
   const { toast } = useToast();
   const [templates, setTemplates] = useState<TemplateWithType[]>([]);
@@ -60,9 +59,7 @@ const DeviceInstanceDialog: React.FC<Props> = ({ open, onOpenChange, homeId, dev
   const [search, setSearch] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateWithType | null>(null);
 
-  // Instance form state
   const [name, setName] = useState('');
-  const [quantity, setQuantity] = useState(1);
   const [fieldValues, setFieldValues] = useState<Record<string, any>>({});
   const [controllable, setControllable] = useState(false);
   const [shiftable, setShiftable] = useState(false);
@@ -91,11 +88,9 @@ const DeviceInstanceDialog: React.FC<Props> = ({ open, onOpenChange, homeId, dev
     }
   }, [open, isEditMode]);
 
-  // Edit mode: populate form from device
   useEffect(() => {
     if (device && templates.length > 0) {
       setName(device.name);
-      setQuantity(device.quantity);
       setFieldValues(device.field_values || {});
       setControllable(device.controllable);
       setShiftable(device.shiftable);
@@ -108,16 +103,13 @@ const DeviceInstanceDialog: React.FC<Props> = ({ open, onOpenChange, homeId, dev
   const handleSelectTemplate = (tpl: TemplateWithType) => {
     setSelectedTemplate(tpl);
     setName(tpl.display_name);
-    // Pre-fill with template defaults
     const defaults: Record<string, any> = { ...tpl.field_defaults };
-    // Also pre-fill make/model from template if in schema
     const schema = tpl.device_types?.field_schema?.fields || [];
     for (const field of schema) {
       if (field.key === 'make' && !defaults.make) defaults.make = tpl.make;
       if (field.key === 'model' && !defaults.model) defaults.model = tpl.model;
     }
     setFieldValues(defaults);
-    setQuantity(1);
     setPriority(5);
     setControllable(false);
     setShiftable(false);
@@ -126,7 +118,6 @@ const DeviceInstanceDialog: React.FC<Props> = ({ open, onOpenChange, homeId, dev
   const handleSave = async () => {
     if (!selectedTemplate || !name.trim()) return;
     
-    // Validate required fields
     const schema = selectedTemplate.device_types?.field_schema?.fields || [];
     for (const field of schema) {
       if (field.required && (fieldValues[field.key] === undefined || fieldValues[field.key] === '')) {
@@ -140,7 +131,6 @@ const DeviceInstanceDialog: React.FC<Props> = ({ open, onOpenChange, homeId, dev
       if (isEditMode && device) {
         const { error } = await supabase.from('device_instances').update({
           name: name.trim(),
-          quantity,
           field_values: fieldValues,
           controllable,
           shiftable,
@@ -149,10 +139,9 @@ const DeviceInstanceDialog: React.FC<Props> = ({ open, onOpenChange, homeId, dev
         if (error) throw error;
       } else {
         const { error } = await supabase.from('device_instances').insert({
-          home_id: homeId,
+          customer_id: customerId,
           device_template_id: selectedTemplate.id,
           name: name.trim(),
-          quantity,
           field_values: fieldValues,
           controllable,
           shiftable,
@@ -181,7 +170,7 @@ const DeviceInstanceDialog: React.FC<Props> = ({ open, onOpenChange, homeId, dev
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={showForm ? 'max-w-lg' : 'max-w-lg'}>
+      <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>{isEditMode ? t('Redigera enhet', 'Edit Device') : selectedTemplate ? t('Konfigurera enhet', 'Configure Device') : t('Välj enhetsmall', 'Select Template')}</DialogTitle>
         </DialogHeader>
@@ -207,7 +196,6 @@ const DeviceInstanceDialog: React.FC<Props> = ({ open, onOpenChange, homeId, dev
               <Input value={name} onChange={e => setName(e.target.value)} />
             </div>
 
-            {/* Dynamic fields from type schema */}
             {schema.map(field => (
               <div key={field.key}>
                 <Label>
@@ -227,15 +215,9 @@ const DeviceInstanceDialog: React.FC<Props> = ({ open, onOpenChange, homeId, dev
               </div>
             ))}
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>{t('Antal', 'Quantity')}</Label>
-                <Input type="number" min={1} value={quantity} onChange={e => setQuantity(Number(e.target.value) || 1)} />
-              </div>
-              <div>
-                <Label>{t('Prioritet', 'Priority')}</Label>
-                <Input type="number" min={1} max={10} value={priority} onChange={e => setPriority(Number(e.target.value) || 5)} />
-              </div>
+            <div>
+              <Label>{t('Prioritet', 'Priority')}</Label>
+              <Input type="number" min={1} max={10} value={priority} onChange={e => setPriority(Number(e.target.value) || 5)} />
             </div>
 
             <div className="flex items-center justify-between">
@@ -256,7 +238,6 @@ const DeviceInstanceDialog: React.FC<Props> = ({ open, onOpenChange, homeId, dev
             </DialogFooter>
           </div>
         ) : (
-          /* Template picker */
           <div className="space-y-3">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />

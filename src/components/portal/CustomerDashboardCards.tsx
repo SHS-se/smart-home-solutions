@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Building2, FileText, MessageSquare, ClipboardList, Home, Loader2, AlertCircle, Zap } from 'lucide-react';
+import { Building2, FileText, MessageSquare, ClipboardList, Home, Loader2, AlertCircle, Zap, Box } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useLanguage } from '@/contexts/LanguageContext';
 
@@ -43,6 +43,18 @@ const CustomerDashboardCards: React.FC<CustomerDashboardCardsProps> = ({
           </p>
           <p className="text-muted-foreground text-sm">
             {t('Uppladdade foton:', 'Photos uploaded:')} <strong>{homeProfileStats.photos}</strong>
+          </p>
+        </>
+      ),
+    },
+    {
+      title: t('Enhetskatalog', 'Device Catalog'),
+      icon: Box,
+      path: '/portal/device-catalog',
+      content: (
+        <>
+          <p className="text-muted-foreground mb-2">
+            {t('Bläddra i den delade enhetskatalogen och tillgängliga enhetsmodeller.', 'Browse the shared device catalog and available device models.')}
           </p>
         </>
       ),

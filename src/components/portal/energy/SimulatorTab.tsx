@@ -41,25 +41,28 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
     if (!homeId) return;
     setRunning(true);
 
-    // Load device instances for this home
-    const { data: devices } = await supabase
-      .from('device_instances')
-      .select('id, name, device_template_id, quantity, field_values, controllable, shiftable, priority, device_templates(id, display_name, device_kind, device_type_id, device_types(key, simulation_model_key))')
+    // Load device assignments for this home via home_device_assignments
+    const { data: assignments } = await supabase
+      .from('home_device_assignments')
+      .select('quantity, device_instances(id, name, device_template_id, field_values, controllable, shiftable, priority, device_templates(id, display_name, device_kind, device_type_id, device_types(key, simulation_model_key)))')
       .eq('home_id', homeId);
 
-    const deviceSnapshot = (devices || []).map((d: any) => ({
-      instance_id: d.id,
-      device_template_id: d.device_template_id,
-      name: d.name,
-      quantity: d.quantity,
-      field_values: d.field_values,
-      controllable: d.controllable,
-      shiftable: d.shiftable,
-      priority: d.priority,
-      type_key: d.device_templates?.device_types?.key,
-      simulation_model_key: d.device_templates?.device_types?.simulation_model_key,
-      template_display_name: d.device_templates?.display_name,
-    }));
+    const deviceSnapshot = (assignments || []).map((a: any) => {
+      const d = a.device_instances;
+      return {
+        instance_id: d.id,
+        device_template_id: d.device_template_id,
+        name: d.name,
+        quantity: a.quantity,
+        field_values: d.field_values,
+        controllable: d.controllable,
+        shiftable: d.shiftable,
+        priority: d.priority,
+        type_key: d.device_templates?.device_types?.key,
+        simulation_model_key: d.device_templates?.device_types?.simulation_model_key,
+        template_display_name: d.device_templates?.display_name,
+      };
+    });
 
     const inputsSnapshot = {
       indoor_temp_c: indoorTemp,
