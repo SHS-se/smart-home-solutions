@@ -14,106 +14,124 @@ import { useToast } from '@/hooks/use-toast';
 import { formatPower } from '@/lib/energy-units';
 import PerformanceCurveChart from './PerformanceCurveChart';
 
+interface FieldDef {
+  key: string;
+  type: 'text' | 'number';
+  required: boolean;
+  label: string;
+}
+
+interface DeviceType {
+  id: string;
+  key: string;
+  display_name: string;
+  field_schema: { fields: FieldDef[] };
+}
+
 interface DeviceTemplate {
   id: string;
   name: string;
-  category: string;
-  device_type: string;
-  make: string;
-  model: string;
   display_name: string;
   device_kind: string;
-  specs: Record<string, any>;
+  device_type_id: string;
+  field_defaults: Record<string, any>;
   max_electrical_power_w: number;
   controllable_default: boolean;
   shiftable_default: boolean;
   scop: number | null;
   min_operating_temp_c: number | null;
   is_deleted: boolean;
+  make: string;
+  model: string;
+  category: string;
+  device_type: string;
+  device_types: { key: string; display_name: string; field_schema: { fields: FieldDef[] } } | null;
 }
-
-const DEVICE_KINDS = [
-  'air_to_air_heat_pump', 'air_to_water_heat_pump', 'direct_electric_heater',
-  'ev_charger', 'appliance', 'base_load', 'hot_water_heater',
-];
-
-const KIND_LABELS: Record<string, string> = {
-  air_to_air_heat_pump: 'Air-Air Heat Pump',
-  air_to_water_heat_pump: 'Air-Water Heat Pump',
-  direct_electric_heater: 'Electric Heater',
-  ev_charger: 'EV Charger',
-  appliance: 'Appliance',
-  base_load: 'Base Load',
-  hot_water_heater: 'Hot Water Heater',
-};
 
 const DeviceTemplatesTab: React.FC = () => {
   const { t } = useLanguage();
   const { user } = useAuth();
   const { toast } = useToast();
   const [templates, setTemplates] = useState<DeviceTemplate[]>([]);
+  const [deviceTypes, setDeviceTypes] = useState<DeviceType[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [selected, setSelected] = useState<DeviceTemplate | null>(null);
 
   const [form, setForm] = useState({
-    make: '', model: '', display_name: '', device_kind: 'direct_electric_heater',
-    max_electrical_power_w: 2000, controllable_default: false, shiftable_default: false,
-    scop: '', min_operating_temp_c: '',
+    device_type_id: '',
+    display_name: '',
+    controllable_default: false,
+    shiftable_default: false,
+    field_defaults: {} as Record<string, any>,
   });
 
-  const fetchTemplates = useCallback(async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase
-      .from('device_templates')
-      .select('*')
-      .eq('is_deleted', false)
-      .order('device_kind')
-      .order('display_name');
-    if (data) setTemplates(data as unknown as DeviceTemplate[]);
+    const [{ data: tpls }, { data: types }] = await Promise.all([
+      supabase.from('device_templates').select('*, device_types(key, display_name, field_schema)').eq('is_deleted', false).order('display_name'),
+      supabase.from('device_types').select('*').order('display_name'),
+    ]);
+    if (tpls) setTemplates(tpls as unknown as DeviceTemplate[]);
+    if (types) setDeviceTypes(types.map(t => ({ ...t, field_schema: t.field_schema as any })) as DeviceType[]);
     setLoading(false);
   }, []);
 
-  useEffect(() => { fetchTemplates(); }, [fetchTemplates]);
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  const selectedType = deviceTypes.find(dt => dt.id === form.device_type_id) || null;
+  const schema = selectedType?.field_schema?.fields || [];
 
   const handleSelect = (tpl: DeviceTemplate) => {
     setSelected(tpl);
     setForm({
-      make: tpl.make, model: tpl.model, display_name: tpl.display_name,
-      device_kind: tpl.device_kind, max_electrical_power_w: tpl.max_electrical_power_w,
-      controllable_default: tpl.controllable_default, shiftable_default: tpl.shiftable_default,
-      scop: tpl.scop ? String(tpl.scop) : '', min_operating_temp_c: tpl.min_operating_temp_c ? String(tpl.min_operating_temp_c) : '',
+      device_type_id: tpl.device_type_id,
+      display_name: tpl.display_name,
+      controllable_default: tpl.controllable_default,
+      shiftable_default: tpl.shiftable_default,
+      field_defaults: tpl.field_defaults || {},
     });
   };
 
   const handleNew = () => {
     setSelected(null);
     setForm({
-      make: '', model: '', display_name: '', device_kind: 'direct_electric_heater',
-      max_electrical_power_w: 2000, controllable_default: false, shiftable_default: false,
-      scop: '', min_operating_temp_c: '',
+      device_type_id: deviceTypes[0]?.id || '',
+      display_name: '',
+      controllable_default: false,
+      shiftable_default: false,
+      field_defaults: {},
     });
   };
 
   const handleSave = async () => {
-    if (!form.make.trim() || !form.model.trim()) return;
+    if (!form.device_type_id || !form.display_name.trim()) return;
     setSaving(true);
     try {
-      const derivedDisplayName = form.display_name.trim() || `${form.make.trim()} ${form.model.trim()}`;
+      // Derive legacy fields from field_defaults
+      const make = form.field_defaults.make || '';
+      const model = form.field_defaults.model || '';
+      const maxPower = form.field_defaults.max_power_w || 0;
+      const scop = form.field_defaults.scop || null;
+      const minTemp = form.field_defaults.min_temp_c || null;
+      const typeObj = deviceTypes.find(dt => dt.id === form.device_type_id);
+
       const payload = {
-        make: form.make.trim(),
-        model: form.model.trim(),
-        display_name: derivedDisplayName,
-        device_kind: form.device_kind,
-        // Keep legacy fields in sync
-        name: derivedDisplayName,
-        category: form.device_kind.includes('heat_pump') ? 'heating' : form.device_kind === 'direct_electric_heater' ? 'heating' : form.device_kind === 'ev_charger' ? 'ev' : form.device_kind === 'base_load' ? 'base_load' : 'appliance',
-        device_type: form.device_kind.includes('heat_pump') ? 'heat_pump_air_air' : form.device_kind === 'ev_charger' ? 'ev_charger' : form.device_kind === 'direct_electric_heater' ? 'resistive_heater' : form.device_kind,
-        max_electrical_power_w: form.max_electrical_power_w,
+        device_type_id: form.device_type_id,
+        display_name: form.display_name.trim(),
+        field_defaults: form.field_defaults,
         controllable_default: form.controllable_default,
         shiftable_default: form.shiftable_default,
-        scop: form.scop ? Number(form.scop) : null,
-        min_operating_temp_c: form.min_operating_temp_c ? Number(form.min_operating_temp_c) : null,
+        // Legacy fields kept in sync
+        make: String(make),
+        model: String(model),
+        name: form.display_name.trim(),
+        device_kind: typeObj?.key || '',
+        category: typeObj?.key?.includes('heat_pump') ? 'heating' : typeObj?.key === 'direct_electric_heater' ? 'heating' : typeObj?.key === 'ev_charger' ? 'ev' : typeObj?.key === 'base_load' ? 'base_load' : 'appliance',
+        device_type: typeObj?.key?.includes('heat_pump') ? 'heat_pump_air_air' : typeObj?.key === 'ev_charger' ? 'ev_charger' : typeObj?.key === 'direct_electric_heater' ? 'resistive_heater' : typeObj?.key || '',
+        max_electrical_power_w: Number(maxPower) || 0,
+        scop: scop ? Number(scop) : null,
+        min_operating_temp_c: minTemp ? Number(minTemp) : null,
         created_by: user?.id || null,
       };
 
@@ -125,7 +143,7 @@ const DeviceTemplatesTab: React.FC = () => {
         if (error) throw error;
       }
       toast({ title: t('Sparat!', 'Saved!') });
-      fetchTemplates();
+      fetchData();
     } catch (err: any) {
       toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
     } finally {
@@ -142,14 +160,14 @@ const DeviceTemplatesTab: React.FC = () => {
       toast({ title: t('Borttagen!', 'Deleted!') });
       setSelected(null);
       handleNew();
-      fetchTemplates();
+      fetchData();
     }
   };
 
-  const copData = selected?.scop
+  const copData = (form.field_defaults.scop)
     ? Array.from({ length: 13 }, (_, i) => {
         const temp = -20 + i * 5;
-        const cop = Math.max(1, selected.scop! * (1 + (temp - 7) * 0.03));
+        const cop = Math.max(1, Number(form.field_defaults.scop) * (1 + (temp - 7) * 0.03));
         return { x: temp, y: parseFloat(cop.toFixed(2)) };
       })
     : null;
@@ -175,10 +193,10 @@ const DeviceTemplatesTab: React.FC = () => {
               onClick={() => handleSelect(tpl)}
             >
               <div>
-                <p className="text-sm font-medium">{tpl.make} {tpl.model}</p>
+                <p className="text-sm font-medium">{tpl.display_name}</p>
                 <p className="text-xs text-muted-foreground">{formatPower(tpl.max_electrical_power_w).display}</p>
               </div>
-              <Badge variant="outline" className="text-xs">{KIND_LABELS[tpl.device_kind] || tpl.device_kind}</Badge>
+              <Badge variant="outline" className="text-xs">{tpl.device_types?.display_name || tpl.device_kind}</Badge>
             </div>
           ))}
         </CardContent>
@@ -189,43 +207,46 @@ const DeviceTemplatesTab: React.FC = () => {
           <CardTitle className="text-base">{selected ? t('Redigera mall', 'Edit Template') : t('Ny mall', 'New Template')}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label className="text-sm">{t('Tillverkare', 'Make')}</Label>
-              <Input value={form.make} onChange={e => setForm(f => ({ ...f, make: e.target.value }))} />
-            </div>
-            <div>
-              <Label className="text-sm">{t('Modell', 'Model')}</Label>
-              <Input value={form.model} onChange={e => setForm(f => ({ ...f, model: e.target.value }))} />
-            </div>
-          </div>
           <div>
-            <Label className="text-sm">{t('Visningsnamn', 'Display Name')}</Label>
-            <Input value={form.display_name} onChange={e => setForm(f => ({ ...f, display_name: e.target.value }))} placeholder={`${form.make} ${form.model}`.trim() || '—'} />
-          </div>
-          <div>
-            <Label className="text-sm">{t('Enhetstyp', 'Device Kind')}</Label>
-            <Select value={form.device_kind} onValueChange={v => setForm(f => ({ ...f, device_kind: v }))}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
+            <Label className="text-sm">{t('Enhetstyp', 'Device Type')}</Label>
+            <Select value={form.device_type_id} onValueChange={v => setForm(f => ({ ...f, device_type_id: v, field_defaults: {} }))} disabled={!!selected}>
+              <SelectTrigger><SelectValue placeholder={t('Välj typ...', 'Select type...')} /></SelectTrigger>
               <SelectContent>
-                {DEVICE_KINDS.map(dk => <SelectItem key={dk} value={dk}>{KIND_LABELS[dk] || dk}</SelectItem>)}
+                {deviceTypes.map(dt => <SelectItem key={dt.id} value={dt.id}>{dt.display_name}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
           <div>
-            <Label className="text-sm">{t('Max eleffekt (W)', 'Max Electrical Power (W)')}</Label>
-            <Input type="number" value={form.max_electrical_power_w} onChange={e => setForm(f => ({ ...f, max_electrical_power_w: Number(e.target.value) || 0 }))} />
+            <Label className="text-sm">{t('Visningsnamn', 'Display Name')}</Label>
+            <Input value={form.display_name} onChange={e => setForm(f => ({ ...f, display_name: e.target.value }))} />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label className="text-sm">SCOP</Label>
-              <Input type="number" step="0.1" value={form.scop} onChange={e => setForm(f => ({ ...f, scop: e.target.value }))} placeholder="—" />
+
+          {/* Dynamic fields from type schema */}
+          {schema.length > 0 && (
+            <div className="space-y-2">
+              <Label className="text-sm text-muted-foreground">{t('Standardvärden (valfria)', 'Default Values (optional)')}</Label>
+              {schema.map(field => (
+                <div key={field.key}>
+                  <Label className="text-xs">{field.label}</Label>
+                  <Input
+                    type={field.type === 'number' ? 'number' : 'text'}
+                    value={form.field_defaults[field.key] ?? ''}
+                    onChange={e => {
+                      const val = field.type === 'number'
+                        ? (e.target.value === '' ? undefined : Number(e.target.value))
+                        : e.target.value || undefined;
+                      setForm(f => ({
+                        ...f,
+                        field_defaults: { ...f.field_defaults, [field.key]: val },
+                      }));
+                    }}
+                    placeholder="—"
+                  />
+                </div>
+              ))}
             </div>
-            <div>
-              <Label className="text-sm">{t('Min temp (°C)', 'Min Temp (°C)')}</Label>
-              <Input type="number" value={form.min_operating_temp_c} onChange={e => setForm(f => ({ ...f, min_operating_temp_c: e.target.value }))} placeholder="—" />
-            </div>
-          </div>
+          )}
+
           <div className="flex items-center justify-between">
             <Label className="text-sm">{t('Styrbar standard', 'Controllable Default')}</Label>
             <Switch checked={form.controllable_default} onCheckedChange={v => setForm(f => ({ ...f, controllable_default: v }))} />
@@ -235,7 +256,7 @@ const DeviceTemplatesTab: React.FC = () => {
             <Switch checked={form.shiftable_default} onCheckedChange={v => setForm(f => ({ ...f, shiftable_default: v }))} />
           </div>
           <div className="flex gap-2">
-            <Button onClick={handleSave} disabled={saving || !form.make.trim() || !form.model.trim()} className="flex-1">
+            <Button onClick={handleSave} disabled={saving || !form.display_name.trim() || !form.device_type_id} className="flex-1">
               {saving && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
               <Save className="w-4 h-4 mr-2" /> {t('Spara', 'Save')}
             </Button>

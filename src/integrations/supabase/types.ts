@@ -399,6 +399,63 @@ export type Database = {
           },
         ]
       }
+      device_instances: {
+        Row: {
+          controllable: boolean
+          created_at: string
+          device_template_id: string
+          field_values: Json
+          home_id: string
+          id: string
+          name: string
+          priority: number
+          quantity: number
+          shiftable: boolean
+          updated_at: string
+        }
+        Insert: {
+          controllable?: boolean
+          created_at?: string
+          device_template_id: string
+          field_values?: Json
+          home_id: string
+          id?: string
+          name: string
+          priority?: number
+          quantity?: number
+          shiftable?: boolean
+          updated_at?: string
+        }
+        Update: {
+          controllable?: boolean
+          created_at?: string
+          device_template_id?: string
+          field_values?: Json
+          home_id?: string
+          id?: string
+          name?: string
+          priority?: number
+          quantity?: number
+          shiftable?: boolean
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "device_instances_device_template_id_fkey"
+            columns: ["device_template_id"]
+            isOneToOne: false
+            referencedRelation: "device_templates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "device_instances_home_id_fkey"
+            columns: ["home_id"]
+            isOneToOne: false
+            referencedRelation: "homes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       device_template_profiles: {
         Row: {
           created_at: string
@@ -460,7 +517,9 @@ export type Database = {
           created_by: string | null
           device_kind: string
           device_type: string
+          device_type_id: string
           display_name: string
+          field_defaults: Json
           id: string
           is_deleted: boolean
           make: string
@@ -479,7 +538,9 @@ export type Database = {
           created_by?: string | null
           device_kind?: string
           device_type: string
+          device_type_id: string
           display_name?: string
+          field_defaults?: Json
           id?: string
           is_deleted?: boolean
           make?: string
@@ -498,7 +559,9 @@ export type Database = {
           created_by?: string | null
           device_kind?: string
           device_type?: string
+          device_type_id?: string
           display_name?: string
+          field_defaults?: Json
           id?: string
           is_deleted?: boolean
           make?: string
@@ -509,6 +572,44 @@ export type Database = {
           scop?: number | null
           shiftable_default?: boolean
           specs?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "device_templates_device_type_id_fkey"
+            columns: ["device_type_id"]
+            isOneToOne: false
+            referencedRelation: "device_types"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      device_types: {
+        Row: {
+          created_at: string
+          display_name: string
+          field_schema: Json
+          id: string
+          key: string
+          simulation_model_key: string
+          supported_profile_kinds: Json
+        }
+        Insert: {
+          created_at?: string
+          display_name: string
+          field_schema: Json
+          id?: string
+          key: string
+          simulation_model_key: string
+          supported_profile_kinds?: Json
+        }
+        Update: {
+          created_at?: string
+          display_name?: string
+          field_schema?: Json
+          id?: string
+          key?: string
+          simulation_model_key?: string
+          supported_profile_kinds?: Json
         }
         Relationships: []
       }

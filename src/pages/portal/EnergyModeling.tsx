@@ -14,6 +14,7 @@ import ROITab from '@/components/portal/energy/ROITab';
 import DeviceTemplatesTab from '@/components/portal/energy/DeviceTemplatesTab';
 import CalibrationTab from '@/components/portal/energy/CalibrationTab';
 import HomeSelector from '@/components/portal/energy/HomeSelector';
+import DeviceTypesManager from '@/components/portal/energy/DeviceTypesManager';
 
 interface EnergyModelingProps {
   customerId?: string;
@@ -63,11 +64,13 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
         </div>
 
         {showStaffOnlyTabs ? (
-          <Tabs defaultValue="device-manager">
+          <Tabs defaultValue="device-types">
             <TabsList>
-              <TabsTrigger value="device-manager">{t('Enhetshanterare', 'Device Manager')}</TabsTrigger>
+              <TabsTrigger value="device-types">{t('Enhetstyper', 'Device Types')}</TabsTrigger>
+              <TabsTrigger value="device-manager">{t('Enhetsmallar', 'Device Templates')}</TabsTrigger>
               <TabsTrigger value="calibration">{t('Kalibrering', 'Calibration')}</TabsTrigger>
             </TabsList>
+            <TabsContent value="device-types"><DeviceTypesManager /></TabsContent>
             <TabsContent value="device-manager"><DeviceTemplatesTab /></TabsContent>
             <TabsContent value="calibration"><CalibrationTab /></TabsContent>
           </Tabs>

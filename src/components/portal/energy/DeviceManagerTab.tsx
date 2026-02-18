@@ -9,13 +9,30 @@ import { supabase } from '@/integrations/supabase/client';
 import { formatPower } from '@/lib/energy-units';
 import PerformanceCurveChart from './PerformanceCurveChart';
 
-const KIND_LABELS: Record<string, { sv: string; en: string }> = {
+const TYPE_LABELS: Record<string, { sv: string; en: string }> = {
   air_to_air_heat_pump: { sv: 'Luft-luft VP', en: 'Air-Air HP' },
   direct_electric_heater: { sv: 'Elradiator', en: 'Electric Heater' },
   ev_charger: { sv: 'Elbilsladdare', en: 'EV Charger' },
   appliance: { sv: 'Apparat', en: 'Appliance' },
   base_load: { sv: 'Baslast', en: 'Base Load' },
+  hot_water_heater: { sv: 'Varmvatten', en: 'Hot Water' },
 };
+
+interface DeviceInstanceEntry {
+  id: string;
+  name: string;
+  field_values: Record<string, any>;
+  quantity: number;
+  device_template_id: string;
+  device_templates: {
+    display_name: string;
+    device_kind: string;
+    device_types: {
+      key: string;
+      display_name: string;
+    } | null;
+  };
+}
 
 interface TemplateEntry {
   id: string;
@@ -25,6 +42,10 @@ interface TemplateEntry {
   device_kind: string;
   max_electrical_power_w: number;
   scop: number | null;
+  device_types: {
+    key: string;
+    display_name: string;
+  } | null;
 }
 
 interface DeviceManagerTabProps {
@@ -35,7 +56,7 @@ interface DeviceManagerTabProps {
 const DeviceManagerTab: React.FC<DeviceManagerTabProps> = ({ customerId, homeId }) => {
   const { t } = useLanguage();
   const [viewMode, setViewMode] = useState<'my' | 'all'>('my');
-  const [myTemplateIds, setMyTemplateIds] = useState<Set<string>>(new Set());
+  const [myInstances, setMyInstances] = useState<DeviceInstanceEntry[]>([]);
   const [allTemplates, setAllTemplates] = useState<TemplateEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -47,31 +68,32 @@ const DeviceManagerTab: React.FC<DeviceManagerTabProps> = ({ customerId, homeId 
     // Fetch all templates
     const { data: templates } = await supabase
       .from('device_templates')
-      .select('id, display_name, make, model, device_kind, max_electrical_power_w, scop')
+      .select('id, display_name, make, model, device_kind, max_electrical_power_w, scop, device_types(key, display_name)')
       .eq('is_deleted', false)
       .order('device_kind')
       .order('display_name');
-    if (templates) setAllTemplates(templates);
+    if (templates) setAllTemplates(templates as unknown as TemplateEntry[]);
 
-    // Fetch my device template IDs (from all homes of this customer)
+    // Fetch my device instances
     const { data: homes } = await supabase
       .from('homes')
       .select('id')
       .eq('customer_id', customerId);
     if (homes && homes.length > 0) {
       const homeIds = homes.map(h => h.id);
-      const { data: devices } = await supabase
-        .from('energy_devices')
-        .select('device_template_id')
+      const { data: instances } = await supabase
+        .from('device_instances')
+        .select('id, name, field_values, quantity, device_template_id, device_templates(display_name, device_kind, device_types(key, display_name))')
         .in('home_id', homeIds);
-      if (devices) {
-        setMyTemplateIds(new Set(devices.map(d => d.device_template_id)));
-      }
+      if (instances) setMyInstances(instances as unknown as DeviceInstanceEntry[]);
     }
     setLoading(false);
   }, [customerId]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // In "my" mode show instances; in "all" mode show templates
+  const myTemplateIds = new Set(myInstances.map(i => i.device_template_id));
 
   const displayTemplates = viewMode === 'my'
     ? allTemplates.filter(t => myTemplateIds.has(t.id))
@@ -119,7 +141,7 @@ const DeviceManagerTab: React.FC<DeviceManagerTabProps> = ({ customerId, homeId 
             </Badge>
             {kinds.map(k => (
               <Badge key={k} variant={kindFilter === k ? 'default' : 'outline'} className="cursor-pointer" onClick={() => setKindFilter(k === kindFilter ? null : k)}>
-                {t(KIND_LABELS[k]?.sv || k, KIND_LABELS[k]?.en || k)}
+                {t(TYPE_LABELS[k]?.sv || k, TYPE_LABELS[k]?.en || k)}
               </Badge>
             ))}
           </div>
@@ -156,7 +178,7 @@ const DeviceManagerTab: React.FC<DeviceManagerTabProps> = ({ customerId, homeId 
                       <TableCell>{tpl.model}</TableCell>
                       <TableCell>
                         <Badge variant="outline" className="text-xs">
-                          {t(KIND_LABELS[tpl.device_kind]?.sv || tpl.device_kind, KIND_LABELS[tpl.device_kind]?.en || tpl.device_kind)}
+                          {tpl.device_types?.display_name || t(TYPE_LABELS[tpl.device_kind]?.sv || tpl.device_kind, TYPE_LABELS[tpl.device_kind]?.en || tpl.device_kind)}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right">{formatPower(tpl.max_electrical_power_w).display}</TableCell>
@@ -179,7 +201,7 @@ const DeviceManagerTab: React.FC<DeviceManagerTabProps> = ({ customerId, homeId 
               <CardContent className="text-sm space-y-2">
                 <div className="flex justify-between"><span className="text-muted-foreground">{t('Tillverkare', 'Make')}</span><span>{selectedTemplate.make}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">{t('Modell', 'Model')}</span><span>{selectedTemplate.model}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">{t('Typ', 'Type')}</span><span>{t(KIND_LABELS[selectedTemplate.device_kind]?.sv || selectedTemplate.device_kind, KIND_LABELS[selectedTemplate.device_kind]?.en || selectedTemplate.device_kind)}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">{t('Typ', 'Type')}</span><span>{selectedTemplate.device_types?.display_name || t(TYPE_LABELS[selectedTemplate.device_kind]?.sv || selectedTemplate.device_kind, TYPE_LABELS[selectedTemplate.device_kind]?.en || selectedTemplate.device_kind)}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">{t('Maxeffekt', 'Max Power')}</span><span>{formatPower(selectedTemplate.max_electrical_power_w).display}</span></div>
                 {selectedTemplate.scop && <div className="flex justify-between"><span className="text-muted-foreground">SCOP</span><span>{selectedTemplate.scop}</span></div>}
               </CardContent>
