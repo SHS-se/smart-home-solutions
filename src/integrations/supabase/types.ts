@@ -403,7 +403,7 @@ export type Database = {
         Row: {
           controllable: boolean
           created_at: string
-          customer_id: string
+          customer_id: string | null
           device_template_id: string
           field_values: Json
           id: string
@@ -415,7 +415,7 @@ export type Database = {
         Insert: {
           controllable?: boolean
           created_at?: string
-          customer_id: string
+          customer_id?: string | null
           device_template_id: string
           field_values?: Json
           id?: string
@@ -427,7 +427,7 @@ export type Database = {
         Update: {
           controllable?: boolean
           created_at?: string
-          customer_id?: string
+          customer_id?: string | null
           device_template_id?: string
           field_values?: Json
           id?: string
