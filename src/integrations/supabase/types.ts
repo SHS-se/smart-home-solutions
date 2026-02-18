@@ -403,55 +403,59 @@ export type Database = {
         Row: {
           controllable: boolean
           created_at: string
+          customer_id: string
           device_template_id: string
           field_values: Json
-          home_id: string
           id: string
           name: string
           priority: number
-          quantity: number
           shiftable: boolean
           updated_at: string
         }
         Insert: {
           controllable?: boolean
           created_at?: string
+          customer_id: string
           device_template_id: string
           field_values?: Json
-          home_id: string
           id?: string
           name: string
           priority?: number
-          quantity?: number
           shiftable?: boolean
           updated_at?: string
         }
         Update: {
           controllable?: boolean
           created_at?: string
+          customer_id?: string
           device_template_id?: string
           field_values?: Json
-          home_id?: string
           id?: string
           name?: string
           priority?: number
-          quantity?: number
           shiftable?: boolean
           updated_at?: string
         }
         Relationships: [
           {
+            foreignKeyName: "device_instances_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "device_instances_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers_with_identity"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "device_instances_device_template_id_fkey"
             columns: ["device_template_id"]
             isOneToOne: false
             referencedRelation: "device_templates"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "device_instances_home_id_fkey"
-            columns: ["home_id"]
-            isOneToOne: false
-            referencedRelation: "homes"
             referencedColumns: ["id"]
           },
         ]
@@ -627,63 +631,6 @@ export type Database = {
           next_value?: number
         }
         Relationships: []
-      }
-      energy_devices: {
-        Row: {
-          controllable: boolean
-          created_at: string
-          device_template_id: string
-          home_id: string
-          id: string
-          max_power_override_w: number | null
-          name: string
-          priority: number
-          quantity: number
-          shiftable: boolean
-          updated_at: string
-        }
-        Insert: {
-          controllable?: boolean
-          created_at?: string
-          device_template_id: string
-          home_id: string
-          id?: string
-          max_power_override_w?: number | null
-          name: string
-          priority?: number
-          quantity?: number
-          shiftable?: boolean
-          updated_at?: string
-        }
-        Update: {
-          controllable?: boolean
-          created_at?: string
-          device_template_id?: string
-          home_id?: string
-          id?: string
-          max_power_override_w?: number | null
-          name?: string
-          priority?: number
-          quantity?: number
-          shiftable?: boolean
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "energy_devices_device_template_id_fkey"
-            columns: ["device_template_id"]
-            isOneToOne: false
-            referencedRelation: "device_templates"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "energy_devices_home_id_fkey"
-            columns: ["home_id"]
-            isOneToOne: false
-            referencedRelation: "homes"
-            referencedColumns: ["id"]
-          },
-        ]
       }
       energy_home_settings: {
         Row: {
@@ -894,6 +841,45 @@ export type Database = {
             columns: ["question_id"]
             isOneToOne: false
             referencedRelation: "home_questions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      home_device_assignments: {
+        Row: {
+          created_at: string
+          device_instance_id: string
+          home_id: string
+          id: string
+          quantity: number
+        }
+        Insert: {
+          created_at?: string
+          device_instance_id: string
+          home_id: string
+          id?: string
+          quantity?: number
+        }
+        Update: {
+          created_at?: string
+          device_instance_id?: string
+          home_id?: string
+          id?: string
+          quantity?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "home_device_assignments_device_instance_id_fkey"
+            columns: ["device_instance_id"]
+            isOneToOne: false
+            referencedRelation: "device_instances"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "home_device_assignments_home_id_fkey"
+            columns: ["home_id"]
+            isOneToOne: false
+            referencedRelation: "homes"
             referencedColumns: ["id"]
           },
         ]

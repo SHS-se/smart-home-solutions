@@ -51,6 +51,7 @@ import InvoiceDetail from "./pages/portal/invoices/InvoiceDetail";
 import PublicQuotePage from "./pages/portal/PublicQuotePage";
 import HomeProfile from "./pages/portal/HomeProfile";
 import EnergyModeling from "./pages/portal/EnergyModeling";
+import DeviceCatalog from "./pages/portal/DeviceCatalog";
 import SetPassword from "./pages/onboarding/SetPassword";
 import Verify from "./pages/Verify";
 
@@ -140,6 +141,7 @@ const App = () => (
                 <Route path="/portal/tickets" element={<TicketsList />} />
                 <Route path="/portal/home-profile" element={<HomeProfile />} />
                 <Route path="/portal/energy-modeling" element={<EnergyModeling />} />
+                <Route path="/portal/device-catalog" element={<DeviceCatalog />} />
                 <Route path="/portal/tickets/new" element={<NewTicket />} />
                 <Route path="/portal/tickets/:ticketNumber" element={<TicketDetail />} />
                 <Route path="/portal/customers" element={<Customers />} />
