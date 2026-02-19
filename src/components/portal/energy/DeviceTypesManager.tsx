@@ -314,9 +314,9 @@ const DeviceTypesManager: React.FC = () => {
   const infoData = activeInfo ? INFO_CONTENT[activeInfo][language] : null;
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      {/* List */}
-      <Card>
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {/* List – hidden when info panel is open */}
+      {!activeInfo && <Card>
         <CardHeader className="pb-2">
           <div className="flex items-center justify-between">
             <CardTitle className="text-base">{t('Enhetstyper', 'Device Types')}</CardTitle>
@@ -338,10 +338,10 @@ const DeviceTypesManager: React.FC = () => {
             </div>
           ))}
         </CardContent>
-      </Card>
+      </Card>}
 
       {/* Form */}
-      <Card className={activeInfo ? 'lg:col-span-1' : 'lg:col-span-2'}>
+      <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base">{selected ? t('Redigera typ', 'Edit Type') : t('Ny typ', 'New Type')}</CardTitle>
         </CardHeader>
