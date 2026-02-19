@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Loader2, Plus, Save, Trash2, GripVertical, Info, X, ChevronDown, ChevronRight } from 'lucide-react';
+import { Loader2, Plus, Save, Trash2, GripVertical, Info, X } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -178,7 +178,6 @@ const DeviceTypesManager: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [selected, setSelected] = useState<DeviceType | null>(null);
   const [activeInfo, setActiveInfo] = useState<InfoTopic | null>(null);
-  const [listCollapsed, setListCollapsed] = useState(false);
 
   const [form, setForm] = useState({
     key: '',
@@ -314,41 +313,31 @@ const DeviceTypesManager: React.FC = () => {
 
   const infoData = activeInfo ? INFO_CONTENT[activeInfo][language] : null;
 
-  // Auto-collapse list when info panel opens, expand when it closes
-  const effectiveCollapsed = activeInfo ? listCollapsed || false : false;
-
   return (
-    <div className={`grid grid-cols-1 gap-6 ${activeInfo ? (effectiveCollapsed ? 'lg:grid-cols-[auto_1fr_1fr]' : 'lg:grid-cols-3') : 'lg:grid-cols-3'}`}>
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       {/* List */}
-      <Card className={activeInfo && listCollapsed ? 'lg:w-auto' : ''}>
+      <Card>
         <CardHeader className="pb-2">
-          <div className="flex items-center justify-between gap-2">
-            {activeInfo && (
-              <Button variant="ghost" size="icon" className="h-7 w-7 flex-shrink-0" onClick={() => setListCollapsed(c => !c)}>
-                {listCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-              </Button>
-            )}
-            {!listCollapsed && <CardTitle className="text-base flex-1">{t('Enhetstyper', 'Device Types')}</CardTitle>}
-            {!listCollapsed && <Button size="sm" variant="outline" onClick={handleNew}><Plus className="w-3.5 h-3.5 mr-1" />{t('Ny', 'New')}</Button>}
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base">{t('Enhetstyper', 'Device Types')}</CardTitle>
+            <Button size="sm" variant="outline" onClick={handleNew}><Plus className="w-3.5 h-3.5 mr-1" />{t('Ny', 'New')}</Button>
           </div>
         </CardHeader>
-        {!listCollapsed && (
-          <CardContent className="space-y-1 max-h-[500px] overflow-y-auto">
-            {types.map(dt => (
-              <div
-                key={dt.id}
-                className={`p-2 rounded cursor-pointer flex items-center justify-between ${selected?.id === dt.id ? 'bg-muted' : 'hover:bg-muted/50'}`}
-                onClick={() => handleSelect(dt)}
-              >
-                <div>
-                  <p className="text-sm font-medium">{dt.display_name}</p>
-                  <p className="text-xs text-muted-foreground">{dt.key}</p>
-                </div>
-                <Badge variant="outline" className="text-xs">{dt.field_schema.fields.length} {t('fält', 'fields')}</Badge>
+        <CardContent className="space-y-1 max-h-[500px] overflow-y-auto">
+          {types.map(dt => (
+            <div
+              key={dt.id}
+              className={`p-2 rounded cursor-pointer flex items-center justify-between ${selected?.id === dt.id ? 'bg-muted' : 'hover:bg-muted/50'}`}
+              onClick={() => handleSelect(dt)}
+            >
+              <div>
+                <p className="text-sm font-medium">{dt.display_name}</p>
+                <p className="text-xs text-muted-foreground">{dt.key}</p>
               </div>
-            ))}
-          </CardContent>
-        )}
+              <Badge variant="outline" className="text-xs">{dt.field_schema.fields.length} {t('fält', 'fields')}</Badge>
+            </div>
+          ))}
+        </CardContent>
       </Card>
 
       {/* Form */}
