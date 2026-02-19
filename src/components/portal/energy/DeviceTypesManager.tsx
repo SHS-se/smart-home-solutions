@@ -314,7 +314,7 @@ const DeviceTypesManager: React.FC = () => {
   const infoData = activeInfo ? INFO_CONTENT[activeInfo][language] : null;
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <div className="grid grid-cols-1 lg:grid-cols-[1fr_2fr] gap-6">
       {/* List – hidden when info panel is open */}
       {!activeInfo && <Card>
         <CardHeader className="pb-2">
