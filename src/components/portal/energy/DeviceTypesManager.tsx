@@ -315,32 +315,55 @@ const DeviceTypesManager: React.FC = () => {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[1fr_2fr] gap-6">
-      {/* List – hidden when info panel is open */}
-      {!activeInfo && <Card>
-        <CardHeader className="pb-2">
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-base">{t('Enhetstyper', 'Device Types')}</CardTitle>
-            <Button size="sm" variant="outline" onClick={handleNew}><Plus className="w-3.5 h-3.5 mr-1" />{t('Ny', 'New')}</Button>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-1 max-h-[500px] overflow-y-auto">
-          {types.map(dt => (
-            <div
-              key={dt.id}
-              className={`p-2 rounded cursor-pointer flex items-center justify-between ${selected?.id === dt.id ? 'bg-muted' : 'hover:bg-muted/50'}`}
-              onClick={() => handleSelect(dt)}
-            >
-              <div>
-                <p className="text-sm font-medium">{dt.display_name}</p>
-                <p className="text-xs text-muted-foreground">{dt.key}</p>
-              </div>
-              <Badge variant="outline" className="text-xs">{dt.field_schema.fields.length} {t('fält', 'fields')}</Badge>
+      {/* Col 1: either Device Types list OR Info panel */}
+      {activeInfo && infoData ? (
+        <Card>
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base">{infoData.title}</CardTitle>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setActiveInfo(null)}>
+                <X className="w-4 h-4" />
+              </Button>
             </div>
-          ))}
-        </CardContent>
-      </Card>}
+          </CardHeader>
+          <CardContent>
+            <div className="text-sm text-muted-foreground whitespace-pre-line leading-relaxed prose prose-sm max-w-none">
+              {infoData.body.split('\n').map((line, i) => {
+                const rendered = line
+                  .replace(/\*\*(.+?)\*\*/g, '<strong class="text-foreground">$1</strong>')
+                  .replace(/- /g, '• ');
+                return <p key={i} className="mb-1" dangerouslySetInnerHTML={{ __html: rendered }} />;
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card>
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base">{t('Enhetstyper', 'Device Types')}</CardTitle>
+              <Button size="sm" variant="outline" onClick={handleNew}><Plus className="w-3.5 h-3.5 mr-1" />{t('Ny', 'New')}</Button>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-1 max-h-[500px] overflow-y-auto">
+            {types.map(dt => (
+              <div
+                key={dt.id}
+                className={`p-2 rounded cursor-pointer flex items-center justify-between ${selected?.id === dt.id ? 'bg-muted' : 'hover:bg-muted/50'}`}
+                onClick={() => handleSelect(dt)}
+              >
+                <div>
+                  <p className="text-sm font-medium">{dt.display_name}</p>
+                  <p className="text-xs text-muted-foreground">{dt.key}</p>
+                </div>
+                <Badge variant="outline" className="text-xs">{dt.field_schema.fields.length} {t('fält', 'fields')}</Badge>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
-      {/* Form */}
+      {/* Col 2: Edit Type form (always 2fr) */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base">{selected ? t('Redigera typ', 'Edit Type') : t('Ny typ', 'New Type')}</CardTitle>
@@ -414,30 +437,6 @@ const DeviceTypesManager: React.FC = () => {
           </div>
         </CardContent>
       </Card>
-
-      {/* Info panel */}
-      {activeInfo && infoData && (
-        <Card className="lg:col-span-1">
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-base">{infoData.title}</CardTitle>
-              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setActiveInfo(null)}>
-                <X className="w-4 h-4" />
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="text-sm text-muted-foreground whitespace-pre-line leading-relaxed prose prose-sm max-w-none">
-              {infoData.body.split('\n').map((line, i) => {
-                const rendered = line
-                  .replace(/\*\*(.+?)\*\*/g, '<strong class="text-foreground">$1</strong>')
-                  .replace(/- /g, '• ');
-                return <p key={i} className="mb-1" dangerouslySetInnerHTML={{ __html: rendered }} />;
-              })}
-            </div>
-          </CardContent>
-        </Card>
-      )}
     </div>
   );
 };
