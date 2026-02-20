@@ -990,44 +990,12 @@ const QuotePreparation: React.FC = () => {
                       <span className="text-sm text-muted-foreground">{t('dagar', 'days')}</span>
                     </div>
                   ) : quote?.expires_at ? (
-                    <>
-                      <p className="text-sm">
-                        {t('Giltig till', 'Valid until')}{' '}
-                        <span className={`font-medium ${new Date(quote.expires_at) < new Date() ? 'text-destructive' : ''}`}>
-                          {new Date(quote.expires_at).toLocaleDateString('sv-SE', { year: 'numeric', month: 'short', day: 'numeric' })}
-                        </span>
-                        {new Date(quote.expires_at) < new Date() && (
-                          <span className="text-destructive text-xs ml-1">({t('Utgången', 'Expired')})</span>
-                        )}
-                      </p>
-                      {isLatestVersion && !isSuperseded && ['sent', 'viewed', 'expired'].includes(quoteStatus) && (
-                        <div className="space-y-2 pt-2">
-                          <label className="text-xs text-muted-foreground">
-                            {t('Ny giltighetstid', 'New validity period')}
-                          </label>
-                          <div className="flex items-center gap-2">
-                            <BlurCommitInput
-                              type="number"
-                              value={expiryDays}
-                              onCommit={(value) => setExpiryDays(Math.max(1, parseInt(value) || 7))}
-                              className="w-20 h-9 text-center"
-                              min={1}
-                            />
-                            <span className="text-sm text-muted-foreground">{t('dagar', 'days')}</span>
-                          </div>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="w-full"
-                            onClick={sendQuoteEmail}
-                            disabled={isSending || !quote?.customer_id}
-                          >
-                            <Send className="h-3.5 w-3.5 mr-1.5" />
-                            {isSending ? t('Skickar...', 'Sending...') : t('Skicka offert igen', 'Resend quote')}
-                          </Button>
-                        </div>
-                      )}
-                    </>
+                    <p className="text-sm">
+                      {t('Giltig till', 'Valid until')}{' '}
+                      <span className="font-medium">
+                        {new Date(quote.expires_at).toLocaleDateString('sv-SE', { year: 'numeric', month: 'short', day: 'numeric' })}
+                      </span>
+                    </p>
                   ) : (
                     <p className="text-sm text-muted-foreground">{t('Ej angiven', 'Not set')}</p>
                   )}
