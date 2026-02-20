@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
@@ -18,7 +18,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { ArrowLeft, ExternalLink, Send, Info, Loader2, AlertTriangle, Plus, Trash2, Save } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Send, Info, Loader2, AlertTriangle, Plus, Trash2, Save, RotateCcw } from 'lucide-react';
+import { Calendar } from '@/components/ui/calendar';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { addDays, format, endOfDay } from 'date-fns';
+import { sv, enUS } from 'date-fns/locale';
+import { supersedeActiveQuotesInChain } from '@/lib/supersede-quotes';
 import { toast } from '@/hooks/use-toast';
 import QuoteVersionDropdown from '@/components/portal/quotes/QuoteVersionDropdown';
 import { useQuoteVersioning } from '@/hooks/use-quote-versioning';
@@ -50,7 +55,7 @@ interface QuoteLine {
 
 const QuotePreparation: React.FC = () => {
   const { id } = useParams<{ id: string }>();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const { isStaff, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -60,6 +65,9 @@ const QuotePreparation: React.FC = () => {
   const [expiryDays, setExpiryDays] = useState(7);
   
   const [isSaving, setIsSaving] = useState(false);
+  const [showReissueDialog, setShowReissueDialog] = useState(false);
+  const [reissueDate, setReissueDate] = useState<Date>(addDays(new Date(), 14));
+  const [isReissuing, setIsReissuing] = useState(false);
 
   // Pending changes: { [lineId]: { field: value, ... } }
   const [pendingChanges, setPendingChanges] = useState<Record<string, Record<string, string | number>>>({});
@@ -494,6 +502,118 @@ const QuotePreparation: React.FC = () => {
   const isEditable = isLatestVersion && !isSuperseded && (quoteStatus === 'draft' || quoteStatus === 'revision_requested');
   const canSend = isLatestVersion && !isSuperseded && (quoteStatus === 'draft' || quoteStatus === 'revision_requested') && !!quote?.customer_id && hardwareLines.length > 0 && !hasUnsavedChanges;
   const canCreateInvoice = quoteStatus === 'accepted' && !!quote?.customer_id;
+  const isExpired = quoteStatus === 'expired';
+
+  // Reissue handler for expired quotes
+  const handleReissue = async () => {
+    if (!id || !quote) return;
+    setIsReissuing(true);
+    try {
+      const rootId = (quote as any).parent_quote_id || quote.id;
+
+      const { data: maxVersionData } = await supabase
+        .from('quotes')
+        .select('version')
+        .or(`id.eq.${rootId},parent_quote_id.eq.${rootId}`)
+        .order('version', { ascending: false })
+        .limit(1)
+        .single();
+
+      const newVersion = (maxVersionData?.version || 1) + 1;
+
+      await supabase
+        .from('quotes')
+        .update({ is_latest: false })
+        .or(`id.eq.${rootId},parent_quote_id.eq.${rootId}`);
+
+      const { data: existingLines } = await supabase
+        .from('quote_lines')
+        .select('*')
+        .eq('quote_id', quote.id);
+
+      const { data: newQuote, error: createError } = await supabase
+        .from('quotes')
+        .insert({
+          version: newVersion,
+          parent_quote_id: rootId,
+          supersedes_quote_id: quote.id,
+          is_latest: true,
+          bom_id: quote.bom_id,
+          bom_version: quote.bom_version,
+          customer_id: quote.customer_id,
+          status: 'draft',
+          created_by: quote.created_by,
+          is_test: (quote as any).is_test || false,
+          expires_at: endOfDay(reissueDate).toISOString(),
+        })
+        .select()
+        .single();
+
+      if (createError) throw createError;
+
+      if (existingLines && existingLines.length > 0) {
+        const copiedLines = existingLines.map(line => ({
+          quote_id: newQuote.id,
+          section: line.section,
+          description: line.description,
+          quantity: line.quantity,
+          unit_price: line.unit_price,
+          unit_price_ex_vat: line.unit_price_ex_vat,
+          vat_rate: line.vat_rate,
+          unit_price_inc_vat: line.unit_price_inc_vat,
+          sku_id: line.sku_id,
+          cost_ex_vat_at_time: line.cost_ex_vat_at_time,
+          original_sku_name: line.original_sku_name,
+          original_sku_code: line.original_sku_code,
+          pricing_source: line.pricing_source,
+          source_bom_id: line.source_bom_id,
+          source_bom_item_id: line.source_bom_item_id,
+          source_bom_version: line.source_bom_version,
+        }));
+        await supabase.from('quote_lines').insert(copiedLines);
+      }
+
+      await supabase
+        .from('quotes')
+        .update({
+          status: 'superseded',
+          superseded_by_quote_id: newQuote.id,
+          superseded_at: new Date().toISOString(),
+          is_latest: false,
+        } as any)
+        .eq('id', quote.id);
+
+      if (quote.bom_id) {
+        await supersedeActiveQuotesInChain({ newQuoteId: newQuote.id, bomId: quote.bom_id });
+      }
+
+      await supabase.from('quote_events').insert([
+        {
+          quote_id: quote.id,
+          event_type: 'reissued',
+          actor_type: 'staff',
+          metadata: { reissued_as_quote_id: newQuote.id },
+        },
+        {
+          quote_id: newQuote.id,
+          event_type: 'created',
+          actor_type: 'staff',
+          metadata: { reissued_from_quote_id: quote.id },
+        },
+      ]);
+
+      queryClient.invalidateQueries({ queryKey: ['quote_family'] });
+      queryClient.invalidateQueries({ queryKey: ['quotes'] });
+      setShowReissueDialog(false);
+      
+      toast({ title: t('Ny offert skapad', 'New quote created'), description: t('Du omdirigeras till den nya offerten', 'Redirecting to the new quote') });
+      navigate(`/portal/quotes/${newQuote.id}`);
+    } catch (error: any) {
+      toast({ title: t('Kunde inte skapa ny offert', 'Failed to create new quote'), description: error.message, variant: 'destructive' });
+    } finally {
+      setIsReissuing(false);
+    }
+  };
 
   return (
     <PortalLayout>
@@ -573,6 +693,25 @@ const QuotePreparation: React.FC = () => {
                 }}
               >
                 {t('Gå till senaste', 'Go to latest')}
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {/* Supersedes banner - shown on quotes that replace another */}
+        {!isSuperseded && (quote as any)?.supersedes_quote_id && (
+          <Alert className="border-primary/30 bg-primary/5">
+            <Info className="h-4 w-4 text-primary" />
+            <AlertDescription className="flex items-center justify-between">
+              <span className="text-muted-foreground">
+                {t('Denna offert ersätter en tidigare offert.', 'This quote supersedes a previous quote.')}
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => navigate(`/portal/quotes/${(quote as any).supersedes_quote_id}`)}
+              >
+                {t('Visa föregående', 'View previous')}
               </Button>
             </AlertDescription>
           </Alert>
@@ -990,12 +1129,28 @@ const QuotePreparation: React.FC = () => {
                       <span className="text-sm text-muted-foreground">{t('dagar', 'days')}</span>
                     </div>
                   ) : quote?.expires_at ? (
-                    <p className="text-sm">
-                      {t('Giltig till', 'Valid until')}{' '}
-                      <span className="font-medium">
-                        {new Date(quote.expires_at).toLocaleDateString('sv-SE', { year: 'numeric', month: 'short', day: 'numeric' })}
+                    <div className="text-sm">
+                      <span>
+                        {t('Giltig till', 'Valid until')}{' '}
+                        <span className="font-medium">
+                          {new Date(quote.expires_at).toLocaleDateString('sv-SE', { year: 'numeric', month: 'short', day: 'numeric' })}
+                        </span>
                       </span>
-                    </p>
+                      {isExpired && (
+                        <>
+                          {' — '}
+                          <button
+                            onClick={() => setShowReissueDialog(true)}
+                            className="inline-flex items-center gap-1 text-destructive font-semibold hover:underline cursor-pointer"
+                            role="button"
+                            tabIndex={0}
+                          >
+                            <RotateCcw className="h-3.5 w-3.5" />
+                            {t('Utgången', 'Expired')}
+                          </button>
+                        </>
+                      )}
+                    </div>
                   ) : (
                     <p className="text-sm text-muted-foreground">{t('Ej angiven', 'Not set')}</p>
                   )}
@@ -1091,6 +1246,51 @@ const QuotePreparation: React.FC = () => {
               setPendingNavigationPath(null);
             }}>
               {t('Spara och lämna', 'Save and leave')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reissue quote dialog */}
+      <Dialog open={showReissueDialog} onOpenChange={setShowReissueDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('Ge ut offert på nytt', 'Reissue quote')}</DialogTitle>
+            <DialogDescription>
+              {t(
+                'En ny offert med nytt offertnummer skapas. Den gamla offerten markeras som ersatt.',
+                'A new quote with a new quote number will be created. The old quote will be marked as superseded.'
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">{t('Giltig till', 'Valid until')}</label>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" className="w-full justify-start text-left font-normal">
+                    {format(reissueDate, 'PPP', { locale: language === 'sv' ? sv : enUS })}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar
+                    mode="single"
+                    selected={reissueDate}
+                    onSelect={(date) => date && setReissueDate(date)}
+                    disabled={(date) => date < new Date()}
+                    initialFocus
+                  />
+                </PopoverContent>
+              </Popover>
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setShowReissueDialog(false)} disabled={isReissuing}>
+              {t('Avbryt', 'Cancel')}
+            </Button>
+            <Button onClick={handleReissue} disabled={isReissuing}>
+              {isReissuing && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              {t('Skapa ny offert', 'Create new quote')}
             </Button>
           </DialogFooter>
         </DialogContent>
