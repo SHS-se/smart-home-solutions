@@ -1,199 +1,179 @@
 
-# Remove Device Templates; Unify to Single Devices Catalog
 
-## Summary
+# Performance Data System for Energy Modeling
 
-This plan eliminates the `device_templates` and `device_template_profiles` tables, making `device_instances` the single "Devices" table. Physics fields and COP/capacity profiles are stored directly on devices. The UI is rebuilt as a single "Devices" tab with a 3-column layout (list, form, chart/profile panel) plus search, scope, and type filters.
+## Overview
 
----
+This plan extends the existing `device_profiles` system from a single curve-only model to a full performance data platform supporting both 1D curves and 2D surfaces, with a rich editor modal, borrowed-data resolution, and simulator integration.
 
-## 1. Database Migration (single migration)
+## Scope and Phasing
 
-### Step A: Add `device_type_id` to `device_instances`
-
-- Add column `device_type_id uuid` (nullable initially for migration)
-- Add FK to `device_types(id)`
-
-### Step B: Migrate template data into `device_instances`
-
-For each `device_templates` row (where `is_deleted = false`), insert a new global device:
-```sql
-INSERT INTO device_instances (device_type_id, name, field_values, controllable, shiftable, priority, customer_id)
-SELECT device_type_id, display_name, coalesce(field_defaults,'{}'), controllable_default, shiftable_default, 0, NULL
-FROM device_templates WHERE is_deleted = false;
-```
-
-For existing customer `device_instances`, copy `device_type_id` from their linked template and merge field_defaults:
-```sql
-UPDATE device_instances di
-SET device_type_id = dt.device_type_id,
-    field_values = coalesce(dt.field_defaults,'{}') || coalesce(di.field_values,'{}')
-FROM device_templates dt
-WHERE di.device_template_id = dt.id AND di.device_type_id IS NULL;
-```
-
-### Step C: Create `device_profiles` table
-
-```sql
-CREATE TABLE device_profiles (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  device_id uuid NOT NULL REFERENCES device_instances(id) ON DELETE CASCADE,
-  profile_kind text NOT NULL DEFAULT 'cop_capacity_curve',
-  data jsonb NOT NULL DEFAULT '{}',
-  source text,
-  notes text,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE(device_id)
-);
-```
-
-Enable RLS with policies matching `device_instances` (staff full access, customers read own + global).
-
-### Step D: Migrate existing `device_template_profiles`
-
-Map old template profile rows to the newly-created global device that came from the same template:
-```sql
-INSERT INTO device_profiles (device_id, profile_kind, data, source, notes)
-SELECT di.id, 'cop_capacity_curve', dtp.data, dtp.source, dtp.notes
-FROM device_template_profiles dtp
-JOIN device_templates dt ON dtp.device_template_id = dt.id
-JOIN device_instances di ON di.name = dt.display_name 
-  AND di.customer_id IS NULL AND di.device_type_id = dt.device_type_id
-WHERE dtp.is_active = true
-ON CONFLICT (device_id) DO NOTHING;
-```
-
-### Step E: Finalize schema
-
-- Make `device_type_id` NOT NULL on `device_instances`
-- Drop `device_template_id` column from `device_instances`
-- Drop `device_template_profiles` table
-- Drop `device_templates` table
-
-### Step F: Add `updated_at` trigger on `device_profiles`
+Due to the breadth of this feature, this is broken into **4 phases** that build on each other. Each phase delivers working functionality.
 
 ---
 
-## 2. New Edge Function: `validate-device-profile`
+## Phase 1: Database Migration
 
-**File**: `supabase/functions/validate-device-profile/index.ts`
+### 1a. Evolve `device_profiles` table
 
-Accepts POST with `{ profile_kind, data }` and validates:
+The current table has a `UNIQUE(device_id)` constraint allowing only one profile per device. We need to support multiple profile kinds per device (e.g., heating curve + heating surface).
 
-1. JSON Schema validation (points array with temp_c, cop, capacity_w constraints)
-2. Business rules:
-   - `temp_c` values strictly increasing
-   - At least 4 points
-3. Returns `{ valid: true }` or `{ valid: false, error: "..." }`
+**Changes:**
+- Drop the existing `UNIQUE(device_id)` constraint
+- Add a `mode` column (`text`, default `'heating'`, not null) for heating vs cooling
+- Add a `metadata` column (`jsonb`, nullable) for optional details (e.g., outdoor temp type WB/DB)
+- Add a new unique constraint on `(device_id, mode, profile_kind)`
+- Migrate the existing 1 row: set `mode = 'heating'`
 
-This is called from the UI before saving to `device_profiles`. Additionally, the profile save goes through the standard Supabase client insert/update.
+### 1b. Create `device_profile_points` table
 
----
+A normalized points table for granular data storage:
 
-## 3. UI Changes
+| Column | Type | Notes |
+|--------|------|-------|
+| id | uuid PK | |
+| profile_id | uuid FK -> device_profiles.id ON DELETE CASCADE | |
+| temp_c | numeric | Outdoor temp |
+| indoor_temp_c | numeric, nullable | NULL for 1D curve, required for 2D surface |
+| cop | numeric, nullable | Required for curve, NULL for surface |
+| capacity_w | integer, nullable | Required for both |
+| input_power_w | integer, nullable | Required for surface |
+| created_at | timestamptz | |
 
-### 3a. Replace `DeviceCatalog.tsx` tabs
+**Indexes:**
+- `(profile_id, temp_c)` for curve lookups
+- Unique constraint logic handled at application level (temp_c unique per curve profile; (indoor_temp_c, temp_c) unique per surface profile)
 
-- Remove the "Templates" tab and "Devices" (GlobalDeviceManagerTab) tab
-- Replace with single "Devices" tab using new `DeviceCatalogTab` component
-- Keep "Device Types" and "Calibration" tabs for staff
+**RLS:** Mirror the existing device_profiles pattern -- staff full access, customers can CRUD for own devices, customers can SELECT for global devices.
 
-### 3b. New component: `DeviceCatalogTab.tsx`
+### 1c. Add `performance_data_device_id` to `device_instances`
 
-**Layout**: 3-column grid (list | form | profile panel), same pattern as existing `DeviceTemplatesTab`
-
-**Left column** -- Device List:
-- "New Global Device" button (staff only)
-- Search input (searches name, field_values.make, field_values.model)
-- Scope segmented control: All / Global / Customer
-- Type filter chips from `device_types`
-- Scrollable list of devices, each showing name + subtitle + scope icon
-
-**Center column** -- Edit Device Form:
-- Device Type selector (required, dropdown from `device_types`)
-- Display Name input
-- Dynamic fields from `device_types.field_schema`, grouped into sections:
-  - "Identification" (make, model)
-  - "Electrical Limits" (max_power_w, min_power_w)
-  - "Performance" (scop, nominal_capacity_w, min_temp_c) -- optional fields
-- Controllable / Shiftable switches
-- Priority input
-- Save / Delete buttons
-
-**Right column** -- COP + Capacity Curve Panel:
-- Card titled "COP + Capacity curve"
-- Empty state: "No curve uploaded" + "Upload curve" button
-- With data: dual-axis chart (COP left axis, Capacity kW right axis, temp_c X axis)
-- Metadata row: source, last updated
-- Action buttons: "Replace curve", "Clear curve" (with confirm)
-
-### 3c. New component: `CurveUploadModal.tsx`
-
-- Dialog with:
-  - JSON file upload input
-  - Source dropdown (manufacturer / measured / estimated)
-  - Notes textarea
-- After file selection:
-  - Parse and validate locally against JSON schema + business rules
-  - Show preview table of points
-  - Show mini preview chart
-- On save: call validate edge function, then upsert into `device_profiles`
-
-### 3d. Update `PerformanceCurveChart.tsx`
-
-- Add support for dual-axis rendering (COP + Capacity on same chart)
-- New prop for secondary data series
-
-### 3e. Remove old components
-
-- Delete `DeviceTemplatesTab.tsx` (replaced by DeviceCatalogTab)
-- Delete `GlobalDeviceManagerTab.tsx` (merged into DeviceCatalogTab)
-- Delete `DeviceInstanceDialog.tsx` (no longer needed; editing is inline)
-
-### 3f. Update `HomeDevicesTab.tsx`
-
-- Remove all `device_templates` references from queries
-- Query `device_instances` directly with `device_types(key, display_name)` join
-- Update interfaces to use `device_type_id` instead of `device_template_id`
-
-### 3g. Update `SimulatorTab.tsx`
-
-- Remove `device_templates` from query chain
-- Join directly: `device_instances(... device_types(key, simulation_model_key))`
-- Read `type_key` and `simulation_model_key` from `device_types` directly
+- New nullable column `performance_data_device_id uuid` FK -> `device_instances.id`
+- A validation trigger prevents self-referencing (device cannot reference itself)
 
 ---
 
-## 4. Files Summary
+## Phase 2: Backend Validation
 
-| File | Action |
-|------|--------|
-| Migration SQL | **Create**: single migration with steps A-F |
-| `supabase/functions/validate-device-profile/index.ts` | **Create**: JSON schema validation |
-| `src/components/portal/energy/DeviceCatalogTab.tsx` | **Create**: unified devices screen |
-| `src/components/portal/energy/CurveUploadModal.tsx` | **Create**: upload modal with validation + preview |
-| `src/components/portal/energy/PerformanceCurveChart.tsx` | **Modify**: add dual-axis support |
-| `src/pages/portal/DeviceCatalog.tsx` | **Modify**: replace tabs |
-| `src/components/portal/energy/HomeDevicesTab.tsx` | **Modify**: remove template references |
-| `src/components/portal/energy/SimulatorTab.tsx` | **Modify**: remove template references |
-| `src/components/portal/energy/DeviceTemplatesTab.tsx` | **Delete** |
-| `src/components/portal/energy/GlobalDeviceManagerTab.tsx` | **Delete** |
-| `src/components/portal/energy/DeviceInstanceDialog.tsx` | **Delete** |
+### 2a. Extend `validate-device-profile` edge function
+
+Add support for `heating_performance_surface` profile kind alongside the existing `cop_capacity_curve`.
+
+**Curve validation rules (updated):**
+- `points.length >= 2` (relaxed from current 4)
+- `temp_c` unique, sorted ascending (auto-sort on save)
+- `cop > 0 && cop < 15`
+- `capacity_w > 0 && capacity_w < 30000`
+
+**Surface validation rules (new):**
+- Points array with `indoor_temp_c`, `temp_c`, `capacity_w`, `input_power_w`
+- Unique `(indoor_temp_c, temp_c)` combinations
+- `input_power_w > 0 && input_power_w < 20000`
+- Derived COP sanity: `capacity_w / input_power_w` between 0.5 and 15 (warning); block save if < 0.2 or > 25
+
+### 2b. Profile resolution helper
+
+Create a shared utility `src/lib/performance-data.ts`:
+- `resolveProfile(deviceId, mode, profileKind)` -- checks own profile first, falls back to `performance_data_device_id` device's profile
+- Returns `{ profile, source: 'own' | 'borrowed', borrowedFromName? }`
+- Used by both the UI (to show status) and the simulator
 
 ---
 
-## 5. RLS Policies for `device_profiles`
+## Phase 3: Performance Data Editor Modal
 
-- Staff: full access (ALL)
-- Customers: SELECT where device_id references a device with matching customer_id or customer_id IS NULL (global)
-- Customers: INSERT/UPDATE/DELETE only for devices they own
+Replace and extend the existing `CurveUploadModal` with a new `PerformanceDataEditor` modal.
+
+### 3a. Modal structure
+
+- Header: "Edit Performance Data" with profile kind indicator
+- Top bar: Source dropdown (manufacturer/estimated/measured), Notes textarea
+- Three tabs: **JSON**, **Table**, **Preview**
+- Validation summary above Save button
+- Save disabled until valid
+
+### 3b. JSON tab
+- Full JSON textarea (existing behavior, enhanced)
+- Live validation (debounced) with human-readable error paths
+- "Format JSON" button
+- "Paste example" button that inserts a valid sample for the current schema
+
+### 3c. Table tab
+
+**For Curve (1D):**
+- Editable table: `temp_c | cop | capacity_w`
+- Add row / delete row buttons
+- TSV paste support (auto-maps columns)
+- "Sort by temperature" button
+- Inline validation badges per row
+- "Normalize units" helper (kW -> W conversion)
+
+**For Surface (2D):**
+- Flat table view: `indoor_temp_c | temp_c | capacity_w | input_power_w`
+- Add/delete row, TSV paste support
+- Column mapping step when paste shape is ambiguous
+- Derived COP column (read-only, computed)
+- "Normalize units" helper
+
+### 3d. Preview tab
+
+**For Curve:**
+- COP vs temp line chart
+- Capacity (kW display) vs temp line chart
+- Side by side (existing layout)
+
+**For Surface:**
+- Indoor temp dropdown (defaults to 20 deg C)
+- For selected indoor temp, three charts: Capacity vs outdoor temp, Input Power vs outdoor temp, Derived COP vs outdoor temp
+
+### 3e. Save behavior
+- Upsert `device_profiles` row by `(device_id, mode, profile_kind)`
+- Replace all `device_profile_points` for that profile in a transaction
+- Continue storing the JSONB `data` field as well for backwards compatibility
+- Store W internally, display kW in UI
 
 ---
 
-## 6. Edge Cases
+## Phase 4: Device Catalog UI + Simulator Integration
 
-- Existing `home_device_assignments` reference `device_instances.id` which is unchanged, so assignments are preserved
-- The `validate_assignment_customer_match` trigger continues to work since it reads `device_instances.customer_id`
-- The `device_types` table and `DeviceTypesManager` are completely unaffected
-- Calibration tab is unaffected
+### 4a. Device editor: "Performance Data" section
+
+In `DeviceCatalogTab.tsx`, replace the single "COP + Capacity Curve" card with a "Performance Data" section showing:
+- Status chips per profile: "COP+Capacity Curve (heating)" and "Heating Performance Surface"
+- Each shows: present / missing / borrowed + source badge
+- Edit buttons open the new editor modal for the respective kind
+- "Use another device's data" toggle with searchable device dropdown
+- Precedence explanation text
+
+### 4b. Simulator integration
+
+In `SimulatorTab.tsx`:
+- Indoor temperature slider/input already exists -- use it for surface interpolation
+- When evaluating heating device performance:
+  - Resolve profile using `resolveProfile()` helper
+  - If surface exists: bilinear interpolation on (indoor_temp_c, temp_c) for capacity and input power; derive COP
+  - Else fallback to curve: linear interpolation on temp_c for COP and capacity
+- Show data source badge: "Manufacturer / Estimated / Measured / Borrowed from {name}"
+
+---
+
+## Technical Details
+
+### Files to create
+- `src/lib/performance-data.ts` -- profile resolution + interpolation helpers + validation
+- `src/components/portal/energy/PerformanceDataEditor.tsx` -- new modal component
+- `src/components/portal/energy/PerformanceDataStatus.tsx` -- status chips component
+- `src/components/portal/energy/SurfacePreviewCharts.tsx` -- surface chart component
+
+### Files to modify
+- `supabase/functions/validate-device-profile/index.ts` -- add surface validation
+- `src/components/portal/energy/DeviceCatalogTab.tsx` -- replace curve panel with performance data section
+- `src/components/portal/energy/SimulatorTab.tsx` -- integrate profile resolution + interpolation
+- `src/components/portal/energy/CurveUploadModal.tsx` -- deprecate / redirect to new editor
+
+### Migration SQL (summary)
+1. `ALTER TABLE device_profiles` -- add mode, metadata columns, drop old unique, add new unique
+2. `CREATE TABLE device_profile_points` with RLS
+3. `ALTER TABLE device_instances ADD performance_data_device_id` with FK + self-ref trigger
+4. Backfill existing profile row with `mode = 'heating'`
+
