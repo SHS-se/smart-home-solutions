@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Loader2, Plus, Save, Trash2, Search, Globe, User, Upload, Download, X } from 'lucide-react';
+import { Loader2, Plus, Save, Trash2, Search, Globe, User } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,9 +11,8 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { formatPower } from '@/lib/energy-units';
-import PerformanceCurveChart from './PerformanceCurveChart';
-import CurveUploadModal from './CurveUploadModal';
+
+import PerformanceDataStatus from './PerformanceDataStatus';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -56,15 +55,6 @@ interface DeviceRow {
   } | null;
 }
 
-interface DeviceProfile {
-  id: string;
-  device_id: string;
-  profile_kind: string;
-  data: { points: Array<{ temp_c: number; cop: number; capacity_w: number }> };
-  source: string | null;
-  notes: string | null;
-  updated_at: string;
-}
 
 type ScopeFilter = 'all' | 'global' | 'customer';
 
@@ -88,6 +78,7 @@ const DeviceCatalogTab: React.FC = () => {
   const { toast } = useToast();
 
   const [devices, setDevices] = useState<DeviceRow[]>([]);
+  const [performanceDataDeviceId, setPerformanceDataDeviceId] = useState<string | null>(null);
   const [deviceTypes, setDeviceTypes] = useState<DeviceType[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -98,9 +89,7 @@ const DeviceCatalogTab: React.FC = () => {
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
 
   // Selected device
-  const [selected, setSelected] = useState<DeviceRow | null>(null);
-  const [profile, setProfile] = useState<DeviceProfile | null>(null);
-  const [profileLoading, setProfileLoading] = useState(false);
+   const [selected, setSelected] = useState<DeviceRow | null>(null);
 
   // Form state
   const [form, setForm] = useState({
@@ -112,13 +101,10 @@ const DeviceCatalogTab: React.FC = () => {
     field_values: {} as Record<string, any>,
   });
 
-  // Upload modal
-  const [uploadOpen, setUploadOpen] = useState(false);
-
   const fetchData = useCallback(async () => {
     setLoading(true);
     const [{ data: devs }, { data: types }] = await Promise.all([
-      supabase.from('device_instances').select('id, name, customer_id, device_type_id, field_values, controllable, shiftable, priority, device_types(key, display_name, field_schema)').order('name'),
+      supabase.from('device_instances').select('id, name, customer_id, device_type_id, field_values, controllable, shiftable, priority, performance_data_device_id, device_types(key, display_name, field_schema)').order('name'),
       supabase.from('device_types').select('*').order('display_name'),
     ]);
     if (devs) setDevices(devs as unknown as DeviceRow[]);
@@ -128,15 +114,10 @@ const DeviceCatalogTab: React.FC = () => {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const fetchProfile = useCallback(async (deviceId: string) => {
-    setProfileLoading(true);
-    const { data } = await supabase.from('device_profiles').select('*').eq('device_id', deviceId).maybeSingle();
-    setProfile(data as unknown as DeviceProfile | null);
-    setProfileLoading(false);
-  }, []);
 
   const handleSelect = (dev: DeviceRow) => {
     setSelected(dev);
+    setPerformanceDataDeviceId((dev as any).performance_data_device_id || null);
     setForm({
       device_type_id: dev.device_type_id,
       name: dev.name,
@@ -145,12 +126,11 @@ const DeviceCatalogTab: React.FC = () => {
       priority: dev.priority,
       field_values: dev.field_values || {},
     });
-    fetchProfile(dev.id);
   };
 
   const handleNew = () => {
     setSelected(null);
-    setProfile(null);
+    setPerformanceDataDeviceId(null);
     setForm({
       device_type_id: deviceTypes[0]?.id || '',
       name: '',
@@ -199,22 +179,12 @@ const DeviceCatalogTab: React.FC = () => {
     } else {
       toast({ title: t('Borttagen!', 'Deleted!') });
       setSelected(null);
-      setProfile(null);
+      setPerformanceDataDeviceId(null);
       handleNew();
       fetchData();
     }
   };
 
-  const handleClearCurve = async () => {
-    if (!profile) return;
-    const { error } = await supabase.from('device_profiles').delete().eq('id', profile.id);
-    if (error) {
-      toast({ title: t('Fel', 'Error'), description: error.message, variant: 'destructive' });
-    } else {
-      toast({ title: t('Kurva borttagen', 'Curve cleared') });
-      setProfile(null);
-    }
-  };
 
   // Filters
   const filtered = devices.filter(d => {
@@ -233,13 +203,6 @@ const DeviceCatalogTab: React.FC = () => {
   const selectedType = deviceTypes.find(dt => dt.id === form.device_type_id) || null;
   const schema = selectedType?.field_schema?.fields || [];
   const grouped = groupFields(schema);
-
-  // Build chart data from profile
-  const chartData = profile?.data?.points?.map(p => ({
-    temp_c: p.temp_c,
-    cop: p.cop,
-    capacity_kw: p.capacity_w / 1000,
-  }));
 
   if (loading) {
     return <div className="flex items-center justify-center min-h-[300px]"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
@@ -432,77 +395,27 @@ const DeviceCatalogTab: React.FC = () => {
         </CardContent>
       </Card>
 
-      {/* RIGHT: Profile Panel */}
+      {/* RIGHT: Performance Data Panel */}
       <div className="space-y-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">{t('COP + Kapacitetskurva', 'COP + Capacity Curve')}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {!selected ? (
-              <p className="text-sm text-muted-foreground text-center py-8">{t('Välj en enhet', 'Select a device')}</p>
-            ) : profileLoading ? (
-              <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>
-            ) : !profile ? (
-              <div className="text-center py-8 space-y-3">
-                <p className="text-sm text-muted-foreground">{t('Ingen kurva uppladdad', 'No curve uploaded')}</p>
-                {isStaff && (
-                  <Button variant="outline" size="sm" onClick={() => setUploadOpen(true)}>
-                    <Upload className="w-4 h-4 mr-2" />{t('Ladda upp kurva', 'Upload curve')}
-                  </Button>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <PerformanceCurveChart
-                  title="COP"
-                  data={chartData?.map(p => ({ x: p.temp_c, y: p.cop })) || []}
-                  xLabel="°C"
-                  yLabel="COP"
-                  height={180}
-                  hideCard
-                />
-                <PerformanceCurveChart
-                  title={t('Kapacitet', 'Capacity')}
-                  data={chartData?.map(p => ({ x: p.temp_c, y: p.capacity_kw })) || []}
-                  xLabel="°C"
-                  yLabel="kW"
-                  color="hsl(var(--destructive))"
-                  height={180}
-                  hideCard
-                />
-
-                {/* Metadata */}
-                <div className="flex gap-4 text-xs text-muted-foreground">
-                  {profile.source && <span>{t('Källa', 'Source')}: {profile.source}</span>}
-                  <span>{t('Uppdaterad', 'Updated')}: {new Date(profile.updated_at).toLocaleDateString()}</span>
-                </div>
-
-                {/* Actions */}
-                {isStaff && (
-                  <Button variant="outline" size="sm" onClick={() => setUploadOpen(true)}>
-                    {t('Redigera data', 'Edit data')}
-                  </Button>
-                )}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+        {!selected ? (
+          <Card>
+            <CardContent className="py-8">
+              <p className="text-sm text-muted-foreground text-center">{t('Välj en enhet', 'Select a device')}</p>
+            </CardContent>
+          </Card>
+        ) : (
+          <PerformanceDataStatus
+            deviceId={selected.id}
+            devices={devices.map(d => ({ id: d.id, name: d.name, device_type_id: d.device_type_id }))}
+            currentDeviceTypeId={selected.device_type_id}
+            performanceDataDeviceId={performanceDataDeviceId}
+            onPerformanceDeviceChange={async (id) => {
+              setPerformanceDataDeviceId(id);
+              await supabase.from('device_instances').update({ performance_data_device_id: id }).eq('id', selected.id);
+            }}
+          />
+        )}
       </div>
-
-      {/* Upload Modal */}
-      {selected && (
-        <CurveUploadModal
-          open={uploadOpen}
-          onOpenChange={setUploadOpen}
-          deviceId={selected.id}
-          existingProfileId={profile?.id || null}
-          existingData={profile?.data as any}
-          existingSource={profile?.source || null}
-          existingNotes={profile?.notes || null}
-          onSaved={() => fetchProfile(selected.id)}
-        />
-      )}
     </div>
   );
 };
