@@ -1,123 +1,199 @@
 
-# Automatic Quote Expiry and Reissue Flow
+# Remove Device Templates; Unify to Single Devices Catalog
 
 ## Summary
 
-This plan implements two interconnected features: (1) a daily cron job that automatically expires quotes past their `expires_at` date, and (2) a reissue flow on the staff quote page that lets staff create a new draft quote from an expired one, marking the old quote as superseded.
-
-No new database columns are needed -- all existing fields (`expires_at`, `supersedes_quote_id`, `superseded_by_quote_id`, `superseded_at`, `is_latest`, `status_reason`) are used.
+This plan eliminates the `device_templates` and `device_template_profiles` tables, making `device_instances` the single "Devices" table. Physics fields and COP/capacity profiles are stored directly on devices. The UI is rebuilt as a single "Devices" tab with a 3-column layout (list, form, chart/profile panel) plus search, scope, and type filters.
 
 ---
 
-## 1. Edge Function: `expire-quotes` (Daily Cron)
+## 1. Database Migration (single migration)
 
-**New file**: `supabase/functions/expire-quotes/index.ts`
+### Step A: Add `device_type_id` to `device_instances`
 
-- Uses service role key (no auth header needed since triggered by cron)
-- Selection criteria:
-  - `expires_at IS NOT NULL`
-  - `expires_at < now()`
-  - `status IN ('sent', 'viewed', 'revision_requested')`
-- Action per matched quote:
-  - `status = 'expired'`
-  - `status_reason = 'auto_expired'`
-- Logs count of updated rows
-- Idempotent: running multiple times has no effect on already-expired quotes
-- Returns JSON with count of expired quotes
+- Add column `device_type_id uuid` (nullable initially for migration)
+- Add FK to `device_types(id)`
 
-**Cron schedule** (via `pg_cron` + `pg_net`):
-- Runs daily at 02:00 UTC (03:00 CET)
-- Calls the edge function via `net.http_post`
-- Will be set up using the insert tool (not migration) since it contains project-specific URLs and keys
+### Step B: Migrate template data into `device_instances`
 
-**Config**: Add `[functions.expire-quotes]` with `verify_jwt = false` to `supabase/config.toml`
+For each `device_templates` row (where `is_deleted = false`), insert a new global device:
+```sql
+INSERT INTO device_instances (device_type_id, name, field_values, controllable, shiftable, priority, customer_id)
+SELECT device_type_id, display_name, coalesce(field_defaults,'{}'), controllable_default, shiftable_default, 0, NULL
+FROM device_templates WHERE is_deleted = false;
+```
 
----
+For existing customer `device_instances`, copy `device_type_id` from their linked template and merge field_defaults:
+```sql
+UPDATE device_instances di
+SET device_type_id = dt.device_type_id,
+    field_values = coalesce(dt.field_defaults,'{}') || coalesce(di.field_values,'{}')
+FROM device_templates dt
+WHERE di.device_template_id = dt.id AND di.device_type_id IS NULL;
+```
 
-## 2. Staff Quote Page: Expiry Display and Reissue Modal
+### Step C: Create `device_profiles` table
 
-**Modified file**: `src/pages/portal/quotes/QuotePreparation.tsx`
+```sql
+CREATE TABLE device_profiles (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  device_id uuid NOT NULL REFERENCES device_instances(id) ON DELETE CASCADE,
+  profile_kind text NOT NULL DEFAULT 'cop_capacity_curve',
+  data jsonb NOT NULL DEFAULT '{}',
+  source text,
+  notes text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(device_id)
+);
+```
 
-### 2a. Validity section update (sidebar, lines ~976-1001)
+Enable RLS with policies matching `device_instances` (staff full access, customers read own + global).
 
-Current behavior: shows "Giltig till {date}" for non-editable quotes.
+### Step D: Migrate existing `device_template_profiles`
 
-New behavior when `status === 'expired'`:
-- Show: **Giltig till {date}** followed by a red **Utgangen** (Expired) badge/button
-- The badge is clickable and keyboard-accessible (`role="button"`, `tabIndex={0}`)
-- Clicking opens the reissue modal
+Map old template profile rows to the newly-created global device that came from the same template:
+```sql
+INSERT INTO device_profiles (device_id, profile_kind, data, source, notes)
+SELECT di.id, 'cop_capacity_curve', dtp.data, dtp.source, dtp.notes
+FROM device_template_profiles dtp
+JOIN device_templates dt ON dtp.device_template_id = dt.id
+JOIN device_instances di ON di.name = dt.display_name 
+  AND di.customer_id IS NULL AND di.device_type_id = dt.device_type_id
+WHERE dtp.is_active = true
+ON CONFLICT (device_id) DO NOTHING;
+```
 
-For all other non-draft statuses: unchanged display.
+### Step E: Finalize schema
 
-### 2b. Reissue modal (new dialog in same file)
+- Make `device_type_id` NOT NULL on `device_instances`
+- Drop `device_template_id` column from `device_instances`
+- Drop `device_template_profiles` table
+- Drop `device_templates` table
 
-- State: `showReissueDialog`, `reissueDate`, `isReissuing`
-- Title: "Ge ut offert pa nytt" / "Reissue quote"
-- Description: explains that a new quote with a new number will be created, and the old one will be marked superseded
-- Date picker: defaults to today + 14 days
-- Cancel / "Skapa ny offert" / "Create new quote" buttons
-- Loading state with spinner, double-submit prevention
-
-### 2c. Reissue backend logic (client-side, reuses existing patterns from `use-quote-versioning.ts`)
-
-On confirm:
-1. Load current quote (all fields)
-2. Find root quote ID via `parent_quote_id`
-3. Compute `newVersion` (max version in family + 1)
-4. Mark all quotes in family as `is_latest = false`
-5. Insert new quote:
-   - Copy: `customer_id`, `bom_id`, `bom_version`, `created_by`, `is_test`
-   - Set: `status = 'draft'`, `expires_at = selected_date (end of day)`, `supersedes_quote_id = old_quote.id`, `parent_quote_id = rootId`, `version = newVersion`, `is_latest = true`
-   - Do NOT copy: `quote_number` (auto-assigned by trigger), timestamps, invoice fields, acceptance fields, token fields
-6. Clone all `quote_lines` from old quote to new quote (same logic as `createNewVersion` in `use-quote-versioning.ts`)
-7. Update old quote: `status = 'superseded'`, `superseded_by_quote_id = new_quote.id`, `superseded_at = now()`, `is_latest = false`
-8. If BOM exists, call `supersedeActiveQuotesInChain` for safety
-9. Insert `quote_events`: "reissued" event on old quote, "created" event on new quote
-10. Navigate to new quote: `/portal/quotes/{newQuoteId}`
-11. Invalidate query caches
-
----
-
-## 3. Button Rules (already mostly correct)
-
-- "Send quote via email" (`canSend`): already gated on `draft` or `revision_requested` -- no change needed
-- "Create Invoice" (`canCreateInvoice`): already gated on `accepted` -- no change needed
-- Expired and superseded quotes are already non-editable via `isEditable` logic
+### Step F: Add `updated_at` trigger on `device_profiles`
 
 ---
 
-## 4. Traceability Banners
+## 2. New Edge Function: `validate-device-profile`
 
-**Modified file**: `src/pages/portal/quotes/QuotePreparation.tsx`
+**File**: `supabase/functions/validate-device-profile/index.ts`
 
-- Existing superseded banner already links to `superseded_by_quote_id` -- no change needed
-- Add a new banner for quotes that supersede another: "Denna offert ersatter {old_quote_number}" with a link to the old quote. Shown when `supersedes_quote_id` is set and the current quote is NOT superseded itself.
+Accepts POST with `{ profile_kind, data }` and validates:
 
----
+1. JSON Schema validation (points array with temp_c, cop, capacity_w constraints)
+2. Business rules:
+   - `temp_c` values strictly increasing
+   - At least 4 points
+3. Returns `{ valid: true }` or `{ valid: false, error: "..." }`
 
-## 5. Edge Cases Handled
-
-- Draft quotes with past `expires_at`: cron only targets `sent`, `viewed`, `revision_requested` -- drafts are safe
-- Duplicate reissue prevention: the reissue button only appears when `status === 'expired'`; once reissued, the old quote becomes `superseded` and can no longer be reissued
-- Already-superseded quotes with `superseded_by_quote_id`: the superseded banner already redirects to the newer quote
-- Chains (Q1 -> Q2 -> Q3): `parent_quote_id` always points to root, `supersedes_quote_id` points to the immediate predecessor, `is_latest` is maintained correctly
+This is called from the UI before saving to `device_profiles`. Additionally, the profile save goes through the standard Supabase client insert/update.
 
 ---
 
-## 6. Customer-Facing Page (OfferDetail.tsx)
+## 3. UI Changes
 
-- Already shows expiry date and status badge
-- Expired status badge already exists in `quote-status-badge.tsx`
-- No customer-facing reissue action needed (staff only)
-- No changes required
+### 3a. Replace `DeviceCatalog.tsx` tabs
+
+- Remove the "Templates" tab and "Devices" (GlobalDeviceManagerTab) tab
+- Replace with single "Devices" tab using new `DeviceCatalogTab` component
+- Keep "Device Types" and "Calibration" tabs for staff
+
+### 3b. New component: `DeviceCatalogTab.tsx`
+
+**Layout**: 3-column grid (list | form | profile panel), same pattern as existing `DeviceTemplatesTab`
+
+**Left column** -- Device List:
+- "New Global Device" button (staff only)
+- Search input (searches name, field_values.make, field_values.model)
+- Scope segmented control: All / Global / Customer
+- Type filter chips from `device_types`
+- Scrollable list of devices, each showing name + subtitle + scope icon
+
+**Center column** -- Edit Device Form:
+- Device Type selector (required, dropdown from `device_types`)
+- Display Name input
+- Dynamic fields from `device_types.field_schema`, grouped into sections:
+  - "Identification" (make, model)
+  - "Electrical Limits" (max_power_w, min_power_w)
+  - "Performance" (scop, nominal_capacity_w, min_temp_c) -- optional fields
+- Controllable / Shiftable switches
+- Priority input
+- Save / Delete buttons
+
+**Right column** -- COP + Capacity Curve Panel:
+- Card titled "COP + Capacity curve"
+- Empty state: "No curve uploaded" + "Upload curve" button
+- With data: dual-axis chart (COP left axis, Capacity kW right axis, temp_c X axis)
+- Metadata row: source, last updated
+- Action buttons: "Replace curve", "Clear curve" (with confirm)
+
+### 3c. New component: `CurveUploadModal.tsx`
+
+- Dialog with:
+  - JSON file upload input
+  - Source dropdown (manufacturer / measured / estimated)
+  - Notes textarea
+- After file selection:
+  - Parse and validate locally against JSON schema + business rules
+  - Show preview table of points
+  - Show mini preview chart
+- On save: call validate edge function, then upsert into `device_profiles`
+
+### 3d. Update `PerformanceCurveChart.tsx`
+
+- Add support for dual-axis rendering (COP + Capacity on same chart)
+- New prop for secondary data series
+
+### 3e. Remove old components
+
+- Delete `DeviceTemplatesTab.tsx` (replaced by DeviceCatalogTab)
+- Delete `GlobalDeviceManagerTab.tsx` (merged into DeviceCatalogTab)
+- Delete `DeviceInstanceDialog.tsx` (no longer needed; editing is inline)
+
+### 3f. Update `HomeDevicesTab.tsx`
+
+- Remove all `device_templates` references from queries
+- Query `device_instances` directly with `device_types(key, display_name)` join
+- Update interfaces to use `device_type_id` instead of `device_template_id`
+
+### 3g. Update `SimulatorTab.tsx`
+
+- Remove `device_templates` from query chain
+- Join directly: `device_instances(... device_types(key, simulation_model_key))`
+- Read `type_key` and `simulation_model_key` from `device_types` directly
 
 ---
 
-## Technical Details: File Changes Summary
+## 4. Files Summary
 
 | File | Action |
 |------|--------|
-| `supabase/functions/expire-quotes/index.ts` | **Create**: daily cron edge function |
-| `supabase/config.toml` | Auto-updated: add `verify_jwt = false` for expire-quotes |
-| `src/pages/portal/quotes/QuotePreparation.tsx` | **Modify**: add expired badge+link in validity section, reissue modal and logic, "supersedes" banner |
-| Cron job SQL (via insert tool) | **Create**: `pg_cron` schedule calling the edge function daily |
+| Migration SQL | **Create**: single migration with steps A-F |
+| `supabase/functions/validate-device-profile/index.ts` | **Create**: JSON schema validation |
+| `src/components/portal/energy/DeviceCatalogTab.tsx` | **Create**: unified devices screen |
+| `src/components/portal/energy/CurveUploadModal.tsx` | **Create**: upload modal with validation + preview |
+| `src/components/portal/energy/PerformanceCurveChart.tsx` | **Modify**: add dual-axis support |
+| `src/pages/portal/DeviceCatalog.tsx` | **Modify**: replace tabs |
+| `src/components/portal/energy/HomeDevicesTab.tsx` | **Modify**: remove template references |
+| `src/components/portal/energy/SimulatorTab.tsx` | **Modify**: remove template references |
+| `src/components/portal/energy/DeviceTemplatesTab.tsx` | **Delete** |
+| `src/components/portal/energy/GlobalDeviceManagerTab.tsx` | **Delete** |
+| `src/components/portal/energy/DeviceInstanceDialog.tsx` | **Delete** |
+
+---
+
+## 5. RLS Policies for `device_profiles`
+
+- Staff: full access (ALL)
+- Customers: SELECT where device_id references a device with matching customer_id or customer_id IS NULL (global)
+- Customers: INSERT/UPDATE/DELETE only for devices they own
+
+---
+
+## 6. Edge Cases
+
+- Existing `home_device_assignments` reference `device_instances.id` which is unchanged, so assignments are preserved
+- The `validate_assignment_customer_match` trigger continues to work since it reads `device_instances.customer_id`
+- The `device_types` table and `DeviceTypesManager` are completely unaffected
+- Calibration tab is unaffected
