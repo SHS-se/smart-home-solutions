@@ -1,0 +1,223 @@
+import React, { useState, useRef } from 'react';
+import { Upload, Loader2 } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Badge } from '@/components/ui/badge';
+import { useLanguage } from '@/contexts/LanguageContext';
+import { supabase } from '@/integrations/supabase/client';
+import { useToast } from '@/hooks/use-toast';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+
+interface CurvePoint {
+  temp_c: number;
+  cop: number;
+  capacity_w: number;
+}
+
+interface Props {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  deviceId: string;
+  existingProfileId?: string | null;
+  onSaved: () => void;
+}
+
+function localValidate(data: unknown): { valid: true; points: CurvePoint[] } | { valid: false; error: string } {
+  if (typeof data !== 'object' || data === null || !Array.isArray((data as any).points)) {
+    return { valid: false, error: 'JSON must contain a "points" array' };
+  }
+  const points = (data as any).points as CurvePoint[];
+  if (points.length < 4) return { valid: false, error: `At least 4 points required, got ${points.length}` };
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i];
+    if (typeof p.temp_c !== 'number' || p.temp_c < -40 || p.temp_c > 40) return { valid: false, error: `Point ${i}: temp_c invalid` };
+    if (typeof p.cop !== 'number' || p.cop <= 0 || p.cop > 15) return { valid: false, error: `Point ${i}: cop invalid` };
+    if (typeof p.capacity_w !== 'number' || !Number.isInteger(p.capacity_w) || p.capacity_w < 0 || p.capacity_w > 50000) return { valid: false, error: `Point ${i}: capacity_w invalid` };
+    if (i > 0 && p.temp_c <= points[i - 1].temp_c) return { valid: false, error: `Point ${i}: temp_c not strictly increasing` };
+  }
+  return { valid: true, points };
+}
+
+const CurveUploadModal: React.FC<Props> = ({ open, onOpenChange, deviceId, existingProfileId, onSaved }) => {
+  const { t } = useLanguage();
+  const { toast } = useToast();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [source, setSource] = useState('manufacturer');
+  const [notes, setNotes] = useState('');
+  const [points, setPoints] = useState<CurvePoint[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setError(null);
+    setPoints(null);
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const parsed = JSON.parse(ev.target?.result as string);
+        const result = localValidate(parsed);
+        if (result.valid) {
+          setPoints((result as { valid: true; points: CurvePoint[] }).points);
+        } else {
+          setError((result as { valid: false; error: string }).error);
+        }
+      } catch {
+        setError('Invalid JSON file');
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleSave = async () => {
+    if (!points) return;
+    setSaving(true);
+    try {
+      // Server-side validation
+      const { data: validation, error: fnError } = await supabase.functions.invoke('validate-device-profile', {
+        body: { profile_kind: 'cop_capacity_curve', data: { points } },
+      });
+      if (fnError) throw fnError;
+      if (!validation.valid) {
+        setError(validation.error);
+        setSaving(false);
+        return;
+      }
+
+      // Upsert into device_profiles
+      if (existingProfileId) {
+        const { error: upErr } = await supabase.from('device_profiles').update({
+          data: { points } as any,
+          source,
+          notes: notes || null,
+        }).eq('id', existingProfileId);
+        if (upErr) throw upErr;
+      } else {
+        const { error: insErr } = await supabase.from('device_profiles').insert({
+          device_id: deviceId,
+          profile_kind: 'cop_capacity_curve',
+          data: { points } as any,
+          source,
+          notes: notes || null,
+        });
+        if (insErr) throw insErr;
+      }
+
+      toast({ title: t('Kurva sparad!', 'Curve saved!') });
+      onSaved();
+      onOpenChange(false);
+      // Reset
+      setPoints(null);
+      setNotes('');
+      setSource('manufacturer');
+      setError(null);
+    } catch (err: any) {
+      toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const chartData = points?.map(p => ({ temp_c: p.temp_c, cop: p.cop, capacity_kw: p.capacity_w / 1000 }));
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{t('Ladda upp COP + Kapacitetskurva', 'Upload COP + Capacity Curve')}</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div>
+            <Label className="text-sm">{t('JSON-fil', 'JSON File')}</Label>
+            <div className="mt-1">
+              <input ref={fileRef} type="file" accept=".json,application/json" onChange={handleFileChange} className="hidden" />
+              <Button variant="outline" onClick={() => fileRef.current?.click()}>
+                <Upload className="w-4 h-4 mr-2" />
+                {t('Välj fil...', 'Choose file...')}
+              </Button>
+            </div>
+          </div>
+
+          {error && (
+            <Badge variant="destructive" className="text-sm py-1 px-3">{error}</Badge>
+          )}
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <Label className="text-sm">{t('Källa', 'Source')}</Label>
+              <Select value={source} onValueChange={setSource}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="manufacturer">{t('Tillverkare', 'Manufacturer')}</SelectItem>
+                  <SelectItem value="measured">{t('Uppmätt', 'Measured')}</SelectItem>
+                  <SelectItem value="estimated">{t('Uppskattad', 'Estimated')}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-sm">{t('Anteckningar', 'Notes')}</Label>
+              <Textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} />
+            </div>
+          </div>
+
+          {points && (
+            <>
+              {/* Mini chart preview */}
+              <div className="h-[180px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={chartData}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                    <XAxis dataKey="temp_c" label={{ value: '°C', position: 'insideBottom', offset: -5 }} />
+                    <YAxis yAxisId="cop" label={{ value: 'COP', angle: -90, position: 'insideLeft' }} />
+                    <YAxis yAxisId="cap" orientation="right" label={{ value: 'kW', angle: 90, position: 'insideRight' }} />
+                    <Tooltip />
+                    <Line yAxisId="cop" type="monotone" dataKey="cop" stroke="hsl(var(--primary))" strokeWidth={2} dot={{ r: 2 }} />
+                    <Line yAxisId="cap" type="monotone" dataKey="capacity_kw" stroke="hsl(var(--destructive))" strokeWidth={2} dot={{ r: 2 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* Points table */}
+              <div className="max-h-[200px] overflow-y-auto border rounded">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>°C</TableHead>
+                      <TableHead>COP</TableHead>
+                      <TableHead>Capacity (W)</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {points.map((p, i) => (
+                      <TableRow key={i}>
+                        <TableCell>{p.temp_c}</TableCell>
+                        <TableCell>{p.cop}</TableCell>
+                        <TableCell>{p.capacity_w}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>{t('Avbryt', 'Cancel')}</Button>
+          <Button onClick={handleSave} disabled={saving || !points}>
+            {saving && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
+            {t('Spara', 'Save')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
+export default CurveUploadModal;

@@ -404,7 +404,7 @@ export type Database = {
           controllable: boolean
           created_at: string
           customer_id: string | null
-          device_template_id: string
+          device_type_id: string
           field_values: Json
           id: string
           name: string
@@ -416,7 +416,7 @@ export type Database = {
           controllable?: boolean
           created_at?: string
           customer_id?: string | null
-          device_template_id: string
+          device_type_id: string
           field_values?: Json
           id?: string
           name: string
@@ -428,7 +428,7 @@ export type Database = {
           controllable?: boolean
           created_at?: string
           customer_id?: string | null
-          device_template_id?: string
+          device_type_id?: string
           field_values?: Json
           id?: string
           name?: string
@@ -452,137 +452,51 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "device_instances_device_template_id_fkey"
-            columns: ["device_template_id"]
-            isOneToOne: false
-            referencedRelation: "device_templates"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      device_template_profiles: {
-        Row: {
-          created_at: string
-          created_by: string | null
-          data: Json
-          device_template_id: string
-          id: string
-          is_active: boolean
-          notes: string | null
-          profile_kind: string
-          resolution_seconds: number
-          source: string | null
-          unit_power: string
-          version: number
-        }
-        Insert: {
-          created_at?: string
-          created_by?: string | null
-          data?: Json
-          device_template_id: string
-          id?: string
-          is_active?: boolean
-          notes?: string | null
-          profile_kind: string
-          resolution_seconds?: number
-          source?: string | null
-          unit_power?: string
-          version?: number
-        }
-        Update: {
-          created_at?: string
-          created_by?: string | null
-          data?: Json
-          device_template_id?: string
-          id?: string
-          is_active?: boolean
-          notes?: string | null
-          profile_kind?: string
-          resolution_seconds?: number
-          source?: string | null
-          unit_power?: string
-          version?: number
-        }
-        Relationships: [
-          {
-            foreignKeyName: "device_template_profiles_device_template_id_fkey"
-            columns: ["device_template_id"]
-            isOneToOne: false
-            referencedRelation: "device_templates"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      device_templates: {
-        Row: {
-          category: string
-          controllable_default: boolean
-          created_at: string
-          created_by: string | null
-          device_kind: string
-          device_type: string
-          device_type_id: string
-          display_name: string
-          field_defaults: Json
-          id: string
-          is_deleted: boolean
-          make: string
-          max_electrical_power_w: number
-          min_operating_temp_c: number | null
-          model: string
-          name: string
-          scop: number | null
-          shiftable_default: boolean
-          specs: Json
-        }
-        Insert: {
-          category: string
-          controllable_default?: boolean
-          created_at?: string
-          created_by?: string | null
-          device_kind?: string
-          device_type: string
-          device_type_id: string
-          display_name?: string
-          field_defaults?: Json
-          id?: string
-          is_deleted?: boolean
-          make?: string
-          max_electrical_power_w: number
-          min_operating_temp_c?: number | null
-          model?: string
-          name: string
-          scop?: number | null
-          shiftable_default?: boolean
-          specs?: Json
-        }
-        Update: {
-          category?: string
-          controllable_default?: boolean
-          created_at?: string
-          created_by?: string | null
-          device_kind?: string
-          device_type?: string
-          device_type_id?: string
-          display_name?: string
-          field_defaults?: Json
-          id?: string
-          is_deleted?: boolean
-          make?: string
-          max_electrical_power_w?: number
-          min_operating_temp_c?: number | null
-          model?: string
-          name?: string
-          scop?: number | null
-          shiftable_default?: boolean
-          specs?: Json
-        }
-        Relationships: [
-          {
-            foreignKeyName: "device_templates_device_type_id_fkey"
+            foreignKeyName: "device_instances_device_type_id_fkey"
             columns: ["device_type_id"]
             isOneToOne: false
             referencedRelation: "device_types"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      device_profiles: {
+        Row: {
+          created_at: string
+          data: Json
+          device_id: string
+          id: string
+          notes: string | null
+          profile_kind: string
+          source: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          data?: Json
+          device_id: string
+          id?: string
+          notes?: string | null
+          profile_kind?: string
+          source?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          data?: Json
+          device_id?: string
+          id?: string
+          notes?: string | null
+          profile_kind?: string
+          source?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "device_profiles_device_id_fkey"
+            columns: ["device_id"]
+            isOneToOne: true
+            referencedRelation: "device_instances"
             referencedColumns: ["id"]
           },
         ]

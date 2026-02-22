@@ -41,26 +41,24 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
     if (!homeId) return;
     setRunning(true);
 
-    // Load device assignments for this home via home_device_assignments
+    // Load device assignments - now using device_type_id directly
     const { data: assignments } = await supabase
       .from('home_device_assignments')
-      .select('quantity, device_instances(id, name, device_template_id, field_values, controllable, shiftable, priority, device_templates(id, display_name, device_kind, device_type_id, device_types(key, simulation_model_key)))')
+      .select('quantity, device_instances(id, name, device_type_id, field_values, controllable, shiftable, priority, device_types(key, simulation_model_key))')
       .eq('home_id', homeId);
 
     const deviceSnapshot = (assignments || []).map((a: any) => {
       const d = a.device_instances;
       return {
         instance_id: d.id,
-        device_template_id: d.device_template_id,
         name: d.name,
         quantity: a.quantity,
         field_values: d.field_values,
         controllable: d.controllable,
         shiftable: d.shiftable,
         priority: d.priority,
-        type_key: d.device_templates?.device_types?.key,
-        simulation_model_key: d.device_templates?.device_types?.simulation_model_key,
-        template_display_name: d.device_templates?.display_name,
+        type_key: d.device_types?.key,
+        simulation_model_key: d.device_types?.simulation_model_key,
       };
     });
 
@@ -97,7 +95,6 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
       savingsSek: scenario === 'smart' ? Math.round(peakW * 0.045 * 12 * 0.3) : 0,
     };
 
-    // Insert model_run
     await supabase.from('model_runs').insert({
       customer_id: customerId,
       home_id: homeId,
