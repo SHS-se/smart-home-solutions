@@ -498,6 +498,8 @@ const DeviceCatalogTab: React.FC = () => {
           deviceId={selected.id}
           existingProfileId={profile?.id || null}
           existingData={profile?.data as any}
+          existingSource={profile?.source || null}
+          existingNotes={profile?.notes || null}
           onSaved={() => fetchProfile(selected.id)}
         />
       )}

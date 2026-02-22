@@ -24,6 +24,8 @@ interface Props {
   deviceId: string;
   existingProfileId?: string | null;
   existingData?: { points: CurvePoint[] } | null;
+  existingSource?: string | null;
+  existingNotes?: string | null;
   onSaved: () => void;
 }
 
@@ -43,7 +45,7 @@ function localValidate(data: unknown): { valid: true; points: CurvePoint[] } | {
   return { valid: true, points };
 }
 
-const CurveUploadModal: React.FC<Props> = ({ open, onOpenChange, deviceId, existingProfileId, existingData, onSaved }) => {
+const CurveUploadModal: React.FC<Props> = ({ open, onOpenChange, deviceId, existingProfileId, existingData, existingSource, existingNotes, onSaved }) => {
   const { t } = useLanguage();
   const { toast } = useToast();
   const [source, setSource] = useState('manufacturer');
@@ -55,19 +57,23 @@ const CurveUploadModal: React.FC<Props> = ({ open, onOpenChange, deviceId, exist
 
   // Pre-populate with existing data when modal opens
   React.useEffect(() => {
-    if (open && existingData?.points) {
-      const text = JSON.stringify(existingData, null, 2);
-      setJsonText(text);
-      setPoints(existingData.points);
-      setError(null);
-    } else if (!open) {
+    if (open) {
+      if (existingData?.points) {
+        const text = JSON.stringify(existingData, null, 2);
+        setJsonText(text);
+        setPoints(existingData.points);
+        setError(null);
+      }
+      setSource(existingSource || 'manufacturer');
+      setNotes(existingNotes || '');
+    } else {
       setJsonText('');
       setPoints(null);
       setError(null);
       setNotes('');
       setSource('manufacturer');
     }
-  }, [open, existingData]);
+  }, [open, existingData, existingSource, existingNotes]);
 
   const validateJson = (text: string) => {
     setJsonText(text);
