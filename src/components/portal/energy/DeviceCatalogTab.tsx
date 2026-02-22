@@ -455,13 +455,20 @@ const DeviceCatalogTab: React.FC = () => {
             ) : (
               <div className="space-y-3">
                 <PerformanceCurveChart
-                  title=""
+                  title="COP"
                   data={chartData?.map(p => ({ x: p.temp_c, y: p.cop })) || []}
-                  secondaryData={chartData?.map(p => ({ x: p.temp_c, y: p.capacity_kw })) || []}
                   xLabel="°C"
                   yLabel="COP"
-                  secondaryYLabel="kW"
-                  height={220}
+                  height={180}
+                  hideCard
+                />
+                <PerformanceCurveChart
+                  title={t('Kapacitet', 'Capacity')}
+                  data={chartData?.map(p => ({ x: p.temp_c, y: p.capacity_kw })) || []}
+                  xLabel="°C"
+                  yLabel="kW"
+                  color="hsl(var(--destructive))"
+                  height={180}
                   hideCard
                 />
 
