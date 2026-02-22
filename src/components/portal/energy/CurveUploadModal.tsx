@@ -1,5 +1,5 @@
-import React, { useState, useRef } from 'react';
-import { Upload, Loader2 } from 'lucide-react';
+import React, { useState } from 'react';
+import { Loader2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -45,40 +45,40 @@ function localValidate(data: unknown): { valid: true; points: CurvePoint[] } | {
 const CurveUploadModal: React.FC<Props> = ({ open, onOpenChange, deviceId, existingProfileId, onSaved }) => {
   const { t } = useLanguage();
   const { toast } = useToast();
-  const fileRef = useRef<HTMLInputElement>(null);
   const [source, setSource] = useState('manufacturer');
   const [notes, setNotes] = useState('');
+  const [jsonText, setJsonText] = useState('');
   const [points, setPoints] = useState<CurvePoint[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setError(null);
-    setPoints(null);
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      try {
-        const parsed = JSON.parse(ev.target?.result as string);
-        const result = localValidate(parsed);
-        if (result.valid) {
-          setPoints((result as { valid: true; points: CurvePoint[] }).points);
-        } else {
-          setError((result as { valid: false; error: string }).error);
-        }
-      } catch {
-        setError('Invalid JSON file');
+  const validateJson = (text: string) => {
+    setJsonText(text);
+    if (!text.trim()) {
+      setPoints(null);
+      setError(null);
+      return;
+    }
+    try {
+      const parsed = JSON.parse(text);
+      const result = localValidate(parsed);
+      if (result.valid) {
+        setPoints((result as { valid: true; points: CurvePoint[] }).points);
+        setError(null);
+      } else {
+        setPoints(null);
+        setError((result as { valid: false; error: string }).error);
       }
-    };
-    reader.readAsText(file);
+    } catch {
+      setPoints(null);
+      setError('Invalid JSON syntax');
+    }
   };
 
   const handleSave = async () => {
     if (!points) return;
     setSaving(true);
     try {
-      // Server-side validation
       const { data: validation, error: fnError } = await supabase.functions.invoke('validate-device-profile', {
         body: { profile_kind: 'cop_capacity_curve', data: { points } },
       });
@@ -89,7 +89,6 @@ const CurveUploadModal: React.FC<Props> = ({ open, onOpenChange, deviceId, exist
         return;
       }
 
-      // Upsert into device_profiles
       if (existingProfileId) {
         const { error: upErr } = await supabase.from('device_profiles').update({
           data: { points } as any,
@@ -111,9 +110,9 @@ const CurveUploadModal: React.FC<Props> = ({ open, onOpenChange, deviceId, exist
       toast({ title: t('Kurva sparad!', 'Curve saved!') });
       onSaved();
       onOpenChange(false);
-      // Reset
       setPoints(null);
       setNotes('');
+      setJsonText('');
       setSource('manufacturer');
       setError(null);
     } catch (err: any) {
@@ -127,25 +126,33 @@ const CurveUploadModal: React.FC<Props> = ({ open, onOpenChange, deviceId, exist
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>{t('Ladda upp COP + Kapacitetskurva', 'Upload COP + Capacity Curve')}</DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-4">
+        <div className="space-y-4 overflow-y-auto flex-1 min-h-0 pr-1">
           <div>
-            <Label className="text-sm">{t('JSON-fil', 'JSON File')}</Label>
-            <div className="mt-1">
-              <input ref={fileRef} type="file" accept=".json,application/json" onChange={handleFileChange} className="hidden" />
-              <Button variant="outline" onClick={() => fileRef.current?.click()}>
-                <Upload className="w-4 h-4 mr-2" />
-                {t('Välj fil...', 'Choose file...')}
-              </Button>
-            </div>
+            <Label className="text-sm">{t('JSON-data', 'JSON Data')}</Label>
+            <Textarea
+              value={jsonText}
+              onChange={e => validateJson(e.target.value)}
+              onPaste={e => {
+                e.preventDefault();
+                const pasted = e.clipboardData.getData('text');
+                validateJson(pasted);
+              }}
+              placeholder={t(
+                'Klistra in JSON här, t.ex. {"points": [{"temp_c": -15, "cop": 2.1, "capacity_w": 4500}, ...]}',
+                'Paste JSON here, e.g. {"points": [{"temp_c": -15, "cop": 2.1, "capacity_w": 4500}, ...]}'
+              )}
+              rows={6}
+              className="mt-1 font-mono text-xs"
+            />
           </div>
 
           {error && (
-            <Badge variant="destructive" className="text-sm py-1 px-3">{error}</Badge>
+            <Badge variant="destructive" className="text-sm py-1 px-3 whitespace-normal break-words">{error}</Badge>
           )}
 
           <div className="grid grid-cols-2 gap-4">
@@ -168,7 +175,6 @@ const CurveUploadModal: React.FC<Props> = ({ open, onOpenChange, deviceId, exist
 
           {points && (
             <>
-              {/* Mini chart preview */}
               <div className="h-[180px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={chartData}>
@@ -183,7 +189,6 @@ const CurveUploadModal: React.FC<Props> = ({ open, onOpenChange, deviceId, exist
                 </ResponsiveContainer>
               </div>
 
-              {/* Points table */}
               <div className="max-h-[200px] overflow-y-auto border rounded">
                 <Table>
                   <TableHeader>
