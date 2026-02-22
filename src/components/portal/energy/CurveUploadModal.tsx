@@ -137,11 +137,6 @@ const CurveUploadModal: React.FC<Props> = ({ open, onOpenChange, deviceId, exist
             <Textarea
               value={jsonText}
               onChange={e => validateJson(e.target.value)}
-              onPaste={e => {
-                e.preventDefault();
-                const pasted = e.clipboardData.getData('text');
-                validateJson(pasted);
-              }}
               placeholder={t(
                 'Klistra in JSON här, t.ex. {"points": [{"temp_c": -15, "cop": 2.1, "capacity_w": 4500}, ...]}',
                 'Paste JSON here, e.g. {"points": [{"temp_c": -15, "cop": 2.1, "capacity_w": 4500}, ...]}'
