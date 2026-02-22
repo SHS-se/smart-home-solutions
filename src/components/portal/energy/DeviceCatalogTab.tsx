@@ -480,28 +480,9 @@ const DeviceCatalogTab: React.FC = () => {
 
                 {/* Actions */}
                 {isStaff && (
-                  <div className="flex gap-2">
-                    <Button variant="outline" size="sm" onClick={() => setUploadOpen(true)}>
-                      {t('Ersätt kurva', 'Replace curve')}
-                    </Button>
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button variant="outline" size="sm">
-                          <X className="w-3.5 h-3.5 mr-1" />{t('Rensa', 'Clear')}
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>{t('Rensa kurva?', 'Clear curve?')}</AlertDialogTitle>
-                          <AlertDialogDescription>{t('Kurvdata raderas permanent.', 'Curve data will be permanently deleted.')}</AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>{t('Avbryt', 'Cancel')}</AlertDialogCancel>
-                          <AlertDialogAction onClick={handleClearCurve}>{t('Rensa', 'Clear')}</AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                  </div>
+                  <Button variant="outline" size="sm" onClick={() => setUploadOpen(true)}>
+                    {t('Redigera data', 'Edit data')}
+                  </Button>
                 )}
               </div>
             )}
@@ -516,6 +497,7 @@ const DeviceCatalogTab: React.FC = () => {
           onOpenChange={setUploadOpen}
           deviceId={selected.id}
           existingProfileId={profile?.id || null}
+          existingData={profile?.data as any}
           onSaved={() => fetchProfile(selected.id)}
         />
       )}
