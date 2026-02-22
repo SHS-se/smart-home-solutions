@@ -182,18 +182,31 @@ const CurveUploadModal: React.FC<Props> = ({ open, onOpenChange, deviceId, exist
 
           {points && (
             <>
-              <div className="h-[180px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                    <XAxis dataKey="temp_c" label={{ value: '°C', position: 'insideBottom', offset: -5 }} />
-                    <YAxis yAxisId="cop" label={{ value: 'COP', angle: -90, position: 'insideLeft' }} />
-                    <YAxis yAxisId="cap" orientation="right" label={{ value: 'kW', angle: 90, position: 'insideRight' }} />
-                    <Tooltip />
-                    <Line yAxisId="cop" type="monotone" dataKey="cop" stroke="hsl(var(--primary))" strokeWidth={2} dot={{ r: 2 }} />
-                    <Line yAxisId="cap" type="monotone" dataKey="capacity_kw" stroke="hsl(var(--destructive))" strokeWidth={2} dot={{ r: 2 }} />
-                  </LineChart>
-                </ResponsiveContainer>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="h-[180px]">
+                  <p className="text-xs font-medium mb-1">COP</p>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={chartData}>
+                      <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                      <XAxis dataKey="temp_c" type="number" label={{ value: '°C', position: 'insideBottom', offset: -5 }} />
+                      <YAxis label={{ value: 'COP', angle: -90, position: 'insideLeft' }} />
+                      <Tooltip />
+                      <Line type="monotone" dataKey="cop" stroke="hsl(var(--primary))" strokeWidth={2} dot={{ r: 2 }} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="h-[180px]">
+                  <p className="text-xs font-medium mb-1">{t('Kapacitet', 'Capacity')}</p>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={chartData}>
+                      <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                      <XAxis dataKey="temp_c" type="number" label={{ value: '°C', position: 'insideBottom', offset: -5 }} />
+                      <YAxis label={{ value: 'kW', angle: -90, position: 'insideLeft' }} />
+                      <Tooltip />
+                      <Line type="monotone" dataKey="capacity_kw" stroke="hsl(var(--destructive))" strokeWidth={2} dot={{ r: 2 }} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
 
               <div className="max-h-[200px] overflow-y-auto border rounded">

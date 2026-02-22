@@ -48,7 +48,7 @@ const PerformanceCurveChart: React.FC<PerformanceCurveChartProps> = ({
     <ResponsiveContainer width="100%" height={height}>
       <LineChart data={mergedData}>
         <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-        <XAxis dataKey="x" label={{ value: xLabel, position: 'insideBottom', offset: -5 }} className="text-xs" />
+        <XAxis dataKey="x" type="number" label={{ value: xLabel, position: 'insideBottom', offset: -5 }} className="text-xs" />
         <YAxis yAxisId="left" label={{ value: yLabel, angle: -90, position: 'insideLeft' }} className="text-xs" />
         {hasDualAxis && (
           <YAxis yAxisId="right" orientation="right" label={{ value: secondaryYLabel || '', angle: 90, position: 'insideRight' }} className="text-xs" />
