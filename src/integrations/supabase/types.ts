@@ -408,6 +408,7 @@ export type Database = {
           field_values: Json
           id: string
           name: string
+          performance_data_device_id: string | null
           priority: number
           shiftable: boolean
           updated_at: string
@@ -420,6 +421,7 @@ export type Database = {
           field_values?: Json
           id?: string
           name: string
+          performance_data_device_id?: string | null
           priority?: number
           shiftable?: boolean
           updated_at?: string
@@ -432,6 +434,7 @@ export type Database = {
           field_values?: Json
           id?: string
           name?: string
+          performance_data_device_id?: string | null
           priority?: number
           shiftable?: boolean
           updated_at?: string
@@ -458,6 +461,54 @@ export type Database = {
             referencedRelation: "device_types"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "device_instances_performance_data_device_id_fkey"
+            columns: ["performance_data_device_id"]
+            isOneToOne: false
+            referencedRelation: "device_instances"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      device_profile_points: {
+        Row: {
+          capacity_w: number | null
+          cop: number | null
+          created_at: string
+          id: string
+          indoor_temp_c: number | null
+          input_power_w: number | null
+          profile_id: string
+          temp_c: number
+        }
+        Insert: {
+          capacity_w?: number | null
+          cop?: number | null
+          created_at?: string
+          id?: string
+          indoor_temp_c?: number | null
+          input_power_w?: number | null
+          profile_id: string
+          temp_c: number
+        }
+        Update: {
+          capacity_w?: number | null
+          cop?: number | null
+          created_at?: string
+          id?: string
+          indoor_temp_c?: number | null
+          input_power_w?: number | null
+          profile_id?: string
+          temp_c?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "device_profile_points_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "device_profiles"
+            referencedColumns: ["id"]
+          },
         ]
       }
       device_profiles: {
@@ -466,6 +517,8 @@ export type Database = {
           data: Json
           device_id: string
           id: string
+          metadata: Json | null
+          mode: string
           notes: string | null
           profile_kind: string
           source: string | null
@@ -476,6 +529,8 @@ export type Database = {
           data?: Json
           device_id: string
           id?: string
+          metadata?: Json | null
+          mode?: string
           notes?: string | null
           profile_kind?: string
           source?: string | null
@@ -486,6 +541,8 @@ export type Database = {
           data?: Json
           device_id?: string
           id?: string
+          metadata?: Json | null
+          mode?: string
           notes?: string | null
           profile_kind?: string
           source?: string | null
@@ -495,7 +552,7 @@ export type Database = {
           {
             foreignKeyName: "device_profiles_device_id_fkey"
             columns: ["device_id"]
-            isOneToOne: true
+            isOneToOne: false
             referencedRelation: "device_instances"
             referencedColumns: ["id"]
           },
