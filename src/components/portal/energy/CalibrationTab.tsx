@@ -41,7 +41,28 @@ const CalibrationTab: React.FC = () => {
   };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div className="space-y-6">
+      {/* Description */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">{t('Om kalibrering', 'About Calibration')}</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm text-muted-foreground">
+          <p>
+            {t(
+              'Kalibreringsverktyget låter dig jämföra uppmätt energiförbrukning med den modellerade kurvan och justera modellparametrarna tills de stämmer överens.',
+              'The calibration tool lets you compare measured energy consumption against the modeled curve and adjust model parameters until they align.'
+            )}
+          </p>
+          <ol className="list-decimal list-inside space-y-1">
+            <li>{t('Ladda upp en CSV-fil med uppmätt effektdata (15-minutersmedelvärden rekommenderas).', 'Upload a CSV file with measured power data (15-minute mean values recommended).')}</li>
+            <li>{t('Justera UA-, COP- och kapacitetsskalorna med reglagen tills den modellerade kurvan (streckad) matchar den uppmätta kurvan.', 'Adjust the UA, COP, and capacity scales using the sliders until the modeled curve (dashed) matches the measured curve.')}</li>
+            <li>{t('Spara kalibreringen för att tillämpa de justerade parametrarna på framtida simuleringar.', 'Save calibration to apply the adjusted parameters to future simulations.')}</li>
+          </ol>
+        </CardContent>
+      </Card>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       {/* Upload + sliders */}
       <div className="space-y-4">
         <Card>
@@ -123,6 +144,7 @@ const CalibrationTab: React.FC = () => {
           </CardContent>
         </Card>
       </div>
+    </div>
     </div>
   );
 };
