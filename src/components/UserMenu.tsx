@@ -58,7 +58,7 @@ const UserMenu = ({ size = "default" }: UserMenuProps) => {
     { href: "/portal/invoices", label: t("Fakturor", "Invoices") },
     { href: "/portal/settings/margins", label: t("Marginalregler", "Margin Rules") },
     { href: "/portal/settings/questionnaire", label: t("Hemprofilfrågor", "Home Profile Questions") },
-    { href: "/portal/energy-modeling", label: t("Energimodellering", "Energy Modeling") },
+    { href: "/portal/device-catalog", label: t("Enhetskatalog", "Device Catalog") },
     { href: "/portal/erd", label: t("Databas ERD", "Database ERD") },
   ];
 
@@ -66,7 +66,7 @@ const UserMenu = ({ size = "default" }: UserMenuProps) => {
     { href: "/portal", label: t("Översikt", "Overview") },
     { href: "/portal/account", label: t("Konto", "Account") },
     { href: "/portal/home-profile", label: t("Hemprofil", "Home Profile") },
-    { href: "/portal/energy-modeling", label: t("Energimodellering", "Energy Modeling") },
+    { href: "/portal/device-catalog", label: t("Enhetskatalog", "Device Catalog") },
     { href: "/portal/offers", label: t("Offerter", "Offers") },
     { href: "/portal/billing", label: t("Fakturor", "Billing") },
     { href: "/portal/tickets", label: t("Mina ärenden", "My Tickets") },
