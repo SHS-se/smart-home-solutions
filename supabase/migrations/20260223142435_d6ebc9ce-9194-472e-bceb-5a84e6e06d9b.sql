@@ -1,0 +1,1 @@
+ALTER TABLE public.device_types DROP COLUMN include_in_standard_home;
