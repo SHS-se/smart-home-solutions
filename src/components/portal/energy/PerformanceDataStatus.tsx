@@ -32,6 +32,7 @@ interface Props {
   currentDeviceTypeId: string;
   performanceDataDeviceId: string | null;
   onPerformanceDeviceChange: (id: string | null) => void;
+  supportedProfileKinds: string[];
 }
 
 interface ProfileStatus {
@@ -41,13 +42,14 @@ interface ProfileStatus {
   loading: boolean;
 }
 
-const PROFILE_KINDS: { kind: ProfileKind; labelSv: string; labelEn: string }[] = [
+const ALL_PROFILE_KINDS: { kind: ProfileKind; labelSv: string; labelEn: string }[] = [
   { kind: 'cop_capacity_curve', labelSv: 'COP + Kapacitetskurva', labelEn: 'COP + Capacity Curve' },
   { kind: 'heating_performance_surface', labelSv: 'Värmeprestanda (yta)', labelEn: 'Heating Performance Surface' },
+  { kind: 'load_curve', labelSv: 'Lastkurva', labelEn: 'Load Curve' },
 ];
 
 const PerformanceDataStatus: React.FC<Props> = ({
-  deviceId, devices, currentDeviceTypeId, performanceDataDeviceId, onPerformanceDeviceChange,
+  deviceId, devices, currentDeviceTypeId, performanceDataDeviceId, onPerformanceDeviceChange, supportedProfileKinds,
 }) => {
   const { t } = useLanguage();
   const { isStaff } = useAuth();
@@ -56,9 +58,14 @@ const PerformanceDataStatus: React.FC<Props> = ({
   const [editingKind, setEditingKind] = useState<ProfileKind | null>(null);
   const [useBorrowed, setUseBorrowed] = useState(!!performanceDataDeviceId);
 
+  const activeProfileKinds = useMemo(() =>
+    ALL_PROFILE_KINDS.filter(pk => supportedProfileKinds.includes(pk.kind)),
+    [supportedProfileKinds]
+  );
+
   const loadStatuses = useCallback(async () => {
     const results: ProfileStatus[] = [];
-    for (const pk of PROFILE_KINDS) {
+    for (const pk of activeProfileKinds) {
       const resolution = await resolveProfile(deviceId, 'heating', pk.kind);
       results.push({
         kind: pk.kind,
@@ -68,7 +75,7 @@ const PerformanceDataStatus: React.FC<Props> = ({
       });
     }
     setStatuses(results);
-  }, [deviceId, t]);
+  }, [deviceId, t, activeProfileKinds]);
 
   useEffect(() => {
     if (deviceId) loadStatuses();

@@ -15,7 +15,7 @@ export interface SurfacePoint {
   input_power_w: number;
 }
 
-export type ProfileKind = 'cop_capacity_curve' | 'heating_performance_surface';
+export type ProfileKind = 'cop_capacity_curve' | 'heating_performance_surface' | 'load_curve';
 
 export interface ProfileResolution {
   profile: {
