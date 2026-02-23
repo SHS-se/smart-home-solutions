@@ -186,9 +186,6 @@ const HomeDevicesTab: React.FC<HomeDevicesTabProps> = ({ customerId, homeId }) =
                 <Plus className="w-3.5 h-3.5 mr-1" />{t('Lägg till', 'Add Existing')}
               </Button>
             )}
-            <Button size="sm" variant="outline" onClick={handleNewDevice}>
-              <Plus className="w-3.5 h-3.5 mr-1" />{t('Ny enhet', 'New Device')}
-            </Button>
           </div>
         </div>
 
