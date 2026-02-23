@@ -44,7 +44,7 @@ interface DeviceType {
   simulation_model_key: string;
 }
 
-const PROFILE_KIND_OPTIONS = ['cop_curve', 'capacity_curve', 'load_curve'];
+const PROFILE_KIND_OPTIONS = ['cop_capacity_curve', 'heating_performance_surface', 'load_curve'];
 
 type InfoTopic = 'key' | 'display_name' | 'simulation_model_key' | 'supported_profile_kinds' | 'field_schema';
 

@@ -37,6 +37,7 @@ interface DeviceType {
   key: string;
   display_name: string;
   field_schema: { fields: FieldDef[] };
+  supported_profile_kinds: string[];
 }
 
 interface DeviceRow {
@@ -108,7 +109,7 @@ const DeviceCatalogTab: React.FC = () => {
       supabase.from('device_types').select('*').order('display_name'),
     ]);
     if (devs) setDevices(devs as unknown as DeviceRow[]);
-    if (types) setDeviceTypes(types.map(t => ({ ...t, field_schema: t.field_schema as any })) as DeviceType[]);
+    if (types) setDeviceTypes(types.map(t => ({ ...t, field_schema: t.field_schema as any, supported_profile_kinds: (t.supported_profile_kinds || []) as string[] })) as DeviceType[]);
     setLoading(false);
   }, []);
 
@@ -403,18 +404,29 @@ const DeviceCatalogTab: React.FC = () => {
               <p className="text-sm text-muted-foreground text-center">{t('Välj en enhet', 'Select a device')}</p>
             </CardContent>
           </Card>
-        ) : (
-          <PerformanceDataStatus
-            deviceId={selected.id}
-            devices={devices.map(d => ({ id: d.id, name: d.name, device_type_id: d.device_type_id }))}
-            currentDeviceTypeId={selected.device_type_id}
-            performanceDataDeviceId={performanceDataDeviceId}
-            onPerformanceDeviceChange={async (id) => {
-              setPerformanceDataDeviceId(id);
-              await supabase.from('device_instances').update({ performance_data_device_id: id }).eq('id', selected.id);
-            }}
-          />
-        )}
+        ) : (() => {
+          const dt = deviceTypes.find(d => d.id === selected.device_type_id);
+          const spk = dt?.supported_profile_kinds || [];
+          return spk.length > 0 ? (
+            <PerformanceDataStatus
+              deviceId={selected.id}
+              devices={devices.map(d => ({ id: d.id, name: d.name, device_type_id: d.device_type_id }))}
+              currentDeviceTypeId={selected.device_type_id}
+              performanceDataDeviceId={performanceDataDeviceId}
+              supportedProfileKinds={spk}
+              onPerformanceDeviceChange={async (id) => {
+                setPerformanceDataDeviceId(id);
+                await supabase.from('device_instances').update({ performance_data_device_id: id }).eq('id', selected.id);
+              }}
+            />
+          ) : (
+            <Card>
+              <CardContent className="py-8">
+                <p className="text-sm text-muted-foreground text-center">{t('Inga profiltyper stöds för denna enhetstyp.', 'No profile types supported for this device type.')}</p>
+              </CardContent>
+            </Card>
+          );
+        })()}
       </div>
     </div>
   );
