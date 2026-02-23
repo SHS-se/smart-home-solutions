@@ -1,107 +1,32 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Loader2, Plus, Save, Trash2, Search, Globe, User } from 'lucide-react';
+import { Loader2, Plus, Search, Globe, User } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
-import { useToast } from '@/hooks/use-toast';
 
+import DeviceEditorForm, { DeviceType, DeviceRow } from './DeviceEditorForm';
 import PerformanceDataStatus from './PerformanceDataStatus';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog';
-
-interface FieldDef {
-  key: string;
-  type: 'text' | 'number';
-  required: boolean;
-  label: string;
-}
-
-interface DeviceType {
-  id: string;
-  key: string;
-  display_name: string;
-  field_schema: { fields: FieldDef[] };
-  supported_profile_kinds: string[];
-}
-
-interface DeviceRow {
-  id: string;
-  name: string;
-  customer_id: string | null;
-  device_type_id: string;
-  field_values: Record<string, any>;
-  controllable: boolean;
-  shiftable: boolean;
-  priority: number;
-  device_types: {
-    key: string;
-    display_name: string;
-    field_schema: { fields: FieldDef[] };
-  } | null;
-}
-
 
 type ScopeFilter = 'all' | 'global' | 'customer';
-
-// Group schema fields into sections
-function groupFields(fields: FieldDef[]) {
-  const identification: FieldDef[] = [];
-  const electrical: FieldDef[] = [];
-  const performance: FieldDef[] = [];
-
-  for (const f of fields) {
-    if (['make', 'model'].includes(f.key)) identification.push(f);
-    else if (f.key.includes('power') || f.key.includes('input_power')) electrical.push(f);
-    else performance.push(f);
-  }
-  return { identification, electrical, performance };
-}
 
 const DeviceCatalogTab: React.FC = () => {
   const { t } = useLanguage();
   const { user, isStaff } = useAuth();
-  const { toast } = useToast();
 
   const [devices, setDevices] = useState<DeviceRow[]>([]);
   const [performanceDataDeviceId, setPerformanceDataDeviceId] = useState<string | null>(null);
   const [deviceTypes, setDeviceTypes] = useState<DeviceType[]>([]);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
 
-  // Filters
   const [search, setSearch] = useState('');
   const [scopeFilter, setScopeFilter] = useState<ScopeFilter>('all');
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
 
-  // Selected device
-   const [selected, setSelected] = useState<DeviceRow | null>(null);
-
-  // Form state
-  const [form, setForm] = useState({
-    device_type_id: '',
-    name: '',
-    controllable: false,
-    shiftable: false,
-    include_in_standard_home: false,
-    priority: 0,
-    field_values: {} as Record<string, any>,
-  });
+  const [selected, setSelected] = useState<DeviceRow | null>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -116,82 +41,16 @@ const DeviceCatalogTab: React.FC = () => {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-
   const handleSelect = (dev: DeviceRow) => {
     setSelected(dev);
     setPerformanceDataDeviceId((dev as any).performance_data_device_id || null);
-    setForm({
-      device_type_id: dev.device_type_id,
-      name: dev.name,
-      controllable: dev.controllable,
-      shiftable: dev.shiftable,
-      include_in_standard_home: (dev as any).include_in_standard_home ?? false,
-      priority: dev.priority,
-      field_values: dev.field_values || {},
-    });
   };
 
   const handleNew = () => {
     setSelected(null);
     setPerformanceDataDeviceId(null);
-    setForm({
-      device_type_id: deviceTypes[0]?.id || '',
-      name: '',
-      controllable: false,
-      shiftable: false,
-      include_in_standard_home: false,
-      priority: 0,
-      field_values: {},
-    });
   };
 
-  const handleSave = async () => {
-    if (!form.device_type_id || !form.name.trim()) return;
-    setSaving(true);
-    try {
-      const payload = {
-        device_type_id: form.device_type_id,
-        name: form.name.trim(),
-        field_values: form.field_values,
-        controllable: form.controllable,
-        shiftable: form.shiftable,
-        include_in_standard_home: form.include_in_standard_home,
-        priority: form.priority,
-      };
-
-      if (selected) {
-        const { error } = await supabase.from('device_instances').update(payload).eq('id', selected.id);
-        if (error) throw error;
-      } else {
-        // New global device (customer_id = null)
-        const { error } = await supabase.from('device_instances').insert({ ...payload, customer_id: null });
-        if (error) throw error;
-      }
-      toast({ title: t('Sparat!', 'Saved!') });
-      fetchData();
-    } catch (err: any) {
-      toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleDelete = async () => {
-    if (!selected) return;
-    const { error } = await supabase.from('device_instances').delete().eq('id', selected.id);
-    if (error) {
-      toast({ title: t('Fel', 'Error'), description: error.message, variant: 'destructive' });
-    } else {
-      toast({ title: t('Borttagen!', 'Deleted!') });
-      setSelected(null);
-      setPerformanceDataDeviceId(null);
-      handleNew();
-      fetchData();
-    }
-  };
-
-
-  // Filters
   const filtered = devices.filter(d => {
     if (scopeFilter === 'global' && d.customer_id !== null) return false;
     if (scopeFilter === 'customer' && d.customer_id === null) return false;
@@ -204,10 +63,6 @@ const DeviceCatalogTab: React.FC = () => {
     }
     return true;
   });
-
-  const selectedType = deviceTypes.find(dt => dt.id === form.device_type_id) || null;
-  const schema = selectedType?.field_schema?.fields || [];
-  const grouped = groupFields(schema);
 
   const selectedDeviceType = selected ? deviceTypes.find(d => d.id === selected.device_type_id) : null;
   const showPerformancePanel = selected && (selectedDeviceType?.supported_profile_kinds?.length ?? 0) > 0;
@@ -236,7 +91,6 @@ const DeviceCatalogTab: React.FC = () => {
             <Input value={search} onChange={e => setSearch(e.target.value)} placeholder={t('Sök...', 'Search...')} className="pl-9 h-8 text-sm" />
           </div>
 
-          {/* Scope filter */}
           <div className="flex gap-1">
             {(['all', 'global', 'customer'] as ScopeFilter[]).map(s => (
               <Badge key={s} variant={scopeFilter === s ? 'default' : 'outline'} className="cursor-pointer text-xs" onClick={() => setScopeFilter(s)}>
@@ -245,7 +99,6 @@ const DeviceCatalogTab: React.FC = () => {
             ))}
           </div>
 
-          {/* Type filter chips */}
           <div className="flex gap-1 flex-wrap">
             <Badge variant={typeFilter === null ? 'default' : 'outline'} className="cursor-pointer text-xs" onClick={() => setTypeFilter(null)}>
               {t('Alla typer', 'All Types')}
@@ -257,7 +110,6 @@ const DeviceCatalogTab: React.FC = () => {
             ))}
           </div>
 
-          {/* Device list */}
           <div className="space-y-1 max-h-[400px] overflow-y-auto">
             {filtered.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-8">{t('Inga enheter hittades.', 'No devices found.')}</p>
@@ -282,134 +134,17 @@ const DeviceCatalogTab: React.FC = () => {
       </Card>
 
       {/* CENTER: Edit Form */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base">{selected ? t('Redigera enhet', 'Edit Device') : t('Ny enhet', 'New Device')}</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div>
-            <Label className="text-sm">{t('Enhetstyp', 'Device Type')}</Label>
-            <Select value={form.device_type_id} onValueChange={v => setForm(f => ({ ...f, device_type_id: v, field_values: {} }))}>
-              <SelectTrigger><SelectValue placeholder={t('Välj typ...', 'Select type...')} /></SelectTrigger>
-              <SelectContent>
-                {deviceTypes.map(dt => <SelectItem key={dt.id} value={dt.id}>{dt.display_name}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label className="text-sm">{t('Namn', 'Name')}</Label>
-            <Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
-          </div>
+      <DeviceEditorForm
+        deviceTypes={deviceTypes}
+        selected={selected}
+        customerId={null}
+        isStaff={isStaff}
+        onSaved={() => fetchData()}
+        onDeleted={() => { handleNew(); fetchData(); }}
+        onNewRequested={handleNew}
+      />
 
-          {/* Identification fields */}
-          {grouped.identification.length > 0 && (
-            <div className="space-y-2">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{t('Identifiering', 'Identification')}</p>
-              {grouped.identification.map(field => (
-                <div key={field.key}>
-                  <Label className="text-xs">{field.label}{field.required && <span className="text-destructive ml-0.5">*</span>}</Label>
-                  <Input
-                    type={field.type === 'number' ? 'number' : 'text'}
-                    value={form.field_values[field.key] ?? ''}
-                    onChange={e => {
-                      const val = field.type === 'number' ? (e.target.value === '' ? undefined : Number(e.target.value)) : e.target.value || undefined;
-                      setForm(f => ({ ...f, field_values: { ...f.field_values, [field.key]: val } }));
-                    }}
-                    placeholder="—"
-                    className="h-8 text-sm"
-                  />
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Electrical fields */}
-          {grouped.electrical.length > 0 && (
-            <div className="space-y-2">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{t('Elektriska gränser', 'Electrical Limits')}</p>
-              {grouped.electrical.map(field => (
-                <div key={field.key}>
-                  <Label className="text-xs">{field.label}{field.required && <span className="text-destructive ml-0.5">*</span>}</Label>
-                  <Input
-                    type="number"
-                    value={form.field_values[field.key] ?? ''}
-                    onChange={e => setForm(f => ({ ...f, field_values: { ...f.field_values, [field.key]: e.target.value === '' ? undefined : Number(e.target.value) } }))}
-                    placeholder="—"
-                    className="h-8 text-sm"
-                  />
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Performance fields */}
-          {grouped.performance.length > 0 && (
-            <div className="space-y-2">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{t('Prestanda', 'Performance')}</p>
-              {grouped.performance.map(field => (
-                <div key={field.key}>
-                  <Label className="text-xs">{field.label}{field.required && <span className="text-destructive ml-0.5">*</span>}</Label>
-                  <Input
-                    type={field.type === 'number' ? 'number' : 'text'}
-                    value={form.field_values[field.key] ?? ''}
-                    onChange={e => {
-                      const val = field.type === 'number' ? (e.target.value === '' ? undefined : Number(e.target.value)) : e.target.value || undefined;
-                      setForm(f => ({ ...f, field_values: { ...f.field_values, [field.key]: val } }));
-                    }}
-                    placeholder="—"
-                    className="h-8 text-sm"
-                  />
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div className="flex items-center justify-between">
-            <Label className="text-sm">{t('Styrbar', 'Controllable')}</Label>
-            <Switch checked={form.controllable} onCheckedChange={v => setForm(f => ({ ...f, controllable: v }))} />
-          </div>
-          <div className="flex items-center justify-between">
-            <Label className="text-sm">{t('Förskjutbar', 'Shiftable')}</Label>
-            <Switch checked={form.shiftable} onCheckedChange={v => setForm(f => ({ ...f, shiftable: v }))} />
-          </div>
-          {(!selected || selected.customer_id === null) && (
-            <div className="flex items-center justify-between">
-              <Label className="text-sm">{t('Inkludera i standardhem', 'Include in standard home')}</Label>
-              <Switch checked={form.include_in_standard_home} onCheckedChange={v => setForm(f => ({ ...f, include_in_standard_home: v }))} />
-            </div>
-          )}
-          <div>
-            <Label className="text-sm">{t('Prioritet', 'Priority')}</Label>
-            <Input type="number" min={0} max={10} value={form.priority} onChange={e => setForm(f => ({ ...f, priority: Number(e.target.value) || 0 }))} className="h-8 text-sm" />
-          </div>
-
-          <div className="flex gap-2">
-            <Button onClick={handleSave} disabled={saving || !form.name.trim() || !form.device_type_id} className="flex-1">
-              {saving && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
-              <Save className="w-4 h-4 mr-2" />{t('Spara', 'Save')}
-            </Button>
-            {selected && isStaff && (
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button variant="destructive" size="icon"><Trash2 className="w-4 h-4" /></Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>{t('Radera enhet?', 'Delete device?')}</AlertDialogTitle>
-                    <AlertDialogDescription>{t('Alla hemtilldelningar tas också bort.', 'All home assignments will also be removed.')}</AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>{t('Avbryt', 'Cancel')}</AlertDialogCancel>
-                    <AlertDialogAction onClick={handleDelete}>{t('Radera', 'Delete')}</AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* RIGHT: Performance Data Panel – only when device selected AND has supported profiles */}
+      {/* RIGHT: Performance Data Panel */}
       {showPerformancePanel && selected && selectedDeviceType && (
         <div className="space-y-4">
           <PerformanceDataStatus
