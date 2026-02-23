@@ -42,12 +42,11 @@ interface DeviceType {
   field_schema: { fields: FieldDef[] };
   supported_profile_kinds: string[];
   simulation_model_key: string;
-  include_in_standard_home: boolean;
 }
 
 const PROFILE_KIND_OPTIONS = ['cop_capacity_curve', 'heating_performance_surface', 'load_curve'];
 
-type InfoTopic = 'key' | 'display_name' | 'simulation_model_key' | 'supported_profile_kinds' | 'field_schema' | 'include_in_standard_home';
+type InfoTopic = 'key' | 'display_name' | 'simulation_model_key' | 'supported_profile_kinds' | 'field_schema';
 
 const INFO_CONTENT: Record<InfoTopic, { sv: { title: string; body: string }; en: { title: string; body: string } }> = {
   key: {
@@ -98,16 +97,6 @@ const INFO_CONTENT: Record<InfoTopic, { sv: { title: string; body: string }; en:
     en: {
       title: 'Field Schema',
       body: `**What:** Defines which data fields must be filled in for each device of this type.\n\n**Field properties:**\n- **Key** – Internal name (snake_case), used as reference in code and simulations.\n- **Label** – Display name that customers and staff see in forms.\n- **Type** – "Text" for free text or "Number" for numeric values.\n- **Required** – Whether the field must be completed when creating a device.\n\n**How it's used:** The field schema generates dynamic forms in device catalogs and home profiles. Numeric fields with known keys (e.g. "max_input_power_w", "scop") are used directly by the simulation engine. Text fields (e.g. "make", "model") are informational and shown in reports.\n\n**Ordering:** Drag fields to change their order – this determines the display order in forms.`,
-    },
-  },
-  include_in_standard_home: {
-    sv: {
-      title: 'Inkludera i standardhem',
-      body: `**Vad:** Anger om enheter av denna typ automatiskt ska tilldelas till nya hem när de skapas för en kund.\n\n**Hur den används:** När ett nytt hem skapas för en kund, kommer alla enhetstyper med denna inställning aktiverad att automatiskt läggas till i hemmets enhetslista. Detta säkerställer att standardutrustning (t.ex. grundlast, varmvattenberedare) alltid finns med från start utan manuell tilldelning.\n\n**Viktigt:** Denna inställning gäller bara för nya hem som skapas efter att den aktiverats. Befintliga hem påverkas inte.`,
-    },
-    en: {
-      title: 'Include in Standard Home',
-      body: `**What:** Specifies whether devices of this type should be automatically assigned to new homes when they are created for a customer.\n\n**How it's used:** When a new home is created for a customer, all device types with this setting enabled will automatically be added to the home's device list. This ensures that standard equipment (e.g. base load, water heater) is always present from the start without manual assignment.\n\n**Important:** This setting only applies to new homes created after it is enabled. Existing homes are not affected.`,
     },
   },
 };
@@ -195,7 +184,6 @@ const DeviceTypesManager: React.FC = () => {
     display_name: '',
     simulation_model_key: '',
     supported_profile_kinds: [] as string[],
-    include_in_standard_home: false,
     fields: [{ key: '', type: 'text' as 'text' | 'number', required: true, label: '' }],
   });
 
@@ -212,7 +200,6 @@ const DeviceTypesManager: React.FC = () => {
         ...d,
         field_schema: d.field_schema as any,
         supported_profile_kinds: d.supported_profile_kinds as any,
-        include_in_standard_home: d.include_in_standard_home ?? false,
       })));
     }
     setLoading(false);
@@ -228,7 +215,6 @@ const DeviceTypesManager: React.FC = () => {
       display_name: dt.display_name,
       simulation_model_key: dt.simulation_model_key,
       supported_profile_kinds: dt.supported_profile_kinds,
-      include_in_standard_home: dt.include_in_standard_home,
       fields: dt.field_schema.fields.length > 0 ? dt.field_schema.fields : [{ key: '', type: 'text', required: true, label: '' }],
     });
   };
@@ -239,7 +225,6 @@ const DeviceTypesManager: React.FC = () => {
     setForm({
       key: '', display_name: '', simulation_model_key: '',
       supported_profile_kinds: [],
-      include_in_standard_home: false,
       fields: [{ key: '', type: 'text', required: true, label: '' }],
     });
   };
@@ -256,7 +241,6 @@ const DeviceTypesManager: React.FC = () => {
         display_name: form.display_name.trim(),
         simulation_model_key: form.simulation_model_key.trim(),
         supported_profile_kinds: form.supported_profile_kinds,
-        include_in_standard_home: form.include_in_standard_home,
         field_schema: { fields: validFields },
       };
 
@@ -414,11 +398,6 @@ const DeviceTypesManager: React.FC = () => {
                 </Badge>
               ))}
             </div>
-          </div>
-
-          <div className="flex items-center justify-between p-3 rounded border border-border">
-            <InfoLabel label={t('Inkludera i standardhem', 'Include in Standard Home')} topic="include_in_standard_home" activeInfo={activeInfo} setActiveInfo={setActiveInfo} />
-            <Switch checked={form.include_in_standard_home} onCheckedChange={v => setForm(f => ({ ...f, include_in_standard_home: v }))} />
           </div>
 
           <div>

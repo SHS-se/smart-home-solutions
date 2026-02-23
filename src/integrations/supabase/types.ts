@@ -564,7 +564,6 @@ export type Database = {
           display_name: string
           field_schema: Json
           id: string
-          include_in_standard_home: boolean
           key: string
           simulation_model_key: string
           supported_profile_kinds: Json
@@ -574,7 +573,6 @@ export type Database = {
           display_name: string
           field_schema: Json
           id?: string
-          include_in_standard_home?: boolean
           key: string
           simulation_model_key: string
           supported_profile_kinds?: Json
@@ -584,7 +582,6 @@ export type Database = {
           display_name?: string
           field_schema?: Json
           id?: string
-          include_in_standard_home?: boolean
           key?: string
           simulation_model_key?: string
           supported_profile_kinds?: Json

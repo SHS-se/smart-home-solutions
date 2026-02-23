@@ -1,1 +1,0 @@
-ALTER TABLE public.device_types ADD COLUMN include_in_standard_home boolean NOT NULL DEFAULT false;
