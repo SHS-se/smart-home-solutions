@@ -98,6 +98,7 @@ const DeviceCatalogTab: React.FC = () => {
     name: '',
     controllable: false,
     shiftable: false,
+    include_in_standard_home: false,
     priority: 0,
     field_values: {} as Record<string, any>,
   });
@@ -105,7 +106,7 @@ const DeviceCatalogTab: React.FC = () => {
   const fetchData = useCallback(async () => {
     setLoading(true);
     const [{ data: devs }, { data: types }] = await Promise.all([
-      supabase.from('device_instances').select('id, name, customer_id, device_type_id, field_values, controllable, shiftable, priority, performance_data_device_id, device_types(key, display_name, field_schema)').order('name'),
+      supabase.from('device_instances').select('id, name, customer_id, device_type_id, field_values, controllable, shiftable, priority, performance_data_device_id, include_in_standard_home, device_types(key, display_name, field_schema)').order('name'),
       supabase.from('device_types').select('*').order('display_name'),
     ]);
     if (devs) setDevices(devs as unknown as DeviceRow[]);
@@ -124,6 +125,7 @@ const DeviceCatalogTab: React.FC = () => {
       name: dev.name,
       controllable: dev.controllable,
       shiftable: dev.shiftable,
+      include_in_standard_home: (dev as any).include_in_standard_home ?? false,
       priority: dev.priority,
       field_values: dev.field_values || {},
     });
@@ -137,6 +139,7 @@ const DeviceCatalogTab: React.FC = () => {
       name: '',
       controllable: false,
       shiftable: false,
+      include_in_standard_home: false,
       priority: 0,
       field_values: {},
     });
@@ -152,6 +155,7 @@ const DeviceCatalogTab: React.FC = () => {
         field_values: form.field_values,
         controllable: form.controllable,
         shiftable: form.shiftable,
+        include_in_standard_home: form.include_in_standard_home,
         priority: form.priority,
       };
 
@@ -367,6 +371,10 @@ const DeviceCatalogTab: React.FC = () => {
           <div className="flex items-center justify-between">
             <Label className="text-sm">{t('Förskjutbar', 'Shiftable')}</Label>
             <Switch checked={form.shiftable} onCheckedChange={v => setForm(f => ({ ...f, shiftable: v }))} />
+          </div>
+          <div className="flex items-center justify-between">
+            <Label className="text-sm">{t('Inkludera i standardhem', 'Include in standard home')}</Label>
+            <Switch checked={form.include_in_standard_home} onCheckedChange={v => setForm(f => ({ ...f, include_in_standard_home: v }))} />
           </div>
           <div>
             <Label className="text-sm">{t('Prioritet', 'Priority')}</Label>
