@@ -372,10 +372,12 @@ const DeviceCatalogTab: React.FC = () => {
             <Label className="text-sm">{t('Förskjutbar', 'Shiftable')}</Label>
             <Switch checked={form.shiftable} onCheckedChange={v => setForm(f => ({ ...f, shiftable: v }))} />
           </div>
-          <div className="flex items-center justify-between">
-            <Label className="text-sm">{t('Inkludera i standardhem', 'Include in standard home')}</Label>
-            <Switch checked={form.include_in_standard_home} onCheckedChange={v => setForm(f => ({ ...f, include_in_standard_home: v }))} />
-          </div>
+          {(!selected || selected.customer_id === null) && (
+            <div className="flex items-center justify-between">
+              <Label className="text-sm">{t('Inkludera i standardhem', 'Include in standard home')}</Label>
+              <Switch checked={form.include_in_standard_home} onCheckedChange={v => setForm(f => ({ ...f, include_in_standard_home: v }))} />
+            </div>
+          )}
           <div>
             <Label className="text-sm">{t('Prioritet', 'Priority')}</Label>
             <Input type="number" min={0} max={10} value={form.priority} onChange={e => setForm(f => ({ ...f, priority: Number(e.target.value) || 0 }))} className="h-8 text-sm" />
