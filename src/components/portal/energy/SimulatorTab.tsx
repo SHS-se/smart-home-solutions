@@ -10,7 +10,9 @@ import { Badge } from '@/components/ui/badge';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
 import { formatPower } from '@/lib/energy-units';
+import { simulateDay } from '@/lib/simulate-day';
 import LoadCurveChart from './LoadCurveChart';
+import EnergyVsTempChart from './EnergyVsTempChart';
 
 interface SimulatorTabProps {
   customerId: string;
@@ -34,6 +36,7 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
     annualEnergyCost: number;
     annualFixedCost: number;
     timeseries: Array<{ time: string; total: number; heating: number; shiftable: number; fixedActive: number; base: number }>;
+    sweepData: Array<{ tempC: number; dailyKwh: number }>;
   } | null>(null);
 
   // Pre-populate slider defaults from energy_home_settings overrides
@@ -105,12 +108,9 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
       .eq('home_id', homeId);
 
     // --- Compute aggregates ---
-
-    // UA
     const UA = settings?.ua_w_per_k ?? 150;
     if (!settings?.ua_w_per_k) console.warn('Simulator fallback: using 150 W/K for UA');
 
-    // Base load
     let baseW: number;
     if (annualKwhValue && annualKwhValue > 0) {
       const avgW = (annualKwhValue * 1000) / 8760;
@@ -120,13 +120,11 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
       console.warn('Simulator fallback: using 500W base load');
     }
 
-    // Tariff
-    const networkPrice = (tariff?.network_price_sek_per_w_month) ?? 0.045;
-    const energyPrice = (tariff?.energy_price_sek_per_kwh) ?? 1.5;
-    const fixedFee = (tariff?.fixed_monthly_fee_sek) ?? 0;
+    const networkPrice = tariff?.network_price_sek_per_w_month ?? 0.045;
+    const energyPrice = tariff?.energy_price_sek_per_kwh ?? 1.5;
+    const fixedFee = tariff?.fixed_monthly_fee_sek ?? 0;
     if (!tariff) console.warn('Simulator fallback: using default tariff prices (0.045, 1.5, 0)');
 
-    // Device aggregates
     let shiftableW = 0;
     let fixedActiveW = 0;
     const deviceSnapshot = (assignments || []).map((a: any) => {
@@ -140,7 +138,6 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
       } else if (!d.controllable) {
         fixedActiveW += totalPower;
       }
-      // controllable heating devices handled by UA
 
       return {
         instance_id: d.id,
@@ -155,6 +152,46 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
       };
     });
 
+    // --- Run single-day simulation using extracted function ---
+    const effectiveOutdoorTemp = mode === 'design' ? outdoorTemp : 0;
+    const dayResult = simulateDay({
+      indoorTempC: indoorTemp,
+      outdoorTempC: effectiveOutdoorTemp,
+      UA,
+      baseW,
+      shiftableW,
+      fixedActiveW,
+      scenario,
+    });
+
+    // --- Temperature sweep (-20 to +20) ---
+    const sweepData: Array<{ tempC: number; dailyKwh: number }> = [];
+    for (let temp = -20; temp <= 20; temp++) {
+      const sweep = simulateDay({
+        indoorTempC: indoorTemp,
+        outdoorTempC: temp,
+        UA,
+        baseW,
+        shiftableW,
+        fixedActiveW,
+        scenario,
+      });
+      sweepData.push({ tempC: temp, dailyKwh: sweep.dailyKwh });
+    }
+
+    // --- Compute costs ---
+    const peakW = dayResult.peakW;
+    const totalKwh = Math.round(dayResult.timeseries.reduce((s, p) => s + p.total, 0) * 365 / 4 / 1000);
+    const heatingKwh = Math.round(dayResult.timeseries.reduce((s, p) => s + p.heating, 0) * 365 / 4 / 1000);
+    const baseKwh = Math.round(dayResult.timeseries.reduce((s, p) => s + p.base, 0) * 365 / 4 / 1000);
+    const shiftableKwh = Math.round(dayResult.timeseries.reduce((s, p) => s + p.shiftable, 0) * 365 / 4 / 1000);
+    const fixedActiveKwh = Math.round(dayResult.timeseries.reduce((s, p) => s + p.fixedActive, 0) * 365 / 4 / 1000);
+
+    const annualNetworkCost = Math.round(peakW * networkPrice * 12);
+    const annualEnergyCost = Math.round(totalKwh * energyPrice);
+    const annualFixedCost = Math.round(fixedFee * 12);
+    const annualCostSek = annualNetworkCost + annualEnergyCost + annualFixedCost;
+
     const inputsSnapshot = {
       indoor_temp_c: indoorTemp,
       outdoor_temp_c: outdoorTemp,
@@ -168,71 +205,30 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
       fixed_active_w: fixedActiveW,
     };
 
-    // --- Generate 96-point timeseries ---
-    const effectiveOutdoorTemp = mode === 'design' ? outdoorTemp : 0;
-    const ts = Array.from({ length: 96 }, (_, i) => {
-      const hour = Math.floor(i / 4);
-      const min = (i % 4) * 15;
-      const time = `${String(hour).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
-
-      const heating = Math.max(0, UA * (indoorTemp - effectiveOutdoorTemp)) *
-        (1 + 0.3 * Math.sin(Math.PI * (hour - 6) / 12));
-
-      const shiftable = scenario === 'dumb'
-        ? (hour >= 17 && hour <= 22 ? shiftableW : 0)
-        : (hour >= 1 && hour <= 5 ? shiftableW : 0);
-
-      const fixedActive = ((hour >= 7 && hour <= 9) || (hour >= 18 && hour <= 20)) ? fixedActiveW : 0;
-
-      const total = baseW + heating + shiftable + fixedActive;
-      return { time, total, heating, shiftable, fixedActive, base: baseW };
-    });
-
-    // --- Compute results ---
-    const peakW = Math.max(...ts.map(p => p.total));
-    const totalKwh = Math.round(ts.reduce((s, p) => s + p.total, 0) * 365 / 4 / 1000);
-    const heatingKwh = Math.round(ts.reduce((s, p) => s + p.heating, 0) * 365 / 4 / 1000);
-    const baseKwh = Math.round(ts.reduce((s, p) => s + p.base, 0) * 365 / 4 / 1000);
-    const shiftableKwh = Math.round(ts.reduce((s, p) => s + p.shiftable, 0) * 365 / 4 / 1000);
-    const fixedActiveKwh = Math.round(ts.reduce((s, p) => s + p.fixedActive, 0) * 365 / 4 / 1000);
-
-    const annualNetworkCost = Math.round(peakW * networkPrice * 12);
-    const annualEnergyCost = Math.round(totalKwh * energyPrice);
-    const annualFixedCost = Math.round(fixedFee * 12);
-    const annualCostSek = annualNetworkCost + annualEnergyCost + annualFixedCost;
-
     const resultsSummary = {
-      peakW,
-      totalKwh,
-      heatingKwh,
-      baseKwh,
-      shiftableKwh,
-      fixedActiveKwh,
-      annualNetworkCost,
-      annualEnergyCost,
-      annualFixedCost,
-      annualCostSek,
+      peakW, totalKwh, heatingKwh, baseKwh, shiftableKwh, fixedActiveKwh,
+      annualNetworkCost, annualEnergyCost, annualFixedCost, annualCostSek,
     };
 
     const tariffSnapshot = tariff
       ? { network_price_sek_per_w_month: networkPrice, energy_price_sek_per_kwh: energyPrice, fixed_monthly_fee_sek: fixedFee }
       : {};
 
-    await supabase.from('model_runs').insert({
+    await supabase.from('model_runs').insert([{
       customer_id: customerId,
       home_id: homeId,
       mode,
       scenario,
       step_seconds: 900,
-      inputs_snapshot: inputsSnapshot,
-      device_snapshot: deviceSnapshot,
-      profile_snapshot: {},
-      results_summary: resultsSummary,
-      tariff_snapshot: tariffSnapshot,
-      timeseries: ts,
-    });
+      inputs_snapshot: inputsSnapshot as any,
+      device_snapshot: deviceSnapshot as any,
+      profile_snapshot: {} as any,
+      results_summary: resultsSummary as any,
+      tariff_snapshot: tariffSnapshot as any,
+      timeseries: dayResult.timeseries as any,
+    }]);
 
-    setResults({ ...resultsSummary, annualKwh: totalKwh, timeseries: ts });
+    setResults({ ...resultsSummary, annualKwh: totalKwh, timeseries: dayResult.timeseries, sweepData });
     setRunning(false);
   };
 
@@ -321,7 +317,15 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
 
       <div className="lg:col-span-3 space-y-4">
         {results ? (
-          <LoadCurveChart title={t('Lastkurva (15-min)', 'Load Curve (15-min)')} data={results.timeseries} peakW={targetPeak ? Number(targetPeak) : undefined} height={350} />
+          <>
+            <LoadCurveChart title={t('Lastkurva (15-min)', 'Load Curve (15-min)')} data={results.timeseries} peakW={targetPeak ? Number(targetPeak) : undefined} height={350} />
+            <EnergyVsTempChart
+              title={t('Energi vs utomhustemperatur', 'Energy vs Outdoor Temperature')}
+              data={results.sweepData}
+              currentTemp={mode === 'design' ? outdoorTemp : 0}
+              height={300}
+            />
+          </>
         ) : (
           <Card>
             <CardContent className="flex items-center justify-center min-h-[350px] text-muted-foreground">
