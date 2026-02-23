@@ -1,97 +1,171 @@
-# Redesign Home Devices Tab
+
+
+# v1 Real Data Simulator + ROI
 
 ## Overview
 
-Replace the current two-panel layout (My Devices | Devices in Home) with a new layout:
+Wire existing database data into the Simulator and ROI calculations. Remove all hard-coded constants. No new tables, no UI redesign, no new charts.
 
-- **Left panel**: Single unified list of devices assigned to this home (including standard-home devices), with quantity editing and remove button, plus an "Add Existing Device" button that opens a picker modal
-- **Right panel**: A shared "New Device" editor form (reused from Device Catalog)
-- Hideable right panel: appears same as "Performance data"  panel (reused from Device Catalog)
+## Files Changed
 
-## Changes
+1. **`src/components/portal/energy/SimulatorTab.tsx`** -- complete rewrite of `handleRun()` calculation logic
+2. **`src/components/portal/energy/ROITab.tsx`** -- replace hard-coded costs with `model_runs` queries
+3. **`src/components/portal/energy/LoadCurveChart.tsx`** -- rename stacked area keys from `ev`/`appliance` to `shiftable`/`fixedActive`
 
-### 1. Extract shared DeviceEditorForm component
+## Detailed Changes
 
-**New file**: `src/components/portal/energy/DeviceEditorForm.tsx`
+### 1. SimulatorTab -- Fetch Real Data Before Running
 
-Extract lines 284-409 from `DeviceCatalogTab.tsx` (the editor card with type selector, name, field groups, toggles, save/delete) into a standalone component with props:
+Add three additional queries at the start of `handleRun()`:
 
-- `deviceTypes` -- list of available types
-- `selected` -- currently selected device (or null for new)
-- `customerId` -- owner for newly created devices (null = global)
-- `isStaff` -- controls delete button and "include in standard home" toggle visibility
-- `onSaved` -- callback after save
-- `onDeleted` -- callback after delete
+- **energy_home_settings**: Fetch `ua_w_per_k`, `overrides`, `tariff_instance_id` for this `home_id`
+- **tariff_instances**: Fetch `network_price_sek_per_w_month`, `energy_price_sek_per_kwh`, `fixed_monthly_fee_sek` using the `tariff_instance_id`
+- **home_answers**: Fetch `annual_kwh` via `home_questions` with `semantic_key = 'annual_kwh'` joined to `home_answers` for this `home_id`
 
-The component manages its own form state internally (same as current code). The "include in standard home" toggle only shows for global devices (customer_id is null), same logic as today.
+Pre-populate slider defaults on mount: fetch `energy_home_settings.overrides.indoor_temp_c` and `overrides.comfort_band_c` in a `useEffect` and set them as initial slider values (fall back to 21 and 2).
 
-### 2. Refactor DeviceCatalogTab to use DeviceEditorForm
+### 2. SimulatorTab -- Compute Device Aggregates
 
-Replace the inline editor card in `DeviceCatalogTab.tsx` with `<DeviceEditorForm>`, passing the appropriate props. The list panel and performance panel remain in DeviceCatalogTab.
+From the existing `assignments` query (already fetches `field_values`, `shiftable`, `controllable`, `quantity`):
 
-### 3. Redesign HomeDevicesTab
+```
+For each assignment:
+  power = field_values.rated_power_w ?? 0
+  totalPower = power * quantity
 
-**File**: `src/components/portal/energy/HomeDevicesTab.tsx`
-
-New two-column layout:
-
-**Left column -- "Devices in This Home"**:
-
-- Header with title and an "Add Device" button
-- Table with columns: Name, Type, Qty (editable input), Delete button
-- On load, fetch `home_device_assignments` joined with `device_instances`
-- Also auto-include global devices where `include_in_standard_home = true` that aren't already assigned (show them with qty=1, but as "virtual" rows that get inserted on first interaction)
-- Clicking on a row item in the device list shows the device deails in the new device right panel. 
-- Clicking "Add Device" opens an `AddDeviceModal`
-
-**Right column -- "New Device"**:
-
-- Uses `<DeviceEditorForm>` with `customerId` set to the current customer
-- After saving, the device list refreshes so it can be assigned. 
-- Saving should automatically add a quantity of 1 to the devices in this home
-- Customers cannot modify global devices. If viewing a global device and they click save, the device is saved as a new customer device. 
-
-Hideable right panel:
-
-- Reuses "Performance data" from Device Catalog.
-- Customer can upload profile types just like what is done in Device Catalog. Code must be reused, not duplicated!
-
-### 4. New AddDeviceModal component
-
-**New file**: `src/components/portal/energy/AddDeviceModal.tsx`
-
-A dialog that:
-
-- Fetches all device instances visible to this customer (customer-owned + global)
-- Excludes devices already assigned to this home
-- Sorts: customer-owned devices first, global second
-- Shows a searchable list with name, type badge, and globe/user icon
-- Clicking a device assigns it to the home (inserts into `home_device_assignments` with qty=1) and closes the modal
-
-### Technical Details
-
-**DeviceEditorForm props interface:**
-
-```typescript
-interface DeviceEditorFormProps {
-  deviceTypes: DeviceType[];
-  selected: DeviceRow | null;
-  customerId: string | null; // null = global device
-  isStaff: boolean;
-  onSaved: () => void;
-  onDeleted?: () => void;
-  onNewRequested?: () => void;
-}
+  if shiftable:        shiftableW += totalPower
+  else if !controllable: fixedActiveW += totalPower
+  // controllable heating devices are handled by UA
 ```
 
-**Standard home auto-inclusion logic:**
-When fetching home devices, also query `device_instances` where `include_in_standard_home = true AND customer_id IS NULL` and merge them with existing assignments. If a standard device isn't yet in `home_device_assignments`, display it but only persist the assignment when the user modifies quantity or takes action.
+### 3. SimulatorTab -- Base Load from annual_kwh
 
-**Files changed:**
+```
+if (annualKwh exists):
+  avgW = annualKwh * 1000 / 8760
+  baseW = avgW * 0.35
+else:
+  baseW = 500
+  console.warn('Fallback: using 500W base load')
+```
 
-- `src/components/portal/energy/DeviceEditorForm.tsx` (new -- extracted shared form)
-- `src/components/portal/energy/AddDeviceModal.tsx` (new -- device picker modal)
-- `src/components/portal/energy/DeviceCatalogTab.tsx` (refactor to use DeviceEditorForm)
-- `src/components/portal/energy/HomeDevicesTab.tsx` (full redesign)
+### 4. SimulatorTab -- Heating from UA
 
-No database changes needed.
+```
+UA = energy_home_settings.ua_w_per_k ?? 150
+if (!ua_w_per_k) console.warn('Fallback: using 150 W/K')
+
+heatingW(hour) = max(0, UA * (indoorTemp - outdoorTemp)) * (1 + 0.3 * sin(pi * (hour - 6) / 12))
+```
+
+In typical/year mode, use a moderate outdoor temp assumption (e.g., 0 C for typical) instead of arbitrary 2000+1000*sin.
+
+### 5. SimulatorTab -- Timeseries Generation
+
+For each of 96 intervals:
+```
+time = HH:MM
+heating = heatingW(hour)
+shiftable:
+  dumb: hours 17-22 -> shiftableW, else 0
+  smart: hours 01-05 -> shiftableW, else 0
+fixedActive:
+  hours 07-09, 18-20 -> fixedActiveW, else 0
+base = baseW (constant)
+total = base + heating + shiftable + fixedActive
+```
+
+Output keys change from `{ev, appliance}` to `{shiftable, fixedActive}`.
+
+### 6. SimulatorTab -- Cost Calculation from Tariff
+
+```
+networkPrice = tariff.network_price_sek_per_w_month ?? 0.045
+energyPrice = tariff.energy_price_sek_per_kwh ?? 1.5
+fixedFee = tariff.fixed_monthly_fee_sek ?? 0
+
+if (using fallbacks) console.warn(...)
+
+annualKwhCalc = sum(total) * 365 / 4 / 1000
+annualNetworkCost = peakW * networkPrice * 12
+annualEnergyCost = annualKwhCalc * energyPrice
+annualFixedCost = fixedFee * 12
+annualCostSek = annualNetworkCost + annualEnergyCost + annualFixedCost
+```
+
+### 7. SimulatorTab -- Extended results_summary
+
+Store per-category kWh in `results_summary`:
+```
+heatingKwh, baseKwh, shiftableKwh, fixedActiveKwh, totalKwh,
+annualNetworkCost, annualEnergyCost, annualFixedCost
+```
+
+Also store tariff values in `tariff_snapshot` (currently always `{}`).
+
+### 8. SimulatorTab -- Results Card
+
+Add rows for annualNetworkCost, annualEnergyCost, annualFixedCost in the results display (same style as existing rows). Remove the old `savingsSek` row (savings now computed in ROI).
+
+### 9. LoadCurveChart -- Rename Keys
+
+Change stacked areas from `ev`/`appliance` to `shiftable`/`fixedActive`. Update labels/colors accordingly. Keep `base`, `heating`, `total`.
+
+### 10. ROITab -- Fetch model_runs
+
+Replace lines 94-107 (all hard-coded values) with:
+
+```typescript
+// On mount or when homeId changes:
+const { data: runs } = await supabase
+  .from('model_runs')
+  .select('scenario, results_summary')
+  .eq('home_id', homeId)
+  .order('created_at', { ascending: false });
+
+const dumbRun = runs?.find(r => r.scenario === 'dumb');
+const smartRun = runs?.find(r => r.scenario === 'smart');
+
+// If both exist:
+annualCostDumb = dumbRun.results_summary.annualCostSek
+annualCostSmart = smartRun.results_summary.annualCostSek
+// Cost breakdown:
+costBreakdown = [
+  { name: 'Network Fee', dumb: dumbRun.results_summary.annualNetworkCost, smart: smartRun...},
+  { name: 'Energy', dumb: dumbRun...annualEnergyCost, smart: smartRun...},
+  { name: 'Fixed Fee', dumb: dumbRun...annualFixedCost, smart: smartRun...},
+]
+```
+
+### 11. ROITab -- Missing Runs Banner
+
+If either dumb or smart run is missing for this home, show a banner:
+"Run both Dumb and Smart simulations to calculate ROI." with a disabled/greyed-out ROI section (same pattern as existing missing-fields banner).
+
+### 12. Removed Hard-Coded Constants
+
+| Constant | File | Replaced With |
+|---|---|---|
+| `base = 500` | SimulatorTab | `annualKwh * 1000 / 8760 * 0.35` |
+| `deltaT * 150` | SimulatorTab | `UA * deltaT` from energy_home_settings |
+| `11000` (EV) | SimulatorTab | Sum of shiftable device powers |
+| `2000` (appliance) | SimulatorTab | Sum of non-shiftable device powers |
+| `0.045` (network) | SimulatorTab | tariff_instances.network_price_sek_per_w_month |
+| `1.5` (energy) | SimulatorTab | tariff_instances.energy_price_sek_per_kwh |
+| `peakW * 0.85` | SimulatorTab | Removed (effektavgift = peakW directly) |
+| `0.3` (30% savings) | SimulatorTab | Removed (savings computed by ROI from two runs) |
+| `45000` | ROITab | model_runs dumb scenario annualCostSek |
+| `32000` | ROITab | model_runs smart scenario annualCostSek |
+| `18000/11000` | ROITab | model_runs annualNetworkCost |
+| `22000/18000` | ROITab | model_runs annualEnergyCost |
+| `5000` | ROITab | model_runs annualFixedCost |
+
+### 13. No Changes To
+
+- Database schema
+- TariffPricingTab (no changes needed -- it already saves correctly)
+- HouseSetupTab
+- HomeDevicesTab
+- Chart UI structure (only key renames)
+- model_runs table structure (JSONB columns accept any shape)
+
