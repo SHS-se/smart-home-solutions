@@ -469,13 +469,13 @@ const Dashboard: React.FC = () => {
 
                 <Card 
                   className="cursor-pointer transition-colors hover:bg-muted/50"
-                  onClick={() => navigate('/portal/energy-modeling')}
+                  onClick={() => navigate('/portal/device-catalog')}
                 >
                   <CardHeader className="flex flex-row items-center gap-4">
                     <div className="p-2 rounded-lg bg-primary/10">
-                      <Zap className="w-6 h-6 text-primary" />
+                      <Box className="w-6 h-6 text-primary" />
                     </div>
-                    <CardTitle className="text-lg">{t('Energimodellering', 'Energy Modeling')}</CardTitle>
+                    <CardTitle className="text-lg">{t('Enhetskatalog', 'Device Catalog')}</CardTitle>
                   </CardHeader>
                   <CardContent>
                     <p className="text-muted-foreground">
