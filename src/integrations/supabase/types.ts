@@ -407,6 +407,7 @@ export type Database = {
           device_type_id: string
           field_values: Json
           id: string
+          include_in_standard_home: boolean
           name: string
           performance_data_device_id: string | null
           priority: number
@@ -420,6 +421,7 @@ export type Database = {
           device_type_id: string
           field_values?: Json
           id?: string
+          include_in_standard_home?: boolean
           name: string
           performance_data_device_id?: string | null
           priority?: number
@@ -433,6 +435,7 @@ export type Database = {
           device_type_id?: string
           field_values?: Json
           id?: string
+          include_in_standard_home?: boolean
           name?: string
           performance_data_device_id?: string | null
           priority?: number
