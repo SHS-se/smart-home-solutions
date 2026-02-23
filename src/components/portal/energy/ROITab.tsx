@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { TrendingUp, DollarSign, Clock, BarChart3, Plus, Home, AlertCircle, ArrowRight, Loader2 } from 'lucide-react';
+import { TrendingUp, DollarSign, Clock, BarChart3, Plus, AlertCircle, ArrowRight, Loader2, Play } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -39,16 +38,19 @@ const ROITab: React.FC<ROITabProps> = ({ customerId, homeId, homeCount = 1 }) =>
   const [homeName, setHomeName] = useState<string>('');
   const [checkingFields, setCheckingFields] = useState(true);
 
+  // Model run data
+  const [dumbRun, setDumbRun] = useState<Record<string, any> | null>(null);
+  const [smartRun, setSmartRun] = useState<Record<string, any> | null>(null);
+  const [loadingRuns, setLoadingRuns] = useState(true);
+
   // Check missing fields for ROI
   useEffect(() => {
     if (!homeId) { setCheckingFields(false); return; }
     const checkFields = async () => {
       setCheckingFields(true);
-      // Fetch home name
       const { data: home } = await supabase.from('homes').select('name').eq('id', homeId).single();
       if (home) setHomeName(home.name);
 
-      // Fetch questions with semantic keys
       const { data: questions } = await supabase
         .from('home_questions')
         .select('id, semantic_key')
@@ -56,7 +58,6 @@ const ROITab: React.FC<ROITabProps> = ({ customerId, homeId, homeCount = 1 }) =>
 
       if (!questions) { setCheckingFields(false); return; }
 
-      // Fetch answers for this home
       const { data: answers } = await supabase
         .from('home_answers')
         .select('question_id, answer_value')
@@ -68,6 +69,26 @@ const ROITab: React.FC<ROITabProps> = ({ customerId, homeId, homeCount = 1 }) =>
       setCheckingFields(false);
     };
     checkFields();
+  }, [homeId]);
+
+  // Fetch latest model_runs for dumb and smart scenarios
+  useEffect(() => {
+    if (!homeId) { setLoadingRuns(false); return; }
+    const fetchRuns = async () => {
+      setLoadingRuns(true);
+      const { data: runs } = await supabase
+        .from('model_runs')
+        .select('scenario, results_summary')
+        .eq('home_id', homeId)
+        .order('created_at', { ascending: false });
+
+      const dumb = runs?.find(r => r.scenario === 'dumb') || null;
+      const smart = runs?.find(r => r.scenario === 'smart') || null;
+      setDumbRun(dumb ? (dumb.results_summary as Record<string, any>) : null);
+      setSmartRun(smart ? (smart.results_summary as Record<string, any>) : null);
+      setLoadingRuns(false);
+    };
+    fetchRuns();
   }, [homeId]);
 
   const handleCreateProperty = async () => {
@@ -91,28 +112,30 @@ const ROITab: React.FC<ROITabProps> = ({ customerId, homeId, homeCount = 1 }) =>
     }
   };
 
-  // TODO: Pull from latest model_runs for this homeId
-  const annualCostDumb = 45000;
-  const annualCostSmart = 32000;
-  const annualSavings = annualCostDumb - annualCostSmart;
+  const hasBothRuns = dumbRun != null && smartRun != null;
+  const missingRuns = !loadingRuns && !hasBothRuns;
+
+  const annualCostDumb = dumbRun?.annualCostSek ?? 0;
+  const annualCostSmart = smartRun?.annualCostSek ?? 0;
+  const annualSavings = hasBothRuns ? annualCostDumb - annualCostSmart : 0;
   const totalInvestment = hardwareCost + installCost;
   const annualSubscription = monthlySubscription * 12;
   const netAnnualSavings = annualSavings - annualSubscription;
   const paybackYears = netAnnualSavings > 0 ? totalInvestment / netAnnualSavings : Infinity;
 
-  const costBreakdown = [
-    { name: t('Nätavgift', 'Network Fee'), dumb: 18000, smart: 11000 },
-    { name: t('Energi', 'Energy'), dumb: 22000, smart: 18000 },
-    { name: t('Fast avgift', 'Fixed Fee'), dumb: 5000, smart: 5000 },
-  ];
+  const costBreakdown = hasBothRuns ? [
+    { name: t('Nätavgift', 'Network Fee'), dumb: dumbRun.annualNetworkCost ?? 0, smart: smartRun.annualNetworkCost ?? 0 },
+    { name: t('Energi', 'Energy'), dumb: dumbRun.annualEnergyCost ?? 0, smart: smartRun.annualEnergyCost ?? 0 },
+    { name: t('Fast avgift', 'Fixed Fee'), dumb: dumbRun.annualFixedCost ?? 0, smart: smartRun.annualFixedCost ?? 0 },
+  ] : [];
 
   const scenarioComparison = [
-    { label: t('Årlig kostnad (Dum)', 'Annual Cost (Dumb)'), value: `${annualCostDumb.toLocaleString()} SEK` },
-    { label: t('Årlig kostnad (Smart)', 'Annual Cost (Smart)'), value: `${annualCostSmart.toLocaleString()} SEK` },
-    { label: t('Årlig besparing', 'Annual Savings'), value: `${annualSavings.toLocaleString()} SEK` },
+    { label: t('Årlig kostnad (Dum)', 'Annual Cost (Dumb)'), value: hasBothRuns ? `${annualCostDumb.toLocaleString()} SEK` : '—' },
+    { label: t('Årlig kostnad (Smart)', 'Annual Cost (Smart)'), value: hasBothRuns ? `${annualCostSmart.toLocaleString()} SEK` : '—' },
+    { label: t('Årlig besparing', 'Annual Savings'), value: hasBothRuns ? `${annualSavings.toLocaleString()} SEK` : '—' },
     { label: t('Abonnemang/år', 'Subscription/yr'), value: `${annualSubscription.toLocaleString()} SEK` },
-    { label: t('Nettobesparing/år', 'Net Savings/yr'), value: `${netAnnualSavings.toLocaleString()} SEK` },
-    { label: t('Återbetalningstid', 'Payback Period'), value: paybackYears === Infinity ? '—' : `${paybackYears.toFixed(1)} ${t('år', 'years')}` },
+    { label: t('Nettobesparing/år', 'Net Savings/yr'), value: hasBothRuns ? `${netAnnualSavings.toLocaleString()} SEK` : '—' },
+    { label: t('Återbetalningstid', 'Payback Period'), value: !hasBothRuns ? '—' : paybackYears === Infinity ? '—' : `${paybackYears.toFixed(1)} ${t('år', 'years')}` },
   ];
 
   if (!homeId) {
@@ -127,7 +150,6 @@ const ROITab: React.FC<ROITabProps> = ({ customerId, homeId, homeCount = 1 }) =>
 
   return (
     <div className="space-y-6">
-      {/* Property context label */}
       {homeCount <= 1 && homeName && (
         <p className="text-sm text-muted-foreground">
           {t('Lönsamhet för', 'ROI for')}: {homeName}
@@ -152,10 +174,7 @@ const ROITab: React.FC<ROITabProps> = ({ customerId, homeId, homeCount = 1 }) =>
                     </li>
                   ))}
                 </ul>
-                <Button
-                  size="sm"
-                  onClick={() => navigate(`/portal/home-profile?home=${homeId}`)}
-                >
+                <Button size="sm" onClick={() => navigate(`/portal/home-profile?home=${homeId}`)}>
                   {t('Fortsätt inställning', 'Continue setup')}
                   <ArrowRight className="w-4 h-4 ml-1" />
                 </Button>
@@ -165,8 +184,34 @@ const ROITab: React.FC<ROITabProps> = ({ customerId, homeId, homeCount = 1 }) =>
         </Card>
       )}
 
+      {/* Missing runs banner */}
+      {missingRuns && !hasMissingFields && (
+        <Card className="border-primary/30 bg-primary/5">
+          <CardContent className="pt-6">
+            <div className="flex items-start gap-3">
+              <Play className="w-5 h-5 text-primary mt-0.5 shrink-0" />
+              <div className="space-y-2 flex-1">
+                <p className="font-medium text-sm">
+                  {t(
+                    'Kör båda Dum och Smart simuleringar för att beräkna lönsamhet.',
+                    'Run both Dumb and Smart simulations to calculate ROI.'
+                  )}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {!dumbRun && !smartRun
+                    ? t('Inga simuleringar hittades.', 'No simulations found.')
+                    : !dumbRun
+                      ? t('Dum-scenario saknas.', 'Dumb scenario missing.')
+                      : t('Smart-scenario saknas.', 'Smart scenario missing.')}
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* ROI content */}
-      <div className={hasMissingFields ? 'opacity-50 pointer-events-none' : ''}>
+      <div className={hasMissingFields || missingRuns ? 'opacity-50 pointer-events-none' : ''}>
         {/* Summary cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <Card>
@@ -208,7 +253,7 @@ const ROITab: React.FC<ROITabProps> = ({ customerId, homeId, homeCount = 1 }) =>
                 <div className="p-2 rounded-lg bg-secondary"><Clock className="w-5 h-5 text-secondary-foreground" /></div>
                 <div>
                   <p className="text-xs text-muted-foreground">{t('Återbetalningstid', 'Payback Period')}</p>
-                  <p className="text-xl font-semibold">{paybackYears === Infinity ? '—' : `${paybackYears.toFixed(1)} ${t('år', 'yr')}`}</p>
+                  <p className="text-xl font-semibold">{!hasBothRuns ? '—' : paybackYears === Infinity ? '—' : `${paybackYears.toFixed(1)} ${t('år', 'yr')}`}</p>
                 </div>
               </div>
             </CardContent>
@@ -233,17 +278,23 @@ const ROITab: React.FC<ROITabProps> = ({ customerId, homeId, homeCount = 1 }) =>
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={costBreakdown}>
-                  <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                  <XAxis dataKey="name" className="text-xs" />
-                  <YAxis tickFormatter={v => `${(v / 1000).toFixed(0)}k`} className="text-xs" />
-                  <Tooltip formatter={(v: number) => [`${v.toLocaleString()} SEK`]} />
-                  <Legend />
-                  <Bar dataKey="dumb" name={t('Dum', 'Dumb')} fill="hsl(var(--destructive))" radius={[4, 4, 0, 0]} fillOpacity={0.7} />
-                  <Bar dataKey="smart" name={t('Smart', 'Smart')} fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+              {costBreakdown.length > 0 ? (
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart data={costBreakdown}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                    <XAxis dataKey="name" className="text-xs" />
+                    <YAxis tickFormatter={v => `${(v / 1000).toFixed(0)}k`} className="text-xs" />
+                    <Tooltip formatter={(v: number) => [`${v.toLocaleString()} SEK`]} />
+                    <Legend />
+                    <Bar dataKey="dumb" name={t('Dum', 'Dumb')} fill="hsl(var(--destructive))" radius={[4, 4, 0, 0]} fillOpacity={0.7} />
+                    <Bar dataKey="smart" name={t('Smart', 'Smart')} fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="flex items-center justify-center h-[300px] text-sm text-muted-foreground">
+                  {t('Kör simuleringar för att se data', 'Run simulations to see data')}
+                </div>
+              )}
             </CardContent>
           </Card>
 

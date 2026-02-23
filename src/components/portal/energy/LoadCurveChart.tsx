@@ -7,8 +7,8 @@ interface LoadPoint {
   time: string;
   total: number;
   heating?: number;
-  ev?: number;
-  appliance?: number;
+  shiftable?: number;
+  fixedActive?: number;
   base?: number;
 }
 
@@ -46,8 +46,8 @@ const LoadCurveChart: React.FC<LoadCurveChartProps> = ({
             )}
             <Area type="monotone" dataKey="base" stackId="1" fill="hsl(var(--muted))" stroke="hsl(var(--muted-foreground))" fillOpacity={0.4} />
             <Area type="monotone" dataKey="heating" stackId="1" fill="hsl(var(--primary))" stroke="hsl(var(--primary))" fillOpacity={0.4} />
-            <Area type="monotone" dataKey="ev" stackId="1" fill="hsl(var(--accent))" stroke="hsl(var(--accent-foreground))" fillOpacity={0.4} />
-            <Area type="monotone" dataKey="appliance" stackId="1" fill="hsl(var(--secondary))" stroke="hsl(var(--secondary-foreground))" fillOpacity={0.4} />
+            <Area type="monotone" dataKey="shiftable" stackId="1" fill="hsl(var(--accent))" stroke="hsl(var(--accent-foreground))" fillOpacity={0.4} />
+            <Area type="monotone" dataKey="fixedActive" stackId="1" fill="hsl(var(--secondary))" stroke="hsl(var(--secondary-foreground))" fillOpacity={0.4} />
             <Area type="monotone" dataKey="total" fill="none" stroke="hsl(var(--foreground))" strokeWidth={2} />
           </AreaChart>
         </ResponsiveContainer>
