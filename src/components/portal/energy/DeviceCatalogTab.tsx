@@ -205,12 +205,15 @@ const DeviceCatalogTab: React.FC = () => {
   const schema = selectedType?.field_schema?.fields || [];
   const grouped = groupFields(schema);
 
+  const selectedDeviceType = selected ? deviceTypes.find(d => d.id === selected.device_type_id) : null;
+  const showPerformancePanel = selected && (selectedDeviceType?.supported_profile_kinds?.length ?? 0) > 0;
+
   if (loading) {
     return <div className="flex items-center justify-center min-h-[300px]"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div className={`grid grid-cols-1 ${showPerformancePanel ? 'lg:grid-cols-3' : 'lg:grid-cols-2'} gap-6`}>
       {/* LEFT: Device List */}
       <Card>
         <CardHeader className="pb-2">
@@ -396,38 +399,22 @@ const DeviceCatalogTab: React.FC = () => {
         </CardContent>
       </Card>
 
-      {/* RIGHT: Performance Data Panel */}
-      <div className="space-y-4">
-        {!selected ? (
-          <Card>
-            <CardContent className="py-8">
-              <p className="text-sm text-muted-foreground text-center">{t('Välj en enhet', 'Select a device')}</p>
-            </CardContent>
-          </Card>
-        ) : (() => {
-          const dt = deviceTypes.find(d => d.id === selected.device_type_id);
-          const spk = dt?.supported_profile_kinds || [];
-          return spk.length > 0 ? (
-            <PerformanceDataStatus
-              deviceId={selected.id}
-              devices={devices.map(d => ({ id: d.id, name: d.name, device_type_id: d.device_type_id }))}
-              currentDeviceTypeId={selected.device_type_id}
-              performanceDataDeviceId={performanceDataDeviceId}
-              supportedProfileKinds={spk}
-              onPerformanceDeviceChange={async (id) => {
-                setPerformanceDataDeviceId(id);
-                await supabase.from('device_instances').update({ performance_data_device_id: id }).eq('id', selected.id);
-              }}
-            />
-          ) : (
-            <Card>
-              <CardContent className="py-8">
-                <p className="text-sm text-muted-foreground text-center">{t('Inga profiltyper stöds för denna enhetstyp.', 'No profile types supported for this device type.')}</p>
-              </CardContent>
-            </Card>
-          );
-        })()}
-      </div>
+      {/* RIGHT: Performance Data Panel – only when device selected AND has supported profiles */}
+      {showPerformancePanel && selected && selectedDeviceType && (
+        <div className="space-y-4">
+          <PerformanceDataStatus
+            deviceId={selected.id}
+            devices={devices.map(d => ({ id: d.id, name: d.name, device_type_id: d.device_type_id }))}
+            currentDeviceTypeId={selected.device_type_id}
+            performanceDataDeviceId={performanceDataDeviceId}
+            supportedProfileKinds={selectedDeviceType.supported_profile_kinds}
+            onPerformanceDeviceChange={async (id) => {
+              setPerformanceDataDeviceId(id);
+              await supabase.from('device_instances').update({ performance_data_device_id: id }).eq('id', selected.id);
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 };
