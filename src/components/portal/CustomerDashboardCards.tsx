@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Building2, FileText, MessageSquare, ClipboardList, Home, Loader2, AlertCircle, Zap, Box } from 'lucide-react';
+import { Building2, FileText, MessageSquare, ClipboardList, Home, Loader2, AlertCircle, Box } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useLanguage } from '@/contexts/LanguageContext';
 
@@ -54,22 +54,7 @@ const CustomerDashboardCards: React.FC<CustomerDashboardCardsProps> = ({
       content: (
         <>
           <p className="text-muted-foreground mb-2">
-            {t('Bläddra i den delade enhetskatalogen och tillgängliga enhetsmodeller.', 'Browse the shared device catalog and available device models.')}
-          </p>
-        </>
-      ),
-    },
-    {
-      title: t('Energimodellering', 'Energy Modeling'),
-      icon: Zap,
-      path: `${basePath}/energy-modeling`,
-      content: (
-        <>
-          <p className="text-muted-foreground mb-2">
-            {t('Effekttoppar, nätavgifter och besparingar med smart styrning.', 'Peak power, network fees, and savings with smart control.')}
-          </p>
-          <p className="text-muted-foreground text-sm">
-            {t('Simulera energiförbrukning och beräkna lönsamhet.', 'Simulate energy consumption and calculate ROI.')}
+            {t('Bläddra i enhetskatalogen, hantera enhetsmodeller och prestandadata.', 'Browse the device catalog, manage device models and performance data.')}
           </p>
         </>
       ),
