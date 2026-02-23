@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Play, Loader2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -28,12 +28,31 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
   const [running, setRunning] = useState(false);
   const [results, setResults] = useState<{
     peakW: number;
-    effektavgiftPeakW: number;
     annualKwh: number;
     annualCostSek: number;
-    savingsSek: number;
-    timeseries: Array<{ time: string; total: number; heating: number; ev: number; appliance: number; base: number }>;
+    annualNetworkCost: number;
+    annualEnergyCost: number;
+    annualFixedCost: number;
+    timeseries: Array<{ time: string; total: number; heating: number; shiftable: number; fixedActive: number; base: number }>;
   } | null>(null);
+
+  // Pre-populate slider defaults from energy_home_settings overrides
+  useEffect(() => {
+    if (!homeId) return;
+    const loadDefaults = async () => {
+      const { data: settings } = await supabase
+        .from('energy_home_settings')
+        .select('overrides')
+        .eq('home_id', homeId)
+        .single();
+      if (settings?.overrides && typeof settings.overrides === 'object') {
+        const ov = settings.overrides as Record<string, any>;
+        if (typeof ov.indoor_temp_c === 'number') setIndoorTemp(ov.indoor_temp_c);
+        if (typeof ov.comfort_band_c === 'number') setComfortBand(ov.comfort_band_c);
+      }
+    };
+    loadDefaults();
+  }, [homeId]);
 
   const deltaT = Math.max(0, indoorTemp - outdoorTemp);
 
@@ -41,14 +60,88 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
     if (!homeId) return;
     setRunning(true);
 
-    // Load device assignments - now using device_type_id directly
+    // 1. Fetch energy_home_settings
+    const { data: settings } = await supabase
+      .from('energy_home_settings')
+      .select('ua_w_per_k, overrides, tariff_instance_id')
+      .eq('home_id', homeId)
+      .single();
+
+    // 2. Fetch tariff
+    let tariff: { network_price_sek_per_w_month: number; energy_price_sek_per_kwh: number; fixed_monthly_fee_sek: number } | null = null;
+    if (settings?.tariff_instance_id) {
+      const { data: ti } = await supabase
+        .from('tariff_instances')
+        .select('network_price_sek_per_w_month, energy_price_sek_per_kwh, fixed_monthly_fee_sek')
+        .eq('id', settings.tariff_instance_id)
+        .single();
+      tariff = ti as any;
+    }
+
+    // 3. Fetch annual_kwh from home_answers
+    let annualKwhValue: number | null = null;
+    const { data: annualQ } = await supabase
+      .from('home_questions')
+      .select('id')
+      .eq('semantic_key', 'annual_kwh')
+      .single();
+    if (annualQ) {
+      const { data: ans } = await supabase
+        .from('home_answers')
+        .select('answer_value')
+        .eq('home_id', homeId)
+        .eq('question_id', annualQ.id)
+        .single();
+      if (ans?.answer_value != null) {
+        annualKwhValue = Number(ans.answer_value);
+        if (isNaN(annualKwhValue)) annualKwhValue = null;
+      }
+    }
+
+    // 4. Fetch device assignments
     const { data: assignments } = await supabase
       .from('home_device_assignments')
       .select('quantity, device_instances(id, name, device_type_id, field_values, controllable, shiftable, priority, device_types(key, simulation_model_key))')
       .eq('home_id', homeId);
 
+    // --- Compute aggregates ---
+
+    // UA
+    const UA = settings?.ua_w_per_k ?? 150;
+    if (!settings?.ua_w_per_k) console.warn('Simulator fallback: using 150 W/K for UA');
+
+    // Base load
+    let baseW: number;
+    if (annualKwhValue && annualKwhValue > 0) {
+      const avgW = (annualKwhValue * 1000) / 8760;
+      baseW = avgW * 0.35;
+    } else {
+      baseW = 500;
+      console.warn('Simulator fallback: using 500W base load');
+    }
+
+    // Tariff
+    const networkPrice = (tariff?.network_price_sek_per_w_month) ?? 0.045;
+    const energyPrice = (tariff?.energy_price_sek_per_kwh) ?? 1.5;
+    const fixedFee = (tariff?.fixed_monthly_fee_sek) ?? 0;
+    if (!tariff) console.warn('Simulator fallback: using default tariff prices (0.045, 1.5, 0)');
+
+    // Device aggregates
+    let shiftableW = 0;
+    let fixedActiveW = 0;
     const deviceSnapshot = (assignments || []).map((a: any) => {
       const d = a.device_instances;
+      const fv = (d.field_values && typeof d.field_values === 'object') ? d.field_values as Record<string, any> : {};
+      const power = Number(fv.rated_power_w) || 0;
+      const totalPower = power * (a.quantity || 1);
+
+      if (d.shiftable) {
+        shiftableW += totalPower;
+      } else if (!d.controllable) {
+        fixedActiveW += totalPower;
+      }
+      // controllable heating devices handled by UA
+
       return {
         instance_id: d.id,
         name: d.name,
@@ -69,31 +162,61 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
       comfort_band_c: comfortBand,
       target_peak_w: targetPeak ? Number(targetPeak) : null,
       home_id: homeId,
+      ua_w_per_k: UA,
+      base_w: baseW,
+      shiftable_w: shiftableW,
+      fixed_active_w: fixedActiveW,
     };
 
-    // Generate demo timeseries
+    // --- Generate 96-point timeseries ---
+    const effectiveOutdoorTemp = mode === 'design' ? outdoorTemp : 0;
     const ts = Array.from({ length: 96 }, (_, i) => {
       const hour = Math.floor(i / 4);
       const min = (i % 4) * 15;
       const time = `${String(hour).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
-      const base = 500;
-      const heating = mode === 'design'
-        ? Math.max(0, deltaT * 150 * (1 + 0.3 * Math.sin(Math.PI * (hour - 6) / 12)))
-        : Math.max(0, 2000 + 1000 * Math.sin(Math.PI * (hour - 14) / 12));
-      const ev = hour >= 17 && hour <= 22 ? 11000 * (scenario === 'smart' ? 0 : 1) : (scenario === 'smart' && hour >= 1 && hour <= 5 ? 11000 : 0);
-      const appliance = (hour >= 7 && hour <= 9) || (hour >= 18 && hour <= 20) ? 2000 : 0;
-      const total = base + heating + ev + appliance;
-      return { time, total, heating, ev, appliance, base };
+
+      const heating = Math.max(0, UA * (indoorTemp - effectiveOutdoorTemp)) *
+        (1 + 0.3 * Math.sin(Math.PI * (hour - 6) / 12));
+
+      const shiftable = scenario === 'dumb'
+        ? (hour >= 17 && hour <= 22 ? shiftableW : 0)
+        : (hour >= 1 && hour <= 5 ? shiftableW : 0);
+
+      const fixedActive = ((hour >= 7 && hour <= 9) || (hour >= 18 && hour <= 20)) ? fixedActiveW : 0;
+
+      const total = baseW + heating + shiftable + fixedActive;
+      return { time, total, heating, shiftable, fixedActive, base: baseW };
     });
 
+    // --- Compute results ---
     const peakW = Math.max(...ts.map(p => p.total));
+    const totalKwh = Math.round(ts.reduce((s, p) => s + p.total, 0) * 365 / 4 / 1000);
+    const heatingKwh = Math.round(ts.reduce((s, p) => s + p.heating, 0) * 365 / 4 / 1000);
+    const baseKwh = Math.round(ts.reduce((s, p) => s + p.base, 0) * 365 / 4 / 1000);
+    const shiftableKwh = Math.round(ts.reduce((s, p) => s + p.shiftable, 0) * 365 / 4 / 1000);
+    const fixedActiveKwh = Math.round(ts.reduce((s, p) => s + p.fixedActive, 0) * 365 / 4 / 1000);
+
+    const annualNetworkCost = Math.round(peakW * networkPrice * 12);
+    const annualEnergyCost = Math.round(totalKwh * energyPrice);
+    const annualFixedCost = Math.round(fixedFee * 12);
+    const annualCostSek = annualNetworkCost + annualEnergyCost + annualFixedCost;
+
     const resultsSummary = {
       peakW,
-      effektavgiftPeakW: peakW * 0.85,
-      annualKwh: Math.round(ts.reduce((s, p) => s + p.total, 0) * 365 / 4 / 1000),
-      annualCostSek: Math.round(peakW * 0.045 * 12 + ts.reduce((s, p) => s + p.total, 0) * 365 / 4 / 1000 * 1.5),
-      savingsSek: scenario === 'smart' ? Math.round(peakW * 0.045 * 12 * 0.3) : 0,
+      totalKwh,
+      heatingKwh,
+      baseKwh,
+      shiftableKwh,
+      fixedActiveKwh,
+      annualNetworkCost,
+      annualEnergyCost,
+      annualFixedCost,
+      annualCostSek,
     };
+
+    const tariffSnapshot = tariff
+      ? { network_price_sek_per_w_month: networkPrice, energy_price_sek_per_kwh: energyPrice, fixed_monthly_fee_sek: fixedFee }
+      : {};
 
     await supabase.from('model_runs').insert({
       customer_id: customerId,
@@ -105,10 +228,11 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
       device_snapshot: deviceSnapshot,
       profile_snapshot: {},
       results_summary: resultsSummary,
+      tariff_snapshot: tariffSnapshot,
       timeseries: ts,
     });
 
-    setResults({ ...resultsSummary, timeseries: ts });
+    setResults({ ...resultsSummary, annualKwh: totalKwh, timeseries: ts });
     setRunning(false);
   };
 
@@ -185,12 +309,11 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
             </CardHeader>
             <CardContent className="space-y-2 text-sm">
               <div className="flex justify-between"><span className="text-muted-foreground">{t('Topp', 'Peak')}</span><span className="font-medium">{formatPower(results.peakW).display}</span></div>
-              <div className="flex justify-between"><span className="text-muted-foreground">{t('Effektavgift topp', 'Demand Charge Peak')}</span><span className="font-medium">{formatPower(results.effektavgiftPeakW).display}</span></div>
               <div className="flex justify-between"><span className="text-muted-foreground">{t('Årlig kWh', 'Annual kWh')}</span><span className="font-medium">{results.annualKwh.toLocaleString()} kWh</span></div>
-              <div className="flex justify-between"><span className="text-muted-foreground">{t('Årlig kostnad', 'Annual Cost')}</span><span className="font-medium">{results.annualCostSek.toLocaleString()} SEK</span></div>
-              {results.savingsSek > 0 && (
-                <div className="flex justify-between text-green-600"><span>{t('Besparing', 'Savings')}</span><span className="font-medium">{results.savingsSek.toLocaleString()} SEK</span></div>
-              )}
+              <div className="flex justify-between"><span className="text-muted-foreground">{t('Nätavgift', 'Network Cost')}</span><span className="font-medium">{results.annualNetworkCost.toLocaleString()} SEK</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">{t('Energikostnad', 'Energy Cost')}</span><span className="font-medium">{results.annualEnergyCost.toLocaleString()} SEK</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">{t('Fast avgift', 'Fixed Fee')}</span><span className="font-medium">{results.annualFixedCost.toLocaleString()} SEK</span></div>
+              <div className="flex justify-between border-t border-border pt-1"><span className="text-muted-foreground font-medium">{t('Årlig kostnad', 'Annual Cost')}</span><span className="font-medium">{results.annualCostSek.toLocaleString()} SEK</span></div>
             </CardContent>
           </Card>
         )}
