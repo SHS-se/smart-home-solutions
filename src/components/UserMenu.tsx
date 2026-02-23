@@ -66,7 +66,7 @@ const UserMenu = ({ size = "default" }: UserMenuProps) => {
     { href: "/portal", label: t("Översikt", "Overview") },
     { href: "/portal/account", label: t("Konto", "Account") },
     { href: "/portal/home-profile", label: t("Hemprofil", "Home Profile") },
-    { href: "/portal/device-catalog", label: t("Enhetskatalog", "Device Catalog") },
+    { href: "/portal/energy-modeling", label: t("Energimodellering", "Energy Modeling") },
     { href: "/portal/offers", label: t("Offerter", "Offers") },
     { href: "/portal/billing", label: t("Fakturor", "Billing") },
     { href: "/portal/tickets", label: t("Mina ärenden", "My Tickets") },
