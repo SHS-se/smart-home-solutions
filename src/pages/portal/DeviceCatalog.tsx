@@ -6,6 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import DeviceCatalogTab from '@/components/portal/energy/DeviceCatalogTab';
 import DeviceModelsTab from '@/components/portal/energy/DeviceModelsTab';
+import HouseModelTab from '@/components/portal/energy/HouseModelTab';
 import DeviceTypesManager from '@/components/portal/energy/DeviceTypesManager';
 import CalibrationTab from '@/components/portal/energy/CalibrationTab';
 
@@ -29,6 +30,7 @@ const DeviceCatalog: React.FC = () => {
           <TabsList>
             <TabsTrigger value="devices">{t('Enheter', 'Devices')}</TabsTrigger>
             <TabsTrigger value="device-models">{t('Enhetsmodeller', 'Device Models')}</TabsTrigger>
+            <TabsTrigger value="house-model">{t('Husmodell', 'House Model')}</TabsTrigger>
             {isStaff && (
               <>
                 <TabsTrigger value="device-types">{t('Enhetstyper', 'Device Types')}</TabsTrigger>
@@ -38,6 +40,7 @@ const DeviceCatalog: React.FC = () => {
           </TabsList>
           <TabsContent value="devices"><DeviceCatalogTab /></TabsContent>
           <TabsContent value="device-models"><DeviceModelsTab /></TabsContent>
+          <TabsContent value="house-model"><HouseModelTab /></TabsContent>
           {isStaff && (
             <>
               <TabsContent value="device-types"><DeviceTypesManager /></TabsContent>
