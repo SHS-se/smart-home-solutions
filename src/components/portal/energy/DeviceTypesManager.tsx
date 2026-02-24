@@ -27,6 +27,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { DUMB_HOME_ARCHETYPE_KEYS, type DeviceModelKey } from '@/lib/simulator';
 
 interface FieldDef {
   key: string;
@@ -45,6 +46,14 @@ interface DeviceType {
 }
 
 const PROFILE_KIND_OPTIONS = ['cop_capacity_curve', 'heating_performance_surface', 'load_curve'];
+
+const SIMULATION_MODEL_OPTIONS: Array<{ key: DeviceModelKey; label: string }> = [
+  { key: 'fixed_baseload', label: 'Fixed baseload' },
+  { key: 'electric_resistive_thermostat', label: 'Electric resistive thermostat' },
+  { key: 'air_to_air_heat_pump_inverter', label: 'Air-to-air heat pump (inverter)' },
+  { key: 'fridge_freezer_compressor', label: 'Fridge/freezer compressor' },
+  { key: 'event_appliance', label: 'Event appliance' },
+].filter(opt => DUMB_HOME_ARCHETYPE_KEYS.includes(opt.key));
 
 type InfoTopic = 'key' | 'display_name' | 'simulation_model_key' | 'supported_profile_kinds' | 'field_schema';
 
@@ -72,11 +81,11 @@ const INFO_CONTENT: Record<InfoTopic, { sv: { title: string; body: string }; en:
   simulation_model_key: {
     sv: {
       title: 'Simuleringsmodellnyckel',
-      body: `**Vad:** Kopplar enhetstypen till en specifik beräkningsmotor i simulatorn (t.ex. "heat_pump_aa").\n\n**Hur den används:** När en simulering körs, avgör denna nyckel vilken matematisk modell som används för att beräkna energiförbrukning, COP-kurvor och lastbalanser. Varje modellnyckel motsvarar en unik algoritm i simuleringsmotorn.\n\n**Viktigt:** Ange exakt den nyckel som stöds av simuleringsmotorn. En felaktig nyckel innebär att simuleringar inte kan köras för denna enhetstyp.`,
+      body: `**Vad:** Kopplar enhetstypen till en specifik beräkningsmotor i simulatorn (t.ex. "air_to_air_heat_pump_inverter").\n\n**Hur den används:** När en simulering körs, avgör denna nyckel vilken matematisk modell som används för att beräkna energiförbrukning, COP-kurvor och lastbalanser. Varje modellnyckel motsvarar en unik algoritm i simuleringsmotorn.\n\n**Viktigt:** Välj en nyckel som stöds av simuleringsmotorn. En felaktig eller föråldrad nyckel innebär att simuleringar inte kan köras korrekt för denna enhetstyp.`,
     },
     en: {
       title: 'Simulation Model Key',
-      body: `**What:** Links the device type to a specific calculation engine in the simulator (e.g. "heat_pump_aa").\n\n**How it's used:** When a simulation is run, this key determines which mathematical model is used to compute energy consumption, COP curves, and load balancing. Each model key maps to a unique algorithm in the simulation engine.\n\n**Important:** Enter the exact key supported by the simulation engine. An incorrect key means simulations cannot run for this device type.`,
+      body: `**What:** Links the device type to a specific calculation engine in the simulator (e.g. "air_to_air_heat_pump_inverter").\n\n**How it's used:** When a simulation is run, this key determines which mathematical model is used to compute energy consumption, COP curves, and load balancing. Each model key maps to a unique algorithm in the simulation engine.\n\n**Important:** Choose a key supported by the simulation engine. An incorrect or outdated key means simulations cannot run correctly for this device type.`,
     },
   },
   supported_profile_kinds: {
@@ -312,6 +321,10 @@ const DeviceTypesManager: React.FC = () => {
   }
 
   const infoData = activeInfo ? INFO_CONTENT[activeInfo][language] : null;
+  const isKnownSimulationModelKey = SIMULATION_MODEL_OPTIONS.some(opt => opt.key === form.simulation_model_key);
+  const simulationModelOptions: Array<{ key: string; label: string; legacy?: boolean }> = isKnownSimulationModelKey || !form.simulation_model_key
+    ? SIMULATION_MODEL_OPTIONS
+    : [{ key: form.simulation_model_key, label: `${t('Äldre/okänd', 'Legacy/Unknown')}: ${form.simulation_model_key}`, legacy: true }, ...SIMULATION_MODEL_OPTIONS];
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[1fr_2fr] gap-6">
@@ -381,7 +394,31 @@ const DeviceTypesManager: React.FC = () => {
           </div>
           <div>
             <InfoLabel label={t('Simuleringsmodell', 'Simulation Model Key')} topic="simulation_model_key" activeInfo={activeInfo} setActiveInfo={setActiveInfo} />
-            <Input value={form.simulation_model_key} onChange={e => setForm(f => ({ ...f, simulation_model_key: e.target.value }))} placeholder="e.g. heat_pump_aa" />
+            <Select value={form.simulation_model_key || undefined} onValueChange={v => setForm(f => ({ ...f, simulation_model_key: v }))}>
+              <SelectTrigger>
+                <SelectValue placeholder={t('Välj simuleringsmodell', 'Select simulation model')} />
+              </SelectTrigger>
+              <SelectContent>
+                {simulationModelOptions.map(opt => (
+                  <SelectItem key={opt.key} value={opt.key}>
+                    <div className="flex flex-col items-start leading-tight">
+                      <span>{opt.label}</span>
+                      {opt.legacy ? null : (
+                        <span className="font-mono text-[11px] text-muted-foreground">{opt.key}</span>
+                      )}
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {!isKnownSimulationModelKey && form.simulation_model_key ? (
+              <p className="text-xs text-amber-600 mt-1">
+                {t(
+                  'Denna typ använder en äldre/okänd modellnyckel. Välj en giltig modell och spara för att migrera.',
+                  'This type uses a legacy/unknown model key. Choose a valid model and save to migrate.',
+                )}
+              </p>
+            ) : null}
           </div>
 
           <div>

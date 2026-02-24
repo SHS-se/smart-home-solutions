@@ -366,6 +366,12 @@ const HouseSetupTab: React.FC<HouseSetupTabProps> = ({ customerId, homeId }) => 
         <Card>
           <CardHeader>
             <CardTitle className="text-base">{t('Värmebehov vs ΔT', 'Heat Demand vs ΔT')}</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              {t(
+                'Visar ungefärlig värmeeffekt (termisk effekt) som huset behöver tillföras för att hålla stabil inomhustemperatur vid ett givet ΔT = (inne - ute).',
+                'Shows the approximate heating power (thermal power) that must be supplied to keep indoor temperature stable at a given ΔT = (indoor - outdoor).',
+              )}
+            </p>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={350}>
@@ -379,6 +385,12 @@ const HouseSetupTab: React.FC<HouseSetupTabProps> = ({ customerId, homeId }) => 
             </ResponsiveContainer>
             <p className="text-xs text-muted-foreground mt-2">
               UA = {effectiveUA.toFixed(0)} W/K · {t('Värmebehov = UA × ΔT', 'Heat Demand = UA × ΔT')}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {t(
+                'Obs: Detta är husets värmebehov, inte nödvändigtvis el-effekten från värmekällan. För värmepump beror el-effekten även på COP.',
+                'Note: This is the building heat demand, not necessarily the electrical input power of the heating device. For a heat pump, electrical power also depends on COP.',
+              )}
             </p>
           </CardContent>
         </Card>

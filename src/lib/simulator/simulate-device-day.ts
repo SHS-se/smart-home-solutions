@@ -135,6 +135,7 @@ export function simulateDeviceDay(inputs: SimulateDeviceDayInputs): SimulateDevi
         outdoorTempC: inputs.outdoorTempC,
         occupancy,
         roomTempsC,
+        roomUaWPerK: Object.fromEntries(roomKeys.map(k => [k, roomUa])),
       },
       rng,
     };
@@ -203,4 +204,3 @@ export function simulateDeviceDay(inputs: SimulateDeviceDayInputs): SimulateDevi
     finalRoomTempsC: roomTempsC,
   };
 }
-

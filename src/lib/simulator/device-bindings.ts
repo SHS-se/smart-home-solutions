@@ -24,6 +24,7 @@ export interface DeviceBindingDefaults {
   roomKeyByDeviceId?: Record<string, string>;
   roomKeyByDeviceTypeKey?: Record<string, string>;
   occupancyDefault?: 'home' | 'away' | 'sleep' | 'unknown';
+  defaultSetpointC?: number;
 }
 
 export interface DeviceBindingWarning {
@@ -43,8 +44,9 @@ const MODEL_KEY_ALIASES: Record<string, DeviceModelKey> = {
   base_load_constant: 'fixed_baseload',
   resistive: 'electric_resistive_thermostat',
   direct_electric_heater: 'electric_resistive_thermostat',
-  heat_pump_aa: 'air_to_air_heat_pump_dumb',
-  air_to_air_heat_pump: 'air_to_air_heat_pump_dumb',
+  heat_pump_aa: 'air_to_air_heat_pump_inverter',
+  air_to_air_heat_pump: 'air_to_air_heat_pump_inverter',
+  air_to_air_heat_pump_dumb: 'air_to_air_heat_pump_inverter',
   fixed_schedule: 'event_appliance',
   ev_charger: 'event_appliance',
 };
@@ -187,7 +189,7 @@ function normalizeSimulationModelKey(
   if (!sourceKey) return { normalized: null, sourceKey: null, aliasUsed: false };
   const canonical = sourceKey.toLowerCase();
   const direct = canonical as DeviceModelKey;
-  if (['fixed_baseload', 'electric_resistive_thermostat', 'air_to_air_heat_pump_dumb', 'fridge_freezer_compressor', 'event_appliance'].includes(direct)) {
+  if (['fixed_baseload', 'electric_resistive_thermostat', 'air_to_air_heat_pump_inverter', 'fridge_freezer_compressor', 'event_appliance'].includes(direct)) {
     return { normalized: direct, sourceKey, aliasUsed: canonical !== sourceKey };
   }
   const alias = MODEL_KEY_ALIASES[canonical];
@@ -276,7 +278,11 @@ function buildRuntimeForDevice(
   }
 
   try {
-    if (normalizedModel.aliasUsed && normalizedModel.sourceKey) {
+    if (
+      normalizedModel.aliasUsed &&
+      normalizedModel.sourceKey &&
+      !['heat_pump_aa', 'air_to_air_heat_pump_dumb'].includes(normalizedModel.sourceKey.toLowerCase())
+    ) {
       pushWarning(warnings, device, 'model_key_alias', `Mapped ${normalizedModel.sourceKey} -> ${modelKey}`);
     }
 
@@ -319,8 +325,7 @@ function buildRuntimeForDevice(
           pushWarning(warnings, device, 'assumed_power_from_name', `Using ${Math.round(ratedPowerW)}W inferred from device name`);
         }
         if (setpointC == null) {
-          setpointC = 21;
-          pushWarning(warnings, device, 'assumed_setpoint', 'No setpoint_c found; using default 21C');
+          setpointC = defaults?.defaultSetpointC ?? 21;
         }
         const deadbandC = readNumber(fv, ['deadband_c', 'thermostat_deadband_c'], { min: 0.05 }) ?? 0.4;
         const minOnSeconds = readNumber(fv, ['min_on_seconds'], { min: 0, allowZero: true }) ?? 0;
@@ -339,7 +344,7 @@ function buildRuntimeForDevice(
         });
       }
 
-      case 'air_to_air_heat_pump_dumb': {
+      case 'air_to_air_heat_pump_inverter': {
         let ratedInputPowerW = readPowerWWithAliases(fv, {
           wKeys: ['rated_input_power_w', 'input_power_w', 'nominal_input_power_w', 'max_input_power_w'],
           kwKeys: ['rated_input_power_kw', 'input_power_kw', 'nominal_input_power_kw'],
@@ -381,7 +386,7 @@ function buildRuntimeForDevice(
           }
         }
         if (ratedInputPowerW == null) {
-          pushWarning(warnings, device, 'missing_fields', 'air_to_air_heat_pump_dumb requires rated_input_power_w or a capacity field/name');
+          pushWarning(warnings, device, 'missing_fields', 'air_to_air_heat_pump_inverter requires rated_input_power_w or a capacity field/name');
           return null;
         }
         if (ratedHeatingCapacityW == null) {
@@ -389,9 +394,17 @@ function buildRuntimeForDevice(
           pushWarning(warnings, device, 'assumed_capacity', 'No heating capacity found; assuming 3x input power');
         }
         if (setpointC == null) {
-          setpointC = 21;
-          pushWarning(warnings, device, 'assumed_setpoint', 'No setpoint_c found; using default 21C');
+          setpointC = defaults?.defaultSetpointC ?? 21;
         }
+        const minInputPowerW =
+          readPowerWWithAliases(fv, {
+            wKeys: ['min_input_power_w', 'minimum_input_power_w'],
+            kwKeys: ['min_input_power_kw', 'minimum_input_power_kw'],
+            nameText: null,
+            allowNameFallback: false,
+            min: 0,
+            allowZero: true,
+          }) ?? 0;
 
         const onWindows =
           minuteWindowsFromFieldValues(fv) ??
@@ -401,6 +414,7 @@ function buildRuntimeForDevice(
           roomKey: resolveRoomKey(device, fv, defaults),
           ratedInputPowerW: ratedInputPowerW * quantity,
           ratedHeatingCapacityW: ratedHeatingCapacityW * quantity,
+          minInputPowerW: minInputPowerW * quantity,
           setpointC,
           deadbandC: readNumber(fv, ['deadband_c'], { min: 0.05 }) ?? 0.6,
           minOnSeconds: readNumber(fv, ['min_on_seconds'], { min: 0, allowZero: true }) ?? 300,

@@ -23,13 +23,13 @@ type PreviewCategory = 'base' | 'heating' | 'shiftable' | 'fixedActive';
 const MODEL_LABELS: Record<string, string> = {
   fixed_baseload: 'Fixed baseload',
   electric_resistive_thermostat: 'Electric heater thermostat',
-  air_to_air_heat_pump_dumb: 'Air-to-air heat pump (dumb)',
+  air_to_air_heat_pump_inverter: 'Air-to-air heat pump (inverter)',
   fridge_freezer_compressor: 'Fridge/freezer compressor',
   event_appliance: 'Event appliance',
 };
 
 function isHeatingModel(modelKey?: string | null): boolean {
-  return modelKey === 'electric_resistive_thermostat' || modelKey === 'air_to_air_heat_pump_dumb';
+  return modelKey === 'electric_resistive_thermostat' || modelKey === 'air_to_air_heat_pump_inverter';
 }
 
 function classifyDevice(modelKey?: string | null, shiftable?: boolean | null): PreviewCategory {
@@ -139,7 +139,9 @@ const DeviceModelsTab: React.FC = () => {
       },
     };
 
-    const binding = buildDeviceRuntimesFromAssignments([assignment]);
+    const binding = buildDeviceRuntimesFromAssignments([assignment], {
+      defaultSetpointC: indoorTempC,
+    });
     const runtime = binding.devices[0] ?? null;
     const mappedModelKey = runtime?.modelKey ?? null;
     const originalModelKey = (selected.device_types as any)?.simulation_model_key ?? null;
@@ -282,7 +284,7 @@ const DeviceModelsTab: React.FC = () => {
               </div>
             </div>
             <div>
-              <label className="text-xs text-muted-foreground">{t('Husets UA (W/K)', 'Building UA (W/K)')}</label>
+              <label className="text-xs text-muted-foreground">{t('Zonens UA (W/K)', 'Zone UA (W/K)')}</label>
               <Input type="number" value={uaWPerK} onChange={e => setUaWPerK(Number(e.target.value) || 0)} className="h-8" />
             </div>
             {preview && (
@@ -361,4 +363,3 @@ const DeviceModelsTab: React.FC = () => {
 };
 
 export default DeviceModelsTab;
-

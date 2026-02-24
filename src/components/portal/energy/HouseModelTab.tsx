@@ -1,11 +1,12 @@
-import React, { useMemo, useState, useEffect, useCallback } from 'react';
-import { Info, X } from 'lucide-react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
+import { Info, Plus, Trash2, X } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
 import { useLanguage } from '@/contexts/LanguageContext';
 import {
   Bar,
@@ -42,6 +43,7 @@ type WindowPreset = {
 };
 
 type HouseInfoTopic =
+  | 'floors'
   | 'footprint_area'
   | 'stories'
   | 'ceiling_height'
@@ -56,6 +58,14 @@ type HouseInfoTopic =
   | 'total_ua'
   | 'design_heat_load'
   | 'infiltration_share';
+
+interface HouseFloorInput {
+  id: string;
+  name: string;
+  areaM2: number;
+  ceilingHeightM: number;
+  heatedInWinter: boolean;
+}
 
 const WALL_PRESETS: Record<WallTypeKey, ConstructionPreset> = {
   timber: { key: 'timber', labelEn: 'Timber Frame', labelSv: 'Träregelvägg', lambdaWmK: 0.13, defaultThicknessMm: 145, extraR: 0.25 },
@@ -90,6 +100,16 @@ const WINDOW_PRESETS: WindowPreset[] = [
 ];
 
 const HOUSE_INFO_CONTENT: Record<HouseInfoTopic, { sv: { title: string; body: string }; en: { title: string; body: string } }> = {
+  floors: {
+    sv: {
+      title: 'Våningslista (uppvärmda / ej uppvärmda)',
+      body: `**Vad:** Här beskriver du varje våningsplan separat med area, takhöjd och om planet är uppvärmt på vintern.\n\n**Varför:** Kalkylen blir mer korrekt när våningar har olika storlek. Volym (ventilation/infiltration), väggarea och tak/golv-koppling påverkas av vilka plan som faktiskt är uppvärmda.\n\n**Tips:** Lägg in källare också men markera den som ej uppvärmd om den inte värms vintertid.`,
+    },
+    en: {
+      title: 'Floor list (heated / unheated)',
+      body: `**What:** Define each floor separately with area, ceiling height, and whether it is heated in winter.\n\n**Why:** The estimate is more accurate when floors differ in size. Volume (ventilation/infiltration), wall area, and roof/floor coupling depend on which floors are actually heated.\n\n**Tip:** Add the basement too, but mark it unheated if it is not heated in winter.`,
+    },
+  },
   footprint_area: {
     sv: {
       title: 'Byggnadsarea / footprint',
@@ -312,9 +332,7 @@ function HouseInfoValueLabel({
 const STORAGE_KEY = 'house-model-inputs';
 
 interface HouseModelInputs {
-  footprintAreaM2: number;
-  stories: number;
-  ceilingHeightM: number;
+  floors: HouseFloorInput[];
   aspectRatio: number;
   windowToWallPct: number;
   roofAreaFactor: number;
@@ -338,10 +356,85 @@ interface HouseModelInputs {
   designOutdoorTempC: number;
 }
 
+interface HouseModelExport {
+  schema: 'house_model_v1' | 'house_model_v2';
+  exportedAt: string;
+  units: {
+    ua: 'W/K';
+    power: 'W';
+    powerChart: 'kW';
+    area: 'm2';
+    volume: 'm3';
+    temp: 'C';
+    thickness: 'mm';
+    uValue: 'W/m2K';
+    ach: '1/h';
+  };
+  inputs: HouseModelInputs | (Record<string, unknown> & {
+    footprintAreaM2?: number;
+    stories?: number;
+    ceilingHeightM?: number;
+  });
+  calculated: {
+    geometry: {
+      perimeterM: number;
+      wallGrossAreaM2: number;
+      wallOpaqueAreaM2: number;
+      windowAreaM2: number;
+      roofAreaM2: number;
+      floorAreaM2: number;
+      volumeM3: number;
+      floorCount?: number;
+      heatedFloorCount?: number;
+      heatedFloorAreaM2?: number;
+    };
+    uValues: {
+      wallWm2K: number;
+      windowWm2K: number;
+      roofWm2K: number;
+      floorWm2K: number;
+    };
+    uaBreakdownWPerK: {
+      wall: number;
+      window: number;
+      roof: number;
+      floor: number;
+      thermalBridges: number;
+      infiltration: number;
+      conduction: number;
+      total: number;
+    };
+    design: {
+      indoorTempC: number;
+      designOutdoorTempC: number;
+      deltaTC: number;
+      heatLoadW: number;
+      heatLoadKw: number;
+      infiltrationSharePct: number;
+    };
+    charts: {
+      tempSweep: Array<{ tempC: number; heatKw: number }>;
+      uaBreakdown: Array<{ key: string; label: string; ua: number }>;
+    };
+  };
+}
+
+function createFloor(overrides: Partial<HouseFloorInput> = {}): HouseFloorInput {
+  return {
+    id: overrides.id ?? `floor_${Math.random().toString(36).slice(2, 10)}`,
+    name: overrides.name ?? 'Floor',
+    areaM2: overrides.areaM2 ?? 60,
+    ceilingHeightM: overrides.ceilingHeightM ?? 2.4,
+    heatedInWinter: overrides.heatedInWinter ?? true,
+  };
+}
+
 const DEFAULTS: HouseModelInputs = {
-  footprintAreaM2: 120,
-  stories: 2,
-  ceilingHeightM: 2.4,
+  floors: [
+    createFloor({ name: 'Basement', areaM2: 120, heatedInWinter: false }),
+    createFloor({ name: 'Middle floor', areaM2: 120, heatedInWinter: true }),
+    createFloor({ name: 'Top floor', areaM2: 90, heatedInWinter: true }),
+  ],
   aspectRatio: 1.5,
   windowToWallPct: 18,
   roofAreaFactor: 1.08,
@@ -365,10 +458,55 @@ const DEFAULTS: HouseModelInputs = {
   designOutdoorTempC: -15,
 };
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeFloors(value: unknown): HouseFloorInput[] | null {
+  if (!Array.isArray(value)) return null;
+
+  const floors: HouseFloorInput[] = value
+    .filter(isRecord)
+    .map((row, index) => createFloor({
+      id: typeof row.id === 'string' && row.id ? row.id : undefined,
+      name: typeof row.name === 'string' && row.name.trim() ? row.name : `Floor ${index + 1}`,
+      areaM2: isFiniteNumber(row.areaM2) ? row.areaM2 : 0,
+      ceilingHeightM: isFiniteNumber(row.ceilingHeightM) ? row.ceilingHeightM : 2.4,
+      heatedInWinter: typeof row.heatedInWinter === 'boolean' ? row.heatedInWinter : true,
+    }));
+
+  return floors.length > 0 ? floors : null;
+}
+
 function loadSavedInputs(): HouseModelInputs {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return { ...DEFAULTS, ...JSON.parse(raw) };
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (isRecord(parsed)) {
+        const floors = normalizeFloors(parsed.floors);
+        if (floors) {
+          return { ...DEFAULTS, ...parsed, floors } as HouseModelInputs;
+        }
+        // Migrate older saved shape (v1 footprint/stories/ceilingHeight -> floors)
+        const footprint = isFiniteNumber(parsed.footprintAreaM2) ? parsed.footprintAreaM2 : 120;
+        const stories = isFiniteNumber(parsed.stories) ? Math.max(1, Math.round(parsed.stories)) : 2;
+        const ceilingHeightM = isFiniteNumber(parsed.ceilingHeightM) ? parsed.ceilingHeightM : 2.4;
+        const migratedFloors = Array.from({ length: stories }, (_, i) =>
+          createFloor({
+            name: `Floor ${i + 1}`,
+            areaM2: footprint,
+            ceilingHeightM,
+            heatedInWinter: true,
+          }),
+        );
+        return { ...DEFAULTS, ...parsed, floors: migratedFloors } as HouseModelInputs;
+      }
+    }
   } catch { /* ignore */ }
   return DEFAULTS;
 }
@@ -376,12 +514,12 @@ function loadSavedInputs(): HouseModelInputs {
 const HouseModelTab: React.FC = () => {
   const { t, language } = useLanguage();
   const [activeInfo, setActiveInfo] = useState<HouseInfoTopic | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [importStatus, setImportStatus] = useState<string | null>(null);
 
   const [saved] = useState(() => loadSavedInputs());
 
-  const [footprintAreaM2, setFootprintAreaM2] = useState(saved.footprintAreaM2);
-  const [stories, setStories] = useState(saved.stories);
-  const [ceilingHeightM, setCeilingHeightM] = useState(saved.ceilingHeightM);
+  const [floors, setFloors] = useState<HouseFloorInput[]>(saved.floors);
   const [aspectRatio, setAspectRatio] = useState(saved.aspectRatio);
   const [windowToWallPct, setWindowToWallPct] = useState(saved.windowToWallPct);
   const [roofAreaFactor, setRoofAreaFactor] = useState(saved.roofAreaFactor);
@@ -410,24 +548,55 @@ const HouseModelTab: React.FC = () => {
   const [indoorTempC, setIndoorTempC] = useState(saved.indoorTempC);
   const [designOutdoorTempC, setDesignOutdoorTempC] = useState(saved.designOutdoorTempC);
 
-  // Persist all inputs to localStorage on every change
-  useEffect(() => {
-    const inputs: HouseModelInputs = {
-      footprintAreaM2, stories, ceilingHeightM, aspectRatio, windowToWallPct, roofAreaFactor,
-      wallType, wallStructThicknessMm, wallInsType, wallInsThicknessMm,
-      windowType,
-      roofType, roofStructThicknessMm, roofInsType, roofInsThicknessMm,
-      floorType, floorStructThicknessMm, floorInsType, floorInsThicknessMm, floorExposureFactor,
-      ach, thermalBridgePct, indoorTempC, designOutdoorTempC,
-    };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(inputs));
-  }, [
-    footprintAreaM2, stories, ceilingHeightM, aspectRatio, windowToWallPct, roofAreaFactor,
+  const addFloor = () => {
+    setFloors(prev => [...prev, createFloor({ name: `Floor ${prev.length + 1}` })]);
+  };
+
+  const updateFloor = (id: string, patch: Partial<HouseFloorInput>) => {
+    setFloors(prev => prev.map(f => (f.id === id ? { ...f, ...patch } : f)));
+  };
+
+  const removeFloor = (id: string) => {
+    setFloors(prev => (prev.length <= 1 ? prev : prev.filter(f => f.id !== id)));
+  };
+
+  const currentInputs = useMemo<HouseModelInputs>(() => ({
+    floors,
+    aspectRatio,
+    windowToWallPct,
+    roofAreaFactor,
+    wallType,
+    wallStructThicknessMm,
+    wallInsType,
+    wallInsThicknessMm,
+    windowType,
+    roofType,
+    roofStructThicknessMm,
+    roofInsType,
+    roofInsThicknessMm,
+    floorType,
+    floorStructThicknessMm,
+    floorInsType,
+    floorInsThicknessMm,
+    floorExposureFactor,
+    ach,
+    thermalBridgePct,
+    indoorTempC,
+    designOutdoorTempC,
+  }), [
+    floors, aspectRatio, windowToWallPct, roofAreaFactor,
     wallType, wallStructThicknessMm, wallInsType, wallInsThicknessMm,
     windowType,
     roofType, roofStructThicknessMm, roofInsType, roofInsThicknessMm,
     floorType, floorStructThicknessMm, floorInsType, floorInsThicknessMm, floorExposureFactor,
     ach, thermalBridgePct, indoorTempC, designOutdoorTempC,
+  ]);
+
+  // Persist all inputs to localStorage on every change
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(currentInputs));
+  }, [
+    currentInputs,
   ]);
 
   const calc = useMemo(() => {
@@ -439,17 +608,24 @@ const HouseModelTab: React.FC = () => {
     const floorIns = INSULATION_PRESETS[floorInsType];
     const winPreset = WINDOW_PRESETS.find(w => w.key === windowType)!;
 
-    const footprint = safePositive(footprintAreaM2, 1);
-    const storyCount = Math.max(1, Math.round(stories));
-    const ceilingH = safePositive(ceilingHeightM, 2.4);
+    const normalizedFloors = floors.length > 0 ? floors : DEFAULTS.floors;
+    const heatedFloors = normalizedFloors.filter(f => f.heatedInWinter);
+    const effectiveHeatedFloors = heatedFloors.length > 0 ? heatedFloors : [normalizedFloors[0]];
 
-    const perimeter = perimeterFromFootprint(footprint, aspectRatio);
-    const wallGrossArea = perimeter * ceilingH * storyCount;
+    const floorPerimeters = normalizedFloors.map(f => perimeterFromFootprint(safePositive(f.areaM2, 1), aspectRatio));
+    const heatedPerimeterSum = effectiveHeatedFloors.reduce((sum, f) => sum + perimeterFromFootprint(safePositive(f.areaM2, 1), aspectRatio), 0);
+    const wallGrossArea = effectiveHeatedFloors.reduce((sum, f) => {
+      const perimeter = perimeterFromFootprint(safePositive(f.areaM2, 1), aspectRatio);
+      const ceilingH = safePositive(f.ceilingHeightM, 2.4);
+      return sum + perimeter * ceilingH;
+    }, 0);
     const windowArea = clamp(wallGrossArea * (windowToWallPct / 100), 0, wallGrossArea * 0.8);
     const wallOpaqueArea = Math.max(0, wallGrossArea - windowArea);
-    const roofArea = footprint * safePositive(roofAreaFactor, 1);
-    const floorArea = footprint;
-    const volumeM3 = footprint * storyCount * ceilingH;
+    const topHeatedFloor = effectiveHeatedFloors[effectiveHeatedFloors.length - 1];
+    const lowestHeatedFloor = effectiveHeatedFloors[0];
+    const roofArea = safePositive(topHeatedFloor.areaM2, 1) * safePositive(roofAreaFactor, 1);
+    const floorArea = safePositive(lowestHeatedFloor.areaM2, 1);
+    const volumeM3 = effectiveHeatedFloors.reduce((sum, f) => sum + safePositive(f.areaM2, 1) * safePositive(f.ceilingHeightM, 2.4), 0);
 
     const wallU = withSurfaceFilmsU(wallPreset, wallStructThicknessMm, wallIns.lambdaWmK, wallInsThicknessMm, 0.13, 0.04);
     const roofU = withSurfaceFilmsU(roofPreset, roofStructThicknessMm, roofIns.lambdaWmK, roofInsThicknessMm, 0.10, 0.04);
@@ -484,13 +660,17 @@ const HouseModelTab: React.FC = () => {
     });
 
     return {
-      perimeter,
+      heatedPerimeterSum,
+      floorPerimeters,
+      floorCount: normalizedFloors.length,
+      heatedFloorCount: heatedFloors.length,
       wallGrossArea,
       wallOpaqueArea,
       windowArea,
       roofArea,
       floorArea,
       volumeM3,
+      heatedFloorAreaM2: effectiveHeatedFloors.reduce((sum, f) => sum + safePositive(f.areaM2, 1), 0),
       wallU,
       roofU,
       floorU,
@@ -509,7 +689,7 @@ const HouseModelTab: React.FC = () => {
     };
   }, [
     t,
-    footprintAreaM2, stories, ceilingHeightM, aspectRatio, windowToWallPct, roofAreaFactor,
+    floors, aspectRatio, windowToWallPct, roofAreaFactor,
     wallType, wallStructThicknessMm, wallInsType, wallInsThicknessMm,
     windowType,
     roofType, roofStructThicknessMm, roofInsType, roofInsThicknessMm,
@@ -519,9 +699,172 @@ const HouseModelTab: React.FC = () => {
 
   const infoData = activeInfo ? HOUSE_INFO_CONTENT[activeInfo][language] : null;
 
+  const applyImportedInputs = (raw: unknown) => {
+    if (!isRecord(raw)) throw new Error('Invalid JSON: expected object');
+
+    const src = isRecord(raw.inputs) ? raw.inputs : raw;
+    if (!isRecord(src)) throw new Error('Invalid JSON: missing inputs object');
+
+    const importedFloors = normalizeFloors(src.floors);
+    if (importedFloors) {
+      setFloors(importedFloors);
+    } else {
+      const footprint = isFiniteNumber(src.footprintAreaM2) ? src.footprintAreaM2 : undefined;
+      const stories = isFiniteNumber(src.stories) ? Math.max(1, Math.round(src.stories)) : undefined;
+      const ceilingHeight = isFiniteNumber(src.ceilingHeightM) ? src.ceilingHeightM : undefined;
+      if (footprint && stories) {
+        setFloors(Array.from({ length: stories }, (_, i) => createFloor({
+          name: `Floor ${i + 1}`,
+          areaM2: footprint,
+          ceilingHeightM: ceilingHeight ?? 2.4,
+          heatedInWinter: true,
+        })));
+      }
+    }
+
+    const setNum = (key: keyof HouseModelInputs, setter: (n: number) => void) => {
+      const value = src[key as string];
+      if (isFiniteNumber(value)) setter(value);
+    };
+
+    const setEnum = <T extends string>(key: keyof HouseModelInputs, valid: readonly T[], setter: (v: T) => void) => {
+      const value = src[key as string];
+      if (typeof value === 'string' && (valid as readonly string[]).includes(value)) setter(value as T);
+    };
+
+    setNum('aspectRatio', setAspectRatio);
+    setNum('windowToWallPct', setWindowToWallPct);
+    setNum('roofAreaFactor', setRoofAreaFactor);
+
+    setEnum('wallType', Object.keys(WALL_PRESETS) as WallTypeKey[], setWallType);
+    setNum('wallStructThicknessMm', setWallStructThicknessMm);
+    setEnum('wallInsType', Object.keys(INSULATION_PRESETS) as InsulationTypeKey[], setWallInsType);
+    setNum('wallInsThicknessMm', setWallInsThicknessMm);
+
+    setEnum('windowType', WINDOW_PRESETS.map(w => w.key) as WindowTypeKey[], setWindowType);
+
+    setEnum('roofType', Object.keys(ROOF_PRESETS) as RoofTypeKey[], setRoofType);
+    setNum('roofStructThicknessMm', setRoofStructThicknessMm);
+    setEnum('roofInsType', Object.keys(INSULATION_PRESETS) as InsulationTypeKey[], setRoofInsType);
+    setNum('roofInsThicknessMm', setRoofInsThicknessMm);
+
+    setEnum('floorType', Object.keys(FLOOR_PRESETS) as FloorTypeKey[], setFloorType);
+    setNum('floorStructThicknessMm', setFloorStructThicknessMm);
+    setEnum('floorInsType', Object.keys(INSULATION_PRESETS) as InsulationTypeKey[], setFloorInsType);
+    setNum('floorInsThicknessMm', setFloorInsThicknessMm);
+    setNum('floorExposureFactor', setFloorExposureFactor);
+
+    setNum('ach', setAch);
+    setNum('thermalBridgePct', setThermalBridgePct);
+    setNum('indoorTempC', setIndoorTempC);
+    setNum('designOutdoorTempC', setDesignOutdoorTempC);
+  };
+
+  const handleExportJson = () => {
+    const exportData: HouseModelExport = {
+      schema: 'house_model_v2',
+      exportedAt: new Date().toISOString(),
+      units: {
+        ua: 'W/K',
+        power: 'W',
+        powerChart: 'kW',
+        area: 'm2',
+        volume: 'm3',
+        temp: 'C',
+        thickness: 'mm',
+        uValue: 'W/m2K',
+        ach: '1/h',
+      },
+      inputs: currentInputs,
+      calculated: {
+        geometry: {
+          perimeterM: calc.heatedPerimeterSum,
+          wallGrossAreaM2: calc.wallGrossArea,
+          wallOpaqueAreaM2: calc.wallOpaqueArea,
+          windowAreaM2: calc.windowArea,
+          roofAreaM2: calc.roofArea,
+          floorAreaM2: calc.floorArea,
+          volumeM3: calc.volumeM3,
+          floorCount: calc.floorCount,
+          heatedFloorCount: calc.heatedFloorCount,
+          heatedFloorAreaM2: calc.heatedFloorAreaM2,
+        },
+        uValues: {
+          wallWm2K: calc.wallU,
+          windowWm2K: calc.windowU,
+          roofWm2K: calc.roofU,
+          floorWm2K: calc.floorU,
+        },
+        uaBreakdownWPerK: {
+          wall: calc.wallUa,
+          window: calc.windowUa,
+          roof: calc.roofUa,
+          floor: calc.floorUa,
+          thermalBridges: calc.bridgeUa,
+          infiltration: calc.infiltrationUa,
+          conduction: calc.conductionUa,
+          total: calc.totalUa,
+        },
+        design: {
+          indoorTempC,
+          designOutdoorTempC,
+          deltaTC: Math.max(0, indoorTempC - designOutdoorTempC),
+          heatLoadW: calc.designHeatW,
+          heatLoadKw: calc.designHeatW / 1000,
+          infiltrationSharePct: calc.totalUa > 0 ? (calc.infiltrationUa / calc.totalUa) * 100 : 0,
+        },
+        charts: {
+          tempSweep: calc.tempSweep,
+          uaBreakdown: calc.breakdown,
+        },
+      },
+    };
+
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `house-model-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    setImportStatus(t('Exporterade husmodell till JSON.', 'Exported house model to JSON.'));
+  };
+
+  const handleImportClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleImportFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text) as unknown;
+      applyImportedInputs(parsed);
+      setImportStatus(t(
+        'Importerade husmodell från JSON. Beräknade värden ignorerades och räknas om.',
+        'Imported house model from JSON. Calculated values were ignored and recalculated.',
+      ));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      setImportStatus(t(`Import misslyckades: ${message}`, `Import failed: ${message}`));
+    }
+  };
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
       <div className="lg:col-span-1 space-y-4">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="application/json,.json"
+          className="hidden"
+          onChange={handleImportFile}
+        />
         {activeInfo && infoData ? (
           <Card>
             <CardHeader className="pb-2">
@@ -547,21 +890,100 @@ const HouseModelTab: React.FC = () => {
 
         <Card>
           <CardHeader className="pb-2">
+            <CardTitle className="text-base">{t('Import / Export', 'Import / Export')}</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex flex-col gap-2">
+              <Button variant="outline" onClick={handleExportJson}>
+                {t('Exportera JSON', 'Export JSON')}
+              </Button>
+              <Button variant="outline" onClick={handleImportClick}>
+                {t('Importera JSON', 'Import JSON')}
+              </Button>
+            </div>
+            <div className="text-xs text-muted-foreground">
+              {t(
+                'JSON innehåller både indata och beräknade värden. Vid import används endast indata; beräknade värden ignoreras och räknas om.',
+                'JSON includes both inputs and calculated values. On import, only inputs are used; calculated values are ignored and recalculated.',
+              )}
+            </div>
+            {importStatus ? (
+              <div className="text-xs text-muted-foreground rounded border p-2">
+                {importStatus}
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
             <CardTitle className="text-base">{t('Geometri', 'Geometry')}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div>
-              <HouseInfoLabel label={t('Byggnadsarea / footprint (m²)', 'Footprint area (m²)')} topic="footprint_area" activeInfo={activeInfo} setActiveInfo={setActiveInfo} />
-              <Input type="number" value={footprintAreaM2} onChange={e => setFootprintAreaM2(Number(e.target.value) || 0)} className="h-8" />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <HouseInfoLabel label={t('Våningar', 'Stories')} topic="stories" activeInfo={activeInfo} setActiveInfo={setActiveInfo} />
-                <Input type="number" value={stories} onChange={e => setStories(Number(e.target.value) || 1)} className="h-8" />
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <HouseInfoLabel label={t('Våningsplan', 'Floors')} topic="floors" activeInfo={activeInfo} setActiveInfo={setActiveInfo} />
+                <Button type="button" size="sm" variant="outline" onClick={addFloor}>
+                  <Plus className="w-3.5 h-3.5 mr-1" />
+                  {t('Våning', 'Floor')}
+                </Button>
               </div>
-              <div>
-                <HouseInfoLabel label={t('Takhöjd (m)', 'Ceiling height (m)')} topic="ceiling_height" activeInfo={activeInfo} setActiveInfo={setActiveInfo} />
-                <Input type="number" step="0.1" value={ceilingHeightM} onChange={e => setCeilingHeightM(Number(e.target.value) || 0)} className="h-8" />
+              {floors.map((floor, index) => (
+                <div key={floor.id} className="rounded border p-2 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <Input
+                      value={floor.name}
+                      onChange={e => updateFloor(floor.id, { name: e.target.value })}
+                      className="h-8"
+                      placeholder={t(`Våning ${index + 1}`, `Floor ${index + 1}`)}
+                    />
+                    {floors.length > 1 ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-destructive"
+                        onClick={() => removeFloor(floor.id)}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    ) : null}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <Label className="text-xs">{t('Area (m²)', 'Area (m²)')}</Label>
+                      <Input
+                        type="number"
+                        value={floor.areaM2}
+                        onChange={e => updateFloor(floor.id, { areaM2: Number(e.target.value) || 0 })}
+                        className="h-8"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs">{t('Takhöjd (m)', 'Ceiling height (m)')}</Label>
+                      <Input
+                        type="number"
+                        step="0.1"
+                        value={floor.ceilingHeightM}
+                        onChange={e => updateFloor(floor.id, { ceilingHeightM: Number(e.target.value) || 0 })}
+                        className="h-8"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between rounded bg-muted/40 px-2 py-1.5">
+                    <span className="text-xs">{t('Uppvärmd vintertid', 'Heated in winter')}</span>
+                    <Switch
+                      checked={floor.heatedInWinter}
+                      onCheckedChange={checked => updateFloor(floor.id, { heatedInWinter: checked })}
+                    />
+                  </div>
+                </div>
+              ))}
+              <div className="text-[11px] text-muted-foreground">
+                {t(
+                  'Volym och ventilations-UA beräknas från våningar markerade som uppvärmda vintertid.',
+                  'Volume and ventilation UA are calculated from floors marked as heated in winter.',
+                )}
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2">
@@ -729,11 +1151,15 @@ const HouseModelTab: React.FC = () => {
               <div className="rounded border p-3">
                 <div className="text-sm font-medium mb-2">{t('Geometri (härledd)', 'Derived Geometry')}</div>
                 <div className="space-y-1 text-sm">
-                  <div className="flex justify-between"><span className="text-muted-foreground">{t('Perimeter', 'Perimeter')}</span><span>{calc.perimeter.toFixed(1)} m</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">{t('Antal våningar', 'Floor count')}</span><span>{calc.floorCount}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">{t('Uppvärmda våningar', 'Heated floors')}</span><span>{calc.heatedFloorCount}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">{t('Uppvärmd golvarea', 'Heated floor area')}</span><span>{calc.heatedFloorAreaM2.toFixed(1)} m²</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">{t('Perimeter (summa uppvärmda plan)', 'Perimeter (sum heated floors)')}</span><span>{calc.heatedPerimeterSum.toFixed(1)} m</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground">{t('Väggarea brutto', 'Gross wall area')}</span><span>{calc.wallGrossArea.toFixed(1)} m²</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground">{t('Fönsterarea', 'Window area')}</span><span>{calc.windowArea.toFixed(1)} m²</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground">{t('Väggarea opak', 'Opaque wall area')}</span><span>{calc.wallOpaqueArea.toFixed(1)} m²</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">{t('Takarea', 'Roof area')}</span><span>{calc.roofArea.toFixed(1)} m²</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">{t('Takarea (över översta uppvärmda plan)', 'Roof area (above top heated floor)')}</span><span>{calc.roofArea.toFixed(1)} m²</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">{t('Golvarea (under nedersta uppvärmda plan)', 'Floor area (below lowest heated floor)')}</span><span>{calc.floorArea.toFixed(1)} m²</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground">{t('Volym', 'Volume')}</span><span>{calc.volumeM3.toFixed(0)} m³</span></div>
                 </div>
               </div>

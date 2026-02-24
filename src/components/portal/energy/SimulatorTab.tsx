@@ -61,7 +61,7 @@ type SimulatorResults = {
 const MODEL_LABELS: Record<string, string> = {
   fixed_baseload: 'Fixed baseload',
   electric_resistive_thermostat: 'Electric heater thermostat',
-  air_to_air_heat_pump_dumb: 'Air-to-air heat pump (dumb)',
+  air_to_air_heat_pump_inverter: 'Air-to-air heat pump (inverter)',
   fridge_freezer_compressor: 'Fridge/freezer compressor',
   event_appliance: 'Event appliance',
 };
@@ -83,7 +83,7 @@ function readRuntimeNominalPowerW(modelKey: string | undefined, params: Record<s
   };
   if (modelKey === 'fixed_baseload') return getNum('powerW');
   if (modelKey === 'electric_resistive_thermostat') return getNum('ratedPowerW');
-  if (modelKey === 'air_to_air_heat_pump_dumb') return getNum('ratedInputPowerW');
+  if (modelKey === 'air_to_air_heat_pump_inverter') return getNum('ratedInputPowerW');
   if (modelKey === 'fridge_freezer_compressor') return getNum('ratedPowerW');
   if (modelKey === 'event_appliance') {
     const cycle = Array.isArray(params.cycle) ? params.cycle : [];
@@ -96,7 +96,7 @@ function readRuntimeNominalPowerW(modelKey: string | undefined, params: Record<s
 }
 
 function isSpaceHeatingModel(modelKey?: string): boolean {
-  return modelKey === 'electric_resistive_thermostat' || modelKey === 'air_to_air_heat_pump_dumb';
+  return modelKey === 'electric_resistive_thermostat' || modelKey === 'air_to_air_heat_pump_inverter';
 }
 
 function getDevicePowerCategory(modelKey: string | undefined, shiftable: boolean | null | undefined): 'base' | 'heating' | 'shiftable' | 'fixedActive' {
@@ -173,7 +173,9 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
         .eq('home_id', homeId);
 
       const typedAssignments = ((assignments || []) as unknown[]) as SimulatorAssignmentRow[];
-      const binding = buildDeviceRuntimesFromAssignments(typedAssignments);
+      const binding = buildDeviceRuntimesFromAssignments(typedAssignments, {
+        defaultSetpointC: indoorTemp,
+      });
       const warningsByDeviceId = new Map<string, DeviceBindingWarning[]>();
       for (const warning of binding.warnings) {
         const list = warningsByDeviceId.get(warning.deviceId) || [];

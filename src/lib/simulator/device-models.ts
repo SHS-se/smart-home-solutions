@@ -14,6 +14,7 @@ export interface SimulationInputs {
   outdoorTempC: number;
   occupancy: OccupancyState;
   roomTempsC?: Record<string, number>;
+  roomUaWPerK?: Record<string, number>;
 }
 
 export interface SimulationStepContext {
@@ -38,7 +39,7 @@ export interface DeviceModel<TParams, TState> {
 export type DeviceModelKey =
   | 'fixed_baseload'
   | 'electric_resistive_thermostat'
-  | 'air_to_air_heat_pump_dumb'
+  | 'air_to_air_heat_pump_inverter'
   | 'fridge_freezer_compressor'
   | 'event_appliance';
 
@@ -306,6 +307,7 @@ const airToAirHeatPumpDumbParamsSchema = z.object({
   roomKey: z.string().min(1),
   ratedInputPowerW: positive,
   ratedHeatingCapacityW: positive,
+  minInputPowerW: nonNegative.default(0),
   setpointC: z.number().finite(),
   deadbandC: positive.max(10).default(0.6),
   minOnSeconds: nonNegative.default(300),
@@ -319,6 +321,11 @@ const airToAirHeatPumpDumbParamsSchema = z.object({
   capacitySlopePerC: z.number().finite().default(0.015), // +1.5% per C from 7C reference
   capacityMinFactor: z.number().finite().min(0.2).max(2).default(0.5),
   capacityMaxFactor: z.number().finite().min(0.2).max(3).default(1.4),
+  modulationTempGainPerC: nonNegative.default(1200), // extra requested heat per C below setpoint
+  partLoadCopBoostMax: z.number().finite().min(0).max(0.5).default(0.1),
+  startupBoostSeconds: nonNegative.default(600),
+  startupPowerMultiplier: z.number().finite().min(1).max(3).default(1.6),
+  startupHeatMultiplier: z.number().finite().min(0.2).max(2).default(0.9),
 });
 
 export type AirToAirHeatPumpDumbParams = z.infer<typeof airToAirHeatPumpDumbParamsSchema>;
@@ -326,6 +333,7 @@ export type AirToAirHeatPumpDumbParams = z.infer<typeof airToAirHeatPumpDumbPara
 export interface AirToAirHeatPumpDumbState {
   isOn: boolean;
   secondsInState: number;
+  startupRemainingSeconds: number;
 }
 
 function heatPumpPerformance(params: AirToAirHeatPumpDumbParams, outdoorTempC: number): { inputPowerW: number; heatW: number } {
@@ -346,11 +354,12 @@ function heatPumpPerformance(params: AirToAirHeatPumpDumbParams, outdoorTempC: n
 }
 
 export const airToAirHeatPumpDumbModel: DeviceModel<AirToAirHeatPumpDumbParams, AirToAirHeatPumpDumbState> = {
-  key: 'air_to_air_heat_pump_dumb',
+  key: 'air_to_air_heat_pump_inverter',
   parseParams: raw => airToAirHeatPumpDumbParamsSchema.parse(raw),
-  initState: () => ({ isOn: false, secondsInState: 0 }),
+  initState: () => ({ isOn: false, secondsInState: 0, startupRemainingSeconds: 0 }),
   step: (params, state, ctx) => {
     const roomTempC = ctx.inputs.roomTempsC?.[params.roomKey];
+    const roomUaWPerK = ctx.inputs.roomUaWPerK?.[params.roomKey] ?? 0;
     const { lowerC, upperC } = thermostatThresholds(params.setpointC, params.deadbandC);
     const scheduleEnabled = activeWindowWeight(params.onWindows, ctx.clock) > 0;
     const seasonEnabled = params.outdoorCutoffC == null ? true : ctx.inputs.outdoorTempC < params.outdoorCutoffC;
@@ -369,17 +378,68 @@ export const airToAirHeatPumpDumbModel: DeviceModel<AirToAirHeatPumpDumbParams, 
     const nextState: AirToAirHeatPumpDumbState = {
       isOn: nextIsOn,
       secondsInState: transitioned ? 0 : state.secondsInState + ctx.clock.dtSeconds,
+      startupRemainingSeconds: transitioned && nextIsOn
+        ? params.startupBoostSeconds
+        : Math.max(0, state.startupRemainingSeconds - ctx.clock.dtSeconds),
     };
 
     if (!nextIsOn) {
       return { state: nextState, powerW: 0, heatToRoomW: 0 };
     }
 
-    const perf = heatPumpPerformance(params, ctx.inputs.outdoorTempC);
+    const perfMax = heatPumpPerformance(params, ctx.inputs.outdoorTempC);
+    const maxHeatW = Math.max(0, perfMax.heatW);
+    const maxInputW = Math.max(1, perfMax.inputPowerW);
+    const fullLoadCop = maxHeatW / maxInputW;
+    const minInputW = clamp(
+      params.minInputPowerW > 0 ? params.minInputPowerW : params.ratedInputPowerW * 0.15,
+      0,
+      maxInputW,
+    );
+    const minFracByInput = maxInputW > 0 ? minInputW / maxInputW : 0;
+
+    const effectiveRoomTempC = roomTempC ?? params.setpointC;
+    const tempErrorC = params.setpointC - effectiveRoomTempC;
+    const holdHeatDemandW = roomUaWPerK > 0
+      ? Math.max(0, roomUaWPerK * Math.max(0, params.setpointC - ctx.inputs.outdoorTempC))
+      : maxHeatW;
+    const recoveryHeatDemandW = Math.max(0, tempErrorC) * params.modulationTempGainPerC;
+    const trimHeatDemandW = Math.max(0, -tempErrorC) * (params.modulationTempGainPerC * 0.7);
+    const requestedHeatW = clamp(holdHeatDemandW + recoveryHeatDemandW - trimHeatDemandW, 0, maxHeatW);
+
+    // Convert requested heat to a compressor fraction. Keep a minimum running level while ON.
+    const requestedFrac = maxHeatW > 0 ? requestedHeatW / maxHeatW : 0;
+    const compressorFrac = clamp(
+      requestedFrac <= 0 ? minFracByInput : Math.max(minFracByInput, requestedFrac),
+      0,
+      1,
+    );
+    const modulationFrac = compressorFrac <= minFracByInput
+      ? 0
+      : (compressorFrac - minFracByInput) / Math.max(1e-6, 1 - minFracByInput);
+
+    // Mild part-load COP gain for inverter operation.
+    const partLoadCopBoost = params.partLoadCopBoostMax * (1 - compressorFrac);
+    const effectiveCop = fullLoadCop * (1 + partLoadCopBoost);
+    let inputPowerW = minInputW + (maxInputW - minInputW) * modulationFrac;
+    let heatW = inputPowerW * effectiveCop;
+
+    // Respect max heating capacity at the current outdoor temperature.
+    if (heatW > maxHeatW) {
+      heatW = maxHeatW;
+      inputPowerW = heatW / Math.max(0.5, effectiveCop);
+    }
+
+    // Startup transient: short higher electrical draw, with lower effective COP.
+    if (nextState.startupRemainingSeconds > 0) {
+      inputPowerW = Math.min(params.ratedInputPowerW * 1.25, inputPowerW * params.startupPowerMultiplier);
+      heatW = Math.min(maxHeatW, heatW * params.startupHeatMultiplier);
+    }
+
     return {
       state: nextState,
-      powerW: normalizePowerW(perf.inputPowerW),
-      heatToRoomW: normalizeHeatW(perf.heatW),
+      powerW: normalizePowerW(inputPowerW),
+      heatToRoomW: normalizeHeatW(heatW),
     };
   },
 };
@@ -587,7 +647,7 @@ export const eventApplianceModel: DeviceModel<EventApplianceParams, EventApplian
 export const deviceModelRegistry = {
   fixed_baseload: fixedBaseloadModel,
   electric_resistive_thermostat: electricResistiveThermostatModel,
-  air_to_air_heat_pump_dumb: airToAirHeatPumpDumbModel,
+  air_to_air_heat_pump_inverter: airToAirHeatPumpDumbModel,
   fridge_freezer_compressor: fridgeFreezerCompressorModel,
   event_appliance: eventApplianceModel,
 } as const satisfies Record<DeviceModelKey, DeviceModel<any, any>>;
@@ -647,7 +707,7 @@ export function stepDeviceFleet(
 export const DUMB_HOME_ARCHETYPE_KEYS: DeviceModelKey[] = [
   'fixed_baseload',
   'electric_resistive_thermostat',
-  'air_to_air_heat_pump_dumb',
+  'air_to_air_heat_pump_inverter',
   'fridge_freezer_compressor',
   'event_appliance',
 ];
