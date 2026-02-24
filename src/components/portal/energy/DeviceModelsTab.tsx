@@ -7,6 +7,11 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
 import { formatPower } from '@/lib/energy-units';
 import {
+  resolveProfile,
+  type CurvePoint,
+  type SurfacePoint,
+} from '@/lib/performance-data';
+import {
   buildDeviceRuntimesFromAssignments,
   simulateDeviceDay,
   type DeviceBindingWarning,
@@ -62,6 +67,28 @@ interface DevicePreviewState {
   currentPeakW: number;
 }
 
+function asCurvePoints(value: unknown): CurvePoint[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const points = value.filter((p): p is CurvePoint => {
+    const r = p as any;
+    return r && typeof r.temp_c === 'number' && typeof r.cop === 'number' && typeof r.capacity_w === 'number';
+  });
+  return points.length >= 2 ? points : undefined;
+}
+
+function asSurfacePoints(value: unknown): SurfacePoint[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const points = value.filter((p): p is SurfacePoint => {
+    const r = p as any;
+    return r &&
+      typeof r.indoor_temp_c === 'number' &&
+      typeof r.temp_c === 'number' &&
+      typeof r.capacity_w === 'number' &&
+      typeof r.input_power_w === 'number';
+  });
+  return points.length >= 2 ? points : undefined;
+}
+
 const DeviceModelsTab: React.FC = () => {
   const { t } = useLanguage();
 
@@ -77,6 +104,10 @@ const DeviceModelsTab: React.FC = () => {
   const [indoorTempC, setIndoorTempC] = useState(21);
   const [outdoorTempC, setOutdoorTempC] = useState(-5);
   const [uaWPerK, setUaWPerK] = useState(140);
+  const [heatPumpProfileByDeviceId, setHeatPumpProfileByDeviceId] = useState<Record<string, {
+    copCapacityCurvePoints?: CurvePoint[];
+    heatingPerformanceSurfacePoints?: SurfacePoint[];
+  }>>({});
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -120,6 +151,34 @@ const DeviceModelsTab: React.FC = () => {
     if (selected && !devices.some(d => d.id === selected.id)) setSelected(filtered[0] || null);
   }, [filtered, devices, selected]);
 
+  useEffect(() => {
+    let cancelled = false;
+    if (!selected) return;
+
+    const modelKey = (selected.device_types as any)?.simulation_model_key ?? '';
+    const isHpLike = typeof modelKey === 'string' && /heat_pump|air_to_air/i.test(modelKey);
+    if (!isHpLike) return;
+
+    (async () => {
+      const [curveRes, surfaceRes] = await Promise.all([
+        resolveProfile(selected.id, 'manufacturer', 'cop_capacity_curve'),
+        resolveProfile(selected.id, 'manufacturer', 'heating_performance_surface'),
+      ]);
+      if (cancelled) return;
+      const curvePoints = asCurvePoints((curveRes.profile as any)?.data?.points);
+      const surfacePoints = asSurfacePoints((surfaceRes.profile as any)?.data?.points);
+      setHeatPumpProfileByDeviceId(prev => ({
+        ...prev,
+        [selected.id]: {
+          copCapacityCurvePoints: curvePoints,
+          heatingPerformanceSurfacePoints: surfacePoints,
+        },
+      }));
+    })();
+
+    return () => { cancelled = true; };
+  }, [selected]);
+
   const preview = useMemo<DevicePreviewState | null>(() => {
     if (!selected) return null;
 
@@ -141,6 +200,7 @@ const DeviceModelsTab: React.FC = () => {
 
     const binding = buildDeviceRuntimesFromAssignments([assignment], {
       defaultSetpointC: indoorTempC,
+      heatPumpProfilesByDeviceId: heatPumpProfileByDeviceId,
     });
     const runtime = binding.devices[0] ?? null;
     const mappedModelKey = runtime?.modelKey ?? null;
@@ -211,7 +271,7 @@ const DeviceModelsTab: React.FC = () => {
       currentDailyKwh: day.dailyKwh,
       currentPeakW: day.peakW,
     };
-  }, [selected, indoorTempC, outdoorTempC, uaWPerK]);
+  }, [selected, indoorTempC, outdoorTempC, uaWPerK, heatPumpProfileByDeviceId]);
 
   if (loading) {
     return <div className="flex items-center justify-center min-h-[300px]"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;

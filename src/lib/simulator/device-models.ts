@@ -1,4 +1,10 @@
 import { z } from 'zod';
+import {
+  interpolateCurve,
+  interpolateSurface,
+  type CurvePoint,
+  type SurfacePoint,
+} from '@/lib/performance-data';
 
 export type OccupancyState = 'home' | 'away' | 'sleep' | 'unknown';
 
@@ -326,6 +332,17 @@ const airToAirHeatPumpDumbParamsSchema = z.object({
   startupBoostSeconds: nonNegative.default(600),
   startupPowerMultiplier: z.number().finite().min(1).max(3).default(1.6),
   startupHeatMultiplier: z.number().finite().min(0.2).max(2).default(0.9),
+  copCapacityCurvePoints: z.array(z.object({
+    temp_c: z.number().finite(),
+    cop: z.number().finite(),
+    capacity_w: z.number().finite(),
+  })).optional(),
+  heatingPerformanceSurfacePoints: z.array(z.object({
+    indoor_temp_c: z.number().finite(),
+    temp_c: z.number().finite(),
+    capacity_w: z.number().finite(),
+    input_power_w: z.number().finite(),
+  })).optional(),
 });
 
 export type AirToAirHeatPumpDumbParams = z.infer<typeof airToAirHeatPumpDumbParamsSchema>;
@@ -336,7 +353,7 @@ export interface AirToAirHeatPumpDumbState {
   startupRemainingSeconds: number;
 }
 
-function heatPumpPerformance(params: AirToAirHeatPumpDumbParams, outdoorTempC: number): { inputPowerW: number; heatW: number } {
+function heatPumpPerformanceGeneric(params: AirToAirHeatPumpDumbParams, outdoorTempC: number): { inputPowerW: number; heatW: number } {
   const cop = clamp(
     params.copAt7C + (outdoorTempC - 7) * params.copSlopePerC,
     params.copMin,
@@ -351,6 +368,40 @@ function heatPumpPerformance(params: AirToAirHeatPumpDumbParams, outdoorTempC: n
   const inputPowerByCop = heatW / cop;
   const inputPowerW = clamp(inputPowerByCop, 0, params.ratedInputPowerW * 1.25);
   return { inputPowerW, heatW };
+}
+
+type HeatPumpPerfSource = 'surface' | 'curve' | 'generic';
+
+function resolveHeatPumpPerformance(
+  params: AirToAirHeatPumpDumbParams,
+  outdoorTempC: number,
+  indoorTempC: number,
+): { inputPowerW: number; heatW: number; source: HeatPumpPerfSource } {
+  const surfacePts = params.heatingPerformanceSurfacePoints as SurfacePoint[] | undefined;
+  if (surfacePts && surfacePts.length >= 2) {
+    const r = interpolateSurface(surfacePts, indoorTempC, outdoorTempC);
+    if (r && Number.isFinite(r.capacityW) && Number.isFinite(r.inputPowerW)) {
+      return {
+        inputPowerW: clamp(r.inputPowerW, 0, params.ratedInputPowerW * 1.25),
+        heatW: Math.max(0, r.capacityW),
+        source: 'surface',
+      };
+    }
+  }
+
+  const curvePts = params.copCapacityCurvePoints as CurvePoint[] | undefined;
+  if (curvePts && curvePts.length >= 2) {
+    const r = interpolateCurve(curvePts, outdoorTempC);
+    if (r && Number.isFinite(r.capacityW) && Number.isFinite(r.cop) && r.cop > 0) {
+      return {
+        inputPowerW: clamp(r.capacityW / r.cop, 0, params.ratedInputPowerW * 1.25),
+        heatW: Math.max(0, r.capacityW),
+        source: 'curve',
+      };
+    }
+  }
+
+  return { ...heatPumpPerformanceGeneric(params, outdoorTempC), source: 'generic' };
 }
 
 export const airToAirHeatPumpDumbModel: DeviceModel<AirToAirHeatPumpDumbParams, AirToAirHeatPumpDumbState> = {
@@ -387,7 +438,11 @@ export const airToAirHeatPumpDumbModel: DeviceModel<AirToAirHeatPumpDumbParams, 
       return { state: nextState, powerW: 0, heatToRoomW: 0 };
     }
 
-    const perfMax = heatPumpPerformance(params, ctx.inputs.outdoorTempC);
+    const perfMax = resolveHeatPumpPerformance(
+      params,
+      ctx.inputs.outdoorTempC,
+      params.setpointC,
+    );
     const maxHeatW = Math.max(0, perfMax.heatW);
     const maxInputW = Math.max(1, perfMax.inputPowerW);
     const fullLoadCop = maxHeatW / maxInputW;

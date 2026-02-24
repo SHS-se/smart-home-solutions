@@ -11,6 +11,11 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
 import { formatPower } from '@/lib/energy-units';
 import {
+  resolveProfile,
+  type CurvePoint,
+  type SurfacePoint,
+} from '@/lib/performance-data';
+import {
   buildDeviceRuntimesFromAssignments,
   simulateDeviceDay,
   type DeviceBindingWarning,
@@ -37,6 +42,28 @@ type DeviceModelDiagnosticsRow = {
   params?: Record<string, unknown>;
   warnings: DeviceBindingWarning[];
 };
+
+function asCurvePoints(value: unknown): CurvePoint[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const points = value.filter((p): p is CurvePoint => {
+    const r = p as any;
+    return r && typeof r.temp_c === 'number' && typeof r.cop === 'number' && typeof r.capacity_w === 'number';
+  });
+  return points.length >= 2 ? points : undefined;
+}
+
+function asSurfacePoints(value: unknown): SurfacePoint[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const points = value.filter((p): p is SurfacePoint => {
+    const r = p as any;
+    return r &&
+      typeof r.indoor_temp_c === 'number' &&
+      typeof r.temp_c === 'number' &&
+      typeof r.capacity_w === 'number' &&
+      typeof r.input_power_w === 'number';
+  });
+  return points.length >= 2 ? points : undefined;
+}
 
 type SimulatorResults = {
   peakW: number;
@@ -173,8 +200,31 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
         .eq('home_id', homeId);
 
       const typedAssignments = ((assignments || []) as unknown[]) as SimulatorAssignmentRow[];
+      const heatPumpDevices = typedAssignments
+        .map(a => a.device_instances)
+        .filter((d): d is NonNullable<typeof d> => !!d)
+        .filter(d => {
+          const key = (d.device_types?.simulation_model_key || '').toLowerCase();
+          return key.includes('heat_pump') || key.includes('air_to_air');
+        });
+
+      const heatPumpProfilesByDeviceIdEntries = await Promise.all(
+        heatPumpDevices.map(async d => {
+          const [curveRes, surfaceRes] = await Promise.all([
+            resolveProfile(d.id, 'manufacturer', 'cop_capacity_curve'),
+            resolveProfile(d.id, 'manufacturer', 'heating_performance_surface'),
+          ]);
+          return [d.id, {
+            copCapacityCurvePoints: asCurvePoints((curveRes.profile as any)?.data?.points),
+            heatingPerformanceSurfacePoints: asSurfacePoints((surfaceRes.profile as any)?.data?.points),
+          }] as const;
+        }),
+      );
+      const heatPumpProfilesByDeviceId = Object.fromEntries(heatPumpProfilesByDeviceIdEntries);
+
       const binding = buildDeviceRuntimesFromAssignments(typedAssignments, {
         defaultSetpointC: indoorTemp,
+        heatPumpProfilesByDeviceId,
       });
       const warningsByDeviceId = new Map<string, DeviceBindingWarning[]>();
       for (const warning of binding.warnings) {

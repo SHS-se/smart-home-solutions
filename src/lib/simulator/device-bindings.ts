@@ -1,4 +1,5 @@
 import { createDeviceRuntime, type DeviceModelKey, type DeviceRuntime, type MinuteWindow } from './device-models';
+import type { CurvePoint, SurfacePoint } from '@/lib/performance-data';
 
 export interface SimulatorDeviceTypeRef {
   key?: string | null;
@@ -25,6 +26,10 @@ export interface DeviceBindingDefaults {
   roomKeyByDeviceTypeKey?: Record<string, string>;
   occupancyDefault?: 'home' | 'away' | 'sleep' | 'unknown';
   defaultSetpointC?: number;
+  heatPumpProfilesByDeviceId?: Record<string, {
+    copCapacityCurvePoints?: CurvePoint[];
+    heatingPerformanceSurfacePoints?: SurfacePoint[];
+  }>;
 }
 
 export interface DeviceBindingWarning {
@@ -409,6 +414,7 @@ function buildRuntimeForDevice(
         const onWindows =
           minuteWindowsFromFieldValues(fv) ??
           [{ startMinute: 7 * 60, endMinute: 23 * 60 }];
+        const hpProfiles = defaults?.heatPumpProfilesByDeviceId?.[device.id];
 
         return createDeviceRuntime(device.id, modelKey, {
           roomKey: resolveRoomKey(device, fv, defaults),
@@ -428,6 +434,8 @@ function buildRuntimeForDevice(
           capacitySlopePerC: readNumber(fv, ['capacity_slope_per_c'], { allowZero: true }) ?? 0.015,
           capacityMinFactor: readNumber(fv, ['capacity_min_factor'], { min: 0.2 }) ?? 0.5,
           capacityMaxFactor: readNumber(fv, ['capacity_max_factor'], { min: 0.2 }) ?? 1.4,
+          copCapacityCurvePoints: hpProfiles?.copCapacityCurvePoints,
+          heatingPerformanceSurfacePoints: hpProfiles?.heatingPerformanceSurfacePoints,
         });
       }
 
