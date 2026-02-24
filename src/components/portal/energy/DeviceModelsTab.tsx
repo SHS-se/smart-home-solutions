@@ -103,7 +103,7 @@ const DeviceModelsTab: React.FC = () => {
 
   const [indoorTempC, setIndoorTempC] = useState(21);
   const [outdoorTempC, setOutdoorTempC] = useState(-5);
-  const [uaWPerK, setUaWPerK] = useState(140);
+  const [uaWPerK, setUaWPerK] = useState(20);
   const [heatPumpProfileByDeviceId, setHeatPumpProfileByDeviceId] = useState<Record<string, {
     copCapacityCurvePoints?: CurvePoint[];
     heatingPerformanceSurfacePoints?: SurfacePoint[];
