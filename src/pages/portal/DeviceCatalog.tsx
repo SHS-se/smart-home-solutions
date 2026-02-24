@@ -8,7 +8,6 @@ import DeviceCatalogTab from '@/components/portal/energy/DeviceCatalogTab';
 import DeviceModelsTab from '@/components/portal/energy/DeviceModelsTab';
 import HouseModelTab from '@/components/portal/energy/HouseModelTab';
 import DeviceTypesManager from '@/components/portal/energy/DeviceTypesManager';
-import CalibrationTab from '@/components/portal/energy/CalibrationTab';
 
 const DeviceCatalog: React.FC = () => {
   const { isStaff } = useAuth();
@@ -34,7 +33,6 @@ const DeviceCatalog: React.FC = () => {
             {isStaff && (
               <>
                 <TabsTrigger value="device-types">{t('Enhetstyper', 'Device Types')}</TabsTrigger>
-                <TabsTrigger value="calibration">{t('Kalibrering', 'Calibration')}</TabsTrigger>
               </>
             )}
           </TabsList>
@@ -44,7 +42,6 @@ const DeviceCatalog: React.FC = () => {
           {isStaff && (
             <>
               <TabsContent value="device-types"><DeviceTypesManager /></TabsContent>
-              <TabsContent value="calibration"><CalibrationTab /></TabsContent>
             </>
           )}
         </Tabs>

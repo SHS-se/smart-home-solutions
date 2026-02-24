@@ -1,9 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Loader2, Search, Globe, User } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Loader2, Search, Globe, User, Upload, X } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { formatPower } from '@/lib/energy-units';
 import {
@@ -55,6 +57,21 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
+interface CalibrationImportSummary {
+  fileName: string;
+  schema: string;
+  deviceClass: string;
+  rows: number;
+  intervalMinutes: number | null;
+  timeStartUtc: string | null;
+  timeEndUtc: string | null;
+  energyKwhEstimated: number | null;
+  avgPowerW: number | null;
+  peakPowerW: number | null;
+  validationPass: boolean | null;
+  validationIssues: string[];
+}
+
 interface DevicePreviewState {
   runtime: DeviceRuntime | null;
   warnings: DeviceBindingWarning[];
@@ -91,6 +108,8 @@ function asSurfacePoints(value: unknown): SurfacePoint[] | undefined {
 
 const DeviceModelsTab: React.FC = () => {
   const { t } = useLanguage();
+  const { toast } = useToast();
+  const calibrationFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [devices, setDevices] = useState<DeviceRow[]>([]);
   const [deviceTypes, setDeviceTypes] = useState<DeviceType[]>([]);
@@ -104,6 +123,7 @@ const DeviceModelsTab: React.FC = () => {
   const [indoorTempC, setIndoorTempC] = useState(21);
   const [outdoorTempC, setOutdoorTempC] = useState(-5);
   const [uaWPerK, setUaWPerK] = useState(20);
+  const [importedCalibration, setImportedCalibration] = useState<CalibrationImportSummary | null>(null);
   const [heatPumpProfileByDeviceId, setHeatPumpProfileByDeviceId] = useState<Record<string, {
     copCapacityCurvePoints?: CurvePoint[];
     heatingPerformanceSurfacePoints?: SurfacePoint[];
@@ -178,6 +198,101 @@ const DeviceModelsTab: React.FC = () => {
 
     return () => { cancelled = true; };
   }, [selected]);
+
+  useEffect(() => {
+    setImportedCalibration(null);
+    if (calibrationFileInputRef.current) calibrationFileInputRef.current.value = '';
+  }, [selected?.id]);
+
+  const handleCalibrationImport = useCallback(async (file: File) => {
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text) as unknown;
+      const root = asRecord(parsed);
+      if (!root) throw new Error('JSON root must be an object');
+
+      const schema = typeof root.schema === 'string' ? root.schema : '';
+      if (schema !== 'measured_device_sample_v1') {
+        throw new Error(`Unsupported schema: ${schema || '(missing)'}`);
+      }
+
+      const deviceClass = typeof root.device_class === 'string' ? root.device_class : '';
+      const series = Array.isArray(root.series) ? root.series : null;
+      if (!series) throw new Error('Missing series array');
+      if (series.length === 0) throw new Error('Series array is empty');
+
+      const preprocessing = asRecord(root.preprocessing);
+      const derivedSummary = asRecord(root.derived_summary);
+      const validation = asRecord(preprocessing?.validation);
+      const source = asRecord(root.source);
+      const timeRange = asRecord(source?.time_range_utc);
+
+      const validationIssues: string[] = [];
+      const energyConsistency = asRecord(validation?.energy_consistency);
+      const timestampValidation = asRecord(validation?.timestamp_validation);
+      const requiredKeys = asRecord(validation?.required_keys);
+      const powerCoverage = asRecord(validation?.power_coverage);
+
+      if (energyConsistency && energyConsistency.pass === false) validationIssues.push('energy_consistency');
+      if (timestampValidation && timestampValidation.pass === false) validationIssues.push('timestamp_validation');
+      if (requiredKeys && requiredKeys.pass === false) validationIssues.push('required_keys');
+      if (powerCoverage && powerCoverage.pass === false) validationIssues.push('power_coverage');
+
+      const summary: CalibrationImportSummary = {
+        fileName: file.name,
+        schema,
+        deviceClass,
+        rows: series.length,
+        intervalMinutes: typeof preprocessing?.interval_minutes === 'number' ? preprocessing.interval_minutes : null,
+        timeStartUtc: typeof timeRange?.start === 'string' ? timeRange.start : null,
+        timeEndUtc: typeof timeRange?.end === 'string' ? timeRange.end : null,
+        energyKwhEstimated: typeof derivedSummary?.energy_kwh_estimated === 'number' ? derivedSummary.energy_kwh_estimated : null,
+        avgPowerW: typeof derivedSummary?.avg_power_w === 'number' ? derivedSummary.avg_power_w : null,
+        peakPowerW: typeof derivedSummary?.peak_power_w === 'number' ? derivedSummary.peak_power_w : null,
+        validationPass: validationIssues.length === 0 ? true : false,
+        validationIssues,
+      };
+
+      const selectedModelKey = preview?.mappedModelKey ?? null;
+      const classMismatch =
+        (selectedModelKey === 'electric_resistive_thermostat' && deviceClass !== 'electric_resistive_heater') ||
+        (selectedModelKey === 'air_to_air_heat_pump_inverter' && deviceClass !== 'air_to_air_heat_pump');
+
+      setImportedCalibration(summary);
+
+      if (classMismatch) {
+        toast({
+          title: t('Kalibrering importerad med varning', 'Calibration imported with warning'),
+          description: t(
+            'Filens device_class matchar inte vald enhetsmodell.',
+            'The file device_class does not match the selected device model.',
+          ),
+          variant: 'destructive',
+        });
+      } else {
+        toast({
+          title: t('Kalibrering importerad', 'Calibration imported'),
+          description: t(
+            'JSON-filen lästes in och validerades för förhandsgranskning.',
+            'JSON file loaded and validated for preview.',
+          ),
+        });
+      }
+    } catch (error) {
+      setImportedCalibration(null);
+      toast({
+        title: t('Fel vid import', 'Import error'),
+        description: error instanceof Error ? error.message : t('Kunde inte läsa JSON-fil.', 'Could not read JSON file.'),
+        variant: 'destructive',
+      });
+    }
+  }, [preview?.mappedModelKey, t, toast]);
+
+  const onCalibrationFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    void handleCalibrationImport(file);
+  }, [handleCalibrationImport]);
 
   const preview = useMemo<DevicePreviewState | null>(() => {
     if (!selected) return null;
@@ -373,6 +488,88 @@ const DeviceModelsTab: React.FC = () => {
             </CardContent>
           </Card>
         )}
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">{t('Kalibreringsimport', 'Calibration Import')}</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm">
+            <input
+              ref={calibrationFileInputRef}
+              type="file"
+              accept=".json,application/json"
+              className="hidden"
+              onChange={onCalibrationFileChange}
+            />
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={() => calibrationFileInputRef.current?.click()}
+              disabled={!selected}
+            >
+              <Upload className="w-4 h-4 mr-2" />
+              {t('Importera kalibrerings-JSON', 'Import Calibration JSON')}
+            </Button>
+
+            {importedCalibration ? (
+              <div className="rounded border p-3 space-y-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="font-medium truncate">{importedCalibration.fileName}</div>
+                    <div className="text-xs text-muted-foreground font-mono">
+                      {importedCalibration.schema} • {importedCalibration.deviceClass}
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className="h-7 w-7 shrink-0"
+                    onClick={() => {
+                      setImportedCalibration(null);
+                      if (calibrationFileInputRef.current) calibrationFileInputRef.current.value = '';
+                    }}
+                  >
+                    <X className="w-4 h-4" />
+                  </Button>
+                </div>
+
+                <div className="space-y-1 text-xs">
+                  <div className="flex justify-between"><span className="text-muted-foreground">{t('Rader', 'Rows')}</span><span>{importedCalibration.rows}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">{t('Intervall', 'Interval')}</span><span>{importedCalibration.intervalMinutes ? `${importedCalibration.intervalMinutes} min` : '—'}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">{t('Energi', 'Energy')}</span><span>{importedCalibration.energyKwhEstimated != null ? `${importedCalibration.energyKwhEstimated.toFixed(2)} kWh` : '—'}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">{t('Medel effekt', 'Avg power')}</span><span>{importedCalibration.avgPowerW != null ? formatPower(importedCalibration.avgPowerW).display : '—'}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">{t('Toppeffekt', 'Peak power')}</span><span>{importedCalibration.peakPowerW != null ? formatPower(importedCalibration.peakPowerW).display : '—'}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">{t('Validering', 'Validation')}</span><span className={importedCalibration.validationPass ? 'text-emerald-600' : 'text-amber-600'}>{importedCalibration.validationPass ? t('OK', 'OK') : t('Varningar', 'Warnings')}</span></div>
+                </div>
+
+                {(importedCalibration.timeStartUtc || importedCalibration.timeEndUtc) && (
+                  <div className="text-[11px] text-muted-foreground">
+                    {importedCalibration.timeStartUtc || '—'} → {importedCalibration.timeEndUtc || '—'}
+                  </div>
+                )}
+
+                {importedCalibration.validationIssues.length > 0 && (
+                  <div className="rounded border border-amber-500/40 bg-amber-500/5 p-2 text-xs">
+                    <div className="font-medium mb-1">{t('Valideringsproblem', 'Validation issues')}</div>
+                    <div className="space-y-0.5">
+                      {importedCalibration.validationIssues.map(issue => (
+                        <div key={issue} className="font-mono">{issue}</div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                {t(
+                  'Importera en förprocessad mätfil (measured_device_sample_v1) för vald enhet. Detta används för kalibrering och jämförelse i nästa steg.',
+                  'Import a preprocessed measured sample (measured_device_sample_v1) for the selected device. This will be used for calibration and comparison in the next step.',
+                )}
+              </p>
+            )}
+          </CardContent>
+        </Card>
       </div>
 
       <div className="lg:col-span-3 space-y-4">
