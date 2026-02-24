@@ -273,6 +273,8 @@ const DeviceModelsTab: React.FC = () => {
     };
   }, [selected, indoorTempC, outdoorTempC, uaWPerK, heatPumpProfileByDeviceId]);
 
+  const heatingPreviewEnabled = isHeatingModel(preview?.mappedModelKey ?? null);
+
   if (loading) {
     return <div className="flex items-center justify-center min-h-[300px]"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
   }
@@ -328,33 +330,49 @@ const DeviceModelsTab: React.FC = () => {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">{t('Förhandsvisning', 'Preview')}</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3 text-sm">
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-xs text-muted-foreground">{t('Inomhus (°C)', 'Indoor (°C)')}</label>
-                <Input type="number" value={indoorTempC} onChange={e => setIndoorTempC(Number(e.target.value) || 0)} className="h-8" />
+        {heatingPreviewEnabled ? (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">{t('Förhandsvisning', 'Preview')}</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm">
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs text-muted-foreground">{t('Inomhus (°C)', 'Indoor (°C)')}</label>
+                  <Input type="number" value={indoorTempC} onChange={e => setIndoorTempC(Number(e.target.value) || 0)} className="h-8" />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">{t('Utomhus (°C)', 'Outdoor (°C)')}</label>
+                  <Input type="number" value={outdoorTempC} onChange={e => setOutdoorTempC(Number(e.target.value) || 0)} className="h-8" />
+                </div>
               </div>
               <div>
-                <label className="text-xs text-muted-foreground">{t('Utomhus (°C)', 'Outdoor (°C)')}</label>
-                <Input type="number" value={outdoorTempC} onChange={e => setOutdoorTempC(Number(e.target.value) || 0)} className="h-8" />
+                <label className="text-xs text-muted-foreground">{t('Zonens UA (W/K)', 'Zone UA (W/K)')}</label>
+                <Input type="number" value={uaWPerK} onChange={e => setUaWPerK(Number(e.target.value) || 0)} className="h-8" />
               </div>
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground">{t('Zonens UA (W/K)', 'Zone UA (W/K)')}</label>
-              <Input type="number" value={uaWPerK} onChange={e => setUaWPerK(Number(e.target.value) || 0)} className="h-8" />
-            </div>
-            {preview && (
-              <div className="space-y-1 pt-1">
-                <div className="flex justify-between"><span className="text-muted-foreground">{t('Daglig energi', 'Daily energy')}</span><span>{preview.currentDailyKwh.toFixed(1)} kWh</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">{t('Toppeffekt', 'Peak')}</span><span>{formatPower(preview.currentPeakW).display}</span></div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+              {preview && (
+                <div className="space-y-1 pt-1">
+                  <div className="flex justify-between"><span className="text-muted-foreground">{t('Daglig energi', 'Daily energy')}</span><span>{preview.currentDailyKwh.toFixed(1)} kWh</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">{t('Toppeffekt', 'Peak')}</span><span>{formatPower(preview.currentPeakW).display}</span></div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">{t('Temperaturpreview', 'Temperature Preview')}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground">
+                {t(
+                  'UA- och temperaturbaserad preview visas endast för värmeenheter (t.ex. luft-luftvärmepump och elradiator).',
+                  'UA- and temperature-based preview is only shown for heating devices (e.g. air-to-air heat pump and electric heater).',
+                )}
+              </p>
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       <div className="lg:col-span-3 space-y-4">
@@ -409,12 +427,14 @@ const DeviceModelsTab: React.FC = () => {
               height={320}
             />
 
-            <EnergyVsTempChart
-              title={t('Enhetsenergi vs utomhustemperatur', 'Device Energy vs Outdoor Temperature')}
-              data={preview.sweepData}
-              currentTemp={outdoorTempC}
-              height={300}
-            />
+            {heatingPreviewEnabled ? (
+              <EnergyVsTempChart
+                title={t('Enhetsenergi vs utomhustemperatur', 'Device Energy vs Outdoor Temperature')}
+                data={preview.sweepData}
+                currentTemp={outdoorTempC}
+                height={300}
+              />
+            ) : null}
           </>
         )}
       </div>
