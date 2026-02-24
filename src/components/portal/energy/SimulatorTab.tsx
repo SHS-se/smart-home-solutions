@@ -10,8 +10,13 @@ import { Badge } from '@/components/ui/badge';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
 import { formatPower } from '@/lib/energy-units';
-import { simulateDay } from '@/lib/simulate-day';
-import { buildDeviceRuntimesFromAssignments, type DeviceBindingWarning, type SimulatorAssignmentRow } from '@/lib/simulator';
+import {
+  buildDeviceRuntimesFromAssignments,
+  simulateDeviceDay,
+  type DeviceBindingWarning,
+  type DeviceRuntime,
+  type SimulatorAssignmentRow,
+} from '@/lib/simulator';
 import LoadCurveChart from './LoadCurveChart';
 import EnergyVsTempChart from './EnergyVsTempChart';
 
@@ -49,7 +54,7 @@ type SimulatorResults = {
     modelCounts: Array<{ modelKey: string; count: number }>;
     rows: DeviceModelDiagnosticsRow[];
     warnings: DeviceBindingWarning[];
-    aggregateInputs: { baseW: number; fixedActiveW: number; shiftableW: number; baseSource: 'models' | 'annual_kwh_fallback' | 'fixed_fallback' };
+    aggregateInputs: { baseW: number; fixedActiveW: number; shiftableW: number; baseSource: 'models' };
   };
 };
 
@@ -92,6 +97,20 @@ function readRuntimeNominalPowerW(modelKey: string | undefined, params: Record<s
 
 function isSpaceHeatingModel(modelKey?: string): boolean {
   return modelKey === 'electric_resistive_thermostat' || modelKey === 'air_to_air_heat_pump_dumb';
+}
+
+function getDevicePowerCategory(modelKey: string | undefined, shiftable: boolean | null | undefined): 'base' | 'heating' | 'shiftable' | 'fixedActive' {
+  if (modelKey === 'fixed_baseload') return 'base';
+  if (isSpaceHeatingModel(modelKey)) return 'heating';
+  if (shiftable) return 'shiftable';
+  return 'fixedActive';
+}
+
+function getRuntimeRoomKey(device: DeviceRuntime): string {
+  const params = (device.params && typeof device.params === 'object') ? device.params as Record<string, unknown> : {};
+  if (typeof params.roomKey === 'string' && params.roomKey) return params.roomKey;
+  if (typeof params.ambientRoomKey === 'string' && params.ambientRoomKey) return params.ambientRoomKey;
+  return 'default_room';
 }
 
 const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
@@ -147,27 +166,7 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
         tariff = ti as any;
       }
 
-      // 3. Fetch annual_kwh from home_answers
-      let annualKwhValue: number | null = null;
-      const { data: annualQ } = await supabase
-        .from('home_questions')
-        .select('id')
-        .eq('semantic_key', 'annual_kwh')
-        .single();
-      if (annualQ) {
-        const { data: ans } = await supabase
-          .from('home_answers')
-          .select('answer_value')
-          .eq('home_id', homeId)
-          .eq('question_id', annualQ.id)
-          .single();
-        if (ans?.answer_value != null) {
-          annualKwhValue = Number(ans.answer_value);
-          if (isNaN(annualKwhValue)) annualKwhValue = null;
-        }
-      }
-
-      // 4. Fetch device assignments
+      // 3. Fetch device assignments
       const { data: assignments } = await supabase
         .from('home_device_assignments')
         .select('quantity, device_instances(id, name, device_type_id, field_values, controllable, shiftable, priority, device_types(key, simulation_model_key))')
@@ -187,7 +186,7 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
       const UA = settings?.ua_w_per_k ?? 150;
       if (!settings?.ua_w_per_k) console.warn('Simulator fallback: using 150 W/K for UA');
 
-      let baseSource: SimulatorResults['deviceModelDiagnostics']['aggregateInputs']['baseSource'] = 'fixed_fallback';
+      const baseSource: SimulatorResults['deviceModelDiagnostics']['aggregateInputs']['baseSource'] = 'models';
       let baseWFromModels = 0;
       for (const runtime of binding.devices) {
         if (runtime.modelKey !== 'fixed_baseload') continue;
@@ -196,18 +195,7 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
         if (Number.isFinite(powerW) && powerW > 0) baseWFromModels += powerW;
       }
 
-      let baseW: number;
-      if (baseWFromModels > 0) {
-        baseW = baseWFromModels;
-        baseSource = 'models';
-      } else if (annualKwhValue && annualKwhValue > 0) {
-        const avgW = (annualKwhValue * 1000) / 8760;
-        baseW = avgW * 0.35;
-        baseSource = 'annual_kwh_fallback';
-      } else {
-        baseW = 500;
-        console.warn('Simulator fallback: using 500W base load');
-      }
+      const baseW = baseWFromModels;
 
       const networkPrice = tariff?.network_price_sek_per_w_month ?? 0.045;
       const energyPrice = tariff?.energy_price_sek_per_kwh ?? 1.5;
@@ -216,6 +204,7 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
 
       let shiftableW = 0;
       let fixedActiveW = 0;
+      const deviceCategoryById = new Map<string, 'base' | 'heating' | 'shiftable' | 'fixedActive'>();
 
       const diagnosticsRows: DeviceModelDiagnosticsRow[] = (typedAssignments || []).flatMap((assignment: any) => {
         const d = assignment.device_instances;
@@ -228,10 +217,10 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
         const fallbackPower = (Number(fv.rated_power_w) || Number(fv.power_w) || 0) * qty;
         const contributionW = nominalPowerW ?? fallbackPower;
 
-        if (!isSpaceHeatingModel(runtime?.modelKey)) {
-          if (d.shiftable) shiftableW += contributionW;
-          else if (!d.controllable && runtime?.modelKey !== 'fixed_baseload') fixedActiveW += contributionW;
-        }
+        const category = getDevicePowerCategory(runtime?.modelKey, d.shiftable);
+        if (runtime?.id) deviceCategoryById.set(runtime.id, category);
+        if (category === 'shiftable') shiftableW += contributionW;
+        if (category === 'fixedActive') fixedActiveW += contributionW;
 
         return [{
           instanceId: d.id,
@@ -277,29 +266,45 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
         };
       });
 
-      // --- Run single-day simulation using extracted function ---
+      const occupancySchedule = [
+        { startMinute: 0, endMinute: 7 * 60, occupancy: 'sleep' as const },
+        { startMinute: 7 * 60, endMinute: 23 * 60, occupancy: 'home' as const },
+        { startMinute: 23 * 60, endMinute: 0, occupancy: 'sleep' as const },
+      ];
+
+      // --- Run single-day simulation (device-driven) ---
       const effectiveOutdoorTemp = mode === 'design' ? outdoorTemp : 0;
-      const dayResult = simulateDay({
-        indoorTempC: indoorTemp,
+      const dayResult = simulateDeviceDay({
+        devices: binding.devices,
         outdoorTempC: effectiveOutdoorTemp,
-        UA,
-        baseW,
-        shiftableW,
-        fixedActiveW,
-        scenario,
+        initialIndoorTempC: indoorTemp,
+        uaWPerK: UA,
+        dtSeconds: 300,
+        outputStepSeconds: 900,
+        seed: 42,
+        occupancySchedule,
+        categorizer: {
+          getCategory: (deviceId, modelKey) => deviceCategoryById.get(deviceId) ?? getDevicePowerCategory(modelKey, false),
+          getHeatRoomKey: device => getRuntimeRoomKey(device),
+        },
       });
 
       // --- Temperature sweep (-20 to +20) ---
       const sweepData: Array<{ tempC: number; dailyKwh: number }> = [];
       for (let temp = -20; temp <= 20; temp++) {
-        const sweep = simulateDay({
-          indoorTempC: indoorTemp,
+        const sweep = simulateDeviceDay({
+          devices: binding.devices,
           outdoorTempC: temp,
-          UA,
-          baseW,
-          shiftableW,
-          fixedActiveW,
-          scenario,
+          initialIndoorTempC: indoorTemp,
+          uaWPerK: UA,
+          dtSeconds: 300,
+          outputStepSeconds: 900,
+          seed: 42 + (temp + 20),
+          occupancySchedule,
+          categorizer: {
+            getCategory: (deviceId, modelKey) => deviceCategoryById.get(deviceId) ?? getDevicePowerCategory(modelKey, false),
+            getHeatRoomKey: device => getRuntimeRoomKey(device),
+          },
         });
         sweepData.push({ tempC: temp, dailyKwh: sweep.dailyKwh });
       }
@@ -325,6 +330,7 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
         target_peak_w: targetPeak ? Number(targetPeak) : null,
         home_id: homeId,
         ua_w_per_k: UA,
+        simulation_engine: 'device_models_v1',
         base_w: baseW,
         base_w_source: baseSource,
         shiftable_w: shiftableW,
