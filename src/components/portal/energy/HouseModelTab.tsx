@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import { Info, X } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -309,40 +309,126 @@ function HouseInfoValueLabel({
   );
 }
 
+const STORAGE_KEY = 'house-model-inputs';
+
+interface HouseModelInputs {
+  footprintAreaM2: number;
+  stories: number;
+  ceilingHeightM: number;
+  aspectRatio: number;
+  windowToWallPct: number;
+  roofAreaFactor: number;
+  wallType: WallTypeKey;
+  wallStructThicknessMm: number;
+  wallInsType: InsulationTypeKey;
+  wallInsThicknessMm: number;
+  windowType: WindowTypeKey;
+  roofType: RoofTypeKey;
+  roofStructThicknessMm: number;
+  roofInsType: InsulationTypeKey;
+  roofInsThicknessMm: number;
+  floorType: FloorTypeKey;
+  floorStructThicknessMm: number;
+  floorInsType: InsulationTypeKey;
+  floorInsThicknessMm: number;
+  floorExposureFactor: number;
+  ach: number;
+  thermalBridgePct: number;
+  indoorTempC: number;
+  designOutdoorTempC: number;
+}
+
+const DEFAULTS: HouseModelInputs = {
+  footprintAreaM2: 120,
+  stories: 2,
+  ceilingHeightM: 2.4,
+  aspectRatio: 1.5,
+  windowToWallPct: 18,
+  roofAreaFactor: 1.08,
+  wallType: 'timber',
+  wallStructThicknessMm: WALL_PRESETS.timber.defaultThicknessMm,
+  wallInsType: 'mineral_wool',
+  wallInsThicknessMm: 170,
+  windowType: 'double_modern',
+  roofType: 'attic',
+  roofStructThicknessMm: ROOF_PRESETS.attic.defaultThicknessMm,
+  roofInsType: 'mineral_wool',
+  roofInsThicknessMm: 350,
+  floorType: 'slab',
+  floorStructThicknessMm: FLOOR_PRESETS.slab.defaultThicknessMm,
+  floorInsType: 'eps',
+  floorInsThicknessMm: 100,
+  floorExposureFactor: 0.55,
+  ach: 0.35,
+  thermalBridgePct: 10,
+  indoorTempC: 21,
+  designOutdoorTempC: -15,
+};
+
+function loadSavedInputs(): HouseModelInputs {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return { ...DEFAULTS, ...JSON.parse(raw) };
+  } catch { /* ignore */ }
+  return DEFAULTS;
+}
+
 const HouseModelTab: React.FC = () => {
   const { t, language } = useLanguage();
   const [activeInfo, setActiveInfo] = useState<HouseInfoTopic | null>(null);
 
-  const [footprintAreaM2, setFootprintAreaM2] = useState(120);
-  const [stories, setStories] = useState(2);
-  const [ceilingHeightM, setCeilingHeightM] = useState(2.4);
-  const [aspectRatio, setAspectRatio] = useState(1.5);
-  const [windowToWallPct, setWindowToWallPct] = useState(18);
-  const [roofAreaFactor, setRoofAreaFactor] = useState(1.08);
+  const [saved] = useState(() => loadSavedInputs());
 
-  const [wallType, setWallType] = useState<WallTypeKey>('timber');
-  const [wallStructThicknessMm, setWallStructThicknessMm] = useState(WALL_PRESETS.timber.defaultThicknessMm);
-  const [wallInsType, setWallInsType] = useState<InsulationTypeKey>('mineral_wool');
-  const [wallInsThicknessMm, setWallInsThicknessMm] = useState(170);
+  const [footprintAreaM2, setFootprintAreaM2] = useState(saved.footprintAreaM2);
+  const [stories, setStories] = useState(saved.stories);
+  const [ceilingHeightM, setCeilingHeightM] = useState(saved.ceilingHeightM);
+  const [aspectRatio, setAspectRatio] = useState(saved.aspectRatio);
+  const [windowToWallPct, setWindowToWallPct] = useState(saved.windowToWallPct);
+  const [roofAreaFactor, setRoofAreaFactor] = useState(saved.roofAreaFactor);
 
-  const [windowType, setWindowType] = useState<WindowTypeKey>('double_modern');
+  const [wallType, setWallType] = useState<WallTypeKey>(saved.wallType);
+  const [wallStructThicknessMm, setWallStructThicknessMm] = useState(saved.wallStructThicknessMm);
+  const [wallInsType, setWallInsType] = useState<InsulationTypeKey>(saved.wallInsType);
+  const [wallInsThicknessMm, setWallInsThicknessMm] = useState(saved.wallInsThicknessMm);
 
-  const [roofType, setRoofType] = useState<RoofTypeKey>('attic');
-  const [roofStructThicknessMm, setRoofStructThicknessMm] = useState(ROOF_PRESETS.attic.defaultThicknessMm);
-  const [roofInsType, setRoofInsType] = useState<InsulationTypeKey>('mineral_wool');
-  const [roofInsThicknessMm, setRoofInsThicknessMm] = useState(350);
+  const [windowType, setWindowType] = useState<WindowTypeKey>(saved.windowType);
 
-  const [floorType, setFloorType] = useState<FloorTypeKey>('slab');
-  const [floorStructThicknessMm, setFloorStructThicknessMm] = useState(FLOOR_PRESETS.slab.defaultThicknessMm);
-  const [floorInsType, setFloorInsType] = useState<InsulationTypeKey>('eps');
-  const [floorInsThicknessMm, setFloorInsThicknessMm] = useState(100);
-  const [floorExposureFactor, setFloorExposureFactor] = useState(0.55);
+  const [roofType, setRoofType] = useState<RoofTypeKey>(saved.roofType);
+  const [roofStructThicknessMm, setRoofStructThicknessMm] = useState(saved.roofStructThicknessMm);
+  const [roofInsType, setRoofInsType] = useState<InsulationTypeKey>(saved.roofInsType);
+  const [roofInsThicknessMm, setRoofInsThicknessMm] = useState(saved.roofInsThicknessMm);
 
-  const [ach, setAch] = useState(0.35);
-  const [thermalBridgePct, setThermalBridgePct] = useState(10);
+  const [floorType, setFloorType] = useState<FloorTypeKey>(saved.floorType);
+  const [floorStructThicknessMm, setFloorStructThicknessMm] = useState(saved.floorStructThicknessMm);
+  const [floorInsType, setFloorInsType] = useState<InsulationTypeKey>(saved.floorInsType);
+  const [floorInsThicknessMm, setFloorInsThicknessMm] = useState(saved.floorInsThicknessMm);
+  const [floorExposureFactor, setFloorExposureFactor] = useState(saved.floorExposureFactor);
 
-  const [indoorTempC, setIndoorTempC] = useState(21);
-  const [designOutdoorTempC, setDesignOutdoorTempC] = useState(-15);
+  const [ach, setAch] = useState(saved.ach);
+  const [thermalBridgePct, setThermalBridgePct] = useState(saved.thermalBridgePct);
+
+  const [indoorTempC, setIndoorTempC] = useState(saved.indoorTempC);
+  const [designOutdoorTempC, setDesignOutdoorTempC] = useState(saved.designOutdoorTempC);
+
+  // Persist all inputs to localStorage on every change
+  useEffect(() => {
+    const inputs: HouseModelInputs = {
+      footprintAreaM2, stories, ceilingHeightM, aspectRatio, windowToWallPct, roofAreaFactor,
+      wallType, wallStructThicknessMm, wallInsType, wallInsThicknessMm,
+      windowType,
+      roofType, roofStructThicknessMm, roofInsType, roofInsThicknessMm,
+      floorType, floorStructThicknessMm, floorInsType, floorInsThicknessMm, floorExposureFactor,
+      ach, thermalBridgePct, indoorTempC, designOutdoorTempC,
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(inputs));
+  }, [
+    footprintAreaM2, stories, ceilingHeightM, aspectRatio, windowToWallPct, roofAreaFactor,
+    wallType, wallStructThicknessMm, wallInsType, wallInsThicknessMm,
+    windowType,
+    roofType, roofStructThicknessMm, roofInsType, roofInsThicknessMm,
+    floorType, floorStructThicknessMm, floorInsType, floorInsThicknessMm, floorExposureFactor,
+    ach, thermalBridgePct, indoorTempC, designOutdoorTempC,
+  ]);
 
   const calc = useMemo(() => {
     const wallPreset = WALL_PRESETS[wallType];

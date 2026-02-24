@@ -602,18 +602,15 @@ export function parseDeviceParams<TKey extends DeviceModelKey>(
   return model.parseParams(raw) as any;
 }
 
-export function createDeviceRuntime<TKey extends DeviceModelKey>(
+export function createDeviceRuntime(
   id: string,
-  modelKey: TKey,
+  modelKey: DeviceModelKey,
   rawParams: unknown,
-): DeviceRuntime<
-  ReturnType<(typeof deviceModelRegistry)[TKey]['parseParams']>,
-  ReturnType<(typeof deviceModelRegistry)[TKey]['initState']>
-> {
+): DeviceRuntime {
   const model = deviceModelRegistry[modelKey];
-  const params = model.parseParams(rawParams) as ReturnType<typeof model.parseParams>;
-  const state = model.initState(params) as ReturnType<typeof model.initState>;
-  return { id, modelKey, params, state };
+  const params = model.parseParams(rawParams);
+  const state = model.initState(params as any);
+  return { id, modelKey, params, state } as DeviceRuntime;
 }
 
 export interface FleetStepResult {
@@ -634,7 +631,7 @@ export function stepDeviceFleet(
 
   for (const device of devices) {
     const model = deviceModelRegistry[device.modelKey];
-    const out = model.step(device.params, device.state, ctx);
+    const out = model.step(device.params as any, device.state as any, ctx);
     const powerW = normalizePowerW(out.powerW);
     const heatToRoomW = normalizeHeatW(out.heatToRoomW);
 
