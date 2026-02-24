@@ -204,96 +204,6 @@ const DeviceModelsTab: React.FC = () => {
     if (calibrationFileInputRef.current) calibrationFileInputRef.current.value = '';
   }, [selected?.id]);
 
-  const handleCalibrationImport = useCallback(async (file: File) => {
-    try {
-      const text = await file.text();
-      const parsed = JSON.parse(text) as unknown;
-      const root = asRecord(parsed);
-      if (!root) throw new Error('JSON root must be an object');
-
-      const schema = typeof root.schema === 'string' ? root.schema : '';
-      if (schema !== 'measured_device_sample_v1') {
-        throw new Error(`Unsupported schema: ${schema || '(missing)'}`);
-      }
-
-      const deviceClass = typeof root.device_class === 'string' ? root.device_class : '';
-      const series = Array.isArray(root.series) ? root.series : null;
-      if (!series) throw new Error('Missing series array');
-      if (series.length === 0) throw new Error('Series array is empty');
-
-      const preprocessing = asRecord(root.preprocessing);
-      const derivedSummary = asRecord(root.derived_summary);
-      const validation = asRecord(preprocessing?.validation);
-      const source = asRecord(root.source);
-      const timeRange = asRecord(source?.time_range_utc);
-
-      const validationIssues: string[] = [];
-      const energyConsistency = asRecord(validation?.energy_consistency);
-      const timestampValidation = asRecord(validation?.timestamp_validation);
-      const requiredKeys = asRecord(validation?.required_keys);
-      const powerCoverage = asRecord(validation?.power_coverage);
-
-      if (energyConsistency && energyConsistency.pass === false) validationIssues.push('energy_consistency');
-      if (timestampValidation && timestampValidation.pass === false) validationIssues.push('timestamp_validation');
-      if (requiredKeys && requiredKeys.pass === false) validationIssues.push('required_keys');
-      if (powerCoverage && powerCoverage.pass === false) validationIssues.push('power_coverage');
-
-      const summary: CalibrationImportSummary = {
-        fileName: file.name,
-        schema,
-        deviceClass,
-        rows: series.length,
-        intervalMinutes: typeof preprocessing?.interval_minutes === 'number' ? preprocessing.interval_minutes : null,
-        timeStartUtc: typeof timeRange?.start === 'string' ? timeRange.start : null,
-        timeEndUtc: typeof timeRange?.end === 'string' ? timeRange.end : null,
-        energyKwhEstimated: typeof derivedSummary?.energy_kwh_estimated === 'number' ? derivedSummary.energy_kwh_estimated : null,
-        avgPowerW: typeof derivedSummary?.avg_power_w === 'number' ? derivedSummary.avg_power_w : null,
-        peakPowerW: typeof derivedSummary?.peak_power_w === 'number' ? derivedSummary.peak_power_w : null,
-        validationPass: validationIssues.length === 0 ? true : false,
-        validationIssues,
-      };
-
-      const selectedModelKey = preview?.mappedModelKey ?? null;
-      const classMismatch =
-        (selectedModelKey === 'electric_resistive_thermostat' && deviceClass !== 'electric_resistive_heater') ||
-        (selectedModelKey === 'air_to_air_heat_pump_inverter' && deviceClass !== 'air_to_air_heat_pump');
-
-      setImportedCalibration(summary);
-
-      if (classMismatch) {
-        toast({
-          title: t('Kalibrering importerad med varning', 'Calibration imported with warning'),
-          description: t(
-            'Filens device_class matchar inte vald enhetsmodell.',
-            'The file device_class does not match the selected device model.',
-          ),
-          variant: 'destructive',
-        });
-      } else {
-        toast({
-          title: t('Kalibrering importerad', 'Calibration imported'),
-          description: t(
-            'JSON-filen lästes in och validerades för förhandsgranskning.',
-            'JSON file loaded and validated for preview.',
-          ),
-        });
-      }
-    } catch (error) {
-      setImportedCalibration(null);
-      toast({
-        title: t('Fel vid import', 'Import error'),
-        description: error instanceof Error ? error.message : t('Kunde inte läsa JSON-fil.', 'Could not read JSON file.'),
-        variant: 'destructive',
-      });
-    }
-  }, [preview?.mappedModelKey, t, toast]);
-
-  const onCalibrationFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    void handleCalibrationImport(file);
-  }, [handleCalibrationImport]);
-
   const preview = useMemo<DevicePreviewState | null>(() => {
     if (!selected) return null;
 
@@ -387,6 +297,96 @@ const DeviceModelsTab: React.FC = () => {
       currentPeakW: day.peakW,
     };
   }, [selected, indoorTempC, outdoorTempC, uaWPerK, heatPumpProfileByDeviceId]);
+
+  const handleCalibrationImport = useCallback(async (file: File) => {
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text) as unknown;
+      const root = asRecord(parsed);
+      if (!root) throw new Error('JSON root must be an object');
+
+      const schema = typeof root.schema === 'string' ? root.schema : '';
+      if (schema !== 'measured_device_sample_v1') {
+        throw new Error(`Unsupported schema: ${schema || '(missing)'}`);
+      }
+
+      const deviceClass = typeof root.device_class === 'string' ? root.device_class : '';
+      const series = Array.isArray(root.series) ? root.series : null;
+      if (!series) throw new Error('Missing series array');
+      if (series.length === 0) throw new Error('Series array is empty');
+
+      const preprocessing = asRecord(root.preprocessing);
+      const derivedSummary = asRecord(root.derived_summary);
+      const validation = asRecord(preprocessing?.validation);
+      const source = asRecord(root.source);
+      const timeRange = asRecord(source?.time_range_utc);
+
+      const validationIssues: string[] = [];
+      const energyConsistency = asRecord(validation?.energy_consistency);
+      const timestampValidation = asRecord(validation?.timestamp_validation);
+      const requiredKeys = asRecord(validation?.required_keys);
+      const powerCoverage = asRecord(validation?.power_coverage);
+
+      if (energyConsistency && energyConsistency.pass === false) validationIssues.push('energy_consistency');
+      if (timestampValidation && timestampValidation.pass === false) validationIssues.push('timestamp_validation');
+      if (requiredKeys && requiredKeys.pass === false) validationIssues.push('required_keys');
+      if (powerCoverage && powerCoverage.pass === false) validationIssues.push('power_coverage');
+
+      const summary: CalibrationImportSummary = {
+        fileName: file.name,
+        schema,
+        deviceClass,
+        rows: series.length,
+        intervalMinutes: typeof preprocessing?.interval_minutes === 'number' ? preprocessing.interval_minutes : null,
+        timeStartUtc: typeof timeRange?.start === 'string' ? timeRange.start : null,
+        timeEndUtc: typeof timeRange?.end === 'string' ? timeRange.end : null,
+        energyKwhEstimated: typeof derivedSummary?.energy_kwh_estimated === 'number' ? derivedSummary.energy_kwh_estimated : null,
+        avgPowerW: typeof derivedSummary?.avg_power_w === 'number' ? derivedSummary.avg_power_w : null,
+        peakPowerW: typeof derivedSummary?.peak_power_w === 'number' ? derivedSummary.peak_power_w : null,
+        validationPass: validationIssues.length === 0 ? true : false,
+        validationIssues,
+      };
+
+      const selectedModelKey = preview?.mappedModelKey ?? null;
+      const classMismatch =
+        (selectedModelKey === 'electric_resistive_thermostat' && deviceClass !== 'electric_resistive_heater') ||
+        (selectedModelKey === 'air_to_air_heat_pump_inverter' && deviceClass !== 'air_to_air_heat_pump');
+
+      setImportedCalibration(summary);
+
+      if (classMismatch) {
+        toast({
+          title: t('Kalibrering importerad med varning', 'Calibration imported with warning'),
+          description: t(
+            'Filens device_class matchar inte vald enhetsmodell.',
+            'The file device_class does not match the selected device model.',
+          ),
+          variant: 'destructive',
+        });
+      } else {
+        toast({
+          title: t('Kalibrering importerad', 'Calibration imported'),
+          description: t(
+            'JSON-filen lästes in och validerades för förhandsgranskning.',
+            'JSON file loaded and validated for preview.',
+          ),
+        });
+      }
+    } catch (error) {
+      setImportedCalibration(null);
+      toast({
+        title: t('Fel vid import', 'Import error'),
+        description: error instanceof Error ? error.message : t('Kunde inte läsa JSON-fil.', 'Could not read JSON file.'),
+        variant: 'destructive',
+      });
+    }
+  }, [preview?.mappedModelKey, t, toast]);
+
+  const onCalibrationFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    void handleCalibrationImport(file);
+  }, [handleCalibrationImport]);
 
   const heatingPreviewEnabled = isHeatingModel(preview?.mappedModelKey ?? null);
 
