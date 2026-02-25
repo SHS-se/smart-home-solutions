@@ -313,7 +313,7 @@ function buildRuntimeForDevice(
       }
 
       case 'electric_resistive_thermostat': {
-        const ratedPowerW = readPowerWWithAliases(fv, {
+        let ratedPowerW = readPowerWWithAliases(fv, {
           wKeys: ['rated_power_w', 'power_w', 'nominal_power_w', 'max_power_w', 'heater_power_w'],
           kwKeys: ['rated_power_kw', 'power_kw', 'nominal_power_kw'],
           nameText: device.name,
@@ -324,6 +324,14 @@ function buildRuntimeForDevice(
         if (ratedPowerW == null) {
           pushWarning(warnings, device, 'missing_fields', 'electric_resistive_thermostat requires rated_power_w');
           return null;
+        }
+        // Apply calibration override if present
+        const calOverrides = asRecord(fv.calibration_overrides);
+        if (calOverrides) {
+          const calibratedPower = readNumber(calOverrides, ['applied_rated_power_w'], { min: 1 });
+          if (calibratedPower != null) {
+            ratedPowerW = calibratedPower;
+          }
         }
         if (readNumber(fv, ['rated_power_w', 'power_w', 'nominal_power_w', 'max_power_w', 'heater_power_w'], { min: 1 }) == null &&
             readNumber(fv, ['rated_power_kw', 'power_kw', 'nominal_power_kw'], { min: 0.001 }) == null) {

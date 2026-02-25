@@ -736,21 +736,21 @@ const HouseModelTab: React.FC = () => {
     setNum('windowToWallPct', setWindowToWallPct);
     setNum('roofAreaFactor', setRoofAreaFactor);
 
-    setEnum('wallType', Object.keys(WALL_PRESETS) as WallTypeKey[], setWallType);
+    setEnum('wallType', Object.keys(WALL_PRESETS) as WallTypeKey[], setWallType as (v: string) => void);
     setNum('wallStructThicknessMm', setWallStructThicknessMm);
-    setEnum('wallInsType', Object.keys(INSULATION_PRESETS) as InsulationTypeKey[], setWallInsType);
+    setEnum('wallInsType', Object.keys(INSULATION_PRESETS) as InsulationTypeKey[], setWallInsType as (v: string) => void);
     setNum('wallInsThicknessMm', setWallInsThicknessMm);
 
-    setEnum('windowType', WINDOW_PRESETS.map(w => w.key) as WindowTypeKey[], setWindowType);
+    setEnum('windowType', WINDOW_PRESETS.map(w => w.key) as WindowTypeKey[], setWindowType as (v: string) => void);
 
-    setEnum('roofType', Object.keys(ROOF_PRESETS) as RoofTypeKey[], setRoofType);
+    setEnum('roofType', Object.keys(ROOF_PRESETS) as RoofTypeKey[], setRoofType as (v: string) => void);
     setNum('roofStructThicknessMm', setRoofStructThicknessMm);
-    setEnum('roofInsType', Object.keys(INSULATION_PRESETS) as InsulationTypeKey[], setRoofInsType);
+    setEnum('roofInsType', Object.keys(INSULATION_PRESETS) as InsulationTypeKey[], setRoofInsType as (v: string) => void);
     setNum('roofInsThicknessMm', setRoofInsThicknessMm);
 
-    setEnum('floorType', Object.keys(FLOOR_PRESETS) as FloorTypeKey[], setFloorType);
+    setEnum('floorType', Object.keys(FLOOR_PRESETS) as FloorTypeKey[], setFloorType as (v: string) => void);
     setNum('floorStructThicknessMm', setFloorStructThicknessMm);
-    setEnum('floorInsType', Object.keys(INSULATION_PRESETS) as InsulationTypeKey[], setFloorInsType);
+    setEnum('floorInsType', Object.keys(INSULATION_PRESETS) as InsulationTypeKey[], setFloorInsType as (v: string) => void);
     setNum('floorInsThicknessMm', setFloorInsThicknessMm);
     setNum('floorExposureFactor', setFloorExposureFactor);
 
