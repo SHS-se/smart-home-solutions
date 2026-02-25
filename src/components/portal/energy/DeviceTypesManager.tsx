@@ -47,13 +47,13 @@ interface DeviceType {
 
 const PROFILE_KIND_OPTIONS = ['cop_capacity_curve', 'heating_performance_surface', 'load_curve'];
 
-const SIMULATION_MODEL_OPTIONS: Array<{ key: DeviceModelKey; label: string }> = [
-  { key: 'fixed_baseload', label: 'Fixed baseload' },
-  { key: 'electric_resistive_thermostat', label: 'Electric resistive thermostat' },
-  { key: 'air_to_air_heat_pump_inverter', label: 'Air-to-air heat pump (inverter)' },
-  { key: 'fridge_freezer_compressor', label: 'Fridge/freezer compressor' },
-  { key: 'event_appliance', label: 'Event appliance' },
-].filter(opt => DUMB_HOME_ARCHETYPE_KEYS.includes(opt.key));
+const SIMULATION_MODEL_OPTIONS = ([
+  { key: 'fixed_baseload' as DeviceModelKey, label: 'Fixed baseload' },
+  { key: 'electric_resistive_thermostat' as DeviceModelKey, label: 'Electric resistive thermostat' },
+  { key: 'air_to_air_heat_pump_inverter' as DeviceModelKey, label: 'Air-to-air heat pump (inverter)' },
+  { key: 'fridge_freezer_compressor' as DeviceModelKey, label: 'Fridge/freezer compressor' },
+  { key: 'event_appliance' as DeviceModelKey, label: 'Event appliance' },
+] as Array<{ key: DeviceModelKey; label: string }>).filter(opt => DUMB_HOME_ARCHETYPE_KEYS.includes(opt.key)) as Array<{ key: DeviceModelKey; label: string }>;
 
 type InfoTopic = 'key' | 'display_name' | 'simulation_model_key' | 'supported_profile_kinds' | 'field_schema';
 

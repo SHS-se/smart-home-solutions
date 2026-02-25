@@ -1,9 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, Search, Globe, User, Upload, X } from 'lucide-react';
+import { Loader2, Search, Globe, User, Upload, X, RotateCcw, Check } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
@@ -72,6 +77,14 @@ interface CalibrationImportSummary {
   validationIssues: string[];
 }
 
+interface CalibrationSignals {
+  measuredPeakW: number;
+  measuredAvgW: number;
+  measuredDutyCycle: number;
+  measuredEnergyKwh: number;
+  measuredSeries96: Array<{ time: string; power: number }>;
+}
+
 interface DevicePreviewState {
   runtime: DeviceRuntime | null;
   warnings: DeviceBindingWarning[];
@@ -106,6 +119,73 @@ function asSurfacePoints(value: unknown): SurfacePoint[] | undefined {
   return points.length >= 2 ? points : undefined;
 }
 
+/** Extract calibration signals from series data, then discard the raw series. */
+function extractCalibrationSignals(series: unknown[], intervalMinutes: number | null): CalibrationSignals {
+  const powerValues: number[] = [];
+  for (const row of series) {
+    const r = asRecord(row);
+    if (r && typeof r.power_w === 'number' && isFinite(r.power_w)) {
+      powerValues.push(r.power_w);
+    }
+  }
+
+  if (powerValues.length === 0) {
+    return { measuredPeakW: 0, measuredAvgW: 0, measuredDutyCycle: 0, measuredEnergyKwh: 0, measuredSeries96: [] };
+  }
+
+  // Peak: 95th percentile to avoid spikes
+  const sorted = [...powerValues].sort((a, b) => a - b);
+  const p95Idx = Math.min(Math.floor(sorted.length * 0.95), sorted.length - 1);
+  const measuredPeakW = sorted[p95Idx];
+  const measuredAvgW = powerValues.reduce((s, v) => s + v, 0) / powerValues.length;
+
+  // Duty cycle: fraction of intervals where power > 10% of peak
+  const threshold = measuredPeakW * 0.1;
+  const onCount = powerValues.filter(v => v > threshold).length;
+  const measuredDutyCycle = powerValues.length > 0 ? onCount / powerValues.length : 0;
+
+  // Energy estimate
+  const stepHours = (intervalMinutes ?? 1) / 60;
+  const measuredEnergyKwh = powerValues.reduce((s, v) => s + v, 0) * stepHours / 1000;
+
+  // Resample to 96 points (15-min averages over 24h)
+  const measuredSeries96: Array<{ time: string; power: number }> = [];
+  const totalMinutes = powerValues.length * (intervalMinutes ?? 1);
+  const bucketCount = 96;
+
+  if (totalMinutes >= 1440) {
+    // We have at least 24h of data; resample directly
+    const pointsPerBucket = Math.max(1, Math.floor(powerValues.length / bucketCount));
+    for (let b = 0; b < bucketCount; b++) {
+      const start = b * pointsPerBucket;
+      const end = Math.min(start + pointsPerBucket, powerValues.length);
+      let sum = 0;
+      for (let i = start; i < end; i++) sum += powerValues[i];
+      const avg = (end - start) > 0 ? sum / (end - start) : 0;
+      const h = Math.floor(b * 15 / 60);
+      const m = (b * 15) % 60;
+      measuredSeries96.push({
+        time: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`,
+        power: Math.round(avg * 10) / 10,
+      });
+    }
+  } else {
+    // Less than 24h: stretch to fill 96 slots
+    for (let b = 0; b < bucketCount; b++) {
+      const frac = b / bucketCount;
+      const idx = Math.min(Math.floor(frac * powerValues.length), powerValues.length - 1);
+      const h = Math.floor(b * 15 / 60);
+      const m = (b * 15) % 60;
+      measuredSeries96.push({
+        time: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`,
+        power: Math.round(powerValues[idx] * 10) / 10,
+      });
+    }
+  }
+
+  return { measuredPeakW, measuredAvgW, measuredDutyCycle, measuredEnergyKwh, measuredSeries96 };
+}
+
 const DeviceModelsTab: React.FC = () => {
   const { t } = useLanguage();
   const { toast } = useToast();
@@ -124,6 +204,9 @@ const DeviceModelsTab: React.FC = () => {
   const [outdoorTempC, setOutdoorTempC] = useState(-5);
   const [uaWPerK, setUaWPerK] = useState(20);
   const [importedCalibration, setImportedCalibration] = useState<CalibrationImportSummary | null>(null);
+  const [calibrationSignals, setCalibrationSignals] = useState<CalibrationSignals | null>(null);
+  const [applyDialogOpen, setApplyDialogOpen] = useState(false);
+  const [applying, setApplying] = useState(false);
   const [heatPumpProfileByDeviceId, setHeatPumpProfileByDeviceId] = useState<Record<string, {
     copCapacityCurvePoints?: CurvePoint[];
     heatingPerformanceSurfacePoints?: SurfacePoint[];
@@ -201,6 +284,7 @@ const DeviceModelsTab: React.FC = () => {
 
   useEffect(() => {
     setImportedCalibration(null);
+    setCalibrationSignals(null);
     if (calibrationFileInputRef.current) calibrationFileInputRef.current.value = '';
   }, [selected?.id]);
 
@@ -332,12 +416,14 @@ const DeviceModelsTab: React.FC = () => {
       if (requiredKeys && requiredKeys.pass === false) validationIssues.push('required_keys');
       if (powerCoverage && powerCoverage.pass === false) validationIssues.push('power_coverage');
 
+      const intervalMinutes = typeof preprocessing?.interval_minutes === 'number' ? preprocessing.interval_minutes : null;
+
       const summary: CalibrationImportSummary = {
         fileName: file.name,
         schema,
         deviceClass,
         rows: series.length,
-        intervalMinutes: typeof preprocessing?.interval_minutes === 'number' ? preprocessing.interval_minutes : null,
+        intervalMinutes,
         timeStartUtc: typeof timeRange?.start === 'string' ? timeRange.start : null,
         timeEndUtc: typeof timeRange?.end === 'string' ? timeRange.end : null,
         energyKwhEstimated: typeof derivedSummary?.energy_kwh_estimated === 'number' ? derivedSummary.energy_kwh_estimated : null,
@@ -346,6 +432,10 @@ const DeviceModelsTab: React.FC = () => {
         validationPass: validationIssues.length === 0 ? true : false,
         validationIssues,
       };
+
+      // Extract calibration signals from series (then discard raw series)
+      const signals = extractCalibrationSignals(series, intervalMinutes);
+      setCalibrationSignals(signals);
 
       const selectedModelKey = preview?.mappedModelKey ?? null;
       const classMismatch =
@@ -374,6 +464,7 @@ const DeviceModelsTab: React.FC = () => {
       }
     } catch (error) {
       setImportedCalibration(null);
+      setCalibrationSignals(null);
       toast({
         title: t('Fel vid import', 'Import error'),
         description: error instanceof Error ? error.message : t('Kunde inte läsa JSON-fil.', 'Could not read JSON file.'),
@@ -387,6 +478,114 @@ const DeviceModelsTab: React.FC = () => {
     if (!file) return;
     void handleCalibrationImport(file);
   }, [handleCalibrationImport]);
+
+  // Check if current device has existing calibration overrides
+  const existingCalibration = useMemo(() => {
+    if (!selected) return null;
+    const fv = asRecord(selected.field_values);
+    if (!fv) return null;
+    const cal = asRecord(fv.calibration_overrides);
+    if (!cal) return null;
+    return cal;
+  }, [selected]);
+
+  const isElectricResistiveModel = preview?.mappedModelKey === 'electric_resistive_thermostat';
+
+  // Compute modeled duty cycle from preview timeseries
+  const modeledDutyCycle = useMemo(() => {
+    if (!preview?.timeseries || preview.timeseries.length === 0) return 0;
+    const peak = Math.max(...preview.timeseries.map(p => p.total));
+    if (peak <= 0) return 0;
+    const threshold = peak * 0.1;
+    const onCount = preview.timeseries.filter(p => p.total > threshold).length;
+    return onCount / preview.timeseries.length;
+  }, [preview?.timeseries]);
+
+  // Get modeled rated power from runtime params
+  const modeledRatedPowerW = useMemo(() => {
+    if (!preview?.runtime?.params) return null;
+    const params = preview.runtime.params as Record<string, unknown>;
+    return typeof params.ratedPowerW === 'number' ? params.ratedPowerW : null;
+  }, [preview?.runtime]);
+
+  const handleApplyCalibration = useCallback(async () => {
+    if (!selected || !calibrationSignals || !importedCalibration) return;
+    setApplying(true);
+    try {
+      const fv = asRecord(selected.field_values) ?? {};
+      const newFv = {
+        ...fv,
+        calibration_overrides: {
+          calibrated_at: new Date().toISOString(),
+          source_file: importedCalibration.fileName,
+          device_class: importedCalibration.deviceClass,
+          measured_peak_w: calibrationSignals.measuredPeakW,
+          measured_avg_w: calibrationSignals.measuredAvgW,
+          measured_duty_cycle: calibrationSignals.measuredDutyCycle,
+          measured_energy_kwh: calibrationSignals.measuredEnergyKwh,
+          applied_rated_power_w: calibrationSignals.measuredPeakW,
+          notes: `Calibrated from ${importedCalibration.fileName}: peak=${Math.round(calibrationSignals.measuredPeakW)}W, duty=${(calibrationSignals.measuredDutyCycle * 100).toFixed(1)}%`,
+        },
+      };
+
+      const { error } = await supabase
+        .from('device_instances')
+        .update({ field_values: newFv as any })
+        .eq('id', selected.id);
+
+      if (error) throw error;
+
+      // Update local state
+      setDevices(prev => prev.map(d => d.id === selected.id ? { ...d, field_values: newFv as any } : d));
+      setSelected(prev => prev && prev.id === selected.id ? { ...prev, field_values: newFv as any } : prev);
+
+      toast({
+        title: t('Kalibrering tillämpad', 'Calibration applied'),
+        description: t(
+          `Rated power justerat till ${Math.round(calibrationSignals.measuredPeakW)}W`,
+          `Rated power adjusted to ${Math.round(calibrationSignals.measuredPeakW)}W`,
+        ),
+      });
+    } catch (error) {
+      toast({
+        title: t('Fel', 'Error'),
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    } finally {
+      setApplying(false);
+      setApplyDialogOpen(false);
+    }
+  }, [selected, calibrationSignals, importedCalibration, t, toast]);
+
+  const handleResetCalibration = useCallback(async () => {
+    if (!selected) return;
+    try {
+      const fv = asRecord(selected.field_values) ?? {};
+      const { calibration_overrides: _, ...newFv } = fv;
+
+      const { error } = await supabase
+        .from('device_instances')
+        .update({ field_values: newFv as any })
+        .eq('id', selected.id);
+
+      if (error) throw error;
+
+      setDevices(prev => prev.map(d => d.id === selected.id ? { ...d, field_values: newFv as any } : d));
+      setSelected(prev => prev && prev.id === selected.id ? { ...prev, field_values: newFv as any } : prev);
+
+      toast({
+        title: t('Kalibrering återställd', 'Calibration reset'),
+        description: t('Kalibreringsöverskridningar har tagits bort.', 'Calibration overrides have been removed.'),
+      });
+    } catch (error) {
+      toast({
+        title: t('Fel', 'Error'),
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    }
+  }, [selected, t, toast]);
 
   const heatingPreviewEnabled = isHeatingModel(preview?.mappedModelKey ?? null);
 
@@ -527,6 +726,7 @@ const DeviceModelsTab: React.FC = () => {
                     className="h-7 w-7 shrink-0"
                     onClick={() => {
                       setImportedCalibration(null);
+                      setCalibrationSignals(null);
                       if (calibrationFileInputRef.current) calibrationFileInputRef.current.value = '';
                     }}
                   >
@@ -567,6 +767,25 @@ const DeviceModelsTab: React.FC = () => {
                   'Import a preprocessed measured sample (measured_device_sample_v1) for the selected device. This will be used for calibration and comparison in the next step.',
                 )}
               </p>
+            )}
+
+            {/* Show existing calibration status */}
+            {existingCalibration && (
+              <div className="rounded border border-primary/30 bg-primary/5 p-2 text-xs space-y-1">
+                <div className="font-medium">{t('Aktiv kalibrering', 'Active Calibration')}</div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">{t('Tillämpad effekt', 'Applied power')}</span>
+                  <span>{typeof existingCalibration.applied_rated_power_w === 'number' ? formatPower(existingCalibration.applied_rated_power_w).display : '—'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">{t('Källa', 'Source')}</span>
+                  <span className="truncate max-w-[120px]">{typeof existingCalibration.source_file === 'string' ? existingCalibration.source_file : '—'}</span>
+                </div>
+                <Button variant="outline" size="sm" className="w-full mt-1" onClick={handleResetCalibration}>
+                  <RotateCcw className="w-3.5 h-3.5 mr-1" />
+                  {t('Återställ kalibrering', 'Reset Calibration')}
+                </Button>
+              </div>
             )}
           </CardContent>
         </Card>
@@ -618,10 +837,95 @@ const DeviceModelsTab: React.FC = () => {
               </CardContent>
             </Card>
 
+            {importedCalibration && calibrationSignals && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">{t('Kalibreringsanalys', 'Calibration Analysis')}</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4 text-sm">
+                  {isElectricResistiveModel ? (
+                    <>
+                      {/* Measured vs Modeled comparison table */}
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="text-xs">{t('Parameter', 'Parameter')}</TableHead>
+                            <TableHead className="text-xs text-right">{t('Uppmätt', 'Measured')}</TableHead>
+                            <TableHead className="text-xs text-right">{t('Modellerat', 'Modeled')}</TableHead>
+                            <TableHead className="text-xs text-right">{t('Avvikelse', 'Diff')}</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          <TableRow>
+                            <TableCell className="text-xs">{t('Toppeffekt (W)', 'Peak Power (W)')}</TableCell>
+                            <TableCell className="text-xs text-right">{Math.round(calibrationSignals.measuredPeakW)}</TableCell>
+                            <TableCell className="text-xs text-right">{modeledRatedPowerW != null ? Math.round(modeledRatedPowerW) : '—'}</TableCell>
+                            <TableCell className="text-xs text-right">
+                              {modeledRatedPowerW != null
+                                ? `${((calibrationSignals.measuredPeakW - modeledRatedPowerW) / modeledRatedPowerW * 100).toFixed(1)}%`
+                                : '—'}
+                            </TableCell>
+                          </TableRow>
+                          <TableRow>
+                            <TableCell className="text-xs">{t('Medeleffekt (W)', 'Avg Power (W)')}</TableCell>
+                            <TableCell className="text-xs text-right">{Math.round(calibrationSignals.measuredAvgW)}</TableCell>
+                            <TableCell className="text-xs text-right">—</TableCell>
+                            <TableCell className="text-xs text-right">—</TableCell>
+                          </TableRow>
+                          <TableRow>
+                            <TableCell className="text-xs">{t('Driftcykel', 'Duty Cycle')}</TableCell>
+                            <TableCell className="text-xs text-right">{(calibrationSignals.measuredDutyCycle * 100).toFixed(1)}%</TableCell>
+                            <TableCell className="text-xs text-right">{(modeledDutyCycle * 100).toFixed(1)}%</TableCell>
+                            <TableCell className="text-xs text-right">
+                              {modeledDutyCycle > 0
+                                ? `${((calibrationSignals.measuredDutyCycle - modeledDutyCycle) / modeledDutyCycle * 100).toFixed(1)}%`
+                                : '—'}
+                            </TableCell>
+                          </TableRow>
+                          <TableRow>
+                            <TableCell className="text-xs">{t('Energi (kWh)', 'Energy (kWh)')}</TableCell>
+                            <TableCell className="text-xs text-right">{calibrationSignals.measuredEnergyKwh.toFixed(2)}</TableCell>
+                            <TableCell className="text-xs text-right">{preview.currentDailyKwh.toFixed(2)}</TableCell>
+                            <TableCell className="text-xs text-right">
+                              {preview.currentDailyKwh > 0
+                                ? `${((calibrationSignals.measuredEnergyKwh - preview.currentDailyKwh) / preview.currentDailyKwh * 100).toFixed(1)}%`
+                                : '—'}
+                            </TableCell>
+                          </TableRow>
+                        </TableBody>
+                      </Table>
+
+                      {/* Apply / Reset buttons */}
+                      <div className="flex gap-2">
+                        <Button onClick={() => setApplyDialogOpen(true)} disabled={applying}>
+                          <Check className="w-4 h-4 mr-1" />
+                          {t('Tillämpa kalibrering', 'Apply Calibration')}
+                        </Button>
+                        {existingCalibration && (
+                          <Button variant="outline" onClick={handleResetCalibration}>
+                            <RotateCcw className="w-4 h-4 mr-1" />
+                            {t('Återställ', 'Reset')}
+                          </Button>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="rounded border p-3 text-muted-foreground text-sm">
+                      {t(
+                        'Kalibrering stöds inte ännu för denna enhetstyp. Importsummering och uppmätt data visas ovan.',
+                        'Calibration is not yet supported for this device type. Import summary and measured data are shown above.',
+                      )}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
             <LoadCurveChart
               title={t('Enhetsbeteende (24h, 15-min)', 'Device Behavior (24h, 15-min)')}
               data={preview.timeseries}
               height={320}
+              measuredOverlay={calibrationSignals?.measuredSeries96}
             />
 
             {heatingPreviewEnabled ? (
@@ -635,6 +939,40 @@ const DeviceModelsTab: React.FC = () => {
           </>
         )}
       </div>
+
+      {/* Apply Calibration Dialog */}
+      <AlertDialog open={applyDialogOpen} onOpenChange={setApplyDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('Tillämpa kalibrering?', 'Apply calibration?')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {calibrationSignals && modeledRatedPowerW != null ? (
+                <>
+                  {t('Justera rated_power_w från ', 'Adjust rated_power_w from ')}
+                  <strong>{Math.round(modeledRatedPowerW)}W</strong>
+                  {t(' till ', ' to ')}
+                  <strong>{Math.round(calibrationSignals.measuredPeakW)}W</strong>
+                  {t(' baserat på uppmätt data?', ' based on measured data?')}
+                  <br /><br />
+                  {t(
+                    'Detta sparar kalibreringsmetadata (ej rådata) och påverkar framtida simuleringar.',
+                    'This saves calibration metadata (not raw data) and affects future simulations.',
+                  )}
+                </>
+              ) : (
+                t('Spara kalibreringsöverskridningar?', 'Save calibration overrides?')
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('Avbryt', 'Cancel')}</AlertDialogCancel>
+            <AlertDialogAction onClick={handleApplyCalibration} disabled={applying}>
+              {applying ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
+              {t('Tillämpa', 'Apply')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
