@@ -84,7 +84,12 @@ const HouseSetupTab: React.FC<HouseSetupTabProps> = ({ customerId, homeId }) => 
 
 
   useEffect(() => {
-    if (!customerId) return;
+    if (!customerId || !homeId) {
+      setProfileValues({});
+      setQuestionMap({});
+      setLoading(false);
+      return;
+    }
     const fetchData = async () => {
       setLoading(true);
       try {
@@ -92,10 +97,7 @@ const HouseSetupTab: React.FC<HouseSetupTabProps> = ({ customerId, homeId }) => 
           .from('home_questions')
           .select('id, semantic_key, question_text, question_text_en, question_type')
           .in('semantic_key', ENERGY_SEMANTIC_KEYS);
-        const answersQuery = homeId
-          ? supabase.from('home_answers').select('question_id, answer_text, answer_value').eq('home_id', homeId)
-          : supabase.from('home_answers').select('question_id, answer_text, answer_value').eq('customer_id', customerId);
-        const { data: answers } = await answersQuery;
+        const { data: answers } = await supabase.from('home_answers').select('question_id, answer_text, answer_value').eq('home_id', homeId);
         const values: Record<string, unknown> = {};
         const qMap: Record<string, string> = {};
         if (questions && answers) {
@@ -149,33 +151,20 @@ const HouseSetupTab: React.FC<HouseSetupTabProps> = ({ customerId, homeId }) => 
     const questionId = questionMap[key];
     if (!questionId) return;
     try {
+      if (!homeId) return;
       const answerValue = newValue;
       const answerText = String(newValue ?? '');
-      if (homeId) {
-        // Use home_id scoped upsert
-        const { data: existing } = await supabase
-          .from('home_answers')
-          .select('id')
-          .eq('home_id', homeId)
-          .eq('question_id', questionId)
-          .maybeSingle();
-        if (existing) {
-          await supabase.from('home_answers').update({ answer_value: answerValue as any, answer_text: answerText }).eq('id', existing.id);
-        } else {
-          await supabase.from('home_answers').insert({ customer_id: customerId, home_id: homeId, question_id: questionId, answer_value: answerValue as any, answer_text: answerText });
-        }
+      const { data: existing } = await supabase
+        .from('home_answers')
+        .select('id')
+        .eq('home_id', homeId)
+        .eq('question_id', questionId)
+        .maybeSingle();
+
+      if (existing) {
+        await supabase.from('home_answers').update({ answer_value: answerValue as any, answer_text: answerText }).eq('id', existing.id);
       } else {
-        const { data: existing } = await supabase
-          .from('home_answers')
-          .select('id')
-          .eq('customer_id', customerId)
-          .eq('question_id', questionId)
-          .maybeSingle();
-        if (existing) {
-          await supabase.from('home_answers').update({ answer_value: answerValue as any, answer_text: answerText }).eq('id', existing.id);
-        } else {
-          await supabase.from('home_answers').insert({ customer_id: customerId, home_id: homeId || '', question_id: questionId, answer_value: answerValue as any, answer_text: answerText } as any);
-        }
+        await supabase.from('home_answers').insert({ customer_id: customerId, home_id: homeId, question_id: questionId, answer_value: answerValue as any, answer_text: answerText });
       }
     } catch (err) {
       console.error('Failed to sync profile value:', err);

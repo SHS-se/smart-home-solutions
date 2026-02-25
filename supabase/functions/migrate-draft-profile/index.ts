@@ -114,10 +114,57 @@ serve(async (req: Request) => {
       }
     }
 
+    if (!customerId) {
+      return new Response(JSON.stringify({ error: "Failed to resolve customer" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+
+    // Ensure customer has at least one home and a primary home
+    let homeId: string | null = null;
+
+    const { data: firstHome } = await supabase
+      .from("homes")
+      .select("id")
+      .eq("customer_id", customerId)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (firstHome?.id) {
+      homeId = firstHome.id;
+    } else {
+      const { data: createdHome, error: homeCreateError } = await supabase
+        .from("homes")
+        .insert({ customer_id: customerId, name: "My home" })
+        .select("id")
+        .single();
+
+      if (homeCreateError || !createdHome) {
+        console.error("Error creating home:", homeCreateError);
+        return new Response(JSON.stringify({ error: "Failed to bootstrap home" }), {
+          status: 500,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+      homeId = createdHome.id;
+    }
+
+    const { error: primaryHomeError } = await supabase
+      .from("customers")
+      .update({ primary_home_id: homeId })
+      .eq("id", customerId);
+
+    if (primaryHomeError) {
+      console.error("Failed to set primary home:", primaryHomeError);
+    }
+
     // Upsert draft answers into home_answers (only if there are drafts)
     if (hasDrafts) {
       const upserts = drafts.map(d => ({
         customer_id: customerId!,
+        home_id: homeId!,
         question_id: d.question_id,
         answer_text: d.answer_text,
         answer_value: d.answer_value ?? null,
@@ -126,7 +173,7 @@ serve(async (req: Request) => {
 
       const { error: upsertError } = await supabase
         .from("home_answers")
-        .upsert(upserts, { onConflict: "customer_id,question_id" });
+        .upsert(upserts, { onConflict: "home_id,question_id" });
 
       if (upsertError) {
         console.error("Error upserting answers:", upsertError);
@@ -148,7 +195,7 @@ serve(async (req: Request) => {
     }
 
     const migratedCount = hasDrafts ? drafts.length : 0;
-    console.log(`Migrated ${migratedCount} draft answers for ${email} to customer ${customerId}`);
+    console.log(`Migrated ${migratedCount} draft answers for ${email} to customer ${customerId}, home ${homeId}`);
 
     return new Response(JSON.stringify({ success: true, migrated: migratedCount }), {
       status: 200,

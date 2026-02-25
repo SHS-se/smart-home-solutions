@@ -49,19 +49,19 @@ const HomeProfile: React.FC<HomeProfileProps> = ({ customerId: propCustomerId, i
         .order('created_at');
 
       if (!homes || homes.length === 0) {
-        // Auto-create primary home (only for customer self-view)
-        if (!isStaffView) {
-          const { data: newHome } = await supabase
-            .from('homes')
-            .insert({ customer_id: resolvedCustomerId, name: 'My home' })
-            .select('id, name')
-            .single();
-          if (newHome) {
-            await supabase.from('customers').update({ primary_home_id: newHome.id } as any).eq('id', resolvedCustomerId);
-            setHomeId(newHome.id);
-            setHomeName(newHome.name);
-            setHomeCount(1);
-          }
+        const { data: newHome, error: createHomeError } = await supabase
+          .from('homes')
+          .insert({ customer_id: resolvedCustomerId, name: 'My home' })
+          .select('id, name')
+          .single();
+
+        if (createHomeError) {
+          console.error('Failed to auto-create home:', createHomeError);
+        } else if (newHome) {
+          await supabase.from('customers').update({ primary_home_id: newHome.id } as any).eq('id', resolvedCustomerId);
+          setHomeId(newHome.id);
+          setHomeName(newHome.name);
+          setHomeCount(1);
         }
       } else {
         setHomeCount(homes.length);
@@ -120,17 +120,15 @@ const HomeProfile: React.FC<HomeProfileProps> = ({ customerId: propCustomerId, i
               )}
             </div>
           </div>
-          {homeId && (
-            <HomeSelector
-              customerId={resolvedCustomerId}
-              selectedHomeId={homeId}
-              onHomeChange={(newId) => {
-                setHomeId(newId);
-                setSearchParams({ home: newId });
-              }}
-              onHomeCountChange={setHomeCount}
-            />
-          )}
+          <HomeSelector
+            customerId={resolvedCustomerId}
+            selectedHomeId={homeId}
+            onHomeChange={(newId) => {
+              setHomeId(newId);
+              setSearchParams({ home: newId });
+            }}
+            onHomeCountChange={setHomeCount}
+          />
         </div>
 
         {homeCount > 1 && (

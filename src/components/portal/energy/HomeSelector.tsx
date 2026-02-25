@@ -62,7 +62,11 @@ const HomeSelector: React.FC<HomeSelectorProps> = ({ customerId, selectedHomeId,
         .single();
       if (error) throw error;
       if (data) {
-        setHomes(prev => [...prev, data]);
+        setHomes(prev => {
+          const next = [...prev, data];
+          onHomeCountChange?.(next.length);
+          return next;
+        });
         onHomeChange(data.id);
         toast({ title: t('Hem skapat!', 'Home created!') });
       }
