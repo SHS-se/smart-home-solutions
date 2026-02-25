@@ -71,23 +71,24 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
   const [lightboxPhoto, setLightboxPhoto] = useState<Photo | null>(null);
 
   useEffect(() => {
-    if (!customerId) return;
+    if (!customerId || !homeId) {
+      setAnswers({});
+      setPhotos([]);
+      setLoading(false);
+      return;
+    }
     const fetchData = async () => {
       setLoading(true);
       try {
         const photoSelect = 'id, storage_path, annotation_text, uploaded_at, visible_to_customer';
-        const basePhotoQuery = homeId
-          ? supabase.from('home_photos').select(photoSelect).eq('home_id', homeId)
-          : supabase.from('home_photos').select(photoSelect).eq('customer_id', customerId);
+        const basePhotoQuery = supabase.from('home_photos').select(photoSelect).eq('home_id', homeId);
         const photoQuery = isStaffView
           ? basePhotoQuery.order('uploaded_at', { ascending: false })
           : basePhotoQuery.eq('visible_to_customer', true).order('uploaded_at', { ascending: false });
 
         const [qRes, aRes, pRes, oRes, rRes] = await Promise.all([
           supabase.from('home_questions').select('id, question_text, question_text_en, question_type, order_index, parent_question_id, is_active, display_on_contact_form, allow_other').eq('is_active', true).order('order_index'),
-          homeId
-            ? supabase.from('home_answers').select('question_id, answer_text, answer_value').eq('home_id', homeId)
-            : supabase.from('home_answers').select('question_id, answer_text, answer_value').eq('customer_id', customerId),
+          supabase.from('home_answers').select('question_id, answer_text, answer_value').eq('home_id', homeId),
           photoQuery,
           supabase.from('home_question_options').select('*').order('order_index'),
           supabase.from('home_question_display_rules').select('*'),
@@ -150,7 +151,12 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
   };
 
   const handleSaveAnswers = async () => {
-    if (!customerId || !userId) return;
+    if (!customerId || !userId || !homeId) {
+      if (!homeId) {
+        toast({ title: t('Välj ett hem först', 'Select a home first'), variant: 'destructive' });
+      }
+      return;
+    }
     setSaving(true);
     try {
       // Only save visible questions
@@ -164,10 +170,9 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
         answer_text: visibleIds.has(q.id) ? stringifyAnswer(answers[q.id]) : '',
         answer_value: visibleIds.has(q.id) ? (answers[q.id] as any) ?? null : null,
         updated_by: userId,
-        home_id: homeId || '',
+        home_id: homeId,
       }));
-      const conflictKey = homeId ? 'home_id,question_id' : 'customer_id,question_id';
-      const { error } = await supabase.from('home_answers').upsert(upserts as any, { onConflict: conflictKey });
+      const { error } = await supabase.from('home_answers').upsert(upserts as any, { onConflict: 'home_id,question_id' });
       if (error) throw error;
       toast({ title: t('Sparat!', 'Saved!') });
     } catch (err: any) {
