@@ -260,13 +260,6 @@ const ROITab: React.FC<ROITabProps> = ({ customerId, homeId, homeCount = 1 }) =>
           </Card>
         </div>
 
-        {/* Add property CTA */}
-        <div className="flex justify-end mt-4">
-          <Button variant="outline" size="sm" onClick={() => setAddPropertyOpen(true)}>
-            <Plus className="w-4 h-4 mr-1" />
-            {t('Beräkna lönsamhet för en annan fastighet', 'Calculate ROI for another property')}
-          </Button>
-        </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-4">
           {/* Cost breakdown chart */}
