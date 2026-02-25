@@ -84,10 +84,13 @@ const HomeSelector: React.FC<HomeSelectorProps> = ({ customerId, selectedHomeId,
     return <div className="flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /><span className="text-sm text-muted-foreground">{t('Laddar hem...', 'Loading homes...')}</span></div>;
   }
 
-  // When only 1 home, just show the "+" button (no dropdown needed)
+  // When only 1 home, show the name + "+" button (no dropdown needed)
   if (homes.length <= 1) {
     return (
       <div className="flex items-center gap-2">
+        {homes.length === 1 && (
+          <span className="text-sm text-muted-foreground">{homes[0].name}{homes[0].address_text ? ` — ${homes[0].address_text}` : ''}</span>
+        )}
         <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setCreateOpen(true)} title={t('Lägg till hem', 'Add home')}>
           <Plus className="w-4 h-4" />
         </Button>
