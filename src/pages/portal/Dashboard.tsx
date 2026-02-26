@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Building2, FileText, MessageSquare, Loader2, Shield, Users, Package, Box, FileCheck, Settings, Database, Receipt, ClipboardList, Home, Zap } from 'lucide-react';
+import { Building2, FileText, MessageSquare, Loader2, Shield, Users, Package, Box, FileCheck, Settings, Database, Receipt, ClipboardList, Home, Zap, Download } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -446,6 +446,47 @@ const Dashboard: React.FC = () => {
                   <CardContent>
                     <p className="text-muted-foreground">
                       {t('Visa relationer mellan tabeller', 'View table relationships')}
+                    </p>
+                  </CardContent>
+                </Card>
+
+                <Card 
+                  className="cursor-pointer transition-colors hover:bg-muted/50"
+                  onClick={async () => {
+                    toast({ title: t('Laddar ner backup...', 'Downloading backup...') });
+                    try {
+                      const { data: { session } } = await supabase.auth.getSession();
+                      if (!session) throw new Error('Not authenticated');
+                      const res = await fetch(
+                        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/dump-database`,
+                        { headers: { Authorization: `Bearer ${session.access_token}` } }
+                      );
+                      if (!res.ok) {
+                        const err = await res.json();
+                        throw new Error(err.error || 'Download failed');
+                      }
+                      const blob = await res.blob();
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `backup-${new Date().toISOString().slice(0,10)}.sql`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                      toast({ title: t('Backup nedladdad!', 'Backup downloaded!') });
+                    } catch (e: any) {
+                      toast({ title: t('Fel', 'Error'), description: e.message, variant: 'destructive' });
+                    }
+                  }}
+                >
+                  <CardHeader className="flex flex-row items-center gap-4">
+                    <div className="p-2 rounded-lg bg-primary/10">
+                      <Download className="w-6 h-6 text-primary" />
+                    </div>
+                    <CardTitle className="text-lg">{t('Databasbackup', 'Database Backup')}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-muted-foreground">
+                      {t('Ladda ner fullständig SQL-backup', 'Download full SQL backup')}
                     </p>
                   </CardContent>
                 </Card>
