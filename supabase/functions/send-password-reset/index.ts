@@ -154,8 +154,8 @@ const handler = async (req: Request): Promise<Response> => {
     }
 
     // Determine app URL based on APP_ENV
-    const appEnv = Deno.env.get("APP_ENV") || "production";
-    const appUrl = appEnv === "production"
+    const appEnv = Deno.env.get("APP_ENV") || "live";
+    const appUrl = appEnv === "live"
       ? "https://smarthomesolutions.lovable.app"
       : "https://id-preview--f333950d-a4c9-4f4e-b82f-25cfcd289f20.lovable.app";
     const verifyUrl = `${appUrl}/verify?code=${verificationCode}`;
