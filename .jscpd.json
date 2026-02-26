@@ -1,0 +1,15 @@
+{
+  "threshold": 3,
+  "reporters": ["html", "console"],
+  "ignore": [
+    "**/__tests__/**",
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/*.min.js",
+    "**/supabase/migrations/**"
+  ],
+  "format": ["typescript", "tsx", "javascript", "jsx"],
+  "minLines": 5,
+  "minTokens": 50,
+  "output": "./reports/jscpd"
+}
