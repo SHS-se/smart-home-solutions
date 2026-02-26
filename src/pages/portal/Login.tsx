@@ -74,11 +74,12 @@ const Login: React.FC = () => {
     setIsLoading(true);
 
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-        redirectTo: `${window.location.origin}/reset-password`,
+      const { data, error } = await supabase.functions.invoke('send-password-reset', {
+        body: { email: email.trim() },
       });
 
       if (error) throw error;
+      if (data?.error) throw new Error(data.error);
 
       setEmailSent(true);
       toast({
