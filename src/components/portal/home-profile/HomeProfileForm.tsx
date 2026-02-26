@@ -81,7 +81,8 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
       setLoading(true);
       try {
         const photoSelect = 'id, storage_path, annotation_text, uploaded_at, visible_to_customer';
-        const basePhotoQuery = supabase.from('home_photos').select(photoSelect).eq('home_id', homeId);
+        // Include photos with matching home_id OR legacy photos with null home_id for this customer
+        const basePhotoQuery = supabase.from('home_photos').select(photoSelect).eq('customer_id', customerId).or(`home_id.eq.${homeId},home_id.is.null`);
         const photoQuery = isStaffView
           ? basePhotoQuery.order('uploaded_at', { ascending: false })
           : basePhotoQuery.eq('visible_to_customer', true).order('uploaded_at', { ascending: false });
