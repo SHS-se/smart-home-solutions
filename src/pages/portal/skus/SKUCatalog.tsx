@@ -340,7 +340,7 @@ const SKUCatalog: React.FC = () => {
                     <TableCell className="text-center">
                       {sku.image_path ? (
                         <img
-                          src={`${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/sku-images/${sku.image_path}`}
+                          src={`${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/sku-images/${sku.image_path}?t=${Date.now()}`}
                           alt={sku.name}
                           className="h-10 w-10 object-contain mx-auto rounded"
                         />
