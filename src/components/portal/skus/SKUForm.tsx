@@ -492,7 +492,7 @@ const SKUForm: React.FC<SKUFormProps> = ({ sku, onClose, categories }) => {
               <div className="space-y-3">
                 <div className="border border-border rounded-lg p-4 bg-muted/30">
                   <img
-                    src={`${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/sku-images/${sku.image_path}`}
+                    src={`${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/sku-images/${sku.image_path}?t=${sku.updated_at || ''}`}
                     alt={sku.name}
                     className="max-h-40 mx-auto object-contain rounded"
                   />
