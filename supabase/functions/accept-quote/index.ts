@@ -41,7 +41,7 @@ serve(async (req) => {
     // Fetch quote with customer info
     const { data: quote, error: quoteError } = await serviceClient
       .from("quotes")
-      .select("id, status, accept_token_hash, accept_token_expires_at, customer_id")
+      .select("id, status, accept_token_hash, accept_token_expires_at, customer_id, quote_number")
       .eq("id", quote_id)
       .single();
 
