@@ -1,5 +1,24 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
+import { Resend } from "npm:resend@2.0.0";
+
+async function notifyStaff(subject: string, html: string, text: string) {
+  const resendApiKey = Deno.env.get("RESEND_API_KEY");
+  if (!resendApiKey) return;
+  try {
+    const resend = new Resend(resendApiKey);
+    await resend.emails.send({
+      from: "Smart Home Solutions <offert@mail.smarthomesolutions.se>",
+      to: ["sales@smarthomesolutions.se"],
+      subject,
+      html,
+      text,
+    });
+    console.log("[CUSTOMER-QUOTE-ACTION] Staff notification sent");
+  } catch (err) {
+    console.log("[CUSTOMER-QUOTE-ACTION] Staff notification failed (non-blocking)", String(err));
+  }
+}
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -155,6 +174,16 @@ serve(async (req) => {
         });
 
         logStep("Quote accepted via portal", { quoteId: quote_id, name: customerName });
+
+        await notifyStaff(
+          `✅ Offert accepterad: ${customerName} – ${quote.quote_number || quote_id}`,
+          `<h2>Kunden har accepterat offerten</h2>
+           <p><strong>Kund:</strong> ${customerName}</p>
+           <p><strong>E-post:</strong> ${customerEmail}</p>
+           <p><strong>Offert:</strong> ${quote.quote_number || quote_id}</p>
+           <p><strong>Tid:</strong> ${new Date().toLocaleString("sv-SE", { timeZone: "Europe/Stockholm" })}</p>`,
+          `Offert accepterad\nKund: ${customerName}\nE-post: ${customerEmail}\nOffert: ${quote.quote_number || quote_id}`
+        );
         break;
       }
 
@@ -189,6 +218,17 @@ serve(async (req) => {
         });
 
         logStep("Quote declined via portal", { quoteId: quote_id });
+
+        await notifyStaff(
+          `❌ Offert avvisad: ${customerName} – ${quote.quote_number || quote_id}`,
+          `<h2>Kunden har avvisat offerten</h2>
+           <p><strong>Kund:</strong> ${customerName}</p>
+           <p><strong>E-post:</strong> ${customerEmail}</p>
+           <p><strong>Offert:</strong> ${quote.quote_number || quote_id}</p>
+           ${reason ? `<p><strong>Anledning:</strong> ${reason}</p>` : ""}
+           <p><strong>Tid:</strong> ${new Date().toLocaleString("sv-SE", { timeZone: "Europe/Stockholm" })}</p>`,
+          `Offert avvisad\nKund: ${customerName}\nE-post: ${customerEmail}\nOffert: ${quote.quote_number || quote_id}${reason ? `\nAnledning: ${reason}` : ""}`
+        );
         break;
       }
 
@@ -246,6 +286,17 @@ serve(async (req) => {
         ]);
 
         logStep("Revision requested via portal", { quoteId: quote_id, name: customerName });
+
+        await notifyStaff(
+          `📝 Ändringsförfrågan: ${customerName} – ${quote.quote_number || quote_id}`,
+          `<h2>Kunden begär ändring av offert</h2>
+           <p><strong>Kund:</strong> ${customerName}</p>
+           <p><strong>E-post:</strong> ${customerEmail}</p>
+           <p><strong>Offert:</strong> ${quote.quote_number || quote_id}</p>
+           <p><strong>Meddelande:</strong></p>
+           <blockquote style="border-left:3px solid #3b82f6;padding-left:12px;color:#333;">${message.replace(/\n/g, "<br>")}</blockquote>`,
+          `Ändringsförfrågan\nKund: ${customerName}\nE-post: ${customerEmail}\nOffert: ${quote.quote_number || quote_id}\n\nMeddelande:\n${message}`
+        );
         break;
       }
 

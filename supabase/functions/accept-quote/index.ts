@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
+import { Resend } from "npm:resend@2.0.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -40,7 +41,7 @@ serve(async (req) => {
     // Fetch quote with customer info
     const { data: quote, error: quoteError } = await serviceClient
       .from("quotes")
-      .select("id, status, accept_token_hash, accept_token_expires_at, customer_id")
+      .select("id, status, accept_token_hash, accept_token_expires_at, customer_id, quote_number")
       .eq("id", quote_id)
       .single();
 
@@ -131,6 +132,31 @@ serve(async (req) => {
     });
 
     logStep("Quote accepted", { quoteId: quote_id, name: customerName, email: customerEmail });
+
+    // Notify staff via email
+    const resendApiKey = Deno.env.get("RESEND_API_KEY");
+    if (resendApiKey) {
+      try {
+        const resend = new Resend(resendApiKey);
+        await resend.emails.send({
+          from: "Smart Home Solutions <offert@mail.smarthomesolutions.se>",
+          to: ["sales@smarthomesolutions.se"],
+          subject: `✅ Offert accepterad: ${customerName} – ${quote.quote_number || quote_id}`,
+          html: `
+            <h2>Kunden har accepterat offerten</h2>
+            <p><strong>Kund:</strong> ${customerName}</p>
+            <p><strong>E-post:</strong> ${customerEmail}</p>
+            <p><strong>Offert:</strong> ${quote.quote_number || quote_id}</p>
+            <p><strong>IP:</strong> ${clientIp}</p>
+            <p><strong>Tid:</strong> ${new Date().toLocaleString("sv-SE", { timeZone: "Europe/Stockholm" })}</p>
+          `,
+          text: `Offert accepterad\n\nKund: ${customerName}\nE-post: ${customerEmail}\nOffert: ${quote.quote_number || quote_id}`,
+        });
+        logStep("Staff notification sent");
+      } catch (emailErr) {
+        logStep("Staff notification failed (non-blocking)", { error: String(emailErr) });
+      }
+    }
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
