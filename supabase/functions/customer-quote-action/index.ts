@@ -1,5 +1,24 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
+import { Resend } from "npm:resend@2.0.0";
+
+async function notifyStaff(subject: string, html: string, text: string) {
+  const resendApiKey = Deno.env.get("RESEND_API_KEY");
+  if (!resendApiKey) return;
+  try {
+    const resend = new Resend(resendApiKey);
+    await resend.emails.send({
+      from: "Smart Home Solutions <offert@mail.smarthomesolutions.se>",
+      to: ["sales@smarthomesolutions.se"],
+      subject,
+      html,
+      text,
+    });
+    console.log("[CUSTOMER-QUOTE-ACTION] Staff notification sent");
+  } catch (err) {
+    console.log("[CUSTOMER-QUOTE-ACTION] Staff notification failed (non-blocking)", String(err));
+  }
+}
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
