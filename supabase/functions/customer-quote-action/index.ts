@@ -174,6 +174,16 @@ serve(async (req) => {
         });
 
         logStep("Quote accepted via portal", { quoteId: quote_id, name: customerName });
+
+        await notifyStaff(
+          `✅ Offert accepterad: ${customerName} – ${quote.quote_number || quote_id}`,
+          `<h2>Kunden har accepterat offerten</h2>
+           <p><strong>Kund:</strong> ${customerName}</p>
+           <p><strong>E-post:</strong> ${customerEmail}</p>
+           <p><strong>Offert:</strong> ${quote.quote_number || quote_id}</p>
+           <p><strong>Tid:</strong> ${new Date().toLocaleString("sv-SE", { timeZone: "Europe/Stockholm" })}</p>`,
+          `Offert accepterad\nKund: ${customerName}\nE-post: ${customerEmail}\nOffert: ${quote.quote_number || quote_id}`
+        );
         break;
       }
 
