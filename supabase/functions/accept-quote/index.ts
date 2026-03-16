@@ -133,6 +133,32 @@ serve(async (req) => {
 
     logStep("Quote accepted", { quoteId: quote_id, name: customerName, email: customerEmail });
 
+    // Notify staff via email
+    const resendApiKey = Deno.env.get("RESEND_API_KEY");
+    if (resendApiKey) {
+      try {
+        const resend = new Resend(resendApiKey);
+        const quoteNum = quote.id.substring(0, 8);
+        await resend.emails.send({
+          from: "Smart Home Solutions <offert@mail.smarthomesolutions.se>",
+          to: ["sales@smarthomesolutions.se"],
+          subject: `✅ Offert accepterad: ${customerName}`,
+          html: `
+            <h2>Kunden har accepterat offerten</h2>
+            <p><strong>Kund:</strong> ${customerName}</p>
+            <p><strong>E-post:</strong> ${customerEmail}</p>
+            <p><strong>Offert-ID:</strong> ${quote_id}</p>
+            <p><strong>IP:</strong> ${clientIp}</p>
+            <p><strong>Tid:</strong> ${new Date().toLocaleString("sv-SE", { timeZone: "Europe/Stockholm" })}</p>
+          `,
+          text: `Offert accepterad\n\nKund: ${customerName}\nE-post: ${customerEmail}\nOffert-ID: ${quote_id}`,
+        });
+        logStep("Staff notification sent");
+      } catch (emailErr) {
+        logStep("Staff notification failed (non-blocking)", { error: String(emailErr) });
+      }
+    }
+
     return new Response(JSON.stringify({ success: true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 200,

@@ -286,6 +286,17 @@ serve(async (req) => {
         ]);
 
         logStep("Revision requested via portal", { quoteId: quote_id, name: customerName });
+
+        await notifyStaff(
+          `📝 Ändringsförfrågan: ${customerName} – ${quote.quote_number || quote_id}`,
+          `<h2>Kunden begär ändring av offert</h2>
+           <p><strong>Kund:</strong> ${customerName}</p>
+           <p><strong>E-post:</strong> ${customerEmail}</p>
+           <p><strong>Offert:</strong> ${quote.quote_number || quote_id}</p>
+           <p><strong>Meddelande:</strong></p>
+           <blockquote style="border-left:3px solid #3b82f6;padding-left:12px;color:#333;">${message.replace(/\n/g, "<br>")}</blockquote>`,
+          `Ändringsförfrågan\nKund: ${customerName}\nE-post: ${customerEmail}\nOffert: ${quote.quote_number || quote_id}\n\nMeddelande:\n${message}`
+        );
         break;
       }
 

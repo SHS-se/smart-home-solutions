@@ -98,7 +98,53 @@ serve(async (req) => {
       metadata: reason ? { reason } : {},
     });
 
+    // Resolve customer identity for notification
+    let customerName = "Kund";
+    let customerEmail = "";
+    const { data: qFull } = await serviceClient
+      .from("quotes")
+      .select("customer_id, quote_number")
+      .eq("id", quote_id)
+      .single();
+
+    if (qFull?.customer_id) {
+      const { data: cust } = await serviceClient
+        .from("customers_with_identity")
+        .select("name, contact_name, contact_email")
+        .eq("id", qFull.customer_id)
+        .single();
+      if (cust) {
+        customerName = cust.name || cust.contact_name || "Kund";
+        customerEmail = cust.contact_email || "";
+      }
+    }
+
     logStep("Quote declined", { quoteId: quote_id });
+
+    // Notify staff via email
+    const resendApiKey = Deno.env.get("RESEND_API_KEY");
+    if (resendApiKey) {
+      try {
+        const resend = new Resend(resendApiKey);
+        await resend.emails.send({
+          from: "Smart Home Solutions <offert@mail.smarthomesolutions.se>",
+          to: ["sales@smarthomesolutions.se"],
+          subject: `❌ Offert avvisad: ${customerName} – ${qFull?.quote_number || quote_id}`,
+          html: `
+            <h2>Kunden har avvisat offerten</h2>
+            <p><strong>Kund:</strong> ${customerName}</p>
+            <p><strong>E-post:</strong> ${customerEmail}</p>
+            <p><strong>Offert:</strong> ${qFull?.quote_number || quote_id}</p>
+            ${reason ? `<p><strong>Anledning:</strong> ${reason}</p>` : ""}
+            <p><strong>Tid:</strong> ${new Date().toLocaleString("sv-SE", { timeZone: "Europe/Stockholm" })}</p>
+          `,
+          text: `Offert avvisad\n\nKund: ${customerName}\nE-post: ${customerEmail}\nOffert: ${qFull?.quote_number || quote_id}${reason ? `\nAnledning: ${reason}` : ""}`,
+        });
+        logStep("Staff notification sent");
+      } catch (emailErr) {
+        logStep("Staff notification failed (non-blocking)", { error: String(emailErr) });
+      }
+    }
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
