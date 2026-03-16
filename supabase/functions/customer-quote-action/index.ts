@@ -218,6 +218,17 @@ serve(async (req) => {
         });
 
         logStep("Quote declined via portal", { quoteId: quote_id });
+
+        await notifyStaff(
+          `❌ Offert avvisad: ${customerName} – ${quote.quote_number || quote_id}`,
+          `<h2>Kunden har avvisat offerten</h2>
+           <p><strong>Kund:</strong> ${customerName}</p>
+           <p><strong>E-post:</strong> ${customerEmail}</p>
+           <p><strong>Offert:</strong> ${quote.quote_number || quote_id}</p>
+           ${reason ? `<p><strong>Anledning:</strong> ${reason}</p>` : ""}
+           <p><strong>Tid:</strong> ${new Date().toLocaleString("sv-SE", { timeZone: "Europe/Stockholm" })}</p>`,
+          `Offert avvisad\nKund: ${customerName}\nE-post: ${customerEmail}\nOffert: ${quote.quote_number || quote_id}${reason ? `\nAnledning: ${reason}` : ""}`
+        );
         break;
       }
 
