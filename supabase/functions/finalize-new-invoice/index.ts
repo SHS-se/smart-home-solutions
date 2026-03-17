@@ -91,12 +91,19 @@ serve(async (req) => {
     if (!invoiceNumber) throw new Error("Stripe did not assign an invoice number");
     logStep("Using Stripe invoice number", { invoiceNumber });
 
+    // Capture due_date from Stripe
+    const stripeDueDate = finalizedInvoice.due_date
+      ? new Date(finalizedInvoice.due_date * 1000).toISOString().split('T')[0]
+      : invoice.due_date;
+    logStep("Due date", { stripeDueDate });
+
     // Update local invoice (totals are computed via invoice_computed_totals view)
     const { error: updateError } = await supabaseClient
       .from('invoices')
       .update({
         invoice_number: invoiceNumber,
         status: 'open',
+        due_date: stripeDueDate,
         hosted_invoice_url: finalizedInvoice.hosted_invoice_url,
         invoice_pdf_url: finalizedInvoice.invoice_pdf,
         finalized_at: new Date().toISOString(),
