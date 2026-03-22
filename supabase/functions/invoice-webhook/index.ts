@@ -73,19 +73,6 @@ serve(async (req) => {
   try {
     logStep("Webhook received");
 
-    // Helper to get the appropriate Stripe key based on livemode
-    const getStripeKey = (livemode: boolean): string => {
-      if (!livemode) {
-        const testKey = Deno.env.get("STRIPE_SECRET_KEY");
-        if (!testKey) throw new Error("STRIPE_SECRET_KEY (test) is not set");
-        return testKey;
-      } else {
-        const liveKey = Deno.env.get("STRIPE_SECRET_KEY_LIVE");
-        if (!liveKey) throw new Error("STRIPE_SECRET_KEY_LIVE is not set");
-        return liveKey;
-      }
-    };
-
     // Get raw body for signature verification
     const body = await req.text();
     let event: Stripe.Event;
