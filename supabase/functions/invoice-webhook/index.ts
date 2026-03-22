@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@18.5.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { crypto } from "https://deno.land/std@0.190.0/crypto/mod.ts";
+import { getAppEnvironment } from "../_shared/stripe-env.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -72,19 +73,6 @@ serve(async (req) => {
   try {
     logStep("Webhook received");
 
-    // Helper to get the appropriate Stripe key based on livemode
-    const getStripeKey = (livemode: boolean): string => {
-      if (!livemode) {
-        const testKey = Deno.env.get("STRIPE_SECRET_KEY");
-        if (!testKey) throw new Error("STRIPE_SECRET_KEY (test) is not set");
-        return testKey;
-      } else {
-        const liveKey = Deno.env.get("STRIPE_SECRET_KEY_LIVE");
-        if (!liveKey) throw new Error("STRIPE_SECRET_KEY_LIVE is not set");
-        return liveKey;
-      }
-    };
-
     // Get raw body for signature verification
     const body = await req.text();
     let event: Stripe.Event;
@@ -112,7 +100,22 @@ serve(async (req) => {
     
     // Determine if this is a live or test event based on Stripe's livemode flag
     const livemode = event.livemode ?? false;
-    logStep("Processing event", { type: event.type, invoiceId: stripeInvoice.id, livemode });
+    const appEnv = getAppEnvironment();
+    const isLiveEnv = appEnv === 'live';
+    logStep("Processing event", { type: event.type, invoiceId: stripeInvoice.id, livemode, appEnv });
+
+    // CRITICAL: Reject events that don't match our environment
+    if (livemode !== isLiveEnv) {
+      logStep("Rejecting event - environment mismatch", { livemode, appEnv });
+      return new Response(JSON.stringify({ 
+        received: true, 
+        rejected: true, 
+        reason: `Event livemode (${livemode}) does not match APP_ENV (${appEnv})` 
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 200,
+      });
+    }
 
     // Find the invoice by stripe_invoice_id in the new invoices table
     const { data: invoice, error: invoiceError } = await supabaseClient
