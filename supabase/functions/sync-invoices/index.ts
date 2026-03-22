@@ -25,10 +25,9 @@ serve(async (req) => {
   );
 
   try {
-    logStep("Function started");
-
-    const stripeKey = Deno.env.get("STRIPE_SECRET_KEY");
-    if (!stripeKey) throw new Error("STRIPE_SECRET_KEY is not set");
+    const appEnv = getAppEnvironment();
+    const stripeKey = getStripeSecretKey();
+    logStep("Function started", { environment: appEnv });
 
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) throw new Error("No authorization header provided");
