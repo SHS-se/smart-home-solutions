@@ -86,6 +86,18 @@ serve(async (req) => {
       // If invoice is finalized, use finalized_at as the issue date; otherwise fall back to created.
       const issuedAtTs = finalizedAt ?? invoice.created ?? null;
 
+      // Skip invoices that don't match our environment
+      const invoiceLivemode = invoice.livemode ?? false;
+      const isLiveEnv = appEnv === 'live';
+      if (invoiceLivemode !== isLiveEnv) {
+        logStep("Skipping invoice (environment mismatch)", { 
+          invoiceId: invoice.id, 
+          invoiceLivemode, 
+          appEnv 
+        });
+        continue;
+      }
+
       const invoiceData = {
         customer_id: customerId,
         stripe_invoice_id: invoice.id,
@@ -101,6 +113,7 @@ serve(async (req) => {
         status,
         hosted_invoice_url: invoice.hosted_invoice_url || null,
         invoice_pdf_url: invoice.invoice_pdf || null,
+        is_test: appEnv === 'test',
         updated_at: new Date().toISOString(),
       };
 

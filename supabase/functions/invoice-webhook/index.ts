@@ -113,7 +113,22 @@ serve(async (req) => {
     
     // Determine if this is a live or test event based on Stripe's livemode flag
     const livemode = event.livemode ?? false;
-    logStep("Processing event", { type: event.type, invoiceId: stripeInvoice.id, livemode });
+    const appEnv = getAppEnvironment();
+    const isLiveEnv = appEnv === 'live';
+    logStep("Processing event", { type: event.type, invoiceId: stripeInvoice.id, livemode, appEnv });
+
+    // CRITICAL: Reject events that don't match our environment
+    if (livemode !== isLiveEnv) {
+      logStep("Rejecting event - environment mismatch", { livemode, appEnv });
+      return new Response(JSON.stringify({ 
+        received: true, 
+        rejected: true, 
+        reason: `Event livemode (${livemode}) does not match APP_ENV (${appEnv})` 
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 200,
+      });
+    }
 
     // Find the invoice by stripe_invoice_id in the new invoices table
     const { data: invoice, error: invoiceError } = await supabaseClient
