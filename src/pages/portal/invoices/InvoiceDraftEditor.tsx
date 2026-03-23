@@ -1112,10 +1112,20 @@ const InvoiceDraftEditor: React.FC = () => {
           <DialogHeader>
             <DialogTitle>{t('Skapa ny BOM-revision?', 'Create new BOM revision?')}</DialogTitle>
             <DialogDescription>
-              {t(
-                'Att lägga till denna artikel skapar en ny redigerbar BOM-revision. BOM:en förblir redigerbar tills fakturan fastställs.',
-                'Adding this item will create a new editable BOM revision. The BOM will remain editable until the invoice is finalized.'
-              )}
+              {bomRevision.pendingAction?.type === 'remove_sku'
+                ? t(
+                    'Att ta bort denna artikel kräver en ny BOM-revision. Den nya revisionen kommer att exkludera artikeln.',
+                    'Removing this item requires a new BOM revision. The new revision will exclude the item.'
+                  )
+                : bomRevision.pendingAction?.type === 'update_quantity'
+                ? t(
+                    'Att ändra antalet kräver en ny BOM-revision. Den nya revisionen kommer att spegla det uppdaterade antalet.',
+                    'Changing the quantity requires a new BOM revision. The new revision will reflect the updated quantity.'
+                  )
+                : t(
+                    'Att lägga till denna artikel skapar en ny redigerbar BOM-revision. BOM:en förblir redigerbar tills fakturan fastställs.',
+                    'Adding this item will create a new editable BOM revision. The BOM will remain editable until the invoice is finalized.'
+                  )}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
