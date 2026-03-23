@@ -113,18 +113,28 @@ const BOMBuilder: React.FC = () => {
     enabled: isStaff && !!id,
   });
 
-  // Detect locked state: locked if any quote for this bom+version has been sent/viewed/accepted
+  // Detect locked state: locked if any quote OR finalized invoice for this bom+version
   const { data: isLocked = false } = useQuery({
     queryKey: ['bom_locked', id, bom?.version],
     queryFn: async () => {
-      const { count, error } = await supabase
+      // Check quotes
+      const { count: quoteCount, error: quoteError } = await supabase
         .from('quotes')
         .select('id', { count: 'exact', head: true })
         .eq('bom_id', id!)
         .eq('bom_version', bom!.version)
         .in('status', ['sent', 'viewed', 'accepted', 'revision_requested']);
-      if (error) throw error;
-      return (count ?? 0) > 0;
+      if (quoteError) throw quoteError;
+      if ((quoteCount ?? 0) > 0) return true;
+
+      // Check finalized invoices
+      const { count: invoiceCount, error: invoiceError } = await supabase
+        .from('invoices')
+        .select('id', { count: 'exact', head: true })
+        .eq('bom_id', id!)
+        .in('status', ['open', 'paid']);
+      if (invoiceError) throw invoiceError;
+      return (invoiceCount ?? 0) > 0;
     },
     enabled: isStaff && !!id && !!bom,
   });

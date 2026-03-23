@@ -128,6 +128,33 @@ serve(async (req) => {
       created_by: user.id
     });
 
+    // Enrich bom_events metadata with Stripe identifiers (if a BOM revision was created from this invoice)
+    if (invoice.bom_id) {
+      const { data: bomEvents } = await supabaseClient
+        .from('bom_events')
+        .select('id, metadata')
+        .eq('event_type', 'revision_created')
+        .filter('metadata->>internal_invoice_id', 'eq', invoice_id);
+
+      if (bomEvents && bomEvents.length > 0) {
+        for (const evt of bomEvents) {
+          const existingMeta = (evt.metadata as Record<string, unknown>) || {};
+          await supabaseClient
+            .from('bom_events')
+            .update({
+              metadata: {
+                ...existingMeta,
+                source_document_stage: 'finalized',
+                stripe_invoice_id: invoice.stripe_invoice_id,
+                stripe_invoice_number: invoiceNumber,
+              }
+            })
+            .eq('id', evt.id);
+        }
+        logStep("Enriched bom_events with Stripe identifiers", { count: bomEvents.length });
+      }
+    }
+
     logStep("Invoice finalization complete");
 
     return new Response(JSON.stringify({
