@@ -9,7 +9,9 @@ Deno.serve(async (req) => {
   }
 
   const appEnv = Deno.env.get('APP_ENV') || '(not set)';
-  const stripeKey = Deno.env.get('STRIPE_SECRET_KEY') || '(not set)';
+  const stripeKey = Deno.env.get('SHS_STRIPE_SECRET_KEY') || '(not set)';
+  const oldKey = Deno.env.get('STRIPE_SECRET_KEY') || '(not set)';
+  const oldKeyMasked = oldKey.length > 10 ? oldKey.substring(0, 10) + '...' : oldKey;
   const maskedKey = stripeKey.length > 10 ? stripeKey.substring(0, 10) + '...' : stripeKey;
 
   return new Response(JSON.stringify({ app_env: appEnv, stripe_key_prefix: maskedKey }), {
