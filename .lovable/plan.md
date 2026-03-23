@@ -1,154 +1,92 @@
 
 
-# Device-Level Calibration Workflow + Build Error Fixes
+# Plan: Extend BOM Revision Lifecycle to Invoices
 
 ## Overview
+Invoices will participate in the same BOM revision lifecycle as quotes. Adding SKUs from the invoice draft editor can trigger a new BOM revision (if locked) or reuse an existing editable one. The revision locks when the invoice is finalized, mirroring quote behavior exactly.
 
-Two concerns addressed in one implementation:
+## Changes
 
-1. Fix existing build errors in `HouseModelTab.tsx` and `DeviceTypesManager.tsx` (type mismatches).
-2. Build a complete calibration workflow for `electric_resistive_thermostat` in `DeviceModelsTab.tsx`.
+### 1. UI: Move BOM metadata out of Hardware card into header row
+**File:** `src/pages/portal/invoices/InvoiceDraftEditor.tsx`
 
----
+- Remove "(från BOM #X)" from the Hardware CardTitle
+- Remove "Visa hela BOM" link from inside the Hardware card
+- Add to the metadata row (near Kund/Utkast/Projekt):
+  - "Invoice based on BOM #X" (original `bom_version` stored on invoice)
+  - "Current BOM: #Y" (live query of latest BOM version in group, with editable/locked indicator)
+  - Link to view the BOM
 
-## Part A: Build Error Fixes
+### 2. UI: Add SKU picker button to Hardware section
+**File:** `src/pages/portal/invoices/InvoiceDraftEditor.tsx`
 
-### 1. `HouseModelTab.tsx` -- Generic type parameter mismatch
+- Add "+ Add SKU" button (left of existing "+ Add row") that opens the existing `SKUSelector` component
+- Pass `existingSkuIds` from current hardware line items to dim already-added SKUs
+- When SKU is selected: add it as an invoice line item immediately, then trigger BOM revision logic
 
-The `setEnum` helper's `setter` parameter is typed as `(v: string) => void` but receives `Dispatch<SetStateAction<WallTypeKey>>` etc. Fix: change the generic constraint so the setter accepts the narrower type.
+### 3. BOM revision logic from invoice (new hook or inline)
+**File:** New file `src/hooks/use-invoice-bom-revision.ts`
 
-**Line 730**: Change the `setEnum` signature to accept `setter: (v: string) => void` and cast inside, OR cast each setter call at the call site. Simplest fix: cast setters to `(v: string) => void` at each call site (lines 739-753).
+Core logic when adding a SKU from invoice:
 
-### 2. `DeviceTypesManager.tsx` -- `.filter()` widens type
+1. **Check if BOM exists** on the invoice. If no BOM linked, just add line item (no BOM interaction).
+2. **Check if BOM is locked** (any quote or finalized invoice linked to current BOM version in statuses: sent, viewed, accepted, revision_requested; or invoice finalized).
+3. **Case B — Editable revision exists:** Find a BOM in the same `bom_group_id` with a higher version that has no locking documents. If found, add SKU to both invoice lines and BOM items silently.
+4. **Case A — No editable revision:** Show confirmation dialog. On confirm:
+   - Create new BOM revision (copy items + add new SKU)
+   - Log `bom_events` with `event_type: "revision_created"` and metadata including `source_document_type: "invoice"`, `source_document_stage: "draft"`, `internal_invoice_id`
+   - Update invoice's `bom_id` to new revision
+   - Show toast: "New BOM revision #N created..."
+5. On cancel: just add line item to invoice, no BOM changes.
 
-Line 50-56: The `.filter()` call on the array literal widens `{ key: DeviceModelKey; label: string }[]` to `{ key: string; label: string }[]`. Fix: add `as const` or type the filter result, or use a type assertion after filter.
+### 4. Confirmation modal for BOM revision
+**File:** `src/pages/portal/invoices/InvoiceDraftEditor.tsx` (inline Dialog)
 
-### 3. Deno/resend error
+- Title: "Create new BOM revision?"
+- Body: "Adding this item will create a new editable BOM revision. The BOM will remain editable until the invoice is finalized."
+- Buttons: "Create revision and continue" / "Cancel"
 
-This is a pre-existing edge function issue unrelated to our changes. No action needed.
+### 5. BOM locking on invoice finalization
+**File:** `supabase/functions/finalize-new-invoice/index.ts`
 
----
+After finalization succeeds, enrich the `bom_events` metadata:
+- Query `bom_events` for the `revision_created` event linked to this invoice (via `metadata->>'internal_invoice_id'`)
+- Update metadata to add `source_document_stage: "finalized"`, `stripe_invoice_id`, `stripe_invoice_number`
 
-## Part B: Calibration Workflow
+The BOM is already implicitly locked by the existing lock query pattern (checking for finalized invoices linked to a BOM version). We need to extend the lock check to also consider invoices.
 
-### Design
+### 6. Extend BOM lock detection to include invoices
+**Files:**
+- `src/pages/portal/boms/BOMBuilder.tsx` — the `isLocked` query currently only checks quotes. Add a parallel check: any invoice with `bom_id` matching and `status` in `['open', 'paid']` also locks the BOM.
+- `src/components/portal/boms/BOMVersionSelector.tsx` — same lock detection extension.
 
-The calibration system for `electric_resistive_thermostat` extracts two key signals from imported measured data:
+### 7. Track original vs current BOM on invoice
+**File:** `src/pages/portal/invoices/InvoiceDraftEditor.tsx`
 
-1. **Effective rated power (W)** -- derived from the measured peak/plateau power during ON cycles
-2. **Effective duty cycle** -- ratio of ON time to total time, which validates the thermostat deadband and setpoint behavior
+- Query the `bom_group_id` from the invoice's `bom_id`
+- Query latest BOM version in that group
+- Display both "based on BOM #X" (original) and "Current BOM: #Y" in the header
 
-These are compared against the simulator's modeled output for the same device. The user can then "apply" calibration adjustments that are stored as lightweight metadata in `device_instances.field_values` (under a `calibration_overrides` key), not as raw series data.
+### 8. Invoice detail view updates
+**File:** `src/pages/portal/invoices/InvoiceDetail.tsx`
 
-### What gets stored (per device instance)
+- Move "(från BOM #X)" from Hardware section to top metadata area, consistent with draft editor
 
-```typescript
-// Added to field_values JSONB
-{
-  ...existingFieldValues,
-  calibration_overrides: {
-    calibrated_at: string;          // ISO timestamp
-    source_file: string;            // original filename
-    device_class: string;           // from imported sample
-    measured_peak_w: number;        // extracted from sample
-    measured_avg_w: number;         // extracted from sample
-    measured_duty_cycle: number;    // fraction 0-1
-    measured_energy_kwh: number;    // from sample summary
-    applied_rated_power_w: number;  // the value applied to simulation
-    notes: string;                  // auto-generated summary
-  }
-}
-```
+## Technical Details
 
-This is ~200 bytes per device. No raw series stored.
-
-### Files Changed
-
-#### 1. `src/components/portal/energy/DeviceModelsTab.tsx`
-
-**A. Extract measured series data on import (enhance `handleCalibrationImport`)**
-
-Currently the import only reads summary metadata. Extend it to also extract calibration signals from the series data while the JSON is in memory:
-
-- Parse `series[].power_w` values
-- Compute: measuredPeakW (95th percentile to avoid spikes), measuredAvgW, duty cycle (fraction of intervals where power > 10% of peak)
-- Store these in a new state `calibrationSignals` (in-memory only, not persisted)
-- Discard the raw series after extraction
-
-**B. Add "Calibration Analysis" card in the right panel (below Model Binding card)**
-
-Shown only when `importedCalibration` is loaded and device class matches. Contains:
-
-- **Measured vs Modeled comparison table**: Side-by-side display of measured peak power vs modeled rated power, measured duty cycle vs modeled duty cycle (computed from current preview timeseries)
-- **Overlay chart**: A second `LoadCurveChart` showing both measured and modeled 24h curves overlaid. For the measured data, resample the imported series to 96 points (15-min averages). For modeled, use existing preview timeseries. This overlay uses the existing `LoadCurveChart` component with an additional `measuredOverlay` prop.
-- **"Apply Calibration" button**: Updates `device_instances.field_values.calibration_overrides` in the database and optionally adjusts `rated_power_w` to match the measured peak. Shows a confirmation dialog with before/after values.
-- **"Reset Calibration" button**: Removes `calibration_overrides` from field_values and restores original `rated_power_w` if it was changed.
-
-**C. For non-electric-resistive-heater device classes**: Show a "Calibration not yet supported for this device type" message but keep the import summary visible.
-
-**D. State additions:**
-
-```typescript
-interface CalibrationSignals {
-  measuredPeakW: number;
-  measuredAvgW: number;
-  measuredDutyCycle: number;
-  measuredEnergyKwh: number;
-  measuredSeries96: Array<{ time: string; power: number }>; // resampled to 96 points, temporary
-}
-```
-
-#### 2. `src/components/portal/energy/LoadCurveChart.tsx`
-
-Add an optional `measuredOverlay` prop:
-
-```typescript
-interface LoadCurveChartProps {
-  // ...existing props
-  measuredOverlay?: Array<{ time: string; power: number }>;
-}
-```
-
-When provided, render an additional dashed `Line` on the chart showing measured power. This reuses the existing chart without creating a new component.
-
-#### 3. `src/lib/simulator/device-bindings.ts`
-
-In the `electric_resistive_thermostat` binding (around line 316), check for `calibration_overrides.applied_rated_power_w` and use it instead of the standard `rated_power_w` if present. This makes calibration automatically affect future simulations.
-
-```typescript
-// After reading ratedPowerW:
-const calOverrides = asRecord(fv.calibration_overrides);
-if (calOverrides?.applied_rated_power_w) {
-  ratedPowerW = readNumber(calOverrides, ['applied_rated_power_w'], { min: 1 }) ?? ratedPowerW;
-}
-```
-
-### Calibration Flow (User Experience)
-
-1. Select a device (e.g., "Bathroom Heater 1200W")
-2. Click "Import Calibration JSON" -- load a `measured_device_sample_v1` file
-3. Summary card appears (existing) + new Calibration Analysis card appears
-4. Analysis card shows: measured peak = 1180W vs modeled rated = 1200W, duty cycle = 0.42 vs modeled = 0.38
-5. Overlay chart shows measured power (dashed) vs modeled power (solid stacked areas)
-6. User clicks "Apply Calibration" -- confirmation shows "Adjust rated_power_w from 1200W to 1180W?"
-7. On confirm: saves calibration_overrides to field_values, refreshes preview
-8. "Reset Calibration" button appears, allowing removal of overrides
-
-### What is NOT stored
-
-- Raw series JSON (discarded after signal extraction)
-- No new database tables
-- No new columns
-
----
+- **No database migrations needed** — `bom_events.event_type` is unconstrained text, and `invoices.bom_id` already exists.
+- **SKUSelector** component is reused as-is from BOM builder. The `onSelect` callback receives `(skuId, quantity)`.
+- **BOM revision creation** reuses the same pattern from `BOMBuilder.tsx` `createRevisionMutation` — copy items, insert new BOM, log event.
+- **Lock detection** will use an OR condition: locked if any quote OR any finalized invoice references that `bom_id`+`bom_version`.
+- **Auto-save** continues to work — adding an SKU updates `lineItems` state which triggers the existing debounced auto-save.
 
 ## File Summary
-
-| File | Action | Purpose |
-|---|---|---|
-| `src/components/portal/energy/HouseModelTab.tsx` | Fix | Type cast setters in `setEnum` calls |
-| `src/components/portal/energy/DeviceTypesManager.tsx` | Fix | Type assertion on filtered model options |
-| `src/components/portal/energy/DeviceModelsTab.tsx` | Edit | Add calibration analysis, apply/reset workflow |
-| `src/components/portal/energy/LoadCurveChart.tsx` | Edit | Add optional `measuredOverlay` prop |
-| `src/lib/simulator/device-bindings.ts` | Edit | Read `calibration_overrides` for electric heater |
+| File | Change |
+|------|--------|
+| `src/pages/portal/invoices/InvoiceDraftEditor.tsx` | Major: SKU picker, BOM metadata in header, revision modal, revision logic |
+| `src/hooks/use-invoice-bom-revision.ts` | New: Hook encapsulating BOM revision check/create logic |
+| `src/pages/portal/boms/BOMBuilder.tsx` | Minor: Extend lock detection to include invoices |
+| `src/components/portal/boms/BOMVersionSelector.tsx` | Minor: Extend lock detection to include invoices |
+| `supabase/functions/finalize-new-invoice/index.ts` | Minor: Enrich bom_events metadata after finalization |
+| `src/pages/portal/invoices/InvoiceDetail.tsx` | Minor: Move BOM reference to header metadata |
 
