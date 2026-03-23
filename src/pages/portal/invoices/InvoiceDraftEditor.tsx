@@ -654,7 +654,10 @@ const InvoiceDraftEditor: React.FC = () => {
       if ('quantity' in updates) {
         const item = updated[index];
         if (item.line_type === 'hardware' && item.sku_id && activeBomId) {
-          bomRevision.syncQuantityToBom(item.sku_id, updates.quantity!);
+          const allHw = updated
+            .filter(i => i.line_type === 'hardware' && i.sku_id)
+            .map(i => ({ sku_id: i.sku_id!, quantity: i.quantity }));
+          bomRevision.syncQuantityToBom(item.sku_id, updates.quantity!, allHw);
         }
       }
 
