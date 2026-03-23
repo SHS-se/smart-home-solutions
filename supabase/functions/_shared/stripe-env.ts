@@ -1,10 +1,21 @@
 /**
  * Environment-aware Stripe configuration
  * Single source of truth for Stripe API access
+ *
+ * ╔══════════════════════════════════════════════════════════════════╗
+ * ║  WARNING: DO NOT USE "STRIPE_SECRET_KEY" ANYWHERE IN THIS      ║
+ * ║  CODEBASE. It is a Lovable-managed secret that we cannot       ║
+ * ║  reliably control across test/live environments.               ║
+ * ║                                                                ║
+ * ║  ALWAYS use "SHS_STRIPE_SECRET_KEY" instead.                   ║
+ * ║  This secret is manually managed by the project owner in both  ║
+ * ║  the test and live Lovable Cloud environments.                 ║
+ * ║                                                                ║
+ * ║  If you need to change this, get EXPLICIT consent first.       ║
+ * ╚══════════════════════════════════════════════════════════════════╝
  */
 
 export type AppEnvironment = "test" | "live";
-
 /**
  * Get the current environment - fails hard if not configured
  */
@@ -25,10 +36,10 @@ export function getAppEnvironment(): AppEnvironment {
  */
 export function getStripeSecretKey(): string {
   const env = getAppEnvironment();
-  const key = Deno.env.get("STRIPE_SECRET_KEY");
+  const key = Deno.env.get("SHS_STRIPE_SECRET_KEY");
   
   if (!key) {
-    throw new Error("FATAL: STRIPE_SECRET_KEY is not set");
+    throw new Error("FATAL: SHS_STRIPE_SECRET_KEY is not set");
   }
   
   // CRITICAL: Validate key matches environment
@@ -37,14 +48,14 @@ export function getStripeSecretKey(): string {
   
   if (env === "live" && !isLiveKey) {
     throw new Error(
-      "FATAL: APP_ENV is 'live' but STRIPE_SECRET_KEY is not a live key. " +
+      "FATAL: APP_ENV is 'live' but SHS_STRIPE_SECRET_KEY is not a live key. " +
       "Refusing to proceed - check secret configuration."
     );
   }
   
   if (env === "test" && !isTestKey) {
     throw new Error(
-      "FATAL: APP_ENV is 'test' but STRIPE_SECRET_KEY is not a test key. " +
+      "FATAL: APP_ENV is 'test' but SHS_STRIPE_SECRET_KEY is not a test key. " +
       "Refusing to proceed - check secret configuration."
     );
   }

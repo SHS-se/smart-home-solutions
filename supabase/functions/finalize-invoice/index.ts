@@ -26,8 +26,9 @@ serve(async (req) => {
   try {
     logStep("Function started");
 
-    const stripeKey = Deno.env.get("STRIPE_SECRET_KEY");
-    if (!stripeKey) throw new Error("STRIPE_SECRET_KEY is not set");
+    // WARNING: Use SHS_STRIPE_SECRET_KEY, NOT STRIPE_SECRET_KEY. See _shared/stripe-env.ts for details.
+    const stripeKey = Deno.env.get("SHS_STRIPE_SECRET_KEY");
+    if (!stripeKey) throw new Error("SHS_STRIPE_SECRET_KEY is not set");
 
     // Authenticate staff user
     const authHeader = req.headers.get("Authorization");

@@ -20,17 +20,10 @@ serve(async (req) => {
     logStep("Function started");
 
     // Helper to get the appropriate Stripe key
-    const getStripeKey = (isTest: boolean): string => {
-      if (isTest) {
-        const testKey = Deno.env.get("STRIPE_SECRET_KEY");
-        if (!testKey) throw new Error("STRIPE_SECRET_KEY (test) is not set");
-        return testKey;
-      } else {
-        const liveKey = Deno.env.get("STRIPE_SECRET_KEY_LIVE");
-        if (!liveKey) throw new Error("STRIPE_SECRET_KEY_LIVE is not set");
-        return liveKey;
-      }
-    };
+    // WARNING: Use SHS_STRIPE_SECRET_KEY, NOT STRIPE_SECRET_KEY. See _shared/stripe-env.ts for details.
+    // SHS_STRIPE_SECRET_KEY is environment-specific (test key in test, live key in live).
+    const stripeKey = Deno.env.get("SHS_STRIPE_SECRET_KEY");
+    if (!stripeKey) throw new Error("SHS_STRIPE_SECRET_KEY is not set");
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
@@ -66,10 +59,7 @@ serve(async (req) => {
     const { stripe_invoice_id, is_test } = await req.json();
     if (!stripe_invoice_id) throw new Error("stripe_invoice_id is required");
 
-    // Default to test mode if not specified
-    const isTest = is_test ?? true;
-    const stripeKey = getStripeKey(isTest);
-    logStep("Using Stripe mode", { isTest });
+    logStep("Using environment-specific Stripe key");
 
     // If not staff, verify the invoice belongs to the customer
     if (!isStaff) {
