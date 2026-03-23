@@ -115,7 +115,7 @@ export function useInvoiceBomRevision({ invoiceId, bomId }: UseInvoiceBomRevisio
 
   // Create a new BOM revision from invoice context
   const createRevisionMutation = useMutation({
-    mutationFn: async ({ skuId, quantity }: { skuId: string; quantity: number }) => {
+    mutationFn: async (action: NonNullable<typeof pendingAction>) => {
       if (!currentBom || !invoiceId) throw new Error('Missing BOM or invoice');
 
       const newVersion = Math.max(...groupVersions.map(v => v.version), currentBom.version) + 1;
@@ -136,7 +136,7 @@ export function useInvoiceBomRevision({ invoiceId, bomId }: UseInvoiceBomRevisio
           version: newVersion,
           bom_group_id: currentBom.bom_group_id,
           revision_reason_type: 'invoice_change',
-          revision_reason_note: 'Invoice draft added hardware requiring a new BOM revision',
+          revision_reason_note: 'Invoice draft change requiring a new BOM revision',
           revision_created_by: user?.id,
           revision_created_at: new Date().toISOString(),
         } as any)
@@ -144,34 +144,43 @@ export function useInvoiceBomRevision({ invoiceId, bomId }: UseInvoiceBomRevisio
         .single();
       if (bomError) throw bomError;
 
-      // Copy existing items + add new SKU
-      const itemsToInsert = [
-        ...(existingItems || []).map(item => ({
-          bom_id: newBom.id,
-          sku_id: item.sku_id,
-          quantity: item.quantity,
-          cost_ex_vat_at_time: item.cost_ex_vat_at_time,
-        })),
-      ];
+      // Build items list based on action type
+      let itemsToInsert = (existingItems || []).map(item => ({
+        bom_id: newBom.id,
+        sku_id: item.sku_id,
+        quantity: item.quantity,
+        cost_ex_vat_at_time: item.cost_ex_vat_at_time,
+      }));
 
-      // Check if SKU already exists in copied items
-      const existingSkuItem = itemsToInsert.find(i => i.sku_id === skuId);
-      if (existingSkuItem) {
-        existingSkuItem.quantity += quantity;
-      } else {
-        // Get cost for new SKU
-        const { data: skuCost } = await supabase
-          .from('skus')
-          .select('cost_ex_vat_computed')
-          .eq('id', skuId)
-          .single();
-
-        itemsToInsert.push({
-          bom_id: newBom.id,
-          sku_id: skuId,
-          quantity,
-          cost_ex_vat_at_time: skuCost?.cost_ex_vat_computed ?? null,
-        });
+      if (action.type === 'add_sku') {
+        const existing = itemsToInsert.find(i => i.sku_id === action.skuId);
+        if (existing) {
+          existing.quantity += action.quantity;
+        } else {
+          const { data: skuCost } = await supabase
+            .from('skus')
+            .select('cost_ex_vat_computed')
+            .eq('id', action.skuId)
+            .single();
+          itemsToInsert.push({
+            bom_id: newBom.id,
+            sku_id: action.skuId,
+            quantity: action.quantity,
+            cost_ex_vat_at_time: skuCost?.cost_ex_vat_computed ?? null,
+          });
+        }
+      } else if (action.type === 'update_quantity') {
+        // Sync all hardware quantities from the invoice
+        if (action.allHardwareItems) {
+          for (const hw of action.allHardwareItems) {
+            const existing = itemsToInsert.find(i => i.sku_id === hw.sku_id);
+            if (existing) {
+              existing.quantity = hw.quantity;
+            }
+          }
+        }
+      } else if (action.type === 'remove_sku') {
+        itemsToInsert = itemsToInsert.filter(i => i.sku_id !== action.skuId);
       }
 
       if (itemsToInsert.length > 0) {
@@ -180,7 +189,7 @@ export function useInvoiceBomRevision({ invoiceId, bomId }: UseInvoiceBomRevisio
       }
 
       // Log bom_event
-      await supabase.from('bom_events' as any).insert({
+      await supabase.from('bom_events').insert({
         bom_id: newBom.id,
         event_type: 'revision_created',
         actor_email: user?.email,
@@ -189,7 +198,7 @@ export function useInvoiceBomRevision({ invoiceId, bomId }: UseInvoiceBomRevisio
           from_version: currentBom.version,
           to_version: newVersion,
           reason_type: 'invoice_change',
-          reason_note: 'Invoice draft added hardware requiring a new BOM revision',
+          action_type: action.type,
           source_bom_id: currentBom.id,
           source_document_type: 'invoice',
           source_document_stage: 'draft',
@@ -207,7 +216,7 @@ export function useInvoiceBomRevision({ invoiceId, bomId }: UseInvoiceBomRevisio
     },
     onSuccess: (newBom) => {
       setShowRevisionDialog(false);
-      setPendingSkuAction(null);
+      setPendingAction(null);
       toast({
         title: t(
           `Ny BOM-revision #${newBom.version} skapad`,
