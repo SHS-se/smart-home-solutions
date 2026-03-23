@@ -48,7 +48,7 @@ export function getStripeSecretKey(): string {
   
   if (env === "live" && !isLiveKey) {
     throw new Error(
-      "FATAL: APP_ENV is 'live' but STRIPE_SECRET_KEY is not a live key. " +
+      "FATAL: APP_ENV is 'live' but SHS_STRIPE_SECRET_KEY is not a live key. " +
       "Refusing to proceed - check secret configuration."
     );
   }
