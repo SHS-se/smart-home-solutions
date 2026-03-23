@@ -28,8 +28,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Send, Eye, Plus, Trash2, Loader2, Info, Link as LinkIcon } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Send, Eye, Plus, Trash2, Loader2, Info, Link as LinkIcon, Package, Lock } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
+import SKUSelector from '@/components/portal/boms/SKUSelector';
+import { useInvoiceBomRevision } from '@/hooks/use-invoice-bom-revision';
 
 interface LineItem {
   id?: string;
@@ -51,6 +61,7 @@ interface Invoice {
   stripe_invoice_id: string | null;
   customer_id: string | null;
   bom_id: string | null;
+  bom_version: number | null;
   quote_id: string | null;
   quote_number: string | null;
   status: string;
@@ -82,6 +93,7 @@ const InvoiceDraftEditor: React.FC = () => {
   const [dueDate, setDueDate] = useState<string>(() => getDefaultInvoiceDueDate());
   const [isTest, setIsTest] = useState(false);
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
+  const [isSKUSelectorOpen, setIsSKUSelectorOpen] = useState(false);
 
   // Fetch existing invoice if editing
   // staleTime: 0 ensures we always refetch on mount/focus to defeat bfcache staleness
@@ -114,6 +126,13 @@ const InvoiceDraftEditor: React.FC = () => {
     staleTime: 0,
     refetchOnMount: 'always',
     refetchOnWindowFocus: true,
+  });
+
+  // BOM revision hook
+  const activeBomId = existingInvoice?.bom_id || selectedBomId;
+  const bomRevision = useInvoiceBomRevision({
+    invoiceId: invoiceId,
+    bomId: activeBomId,
   });
 
   // Fetch line items for existing invoice
@@ -166,9 +185,9 @@ const InvoiceDraftEditor: React.FC = () => {
 
   // Fetch BOM items when a BOM is selected
   const { data: bomItems } = useQuery({
-    queryKey: ['bom_items_for_invoice', selectedBomId],
+    queryKey: ['bom_items_for_invoice', activeBomId],
     queryFn: async () => {
-      if (!selectedBomId) return [];
+      if (!activeBomId) return [];
       const { data, error } = await supabase
         .from('bom_items')
         .select(`
@@ -178,11 +197,11 @@ const InvoiceDraftEditor: React.FC = () => {
           cost_ex_vat_at_time,
           skus!bom_items_sku_id_fkey(sku, name, sell_price_ex_vat, vat_rate)
         `)
-        .eq('bom_id', selectedBomId);
+        .eq('bom_id', activeBomId);
       if (error) throw error;
       return data;
     },
-    enabled: !!selectedBomId && isStaff,
+    enabled: !!activeBomId && isStaff,
   });
 
   // Populate line items when BOM items are loaded (for new invoices only)
@@ -246,13 +265,9 @@ const InvoiceDraftEditor: React.FC = () => {
   }, [invoiceId]);
 
   // Re-hydrate local state whenever React Query fetches fresh data.
-  // This is critical for defeating bfcache: the browser may restore stale JS state,
-  // but React Query will refetch (staleTime:0 + refetchOnMount:'always').
-  // When dataUpdatedAt changes, we know fresh data arrived and should re-sync local state.
   useEffect(() => {
     if (!invoiceId) return;
     if (!lineItemsFetched) return;
-    // Only sync if this is new data we haven't hydrated yet
     if (dataUpdatedAt <= lastHydratedAtRef.current) return;
 
     const items = (existingLineItems ?? []) as LineItem[];
@@ -420,7 +435,6 @@ const InvoiceDraftEditor: React.FC = () => {
     mutationFn: async (items: LineItem[]) => {
       if (!invoiceId) return;
 
-      // Ensure stable IDs and required fields in the payload
       const normalized = items.map((item, idx) => {
         const id = item.id ?? crypto.randomUUID();
         return {
@@ -436,7 +450,6 @@ const InvoiceDraftEditor: React.FC = () => {
           tax_rate: item.tax_rate,
           category: item.category ?? null,
           sort_order: idx,
-          // created_at is handled by DB default; omit it
         };
       });
 
@@ -459,7 +472,6 @@ const InvoiceDraftEditor: React.FC = () => {
         if (error) throw error;
       }
 
-      // Update last saved set only after successful operations
       lastSavedIdsRef.current = newIds;
     },
     onError: (error: Error) => {
@@ -472,7 +484,6 @@ const InvoiceDraftEditor: React.FC = () => {
   });
 
   // If this invoice is linked to a BOM but hardware rows are missing, restore them from the BOM.
-  // This is a safety net in case a previous save wiped rows.
   useEffect(() => {
     if (!invoiceId) return;
     if (!existingInvoice?.bom_id) return;
@@ -529,14 +540,11 @@ const InvoiceDraftEditor: React.FC = () => {
       return;
     }
 
-    // Clear any pending save
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
     }
 
-    // Debounce save by 500ms
     saveTimeoutRef.current = setTimeout(() => {
-      // Mark timer as consumed; prevents an unnecessary flush on unmount.
       saveTimeoutRef.current = null;
       saveLineItemsMutation.mutate(lineItemsRef.current);
     }, 500);
@@ -548,9 +556,7 @@ const InvoiceDraftEditor: React.FC = () => {
     };
   }, [lineItems, invoiceId, saveLineItemsMutation]);
 
-  // If the user navigates away while a debounced save is pending, flush it immediately.
-  // NOTE: Empty dependency array is intentional - this should only run on unmount.
-  // Including saveLineItemsMutation would cause infinite loops due to react-query state updates.
+  // Flush pending saves on unmount
   useEffect(() => {
     return () => {
       if (!invoiceId || !initialLoadComplete.current) return;
@@ -589,6 +595,42 @@ const InvoiceDraftEditor: React.FC = () => {
     }]);
   };
 
+  // Handle SKU selection from picker
+  const handleSkuSelect = async (skuId: string, quantity: number) => {
+    // Fetch SKU data
+    const { data: skuData, error } = await supabase
+      .from('skus')
+      .select('sku, name, sell_price_ex_vat, vat_rate')
+      .eq('id', skuId)
+      .single();
+    if (error || !skuData) {
+      toast({ title: t('Kunde inte hämta SKU', 'Failed to fetch SKU'), variant: 'destructive' });
+      return;
+    }
+
+    const unitPrice = skuData.sell_price_ex_vat ?? 0;
+    const vatRateRaw = skuData.vat_rate;
+    const vatRatePct = vatRateRaw == null ? 25 : vatRateRaw <= 1 ? vatRateRaw * 100 : vatRateRaw;
+
+    // Add to invoice line items immediately
+    setLineItems(prev => [...prev, {
+      id: crypto.randomUUID(),
+      line_type: 'hardware' as const,
+      description: skuData.name,
+      sku: skuData.sku,
+      sku_id: skuId,
+      quantity,
+      unit_price: unitPrice,
+      tax_rate: vatRatePct,
+      sort_order: prev.length,
+    }]);
+
+    // Trigger BOM revision logic
+    await bomRevision.handleSkuAddedFromInvoice(skuId, quantity, skuData);
+
+    setIsSKUSelectorOpen(false);
+  };
+
   // Update line item
   const updateLineItem = (index: number, updates: Partial<LineItem>) => {
     setLineItems(prev => prev.map((item, i) => i === index ? { ...item, ...updates } : item));
@@ -596,7 +638,6 @@ const InvoiceDraftEditor: React.FC = () => {
 
   // Remove line item
   const removeLineItem = (index: number) => {
-    // Persist deletions immediately so they can't be lost if the user navigates away before the debounce fires.
     const next = lineItems.filter((_, i) => i !== index);
     skipNextAutosaveRef.current = true;
 
@@ -634,6 +675,11 @@ const InvoiceDraftEditor: React.FC = () => {
 
   const customer = existingInvoice?.customer || customers.find(c => c.id === selectedCustomerId);
   const bom = existingInvoice?.bom || boms.find(b => b.id === selectedBomId);
+  const originalBomVersion = existingInvoice?.bom_version ?? bom?.version;
+  const currentBomVersion = bomRevision.latestVersion?.version ?? originalBomVersion;
+  const existingHardwareSkuIds = lineItems
+    .filter(i => i.line_type === 'hardware' && i.sku_id)
+    .map(i => i.sku_id!);
 
   return (
     <PortalLayout>
@@ -665,6 +711,25 @@ const InvoiceDraftEditor: React.FC = () => {
                     {existingInvoice.quote_number}
                   </Link>
                 </span>
+              )}
+              {/* BOM metadata — moved from Hardware card */}
+              {originalBomVersion && (
+                <span>
+                  <span className="text-muted-foreground">{t('Baserad på BOM:', 'Based on BOM:')}</span>{' '}
+                  <strong>#{originalBomVersion}</strong>
+                </span>
+              )}
+              {currentBomVersion && currentBomVersion !== originalBomVersion && (
+                <span className="flex items-center gap-1">
+                  <span className="text-muted-foreground">{t('Aktuell BOM:', 'Current BOM:')}</span>{' '}
+                  <strong>#{currentBomVersion}</strong>
+                </span>
+              )}
+              {bom && (
+                <Link to={`/portal/boms/${bomRevision.latestVersion?.id || bom.id}`} className="text-primary hover:underline flex items-center gap-1">
+                  <LinkIcon className="h-3 w-3" />
+                  {t('Visa BOM', 'View BOM')}
+                </Link>
               )}
             </div>
           )}
@@ -720,21 +785,18 @@ const InvoiceDraftEditor: React.FC = () => {
               <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle className="text-lg">
                   {t('Hårdvara', 'Hardware')}
-                  {bom && <span className="text-muted-foreground font-normal text-sm ml-2">(från BOM #{bom.version})</span>}
                 </CardTitle>
                 <div className="flex gap-2">
+                  {invoiceId && (
+                    <Button variant="outline" size="sm" onClick={() => setIsSKUSelectorOpen(true)}>
+                      <Package className="h-4 w-4 mr-1" />
+                      {t('Lägg till SKU', 'Add SKU')}
+                    </Button>
+                  )}
                   <Button variant="outline" size="sm" onClick={() => addLineItem('hardware')}>
                     <Plus className="h-4 w-4 mr-1" />
                     {t('Lägg till rad', 'Add row')}
                   </Button>
-                  {bom && (
-                    <Button variant="ghost" size="sm" asChild>
-                      <Link to={`/portal/boms/${bom.id}`}>
-                        <LinkIcon className="h-4 w-4 mr-1" />
-                        {t('Visa hela BOM', 'View full BOM')}
-                      </Link>
-                    </Button>
-                  )}
                 </div>
               </CardHeader>
               <CardContent>
@@ -1000,6 +1062,38 @@ const InvoiceDraftEditor: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* SKU Selector Modal */}
+      <SKUSelector
+        open={isSKUSelectorOpen}
+        onOpenChange={setIsSKUSelectorOpen}
+        onSelect={handleSkuSelect}
+        existingSkuIds={existingHardwareSkuIds}
+      />
+
+      {/* BOM Revision Confirmation Dialog */}
+      <Dialog open={bomRevision.showRevisionDialog} onOpenChange={(open) => { if (!open) bomRevision.cancelRevision(); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('Skapa ny BOM-revision?', 'Create new BOM revision?')}</DialogTitle>
+            <DialogDescription>
+              {t(
+                'Att lägga till denna artikel skapar en ny redigerbar BOM-revision. BOM:en förblir redigerbar tills fakturan fastställs.',
+                'Adding this item will create a new editable BOM revision. The BOM will remain editable until the invoice is finalized.'
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={bomRevision.cancelRevision}>
+              {t('Avbryt', 'Cancel')}
+            </Button>
+            <Button onClick={bomRevision.confirmRevision} disabled={bomRevision.isCreatingRevision}>
+              {bomRevision.isCreatingRevision && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              {t('Skapa revision och fortsätt', 'Create revision and continue')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </PortalLayout>
   );
 };
