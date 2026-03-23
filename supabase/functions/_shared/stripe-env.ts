@@ -36,10 +36,10 @@ export function getAppEnvironment(): AppEnvironment {
  */
 export function getStripeSecretKey(): string {
   const env = getAppEnvironment();
-  const key = Deno.env.get("STRIPE_SECRET_KEY");
+  const key = Deno.env.get("SHS_STRIPE_SECRET_KEY");
   
   if (!key) {
-    throw new Error("FATAL: STRIPE_SECRET_KEY is not set");
+    throw new Error("FATAL: SHS_STRIPE_SECRET_KEY is not set");
   }
   
   // CRITICAL: Validate key matches environment
