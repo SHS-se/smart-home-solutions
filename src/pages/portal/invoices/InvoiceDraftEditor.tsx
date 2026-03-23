@@ -667,6 +667,7 @@ const InvoiceDraftEditor: React.FC = () => {
 
   // Remove line item
   const removeLineItem = (index: number) => {
+    const removedItem = lineItems[index];
     const next = lineItems.filter((_, i) => i !== index);
     skipNextAutosaveRef.current = true;
 
@@ -676,6 +677,11 @@ const InvoiceDraftEditor: React.FC = () => {
     }
 
     setLineItems(next);
+
+    // If removing a hardware line with a sku_id, sync removal to BOM
+    if (removedItem.line_type === 'hardware' && removedItem.sku_id && activeBomId) {
+      bomRevision.handleSkuRemovedFromInvoice(removedItem.sku_id);
+    }
 
     if (invoiceId && initialLoadComplete.current) {
       saveLineItemsMutation.mutate(next);
