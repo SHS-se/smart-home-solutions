@@ -299,62 +299,48 @@ export function useInvoiceBomRevision({ invoiceId, bomId }: UseInvoiceBomRevisio
   ): Promise<'no_bom' | 'editable_found' | 'needs_confirmation'> => {
     if (!bomId || !currentBom) return 'no_bom';
 
-    // Check if current BOM is locked
     const currentLocked = await isVersionLocked(currentBom.id, currentBom.version);
 
     if (!currentLocked) {
-      // Current BOM is editable — add directly
       await addSkuToExistingRevision(currentBom, skuId, quantity);
       return 'editable_found';
     }
 
-    // Look for an existing editable revision
     const editable = await findEditableRevision();
     if (editable) {
       await addSkuToExistingRevision(editable, skuId, quantity);
       return 'editable_found';
     }
 
-    // No editable revision — need confirmation
-    setPendingSkuAction({ skuId, quantity, skuData });
+    setPendingAction({ type: 'add_sku', skuId, quantity, skuData });
     setShowRevisionDialog(true);
     return 'needs_confirmation';
   };
 
-  const confirmRevision = () => {
-    if (!pendingSkuAction) return;
-    createRevisionMutation.mutate({
-      skuId: pendingSkuAction.skuId,
-      quantity: pendingSkuAction.quantity,
-    });
-  };
-
-  const cancelRevision = () => {
-    setShowRevisionDialog(false);
-    setPendingSkuAction(null);
-  };
-
-  // Latest BOM version in group (for display)
-  const latestVersion = groupVersions.length > 0 ? groupVersions[0] : null;
-
   /**
    * Sync a quantity change from an invoice hardware line to the corresponding BOM item.
-   * Only updates the BOM if the current (or editable) revision is not locked.
+   * If the BOM is locked and no editable revision exists, prompts for a new revision.
    */
-  const syncQuantityToBom = async (skuId: string, newQuantity: number) => {
-    if (!bomId || !currentBom) return;
+  const syncQuantityToBom = async (
+    skuId: string,
+    newQuantity: number,
+    allHardwareItems?: Array<{ sku_id: string; quantity: number }>
+  ): Promise<'no_bom' | 'synced' | 'needs_confirmation'> => {
+    if (!bomId || !currentBom) return 'no_bom';
 
-    // Determine which BOM to update: prefer an existing editable revision, fallback to current if unlocked
     const currentLocked = await isVersionLocked(currentBom.id, currentBom.version);
     let targetBomId = currentBom.id;
 
     if (currentLocked) {
       const editable = await findEditableRevision();
-      if (!editable) return; // locked and no editable revision — don't silently modify
+      if (!editable) {
+        setPendingAction({ type: 'update_quantity', skuId, quantity: newQuantity, allHardwareItems });
+        setShowRevisionDialog(true);
+        return 'needs_confirmation';
+      }
       targetBomId = editable.id;
     }
 
-    // Update the BOM item quantity
     const { data: existingItem } = await supabase
       .from('bom_items')
       .select('id, quantity')
@@ -370,16 +356,64 @@ export function useInvoiceBomRevision({ invoiceId, bomId }: UseInvoiceBomRevisio
 
       queryClient.invalidateQueries({ queryKey: ['bom_items_for_invoice'] });
     }
+    return 'synced';
   };
+
+  /**
+   * Handle removal of a hardware SKU from the invoice.
+   * If the BOM is locked, prompts for a new revision that excludes this SKU.
+   */
+  const handleSkuRemovedFromInvoice = async (
+    skuId: string
+  ): Promise<'no_bom' | 'removed' | 'needs_confirmation'> => {
+    if (!bomId || !currentBom) return 'no_bom';
+
+    const currentLocked = await isVersionLocked(currentBom.id, currentBom.version);
+    let targetBomId = currentBom.id;
+
+    if (currentLocked) {
+      const editable = await findEditableRevision();
+      if (!editable) {
+        setPendingAction({ type: 'remove_sku', skuId, quantity: 0 });
+        setShowRevisionDialog(true);
+        return 'needs_confirmation';
+      }
+      targetBomId = editable.id;
+    }
+
+    // Delete the item from the target BOM
+    await supabase
+      .from('bom_items')
+      .delete()
+      .eq('bom_id', targetBomId)
+      .eq('sku_id', skuId);
+
+    queryClient.invalidateQueries({ queryKey: ['bom_items_for_invoice'] });
+    return 'removed';
+  };
+
+  const confirmRevision = () => {
+    if (!pendingAction) return;
+    createRevisionMutation.mutate(pendingAction);
+  };
+
+  const cancelRevision = () => {
+    setShowRevisionDialog(false);
+    setPendingAction(null);
+  };
+
+  // Latest BOM version in group (for display)
+  const latestVersion = groupVersions.length > 0 ? groupVersions[0] : null;
 
   return {
     currentBom,
     latestVersion,
     showRevisionDialog,
-    pendingSkuAction,
+    pendingAction,
     isCreatingRevision: createRevisionMutation.isPending,
     handleSkuAddedFromInvoice,
     syncQuantityToBom,
+    handleSkuRemovedFromInvoice,
     confirmRevision,
     cancelRevision,
   };
