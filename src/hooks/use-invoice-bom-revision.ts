@@ -33,10 +33,13 @@ export function useInvoiceBomRevision({ invoiceId, bomId }: UseInvoiceBomRevisio
   const queryClient = useQueryClient();
 
   const [showRevisionDialog, setShowRevisionDialog] = useState(false);
-  const [pendingSkuAction, setPendingSkuAction] = useState<{
+  const [pendingAction, setPendingAction] = useState<{
+    type: 'add_sku' | 'update_quantity' | 'remove_sku';
     skuId: string;
     quantity: number;
-    skuData: { sku: string; name: string; sell_price_ex_vat: number | null; vat_rate: number };
+    skuData?: { sku: string; name: string; sell_price_ex_vat: number | null; vat_rate: number };
+    /** For update_quantity: the full list of invoice hardware items to sync to BOM */
+    allHardwareItems?: Array<{ sku_id: string; quantity: number }>;
   } | null>(null);
 
   // Fetch current BOM info
