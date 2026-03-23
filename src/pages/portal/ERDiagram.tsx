@@ -138,16 +138,39 @@ const ERDiagram = () => {
   return (
     <PortalLayout>
       <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold">
-            {t('Databasschema (ERD)', 'Database Schema (ERD)')}
-          </h1>
-          <p className="text-muted-foreground">
-            {t(
-              'Visuell representation av databasstrukturen och relationer — hämtas live från databasen.',
-              'Visual representation of the database structure and relationships — fetched live from the database.'
-            )}
-          </p>
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold">
+              {t('Databasschema (ERD)', 'Database Schema (ERD)')}
+            </h1>
+            <p className="text-muted-foreground">
+              {t(
+                'Visuell representation av databasstrukturen och relationer — hämtas live från databasen.',
+                'Visual representation of the database structure and relationships — fetched live from the database.'
+              )}
+            </p>
+          </div>
+          <Button variant="outline" onClick={handleCheckEnv} disabled={envCheckLoading}>
+            {envCheckLoading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+            Check Env Details
+          </Button>
+        </div>
+
+        {envResults && (
+          <Card>
+            <CardContent className="pt-4">
+              <p className="text-sm font-medium mb-1">Current Environment (this edge function instance):</p>
+              <div className="font-mono text-sm space-y-1 bg-muted/50 p-3 rounded-md">
+                <p><span className="text-muted-foreground">APP_ENV:</span> <span className="font-semibold">{envResults.app_env}</span></p>
+                <p><span className="text-muted-foreground">STRIPE_SECRET_KEY:</span> <span className="font-semibold">{envResults.stripe_key_prefix}</span></p>
+              </div>
+              <p className="text-xs text-muted-foreground mt-2">
+                Note: This shows the secrets for the environment where the edge function is running. 
+                To check the other environment, open this page on the {envResults.app_env === 'test' ? 'published (live)' : 'preview (test)'} site.
+              </p>
+            </CardContent>
+          </Card>
+        )}
         </div>
 
         <Card>
