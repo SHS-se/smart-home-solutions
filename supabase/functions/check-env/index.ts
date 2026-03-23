@@ -14,7 +14,7 @@ Deno.serve(async (req) => {
   const oldKeyMasked = oldKey.length > 10 ? oldKey.substring(0, 10) + '...' : oldKey;
   const maskedKey = stripeKey.length > 10 ? stripeKey.substring(0, 10) + '...' : stripeKey;
 
-  return new Response(JSON.stringify({ app_env: appEnv, stripe_key_prefix: maskedKey }), {
+  return new Response(JSON.stringify({ app_env: appEnv, shs_stripe_key_prefix: maskedKey, old_stripe_key_prefix: oldKeyMasked }), {
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });
 });

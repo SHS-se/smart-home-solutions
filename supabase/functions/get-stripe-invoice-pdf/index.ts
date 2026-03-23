@@ -59,10 +59,7 @@ serve(async (req) => {
     const { stripe_invoice_id, is_test } = await req.json();
     if (!stripe_invoice_id) throw new Error("stripe_invoice_id is required");
 
-    // Default to test mode if not specified
-    const isTest = is_test ?? true;
-    const stripeKey = getStripeKey(isTest);
-    logStep("Using Stripe mode", { isTest });
+    logStep("Using environment-specific Stripe key");
 
     // If not staff, verify the invoice belongs to the customer
     if (!isStaff) {

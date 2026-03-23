@@ -55,7 +55,7 @@ export function getStripeSecretKey(): string {
   
   if (env === "test" && !isTestKey) {
     throw new Error(
-      "FATAL: APP_ENV is 'test' but STRIPE_SECRET_KEY is not a test key. " +
+      "FATAL: APP_ENV is 'test' but SHS_STRIPE_SECRET_KEY is not a test key. " +
       "Refusing to proceed - check secret configuration."
     );
   }
