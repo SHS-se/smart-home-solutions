@@ -450,6 +450,7 @@ const InvoiceDraftEditor: React.FC = () => {
           tax_rate: item.tax_rate,
           category: item.category ?? null,
           sort_order: idx,
+          created_at: new Date().toISOString(),
         };
       });
 
