@@ -171,7 +171,6 @@ const ERDiagram = () => {
             </CardContent>
           </Card>
         )}
-        </div>
 
         <Card>
           <CardHeader>
