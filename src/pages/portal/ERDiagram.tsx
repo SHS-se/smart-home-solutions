@@ -23,26 +23,15 @@ const ERDiagram = () => {
   const [erdSource, setErdSource] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [envCheckLoading, setEnvCheckLoading] = useState(false);
-  const [envResults, setEnvResults] = useState<{ test: any; live: any } | null>(null);
+  const [envResults, setEnvResults] = useState<{ app_env: string; stripe_key_prefix: string } | null>(null);
 
   const handleCheckEnv = async () => {
     setEnvCheckLoading(true);
     setEnvResults(null);
     try {
-      const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
-      const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-
-      const [testRes, liveRes] = await Promise.all([
-        fetch(`https://${projectId}.supabase.co/functions/v1/check-env`, {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${anonKey}`, 'apikey': anonKey, 'Content-Type': 'application/json' },
-        }).then(r => r.json()).catch(e => ({ error: e.message })),
-        fetch(`https://${projectId}.supabase.co/functions/v1/check-env`, {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${anonKey}`, 'apikey': anonKey, 'Content-Type': 'application/json', 'x-]environment': 'production' },
-        }).then(r => r.json()).catch(e => ({ error: e.message })),
-      ]);
-      setEnvResults({ test: testRes, live: liveRes });
+      const response = await supabase.functions.invoke('check-env');
+      if (response.error) throw new Error(response.error.message);
+      setEnvResults(response.data);
     } catch (err: any) {
       toast.error('Failed to check env: ' + err.message);
     } finally {
