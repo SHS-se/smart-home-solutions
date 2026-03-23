@@ -327,6 +327,17 @@ const InvoiceDetail: React.FC = () => {
                 <strong>{invoice.bom.project_name}</strong>
               </span>
             )}
+            {invoice.bom_version && (
+              <span>
+                <span className="text-muted-foreground">{t('BOM:', 'BOM:')}</span>{' '}
+                <strong>#{invoice.bom_version}</strong>
+              </span>
+            )}
+            {invoice.bom && (
+              <Link to={`/portal/boms/${invoice.bom.id}`} className="text-primary hover:underline text-sm">
+                {t('Visa BOM', 'View BOM')}
+              </Link>
+            )}
             {invoice.quote_number && (
               <span>
                 <span className="text-muted-foreground">{t('Från offert:', 'From quote:')}</span>{' '}
