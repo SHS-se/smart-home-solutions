@@ -631,9 +631,21 @@ const InvoiceDraftEditor: React.FC = () => {
     setIsSKUSelectorOpen(false);
   };
 
-  // Update line item
+  // Update line item — sync quantity changes to BOM for hardware items
   const updateLineItem = (index: number, updates: Partial<LineItem>) => {
-    setLineItems(prev => prev.map((item, i) => i === index ? { ...item, ...updates } : item));
+    setLineItems(prev => {
+      const updated = prev.map((item, i) => i === index ? { ...item, ...updates } : item);
+
+      // If quantity changed on a hardware line with a sku_id, sync to BOM
+      if ('quantity' in updates) {
+        const item = updated[index];
+        if (item.line_type === 'hardware' && item.sku_id && activeBomId) {
+          bomRevision.syncQuantityToBom(item.sku_id, updates.quantity!);
+        }
+      }
+
+      return updated;
+    });
   };
 
   // Remove line item

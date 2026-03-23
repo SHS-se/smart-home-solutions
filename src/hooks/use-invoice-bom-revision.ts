@@ -325,6 +325,41 @@ export function useInvoiceBomRevision({ invoiceId, bomId }: UseInvoiceBomRevisio
   // Latest BOM version in group (for display)
   const latestVersion = groupVersions.length > 0 ? groupVersions[0] : null;
 
+  /**
+   * Sync a quantity change from an invoice hardware line to the corresponding BOM item.
+   * Only updates the BOM if the current (or editable) revision is not locked.
+   */
+  const syncQuantityToBom = async (skuId: string, newQuantity: number) => {
+    if (!bomId || !currentBom) return;
+
+    // Determine which BOM to update: prefer an existing editable revision, fallback to current if unlocked
+    const currentLocked = await isVersionLocked(currentBom.id, currentBom.version);
+    let targetBomId = currentBom.id;
+
+    if (currentLocked) {
+      const editable = await findEditableRevision();
+      if (!editable) return; // locked and no editable revision — don't silently modify
+      targetBomId = editable.id;
+    }
+
+    // Update the BOM item quantity
+    const { data: existingItem } = await supabase
+      .from('bom_items')
+      .select('id, quantity')
+      .eq('bom_id', targetBomId)
+      .eq('sku_id', skuId)
+      .maybeSingle();
+
+    if (existingItem) {
+      await supabase
+        .from('bom_items')
+        .update({ quantity: newQuantity })
+        .eq('id', existingItem.id);
+
+      queryClient.invalidateQueries({ queryKey: ['bom_items_for_invoice'] });
+    }
+  };
+
   return {
     currentBom,
     latestVersion,
@@ -332,6 +367,7 @@ export function useInvoiceBomRevision({ invoiceId, bomId }: UseInvoiceBomRevisio
     pendingSkuAction,
     isCreatingRevision: createRevisionMutation.isPending,
     handleSkuAddedFromInvoice,
+    syncQuantityToBom,
     confirmRevision,
     cancelRevision,
   };
