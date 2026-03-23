@@ -128,8 +128,50 @@ serve(async (req) => {
       created_by: user.id
     });
 
-    // Enrich bom_events metadata with Stripe identifiers (if a BOM revision was created from this invoice)
+    // Sync BOM items to match invoice hardware lines and enrich bom_events
     if (invoice.bom_id) {
+      // Fetch invoice hardware line items
+      const { data: hardwareLines } = await supabaseClient
+        .from('invoice_line_items')
+        .select('sku_id, quantity')
+        .eq('invoice_id', invoice_id)
+        .eq('line_type', 'hardware')
+        .not('sku_id', 'is', null);
+
+      if (hardwareLines && hardwareLines.length > 0) {
+        // Fetch current costs for all SKUs
+        const skuIds = hardwareLines.map(l => l.sku_id!);
+        const { data: skuCosts } = await supabaseClient
+          .from('skus')
+          .select('id, cost_ex_vat_computed')
+          .in('id', skuIds);
+        const costMap = new Map((skuCosts || []).map(s => [s.id, s.cost_ex_vat_computed]));
+
+        // Delete existing BOM items and replace with invoice hardware items
+        await supabaseClient
+          .from('bom_items')
+          .delete()
+          .eq('bom_id', invoice.bom_id);
+
+        const bomItems = hardwareLines.map(line => ({
+          bom_id: invoice.bom_id,
+          sku_id: line.sku_id!,
+          quantity: line.quantity,
+          cost_ex_vat_at_time: costMap.get(line.sku_id!) ?? null,
+        }));
+
+        const { error: bomInsertError } = await supabaseClient
+          .from('bom_items')
+          .insert(bomItems);
+
+        if (bomInsertError) {
+          logStep("Warning: BOM items sync failed", { error: bomInsertError });
+        } else {
+          logStep("BOM items synced from invoice hardware lines", { count: bomItems.length });
+        }
+      }
+
+      // Enrich bom_events metadata with Stripe identifiers
       const { data: bomEvents } = await supabaseClient
         .from('bom_events')
         .select('id, metadata')
