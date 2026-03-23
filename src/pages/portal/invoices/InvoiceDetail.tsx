@@ -327,6 +327,17 @@ const InvoiceDetail: React.FC = () => {
                 <strong>{invoice.bom.project_name}</strong>
               </span>
             )}
+            {invoice.bom_version && (
+              <span>
+                <span className="text-muted-foreground">{t('BOM:', 'BOM:')}</span>{' '}
+                <strong>#{invoice.bom_version}</strong>
+              </span>
+            )}
+            {invoice.bom && (
+              <Link to={`/portal/boms/${invoice.bom.id}`} className="text-primary hover:underline text-sm">
+                {t('Visa BOM', 'View BOM')}
+              </Link>
+            )}
             {invoice.quote_number && (
               <span>
                 <span className="text-muted-foreground">{t('Från offert:', 'From quote:')}</span>{' '}
@@ -345,19 +356,10 @@ const InvoiceDetail: React.FC = () => {
           <div className="lg:col-span-2 space-y-6">
             {/* Hardware */}
             <Card>
-              <CardHeader className="flex flex-row items-center justify-between">
+              <CardHeader>
                 <CardTitle className="text-lg">
                   {t('Hårdvara', 'Hardware')}
-                  {invoice.bom && <span className="text-muted-foreground font-normal text-sm ml-2">(från BOM #{invoice.bom_version})</span>}
                 </CardTitle>
-                {invoice.bom && (
-                  <Button variant="ghost" size="sm" asChild>
-                    <a href={`/portal/boms/${invoice.bom.id}`} target="_blank">
-                      <ExternalLink className="h-4 w-4 mr-1" />
-                      {t('Visa hela BOM', 'View full BOM')}
-                    </a>
-                  </Button>
-                )}
               </CardHeader>
               <CardContent>
                 <Table>

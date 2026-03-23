@@ -41,20 +41,35 @@ const BOMVersionSelector: React.FC<BOMVersionSelectorProps> = ({
     enabled: !!bomGroupId,
   });
 
-  // Check locked status for each revision
+  // Check locked status for each revision (quotes OR finalized invoices)
   const { data: lockedVersions = new Set<number>() } = useQuery({
     queryKey: ['bom-locked-versions', bomGroupId],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const locked = new Set<number>();
+      const revisionIds = revisions.map(r => r.id);
+
+      // Check quotes
+      const { data: quoteData, error: quoteError } = await supabase
         .from('quotes')
         .select('bom_id, bom_version')
-        .in('bom_id', revisions.map(r => r.id))
+        .in('bom_id', revisionIds)
         .in('status', ['sent', 'viewed', 'accepted', 'revision_requested']);
-      if (error) throw error;
-      const locked = new Set<number>();
-      for (const row of data) {
+      if (quoteError) throw quoteError;
+      for (const row of quoteData) {
         if (row.bom_version !== null) locked.add(row.bom_version);
       }
+
+      // Check finalized invoices
+      const { data: invoiceData, error: invoiceError } = await supabase
+        .from('invoices')
+        .select('bom_id, bom_version')
+        .in('bom_id', revisionIds)
+        .in('status', ['open', 'paid']);
+      if (invoiceError) throw invoiceError;
+      for (const row of invoiceData) {
+        if (row.bom_version !== null) locked.add(row.bom_version);
+      }
+
       return locked;
     },
     enabled: revisions.length > 1,
