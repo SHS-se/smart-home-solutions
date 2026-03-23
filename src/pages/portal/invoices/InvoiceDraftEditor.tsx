@@ -348,11 +348,24 @@ const InvoiceDraftEditor: React.FC = () => {
       await supabase.from('invoice_line_items').delete().eq('invoice_id', invoiceId);
       if (lineItems.length > 0) {
         const { error } = await supabase.from('invoice_line_items').insert(
-          lineItems.map((item, idx) => ({
-            ...item,
-            invoice_id: invoiceId,
-            sort_order: idx,
-          }))
+          lineItems.map((item, idx) => {
+            const existingCreatedAt = (item as LineItem & { created_at?: string | null }).created_at;
+            return {
+              id: item.id ?? crypto.randomUUID(),
+              invoice_id: invoiceId,
+              line_type: item.line_type,
+              description: item.description,
+              sku: item.sku ?? null,
+              sku_id: item.sku_id ?? null,
+              quantity: item.quantity,
+              unit_price: item.unit_price,
+              unit: item.unit ?? null,
+              tax_rate: item.tax_rate,
+              category: item.category ?? null,
+              sort_order: idx,
+              created_at: existingCreatedAt ?? new Date().toISOString(),
+            };
+          })
         );
         if (error) throw error;
       }
