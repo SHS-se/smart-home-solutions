@@ -23,7 +23,7 @@ const ERDiagram = () => {
   const [erdSource, setErdSource] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [envCheckLoading, setEnvCheckLoading] = useState(false);
-  const [envResults, setEnvResults] = useState<{ app_env: string; stripe_key_prefix: string } | null>(null);
+  const [envResults, setEnvResults] = useState<{ app_env: string; shs_stripe_key_prefix: string; old_stripe_key_prefix: string } | null>(null);
 
   const handleCheckEnv = async () => {
     setEnvCheckLoading(true);
