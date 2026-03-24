@@ -1096,6 +1096,8 @@ const InvoiceDraftEditor: React.FC = () => {
                           className="w-full mt-4"
                           onClick={async () => {
                             if (!confirm(t('Är du säker på att du vill radera detta utkast?', 'Are you sure you want to delete this draft?'))) return;
+                            deletedRef.current = true;
+                            if (saveTimeoutRef.current) { clearTimeout(saveTimeoutRef.current); saveTimeoutRef.current = null; }
                             try {
                               await supabase.from('invoice_line_items').delete().eq('invoice_id', invoiceId!);
                               const { error } = await supabase.from('invoices').delete().eq('id', invoiceId!);
