@@ -140,7 +140,7 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
                 {filteredSkus.map(sku => {
                   const isAdded = existingSkuIds.includes(sku.id);
                   return (
-                    <TableRow key={sku.id} className={isAdded ? 'opacity-50' : ''}>
+                    <TableRow key={sku.id}>
                       <TableCell className="font-mono">{sku.sku}</TableCell>
                       <TableCell>{sku.name}</TableCell>
                       <TableCell>
