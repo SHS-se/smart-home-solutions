@@ -990,7 +990,11 @@ const BOMBuilder: React.FC = () => {
           const item = items.find(i => i.sku_id === skuId);
           if (item) deleteItemMutation.mutate(item.id);
         }}
+        onQuantityChange={(skuId, quantity) => {
+          addItemMutation.mutate({ sku_id: skuId, quantity });
+        }}
         existingSkuIds={items.map(i => i.sku_id)}
+        existingQuantities={Object.fromEntries(items.map(i => [i.sku_id, localQuantities[i.id] ?? i.quantity]))}
       />
 
       {/* Template Selector */}
