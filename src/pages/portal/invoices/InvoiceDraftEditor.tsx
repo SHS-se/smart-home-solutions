@@ -1103,6 +1103,10 @@ const InvoiceDraftEditor: React.FC = () => {
         open={isSKUSelectorOpen}
         onOpenChange={setIsSKUSelectorOpen}
         onSelect={handleSkuSelect}
+        onRemove={(skuId) => {
+          const idx = lineItems.findIndex(li => li.sku_id === skuId && li.line_type === 'hardware');
+          if (idx !== -1) removeLineItem(idx);
+        }}
         existingSkuIds={existingHardwareSkuIds}
       />
 
