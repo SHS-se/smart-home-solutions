@@ -96,6 +96,7 @@ The system must satisfy the following business and system requirements:
 - The system must distinguish document date, posting date, due date, and payment date.
 - The system must preserve the filed VAT figures even if later corrections are posted in later periods.
 - Posted entries must remain balanced at all times.
+- Verification numbers must be sequential within their series and fiscal year. Numbers must never be reused. Any gap must be explainable by audit-visible cancelled or discarded drafts. This is an audit expectation under Swedish bookkeeping law.
 - Before VAT snapshot generation, the system must perform a reconciliation checkpoint verifying that total debits equal total credits across all posted entries in the period, and that control account balances match derived totals for accounts receivable, accounts payable, and VAT accounts. VAT snapshot generation must be blocked if any reconciliation check fails.
 - VAT filing data must be exportable as a versioned, machine-readable JSON payload derived from an approved VAT snapshot.
 - The exported filing payload must be reproducible later from the same locked snapshot and generation rules version.
@@ -149,7 +150,7 @@ For MVP, prefixed tables in `public` are the more pragmatic option because the e
 | --- | --- | --- | --- | --- |
 | `accounting_settings` | Stores singleton company accounting configuration without over-engineering multi-company support. | legal_name, org_number, vat_number, base_currency, fiscal_year_start_month, default_verification_series, default_vat_frequency, current_chart_version_id | references `chart_of_accounts`, `vat_codes`, `fiscal_years` | Mutable by finance admin only; changes audited |
 | `fiscal_years` | Defines legal accounting years and year-end status. | id, code, start_date, end_date, status, closed_at, closed_by | parent of `accounting_periods`, `vat_returns` | Open year mutable; closed year locked except audited reopen |
-| `accounting_periods` | Provides month-level control, close discipline, and posting locks even though VAT is quarterly. | fiscal_year_id, period_no, start_date, end_date, status, locked_at, locked_by | belongs to `fiscal_years`; referenced by `journal_entries` and `vat_returns` | Mutable while open; closed/locked states tightly controlled |
+| `accounting_periods` | Provides month-level control, close discipline, and posting locks even though VAT is quarterly. | fiscal_year_id, period_no, start_date, end_date, status, locked_at, locked_by, integrity_hash, integrity_hash_computed_at | belongs to `fiscal_years`; referenced by `journal_entries` and `vat_returns` | Mutable while open; closed/locked states tightly controlled |
 | `chart_of_accounts` | Versioned account plan so future changes do not corrupt historical interpretation. | id, name, version, effective_from, effective_to, status | parent of `accounts` | New versions added; old versions preserved |
 | `accounts` | Defines ledger accounts and account behavior. | chart_id, account_no, name, account_type, normal_balance, is_active, allow_manual_posting, vat_category_hint | referenced by `journal_entry_lines`, posting rules, reports | Mutable while active; historical rows preserved, no renumbering in place |
 | `vat_codes` | Encapsulates VAT logic and reporting mapping. | code, description, rate, direction, deductibility_percent, declaration_box_map, reverse_charge_flag, active_from, active_to, requires_review | referenced by purchase lines, invoice lines, journal lines, VAT snapshots | Version by new row/effective dates; avoid destructive edits |
@@ -189,7 +190,7 @@ For MVP, prefixed tables in `public` are the more pragmatic option because the e
 | Entity | Why it exists | Major fields | Key relationships | Mutability |
 | --- | --- | --- | --- | --- |
 | `vat_returns` | Represents one quarterly VAT return review and filing cycle. | fiscal_year_id, quarter, period_start, period_end, status, generated_at, generated_by, reviewed_at, filed_at, filed_by, filing_reference, notes | parent of `vat_period_snapshots`; linked to posted entries selected by cutoff rules | Draft mutable; filed rows locked except amendment metadata |
-| `vat_period_snapshots` | Immutable preserved output of what was included and what values were shown at filing/review time. | vat_return_id, snapshot_version, included_entry_ids_json, box_totals_json, source_hash, posted_until_timestamp, generation_rules_version, created_at | belongs to `vat_returns` | Append-only; once created never edited |
+| `vat_period_snapshots` | Immutable preserved output of what was included and what values were shown at filing/review time. | vat_return_id, snapshot_version, included_entry_ids_json, box_totals_json, source_hash, ledger_integrity_hash, posted_until_timestamp, generation_rules_version, created_at | belongs to `vat_returns` | Append-only; once created never edited |
 | `tax_filing_exports` | Stores the machine-readable JSON payload generated from a locked VAT snapshot for AI-assisted Skatteverket filing and later audit reproduction. | vat_return_id, vat_period_snapshot_id, export_format, schema_version, payload_json, payload_hash, generated_at, generated_by, approved_at, approved_by, used_at, export_status | belongs to `vat_returns` and `vat_period_snapshots`; linked through audit logs and filing confirmation documents | Append-only payload; status metadata changes audited |
 
 ### Currency and monetary storage model
@@ -231,7 +232,8 @@ These remain operational sources. They should not become accounting tables by in
 ### Record immutability
 
 - Posted `verifications`, `journal_entries`, and `journal_entry_lines` must not support hard delete.
-- Posted accounting records should not support general update operations.
+- Posted accounting records must not support general update operations.
+- This must be enforced at the database level through triggers or row security policies that reject UPDATE and DELETE on these tables when the record is in posted state. Application-level guards alone are insufficient.
 - Corrections must be modeled as:
   - reversal entry
   - adjusting entry
@@ -246,6 +248,29 @@ These remain operational sources. They should not become accounting tables by in
 - Only trusted service roles may perform final posting operations.
 - This rule exists to ensure every posting passes the same validation, idempotency, lock checks, balance enforcement, and audit logging path.
 
+### Payment allocation constraints
+
+- The sum of all `payment_allocations` for a given payment must never exceed the payment's original amount.
+- The sum of all allocations against a given target (invoice receivable, supplier payable, etc.) must never exceed the outstanding amount on that target.
+- Both constraints must be enforced transactionally: allocation inserts must verify remaining available amounts within the same transaction and fail atomically if either limit would be exceeded.
+- Over-allocation is an accounting error, not just a business warning. The system must make it structurally impossible.
+
+### Ledger integrity hash
+
+Each accounting period, when closed, and each VAT period snapshot must store a deterministic integrity fingerprint of all posted `journal_entry_lines` included in that scope.
+
+The fingerprint must be:
+- computed as a deterministic hash over a stable, ordered serialization of all included posted line amounts, account references, and posting dates
+- stored alongside the period close metadata or VAT snapshot record
+- recomputed during integrity checks and compared to the stored value
+
+Purpose:
+- detect silent corruption of posted data
+- detect unauthorized row-level mutation that bypasses application controls
+- provide cryptographic confirmation that the data used for a VAT filing matches the stored snapshot
+
+If the recomputed hash does not match the stored hash, the integrity check must fail, surface an alert, and block further period progression until the discrepancy is investigated. A mismatch is not a warning; it is a hard failure.
+
 ### Database-enforced balance integrity
 
 - The system must enforce `total_debit == total_credit` for every posted journal entry at the database level.
@@ -259,6 +284,16 @@ These remain operational sources. They should not become accounting tables by in
 - Historical foreign-currency conversions must be stored at posting time and must not be recomputed later.
 - The stored exchange rate and converted SEK amount become part of the immutable posted record.
 - VAT calculations, VAT snapshots, and report totals must use the stored SEK amounts, not later retranslation.
+
+### Verification number integrity
+
+Verification numbers are legally significant under Swedish bookkeeping rules and are the primary human-readable reference for audit trail traceability.
+
+- Verification numbers must be assigned sequentially within a given series and fiscal year. The sequence must never skip or reset mid-year without an explicit, audited reason.
+- Once assigned, a verification number must never be reused, even after a reversal or cancellation of the original verification.
+- A cancelled or discarded draft that was issued a number must retain that number as a visible, voided record so auditors can account for the gap.
+- The system must provide a report showing all gaps or voided numbers within a series, accessible to finance admin at any time.
+- Numbering must be generated by the system at posting time, not pre-assigned by users. User-defined numbers are only acceptable for manually created opening-balance verifications if explicitly required.
 
 ### Traceability chain
 
@@ -288,8 +323,10 @@ Minimum checks:
 Operational requirements:
 
 - failures must be logged and alerted, not silently ignored
-- exceptions should appear in an operational integrity report or admin dashboard
-- unresolved integrity failures should block VAT snapshot generation and period close where relevant
+- exceptions must appear in an operational integrity report or admin dashboard and remain visible until resolved
+- integrity check failures must actively block VAT snapshot generation and period close; logging alone is insufficient
+- a ledger integrity hash mismatch must block all period progression and trigger an immediate alert to finance admin
+- the system must not allow VAT filing to proceed while any unresolved integrity failure exists
 
 ### Payment source confidence
 
@@ -533,6 +570,17 @@ Without this, webhook retries or deploys under load can produce doubled revenue,
 - `reversed`: original remains posted, but a reversing entry exists
 - `cancelled` or `discarded`: only for drafts, never for posted entries
 
+### Draft isolation
+
+Draft records must be strictly isolated from all accounting outputs:
+
+- Draft `journal_entries` and `journal_entry_lines` must never affect account balances.
+- Draft entries must never appear in VAT calculations, VAT snapshots, or VAT reports.
+- Draft entries must never appear in the trial balance or any balance-derived report.
+- All reporting, reconciliation, and VAT logic must operate exclusively on posted records.
+
+This is an invariant, not a UI filtering preference. Any report or calculation that can accidentally include draft data will produce incorrect accounting figures. The query layer must enforce posted-only filtering at its foundation, not as an optional parameter.
+
 ### Dates that must be separate
 
 - `document_date`: date on receipt or invoice
@@ -672,6 +720,16 @@ Each VAT-sensitive line should reference a `vat_code`, not only a raw rate. A VA
 - Document and VAT-return totals must be derived from already rounded lines.
 - Rounding rules must be deterministic and reproducible across UI, posting logic, exports, and reports.
 - Inconsistent rounding will break VAT reconciliation and create filing differences, so the rounding implementation must be centralized and fixed.
+
+### VAT arithmetic invariants
+
+The following relationships must hold for every VAT-bearing journal line and must be stored, not recomputed after the fact:
+
+- `vat_amount` must equal `tax_base_amount × vat_rate`, computed using the system's canonical rounding rules
+- `tax_base_amount + vat_amount` must equal the gross amount for that line
+- these relationships must be validated before posting and must remain permanently consistent afterward; any line that fails these checks must be rejected at posting time
+
+These are not advisory checks. A line where the stored vat_amount does not match the rate-derived amount indicates a data quality problem that will produce incorrect VAT returns. The posting entry point must validate and reject, not warn and continue.
 
 ### Input versus output VAT
 
@@ -999,6 +1057,16 @@ The `review` state is important because it allows the finance user to work throu
 - Evidence can still be uploaded after close, but any posting must go to an allowed period or follow a reopen process
 - Report exports remain available for all periods regardless of status
 
+### DB-level period lock enforcement
+
+Period status enforcement must not rely solely on application-layer checks. The database must enforce that:
+
+- no `journal_entry` may be inserted with an `accounting_period_id` whose status is not `open`
+- no existing `journal_entry` may be updated to reference a period that is not `open`
+- the `posting_date` of every `journal_entry` must fall within the `start_date` and `end_date` of its assigned `accounting_period`; entries outside the period's date range must be rejected
+
+These rules must be enforced via database-level triggers or check constraints so they cannot be bypassed by privileged scripts, migrations, or service-layer mistakes. An attempt to insert or update in violation of these rules must produce a hard database error, not a silent failure.
+
 ### What can still happen after close
 
 - read access
@@ -1068,8 +1136,8 @@ The safer default is "reopen rarely and only under explicit finance control."
 ### Report design requirements
 
 - Reports must be reproducible from posted data only
-- Reports must clearly indicate whether they include draft items
-- Default reports should exclude drafts
+- Reports must never include draft items in balance, VAT, or trial-balance calculations; draft inclusion is not a display toggle but a correctness constraint
+- Reports that optionally show draft items for review purposes must clearly separate and label draft rows and must never aggregate them with posted figures
 - Every report should show generation timestamp and user
 
 ### Operational integrity monitoring
@@ -1406,8 +1474,11 @@ Create a dedicated `opening_balance_verification` at the start of the first acti
 
 This verification must be:
 - supported by documentary evidence (bank statement, debtors list, creditors list, prior VAT filing)
-- reviewed and signed off by the finance admin before being posted
-- treated as immutable once posted
+- reviewed and explicitly approved by the finance admin before posting; it cannot be self-posted without a separate reviewer
+- treated as immutable once posted; it is the ledger's anchor point and must never be reversed without extraordinary justification and full audit trail
+- the chronologically first posted entry in the ledger; the system must reject any attempt to post a journal entry with a `posting_date` earlier than the opening balance date
+
+No transaction history may be posted to the ledger until the opening balance verification has been created, approved, and posted. This must be enforced by the system, not by convention.
 
 **Principles**
 
@@ -1435,12 +1506,16 @@ This verification must be:
 Recommended constraints:
 
 - unique account number within chart version
-- unique verification number within series and fiscal year
+- unique verification number within series and fiscal year; gaps must be traceable to cancelled drafts, not silent skips
 - unique VAT code within active version scope
 - unique `(source_type, source_id, event_type)` on `verifications` or `journal_entries` — enforced at the database level to prevent duplicate posting from retried or duplicated source events
 - check constraint that posted entries have posting date and period
+- check constraint that `posting_date` falls within the assigned `accounting_period.start_date` and `accounting_period.end_date`
+- check constraint or trigger that rejects inserts or updates to `journal_entries` referencing a period whose status is not `open`
 - check constraint that draft entries cannot be attached to locked periods
 - database-enforced balance validation so `total_debit == total_credit` for every posted journal entry
+- check or trigger that rejects UPDATE and DELETE on posted rows in `verifications`, `journal_entries`, and `journal_entry_lines`
+- transactional constraint or application-level guard that prevents `payment_allocations` from exceeding `payments.amount` or the target's outstanding balance
 
 Recommended indexes:
 
@@ -1492,6 +1567,8 @@ Recommended approach:
   - rejecting direct mutation of posted records
   - rejecting direct inserts into posted-state paths that bypass the service entry point
   - preventing updates to immutable posted rows
+  - rejecting journal entry inserts or period-references for non-open periods
+  - validating that `posting_date` falls within the assigned period's date range
   - recording `updated_at` where still appropriate
   - audit log inserts for lock/reopen operations if not already handled by service layer
 - Avoid large trigger chains that create hidden side effects.
