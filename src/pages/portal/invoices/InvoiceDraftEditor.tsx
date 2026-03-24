@@ -574,7 +574,7 @@ const InvoiceDraftEditor: React.FC = () => {
   // Flush pending saves on unmount
   useEffect(() => {
     return () => {
-      if (!invoiceId || !initialLoadComplete.current) return;
+      if (!invoiceId || !initialLoadComplete.current || deletedRef.current) return;
       if (!saveTimeoutRef.current) return;
 
       clearTimeout(saveTimeoutRef.current);
