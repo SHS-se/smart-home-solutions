@@ -153,7 +153,7 @@ For MVP, prefixed tables in `public` are the more pragmatic option because the e
 
 | Entity | Why it exists | Major fields | Key relationships | Mutability |
 | --- | --- | --- | --- | --- |
-| `suppliers` | Counterparty master data for expenses and supplier invoices. | name, org_number, vat_number, address fields, payment_terms_days, default_expense_account_id, default_vat_code_id, active | parent of `purchase_documents`, linked to `payments` | Mutable, but key master-data changes audited |
+| `suppliers` | Counterparty master data for expenses and supplier invoices. | name, org_number, vat_number, address fields, payment_terms_days, default_expense_account_id, default_vat_code_id, f_skatt_registered, active | parent of `purchase_documents`, linked to `payments` | Mutable, but key master-data changes audited |
 | `purchase_documents` | Represents a receipt, simplified invoice, or supplier invoice before and after bookkeeping. More precise than a generic `expenses` table. | supplier_id, primary_document_id, external_invoice_no, receipt_no, document_date, received_date, currency, gross_amount, net_amount, vat_amount, status, document_quality_status, payable_status, due_date, description, created_from, review_notes | links to `accounting_documents`, `verifications`, `payments`, `payment_allocations` | Draft and reviewed states editable; after posting mostly locked with additive links |
 | `purchase_document_lines` | Holds line-level classification, VAT, and account mapping. | purchase_document_id, description, qty, unit_amount, net_amount, vat_amount, gross_amount, expense_account_id, vat_code_id, cost_center, needs_review | belongs to `purchase_documents` | Editable until posting; then locked |
 
@@ -512,6 +512,7 @@ If a receipt is incomplete or ambiguous:
   - Q3: July-September
   - Q4: October-December
 - Store filing due date as data, not hard-coded logic, because due dates depend on registration circumstances
+- Note on filing frequency: Swedish businesses with annual taxable turnover above 40 MSEK must file monthly. Businesses below that threshold typically file quarterly. Some businesses voluntarily file monthly. The system's `accounting_settings` or `vat_returns` frequency configuration should support both quarterly and monthly VAT periods even if the MVP only exercises quarterly.
 
 ### VAT snapshots for filed returns
 
@@ -531,20 +532,64 @@ For each quarterly return preserve:
 - Preserve a link from the correction to the originally affected quarter
 - Allow a later amended snapshot if the business chooses to refile or document adjustment reasoning
 
+### ROT/RUT deductions
+
+ROT (rotavdrag) and RUT (rutavdrag) are Swedish tax deductions for qualifying labor on residential properties. They are highly relevant for any business billing labor for home installation, renovation, or home-service work.
+
+Under the system:
+
+- The customer is entitled to deduct 30% (ROT) or 50% (RUT) of the qualifying labor cost directly from the invoice.
+- The business invoices the customer for only the post-deduction amount.
+- The business then claims the deduction directly from Skatteverket.
+
+VAT applies to the full labor cost before the deduction, meaning the customer still pays VAT on the full labor amount even though they pay reduced cash.
+
+Typical posting for a ROT invoice:
+
+- debit accounts receivable (customer portion)
+- debit accounts receivable – Skatteverket ROT claim
+- credit revenue (full labor cost)
+- credit output VAT (on full labor cost)
+
+The business must track:
+
+- whether each labor line is ROT-qualifying
+- the ROT-deductible percentage per line
+- the outstanding Skatteverket receivable separately from the customer receivable
+- payment of the ROT claim from Skatteverket as a separate settlement event
+
+**Decision required before implementation**: Confirm with the business owner whether the company performs qualifying ROT/RUT work. If yes, the invoice model, posting logic, and receivable tracking must account for split receivables at the outset, as retrofitting this later is difficult.
+
 ### Recommended VAT box scope for MVP
 
-MVP should at least support the common boxes needed for domestic sales and ordinary purchases:
+MVP should at least support the common boxes needed for domestic sales and ordinary purchases, matching the Swedish momsdeklaration (SKV 4700):
 
-- box 05: taxable domestic sales excluding VAT
-- boxes 10, 11, 12: output VAT by rate
+- box 05: total taxable domestic sales excluding VAT (sum of boxes 06–08)
+- box 06: taxable sales at 25%
+- box 07: taxable sales at 12%
+- box 08: taxable sales at 6%
+- box 10: output VAT at 25%
+- box 11: output VAT at 12%
+- box 12: output VAT at 6%
+- box 42: VAT-exempt sales (zero-rated exports, etc.)
+- box 47: corrections and rounding adjustments
 - box 48: deductible input VAT
 - box 49: VAT payable or refundable
 
+Box 05 should always be derived as the sum of 06 + 07 + 08, never entered independently.
+
 If the business expects reverse charge, EU purchases, or import VAT before MVP release, then also include:
 
-- boxes 20-24
-- boxes 30-32
-- boxes 50 and 60-62 where relevant
+- box 20: purchases of services from other EU countries (reverse charge)
+- box 21: purchases of goods from other EU countries (acquisition VAT)
+- boxes 22, 23, 24: acquisition VAT by rate (25%, 12%, 6%)
+- box 30: purchases of services from outside the EU (reverse charge)
+- box 31: domestic reverse charge purchases (e.g. construction services)
+- boxes 32, 33, 34: reverse-charge VAT on box 31 purchases by rate
+- box 35: import VAT reported to Skatteverket
+- boxes 36, 37, 38: import VAT by rate
+
+The SKV 4700 form ends at box 49. There are no boxes 50, 60–62 or higher in the standard Swedish momsdeklaration.
 
 Otherwise design the `vat_codes` model for them now but postpone UI/reporting depth until after MVP.
 
@@ -698,7 +743,7 @@ The safer default is "reopen rarely and only under explicit finance control."
 
 ### Recommended later-phase reports
 
-- SIE export for external accounting migration/interoperability
+- SIE export for external accounting migration/interoperability (SKV SIE4 format; high priority if company uses an external accountant)
 - richer VAT exception reports
 - supplier spend by category
 - cash-basis versus accrual comparison if ever needed
@@ -1176,6 +1221,11 @@ Operational objects are not accounting records unless and until a defined trigge
 - Must the first rollout include reverse-charge, EU purchase, and import VAT handling, or can those remain review-only warnings until needed?
 - How should owner outlays and reimbursements be modeled if the business uses them?
 - Should the app produce an SIE export in MVP, or is a strong CSV/PDF evidence package sufficient for the first declaration cycle?
+  Note: Swedish accountants and bookkeeping firms near-universally expect SIE4 format for year-end review and tax filing support. If the company uses an external accountant, SIE export should be treated as high priority even if phased into Phase 7 or an early post-MVP release.
+- Does the business perform qualifying ROT or RUT work?
+  If yes, the invoice model must support split receivables (customer portion vs. Skatteverket ROT/RUT claim), and the accounting posting logic and payment matching must handle two separate settlement flows. This cannot be easily retrofitted. Confirm before coding Phase 5.
+- Should the supplier master track f-skatt (F-skatt) registration status?
+  In Sweden, if a supplier does not hold F-skatt, the buyer may be obligated to withhold preliminary tax (arbetsgivaravgifter) on payments for work. This is especially relevant for individual subcontractors or sole traders. The `suppliers` table includes `f_skatt_registered` for this purpose, and the purchase document workflow should warn when posting a payment to a supplier without F-skatt registration on file.
 
 ## 18. Recommended MVP Definition
 
@@ -1257,7 +1307,16 @@ These references are not a substitute for accounting advice, but they are the ma
 - Skatteverket, "Momslagens regler om fakturering":
   - supports the invoice-content requirements, distinction between full and simplified invoices, and the current simplified-invoice threshold of 4,000 SEK including VAT
   - practical implication for this plan: deductible input VAT must depend on document sufficiency, not only on the amount entered by the user
+- Skatteverket, momsdeklaration (SKV 4700):
+  - the standard Swedish VAT return form with boxes 05–49
+  - practical implication for this plan: all VAT code declaration-box mappings must correspond to actual boxes on SKV 4700; there are no boxes higher than 49 on this form
+- Skatteverket, "ROT- och RUT-arbete":
+  - if the business bills qualifying residential labor, the ROT/RUT deduction system applies and affects invoice amounts, receivable split, and settlement from Skatteverket
+  - practical implication for this plan: confirm whether the business performs qualifying work before implementing the sales invoice integration in Phase 5
+- Skatteverket, "F-skatt":
+  - businesses paying for work to individuals or sole traders without F-skatt must withhold preliminary tax
+  - practical implication for this plan: the supplier master should record F-skatt status and the purchase workflow should warn when it is absent
 
 Recommended reviewer note:
 
-- Before coding begins, confirm the chosen account plan and any business-specific VAT scenarios against the company's accountant, especially if the business expects imported goods/services, reverse charge, representation, car-related costs, or owner reimbursements during MVP.
+- Before coding begins, confirm the chosen account plan and any business-specific VAT scenarios against the company's accountant, especially if the business expects imported goods/services, reverse charge, representation, car-related costs, owner reimbursements, or qualifying ROT/RUT labor during MVP.
