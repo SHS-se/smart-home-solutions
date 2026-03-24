@@ -250,6 +250,7 @@ const InvoiceDraftEditor: React.FC = () => {
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const skipNextAutosaveRef = useRef(false);
   const lineItemsRef = useRef<LineItem[]>([]);
+  const deletedRef = useRef(false);
 
   // Always keep a ref to the latest lineItems so we can safely flush pending saves on navigation/unmount.
   useEffect(() => {
