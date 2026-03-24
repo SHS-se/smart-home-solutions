@@ -22,6 +22,7 @@ The immediate goal is to make the app operationally ready for Swedish bookkeepin
 - Append-only accounting: posted accounting records are not edited in place; mistakes are corrected through reversal and adjustment entries.
 - Documents linked to entries: the original uploaded file, extraction results, confirmed business facts, verification, journal entry, payment, and VAT period must remain connected.
 - VAT-ready, not "fully automated tax intelligence": the system should calculate and report Swedish VAT reliably for the common domestic cases in MVP, while routing ambiguous cases to human review.
+- AI-assisted filing by export, not hidden logic: for this business/use case, filing to Skatteverket should be supported through a structured JSON export derived from a locked VAT snapshot and consumed by AI/browser automation with human review before submission.
 - Phased delivery: build the ledger, evidence, expense workflow, invoice integration, VAT snapshots, and locking in deliberate phases rather than trying to ship a full ERP at once.
 
 ### Planning assumptions
@@ -47,6 +48,7 @@ The immediate goal is to make the app operationally ready for Swedish bookkeepin
 - Payment recording and allocation
 - Stripe payment matching for sales invoices
 - Manual or semi-manual matching for supplier payments
+- Versioned JSON export of VAT filing data for AI-assisted browser automation against Skatteverket web forms
 - Audit logs for important actions
 - Period closing and locking
 - Exportable review outputs for internal review or external accountant/auditor use
@@ -66,6 +68,8 @@ The immediate goal is to make the app operationally ready for Swedish bookkeepin
 - Full project accounting or cost-center reporting beyond simple dimensions if needed later
 - Automated legal judgment without human review
 - Multi-company accounting inside the same app instance
+- Fully autonomous tax filing with no human verification step inside the Skatteverket browser session
+- Direct Skatteverket API integration assumptions for this private-business use case
 
 ### Scope boundary statement
 
@@ -92,6 +96,10 @@ The system must satisfy the following business and system requirements:
 - The system must distinguish document date, posting date, due date, and payment date.
 - The system must preserve the filed VAT figures even if later corrections are posted in later periods.
 - Posted entries must remain balanced at all times.
+- VAT filing data must be exportable as a versioned, machine-readable JSON payload derived from an approved VAT snapshot.
+- The exported filing payload must be reproducible later from the same locked snapshot and generation rules version.
+- The system must preserve the JSON payload hash, generation time, and approver identity for each filing export used in practice.
+- The system must support storing filing confirmation evidence from the Skatteverket browser workflow, such as confirmation numbers, screenshots, or downloaded receipts.
 
 ## 4. System Design Principles
 
@@ -111,6 +119,8 @@ The system must satisfy the following business and system requirements:
   Use replacement versions, superseded states, reversal entries, and audit logs instead of overwrite/delete semantics.
 - Reproducibility over convenience.
   A VAT snapshot generated today must be reproducible later from locked facts and preserved report metadata.
+- Browser automation is a downstream consumer, not a source of truth.
+  The AI/browser agent should read an exported payload from the accounting subsystem and fill the web form from that payload; it should not infer VAT figures from loose UI text or recalculate from live mutable data.
 - Minimize hidden automation.
   Posting logic should be explicit, inspectable, idempotent, and testable.
 - Prefer database-enforced invariants for core trust boundaries.
@@ -174,6 +184,7 @@ For MVP, prefixed tables in `public` are the more pragmatic option because the e
 | --- | --- | --- | --- | --- |
 | `vat_returns` | Represents one quarterly VAT return review and filing cycle. | fiscal_year_id, quarter, period_start, period_end, status, generated_at, generated_by, reviewed_at, filed_at, filed_by, filing_reference, notes | parent of `vat_period_snapshots`; linked to included posted entries | Draft mutable; filed rows locked except amendment metadata |
 | `vat_period_snapshots` | Immutable preserved output of what was included and what values were shown at filing/review time. | vat_return_id, snapshot_version, included_entry_ids_json, box_totals_json, source_hash, generated_from_posted_until, generation_rules_version, created_at | belongs to `vat_returns` | Append-only; once created never edited |
+| `tax_filing_exports` | Stores the machine-readable JSON payload generated from a locked VAT snapshot for AI-assisted Skatteverket filing and later audit reproduction. | vat_return_id, vat_period_snapshot_id, export_format, schema_version, payload_json, payload_hash, generated_at, generated_by, approved_at, approved_by, used_at, export_status | belongs to `vat_returns` and `vat_period_snapshots`; linked through audit logs and filing confirmation documents | Append-only payload; status metadata changes audited |
 
 ### Existing operational entities to integrate, not replace
 
@@ -209,7 +220,7 @@ These remain operational sources. They should not become accounting tables by in
 
 The system must preserve and expose the following chain:
 
-`source document -> document metadata -> purchase/sales source record -> verification -> journal entry -> journal entry lines -> payment/payment allocation -> VAT return snapshot`
+`source document -> document metadata -> purchase/sales source record -> verification -> journal entry -> journal entry lines -> payment/payment allocation -> VAT return snapshot -> tax filing export -> filing confirmation evidence`
 
 This chain must be queryable from any point:
 
@@ -234,6 +245,7 @@ Audit log coverage should include at minimum:
 - lock period
 - unlock or reopen period
 - generate VAT snapshot
+- generate tax filing export
 - mark VAT return as filed
 - export reports or evidence package
 
@@ -335,9 +347,13 @@ Recommended initial roles:
    - rules version
    - source hash
 6. Finance user reviews and confirms the values for filing.
-7. Once filed, system marks the VAT return as `filed` and preserves the filed values.
-8. The quarter's accounting periods are closed or locked according to policy.
-9. Later corrections affecting that quarter are handled via future-period adjustments, not by rewriting the filed snapshot.
+7. System generates a versioned `tax_filing_export` JSON payload from the approved snapshot for AI-assisted browser automation.
+8. The JSON export is handed to the filing agent or workflow that fills the Skatteverket web form.
+9. Human reviewer verifies the populated browser form before submission.
+10. After submission, the system stores the filing reference and any confirmation artifacts such as screenshots or receipts.
+11. System marks the VAT return as `filed` and preserves both the filed values and the exact JSON export used.
+12. The quarter's accounting periods are closed or locked according to policy.
+13. Later corrections affecting that quarter are handled via future-period adjustments, not by rewriting the filed snapshot or the prior filing export.
 
 ### Document retention workflow
 
@@ -512,7 +528,7 @@ If a receipt is incomplete or ambiguous:
   - Q3: July-September
   - Q4: October-December
 - Store filing due date as data, not hard-coded logic, because due dates depend on registration circumstances
-- Note on filing frequency: Swedish businesses with annual taxable turnover above 40 MSEK must file monthly. Businesses below that threshold typically file quarterly. Some businesses voluntarily file monthly. The system's `accounting_settings` or `vat_returns` frequency configuration should support both quarterly and monthly VAT periods even if the MVP only exercises quarterly.
+- Note on filing frequency: Swedish businesses with annual taxable turnover above 40 MSEK must file monthly. Businesses below that threshold typically file quarterly. Some businesses voluntarily file monthly. For this business, MVP should implement quarterly filing only, but the period and settings model should avoid blocking a later monthly expansion if filing frequency changes.
 
 ### VAT snapshots for filed returns
 
@@ -524,6 +540,67 @@ For each quarterly return preserve:
 - generation time
 - filer/reviewer identity
 - any manual adjustment note entered before filing
+
+### AI-assisted Skatteverket filing export
+
+Because the filing workflow is expected to use AI assistance and browser automation rather than a direct Skatteverket API for this business/use case, the accounting subsystem should produce a dedicated JSON export from the approved VAT snapshot.
+
+This export should be treated as a formal filing artifact, not an ad hoc convenience dump.
+
+Required properties:
+
+- generated only from an approved and locked `vat_period_snapshot`
+- stored with schema version and payload hash
+- reproducible from the same source snapshot
+- safe for an external AI/browser agent to consume without direct database access
+- explicit about which fields are authoritative and which are informational only
+- tied back to the `vat_return` used for filing
+
+Minimum JSON content:
+
+- export metadata
+  - schema version
+  - export timestamp
+  - app/environment identifier
+  - export id
+- business identity
+  - legal name
+  - organization number
+  - VAT number if applicable
+- filing context
+  - filing type: VAT return
+  - Skatteverket form identifier or expected web form context
+  - fiscal year
+  - quarter or filing period
+  - filing frequency setting
+- declaration box payload
+  - every relevant box id
+  - numeric value
+  - currency
+  - whether value is system-derived or manually adjusted
+- review metadata
+  - approved by
+  - approved at
+  - warning flags
+  - unresolved issues list, if any
+- traceability metadata
+  - `vat_return_id`
+  - `vat_period_snapshot_id`
+  - source hash
+  - generation rules version
+
+Recommended optional JSON content:
+
+- per-box drilldown references for audit or troubleshooting
+- counts of included transactions
+- note fields for manual reviewer context
+- filing instructions for the automation agent, such as "fill only listed boxes" and "do not infer missing values"
+
+Operational rule:
+
+- the automation agent should fill only what the JSON payload declares
+- the automation agent should not recalculate totals
+- the human reviewer should approve the web form before final submission
 
 ### Corrections after filing
 
@@ -621,6 +698,8 @@ Otherwise design the `vat_codes` model for them now but postpone UI/reporting de
   - customer invoice PDF
   - credit note
   - bank support
+  - VAT filing JSON export manifest
+  - Skatteverket filing receipt or confirmation screenshot
   - contract/supporting document
 - relation to verification, purchase document, or sales invoice
 
@@ -731,6 +810,11 @@ The safer default is "reopen rarely and only under explicit finance control."
 - VAT report by quarter
   - declaration-box totals
   - drill-down to included entries
+- Structured JSON export for AI-assisted Skatteverket filing
+  - generated from approved VAT snapshot
+  - versioned schema
+  - payload hash
+  - filing context and box values
 - Unpaid supplier invoices / payable overview
   - supplier, due date, amount outstanding
 - Paid/unpaid customer invoices / receivable overview
@@ -966,10 +1050,12 @@ Generate reviewable quarterly VAT figures and preserve filed snapshots.
 
 - `vat_returns`
 - `vat_period_snapshots`
+- `tax_filing_exports`
 - VAT validation checks
 - declaration-box mapping
 - quarter review UI
 - VAT drill-down report
+- Skatteverket filing JSON export generation
 
 **Dependencies**
 
@@ -980,12 +1066,15 @@ Generate reviewable quarterly VAT figures and preserve filed snapshots.
 - posted VAT-bearing entries for a quarter can be gathered deterministically
 - box totals are generated consistently
 - a filed quarter preserves snapshot values and included entries
+- a versioned JSON export can be generated from the approved snapshot without exposing live database access to the filing agent
+- the export contains enough structured information for AI/browser automation to fill the Skatteverket form deterministically
 - later corrections do not rewrite the filed snapshot
 
 **Risks / open questions**
 
 - whether MVP supports only domestic boxes or also reverse-charge/import boxes
 - whether output is advisory only or filing-ready enough to upload elsewhere
+- how brittle the browser automation flow will be when Skatteverket changes web form markup or wording
 
 ### Phase 7: Locking, corrections, exports, and rollout hardening
 
@@ -1031,8 +1120,9 @@ Make the subsystem safe to operate in production before the first filing cycle.
 6. payment and allocation tables
 7. sales invoice link tables
 8. VAT return and snapshot tables
-9. reporting views and export support
-10. lock enforcement and audit hardening
+9. tax filing export tables and filing-artifact linkage
+10. reporting views and export support
+11. lock enforcement and audit hardening
 
 ### Foundational tables first
 
@@ -1082,6 +1172,7 @@ Recommended indexes:
 - `payments(payment_date, status, source_system)`
 - `payment_allocations(target_type, target_id)`
 - `vat_returns(fiscal_year_id, quarter, status)`
+- `tax_filing_exports(vat_return_id, export_format, generated_at)`
 - `accounting_documents(sha256)`
 - `accounting_documents(uploaded_at, document_type)`
 
@@ -1163,6 +1254,17 @@ Operational objects are not accounting records unless and until a defined trigge
   - payout settlement
 - do not infer all accounting from a single mutable invoice status field
 
+### AI-assisted browser automation
+
+- The accounting subsystem should export a deterministic JSON payload and should not require the filing agent to inspect live database tables directly.
+- The browser automation agent should be treated as an external integration consumer, similar to a downstream system.
+- The JSON export should be the only authoritative input for filling Skatteverket web forms.
+- After filing, the automation workflow should write back:
+  - filing reference
+  - submission timestamp
+  - confirmation screenshots or receipts
+  - any automation warnings or partial-failure notes
+
 ### File storage
 
 - reuse Supabase Storage patterns already present in the app
@@ -1198,6 +1300,10 @@ Operational objects are not accounting records unless and until a defined trigge
   Existing invoices may exist without full evidence or without enough historical classification detail.
 - Over-automation of accounting judgment will create false confidence.
   The system should suggest, warn, and queue for review; it should not hallucinate deductibility.
+- Browser automation is brittle by nature.
+  Skatteverket page changes, login/session flows, MFA, or wording changes can break automated form filling even when the accounting data is correct.
+- JSON schema drift is a real operational risk.
+  If the export format changes without versioning discipline, the AI/browser workflow can silently file incorrect values or fill the wrong fields.
 - Permissions are easy to under-design.
   Operational staff may need to upload evidence without gaining power to post or reopen periods.
 
@@ -1218,6 +1324,9 @@ Operational objects are not accounting records unless and until a defined trigge
 - How strict should period reopening be?
   Recommendation: very strict, finance-admin only, reason required, fully audited.
 - Is VAT reporting in v1 advisory/reviewable only, or should it be structured to support file upload preparation immediately?
+- Should the first filing workflow include only JSON export, or also capture filing confirmation artifacts back into the app as mandatory evidence?
+- What exact JSON schema should the browser automation agent consume, and which fields are mandatory versus optional?
+- Who is the required human approver before browser submission is allowed?
 - Must the first rollout include reverse-charge, EU purchase, and import VAT handling, or can those remain review-only warnings until needed?
 - How should owner outlays and reimbursements be modeled if the business uses them?
 - Should the app produce an SIE export in MVP, or is a strong CSV/PDF evidence package sufficient for the first declaration cycle?
@@ -1242,6 +1351,7 @@ Operational objects are not accounting records unless and until a defined trigge
 - Payment capture and allocation
 - Stripe payment matching sufficient for customer invoice settlement
 - VAT snapshot and quarterly review report
+- Versioned JSON export for AI-assisted Skatteverket filing, generated from the approved VAT snapshot
 - Locking of reviewed/closed periods
 - Audit log for sensitive actions
 - Essential reports and export package
