@@ -123,7 +123,7 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
         </div>
 
         {/* SKU List */}
-        <div className="flex-1 overflow-auto">
+        <div className="flex-1 overflow-auto min-h-0">
           <TooltipProvider>
             <Table>
               <TableHeader>
