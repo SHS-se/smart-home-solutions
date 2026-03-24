@@ -96,10 +96,12 @@ The system must satisfy the following business and system requirements:
 - The system must distinguish document date, posting date, due date, and payment date.
 - The system must preserve the filed VAT figures even if later corrections are posted in later periods.
 - Posted entries must remain balanced at all times.
+- Before VAT snapshot generation, the system must perform a reconciliation checkpoint verifying that total debits equal total credits across all posted entries in the period, and that control account balances match derived totals for accounts receivable, accounts payable, and VAT accounts. VAT snapshot generation must be blocked if any reconciliation check fails.
 - VAT filing data must be exportable as a versioned, machine-readable JSON payload derived from an approved VAT snapshot.
 - The exported filing payload must be reproducible later from the same locked snapshot and generation rules version.
 - The system must preserve the JSON payload hash, generation time, and approver identity for each filing export used in practice.
 - The system must support storing filing confirmation evidence from the Skatteverket browser workflow, such as confirmation numbers, screenshots, or downloaded receipts.
+- Every human review or approval action on a VAT return, high-risk verification, or adjustment must store the reviewer identity and timestamp separately from the poster identity and timestamp. Posting and approval are not the same action.
 
 ## 4. System Design Principles
 
@@ -152,10 +154,10 @@ For MVP, prefixed tables in `public` are the more pragmatic option because the e
 
 | Entity | Why it exists | Major fields | Key relationships | Mutability |
 | --- | --- | --- | --- | --- |
-| `verifications` | Legal/accounting header for a booked business event; carries numbering and traceability. | verification_no, series, fiscal_year_id, accounting_period_id, status, document_date, posting_date, description, source_type, source_id, source_snapshot_json, created_by, posted_by, posted_at, reversal_of_verification_id | parent of `journal_entries`; linked to `verification_documents` | Draft editable; posted immutable except status transitions like reversed |
+| `verifications` | Legal/accounting header for a booked business event; carries numbering and traceability. | verification_no, series, fiscal_year_id, accounting_period_id, status, document_date, posting_date, description, source_type, source_id, source_snapshot_json, created_by, posted_by, posted_at, reviewed_by, reviewed_at, reversal_of_verification_id | parent of `journal_entries`; linked to `verification_documents` | Draft editable; posted immutable except status transitions like reversed |
 | `journal_entries` | Posting header for a verification. Keeps accounting state separate from evidence and source references. In MVP this should usually be one primary journal entry per verification. | verification_id, status, posting_date, currency, total_debit, total_credit, posted_at, posted_by, reversal_of_journal_entry_id | belongs to `verifications`; parent of `journal_entry_lines` | Draft editable; posted immutable |
 | `journal_entry_lines` | The actual debit and credit postings that make up the ledger. | journal_entry_id, line_no, account_id, debit_amount, credit_amount, line_description, vat_code_id, tax_base_amount, counterparty_type, counterparty_id, dimension_json | belongs to `journal_entries`; references `accounts`, `vat_codes`, counterparties | Immutable after posting |
-| `accounting_documents` | Canonical metadata row for each evidence file and derivative extraction artifact. | document_type, original_filename, storage_bucket, storage_path, mime_type, size_bytes, sha256, uploaded_at, uploaded_by, source_origin, source_ref, ocr_raw_json, extracted_normalized_json, user_confirmed_json, supersedes_document_id, retention_until | linked to `verification_documents`, `purchase_documents`, and sales-side source records | Binary never replaced in place; metadata append-only except enrichment fields with audit |
+| `accounting_documents` | Canonical metadata row for each evidence file and derivative extraction artifact. | document_type, is_original_evidence, original_filename, storage_bucket, storage_path, mime_type, size_bytes, sha256, uploaded_at, uploaded_by, source_origin, source_ref, ocr_raw_json, extracted_normalized_json, user_confirmed_json, supersedes_document_id, retention_until | linked to `verification_documents`, `purchase_documents`, and sales-side source records | Binary never replaced in place; metadata append-only except enrichment fields with audit |
 | `verification_documents` | Join table linking one verification to one or more documents with roles. | verification_id, document_id, role, linked_at, linked_by | belongs to `verifications` and `accounting_documents` | Additive only; unlink requires audited supersede flow |
 | `audit_log` | Cross-cutting record of sensitive actions. | entity_type, entity_id, action, actor_id, actor_type, reason, occurred_at, before_json, after_json, request_id, external_ref | references many entities logically | Append-only, never updated |
 
@@ -174,7 +176,7 @@ For MVP, prefixed tables in `public` are the more pragmatic option because the e
 | `customers` | Existing operational customer master used on the sales side. It remains a business object, but accounting needs stable linkage to it for receivables and audit traceability. | id, billing details, contact linkage, test/live markers, customer identity fields from existing views | existing source for `invoices`; referenced indirectly by `sales_invoice_links`, `payments`, and ledger reports | Mutable operational record; accounting must snapshot the relevant facts at posting time |
 | `sales_invoices` | Existing operational `invoices` table that represents customer invoices, numbering, due dates, Stripe ids, and lifecycle state. It is accounting-relevant once finalized, but is not itself the ledger. | operational invoice id, customer_id, invoice_number, due_date, status, amount, issued/finalized/paid/voided timestamps, Stripe references | source for `sales_invoice_links`, `payments`, and accounting posting | Mutable operational record; accounting uses immutable snapshots, not live values |
 | `sales_invoice_links` | Bridges existing operational sales invoices to accounting-specific interpretation without mutating the operational invoice model into a ledger model. | operational_invoice_id, verification_id, source_snapshot_json, revenue_recognition_status, posted_at | links existing `sales_invoices` to `verifications` | Additive, mostly immutable after posting |
-| `payments` | Canonical payment record from bank, Stripe, cash, card, or manual entry. | payment_date, amount, currency, method, direction, external_ref, source_system, payer_or_payee_type, payer_or_payee_id, status, bank_transaction_id, stripe_event_id, created_by | linked to `payment_allocations`, `bank_transactions`, `verifications` | Can remain draft/unmatched; matched/posted payment facts become locked |
+| `payments` | Canonical payment record from bank, Stripe, cash, card, or manual entry. | payment_date, amount, currency, method, direction, external_ref, source_system, source_confidence, payer_or_payee_type, payer_or_payee_id, status, bank_transaction_id, stripe_event_id, created_by | linked to `payment_allocations`, `bank_transactions`, `verifications` | Can remain draft/unmatched; matched/posted payment facts become locked |
 | `payment_allocations` | Resolves payments against invoices, supplier liabilities, or reimbursements. | payment_id, target_type, target_id, allocated_amount, allocated_at, allocation_status | belongs to `payments`; targets `purchase_documents`, `sales_invoice_links`, or direct `verifications` | Additive adjustments; prior allocations should be reversed, not overwritten |
 | `bank_transactions` | Stores imported or manually entered bank statement lines and later enables reconciliation. | booking_date, value_date, amount, currency, description, reference, account_identifier, import_batch_id, match_status, raw_payload_json | linked to `payments` and reconciliation workflows | Raw imported facts immutable; matching state audited |
 
@@ -183,7 +185,7 @@ For MVP, prefixed tables in `public` are the more pragmatic option because the e
 | Entity | Why it exists | Major fields | Key relationships | Mutability |
 | --- | --- | --- | --- | --- |
 | `vat_returns` | Represents one quarterly VAT return review and filing cycle. | fiscal_year_id, quarter, period_start, period_end, status, generated_at, generated_by, reviewed_at, filed_at, filed_by, filing_reference, notes | parent of `vat_period_snapshots`; linked to included posted entries | Draft mutable; filed rows locked except amendment metadata |
-| `vat_period_snapshots` | Immutable preserved output of what was included and what values were shown at filing/review time. | vat_return_id, snapshot_version, included_entry_ids_json, box_totals_json, source_hash, generated_from_posted_until, generation_rules_version, created_at | belongs to `vat_returns` | Append-only; once created never edited |
+| `vat_period_snapshots` | Immutable preserved output of what was included and what values were shown at filing/review time. | vat_return_id, snapshot_version, included_entry_ids_json, box_totals_json, source_hash, posted_until_timestamp, generation_rules_version, created_at | belongs to `vat_returns` | Append-only; once created never edited |
 | `tax_filing_exports` | Stores the machine-readable JSON payload generated from a locked VAT snapshot for AI-assisted Skatteverket filing and later audit reproduction. | vat_return_id, vat_period_snapshot_id, export_format, schema_version, payload_json, payload_hash, generated_at, generated_by, approved_at, approved_by, used_at, export_status | belongs to `vat_returns` and `vat_period_snapshots`; linked through audit logs and filing confirmation documents | Append-only payload; status metadata changes audited |
 
 ### Existing operational entities to integrate, not replace
@@ -205,6 +207,11 @@ These remain operational sources. They should not become accounting tables by in
 - Never replace the original binary in place.
 - If a user uploads a corrected scan or a clearer image, create a new document row and link it as `supersedes_document_id` or via `verification_documents.role`.
 - Preserve the original evidence file even when a replacement version is added.
+- Every document must carry an `is_original_evidence` boolean:
+  - `true`: the file is the original document received from the counterparty (supplier invoice, customer invoice, bank statement, receipt)
+  - `false`: the file is derived or generated (system-generated invoice PDF, regenerated copy, export manifest, screenshot)
+- Only original-evidence documents are valid as the primary basis for deductible VAT treatment. Derived documents can be retained as supporting context but must not substitute for originals in VAT decisions.
+- The workflow must warn and require explicit override if a VAT-deductible purchase is linked only to non-original documents.
 
 ### Record immutability
 
@@ -229,6 +236,40 @@ This chain must be queryable from any point:
 - from a VAT box total, find included transactions
 - from a payment, find the liability/receivable it settled
 
+### Payment source confidence
+
+Not all payments carry equal audit weight. The `payments` table includes a `source_confidence` field with the following levels:
+
+- `bank_import`: payment fact was imported from a bank statement; highest objective reliability
+- `stripe`: payment fact originated from a verified Stripe event with an external reference id
+- `manual`: payment was entered manually by a user with no external corroboration
+
+Manual payments are the highest audit risk because they depend entirely on user input. The system should:
+
+- flag manually entered payments visibly in reconciliation views
+- require mandatory notes or reference fields for manual payments above a configurable threshold
+- allow auditors and finance users to filter reports by source confidence level
+- never treat a manual payment the same as a bank-imported or Stripe-confirmed payment when assessing settlement completeness
+
+This distinction must be preserved in audit exports and VAT snapshots where payment state is referenced.
+
+### Reviewer and approval accountability
+
+Posting an entry and approving it for inclusion in a VAT return or filing are distinct acts that may be performed by different people at different times.
+
+The system must track both:
+
+- `posted_by` / `posted_at`: the user and time the entry was committed to the ledger
+- `reviewed_by` / `reviewed_at`: the user and time the entry or document was explicitly reviewed and cleared for filing or period close
+
+These fields apply to:
+
+- `verifications`: especially for manually created entries, adjustments, and high-value postings
+- `vat_returns`: a `reviewed_by` and `reviewed_at` must be recorded before the VAT return can be moved from `review` to `filed`
+- `purchase_documents`: for documents that required classification review
+
+The system should not allow a single user to both post and be the sole reviewer for their own manual entries above a risk threshold, though this policy can be relaxed for small teams if explicitly overridden.
+
 ### Audit logging
 
 Audit log coverage should include at minimum:
@@ -241,10 +282,13 @@ Audit log coverage should include at minimum:
 - reverse journal entry
 - void or cancel accounting-related draft objects
 - match or unmatch payment
+- move period to review state
 - close period
 - lock period
 - unlock or reopen period
+- run pre-snapshot reconciliation check
 - generate VAT snapshot
+- approve VAT return for filing
 - generate tax filing export
 - mark VAT return as filed
 - export reports or evidence package
@@ -289,6 +333,8 @@ Recommended initial roles:
    - VAT code is consistent with rate
    - missing supplier or missing document quality is flagged
    - if simplified receipt/full invoice rules are relevant, warn accordingly
+   - if the linked supplier has `f_skatt_registered = false` (or is unknown/null), the system must display a prominent warning that the buyer may have an obligation to withhold preliminary tax on labor payments. The entry cannot be posted without an explicit acknowledgment or override with a recorded reason. This is a legal risk, not a cosmetic warning.
+   - if the linked document has `is_original_evidence = false` and the line claims deductible input VAT, the system must flag the line for review and block posting without an explicit override.
 8. System creates a draft `verification` and draft `journal_entry`.
 9. Finance user posts the entry.
 10. On posting:
@@ -309,11 +355,12 @@ Recommended initial roles:
    - system snapshots relevant invoice facts
    - system creates a `sales_invoice_links` row
    - system creates a draft or auto-posted verification based on configured policy
+   - the posting carries an idempotency key of `(source_type='sales_invoice', source_id=invoice_id, event_type='finalized')`, enforced by a unique database constraint; repeat triggers are safe no-ops
 4. Posting creates:
    - debit accounts receivable
    - credit revenue account(s)
    - credit output VAT account(s)
-5. Stripe or bank payment events create `payments`.
+5. Stripe or bank payment events create `payments`, each with their own idempotency key derived from the Stripe event id or bank transaction reference.
 6. Payment is matched to the receivable through `payment_allocations`.
 7. If Stripe fees are present, they must be booked explicitly, ideally via a clearing-account flow rather than hidden netting.
 
@@ -332,28 +379,35 @@ Recommended initial roles:
 
 ### VAT period workflow
 
-1. Finance user selects the quarter.
-2. System gathers all posted entries with VAT impact whose posting date falls in the quarter.
-3. System runs completeness and integrity checks:
+1. Finance user moves the quarter's monthly periods to `review` state. New postings are blocked; corrections are still allowed.
+2. Finance user works through the review queue: resolving incomplete documents, unmatched payments, ambiguous VAT-coded lines, and review flags until the period is clean.
+3. System gathers all posted entries with VAT impact whose posting date falls in the quarter.
+4. System runs completeness and integrity checks:
    - unposted purchase documents
    - unmatched invoice states
    - ambiguous VAT-coded lines
    - documents missing evidence or review flags
-4. System generates draft VAT totals and a `vat_returns` record in `draft`.
-5. System generates an immutable `vat_period_snapshot` containing:
+5. System runs the pre-snapshot reconciliation checkpoint:
+   - total debits must equal total credits
+   - control account balances must match derived receivable, payable, and VAT totals
+   - If any check fails, generation is blocked until the discrepancy is resolved
+6. Finance user confirms the period is ready. System moves periods to `closed`.
+7. System records a `posted_until_timestamp` at the moment of snapshot generation to define the exact inclusion boundary.
+8. System generates an immutable `vat_period_snapshot` containing:
    - included entries
    - box totals
    - generation timestamp
+   - `posted_until_timestamp`
    - rules version
    - source hash
-6. Finance user reviews and confirms the values for filing.
-7. System generates a versioned `tax_filing_export` JSON payload from the approved snapshot for AI-assisted browser automation.
-8. The JSON export is handed to the filing agent or workflow that fills the Skatteverket web form.
-9. Human reviewer verifies the populated browser form before submission.
-10. After submission, the system stores the filing reference and any confirmation artifacts such as screenshots or receipts.
-11. System marks the VAT return as `filed` and preserves both the filed values and the exact JSON export used.
-12. The quarter's accounting periods are closed or locked according to policy.
-13. Later corrections affecting that quarter are handled via future-period adjustments, not by rewriting the filed snapshot or the prior filing export.
+9. Finance user reviews the draft VAT totals in-app and explicitly approves them. System records `reviewed_by` and `reviewed_at` on the `vat_returns` row. The return cannot proceed without this step.
+10. System generates a versioned `tax_filing_export` JSON payload from the approved snapshot for AI-assisted browser automation. Records `approved_by` and `approved_at` on the export row.
+11. The JSON export is handed to the filing agent or workflow that fills the Skatteverket web form.
+12. Human reviewer verifies the populated browser form before submission.
+13. After submission, the system stores the filing reference and any confirmation artifacts such as screenshots or receipts.
+14. System marks the VAT return as `filed` and preserves both the filed values and the exact JSON export used.
+15. The quarter's accounting periods are locked according to policy.
+16. Later corrections affecting that quarter are handled via future-period adjustments, not by rewriting the filed snapshot or the prior filing export.
 
 ### Document retention workflow
 
@@ -380,6 +434,18 @@ Recommended initial roles:
 - A `verification` is the business/legal header.
 - A `journal_entry` is the accounting posting attached to that verification.
 - `journal_entry_lines` carry account, amount, debit/credit side, VAT metadata, and optional dimension data.
+
+### Idempotency
+
+Each source event must produce exactly one accounting result, even under retries, duplicate webhooks, or concurrent requests.
+
+- Every posting from a known source event must carry an idempotency key derived from `(source_type, source_id, event_type)`.
+- This combination must have a unique constraint enforced at the database level, not only in application logic.
+- A duplicate insert attempt must be a safe no-op or return the existing result, never create a second posting.
+- This applies to: sales invoice finalizations, Stripe payment events, Stripe fee events, and any other external trigger that can fire more than once.
+- The `verifications` or `journal_entries` table should carry this idempotency key column with the database-level unique constraint.
+
+Without this, webhook retries or deploys under load can produce doubled revenue, doubled VAT, or doubled receivable postings that are extremely difficult to trace.
 
 ### State model
 
@@ -537,9 +603,26 @@ For each quarterly return preserve:
 - generated totals by declaration box
 - included posted entry ids
 - source hash
+- `posted_until_timestamp`: the exact timestamp used as the upper cutoff for entry inclusion; entries posted after this timestamp are excluded even if their `posting_date` falls within the quarter. This makes the snapshot reproducible regardless of when later entries are added.
 - generation time
 - filer/reviewer identity
 - any manual adjustment note entered before filing
+
+The `posted_until_timestamp` is required for reproducibility. Without it, regenerating the same snapshot later may produce different results if new entries were posted into the same period after the snapshot was originally created.
+
+### Pre-snapshot reconciliation checkpoint
+
+Before generating a VAT period snapshot, the system must run the following checks and block snapshot generation if any fail:
+
+- total debits equal total credits across all posted entries within the period
+- accounts receivable control account balance matches the sum of open customer invoice receivables
+- accounts payable control account balance matches the sum of open supplier invoice liabilities
+- output VAT account balance matches the sum of output VAT amounts on posted sales lines
+- input VAT account balance matches the sum of deductible input VAT amounts on posted purchase lines
+- no posted entries reference accounts with deactivated or missing account records
+- no VAT-bearing lines reference vat_codes that are outside their active date range for the period
+
+If any check fails, the system must display which check failed and provide a drill-down to the affected entries. The finance user must resolve the discrepancy before proceeding.
 
 ### AI-assisted Skatteverket filing export
 
@@ -711,6 +794,9 @@ Otherwise design the `vat_codes` model for them now but postpone UI/reporting de
 - Preserve the original evidence object even if a later version is clearer or corrected.
 - Treat OCR output and normalized extraction as derived metadata, not as a replacement for the file itself.
 - Store a stable checksum to detect duplicates and support audit validation.
+- Set `is_original_evidence = true` only for files that were received directly from a counterparty or external source: supplier invoices, supplier receipts, customer invoice PDFs issued by the company, bank statement downloads, and equivalent source documents.
+- Set `is_original_evidence = false` for: system-generated invoice PDFs (regenerated copies), OCR extraction artifacts, export manifests, filing JSON payloads, and screenshots.
+- A VAT deduction must not rely solely on a non-original document. If the only linked document has `is_original_evidence = false`, the purchase document line must be flagged for review before posting.
 
 ### Suggested storage path shape
 
@@ -761,14 +847,20 @@ This is stricter than quarter-only bookkeeping but far more manageable for revie
 Recommended period states:
 
 - `open`: normal posting allowed
-- `closed`: reviewed, no ordinary posting or editing
-- `locked`: hard lock after VAT filing or year-end close
+- `review`: no new postings allowed; corrections to existing entries still allowed; used during VAT period review before filing
+- `closed`: review complete, no posting or editing of any kind; VAT snapshot generation allowed
+- `locked`: hard lock after VAT filing or year-end close; no changes of any kind
 - `reopened`: exceptional administrative state, should be rare and audited
+
+The lifecycle for a period moving toward VAT filing is: `open` → `review` → `closed` → `locked`.
+
+The `review` state is important because it allows the finance user to work through the period's entries and make corrections without new business postings arriving and changing the figures mid-review. A period should enter `review` at the start of the VAT review cycle and remain there until the finance user confirms it is ready for snapshot generation.
 
 ### Lock rules
 
-- New postings cannot use a locked period
-- Drafts cannot be posted into a closed or locked period
+- New postings cannot use a `review`, `closed`, or `locked` period
+- Corrections to existing entries are allowed in `review` but not in `closed` or `locked`
+- Drafts cannot be posted into any period other than `open`
 - Evidence can still be uploaded after close, but any posting must go to an allowed period or follow a reopen process
 - Report exports remain available for all periods regardless of status
 
@@ -819,6 +911,10 @@ The safer default is "reopen rarely and only under explicit finance control."
   - supplier, due date, amount outstanding
 - Paid/unpaid customer invoices / receivable overview
   - invoice number, customer, due date, payment state, outstanding amount
+- Trial balance with reconciliation status
+  - total debits vs credits
+  - control account reconciliation: receivable, payable, VAT
+  - flagged discrepancies before period close or VAT snapshot
 - Account balances / trial-balance style overview
 - Export package for audit or external accountant
   - CSV or similar tabular exports
@@ -1137,6 +1233,32 @@ Do not start with OCR or UI. Start with:
 
 Without these, later workflows will hard-code too much logic in the wrong place.
 
+### Opening balance and migration strategy
+
+Before any transaction history can be reliably posted, the ledger must start from a controlled and auditable initial state.
+
+**Opening balance verification**
+
+Create a dedicated `opening_balance_verification` at the start of the first active accounting period. This verification establishes the initial balance for every account that carries a non-zero opening position. At minimum, for a business migrating from an existing operational state, the opening balance must include:
+
+- bank account(s): confirm balance from bank statement on the opening date
+- accounts receivable: the sum of outstanding customer invoices as at the opening date
+- accounts payable: the sum of outstanding supplier liabilities as at the opening date
+- VAT account(s): any outstanding VAT liability or receivable from prior periods
+- equity/owner's capital or retained earnings: the residual to make the entry balance
+
+This verification must be:
+- supported by documentary evidence (bank statement, debtors list, creditors list, prior VAT filing)
+- reviewed and signed off by the finance admin before being posted
+- treated as immutable once posted
+
+**Principles**
+
+- The system must not assume historical completeness.
+- Any period before the opening date is "legacy" and must not be treated as fully auditable accounting unless explicitly and carefully reconstructed.
+- If the business already has invoices in the app that predate the accounting start, those invoices must either be individually posted into the accounting layer with sufficient evidence, or captured as a lump-sum receivable in the opening balance. Do not silently ignore them.
+- Document the chosen approach in an internal migration memo and attach it to the opening balance verification as supporting evidence.
+
 ### Backfill strategy for existing invoices and documents
 
 - Identify the earliest fiscal date that must be represented in-app for the first VAT declaration.
@@ -1147,8 +1269,8 @@ Without these, later workflows will hard-code too much logic in the wrong place.
   - create posted sales verification only if source data is complete enough
 - If historical completeness is poor, use an opening-balance or legacy-import strategy rather than pretending old data is fully auditable.
 - If existing invoice PDFs are only stored as remote URLs or temporary cache artifacts, document whether the stored artifact is:
-  - original evidence
-  - regenerated derivative
+  - original evidence (`is_original_evidence = true`)
+  - regenerated derivative (`is_original_evidence = false`)
   - missing
 
 ### Constraints and indexes
@@ -1158,7 +1280,7 @@ Recommended constraints:
 - unique account number within chart version
 - unique verification number within series and fiscal year
 - unique VAT code within active version scope
-- unique idempotency key for accounting postings from a given source event
+- unique `(source_type, source_id, event_type)` on `verifications` or `journal_entries` — enforced at the database level to prevent duplicate posting from retried or duplicated source events
 - check constraint that posted entries have posting date and period
 - check constraint that draft entries cannot be attached to locked periods
 
