@@ -1089,6 +1089,28 @@ const InvoiceDraftEditor: React.FC = () => {
                         <Info className="h-3 w-3" />
                         {t('PDF tillgänglig efter fastställd', 'PDF available after finalization')}
                       </p>
+                      {existingInvoice?.status === 'draft' && (
+                        <Button 
+                          variant="destructive" 
+                          className="w-full mt-4"
+                          onClick={async () => {
+                            if (!confirm(t('Är du säker på att du vill radera detta utkast?', 'Are you sure you want to delete this draft?'))) return;
+                            try {
+                              await supabase.from('invoice_line_items').delete().eq('invoice_id', invoiceId!);
+                              await supabase.from('invoice_events').delete().eq('invoice_id', invoiceId!);
+                              const { error } = await supabase.from('invoices').delete().eq('id', invoiceId!);
+                              if (error) throw error;
+                              toast({ title: t('Utkast raderat', 'Draft deleted') });
+                              navigate('/portal/invoices');
+                            } catch (err: any) {
+                              toast({ title: t('Kunde inte radera', 'Could not delete'), description: err.message, variant: 'destructive' });
+                            }
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4 mr-2" />
+                          {t('Radera utkast', 'Delete draft')}
+                        </Button>
+                      )}
                     </>
                   )}
                 </div>
