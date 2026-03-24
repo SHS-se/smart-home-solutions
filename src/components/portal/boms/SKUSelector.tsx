@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -33,7 +33,7 @@ interface SKU {
   sku: string;
   name: string;
   category_id: string | null;
-  category_name?: string; // from join
+  category_name?: string;
   cost_ex_vat_computed: number | null;
   vat_rate: number;
   sell_price_ex_vat: number | null;
@@ -45,7 +45,9 @@ interface SKUSelectorProps {
   onOpenChange: (open: boolean) => void;
   onSelect: (skuId: string, quantity: number) => void;
   onRemove?: (skuId: string) => void;
+  onQuantityChange?: (skuId: string, quantity: number) => void;
   existingSkuIds?: string[];
+  existingQuantities?: Record<string, number>;
 }
 
 const SKUSelector: React.FC<SKUSelectorProps> = ({
@@ -53,11 +55,23 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
   onOpenChange,
   onSelect,
   onRemove,
+  onQuantityChange,
   existingSkuIds = [],
+  existingQuantities = {},
 }) => {
   const { t } = useLanguage();
   const [search, setSearch] = useState('');
   const [quantities, setQuantities] = useState<Record<string, number>>({});
+  // Track pending quantity changes for existing items to flush on close
+  const [pendingChanges, setPendingChanges] = useState<Record<string, number>>({});
+
+  // Reset pending changes when dialog opens
+  useEffect(() => {
+    if (open) {
+      setPendingChanges({});
+      setQuantities({});
+    }
+  }, [open]);
 
   // Fetch SKUs with pre-calculated pricing and category join
   const { data: skus = [] } = useQuery({
@@ -68,7 +82,6 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
         .select('id, sku, name, category_id, cost_ex_vat_computed, vat_rate, sell_price_ex_vat, sell_price_inc_vat, sku_categories!skus_category_id_fkey(id, name)')
         .order('sku');
       if (error) throw error;
-      // Map the joined category name
       return (data || []).map(sku => ({
         ...sku,
         category_name: (sku.sku_categories as { id: string; name: string } | null)?.name || 'Unknown',
@@ -76,7 +89,6 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
     },
   });
 
-  // Filter and sort SKUs with natural sorting
   const filteredSkus = useMemo(() => {
     const filtered = skus.filter(sku =>
       sku.sku.toLowerCase().includes(search.toLowerCase()) ||
@@ -88,16 +100,47 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
   const handleSelect = (sku: SKU) => {
     const quantity = quantities[sku.id] || 1;
     onSelect(sku.id, quantity);
-    // Keep search filter active — don't clear
   };
 
   const handleRemove = (sku: SKU) => {
     onRemove?.(sku.id);
+    // Remove from pending changes since it's been removed
+    setPendingChanges(prev => {
+      const next = { ...prev };
+      delete next[sku.id];
+      return next;
+    });
   };
 
-  const handleQuantityChange = (skuId: string, value: number) => {
-    setQuantities(prev => ({ ...prev, [skuId]: Math.max(1, value) }));
+  const handleQuantityChange = (skuId: string, value: number, isExisting: boolean) => {
+    const qty = Math.max(1, value);
+    if (isExisting) {
+      setPendingChanges(prev => ({ ...prev, [skuId]: qty }));
+    } else {
+      setQuantities(prev => ({ ...prev, [skuId]: qty }));
+    }
   };
+
+  const getDisplayQuantity = (skuId: string, isExisting: boolean) => {
+    if (isExisting) {
+      return pendingChanges[skuId] ?? existingQuantities[skuId] ?? 1;
+    }
+    return quantities[skuId] || 1;
+  };
+
+  // Flush pending quantity changes when closing
+  const handleOpenChange = useCallback((nextOpen: boolean) => {
+    if (!nextOpen && onQuantityChange) {
+      // Flush all pending quantity changes
+      Object.entries(pendingChanges).forEach(([skuId, qty]) => {
+        const originalQty = existingQuantities[skuId];
+        if (originalQty !== qty) {
+          onQuantityChange(skuId, qty);
+        }
+      });
+    }
+    onOpenChange(nextOpen);
+  }, [onOpenChange, onQuantityChange, pendingChanges, existingQuantities]);
 
   const formatPrice = (value: number | null) => {
     if (value === null) return '—';
@@ -105,13 +148,12 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-3xl h-[80vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>{t('Välj SKU', 'Select SKU')}</DialogTitle>
         </DialogHeader>
 
-        {/* Search */}
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
@@ -122,7 +164,6 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
           />
         </div>
 
-        {/* SKU List */}
         <div className="flex-1 overflow-auto min-h-0">
           <TooltipProvider>
             <Table>
@@ -162,14 +203,13 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
                         <Input
                           type="number"
                           min="1"
-                          value={quantities[sku.id] || 1}
-                          onChange={(e) => handleQuantityChange(sku.id, parseInt(e.target.value) || 1)}
+                          value={getDisplayQuantity(sku.id, isAdded)}
+                          onChange={(e) => handleQuantityChange(sku.id, parseInt(e.target.value) || 1, isAdded)}
                           className="w-16 text-center"
-                          disabled={isAdded}
                         />
                       </TableCell>
                       <TableCell>
-                      {isAdded ? (
+                        {isAdded ? (
                           <Button 
                             variant="destructive" 
                             size="sm"
