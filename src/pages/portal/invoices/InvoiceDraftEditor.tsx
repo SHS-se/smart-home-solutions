@@ -447,7 +447,7 @@ const InvoiceDraftEditor: React.FC = () => {
   // Save line items mutation (for auto-save)
   const saveLineItemsMutation = useMutation({
     mutationFn: async (items: LineItem[]) => {
-      if (!invoiceId) return;
+      if (!invoiceId || deletedRef.current) return;
 
       const normalized = items.map((item, idx) => {
         const id = item.id ?? crypto.randomUUID();
