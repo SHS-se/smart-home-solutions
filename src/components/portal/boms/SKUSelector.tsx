@@ -52,6 +52,7 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
   open,
   onOpenChange,
   onSelect,
+  onRemove,
   existingSkuIds = [],
 }) => {
   const { t } = useLanguage();
