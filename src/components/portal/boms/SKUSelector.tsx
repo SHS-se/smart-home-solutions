@@ -88,8 +88,11 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
   const handleSelect = (sku: SKU) => {
     const quantity = quantities[sku.id] || 1;
     onSelect(sku.id, quantity);
-    setQuantities({});
-    setSearch('');
+    // Keep search filter active — don't clear
+  };
+
+  const handleRemove = (sku: SKU) => {
+    onRemove?.(sku.id);
   };
 
   const handleQuantityChange = (skuId: string, value: number) => {
