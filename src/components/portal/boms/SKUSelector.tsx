@@ -26,7 +26,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { Search, Plus, Check } from 'lucide-react';
+import { Search, Plus, X } from 'lucide-react';
 
 interface SKU {
   id: string;
