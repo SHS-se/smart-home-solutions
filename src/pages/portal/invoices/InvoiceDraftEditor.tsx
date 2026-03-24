@@ -1107,7 +1107,16 @@ const InvoiceDraftEditor: React.FC = () => {
           const idx = lineItems.findIndex(li => li.sku_id === skuId && li.line_type === 'hardware');
           if (idx !== -1) removeLineItem(idx);
         }}
+        onQuantityChange={(skuId, quantity) => {
+          const idx = lineItems.findIndex(li => li.sku_id === skuId && li.line_type === 'hardware');
+          if (idx !== -1) updateLineItem(idx, { quantity });
+        }}
         existingSkuIds={existingHardwareSkuIds}
+        existingQuantities={Object.fromEntries(
+          lineItems
+            .filter(li => li.line_type === 'hardware' && li.sku_id)
+            .map(li => [li.sku_id!, li.quantity])
+        )}
       />
 
       {/* BOM Revision Confirmation Dialog */}
