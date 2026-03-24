@@ -169,10 +169,15 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
                         />
                       </TableCell>
                       <TableCell>
-                        {isAdded ? (
-                          <Button variant="ghost" size="sm" disabled>
-                            <Check className="h-4 w-4 mr-1" />
-                            {t('Tillagd', 'Added')}
+                      {isAdded ? (
+                          <Button 
+                            variant="destructive" 
+                            size="sm"
+                            onClick={() => handleRemove(sku)}
+                            disabled={!onRemove}
+                          >
+                            <X className="h-4 w-4 mr-1" />
+                            {t('Ta bort', 'Remove')}
                           </Button>
                         ) : (
                           <Button 
