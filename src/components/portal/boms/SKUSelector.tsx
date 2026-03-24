@@ -26,7 +26,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { Search, Plus, Check } from 'lucide-react';
+import { Search, Plus, X } from 'lucide-react';
 
 interface SKU {
   id: string;
@@ -44,6 +44,7 @@ interface SKUSelectorProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSelect: (skuId: string, quantity: number) => void;
+  onRemove?: (skuId: string) => void;
   existingSkuIds?: string[];
 }
 
@@ -51,6 +52,7 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
   open,
   onOpenChange,
   onSelect,
+  onRemove,
   existingSkuIds = [],
 }) => {
   const { t } = useLanguage();
@@ -86,8 +88,11 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
   const handleSelect = (sku: SKU) => {
     const quantity = quantities[sku.id] || 1;
     onSelect(sku.id, quantity);
-    setQuantities({});
-    setSearch('');
+    // Keep search filter active — don't clear
+  };
+
+  const handleRemove = (sku: SKU) => {
+    onRemove?.(sku.id);
   };
 
   const handleQuantityChange = (skuId: string, value: number) => {
@@ -101,7 +106,7 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl max-h-[80vh] flex flex-col">
+      <DialogContent className="max-w-3xl h-[80vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>{t('Välj SKU', 'Select SKU')}</DialogTitle>
         </DialogHeader>
@@ -118,7 +123,7 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
         </div>
 
         {/* SKU List */}
-        <div className="flex-1 overflow-auto">
+        <div className="flex-1 overflow-auto min-h-0">
           <TooltipProvider>
             <Table>
               <TableHeader>
@@ -135,7 +140,7 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
                 {filteredSkus.map(sku => {
                   const isAdded = existingSkuIds.includes(sku.id);
                   return (
-                    <TableRow key={sku.id} className={isAdded ? 'opacity-50' : ''}>
+                    <TableRow key={sku.id}>
                       <TableCell className="font-mono">{sku.sku}</TableCell>
                       <TableCell>{sku.name}</TableCell>
                       <TableCell>
@@ -164,10 +169,15 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
                         />
                       </TableCell>
                       <TableCell>
-                        {isAdded ? (
-                          <Button variant="ghost" size="sm" disabled>
-                            <Check className="h-4 w-4 mr-1" />
-                            {t('Tillagd', 'Added')}
+                      {isAdded ? (
+                          <Button 
+                            variant="destructive" 
+                            size="sm"
+                            onClick={() => handleRemove(sku)}
+                            disabled={!onRemove}
+                          >
+                            <X className="h-4 w-4 mr-1" />
+                            {t('Ta bort', 'Remove')}
                           </Button>
                         ) : (
                           <Button 
