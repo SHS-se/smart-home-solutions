@@ -44,6 +44,7 @@ interface SKUSelectorProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSelect: (skuId: string, quantity: number) => void;
+  onRemove?: (skuId: string) => void;
   existingSkuIds?: string[];
 }
 
