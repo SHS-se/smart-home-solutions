@@ -1097,7 +1097,6 @@ const InvoiceDraftEditor: React.FC = () => {
                             if (!confirm(t('Är du säker på att du vill radera detta utkast?', 'Are you sure you want to delete this draft?'))) return;
                             try {
                               await supabase.from('invoice_line_items').delete().eq('invoice_id', invoiceId!);
-                              await supabase.from('invoice_events').delete().eq('invoice_id', invoiceId!);
                               const { error } = await supabase.from('invoices').delete().eq('id', invoiceId!);
                               if (error) throw error;
                               toast({ title: t('Utkast raderat', 'Draft deleted') });
