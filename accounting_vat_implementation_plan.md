@@ -121,8 +121,12 @@ The system must satisfy the following business and system requirements:
   Use replacement versions, superseded states, reversal entries, and audit logs instead of overwrite/delete semantics.
 - Reproducibility over convenience.
   A VAT snapshot generated today must be reproducible later from locked facts and preserved report metadata.
+- Controlled posting entry points only.
+  No posted accounting record may be created by direct table insert into `journal_entries`, `journal_entry_lines`, or `verifications` in posted state. Posting must happen through controlled service-layer functions such as `post_verification()` or `post_journal_entry()` so validation, idempotency, lock checks, and audit logging cannot be bypassed.
 - Browser automation is a downstream consumer, not a source of truth.
   The AI/browser agent should read an exported payload from the accounting subsystem and fill the web form from that payload; it should not infer VAT figures from loose UI text or recalculate from live mutable data.
+- VAT export is authoritative; browser automation is optional.
+  The structured VAT JSON export is the authoritative filing output. Browser automation is a convenience layer only, and manual filing must remain possible from the same approved data if automation is unavailable.
 - Minimize hidden automation.
   Posting logic should be explicit, inspectable, idempotent, and testable.
 - Prefer database-enforced invariants for core trust boundaries.
@@ -156,7 +160,7 @@ For MVP, prefixed tables in `public` are the more pragmatic option because the e
 | --- | --- | --- | --- | --- |
 | `verifications` | Legal/accounting header for a booked business event; carries numbering and traceability. | verification_no, series, fiscal_year_id, accounting_period_id, status, document_date, posting_date, description, source_type, source_id, source_snapshot_json, created_by, posted_by, posted_at, reviewed_by, reviewed_at, reversal_of_verification_id | parent of `journal_entries`; linked to `verification_documents` | Draft editable; posted immutable except status transitions like reversed |
 | `journal_entries` | Posting header for a verification. Keeps accounting state separate from evidence and source references. In MVP this should usually be one primary journal entry per verification. | verification_id, status, posting_date, currency, total_debit, total_credit, posted_at, posted_by, reversal_of_journal_entry_id | belongs to `verifications`; parent of `journal_entry_lines` | Draft editable; posted immutable |
-| `journal_entry_lines` | The actual debit and credit postings that make up the ledger. | journal_entry_id, line_no, account_id, debit_amount, credit_amount, line_description, vat_code_id, tax_base_amount, counterparty_type, counterparty_id, dimension_json | belongs to `journal_entries`; references `accounts`, `vat_codes`, counterparties | Immutable after posting |
+| `journal_entry_lines` | The actual debit and credit postings that make up the ledger. | journal_entry_id, line_no, account_id, debit_amount_minor, credit_amount_minor, original_amount_minor, original_currency, exchange_rate, converted_amount_minor, line_description, vat_code_id, tax_base_amount_minor, counterparty_type, counterparty_id, dimension_json | belongs to `journal_entries`; references `accounts`, `vat_codes`, counterparties | Immutable after posting |
 | `accounting_documents` | Canonical metadata row for each evidence file and derivative extraction artifact. | document_type, is_original_evidence, original_filename, storage_bucket, storage_path, mime_type, size_bytes, sha256, uploaded_at, uploaded_by, source_origin, source_ref, ocr_raw_json, extracted_normalized_json, user_confirmed_json, supersedes_document_id, retention_until | linked to `verification_documents`, `purchase_documents`, and sales-side source records | Binary never replaced in place; metadata append-only except enrichment fields with audit |
 | `verification_documents` | Join table linking one verification to one or more documents with roles. | verification_id, document_id, role, linked_at, linked_by | belongs to `verifications` and `accounting_documents` | Additive only; unlink requires audited supersede flow |
 | `audit_log` | Cross-cutting record of sensitive actions. | entity_type, entity_id, action, actor_id, actor_type, reason, occurred_at, before_json, after_json, request_id, external_ref | references many entities logically | Append-only, never updated |
@@ -184,9 +188,20 @@ For MVP, prefixed tables in `public` are the more pragmatic option because the e
 
 | Entity | Why it exists | Major fields | Key relationships | Mutability |
 | --- | --- | --- | --- | --- |
-| `vat_returns` | Represents one quarterly VAT return review and filing cycle. | fiscal_year_id, quarter, period_start, period_end, status, generated_at, generated_by, reviewed_at, filed_at, filed_by, filing_reference, notes | parent of `vat_period_snapshots`; linked to included posted entries | Draft mutable; filed rows locked except amendment metadata |
+| `vat_returns` | Represents one quarterly VAT return review and filing cycle. | fiscal_year_id, quarter, period_start, period_end, status, generated_at, generated_by, reviewed_at, filed_at, filed_by, filing_reference, notes | parent of `vat_period_snapshots`; linked to posted entries selected by cutoff rules | Draft mutable; filed rows locked except amendment metadata |
 | `vat_period_snapshots` | Immutable preserved output of what was included and what values were shown at filing/review time. | vat_return_id, snapshot_version, included_entry_ids_json, box_totals_json, source_hash, posted_until_timestamp, generation_rules_version, created_at | belongs to `vat_returns` | Append-only; once created never edited |
 | `tax_filing_exports` | Stores the machine-readable JSON payload generated from a locked VAT snapshot for AI-assisted Skatteverket filing and later audit reproduction. | vat_return_id, vat_period_snapshot_id, export_format, schema_version, payload_json, payload_hash, generated_at, generated_by, approved_at, approved_by, used_at, export_status | belongs to `vat_returns` and `vat_period_snapshots`; linked through audit logs and filing confirmation documents | Append-only payload; status metadata changes audited |
+
+### Currency and monetary storage model
+
+- `accounting_settings.base_currency` must be `SEK`.
+- All posted accounting amounts must be stored in base currency minor units, not floating-point values.
+- Foreign-currency transactions must preserve:
+  - `original_amount_minor`
+  - `original_currency`
+  - `exchange_rate`
+  - `converted_amount_minor` in SEK
+- These fields should exist on the source line and/or `journal_entry_lines` so the final posted ledger can be audited without recomputing historical conversions.
 
 ### Existing operational entities to integrate, not replace
 
@@ -223,6 +238,28 @@ These remain operational sources. They should not become accounting tables by in
   - replacement verification with clear cross-reference
 - Draft accounting records may be editable, but those edits should still be auditable if the record is likely to become part of the accounting trail.
 
+### Controlled posting boundary
+
+- No direct inserts are allowed into `journal_entries`, `journal_entry_lines`, or `verifications` in posted state from normal application roles.
+- Posting must occur only through controlled service-layer functions such as `post_verification()` and `post_journal_entry()` or equivalent trusted RPC/service entry points.
+- Database permissions must prevent ordinary application users from bypassing those entry points.
+- Only trusted service roles may perform final posting operations.
+- This rule exists to ensure every posting passes the same validation, idempotency, lock checks, balance enforcement, and audit logging path.
+
+### Database-enforced balance integrity
+
+- The system must enforce `total_debit == total_credit` for every posted journal entry at the database level.
+- Application-side checks are necessary but insufficient.
+- The final balance check must happen in the same transaction that marks an entry as posted.
+- If the entry is imbalanced, posting must fail atomically and no partial journal state may remain committed.
+
+### Currency integrity
+
+- Base currency for the ledger is SEK.
+- Historical foreign-currency conversions must be stored at posting time and must not be recomputed later.
+- The stored exchange rate and converted SEK amount become part of the immutable posted record.
+- VAT calculations, VAT snapshots, and report totals must use the stored SEK amounts, not later retranslation.
+
 ### Traceability chain
 
 The system must preserve and expose the following chain:
@@ -235,6 +272,24 @@ This chain must be queryable from any point:
 - from a journal line, find the underlying evidence
 - from a VAT box total, find included transactions
 - from a payment, find the liability/receivable it settled
+
+### Continuous integrity monitoring
+
+The system must run periodic integrity checks, ideally as a daily background job, rather than relying only on quarter-end or VAT-time validation.
+
+Minimum checks:
+
+- global debit total equals global credit total across all posted entries
+- no orphaned `journal_entries` or `journal_entry_lines`
+- no broken foreign key relationships or missing reference rows
+- VAT totals remain internally consistent with posted lines and VAT accounts
+- unmatched payments and stale reconciliation exceptions are surfaced
+
+Operational requirements:
+
+- failures must be logged and alerted, not silently ignored
+- exceptions should appear in an operational integrity report or admin dashboard
+- unresolved integrity failures should block VAT snapshot generation and period close where relevant
 
 ### Payment source confidence
 
@@ -356,13 +411,15 @@ Recommended initial roles:
    - system creates a `sales_invoice_links` row
    - system creates a draft or auto-posted verification based on configured policy
    - the posting carries an idempotency key of `(source_type='sales_invoice', source_id=invoice_id, event_type='finalized')`, enforced by a unique database constraint; repeat triggers are safe no-ops
-4. Posting creates:
+4. Invoice finalization posting creates:
    - debit accounts receivable
    - credit revenue account(s)
    - credit output VAT account(s)
-5. Stripe or bank payment events create `payments`, each with their own idempotency key derived from the Stripe event id or bank transaction reference.
-6. Payment is matched to the receivable through `payment_allocations`.
-7. If Stripe fees are present, they must be booked explicitly, ideally via a clearing-account flow rather than hidden netting.
+5. Payment capture is a separate accounting event. Stripe or bank payment events create `payments`, each with their own idempotency key derived from the Stripe event id or bank transaction reference.
+6. Payment recognition settles the receivable into a clearing account; it is not the same event as revenue recognition.
+7. Stripe fees are separate accounting events and must be posted explicitly, never hidden inside net settlement.
+8. Bank settlement is a separate accounting event again: when a Stripe payout reaches the bank account, the posting moves value from Stripe clearing to the bank account.
+9. Payment and settlement are matched through `payment_allocations` and reconciliation flows.
 
 ### Correction workflow
 
@@ -394,7 +451,7 @@ Recommended initial roles:
 6. Finance user confirms the period is ready. System moves periods to `closed`.
 7. System records a `posted_until_timestamp` at the moment of snapshot generation to define the exact inclusion boundary.
 8. System generates an immutable `vat_period_snapshot` containing:
-   - included entries
+   - optional included-entry references for drill-down
    - box totals
    - generation timestamp
    - `posted_until_timestamp`
@@ -435,6 +492,28 @@ Recommended initial roles:
 - A `journal_entry` is the accounting posting attached to that verification.
 - `journal_entry_lines` carry account, amount, debit/credit side, VAT metadata, and optional dimension data.
 
+### Controlled posting entry point
+
+- No posted accounting data may be inserted directly into `journal_entries`, `journal_entry_lines`, or `verifications` in posted state.
+- Posting must happen through controlled service-layer functions or equivalent trusted RPC/service entry points, for example:
+  - `post_verification()`
+  - `post_journal_entry()`
+- These entry points must perform, in one controlled flow:
+  - idempotency checks
+  - period lock checks
+  - balance validation
+  - currency conversion capture
+  - audit log writes
+  - state transition to `posted`
+- Normal application roles may prepare drafts, but they must not be able to bypass the posting entry point.
+
+### Database-enforced balance
+
+- Balance must be enforced at the database level for every posted journal entry.
+- `total_debit == total_credit` must be validated by constraint, deferred validation, or transaction-level validation in the posting transaction.
+- Application-level checks alone are insufficient because they can be bypassed by race conditions, bad migrations, privileged scripts, or integration mistakes.
+- If imbalance exists, posting must fail atomically and leave no partial posted state behind.
+
 ### Idempotency
 
 Each source event must produce exactly one accounting result, even under retries, duplicate webhooks, or concurrent requests.
@@ -462,6 +541,28 @@ Without this, webhook retries or deploys under load can produce doubled revenue,
 - `payment_date`: actual settlement date
 - `uploaded_at`: evidence arrival timestamp
 - `posted_at`: timestamp the system committed the entry
+
+### Currency handling
+
+- Base currency for the ledger is SEK.
+- All posted accounting amounts must be stored in base currency minor units.
+- Foreign-currency transactions must also store:
+  - original amount
+  - original currency
+  - exchange rate used at posting time
+  - converted SEK amount
+- Conversion happens at posting time and becomes immutable after posting.
+- The system must never recompute historical conversions for already posted entries.
+- VAT calculations and VAT reporting must use the stored converted SEK values.
+
+### Monetary precision and rounding
+
+- All monetary values must be stored in minor units (`ore`) as integers.
+- Rounding strategy must be deterministic and consistent across the system.
+- Rounding should occur at line level.
+- Totals must be derived from already rounded lines, not from separate floating-point recomputation.
+- VAT must be calculated per line and then summed.
+- Inconsistent rounding will break VAT reconciliation, payment matching, and audit reproduction, so the rounding rules must be centralized and immutable once entries are posted.
 
 ### Typical posting patterns for MVP
 
@@ -498,7 +599,21 @@ Without this, webhook retries or deploys under load can produce doubled revenue,
 - debit bank/transaction fee expense
 - credit Stripe clearing
 
+#### Stripe payout reaches bank account
+
+- debit bank
+- credit Stripe clearing
+
 This avoids hiding fees inside net receipts and makes reconciliation easier.
+
+### Stripe timing model
+
+- Revenue recognition occurs at invoice finalization.
+- Payment recognition occurs when payment is captured or confirmed by Stripe or another payment source.
+- Bank settlement occurs when the payout reaches the actual bank account.
+- These are separate accounting events and must not be collapsed into one.
+- Stripe fees must be explicit entries.
+- A clearing account must be used to bridge invoice payment, fee recognition, and bank payout timing.
 
 ### Reversal and adjustment rules
 
@@ -548,6 +663,15 @@ Each VAT-sensitive line should reference a `vat_code`, not only a raw rate. A VA
 - Preserve the exact rate used at posting time
 - Use line-level VAT for mixed-rate documents
 - Derive document-level totals from lines, not the other way around
+
+### Monetary precision and rounding
+
+- All VAT-relevant monetary values must be stored in minor units (`ore`) as integers.
+- VAT must be calculated per line and then summed to document and period totals.
+- Rounding must occur at line level, not only at document total level.
+- Document and VAT-return totals must be derived from already rounded lines.
+- Rounding rules must be deterministic and reproducible across UI, posting logic, exports, and reports.
+- Inconsistent rounding will break VAT reconciliation and create filing differences, so the rounding implementation must be centralized and fixed.
 
 ### Input versus output VAT
 
@@ -601,12 +725,19 @@ If a receipt is incomplete or ambiguous:
 For each quarterly return preserve:
 
 - generated totals by declaration box
-- included posted entry ids
+- `included_entry_ids_json` only as an optional convenience/debugging field
 - source hash
 - `posted_until_timestamp`: the exact timestamp used as the upper cutoff for entry inclusion; entries posted after this timestamp are excluded even if their `posting_date` falls within the quarter. This makes the snapshot reproducible regardless of when later entries are added.
 - generation time
 - filer/reviewer identity
 - any manual adjustment note entered before filing
+
+Authoritative snapshot definition:
+
+- `posting_date` must fall within the VAT period
+- `posted_at` must be less than or equal to `posted_until_timestamp`
+
+`included_entry_ids_json` is not the authoritative definition of the snapshot. It is optional and exists only for convenience, debugging, and drill-down. The authoritative snapshot must be reproducible from the cutoff rules above plus the source hash and generation rules version.
 
 The `posted_until_timestamp` is required for reproducibility. Without it, regenerating the same snapshot later may produce different results if new entries were posted into the same period after the snapshot was originally created.
 
@@ -681,9 +812,13 @@ Recommended optional JSON content:
 
 Operational rule:
 
+- the VAT JSON export is the authoritative filing output from the accounting subsystem
+- browser automation is optional convenience only
+- the same approved data must support manual filing if automation is unavailable or fails
 - the automation agent should fill only what the JSON payload declares
 - the automation agent should not recalculate totals
 - the human reviewer should approve the web form before final submission
+- automation failure must not affect accounting correctness, VAT snapshot correctness, or the ability to complete filing manually
 
 ### Corrections after filing
 
@@ -937,6 +1072,24 @@ The safer default is "reopen rarely and only under explicit finance control."
 - Default reports should exclude drafts
 - Every report should show generation timestamp and user
 
+### Operational integrity monitoring
+
+The system should include an operations-facing integrity report backed by a periodic background job, ideally daily.
+
+Minimum monitored conditions:
+
+- global debit total equals global credit total
+- orphaned journal entries or journal lines
+- broken foreign key relationships or missing reference data
+- VAT inconsistencies between posted lines, VAT codes, and VAT account balances
+- unmatched payments or stale reconciliation exceptions
+
+Operational behavior:
+
+- failures must produce alerts or logged incidents
+- integrity failures should remain visible until resolved
+- the system must not rely only on VAT-period validation to discover broken ledger state
+
 ## 13. Implementation Phases
 
 ### Phase 0: Discovery, rule confirmation, design approval
@@ -990,6 +1143,7 @@ Create the accounting foundation that all later workflows depend on.
 - `vat_codes`
 - `audit_log` skeleton
 - verification number sequencing design
+- controlled posting service entry points and permission model
 
 **Dependencies**
 
@@ -1001,6 +1155,7 @@ Create the accounting foundation that all later workflows depend on.
 - periods exist and support open/closed states
 - VAT codes can express the required domestic scenarios
 - verification numbering approach approved and testable
+- direct inserts into posted accounting paths are blocked for normal application roles
 
 **Risks / open questions**
 
@@ -1161,7 +1316,7 @@ Generate reviewable quarterly VAT figures and preserve filed snapshots.
 
 - posted VAT-bearing entries for a quarter can be gathered deterministically
 - box totals are generated consistently
-- a filed quarter preserves snapshot values and included entries
+- a filed quarter preserves snapshot values, cutoff rules, and reproducibility metadata
 - a versioned JSON export can be generated from the approved snapshot without exposing live database access to the filing agent
 - the export contains enough structured information for AI/browser automation to fill the Skatteverket form deterministically
 - later corrections do not rewrite the filed snapshot
@@ -1183,6 +1338,7 @@ Make the subsystem safe to operate in production before the first filing cycle.
 - close/lock/reopen controls
 - correction and reversal flows
 - audit export package
+- background integrity checks and alerting
 - report polish
 - migration/backfill support for existing invoices and documents
 - production checklist and runbook
@@ -1196,6 +1352,7 @@ Make the subsystem safe to operate in production before the first filing cycle.
 - locked periods reject new postings
 - correction flows work without destructive edits
 - export package is usable by an accountant or auditor
+- periodic integrity checks surface broken ledger state before VAT filing time
 - known legacy data is either backfilled or explicitly excluded with documentation
 
 **Risks / open questions**
@@ -1283,6 +1440,7 @@ Recommended constraints:
 - unique `(source_type, source_id, event_type)` on `verifications` or `journal_entries` — enforced at the database level to prevent duplicate posting from retried or duplicated source events
 - check constraint that posted entries have posting date and period
 - check constraint that draft entries cannot be attached to locked periods
+- database-enforced balance validation so `total_debit == total_credit` for every posted journal entry
 
 Recommended indexes:
 
@@ -1317,12 +1475,22 @@ Core state transitions should be enforced by a combination of:
 - application service layer or RPCs for business workflow
 - database checks/triggers for trust boundaries
 
+### Controlled posting entry point and permissions
+
+- Revoke direct insert permission on `journal_entries` and `journal_entry_lines` from normal application roles.
+- Prevent normal application roles from inserting `verifications` directly in posted state or changing a draft verification to posted outside the controlled posting path.
+- Expose trusted posting operations only through controlled service-layer functions or equivalent RPCs such as `post_verification()` and `post_journal_entry()`.
+- Only trusted service roles may execute those posting operations.
+- Those operations must perform idempotency checks, balance validation, audit logging, lock enforcement, and final state transition in one transaction.
+
 ### Triggers versus application logic
 
 Recommended approach:
 
 - Use application services or SQL functions/RPCs for posting workflows, because posting usually spans several tables and validations.
 - Use narrow database triggers only for invariants such as:
+  - rejecting direct mutation of posted records
+  - rejecting direct inserts into posted-state paths that bypass the service entry point
   - preventing updates to immutable posted rows
   - recording `updated_at` where still appropriate
   - audit log inserts for lock/reopen operations if not already handled by service layer
