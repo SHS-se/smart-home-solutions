@@ -548,7 +548,7 @@ const InvoiceDraftEditor: React.FC = () => {
 
   // Auto-save line items when they change (debounced)
   useEffect(() => {
-    if (!invoiceId || !initialLoadComplete.current) return;
+    if (!invoiceId || !initialLoadComplete.current || deletedRef.current) return;
 
     if (skipNextAutosaveRef.current) {
       skipNextAutosaveRef.current = false;
