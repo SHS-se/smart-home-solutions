@@ -250,6 +250,7 @@ const InvoiceDraftEditor: React.FC = () => {
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const skipNextAutosaveRef = useRef(false);
   const lineItemsRef = useRef<LineItem[]>([]);
+  const deletedRef = useRef(false);
 
   // Always keep a ref to the latest lineItems so we can safely flush pending saves on navigation/unmount.
   useEffect(() => {
@@ -446,7 +447,7 @@ const InvoiceDraftEditor: React.FC = () => {
   // Save line items mutation (for auto-save)
   const saveLineItemsMutation = useMutation({
     mutationFn: async (items: LineItem[]) => {
-      if (!invoiceId) return;
+      if (!invoiceId || deletedRef.current) return;
 
       const normalized = items.map((item, idx) => {
         const id = item.id ?? crypto.randomUUID();
@@ -547,7 +548,7 @@ const InvoiceDraftEditor: React.FC = () => {
 
   // Auto-save line items when they change (debounced)
   useEffect(() => {
-    if (!invoiceId || !initialLoadComplete.current) return;
+    if (!invoiceId || !initialLoadComplete.current || deletedRef.current) return;
 
     if (skipNextAutosaveRef.current) {
       skipNextAutosaveRef.current = false;
@@ -573,7 +574,7 @@ const InvoiceDraftEditor: React.FC = () => {
   // Flush pending saves on unmount
   useEffect(() => {
     return () => {
-      if (!invoiceId || !initialLoadComplete.current) return;
+      if (!invoiceId || !initialLoadComplete.current || deletedRef.current) return;
       if (!saveTimeoutRef.current) return;
 
       clearTimeout(saveTimeoutRef.current);
@@ -1095,6 +1096,8 @@ const InvoiceDraftEditor: React.FC = () => {
                           className="w-full mt-4"
                           onClick={async () => {
                             if (!confirm(t('Är du säker på att du vill radera detta utkast?', 'Are you sure you want to delete this draft?'))) return;
+                            deletedRef.current = true;
+                            if (saveTimeoutRef.current) { clearTimeout(saveTimeoutRef.current); saveTimeoutRef.current = null; }
                             try {
                               await supabase.from('invoice_line_items').delete().eq('invoice_id', invoiceId!);
                               const { error } = await supabase.from('invoices').delete().eq('id', invoiceId!);
