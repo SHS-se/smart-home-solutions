@@ -986,6 +986,10 @@ const BOMBuilder: React.FC = () => {
         open={isSKUSelectorOpen}
         onOpenChange={setIsSKUSelectorOpen}
         onSelect={(skuId, quantity) => addItemMutation.mutate({ sku_id: skuId, quantity })}
+        onRemove={(skuId) => {
+          const item = items.find(i => i.sku_id === skuId);
+          if (item) deleteItemMutation.mutate(item.id);
+        }}
         existingSkuIds={items.map(i => i.sku_id)}
       />
 
