@@ -137,21 +137,28 @@ serve(async (req) => {
     const resendApiKey = Deno.env.get("RESEND_API_KEY");
     if (resendApiKey) {
       try {
-        const resend = new Resend(resendApiKey);
-        await resend.emails.send({
-          from: "Smart Home Solutions <offert@mail.smarthomesolutions.se>",
-          to: ["sales@smarthomesolutions.se"],
-          subject: `✅ Offert accepterad: ${customerName} – ${quote.quote_number || quote_id}`,
-          html: `
-            <h2>Kunden har accepterat offerten</h2>
-            <p><strong>Kund:</strong> ${customerName}</p>
-            <p><strong>E-post:</strong> ${customerEmail}</p>
-            <p><strong>Offert:</strong> ${quote.quote_number || quote_id}</p>
-            <p><strong>IP:</strong> ${clientIp}</p>
-            <p><strong>Tid:</strong> ${new Date().toLocaleString("sv-SE", { timeZone: "Europe/Stockholm" })}</p>
-          `,
-          text: `Offert accepterad\n\nKund: ${customerName}\nE-post: ${customerEmail}\nOffert: ${quote.quote_number || quote_id}`,
+        const emailRes = await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${resendApiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            from: "Smart Home Solutions <offert@mail.smarthomesolutions.se>",
+            to: ["sales@smarthomesolutions.se"],
+            subject: `✅ Offert accepterad: ${customerName} – ${quote.quote_number || quote_id}`,
+            html: `
+              <h2>Kunden har accepterat offerten</h2>
+              <p><strong>Kund:</strong> ${customerName}</p>
+              <p><strong>E-post:</strong> ${customerEmail}</p>
+              <p><strong>Offert:</strong> ${quote.quote_number || quote_id}</p>
+              <p><strong>IP:</strong> ${clientIp}</p>
+              <p><strong>Tid:</strong> ${new Date().toLocaleString("sv-SE", { timeZone: "Europe/Stockholm" })}</p>
+            `,
+            text: `Offert accepterad\n\nKund: ${customerName}\nE-post: ${customerEmail}\nOffert: ${quote.quote_number || quote_id}`,
+          }),
         });
+        if (!emailRes.ok) throw new Error(`Resend API ${emailRes.status}`);
         logStep("Staff notification sent");
       } catch (emailErr) {
         logStep("Staff notification failed (non-blocking)", { error: String(emailErr) });
