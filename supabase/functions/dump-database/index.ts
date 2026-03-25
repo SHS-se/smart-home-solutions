@@ -10,7 +10,7 @@ const log = (step: string, details?: Record<string, unknown>) => {
   console.log(`[DUMP-DB] ${step}${d}`);
 };
 
-/** Serialize a single JS value to a safe SQL literal */
+/** Serialize a single JS value to a safe SQL literal for non-JSONB columns */
 function sqlLiteral(val: unknown): string {
   if (val === null || val === undefined) return "NULL";
   if (typeof val === "boolean") return val ? "true" : "false";
@@ -28,12 +28,27 @@ function sqlLiteral(val: unknown): string {
     });
     return `ARRAY[${items.join(", ")}]`;
   }
-  // JSONB / JSON objects
+  // Plain objects — shouldn't appear in non-JSONB columns, but handle safely
   if (typeof val === "object") {
-    return `'${JSON.stringify(val).replace(/'/g, "''")}'::jsonb`;
+    return `'${JSON.stringify(val).replace(/'/g, "''")}'`;
   }
   // Strings (including UUID, numeric-as-string, etc.)
   return `'${String(val).replace(/'/g, "''")}'`;
+}
+
+/**
+ * Serialize a JS value that will be stored in a JSONB/JSON column.
+ * postgres.js deserialises JSONB back to native JS types, so we must
+ * re-encode everything as valid JSON before casting to ::jsonb.
+ */
+function sqlJsonbLiteral(val: unknown): string {
+  if (val === null || val === undefined) return "NULL";
+  // JSON.stringify handles objects, arrays, strings, numbers, booleans correctly.
+  // Dates should not appear in JSONB columns, but guard anyway.
+  const json = val instanceof Date
+    ? JSON.stringify(val.toISOString())
+    : JSON.stringify(val);
+  return `'${json.replace(/'/g, "''")}'::jsonb`;
 }
 
 Deno.serve(async (req) => {
@@ -215,10 +230,18 @@ Deno.serve(async (req) => {
         }
 
         const cols = Object.keys(rows[0]);
+        // Build a set of JSONB column names for this table so we can serialise correctly
+        const jsonbCols = new Set(
+          (colsByTable[tableName] || [])
+            .filter((c: any) => c.udt_name === "jsonb" || c.udt_name === "json")
+            .map((c: any) => c.column_name)
+        );
         lines.push(`-- ${tableName}: ${rows.length} rows`);
 
         for (const row of rows) {
-          const values = cols.map((col) => sqlLiteral(row[col]));
+          const values = cols.map((col) =>
+            jsonbCols.has(col) ? sqlJsonbLiteral(row[col]) : sqlLiteral(row[col])
+          );
           lines.push(`INSERT INTO public.${tableName} (${cols.join(", ")}) VALUES (${values.join(", ")});`);
         }
         lines.push("");
