@@ -10,6 +10,32 @@ const log = (step: string, details?: Record<string, unknown>) => {
   console.log(`[DUMP-DB] ${step}${d}`);
 };
 
+/** Serialize a single JS value to a safe SQL literal */
+function sqlLiteral(val: unknown): string {
+  if (val === null || val === undefined) return "NULL";
+  if (typeof val === "boolean") return val ? "true" : "false";
+  if (typeof val === "number") return String(val);
+  // Date objects (returned by postgres.js for timestamp/timestamptz columns)
+  if (val instanceof Date) return `'${val.toISOString().replace("T", " ").replace("Z", "+00")}'`;
+  // Arrays (returned by postgres.js for array columns like text[], uuid[])
+  if (Array.isArray(val)) {
+    const items = val.map((item) => {
+      if (item === null || item === undefined) return "NULL";
+      if (typeof item === "boolean") return item ? "true" : "false";
+      if (typeof item === "number") return String(item);
+      if (item instanceof Date) return `'${item.toISOString().replace("T", " ").replace("Z", "+00")}'`;
+      return `'${String(item).replace(/'/g, "''")}'`;
+    });
+    return `ARRAY[${items.join(", ")}]`;
+  }
+  // JSONB / JSON objects
+  if (typeof val === "object") {
+    return `'${JSON.stringify(val).replace(/'/g, "''")}'::jsonb`;
+  }
+  // Strings (including UUID, numeric-as-string, etc.)
+  return `'${String(val).replace(/'/g, "''")}'`;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -48,7 +74,16 @@ Deno.serve(async (req) => {
       const lines: string[] = [];
       const now = new Date().toISOString();
       lines.push(`-- Database backup generated at ${now}`);
-      lines.push(`-- Schema: public\n`);
+      lines.push(`-- Schema: public`);
+      lines.push(``);
+      lines.push(`SET client_encoding = 'UTF8';`);
+      lines.push(`SET standard_conforming_strings = on;`);
+      lines.push(`SET search_path = public, pg_catalog;`);
+      lines.push(`SET check_function_bodies = false;`);
+      lines.push(`SET client_min_messages = warning;`);
+      lines.push(``);
+      lines.push(`BEGIN;`);
+      lines.push(``);
 
       // 1. Get all tables
       const tables = await sql`
@@ -62,7 +97,7 @@ Deno.serve(async (req) => {
       // 2. Get columns for each table
       const allCols = await sql`
         SELECT table_name, column_name, data_type, udt_name,
-               is_nullable, column_default, ordinal_position
+               is_nullable, column_default, ordinal_position, is_identity, identity_generation
         FROM information_schema.columns
         WHERE table_schema = 'public'
         ORDER BY table_name, ordinal_position
@@ -83,7 +118,29 @@ Deno.serve(async (req) => {
         pkMap[pk.table_name].push(pk.column_name);
       }
 
-      // 4. Emit CREATE TABLE statements
+      // 4. Get custom sequences (not the auto-generated ones for identity columns)
+      const sequences = await sql`
+        SELECT sequencename, last_value, start_value, increment_by, max_value, min_value, cycle
+        FROM pg_sequences
+        WHERE schemaname = 'public'
+      `;
+      log("Sequences found", { count: sequences.length });
+
+      // 5. Emit custom sequence DDL
+      if (sequences.length > 0) {
+        lines.push(`-- Sequences`);
+        for (const seq of sequences) {
+          lines.push(`CREATE SEQUENCE IF NOT EXISTS public.${seq.sequencename}`);
+          lines.push(`    START WITH ${seq.start_value}`);
+          lines.push(`    INCREMENT BY ${seq.increment_by}`);
+          lines.push(`    MINVALUE ${seq.min_value}`);
+          lines.push(`    MAXVALUE ${seq.max_value}`);
+          lines.push(`    ${seq.cycle ? "CYCLE" : "NO CYCLE"};`);
+        }
+        lines.push(``);
+      }
+
+      // 6. Emit CREATE TABLE statements
       const colsByTable: Record<string, any[]> = {};
       for (const col of allCols) {
         if (!colsByTable[col.table_name]) colsByTable[col.table_name] = [];
@@ -97,17 +154,33 @@ Deno.serve(async (req) => {
         const colDefs: string[] = [];
         for (const col of cols) {
           let colType = col.udt_name;
-          // Map array types
+          // Map array types (udt_name starts with _ for arrays)
           if (colType.startsWith("_")) colType = colType.slice(1) + "[]";
-          // Map common types
+          // Map common internal type names to standard SQL names
           const typeMap: Record<string, string> = {
-            int4: "integer", int8: "bigint", float8: "double precision",
-            bool: "boolean", timestamptz: "timestamptz", varchar: "character varying",
+            int4: "integer",
+            int8: "bigint",
+            int2: "smallint",
+            float4: "real",
+            float8: "double precision",
+            bool: "boolean",
+            timestamptz: "timestamptz",
+            varchar: "character varying",
+            bpchar: "character",
           };
           colType = typeMap[colType] || colType;
 
           let def = `  ${col.column_name} ${colType}`;
-          if (col.column_default) def += ` DEFAULT ${col.column_default}`;
+          // Identity columns use GENERATED ... AS IDENTITY rather than a DEFAULT
+          if (col.is_identity === "YES") {
+            if (col.identity_generation === "ALWAYS") {
+              def += ` GENERATED ALWAYS AS IDENTITY`;
+            } else {
+              def += ` GENERATED BY DEFAULT AS IDENTITY`;
+            }
+          } else if (col.column_default) {
+            def += ` DEFAULT ${col.column_default}`;
+          }
           if (col.is_nullable === "NO") def += " NOT NULL";
           colDefs.push(def);
         }
@@ -119,7 +192,7 @@ Deno.serve(async (req) => {
         lines.push(`);\n`);
       }
 
-      // 5. Get foreign keys and emit ALTER TABLE
+      // 7. Get foreign keys — emitted AFTER data (see step 10)
       const fks = await sql`
         SELECT tc.constraint_name,
                kcu.table_name, kcu.column_name,
@@ -131,6 +204,27 @@ Deno.serve(async (req) => {
           ON tc.constraint_name = ccu.constraint_name AND tc.table_schema = ccu.table_schema
         WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = 'public'
       `;
+
+      // 8. Dump data for each table
+      for (const tableName of tableNames) {
+        log("Dumping data", { table: tableName });
+        const rows = await sql`SELECT * FROM ${sql(tableName)}`;
+        if (rows.length === 0) {
+          lines.push(`-- ${tableName}: 0 rows\n`);
+          continue;
+        }
+
+        const cols = Object.keys(rows[0]);
+        lines.push(`-- ${tableName}: ${rows.length} rows`);
+
+        for (const row of rows) {
+          const values = cols.map((col) => sqlLiteral(row[col]));
+          lines.push(`INSERT INTO public.${tableName} (${cols.join(", ")}) VALUES (${values.join(", ")});`);
+        }
+        lines.push("");
+      }
+
+      // 9. Emit foreign key constraints now that all data is loaded
       if (fks.length > 0) {
         lines.push(`-- Foreign keys`);
         const seen = new Set<string>();
@@ -142,34 +236,17 @@ Deno.serve(async (req) => {
         lines.push("");
       }
 
-      // 6. Dump data for each table
-      for (const tableName of tableNames) {
-        log("Dumping data", { table: tableName });
-        // Fetch all rows (paginated to avoid memory issues)
-        const rows = await sql`SELECT * FROM ${sql(tableName)}`;
-        if (rows.length === 0) {
-          lines.push(`-- ${tableName}: 0 rows\n`);
-          continue;
+      // 10. Reset sequence values so they continue past the highest inserted ID
+      if (sequences.length > 0) {
+        lines.push(`-- Reset sequences to current values`);
+        for (const seq of sequences) {
+          const currentVal = seq.last_value ?? seq.start_value;
+          lines.push(`SELECT setval('public.${seq.sequencename}', ${currentVal}, true);`);
         }
-
-        const cols = Object.keys(rows[0]);
-        lines.push(`-- ${tableName}: ${rows.length} rows`);
-
-        for (const row of rows) {
-          const values = cols.map((col) => {
-            const val = row[col];
-            if (val === null || val === undefined) return "NULL";
-            if (typeof val === "boolean") return val ? "true" : "false";
-            if (typeof val === "number") return String(val);
-            if (typeof val === "object") {
-              return `'${JSON.stringify(val).replace(/'/g, "''")}'::jsonb`;
-            }
-            return `'${String(val).replace(/'/g, "''")}'`;
-          });
-          lines.push(`INSERT INTO public.${tableName} (${cols.join(", ")}) VALUES (${values.join(", ")});`);
-        }
-        lines.push("");
+        lines.push(``);
       }
+
+      lines.push(`COMMIT;`);
 
       await sql.end();
       log("Dump complete", { totalLines: lines.length });
