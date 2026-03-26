@@ -126,6 +126,10 @@ serve(async (req) => {
       const existing = await stripe.customers.list({ email: customer.contact_email, limit: 1 });
       if (existing.data.length > 0) {
         stripeCustomer = existing.data[0];
+        // Ensure Swedish locale is set on existing customers
+        if (!stripeCustomer.preferred_locales?.includes('sv')) {
+          stripeCustomer = await stripe.customers.update(stripeCustomer.id, { preferred_locales: ['sv'] }) as Stripe.Customer;
+        }
       } else {
         stripeCustomer = await stripe.customers.create({
           name: customer.name || undefined,

@@ -117,6 +117,10 @@ serve(async (req) => {
 
     if (existingCustomers.data.length > 0) {
       stripeCustomerId = existingCustomers.data[0].id;
+      // Ensure Swedish locale is set on existing customers
+      if (!existingCustomers.data[0].preferred_locales?.includes('sv')) {
+        await stripe.customers.update(stripeCustomerId, { preferred_locales: ['sv'] });
+      }
       logStep("Found existing Stripe customer", { stripeCustomerId });
     } else {
       const newCustomer = await stripe.customers.create({
