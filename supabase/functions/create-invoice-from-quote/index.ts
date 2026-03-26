@@ -130,6 +130,7 @@ serve(async (req) => {
         stripeCustomer = await stripe.customers.create({
           name: customer.name || undefined,
           email: customer.contact_email,
+          preferred_locales: ['sv'],
           address: customer.billing_street ? {
             line1: customer.billing_street,
             postal_code: customer.billing_postcode || undefined,
@@ -141,6 +142,7 @@ serve(async (req) => {
     } else {
       stripeCustomer = await stripe.customers.create({
         name: customer.name || "Kund",
+        preferred_locales: ['sv'],
       });
     }
     logStep("Stripe customer", { customerId: stripeCustomer.id });

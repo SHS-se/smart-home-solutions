@@ -122,6 +122,7 @@ serve(async (req) => {
       const newCustomer = await stripe.customers.create({
         email: email,
         name: customer.name || undefined,
+        preferred_locales: ['sv'],
         metadata: {
           internal_customer_id: customer_id
         }
