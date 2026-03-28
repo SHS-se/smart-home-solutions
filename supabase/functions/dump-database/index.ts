@@ -357,6 +357,24 @@ Deno.serve(async (req) => {
       const storageStats = await addStorageToZip(zip, serviceClient);
       log("Storage export complete", storageStats);
 
+      // Export auth users (with password hashes for migration)
+      const allUsers: any[] = [];
+      let page = 1;
+      const perPage = 1000;
+      while (true) {
+        const { data: { users }, error: usersErr } = await serviceClient.auth.admin.listUsers({ page, perPage });
+        if (usersErr) {
+          log("Error listing auth users", { error: usersErr.message });
+          break;
+        }
+        if (!users || users.length === 0) break;
+        allUsers.push(...users);
+        if (users.length < perPage) break;
+        page++;
+      }
+      log("Auth users exported", { count: allUsers.length });
+      zip.file("auth_users.json", JSON.stringify(allUsers, null, 2));
+
       // Generate ZIP
       const zipBlob = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
       log("ZIP generated", { sizeBytes: zipBlob.length });
