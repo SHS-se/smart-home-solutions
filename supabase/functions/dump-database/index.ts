@@ -224,6 +224,39 @@ async function generateSqlDump(sql: any): Promise<string> {
   return lines.join("\n");
 }
 
+/** Export auth users (with hashed passwords) from auth.users directly */
+async function addAuthUsersToZip(zip: JSZip, sql: any): Promise<number> {
+  const users = await sql`
+    SELECT id, aud, role, email, phone, encrypted_password,
+           email_confirmed_at, confirmed_at, last_sign_in_at,
+           raw_app_meta_data, raw_user_meta_data,
+           created_at, updated_at, is_anonymous
+    FROM auth.users
+    WHERE is_anonymous = false
+    ORDER BY created_at
+  `;
+
+  const exported = users.map((u: any) => ({
+    id: u.id,
+    aud: u.aud,
+    role: u.role,
+    email: u.email,
+    phone: u.phone || "",
+    password_hash: u.encrypted_password,
+    email_confirmed_at: u.email_confirmed_at,
+    confirmed_at: u.confirmed_at,
+    last_sign_in_at: u.last_sign_in_at,
+    app_metadata: u.raw_app_meta_data,
+    user_metadata: u.raw_user_meta_data,
+    created_at: u.created_at,
+    updated_at: u.updated_at,
+    is_anonymous: u.is_anonymous,
+  }));
+
+  zip.file("auth_users.json", JSON.stringify(exported, null, 2));
+  return exported.length;
+}
+
 /** Download all files from all storage buckets and add to ZIP */
 async function addStorageToZip(zip: JSZip, serviceClient: any): Promise<{ bucketCount: number; fileCount: number }> {
   const { data: buckets, error: bucketsErr } = await serviceClient.storage.listBuckets();
@@ -352,6 +385,10 @@ Deno.serve(async (req) => {
 
       // Add SQL dump to ZIP
       zip.file(`backup-${dateSlug}.sql`, sqlDump);
+
+      // Add auth users to ZIP
+      const authUserCount = await addAuthUsersToZip(zip, sql);
+      log("Auth users export complete", { count: authUserCount });
 
       // Add storage files to ZIP
       const storageStats = await addStorageToZip(zip, serviceClient);
