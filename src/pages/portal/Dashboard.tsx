@@ -469,7 +469,7 @@ const Dashboard: React.FC = () => {
                       const url = URL.createObjectURL(blob);
                       const a = document.createElement('a');
                       a.href = url;
-                      a.download = `backup-${new Date().toISOString().slice(0,10)}.sql`;
+                      a.download = `backup-${new Date().toISOString().slice(0,10)}.zip`;
                       a.click();
                       URL.revokeObjectURL(url);
                       toast({ title: t('Backup nedladdad!', 'Backup downloaded!') });
@@ -486,7 +486,7 @@ const Dashboard: React.FC = () => {
                   </CardHeader>
                   <CardContent>
                     <p className="text-muted-foreground">
-                      {t('Ladda ner fullständig SQL-backup', 'Download full SQL backup')}
+                      {t('Ladda ner fullständig backup (databas + filer)', 'Download full backup (database + files)')}
                     </p>
                   </CardContent>
                 </Card>
