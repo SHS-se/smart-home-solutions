@@ -486,7 +486,7 @@ const Dashboard: React.FC = () => {
                   </CardHeader>
                   <CardContent>
                     <p className="text-muted-foreground">
-                      {t('Ladda ner fullständig SQL-backup', 'Download full SQL backup')}
+                      {t('Ladda ner fullständig backup (databas + filer)', 'Download full backup (database + files)')}
                     </p>
                   </CardContent>
                 </Card>
