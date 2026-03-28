@@ -357,22 +357,25 @@ Deno.serve(async (req) => {
       const storageStats = await addStorageToZip(zip, serviceClient);
       log("Storage export complete", storageStats);
 
-      // Export auth users (with password hashes for migration)
-      const allUsers: any[] = [];
-      let page = 1;
-      const perPage = 1000;
-      while (true) {
-        const { data: { users }, error: usersErr } = await serviceClient.auth.admin.listUsers({ page, perPage });
-        if (usersErr) {
-          log("Error listing auth users", { error: usersErr.message });
-          break;
-        }
-        if (!users || users.length === 0) break;
-        allUsers.push(...users);
-        if (users.length < perPage) break;
-        page++;
+      // Export auth users with encrypted_password via direct SQL
+      const dbUrl2 = Deno.env.get("SUPABASE_DB_URL")!;
+      const { default: postgres2 } = await import("https://deno.land/x/postgresjs@v3.4.5/mod.js");
+      const sql2 = postgres2(dbUrl2, { ssl: "prefer" });
+      let allUsers: any[] = [];
+      try {
+        allUsers = await sql2`
+          SELECT id, email, encrypted_password, email_confirmed_at, phone,
+                 confirmed_at, last_sign_in_at, raw_app_meta_data, raw_user_meta_data,
+                 created_at, updated_at, is_anonymous
+          FROM auth.users
+          ORDER BY created_at
+        `;
+        log("Auth users exported", { count: allUsers.length });
+      } catch (e) {
+        log("Error exporting auth users", { error: String(e) });
+      } finally {
+        await sql2.end();
       }
-      log("Auth users exported", { count: allUsers.length });
       zip.file("auth_users.json", JSON.stringify(allUsers, null, 2));
 
       // Generate ZIP
