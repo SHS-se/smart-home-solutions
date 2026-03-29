@@ -11,6 +11,50 @@ const log = (step: string, details?: Record<string, unknown>) => {
   console.log(`[DUMP-DB] ${step}${d}`);
 };
 
+/**
+ * Encrypt plaintext with AES-256-GCM + PBKDF2-SHA256 key derivation.
+ * Wire format: [16-byte salt][12-byte IV][ciphertext + 16-byte GCM tag]
+ * Compatible with the Python decrypt.py helper in scripts/.
+ */
+async function encryptData(plaintext: string, passphrase: string): Promise<Uint8Array> {
+  const enc = new TextEncoder();
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv   = crypto.getRandomValues(new Uint8Array(12));
+
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw", enc.encode(passphrase), "PBKDF2", false, ["deriveKey"]
+  );
+  const key = await crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt, iterations: 100_000, hash: "SHA-256" },
+    keyMaterial,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt"]
+  );
+  const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, enc.encode(plaintext));
+
+  const out = new Uint8Array(16 + 12 + ciphertext.byteLength);
+  out.set(salt, 0);
+  out.set(iv, 16);
+  out.set(new Uint8Array(ciphertext), 28);
+  return out;
+}
+
+// Secrets exported from edge function env — ENCRYPTION_KEY itself is always excluded.
+// SUPABASE_* keys are auto-provisioned by the new project and never exported.
+const EXPORTED_SECRET_NAMES = [
+  "SHS_STRIPE_SECRET_KEY",
+  "STRIPE_INVOICE_WEBHOOK_SECRET",
+  "RESEND_API_KEY",
+  "RESEND_RECEIVING_API_KEY",
+  "RESEND_SIGNING_SECRET",
+  "CONTACT_TO",
+  "SUPPORT_TO",
+  "APP_ENV",
+  "PORTAL_URL",
+  "SITE_URL",
+];
+
 /** Serialize a single JS value to a safe SQL literal for non-JSONB columns */
 function sqlLiteral(val: unknown): string {
   if (val === null || val === undefined) return "NULL";
@@ -376,7 +420,35 @@ Deno.serve(async (req) => {
       } finally {
         await sql2.end();
       }
-      zip.file("auth_users.json", JSON.stringify(allUsers, null, 2));
+
+      // Encrypt auth users + secrets if ENCRYPTION_KEY is set.
+      // ENCRYPTION_KEY itself is never included in the export.
+      const encryptionKey = Deno.env.get("ENCRYPTION_KEY");
+
+      if (encryptionKey && allUsers.length > 0) {
+        const encryptedAuth = await encryptData(JSON.stringify(allUsers, null, 2), encryptionKey);
+        zip.file("auth_users.enc", encryptedAuth);
+        log("Auth users encrypted → auth_users.enc");
+      } else {
+        zip.file("auth_users.json", JSON.stringify(allUsers, null, 2));
+        log(encryptionKey ? "Auth users unencrypted (no users)" : "Auth users unencrypted — set ENCRYPTION_KEY secret to encrypt");
+      }
+
+      // Collect and encrypt user-managed secrets
+      const secrets: Record<string, string> = {};
+      for (const name of EXPORTED_SECRET_NAMES) {
+        const val = Deno.env.get(name);
+        if (val !== undefined && val !== "") secrets[name] = val;
+      }
+      log("Secrets collected", { count: Object.keys(secrets).length, names: Object.keys(secrets) });
+
+      if (encryptionKey && Object.keys(secrets).length > 0) {
+        const encryptedSecrets = await encryptData(JSON.stringify(secrets), encryptionKey);
+        zip.file("secrets.enc", encryptedSecrets);
+        log("Secrets encrypted → secrets.enc");
+      } else if (!encryptionKey) {
+        log("ENCRYPTION_KEY not set — secrets not exported. Add ENCRYPTION_KEY as a Supabase secret to enable.");
+      }
 
       // Generate ZIP
       const zipBlob = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
