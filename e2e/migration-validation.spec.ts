@@ -26,6 +26,14 @@ let customerPage: Page;
 let publicPage: Page;
 let guards: SupabaseNetworkGuard[] = [];
 
+function createGuardForContext(context: BrowserContext): SupabaseNetworkGuard | null {
+  if (!config.allowedSupabaseUrl && !config.blockedSupabaseUrl) {
+    return null;
+  }
+
+  return attachSupabaseNetworkGuard(context, config.allowedSupabaseUrl, config.blockedSupabaseUrl);
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -437,10 +445,10 @@ test.describe.serial('Migration validation UI', () => {
     publicContext = await browser.newContext(contextOptions);
 
     guards = [
-      attachSupabaseNetworkGuard(staffContext, config.allowedSupabaseUrl, config.blockedSupabaseUrl),
-      attachSupabaseNetworkGuard(customerContext, config.allowedSupabaseUrl, config.blockedSupabaseUrl),
-      attachSupabaseNetworkGuard(publicContext, config.allowedSupabaseUrl, config.blockedSupabaseUrl),
-    ];
+      createGuardForContext(staffContext),
+      createGuardForContext(customerContext),
+      createGuardForContext(publicContext),
+    ].filter((guard): guard is SupabaseNetworkGuard => guard !== null);
 
     staffPage = await staffContext.newPage();
     customerPage = await customerContext.newPage();

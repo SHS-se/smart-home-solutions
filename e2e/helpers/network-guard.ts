@@ -12,10 +12,10 @@ export interface SupabaseNetworkGuard {
 
 export function attachSupabaseNetworkGuard(
   target: BrowserContext | Page,
-  allowedSupabaseUrl: string,
+  allowedSupabaseUrl?: string,
   blockedSupabaseUrl?: string,
 ): SupabaseNetworkGuard {
-  const allowedHost = new URL(allowedSupabaseUrl).host;
+  const allowedHost = allowedSupabaseUrl ? new URL(allowedSupabaseUrl).host : null;
   const blockedHost = blockedSupabaseUrl ? new URL(blockedSupabaseUrl).host : null;
   const violations: string[] = [];
 
@@ -30,7 +30,7 @@ export function attachSupabaseNetworkGuard(
       return;
     }
 
-    if (url.host !== allowedHost) {
+    if (allowedHost && url.host !== allowedHost) {
       violations.push(`Unexpected Supabase host requested: ${request.method()} ${request.url()}`);
     }
   };
