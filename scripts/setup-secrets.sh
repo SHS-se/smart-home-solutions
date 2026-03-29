@@ -1,0 +1,94 @@
+#!/bin/bash
+# setup-secrets.sh — Set edge function secrets for test or live Supabase project
+# Usage: ./scripts/setup-secrets.sh [test|live]
+#
+# Prompts for each secret interactively. Nothing is written to disk.
+# Secrets are piped directly to the Supabase CLI.
+
+set -e
+
+ENV="${1:-test}"
+
+case "$ENV" in
+  test)
+    PROJECT_REF="vxqpgbzseckgceopitpm"
+    STRIPE_MODE="test mode (sk_test_...)"
+    APP_ENV_VALUE="test"
+    PORTAL_URL_DEFAULT="https://preview--smarthomesolutions.lovable.app"
+    ;;
+  live|prod)
+    PROJECT_REF="oosxndduqzhvrorgogaw"
+    STRIPE_MODE="live mode (sk_live_...)"
+    APP_ENV_VALUE="live"
+    PORTAL_URL_DEFAULT="https://smarthomesolutions.se"
+    ;;
+  *)
+    echo "Usage: $0 [test|live]"
+    exit 1
+    ;;
+esac
+
+echo ""
+echo "╔══════════════════════════════════════════════════════╗"
+echo "║  Setting secrets for: $ENV ($PROJECT_REF)  ║"
+echo "╚══════════════════════════════════════════════════════╝"
+echo ""
+echo "The SUPABASE_* secrets are auto-provisioned — you don't need to enter those."
+echo "Enter each value when prompted. Press Enter to skip (keeps existing value)."
+echo ""
+
+prompt_secret() {
+  local name="$1"
+  local hint="$2"
+  echo -n "  $name ($hint): "
+  read -r value
+  echo "$value"
+}
+
+# Collect secrets
+echo "── Stripe ──────────────────────────────────────────────"
+STRIPE_KEY=$(prompt_secret "SHS_STRIPE_SECRET_KEY" "$STRIPE_MODE — stripe.com/apikeys")
+STRIPE_WEBHOOK=$(prompt_secret "STRIPE_INVOICE_WEBHOOK_SECRET" "whsec_... — stripe.com/webhooks")
+
+echo ""
+echo "── Resend ──────────────────────────────────────────────"
+RESEND_KEY=$(prompt_secret "RESEND_API_KEY" "re_... — resend.com/api-keys")
+RESEND_RECEIVING=$(prompt_secret "RESEND_RECEIVING_API_KEY" "re_... — leave blank to reuse RESEND_API_KEY")
+RESEND_SIGNING=$(prompt_secret "RESEND_SIGNING_SECRET" "resend.com/webhooks signing secret")
+
+echo ""
+echo "── Email addresses ──────────────────────────────────────"
+CONTACT_TO=$(prompt_secret "CONTACT_TO" "sales contact email, e.g. sales@smarthomesolutions.se")
+SUPPORT_TO=$(prompt_secret "SUPPORT_TO" "support email, e.g. support@smarthomesolutions.se")
+
+echo ""
+echo "── App config ──────────────────────────────────────────"
+echo "  APP_ENV → $APP_ENV_VALUE (auto-set)"
+echo "  PORTAL_URL → $PORTAL_URL_DEFAULT (auto-set)"
+
+# Build the secrets list, skipping blank entries
+SECRETS=()
+SECRETS+=("APP_ENV=$APP_ENV_VALUE")
+SECRETS+=("PORTAL_URL=$PORTAL_URL_DEFAULT")
+
+[ -n "$STRIPE_KEY" ]     && SECRETS+=("SHS_STRIPE_SECRET_KEY=$STRIPE_KEY")
+[ -n "$STRIPE_WEBHOOK" ] && SECRETS+=("STRIPE_INVOICE_WEBHOOK_SECRET=$STRIPE_WEBHOOK")
+[ -n "$RESEND_KEY" ]     && SECRETS+=("RESEND_API_KEY=$RESEND_KEY")
+[ -n "$RESEND_SIGNING" ] && SECRETS+=("RESEND_SIGNING_SECRET=$RESEND_SIGNING")
+[ -n "$CONTACT_TO" ]     && SECRETS+=("CONTACT_TO=$CONTACT_TO")
+[ -n "$SUPPORT_TO" ]     && SECRETS+=("SUPPORT_TO=$SUPPORT_TO")
+
+# RESEND_RECEIVING_API_KEY falls back to RESEND_API_KEY if blank
+if [ -n "$RESEND_RECEIVING" ]; then
+  SECRETS+=("RESEND_RECEIVING_API_KEY=$RESEND_RECEIVING")
+elif [ -n "$RESEND_KEY" ]; then
+  SECRETS+=("RESEND_RECEIVING_API_KEY=$RESEND_KEY")
+fi
+
+echo ""
+echo "→ Setting ${#SECRETS[@]} secrets on project $PROJECT_REF..."
+supabase secrets set "${SECRETS[@]}" --project-ref "$PROJECT_REF"
+
+echo ""
+echo "✓ Done! Verify with:"
+echo "  supabase secrets list --project-ref $PROJECT_REF"

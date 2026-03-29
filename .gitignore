@@ -24,3 +24,10 @@ dist-ssr
 *.sw?
 dev.log
 reports/
+
+# Claude workspace
+.claude/
+
+# Supabase CLI temp files and restore artifacts
+supabase/.temp/
+supabase/config.toml.bak
