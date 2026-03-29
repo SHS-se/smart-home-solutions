@@ -399,6 +399,7 @@ const ContactDetail: React.FC = () => {
           <h1 className="text-2xl font-bold">{contact.name}</h1>
           <div className="flex gap-2">
             <Button
+              data-testid="contact-convert-button"
               onClick={handleConvertToCustomer}
               disabled={converting}
             >

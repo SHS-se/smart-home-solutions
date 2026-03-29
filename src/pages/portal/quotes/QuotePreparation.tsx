@@ -1160,6 +1160,7 @@ const QuotePreparation: React.FC = () => {
                 <div className="pt-4 space-y-3">
                   {isEditable && (
                     <Button 
+                      data-testid="quote-save-button"
                       className="w-full bg-[#F6C573] text-foreground hover:bg-[#E5B463] disabled:bg-[#E8DCC4] disabled:text-muted-foreground"
                       size="lg"
                       onClick={handleSaveChanges}
@@ -1170,6 +1171,7 @@ const QuotePreparation: React.FC = () => {
                     </Button>
                   )}
                   <Button 
+                    data-testid="quote-send-email-button"
                     className="w-full"
                     size="lg"
                     onClick={sendQuoteEmail}
@@ -1189,6 +1191,7 @@ const QuotePreparation: React.FC = () => {
                     </p>
                   )}
                   <Button 
+                    data-testid="quote-create-invoice-button"
                     variant="success" 
                     className="w-full"
                     size="lg"

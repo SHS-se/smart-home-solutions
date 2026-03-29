@@ -361,7 +361,7 @@ const PublicQuotePage: React.FC = () => {
         {/* Action buttons */}
         {isActionable && (
           <div className="space-y-3">
-            <Button className="w-full h-12 text-base" onClick={() => setShowAcceptModal(true)}>
+            <Button data-testid="public-quote-accept-button" className="w-full h-12 text-base" onClick={() => setShowAcceptModal(true)}>
               <Check className="h-5 w-5 mr-2" />
               Acceptera offert
             </Button>
@@ -370,7 +370,7 @@ const PublicQuotePage: React.FC = () => {
                 <X className="h-5 w-5 mr-2" />
                 Avvisa
               </Button>
-              <Button variant="outline" className="h-12" onClick={() => setShowRevisionModal(true)}>
+              <Button data-testid="public-quote-request-revision-button" variant="outline" className="h-12" onClick={() => setShowRevisionModal(true)}>
                 <MessageSquare className="h-5 w-5 mr-2" />
                 Begär ändring
               </Button>
@@ -398,7 +398,7 @@ const PublicQuotePage: React.FC = () => {
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowAcceptModal(false)}>Avbryt</Button>
-            <Button onClick={handleAccept} disabled={isAccepting}>
+            <Button data-testid="public-quote-accept-confirm-button" onClick={handleAccept} disabled={isAccepting}>
               {isAccepting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Godkänn
             </Button>
@@ -434,12 +434,12 @@ const PublicQuotePage: React.FC = () => {
           <div className="space-y-4">
             <div>
               <Label htmlFor="rev-message">Meddelande</Label>
-              <Textarea id="rev-message" value={revisionMessage} onChange={e => setRevisionMessage(e.target.value)} placeholder="Beskriv önskade ändringar..." rows={4} />
+              <Textarea data-testid="public-quote-revision-message" id="rev-message" value={revisionMessage} onChange={e => setRevisionMessage(e.target.value)} placeholder="Beskriv önskade ändringar..." rows={4} />
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowRevisionModal(false)}>Avbryt</Button>
-            <Button onClick={handleRevision} disabled={isRequesting || !revisionMessage}>
+            <Button data-testid="public-quote-request-revision-confirm-button" onClick={handleRevision} disabled={isRequesting || !revisionMessage}>
               {isRequesting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Skicka
             </Button>

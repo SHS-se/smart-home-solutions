@@ -1070,6 +1070,7 @@ const InvoiceDraftEditor: React.FC = () => {
                   ) : (
                     <>
                       <Button 
+                        data-testid="invoice-finalize-button"
                         className="w-full"
                         onClick={() => finalizeMutation.mutate()}
                         disabled={finalizeMutation.isPending || lineItems.length === 0}

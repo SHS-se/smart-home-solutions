@@ -509,7 +509,7 @@ const InvoiceDetail: React.FC = () => {
 
                 {/* Paid indicator */}
                 {isPaid && (
-                  <div className="flex items-center gap-2 text-green-600 bg-green-50 dark:bg-green-950/30 rounded-md p-3">
+                  <div data-testid="invoice-paid-indicator" className="flex items-center gap-2 text-green-600 bg-green-50 dark:bg-green-950/30 rounded-md p-3">
                     <CheckCircle2 className="h-5 w-5" />
                     <span className="font-medium">{t('Fakturan är betald', 'Invoice is paid')}</span>
                   </div>
@@ -546,7 +546,7 @@ const InvoiceDetail: React.FC = () => {
                   )}
 
                   {!isVoid && !isPaid && (
-                    <Button className="w-full" onClick={() => setShowEmailModal(true)}>
+                    <Button data-testid="invoice-send-email-button" className="w-full" onClick={() => setShowEmailModal(true)}>
                       <Mail className="h-4 w-4 mr-2" />
                       {t('Skicka faktura', 'Send invoice')}
                     </Button>

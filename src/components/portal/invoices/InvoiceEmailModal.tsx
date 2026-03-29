@@ -160,6 +160,7 @@ Smart Home Solutions`;
             {t('Avbryt', 'Cancel')}
           </Button>
           <Button
+            data-testid="invoice-email-send-button"
             onClick={() => sendMutation.mutate()}
             disabled={!to || !subject || !message || sendMutation.isPending}
           >

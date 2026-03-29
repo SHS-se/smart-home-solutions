@@ -341,7 +341,7 @@ const Account: React.FC<AccountProps> = ({ customerId: propCustomerId, isStaffVi
             )}
 
             <div className="pt-4 border-t border-border flex justify-end">
-              <Button onClick={handleSave} disabled={saving}>
+              <Button data-testid="account-save-button" onClick={handleSave} disabled={saving}>
                 {saving ? (
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                 ) : (

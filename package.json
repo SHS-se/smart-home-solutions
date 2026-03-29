@@ -12,7 +12,11 @@
     "duplicate": "jscpd src",
     "duplicate:report": "jscpd src && open reports/jscpd/html/index.html",
     "quality": "npm run lint && npm run duplicate",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:migration": "playwright test e2e/migration-validation.spec.ts",
+    "test:e2e:migration:headed": "playwright test e2e/migration-validation.spec.ts --headed"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

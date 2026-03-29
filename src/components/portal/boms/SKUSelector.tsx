@@ -157,6 +157,7 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
+            data-testid="sku-selector-search-input"
             placeholder={t('Sök SKU eller produktnamn...', 'Search SKU or product name...')}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -181,7 +182,7 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
                 {filteredSkus.map(sku => {
                   const isAdded = existingSkuIds.includes(sku.id);
                   return (
-                    <TableRow key={sku.id}>
+                    <TableRow key={sku.id} data-testid="sku-selector-row" data-sku-id={sku.id} data-sku-code={sku.sku}>
                       <TableCell className="font-mono">{sku.sku}</TableCell>
                       <TableCell>{sku.name}</TableCell>
                       <TableCell>
@@ -221,6 +222,7 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
                           </Button>
                         ) : (
                           <Button 
+                            data-testid="sku-selector-add-button"
                             variant="outline" 
                             size="sm"
                             onClick={() => handleSelect(sku)}

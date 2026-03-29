@@ -218,7 +218,7 @@ const BOMsList: React.FC = () => {
                 <SelectItem value="all">{t('Alla versioner', 'All versions')}</SelectItem>
               </SelectContent>
             </Select>
-            <Button onClick={() => setIsDialogOpen(true)}>
+            <Button data-testid="bom-create-button" onClick={() => setIsDialogOpen(true)}>
               <Plus className="h-4 w-4 mr-2" />
               {t('Skapa ny BOM', 'Create new BOM')}
             </Button>
@@ -338,6 +338,7 @@ const BOMsList: React.FC = () => {
               <Label htmlFor="project_name">{t('Projektnamn', 'Project name')} *</Label>
               <Input
                 id="project_name"
+                data-testid="bom-project-name-input"
                 value={formData.project_name}
                 onChange={(e) => setFormData(prev => ({ ...prev, project_name: e.target.value }))}
                 placeholder={t('ex. Villa Täby - Smart Home Installation', 'e.g. Villa Täby - Smart Home Installation')}
@@ -349,7 +350,7 @@ const BOMsList: React.FC = () => {
                 value={formData.customer_id || "none"} 
                 onValueChange={(value) => setFormData(prev => ({ ...prev, customer_id: value === "none" ? "" : value }))}
               >
-                <SelectTrigger>
+                <SelectTrigger data-testid="bom-customer-select-trigger">
                   <SelectValue placeholder={t('Välj kund (valfritt)', 'Select customer (optional)')} />
                 </SelectTrigger>
                 <SelectContent>
@@ -368,6 +369,7 @@ const BOMsList: React.FC = () => {
               {t('Avbryt', 'Cancel')}
             </Button>
             <Button 
+              data-testid="bom-create-submit-button"
               onClick={() => createMutation.mutate(formData)} 
               disabled={!formData.project_name.trim() || createMutation.isPending}
             >

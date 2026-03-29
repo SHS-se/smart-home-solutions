@@ -744,7 +744,7 @@ const BOMBuilder: React.FC = () => {
                   }}
                   disabled={isLocked}
                 >
-                  <SelectTrigger className="w-[200px] h-8 text-sm">
+                  <SelectTrigger data-testid="bom-customer-trigger" className="w-[200px] h-8 text-sm">
                     <SelectValue placeholder={t('Välj kund', 'Select customer')} />
                   </SelectTrigger>
                   <SelectContent>
@@ -823,7 +823,7 @@ const BOMBuilder: React.FC = () => {
 
         {/* Actions */}
         <div className="flex flex-wrap gap-2 mb-4">
-          <Button onClick={() => setIsSKUSelectorOpen(true)} disabled={isLocked}>
+          <Button data-testid="bom-add-sku-button" onClick={() => setIsSKUSelectorOpen(true)} disabled={isLocked}>
             <Plus className="h-4 w-4 mr-2" />
             {t('Lägg till SKU', 'Add SKU')}
           </Button>
@@ -836,6 +836,7 @@ const BOMBuilder: React.FC = () => {
               <TooltipTrigger asChild>
                 <span>
                   <Button
+                    data-testid="bom-create-revision-button"
                     variant="outline"
                     onClick={() => setIsRevisionDialogOpen(true)}
                     disabled={(!isLocked && existingQuote?.status !== 'revision_requested') || createRevisionMutation.isPending}
@@ -958,6 +959,7 @@ const BOMBuilder: React.FC = () => {
               </Button>
             ) : (
               <Button 
+                data-testid="bom-create-quote-button"
                 className="w-full" 
                 size="lg" 
                 onClick={createQuote}
@@ -969,6 +971,7 @@ const BOMBuilder: React.FC = () => {
             )}
 
             <Button 
+              data-testid="bom-save-button"
               className="w-full bg-[#F6C573] text-foreground hover:bg-[#E5B463] disabled:bg-[#E8DCC4] disabled:text-muted-foreground"
               size="lg"
               onClick={handleSaveChanges}
@@ -1020,7 +1023,7 @@ const BOMBuilder: React.FC = () => {
             <div className="space-y-2">
               <Label>{t('Anledning till revision *', 'Reason for revision *')}</Label>
               <Select value={revisionReasonType} onValueChange={setRevisionReasonType}>
-                <SelectTrigger>
+                <SelectTrigger data-testid="bom-revision-reason-trigger">
                   <SelectValue placeholder={t('Välj anledning...', 'Select reason...')} />
                 </SelectTrigger>
                 <SelectContent>
@@ -1047,6 +1050,7 @@ const BOMBuilder: React.FC = () => {
               {t('Avbryt', 'Cancel')}
             </Button>
             <Button
+              data-testid="bom-create-revision-submit-button"
               onClick={() => createRevisionMutation.mutate({ reasonType: revisionReasonType, reasonNote: revisionReasonNote })}
               disabled={!revisionReasonType || createRevisionMutation.isPending}
             >

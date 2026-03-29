@@ -425,7 +425,7 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
         </CardHeader>
         <CardContent className="space-y-6">
           {flattened.length === 0 ? (
-            <p className="text-muted-foreground">{t('Inga frågor har lagts till ännu.', 'No questions have been added yet.')}</p>
+            <p data-testid="home-profile-no-questions" className="text-muted-foreground">{t('Inga frågor har lagts till ännu.', 'No questions have been added yet.')}</p>
           ) : (
             flattened.map(q => {
               const visible = evaluateVisibility(q.id, displayRules, answers, questions);
@@ -433,7 +433,14 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
               const questionObj = q as unknown as Question;
 
               return (
-                <div key={q.id} className="space-y-2" style={{ paddingLeft: `${q.depth * 20}px` }}>
+                <div
+                  key={q.id}
+                  data-testid="home-profile-question"
+                  data-question-id={q.id}
+                  data-question-type={questionObj.question_type}
+                  className="space-y-2"
+                  style={{ paddingLeft: `${q.depth * 20}px` }}
+                >
                   <label className="text-sm font-medium">{t(questionObj.question_text, questionObj.question_text_en || questionObj.question_text)}</label>
                   {renderQuestionInput(questionObj)}
                 </div>
@@ -441,7 +448,7 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
             })
           )}
           {flattened.length > 0 && (
-            <Button onClick={handleSaveAnswers} disabled={saving}>
+            <Button data-testid="home-profile-save-button" onClick={handleSaveAnswers} disabled={saving}>
               {saving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
               {t('Spara svar', 'Save answers')}
             </Button>
