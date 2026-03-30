@@ -220,8 +220,21 @@ const handler = async (req: Request): Promise<Response> => {
       );
     }
 
-    // Build branded verification URL
-    const appUrl = "https://smarthomesolutions.lovable.app";
+    // Build branded verification URL.
+    // Prefer the calling app's origin (so local/test/prod all generate correct links),
+    // fall back to PORTAL_URL secret.
+    const headerOrigin = req.headers.get("origin");
+    const headerReferer = req.headers.get("referer") || req.headers.get("referrer");
+    const inferredOrigin = headerOrigin || (() => {
+      if (!headerReferer) return null;
+      try {
+        return new URL(headerReferer).origin;
+      } catch {
+        return null;
+      }
+    })();
+
+    const appUrl = inferredOrigin || Deno.env.get("PORTAL_URL") || "https://smarthomesolutions.se";
     const verifyUrl = `${appUrl}/verify?code=${verificationCode}`;
 
     // Send welcome email with branded link

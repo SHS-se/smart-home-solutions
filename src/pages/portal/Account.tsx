@@ -108,13 +108,6 @@ const Account: React.FC<AccountProps> = ({ customerId: propCustomerId, isStaffVi
         billing_city: formData.billing_same_as_site ? null : (formData.billing_city || null),
       };
 
-      // For customer self-view, also update name/billing_email/phone directly on customers
-      if (!isStaffView) {
-        customerUpdateData.name = formData.name || null;
-        customerUpdateData.billing_email = formData.email || null;
-        customerUpdateData.phone = formData.phone || null;
-      }
-
       const { error: customerError } = await supabase
         .from('customers')
         .update(customerUpdateData)
@@ -122,8 +115,9 @@ const Account: React.FC<AccountProps> = ({ customerId: propCustomerId, isStaffVi
 
       if (customerError) throw customerError;
 
-      // For staff view, update the contact's identity fields if we have a contact_id
-      if (isStaffView && resolvedCustomerData?.contact_id) {
+      // Update the contact's identity fields (name/email/phone live on contacts, not customers)
+      // This applies for both staff view and customer self-view.
+      if (resolvedCustomerData?.contact_id) {
         const contactUpdateData = {
           name: formData.name || null,
           email: formData.email || null,

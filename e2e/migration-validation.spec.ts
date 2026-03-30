@@ -83,21 +83,31 @@ async function clickRadixOption(page: Page, trigger: Locator, optionText: string
 
 async function ensureStaffLoggedIn(page: Page): Promise<void> {
   // /login may immediately redirect to /portal if already authenticated.
-  // Decide based on whether the login form is actually visible (not just the URL).
+  // Treat “we got to /portal” as “we’re logged in”. Do NOT hang for 15 minutes.
   await page.goto('/login');
   await page.waitForLoadState('domcontentloaded');
 
   const emailField = page.getByRole('textbox', { name: /e-postadress|email/i }).first();
   const passwordField = page.getByLabel(/lösenord|password/i).first();
 
-  const shouldLogin = await emailField.isVisible().catch(() => false);
-  if (shouldLogin) {
-    await emailField.fill(config.staffEmail);
-    await passwordField.fill(config.staffPassword);
-    await page.getByRole('button', { name: /logga in|log in/i }).click();
+  // Wait for either:
+  // - redirect to /portal (already logged in)
+  // - login form becomes visible (need to log in)
+  await Promise.race([
+    page.waitForURL(/\/portal(?:\/|$)/, { timeout: 60_000 }).catch(() => null),
+    emailField.waitFor({ state: 'visible', timeout: 60_000 }).catch(() => null),
+  ]);
+
+  if (/\/portal(?:\/|$)/.test(page.url())) {
+    return;
   }
 
-  await page.waitForURL(/\/portal(?:\/|$)/);
+  // If we’re still on /login, do the login flow.
+  await emailField.fill(config.staffEmail);
+  await passwordField.fill(config.staffPassword);
+  await page.getByRole('button', { name: /logga in|log in/i }).click();
+
+  await page.waitForURL(/\/portal(?:\/|$)/, { timeout: 60_000 });
   await expect(page).not.toHaveURL(/\/login$/);
 }
 
@@ -171,13 +181,42 @@ async function completeSignupFromInvite(page: Page, verifyLink: string): Promise
 
 async function updateCustomerAccount(page: Page): Promise<void> {
   await page.goto('/portal/account');
+  // Wait for the auth context to finish loading and populate the form.
+  // The #name field transitions from '' → customer name once customerData arrives.
+  // Filling before this fires gets overwritten by the useEffect, so we wait first.
+  await expect(page.locator('#name')).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('#name')).not.toHaveValue('', { timeout: 15_000 });
   await page.locator('#name').fill(run.customerName);
   await page.locator('#email').fill(run.customerEmail);
   await page.locator('#phone').fill(run.customerPhone);
   await page.locator('#site_street').fill(run.siteStreet);
   await page.locator('#site_postcode').fill(run.sitePostcode);
   await page.locator('#site_city').fill(run.siteCity);
+  // Intercept Supabase REST calls to detect if the save PATCH fires at all and what it returns.
+  const patchRequests: { url: string; status: number; body: string }[] = [];
+  const responseListener = async (resp: import('@playwright/test').Response) => {
+    if (resp.url().includes('/rest/v1/customers') && resp.request().method() === 'PATCH') {
+      const body = await resp.text().catch(() => '');
+      patchRequests.push({ url: resp.url(), status: resp.status(), body });
+    }
+  };
+  page.on('response', responseListener);
+
   await page.getByTestId('account-save-button').click();
+
+  // Wait for saving state to clear (button re-enabled means handleSave finished, even if it returned early)
+  await expect(page.getByTestId('account-save-button')).toBeEnabled({ timeout: 15_000 });
+
+  page.off('response', responseListener);
+
+  // Fail early if save didn't fire at all (resolvedCustomerId was null) or returned an error
+  if (patchRequests.length === 0) {
+    throw new Error('Account save did not issue a PATCH to /rest/v1/customers — resolvedCustomerId was likely null (auth not loaded yet)');
+  }
+  const failedPatch = patchRequests.find(r => r.status >= 300);
+  if (failedPatch) {
+    throw new Error(`Account save PATCH failed: HTTP ${failedPatch.status} — ${failedPatch.body}`);
+  }
 
   await page.reload();
   await expect(page.locator('#name')).toHaveValue(run.customerName);
@@ -189,9 +228,27 @@ async function updateCustomerAccount(page: Page): Promise<void> {
 
 async function answerFirstHomeProfileQuestion(page: Page): Promise<SavedHomeAnswer> {
   await page.goto('/portal/home-profile');
-  await expect(page.getByTestId('home-profile-question').first()).toBeVisible();
+  await page.waitForURL(/\/portal\/home-profile(?:\?|$)/, { timeout: 60_000 });
 
-  const question = page.getByTestId('home-profile-question').first();
+  // Wait for the page to actually render (HomeProfile returns null while auth/home loading).
+  await expect(page.getByRole('heading', { name: /hemprofil|home profile/i }).first()).toBeVisible({
+    timeout: 60_000,
+  });
+
+  const firstQuestion = page.getByTestId('home-profile-question').first();
+  const noQuestions = page.getByTestId('home-profile-no-questions').first();
+
+  // Wait up to 60s for either a question to load or an explicit empty-state.
+  await Promise.race([
+    expect(firstQuestion).toBeVisible({ timeout: 60_000 }),
+    expect(noQuestions).toBeVisible({ timeout: 60_000 }),
+  ]);
+
+  if (await noQuestions.isVisible().catch(() => false)) {
+    throw new Error('Home profile has no questions configured (data-testid=home-profile-no-questions).');
+  }
+
+  const question = firstQuestion;
   const questionId = await question.getAttribute('data-question-id');
   const questionType = await question.getAttribute('data-question-type');
 
@@ -510,7 +567,6 @@ test.describe.serial('Migration validation UI', () => {
   });
 
   test('test 1: signup and customer home profile survive the Supabase migration', async () => {
-    test.slow();
 
     await ensureStaffLoggedIn(staffPage);
     await submitContactLead(customerPage);
@@ -534,7 +590,6 @@ test.describe.serial('Migration validation UI', () => {
   });
 
   test('test 2: bom, quote revision, invoice and payment survive the Supabase migration', async () => {
-    test.slow();
 
     expect(run.customerId, 'Test 1 did not create a reusable customer').toBeTruthy();
 

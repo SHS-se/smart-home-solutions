@@ -191,10 +191,24 @@ serve(async (req) => {
     // Token expiry: 30 days (longer than quote validity to allow viewing after expiry)
     const tokenExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
-    // Determine the base URL for the quote link
-    const siteUrl = Deno.env.get("SITE_URL") || (appEnv === "live"
-      ? "https://smarthomesolutions.lovable.app"
-      : "https://id-preview--f333950d-a4c9-4f4e-b82f-25cfcd289f20.lovable.app");
+    // Determine the base URL for the quote link.
+    // Prefer the calling app's origin (so local/test/prod all generate correct links),
+    // fall back to SITE_URL secret.
+    const headerOrigin = req.headers.get("origin");
+    const headerReferer = req.headers.get("referer") || req.headers.get("referrer");
+    const inferredOrigin = headerOrigin || (() => {
+      if (!headerReferer) return null;
+      try {
+        return new URL(headerReferer).origin;
+      } catch {
+        return null;
+      }
+    })();
+
+    const siteUrl = inferredOrigin || Deno.env.get("SITE_URL") || (appEnv === "live"
+      ? "https://smarthomesolutions.se"
+      : "https://smarthomesolutions.se");
+
     const viewUrl = `${siteUrl}/portal/quote/${quote_id}?token=${tokenHex}`;
 
     // Build email
