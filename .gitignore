@@ -24,6 +24,8 @@ dist-ssr
 *.sw?
 dev.log
 reports/
+playwright-report/
+test-results/
 
 # Claude workspace
 .claude/

@@ -65,16 +65,34 @@ async function clickRadixOption(page: Page, trigger: Locator, optionText: string
 }
 
 async function ensureStaffLoggedIn(page: Page): Promise<void> {
-  await page.goto('/portal');
-  await page.waitForURL(/\/login$|\/portal(?:\/|$)/);
+  // /login may immediately redirect to /portal if already authenticated.
+  // Decide based on whether the login form is actually visible (not just the URL).
+  await page.goto('/login');
+  await page.waitForLoadState('domcontentloaded');
 
-  if (/\/login$/.test(page.url())) {
-    await page.locator('#email').fill(config.staffEmail);
-    await page.locator('#password').fill(config.staffPassword);
+  const emailField = page.getByRole('textbox', { name: /e-postadress|email/i }).first();
+  const passwordField = page.getByLabel(/lösenord|password/i).first();
+
+  const shouldLogin = await emailField.isVisible().catch(() => false);
+  if (shouldLogin) {
+    await emailField.fill(config.staffEmail);
+    await passwordField.fill(config.staffPassword);
     await page.getByRole('button', { name: /logga in|log in/i }).click();
   }
 
   await page.waitForURL(/\/portal(?:\/|$)/);
+  await expect(page).not.toHaveURL(/\/login$/);
+}
+
+async function ensureStaffOnContacts(page: Page): Promise<Locator> {
+  await ensureStaffLoggedIn(page);
+
+  await page.goto('/portal/contacts');
+  await page.waitForURL(/\/portal\/contacts(?:\/|$)/);
+
+  const search = page.locator('input[placeholder*="kontakter"], input[placeholder*="contacts"]');
+  await expect(search.first()).toBeVisible({ timeout: 30_000 });
+  return search.first();
 }
 
 async function submitContactLead(page: Page): Promise<void> {
@@ -93,12 +111,18 @@ async function submitContactLead(page: Page): Promise<void> {
 }
 
 async function openLeadAndConvertToCustomer(page: Page): Promise<void> {
-  await page.goto('/portal/contacts');
-  await page.locator('input[placeholder*="kontakter"], input[placeholder*="contacts"]').fill(run.customerEmail);
+  const search = await ensureStaffOnContacts(page);
+  await search.fill(run.customerEmail);
 
   await expect(async () => {
     await page.reload();
-    await page.locator('input[placeholder*="kontakter"], input[placeholder*="contacts"]').fill(run.customerEmail);
+
+    const refreshedSearch = page
+      .locator('input[placeholder*="kontakter"], input[placeholder*="contacts"]')
+      .first();
+    await expect(refreshedSearch).toBeVisible({ timeout: 30_000 });
+    await refreshedSearch.fill(run.customerEmail);
+
     await expect(page.getByRole('row').filter({ hasText: run.customerEmail }).first()).toBeVisible();
   }).toPass({ timeout: 60_000 });
 
@@ -480,7 +504,7 @@ test.describe.serial('Migration validation UI', () => {
     const inviteEmail = await waitForEmail(config, {
       recipient: run.customerEmail,
       afterIso: inviteEmailStartedAt,
-      subjectIncludes: ['Welcome to the Customer Portal'],
+      // Subject varies depending on template/language; filter by recipient + time instead.
       timeoutMs: 180_000,
     });
 
