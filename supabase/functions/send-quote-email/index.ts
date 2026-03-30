@@ -192,20 +192,9 @@ serve(async (req) => {
     const tokenExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
     // Determine the base URL for the quote link.
-    // Prefer the calling app's origin (so local/test/prod all generate correct links),
-    // fall back to SITE_URL secret.
-    const headerOrigin = req.headers.get("origin");
-    const headerReferer = req.headers.get("referer") || req.headers.get("referrer");
-    const inferredOrigin = headerOrigin || (() => {
-      if (!headerReferer) return null;
-      try {
-        return new URL(headerReferer).origin;
-      } catch {
-        return null;
-      }
-    })();
-
-    const siteUrl = inferredOrigin || Deno.env.get("SITE_URL") || (appEnv === "live"
+    // SITE_URL is set per-environment via `supabase secrets set SITE_URL=...`
+    // e.g. http://127.0.0.1:3002 (local), https://smarthomesolutions.se (prod)
+    const siteUrl = Deno.env.get("SITE_URL") || (appEnv === "live"
       ? "https://smarthomesolutions.se"
       : "https://smarthomesolutions.se");
 
