@@ -229,10 +229,12 @@ async function updateCustomerAccount(page: Page): Promise<void> {
 
 async function answerFirstHomeProfileQuestion(page: Page): Promise<SavedHomeAnswer> {
   await page.goto('/portal/home-profile');
-  await page.waitForURL(/\/portal\/home-profile(?:\?|$)/, { timeout: 60_000 });
 
-  // Wait for the page to actually render (HomeProfile returns null while auth/home loading).
-  await expect(page.getByRole('heading', { name: /hemprofil|home profile/i }).first()).toBeVisible({
+  // Ensure we stay on the actual Home Profile route (not the portal dashboard).
+  await expect(page).toHaveURL(/\/portal\/home-profile(?:\?|$)/, { timeout: 60_000 });
+
+  // Wait for the actual Home Profile page title (h1), not the dashboard card heading.
+  await expect(page.getByRole('heading', { name: /hemprofil|home profile/i, level: 1 })).toBeVisible({
     timeout: 60_000,
   });
 
