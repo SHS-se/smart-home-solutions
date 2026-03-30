@@ -583,6 +583,8 @@ test.describe.serial('Migration validation UI', () => {
     });
 
     const verifyLink = pickFirstLink(inviteEmail, (link) => link.includes('/verify?code='), 'verification');
+    console.log('[e2e] invite email subject:', inviteEmail.subject);
+    console.log('[e2e] verify link:', verifyLink);
     await completeSignupFromInvite(customerPage, verifyLink);
     await updateCustomerAccount(customerPage);
 
