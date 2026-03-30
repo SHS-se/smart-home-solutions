@@ -34,11 +34,17 @@ function escapeHtml(unsafe: string): string {
 }
 
 function getAppUrl(): string {
+  // Prefer explicit per-environment config.
+  // This controls the /verify?code=... links sent from this function.
+  const portalUrl = Deno.env.get("PORTAL_URL") || Deno.env.get("SITE_URL");
+  if (portalUrl) return portalUrl;
+
+  // Fallback to legacy behavior.
   const env = Deno.env.get("APP_ENV");
   if (env === "live") {
-    return "https://smarthomesolutions.lovable.app";
+    return "https://smarthomesolutions.se";
   }
-  return "https://id-preview--f333950d-a4c9-4f4e-b82f-25cfcd289f20.lovable.app";
+  return "https://smarthomesolutions.se";
 }
 
 function generateSecureCode(): string {
