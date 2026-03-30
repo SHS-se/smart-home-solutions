@@ -47,9 +47,26 @@ function parseUrlId(url: string, pattern: RegExp): string {
 }
 
 function expectAppOrigin(link: string, label: string): void {
-  expect(new URL(link).origin, `${label} link should point at the configured frontend origin`).toBe(
+  // Soft assertion: records a failure in CI without stopping the test locally.
+  // The link origin is determined by Supabase's "Site URL" config, which differs
+  // across prod/test/local. We rewrite it for navigation (see rewriteToAppOrigin),
+  // but still flag a mismatch so misconfiguration is visible in reports.
+  expect.soft(new URL(link).origin, `${label} link should point at the configured frontend origin`).toBe(
     new URL(config.baseURL).origin,
   );
+}
+
+/**
+ * Rewrites the origin of a Supabase-generated link to the configured frontend
+ * origin so that local/test/prod runs all navigate to the correct host.
+ * The path and query (including the auth token/code) are preserved unchanged.
+ */
+function rewriteToAppOrigin(link: string): string {
+  const url = new URL(link);
+  const appUrl = new URL(config.baseURL);
+  url.protocol = appUrl.protocol;
+  url.host = appUrl.host;
+  return url.toString();
 }
 
 async function clickRadixOption(page: Page, trigger: Locator, optionText: string): Promise<void> {
@@ -140,7 +157,7 @@ async function openLeadAndConvertToCustomer(page: Page): Promise<void> {
 async function completeSignupFromInvite(page: Page, verifyLink: string): Promise<void> {
   expectAppOrigin(verifyLink, 'Verification');
 
-  await page.goto(verifyLink);
+  await page.goto(rewriteToAppOrigin(verifyLink));
   await page.waitForURL(/\/onboarding\/set-password|\/portal\/home-profile/);
 
   if (/\/onboarding\/set-password/.test(page.url())) {
@@ -315,7 +332,7 @@ async function sendQuoteAndOpenPublicLink(page: Page, afterIso: string): Promise
 }
 
 async function requestQuoteRevision(page: Page, quoteLink: string): Promise<void> {
-  await page.goto(quoteLink);
+  await page.goto(rewriteToAppOrigin(quoteLink));
   await expect(page.getByTestId('public-quote-request-revision-button')).toBeVisible();
   await page.getByTestId('public-quote-request-revision-button').click();
   await page
@@ -353,7 +370,7 @@ async function createBomRevisionAndReissueQuote(page: Page): Promise<string> {
 }
 
 async function acceptUpdatedQuote(page: Page, quoteLink: string): Promise<void> {
-  await page.goto(quoteLink);
+  await page.goto(rewriteToAppOrigin(quoteLink));
   await page.getByTestId('public-quote-accept-button').click();
   await page.getByTestId('public-quote-accept-confirm-button').click();
   await expect(page.getByText(/Offerten är godkänd|quote is accepted/i)).toBeVisible();
