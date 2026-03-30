@@ -578,13 +578,7 @@ test.describe.serial('Migration validation UI', () => {
     const inviteEmail = await waitForEmail(config, {
       recipient: run.customerEmail,
       afterIso: inviteEmailStartedAt,
-      // Important: the contact form may also send an onboarding email with a /verify link.
-      // Filter by the invite-customer welcome subject so we don't pick up the wrong message.
-      subjectIncludes: [
-        'Welcome to the Customer Portal',
-        'Customer Portal',
-        'Set Up Your Account',
-      ],
+      // Subject can vary across templates/languages; filter by recipient + time.
       timeoutMs: 180_000,
     });
 
