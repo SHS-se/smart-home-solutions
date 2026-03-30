@@ -168,7 +168,8 @@ async function completeSignupFromInvite(page: Page, verifyLink: string): Promise
   expectAppOrigin(verifyLink, 'Verification');
 
   await page.goto(rewriteToAppOrigin(verifyLink));
-  await page.waitForURL(/\/onboarding\/set-password|\/portal\/home-profile/);
+  // Match only the customer-portal home-profile path, NOT the staff customer-view variant.
+  await page.waitForURL(/\/onboarding\/set-password|\/portal\/home-profile(?:\?|$)/, { timeout: 60_000 });
 
   if (/\/onboarding\/set-password/.test(page.url())) {
     await page.locator('#password').fill(run.customerPassword);
@@ -176,7 +177,7 @@ async function completeSignupFromInvite(page: Page, verifyLink: string): Promise
     await page.getByRole('button', { name: /spara lösenord|save password/i }).click();
   }
 
-  await page.waitForURL(/\/portal\/home-profile/);
+  await page.waitForURL(/\/portal\/home-profile(?:\?|$)/, { timeout: 60_000 });
 }
 
 async function updateCustomerAccount(page: Page): Promise<void> {
