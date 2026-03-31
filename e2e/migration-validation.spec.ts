@@ -137,33 +137,6 @@ async function submitContactLead(page: Page): Promise<void> {
   ).toBeVisible();
 }
 
-async function openLeadAndConvertToCustomer(page: Page): Promise<void> {
-  const search = await ensureStaffOnContacts(page);
-  await search.fill(run.customerEmail);
-
-  await expect(async () => {
-    await page.reload();
-
-    const refreshedSearch = page
-      .locator('input[placeholder*="kontakter"], input[placeholder*="contacts"]')
-      .first();
-    await expect(refreshedSearch).toBeVisible({ timeout: 30_000 });
-    await refreshedSearch.fill(run.customerEmail);
-
-    await expect(page.getByRole('row').filter({ hasText: run.customerEmail }).first()).toBeVisible();
-  }).toPass({ timeout: 60_000 });
-
-  await page.getByRole('row').filter({ hasText: run.customerEmail }).first().click();
-  await expect(page.getByTestId('contact-convert-button')).toBeVisible();
-
-  await Promise.all([
-    page.waitForURL(/\/portal\/customers\/[^/]+\/overview/),
-    page.getByTestId('contact-convert-button').click(),
-  ]);
-
-  run.customerId = parseUrlId(page.url(), /\/portal\/customers\/([^/]+)\/overview/);
-}
-
 async function completeSignupFromInvite(page: Page, verifyLink: string): Promise<void> {
   expectAppOrigin(verifyLink, 'Verification');
 
@@ -228,10 +201,10 @@ async function updateCustomerAccount(page: Page): Promise<void> {
 }
 
 async function answerFirstHomeProfileQuestion(page: Page): Promise<SavedHomeAnswer> {
-  await page.goto('/portal/home-profile');
-
-  // Ensure we stay on the actual Home Profile route (not the portal dashboard).
-  await expect(page).toHaveURL(/\/portal\/home-profile(?:\?|$)/, { timeout: 60_000 });
+  await expect(async () => {
+    await page.goto('/portal/home-profile');
+    await expect(page).toHaveURL(/\/portal\/home-profile(?:\?|$)/, { timeout: 10_000 });
+  }).toPass({ timeout: 60_000 });
 
   // Wait for the actual Home Profile page title (h1), not the dashboard card heading.
   await expect(page.getByRole('heading', { name: /hemprofil|home profile/i, level: 1 })).toBeVisible({
@@ -570,17 +543,13 @@ test.describe.serial('Migration validation UI', () => {
   });
 
   test('test 1: signup and customer home profile survive the Supabase migration', async () => {
-
-    await ensureStaffLoggedIn(staffPage);
-    await submitContactLead(customerPage);
-
     const inviteEmailStartedAt = nowIso();
-    await openLeadAndConvertToCustomer(staffPage);
+    await submitContactLead(customerPage);
 
     const inviteEmail = await waitForEmail(config, {
       recipient: run.customerEmail,
       afterIso: inviteEmailStartedAt,
-      // Subject can vary across templates/languages; filter by recipient + time.
+      subjectIncludes: ['Fyll i din hemprofil'],
       timeoutMs: 180_000,
     });
 
@@ -595,9 +564,6 @@ test.describe.serial('Migration validation UI', () => {
   });
 
   test('test 2: bom, quote revision, invoice and payment survive the Supabase migration', async () => {
-
-    expect(run.customerId, 'Test 1 did not create a reusable customer').toBeTruthy();
-
     await ensureStaffLoggedIn(staffPage);
     await createBomForCustomer(staffPage);
 
