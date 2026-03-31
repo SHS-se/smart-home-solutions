@@ -222,7 +222,6 @@ const handler = async (req: Request): Promise<Response> => {
     }
 
     // Build branded verification URL from the shared app URL config.
-    // APP_URL is the preferred secret; PORTAL_URL and SITE_URL remain as legacy fallbacks.
     const appUrl = getAppUrl();
     const verifyUrl = `${appUrl}/verify?code=${verificationCode}`;
 
