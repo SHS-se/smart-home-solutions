@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { Resend } from "npm:resend@2.0.0";
+import { getAppUrl } from "../_shared/app-url.ts";
 import { getAppEnvironment } from "../_shared/stripe-env.ts";
 
 const corsHeaders = {
@@ -191,14 +192,9 @@ serve(async (req) => {
     // Token expiry: 30 days (longer than quote validity to allow viewing after expiry)
     const tokenExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
-    // Determine the base URL for the quote link.
-    // SITE_URL is set per-environment via `supabase secrets set SITE_URL=...`
-    // e.g. http://127.0.0.1:3002 (local), https://smarthomesolutions.se (prod)
-    const siteUrl = Deno.env.get("SITE_URL") || (appEnv === "live"
-      ? "https://smarthomesolutions.se"
-      : "https://smarthomesolutions.se");
-
-    const viewUrl = `${siteUrl}/portal/quote/${quote_id}?token=${tokenHex}`;
+    // Build customer-facing links from the shared frontend URL config.
+    const appUrl = getAppUrl();
+    const viewUrl = `${appUrl}/portal/quote/${quote_id}?token=${tokenHex}`;
 
     // Build email
     const emailParams = {

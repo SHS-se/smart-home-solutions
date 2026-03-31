@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { getAppUrl } from "../_shared/app-url.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -66,7 +67,7 @@ const handler = async (req: Request): Promise<Response> => {
       comment = data;
     }
 
-    const portalUrl = Deno.env.get("PORTAL_URL") || "https://smarthomesolutions.lovable.app";
+    const portalUrl = getAppUrl();
     const ticketUrl = `${portalUrl}/portal/tickets/${ticketNumber}`;
     const replyTo = `support+${ticket.email_token}@mail.smarthomesolutions.se`;
 

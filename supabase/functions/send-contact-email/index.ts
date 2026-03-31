@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getAppUrl } from "../_shared/app-url.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -31,20 +32,6 @@ function escapeHtml(unsafe: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
-}
-
-function getAppUrl(): string {
-  // Prefer explicit per-environment config.
-  // This controls the /verify?code=... links sent from this function.
-  const portalUrl = Deno.env.get("PORTAL_URL") || Deno.env.get("SITE_URL");
-  if (portalUrl) return portalUrl;
-
-  // Fallback to legacy behavior.
-  const env = Deno.env.get("APP_ENV");
-  if (env === "live") {
-    return "https://smarthomesolutions.se";
-  }
-  return "https://smarthomesolutions.se";
 }
 
 function generateSecureCode(): string {

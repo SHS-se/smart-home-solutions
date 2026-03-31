@@ -51,6 +51,7 @@ const EXPORTED_SECRET_NAMES = [
   "CONTACT_TO",
   "SUPPORT_TO",
   "APP_ENV",
+  "APP_URL",
   "PORTAL_URL",
   "SITE_URL",
 ];

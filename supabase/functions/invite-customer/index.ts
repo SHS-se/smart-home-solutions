@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { getAppUrl } from "../_shared/app-url.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -220,10 +221,9 @@ const handler = async (req: Request): Promise<Response> => {
       );
     }
 
-    // Build branded verification URL.
-    // PORTAL_URL is set per-environment via `supabase secrets set PORTAL_URL=...`
-    // e.g. http://127.0.0.1:3002 (local), https://smarthomesolutions.se (prod)
-    const appUrl = Deno.env.get("PORTAL_URL") || "https://smarthomesolutions.se";
+    // Build branded verification URL from the shared app URL config.
+    // APP_URL is the preferred secret; PORTAL_URL and SITE_URL remain as legacy fallbacks.
+    const appUrl = getAppUrl();
     const verifyUrl = `${appUrl}/verify?code=${verificationCode}`;
 
     // Send welcome email with branded link

@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { getAppUrl } from "../_shared/app-url.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -153,11 +154,8 @@ const handler = async (req: Request): Promise<Response> => {
       );
     }
 
-    // Determine app URL based on APP_ENV
-    const appEnv = Deno.env.get("APP_ENV") || "live";
-    const appUrl = appEnv === "live"
-      ? "https://smarthomesolutions.lovable.app"
-      : "https://id-preview--f333950d-a4c9-4f4e-b82f-25cfcd289f20.lovable.app";
+    // Use the shared frontend URL config so password reset matches other customer emails.
+    const appUrl = getAppUrl();
     const verifyUrl = `${appUrl}/verify?code=${verificationCode}`;
 
     // Send branded email via Resend

@@ -14,13 +14,13 @@ case "$ENV" in
     PROJECT_REF="vxqpgbzseckgceopitpm"
     STRIPE_MODE="test mode (sk_test_...)"
     APP_ENV_VALUE="test"
-    PORTAL_URL_DEFAULT="https://preview--smarthomesolutions.lovable.app"
+    APP_URL_DEFAULT="https://preview--smarthomesolutions.lovable.app"
     ;;
   live|prod)
     PROJECT_REF="oosxndduqzhvrorgogaw"
     STRIPE_MODE="live mode (sk_live_...)"
     APP_ENV_VALUE="live"
-    PORTAL_URL_DEFAULT="https://smarthomesolutions.se"
+    APP_URL_DEFAULT="https://smarthomesolutions.se"
     ;;
   *)
     echo "Usage: $0 [test|live]"
@@ -64,12 +64,12 @@ SUPPORT_TO=$(prompt_secret "SUPPORT_TO" "support email, e.g. support@smarthomeso
 echo ""
 echo "── App config ──────────────────────────────────────────"
 echo "  APP_ENV → $APP_ENV_VALUE (auto-set)"
-echo "  PORTAL_URL → $PORTAL_URL_DEFAULT (auto-set)"
+echo "  APP_URL → $APP_URL_DEFAULT (auto-set)"
 
 # Build the secrets list, skipping blank entries
 SECRETS=()
 SECRETS+=("APP_ENV=$APP_ENV_VALUE")
-SECRETS+=("PORTAL_URL=$PORTAL_URL_DEFAULT")
+SECRETS+=("APP_URL=$APP_URL_DEFAULT")
 
 [ -n "$STRIPE_KEY" ]     && SECRETS+=("SHS_STRIPE_SECRET_KEY=$STRIPE_KEY")
 [ -n "$STRIPE_WEBHOOK" ] && SECRETS+=("STRIPE_INVOICE_WEBHOOK_SECRET=$STRIPE_WEBHOOK")
