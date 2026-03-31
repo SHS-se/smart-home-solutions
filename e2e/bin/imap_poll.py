@@ -10,6 +10,7 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 from email.header import decode_header, make_header
+from email.message import Message
 from email.utils import getaddresses, parsedate_to_datetime
 from typing import Dict, List, Optional, Tuple
 
@@ -53,7 +54,7 @@ def normalize_dt(value: Optional[datetime]) -> datetime:
     return value.astimezone(timezone.utc)
 
 
-def extract_parts(message: email.message.Message) -> Tuple[str, str]:
+def extract_parts(message: Message) -> Tuple[str, str]:
     texts: List[str] = []
     html_parts: List[str] = []
 
@@ -106,7 +107,7 @@ def extract_links(text: str, html: str) -> List[str]:
 
 
 def candidate_matches(
-    msg: email.message.Message,
+    msg: Message,
     raw_bytes: bytes,
     recipient: str,
     subject_filters: list[str],
