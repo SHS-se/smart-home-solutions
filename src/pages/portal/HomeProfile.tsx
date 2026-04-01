@@ -30,6 +30,7 @@ const HomeProfile: React.FC<HomeProfileProps> = ({ customerId: propCustomerId, i
 
   const resolvedCustomerId = propCustomerId || customerData?.id;
   const userId = user?.id;
+  const Layout = isStaffView ? CustomerViewLayout : PortalLayout;
 
   useEffect(() => {
     if (!authLoading && !user) navigate('/login');
@@ -105,8 +106,6 @@ const HomeProfile: React.FC<HomeProfileProps> = ({ customerId: propCustomerId, i
     localStorage.setItem('home_profile_banner_dismissed', 'true');
     setBannerDismissed(true);
   };
-
-  const Layout = isStaffView ? CustomerViewLayout : PortalLayout;
 
   return (
     <Layout>

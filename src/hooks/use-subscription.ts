@@ -18,14 +18,21 @@ interface UseSubscriptionReturn {
 }
 
 export function useSubscription(): UseSubscriptionReturn {
-  const { user, isStaff } = useAuth();
+  const { user, isStaff, loading: authLoading } = useAuth();
   const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const checkSubscription = useCallback(async () => {
+    if (authLoading) {
+      setLoading(true);
+      return;
+    }
+
     if (!user) {
       setLoading(false);
+      setSubscriptionStatus(null);
+      setError(null);
       return;
     }
 
@@ -43,14 +50,15 @@ export function useSubscription(): UseSubscriptionReturn {
       const { data, error: invokeError } = await supabase.functions.invoke('check-subscription');
       if (invokeError) throw invokeError;
       setSubscriptionStatus(data);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to check subscription';
       console.error('Error checking subscription:', err);
-      setError(err.message || 'Failed to check subscription');
+      setError(message);
       setSubscriptionStatus(null);
     } finally {
       setLoading(false);
     }
-  }, [user, isStaff]);
+  }, [authLoading, user, isStaff]);
 
   useEffect(() => {
     checkSubscription();
