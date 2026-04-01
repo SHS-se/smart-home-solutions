@@ -247,6 +247,7 @@ async function answerFirstHomeProfileQuestion(page: Page): Promise<SavedHomeAnsw
   }
 
   await page.getByTestId('home-profile-save-button').click();
+  await expect(page.getByTestId('home-profile-save-button')).toBeEnabled({ timeout: 15_000 });
 
   if (questionType === 'number') {
     return { questionId, questionType, expectedNumber: '2' };
