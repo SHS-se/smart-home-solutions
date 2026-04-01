@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 
@@ -42,8 +42,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isStaff, setIsStaff] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [customerData, setCustomerData] = useState<CustomerData | null>(null);
+  const isMountedRef = useRef(true);
+  const userDataRequestIdRef = useRef(0);
 
-  const fetchUserData = async (userId: string, userEmail?: string) => {
+  const applyResolvedUserData = (resolved: {
+    isStaff: boolean;
+    isAdmin: boolean;
+    customerData: CustomerData | null;
+  }) => {
+    if (!isMountedRef.current) return;
+    setIsStaff(resolved.isStaff);
+    setIsAdmin(resolved.isAdmin);
+    setCustomerData(resolved.customerData);
+  };
+
+  const clearResolvedUserData = () => {
+    applyResolvedUserData({ isStaff: false, isAdmin: false, customerData: null });
+  };
+
+  const fetchUserData = async (userId: string, userEmail?: string, requestId?: number) => {
+    const activeRequestId = requestId ?? userDataRequestIdRef.current;
+    let resolvedState: {
+      isStaff: boolean;
+      isAdmin: boolean;
+      customerData: CustomerData | null;
+    } = {
+      isStaff: false,
+      isAdmin: false,
+      customerData: null,
+    };
+
     try {
       // Check if user is staff
       const { data: staffData } = await supabase
@@ -53,91 +81,104 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .maybeSingle();
 
       if (staffData) {
-        setIsStaff(true);
-        setIsAdmin(staffData.role === 'admin');
-        setCustomerData(null);
-        return;
-      }
-
-      setIsStaff(false);
-      setIsAdmin(false);
-
-      // Check if user is already linked to a customer
-      let { data: customer } = await supabase
-        .from('customers_with_identity')
-        .select('id, contact_id, contact_name, contact_email, contact_phone, name, billing_email, phone, site_street, site_postcode, site_city, billing_street, billing_postcode, billing_city, billing_same_as_site, is_test')
-        .eq('user_id', userId)
-        .maybeSingle();
-
-      // If not linked, try to auto-link by email
-      if (!customer && userEmail) {
-        const { data: unlinkedCustomer } = await supabase
+        resolvedState = {
+          isStaff: true,
+          isAdmin: staffData.role === 'admin',
+          customerData: null,
+        };
+      } else {
+        // Check if user is already linked to a customer
+        let { data: customer } = await supabase
           .from('customers_with_identity')
           .select('id, contact_id, contact_name, contact_email, contact_phone, name, billing_email, phone, site_street, site_postcode, site_city, billing_street, billing_postcode, billing_city, billing_same_as_site, is_test')
-          .eq('contact_email', userEmail)
-          .is('user_id', null)
+          .eq('user_id', userId)
           .maybeSingle();
 
-        if (unlinkedCustomer) {
-          // Link the customer to this user
-          const { error: linkError } = await supabase
-            .from('customers')
-            .update({ user_id: userId })
-            .eq('id', unlinkedCustomer.id);
+        // If not linked, try to auto-link by email
+        if (!customer && userEmail) {
+          const { data: unlinkedCustomer } = await supabase
+            .from('customers_with_identity')
+            .select('id, contact_id, contact_name, contact_email, contact_phone, name, billing_email, phone, site_street, site_postcode, site_city, billing_street, billing_postcode, billing_city, billing_same_as_site, is_test')
+            .eq('contact_email', userEmail)
+            .is('user_id', null)
+            .maybeSingle();
 
-          if (!linkError) {
-            customer = unlinkedCustomer;
-            console.log('Auto-linked customer by email:', unlinkedCustomer.id);
+          if (unlinkedCustomer) {
+            // Link the customer to this user
+            const { error: linkError } = await supabase
+              .from('customers')
+              .update({ user_id: userId })
+              .eq('id', unlinkedCustomer.id);
+
+            if (!linkError) {
+              customer = unlinkedCustomer;
+              console.log('Auto-linked customer by email:', unlinkedCustomer.id);
+            }
           }
         }
-      }
 
-      if (customer) {
-        setCustomerData(customer);
-      } else {
-        setCustomerData(null);
+        resolvedState = {
+          isStaff: false,
+          isAdmin: false,
+          customerData: customer ?? null,
+        };
       }
     } catch (error) {
       console.error('Error fetching user data:', error);
     }
+
+    if (!isMountedRef.current || activeRequestId !== userDataRequestIdRef.current) {
+      return;
+    }
+    applyResolvedUserData(resolvedState);
   };
 
   const refreshUserData = async () => {
     if (user) {
-      await fetchUserData(user.id, user.email);
+      const requestId = ++userDataRequestIdRef.current;
+      await fetchUserData(user.id, user.email, requestId);
     }
   };
 
   useEffect(() => {
-    // Set up auth state listener BEFORE getting session
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, currentSession) => {
-        setSession(currentSession);
-        setUser(currentSession?.user ?? null);
+    isMountedRef.current = true;
 
-        if (currentSession?.user) {
-          // Use setTimeout to avoid Supabase deadlock
-          setTimeout(() => fetchUserData(currentSession.user.id, currentSession.user.email), 0);
-        } else {
-          setIsStaff(false);
-          setIsAdmin(false);
-          setCustomerData(null);
+    const hydrateSession = async (currentSession: Session | null) => {
+      const requestId = ++userDataRequestIdRef.current;
+      setSession(currentSession);
+      setUser(currentSession?.user ?? null);
+
+      if (!currentSession?.user) {
+        clearResolvedUserData();
+        if (isMountedRef.current && requestId === userDataRequestIdRef.current) {
+          setLoading(false);
         }
+        return;
+      }
+
+      if (isMountedRef.current) {
+        setLoading(true);
+      }
+
+      await fetchUserData(currentSession.user.id, currentSession.user.email, requestId);
+
+      if (isMountedRef.current && requestId === userDataRequestIdRef.current) {
         setLoading(false);
+      }
+    };
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (_event, currentSession) => {
+        // Defer out of the callback to avoid nested Supabase calls during auth event handling.
+        setTimeout(() => {
+          void hydrateSession(currentSession);
+        }, 0);
       }
     );
 
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session: currentSession } }) => {
-      setSession(currentSession);
-      setUser(currentSession?.user ?? null);
-      if (currentSession?.user) {
-        fetchUserData(currentSession.user.id, currentSession.user.email);
-      }
-      setLoading(false);
-    });
-
     return () => {
+      isMountedRef.current = false;
+      userDataRequestIdRef.current += 1;
       subscription.unsubscribe();
     };
   }, []);

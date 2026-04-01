@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Home, Info, ArrowLeft } from 'lucide-react';
+import { Home, Info, ArrowLeft, Loader2 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import PortalLayout from '@/components/portal/PortalLayout';
@@ -58,7 +58,7 @@ const HomeProfile: React.FC<HomeProfileProps> = ({ customerId: propCustomerId, i
         if (createHomeError) {
           console.error('Failed to auto-create home:', createHomeError);
         } else if (newHome) {
-          await supabase.from('customers').update({ primary_home_id: newHome.id } as any).eq('id', resolvedCustomerId);
+          await supabase.from('customers').update({ primary_home_id: newHome.id }).eq('id', resolvedCustomerId);
           setHomeId(newHome.id);
           setHomeName(newHome.name);
           setHomeCount(1);
@@ -80,7 +80,7 @@ const HomeProfile: React.FC<HomeProfileProps> = ({ customerId: propCustomerId, i
             .select('primary_home_id')
             .eq('id', resolvedCustomerId)
             .single();
-          const primaryId = (customer as any)?.primary_home_id;
+          const primaryId = customer?.primary_home_id;
           const match = primaryId ? homes.find(h => h.id === primaryId) : null;
           setHomeId(match?.id || homes[0].id);
           setHomeName(match?.name || homes[0].name);
@@ -91,7 +91,15 @@ const HomeProfile: React.FC<HomeProfileProps> = ({ customerId: propCustomerId, i
     resolveHome();
   }, [resolvedCustomerId, searchParams, isStaffView]);
 
-  if (authLoading || !resolvedCustomerId || !userId || loadingHome) return null;
+  if (authLoading || (!isStaffView && user && !resolvedCustomerId) || !userId || loadingHome) {
+    return (
+      <Layout>
+        <div className="flex items-center justify-center min-h-[400px]">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        </div>
+      </Layout>
+    );
+  }
 
   const dismissBanner = () => {
     localStorage.setItem('home_profile_banner_dismissed', 'true');

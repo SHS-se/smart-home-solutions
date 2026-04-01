@@ -1,5 +1,5 @@
 import { Link, useNavigate } from "react-router-dom";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import {
@@ -17,7 +17,7 @@ interface UserMenuProps {
 }
 
 const UserMenu = ({ size = "default" }: UserMenuProps) => {
-  const { user, isStaff, isCustomer, customerData, signOut } = useAuth();
+  const { user, isStaff, isCustomer, customerData, signOut, loading } = useAuth();
   const { t } = useLanguage();
   const navigate = useNavigate();
 
@@ -71,6 +71,19 @@ const UserMenu = ({ size = "default" }: UserMenuProps) => {
     { href: "/portal/billing", label: t("Fakturor", "Billing") },
     { href: "/portal/tickets", label: t("Mina ärenden", "My Tickets") },
   ];
+
+  if (user && loading) {
+    return (
+      <Button variant="ghost" size={size} className="flex items-center gap-2 px-2" disabled>
+        <div className="flex items-center justify-center w-8 h-8 rounded-full bg-muted text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+        </div>
+        <div className="hidden sm:flex flex-col items-start">
+          <span className="text-sm font-medium">{t("Laddar...", "Loading...")}</span>
+        </div>
+      </Button>
+    );
+  }
 
   return (
     <DropdownMenu>
