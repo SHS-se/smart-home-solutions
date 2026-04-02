@@ -153,8 +153,12 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
   };
 
   return (
+    <TooltipProvider>
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-3xl h-[80vh] flex flex-col">
+      <DialogContent
+        className="max-w-3xl h-[80vh] flex flex-col"
+        onEscapeKeyDown={() => handleOpenChange(false)}
+      >
         <DialogHeader>
           <DialogTitle>{t('Välj SKU', 'Select SKU')}</DialogTitle>
         </DialogHeader>
@@ -171,8 +175,7 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
         </div>
 
         <div className="flex-1 overflow-auto min-h-0">
-          <TooltipProvider>
-            <Table>
+          <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead className="text-xs uppercase">SKU</TableHead>
@@ -242,10 +245,10 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
                 })}
               </TableBody>
             </Table>
-          </TooltipProvider>
         </div>
       </DialogContent>
     </Dialog>
+    </TooltipProvider>
   );
 };
 
