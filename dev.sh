@@ -1,32 +1,31 @@
 #!/bin/bash
 # Start the Vite development server in background
 # Usage: ./dev.sh [db]
-#   db: "old" (pdqidiwovlvdyqgbdlda) or "new" (vxqpgbzseckgceopitpm, default)
+#   db: "test" (vxqpgbzseckgceopitpm) or "live" (oosxndduqzhvrorgogaw, default)
 
 LOGFILE="./dev.log"
 
-DB="${1:-new}"
+DB="${1:-live}"
 
 case "$DB" in
-  old)
-    VITE_SUPABASE_PROJECT_ID="pdqidiwovlvdyqgbdlda"
-    VITE_SUPABASE_URL="https://pdqidiwovlvdyqgbdlda.supabase.co"
-    VITE_SUPABASE_PUBLISHABLE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBkcWlkaXdvdmx2ZHlxZ2JkbGRhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAzMDA3MTgsImV4cCI6MjA4NTg3NjcxOH0._QmRh8lDwEtvdCWetwmuecSff5OfItHMcqkXRXL3LpM"
-    ;;
-  new)
+  test)
     VITE_SUPABASE_PROJECT_ID="vxqpgbzseckgceopitpm"
     VITE_SUPABASE_URL="https://vxqpgbzseckgceopitpm.supabase.co"
     VITE_SUPABASE_PUBLISHABLE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ4cXBnYnpzZWNrZ2Nlb3BpdHBtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIxNDE1NTgsImV4cCI6MjA4NzcxNzU1OH0.A56LvY0EnMHP3CulrnQH1MjfSfuejgC7xnrFZvKiOfc"
     ;;
+  live)
+    VITE_SUPABASE_PROJECT_ID="oosxndduqzhvrorgogaw"
+    VITE_SUPABASE_URL="https://oosxndduqzhvrorgogaw.supabase.co"
+    VITE_SUPABASE_PUBLISHABLE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9vc3huZGR1cXpodnJvcmdvZ2F3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ0NTEwMTQsImV4cCI6MjA5MDAyNzAxNH0.h9GcaZwI0JrwOKH2JKUS1jo-DiarYpV9yfe8JQdZl4g"
+    ;;
   *)
-    echo "Unknown db: $DB (use 'old' or 'new')"
+    echo "Unknown db: $DB (use 'test' or 'live')"
     exit 1
     ;;
 esac
 
 echo "Using DB: $DB ($VITE_SUPABASE_PROJECT_ID)"
 
-# Check if server is already running
 if lsof -ti:8080 > /dev/null 2>&1; then
     echo "⚠️  Dev server already running on port 8080"
     echo "Run './stop.sh' to stop it first"
@@ -37,15 +36,11 @@ echo "Starting Vite dev server in background..."
 echo "Logs: $LOGFILE"
 echo ""
 
-# Start server in background, logging to file
-# Source zprofile to ensure node/npm are available
 bash -c "source ~/.zprofile && VITE_SUPABASE_PROJECT_ID='$VITE_SUPABASE_PROJECT_ID' VITE_SUPABASE_URL='$VITE_SUPABASE_URL' VITE_SUPABASE_PUBLISHABLE_KEY='$VITE_SUPABASE_PUBLISHABLE_KEY' npm run dev" > "$LOGFILE" 2>&1 &
 DEV_PID=$!
 
-# Wait a moment for server to start
 sleep 2
 
-# Check if it started successfully
 if lsof -ti:8080 > /dev/null 2>&1; then
     echo "✓ Dev server started successfully"
     echo "  URL: http://localhost:8080/"
