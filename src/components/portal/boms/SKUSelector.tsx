@@ -147,6 +147,20 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
     onOpenChange(nextOpen);
   }, [onOpenChange, onQuantityChange, pendingChanges, existingQuantities]);
 
+  // Radix DismissLayer only handles Escape for the "highest layer". If a Tooltip
+  // inside the dialog happens to be the highest layer (open on hover), it intercepts
+  // Escape before the Dialog's DismissLayer can act. This capture-phase listener
+  // fires after the Dialog's own layer listener (registered at mount) but before the
+  // Tooltip's (registered later), so it always runs and closes the dialog directly.
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') handleOpenChange(false);
+    };
+    document.addEventListener('keydown', onKeyDown, { capture: true });
+    return () => document.removeEventListener('keydown', onKeyDown, { capture: true });
+  }, [open, handleOpenChange]);
+
   const formatPrice = (value: number | null) => {
     if (value === null) return '—';
     return value.toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
