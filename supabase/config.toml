@@ -1,4 +1,4 @@
-project_id = "pdqidiwovlvdyqgbdlda"
+project_id = "oosxndduqzhvrorgogaw"
 
 [functions.fetch-public-quote]
 verify_jwt = false
