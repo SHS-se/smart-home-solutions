@@ -215,6 +215,25 @@ async function generateSqlDump(sql: any): Promise<string> {
     WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = 'public'
   `;
 
+  // 7b. Get UNIQUE constraints (constraint-based, not index-based)
+  const uniqueConstraints = await sql`
+    SELECT tc.constraint_name, tc.table_name, kcu.column_name, kcu.ordinal_position
+    FROM information_schema.table_constraints tc
+    JOIN information_schema.key_column_usage kcu
+      ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+    WHERE tc.constraint_type = 'UNIQUE' AND tc.table_schema = 'public'
+    ORDER BY tc.table_name, tc.constraint_name, kcu.ordinal_position
+  `;
+
+  // 7c. Get UNIQUE indexes created directly (CREATE UNIQUE INDEX style)
+  const uniqueIndexes = await sql`
+    SELECT indexname, tablename, indexdef
+    FROM pg_indexes
+    WHERE schemaname = 'public'
+      AND indexdef LIKE 'CREATE UNIQUE INDEX%'
+    ORDER BY tablename, indexname
+  `;
+
   // 8. Dump data
   for (const tableName of tableNames) {
     log("Dumping data", { table: tableName });
@@ -249,6 +268,29 @@ async function generateSqlDump(sql: any): Promise<string> {
       if (seen.has(fk.constraint_name)) continue;
       seen.add(fk.constraint_name);
       lines.push(`ALTER TABLE public.${fk.table_name} ADD CONSTRAINT ${fk.constraint_name} FOREIGN KEY (${fk.column_name}) REFERENCES public.${fk.ref_table}(${fk.ref_column});`);
+    }
+    lines.push("");
+  }
+
+  // 9b. UNIQUE constraints
+  if (uniqueConstraints.length > 0) {
+    lines.push(`-- Unique constraints`);
+    const ucMap: Record<string, { table: string; cols: string[] }> = {};
+    for (const uc of uniqueConstraints) {
+      if (!ucMap[uc.constraint_name]) ucMap[uc.constraint_name] = { table: uc.table_name, cols: [] };
+      ucMap[uc.constraint_name].cols.push(uc.column_name);
+    }
+    for (const [name, { table, cols }] of Object.entries(ucMap)) {
+      lines.push(`ALTER TABLE public.${table} ADD CONSTRAINT ${name} UNIQUE (${cols.join(", ")});`);
+    }
+    lines.push("");
+  }
+
+  // 9c. UNIQUE indexes (CREATE UNIQUE INDEX style)
+  if (uniqueIndexes.length > 0) {
+    lines.push(`-- Unique indexes`);
+    for (const idx of uniqueIndexes) {
+      lines.push(`${idx.indexdef};`);
     }
     lines.push("");
   }
