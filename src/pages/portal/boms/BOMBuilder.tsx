@@ -323,6 +323,9 @@ const BOMBuilder: React.FC = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bom_items', id] });
     },
+    onError: (error: Error) => {
+      toast({ title: t('Kunde inte lägga till SKU', 'Failed to add SKU'), description: error.message, variant: 'destructive' });
+    },
   });
 
   // Update item mutation

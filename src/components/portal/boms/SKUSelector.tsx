@@ -64,12 +64,15 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   // Track pending quantity changes for existing items to flush on close
   const [pendingChanges, setPendingChanges] = useState<Record<string, number>>({});
+  // Optimistic local adds — show SKU as added immediately before server confirms
+  const [localAddedIds, setLocalAddedIds] = useState<Set<string>>(new Set());
 
-  // Reset pending changes when dialog opens
+  // Reset state when dialog opens
   useEffect(() => {
     if (open) {
       setPendingChanges({});
       setQuantities({});
+      setLocalAddedIds(new Set());
     }
   }, [open]);
 
@@ -99,6 +102,8 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
 
   const handleSelect = (sku: SKU) => {
     const quantity = quantities[sku.id] || 1;
+    // Optimistically mark as added so the row flips to Remove immediately
+    setLocalAddedIds(prev => new Set([...prev, sku.id]));
     onSelect(sku.id, quantity);
   };
 
@@ -180,7 +185,7 @@ const SKUSelector: React.FC<SKUSelectorProps> = ({
               </TableHeader>
               <TableBody>
                 {filteredSkus.map(sku => {
-                  const isAdded = existingSkuIds.includes(sku.id);
+                  const isAdded = existingSkuIds.includes(sku.id) || localAddedIds.has(sku.id);
                   return (
                     <TableRow key={sku.id} data-testid="sku-selector-row" data-sku-id={sku.id} data-sku-code={sku.sku}>
                       <TableCell className="font-mono">{sku.sku}</TableCell>
