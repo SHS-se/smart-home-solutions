@@ -6,7 +6,7 @@ Implement a minimal audit-safe accounting subsystem for Swedish bookkeeping and 
 
 The subsystem must:
 
-- keep operational objects (`customers`, `quotes`, `invoices`, Stripe data) separate from the ledger
+- keep operational objects (`customers`, `quotes`, `invoices`, legacy Stripe data) separate from the ledger
 - book domestic sales and purchases with double-entry accounting
 - preserve immutable evidence and traceability
 - support quarterly VAT review, snapshotting, locking, and filing export
@@ -22,7 +22,7 @@ Included in MVP:
 - evidence storage with checksums and provenance
 - supplier and purchase-document workflow
 - sales invoice integration from existing invoice flow
-- payments and allocations, including Stripe clearing/fees/payout timing
+- payments and allocations for bank giro / bank settlement
 - EU purchase handling in VAT and posting flows
 - period close/lock, corrections, audit log, integrity checks
 - VAT snapshot and versioned JSON export for filing
@@ -44,11 +44,14 @@ Explicitly out of scope:
 - amounts are stored in integer minor units (`ore`)
 - accounting periods are monthly; VAT returns are quarterly
 - sales invoices post when the existing invoice reaches finalized/issued state
+- future customer payments are expected via bank giro / bank transfer, not Stripe
 - browser automation is downstream only; the accounting truth is the VAT snapshot plus export JSON
 - corrections post into the next open period unless finance admin explicitly reopens a period
 - an opening-balance verification is required before any live historical posting/backfill
 
 Code the first release for domestic VAT plus ordinary EU purchases. ROT/RUT, domestic reverse charge, and import VAT stay out of scope for now, but the data model should remain extensible for them later.
+
+Stripe should be treated as legacy migration scope only. There is one real Stripe invoice to account for; do not build ongoing Stripe settlement complexity into the normal workflow unless later required again.
 
 ## Core Data Model
 
@@ -107,7 +110,7 @@ Code the first release for domestic VAT plus ordinary EU purchases. ROT/RUT, dom
   - bridge from existing operational `invoices` into accounting
   - store immutable source snapshot at posting time
 - `payments`
-  - settlement facts from Stripe, bank, or manual entry
+  - settlement facts from bank giro, bank transfer, or manual entry, with optional legacy Stripe support for migration
   - include source confidence and external refs
 - `payment_allocations`
   - allocate payments to receivables, payables, or direct verifications
@@ -181,17 +184,22 @@ Use line-level VAT codes so ordinary EU purchases can map to the required VAT bo
 - credit revenue
 - credit output VAT
 
-### Customer payment via Stripe
+### Customer payment via bank giro / bank transfer
+
+- debit bank
+- credit accounts receivable
+
+### Legacy Stripe payment, if historical backfill requires it
 
 - debit Stripe clearing
 - credit accounts receivable
 
-### Stripe fee
+### Legacy Stripe fee, if historical backfill requires it
 
 - debit transaction-fee expense
 - credit Stripe clearing
 
-### Stripe payout to bank
+### Legacy Stripe payout to bank, if historical backfill requires it
 
 - debit bank
 - credit Stripe clearing
@@ -214,8 +222,8 @@ Use line-level VAT codes so ordinary EU purchases can map to the required VAT bo
 1. Keep existing `invoices` as operational source only.
 2. When invoice is finalized/issued, snapshot source facts and create `sales_invoice_links`.
 3. Post receivable, revenue, and output VAT using idempotency key `(source_type, source_id, event_type)`.
-4. Treat payment, fee, and payout as separate events.
-5. Use Stripe event IDs or equivalent external refs for payment-side idempotency.
+4. For future invoices, settle receivables through bank giro / bank transfer payments matched against the receivable.
+5. If the one historical Stripe invoice is backfilled in detail rather than handled through opening balances, treat payment, fee, and payout as separate legacy events and use Stripe event IDs for idempotency.
 
 ### Corrections
 
@@ -314,7 +322,8 @@ All reports must run from posted data only.
 
 - create payments, allocations, and optional bank transaction tables
 - implement manual matching
-- add Stripe payment, fee, and payout accounting flow
+- support bank giro / bank transfer settlement as the standard customer payment path
+- add only the minimal Stripe backfill flow needed for the one existing real invoice, if it is not handled via opening balances
 
 ### Phase 6: Sales integration
 
@@ -359,6 +368,6 @@ The implementation is complete when the system can:
 
 - post ordinary domestic purchases and sales into an immutable balanced ledger
 - trace every posted event back to evidence
-- allocate customer and supplier payments correctly
+- allocate customer and supplier payments correctly, with bank giro / bank transfer as the default customer-payment flow
 - generate a quarterly VAT snapshot and versioned filing JSON from posted data only
 - lock the filed quarter and handle later corrections without rewriting history
