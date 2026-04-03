@@ -50,3 +50,6 @@ verify_jwt = false
 
 [functions.create-checkout]
 verify_jwt = false
+
+[functions.get-stripe-invoice-pdf]
+verify_jwt = false
