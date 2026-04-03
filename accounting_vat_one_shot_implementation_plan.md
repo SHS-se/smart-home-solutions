@@ -24,6 +24,7 @@ Included in MVP:
 - sales invoice integration from existing invoice flow
 - payments and allocations for bank giro / bank settlement
 - EU purchase handling in VAT and posting flows
+- contextual UI help via small `(i)` info buttons for non-accountant users
 - period close/lock, corrections, audit log, integrity checks
 - VAT snapshot and versioned JSON export for filing
 
@@ -52,6 +53,8 @@ Explicitly out of scope:
 Code the first release for domestic VAT plus ordinary EU purchases. ROT/RUT, domestic reverse charge, and import VAT stay out of scope for now, but the data model should remain extensible for them later.
 
 Stripe should be treated as legacy migration scope only. There is one real Stripe invoice to account for; do not build ongoing Stripe settlement complexity into the normal workflow unless later required again.
+
+The accounting UI must assume the main operator is not an accountant. Core accounting and VAT screens need embedded guidance in plain language, not only technical field labels.
 
 ## Core Data Model
 
@@ -150,6 +153,63 @@ Stripe should be treated as legacy migration scope only. There is one real Strip
 - Period close and VAT snapshot must store deterministic integrity hashes.
 - Integrity failures block period close, VAT snapshot generation, and filing export.
 
+## UI Help Requirements
+
+Reuse the same small `(i)` info-button pattern already used in Enhetskatalog rather than inventing a new help system.
+
+Rules:
+
+- place info buttons next to labels and section headings where accounting or Swedish VAT concepts are not obvious
+- open concise plain-language help written for a non-accountant user
+- explain both what a field means and how it affects bookkeeping/VAT
+- separate "normal case" guidance from "ask an accountant" cases
+- keep help text specific to the current screen and action; do not dump generic accounting theory
+- use the app's normal translation pattern so the help can be shown in Swedish and English
+
+Minimum screens/fields that need info help in v1:
+
+- purchase document intake
+  - supplier
+  - document date
+  - posting date
+  - due date
+  - document quality
+  - original evidence
+  - deductible VAT
+  - VAT code
+  - EU purchase handling
+  - `f_skatt_registered` warning
+- sales invoice accounting view
+  - when invoice posting happens
+  - receivable
+  - revenue
+  - output VAT
+  - bank giro payment matching
+- payment matching
+  - unmatched payment
+  - partial payment
+  - payment allocation
+  - over-allocation prevention
+- period and VAT workflow
+  - `open`, `review`, `closed`, `locked`
+  - why postings are blocked
+  - VAT snapshot
+  - filing export
+  - corrections after filing
+- VAT review screen
+  - each declaration box shown in MVP
+  - what numbers are derived from
+  - which boxes are for EU purchases
+  - when a warning means "stop and review"
+
+Help content should use this format wherever possible:
+
+- what this is
+- when to use it
+- how the system uses it
+- common mistake to avoid
+- when to ask accountant/reviewer
+
 ## Posting Rules
 
 ### Purchase paid immediately
@@ -216,6 +276,7 @@ Use line-level VAT codes so ordinary EU purchases can map to the required VAT bo
 6. Block posting if amounts/VAT do not reconcile, required fields are missing, deductible VAT lacks acceptable evidence, or supplier `f_skatt_registered` risk is not acknowledged.
 7. Create draft verification/journal entry and post through controlled posting function.
 8. If unpaid, leave payable open and settle later through `payments` and `payment_allocations`.
+9. Show contextual `(i)` help on the fields that affect VAT treatment, evidence sufficiency, and supplier-risk warnings.
 
 ### Sales invoice integration
 
@@ -224,6 +285,7 @@ Use line-level VAT codes so ordinary EU purchases can map to the required VAT bo
 3. Post receivable, revenue, and output VAT using idempotency key `(source_type, source_id, event_type)`.
 4. For future invoices, settle receivables through bank giro / bank transfer payments matched against the receivable.
 5. If the one historical Stripe invoice is backfilled in detail rather than handled through opening balances, treat payment, fee, and payout as separate legacy events and use Stripe event IDs for idempotency.
+6. Show contextual `(i)` help explaining when invoice posting happens and how later bank payments settle the receivable.
 
 ### Corrections
 
@@ -250,6 +312,7 @@ Use line-level VAT codes so ordinary EU purchases can map to the required VAT bo
 8. Generate versioned `tax_filing_export` JSON from the approved snapshot only.
 9. Store filing reference and confirmation artifacts after submission.
 10. Lock the periods after filing.
+11. Show contextual `(i)` help on VAT boxes, period states, warnings, and correction rules so the operator can understand what the system is doing without external accounting knowledge.
 
 ## VAT MVP Rules
 
@@ -317,6 +380,7 @@ All reports must run from posted data only.
 - create suppliers, purchase documents, purchase lines
 - implement draft review/post workflow
 - support immediate-payment and payable cases
+- add contextual `(i)` help to purchase intake and classification fields
 
 ### Phase 5: Payments
 
@@ -324,6 +388,7 @@ All reports must run from posted data only.
 - implement manual matching
 - support bank giro / bank transfer settlement as the standard customer payment path
 - add only the minimal Stripe backfill flow needed for the one existing real invoice, if it is not handled via opening balances
+- add contextual `(i)` help to payment matching and allocation UI
 
 ### Phase 6: Sales integration
 
@@ -331,11 +396,13 @@ All reports must run from posted data only.
 - integrate invoice-finalization posting from existing invoice lifecycle
 - snapshot invoice facts at posting time
 - implement void/reversal handling
+- add contextual `(i)` help to invoice-accounting explanations
 
 ### Phase 7: VAT
 
 - create VAT return, snapshot, and filing-export tables
 - implement quarter review, reconciliation checks, snapshotting, approval, and JSON export
+- add contextual `(i)` help to VAT review, box explanations, warnings, and filing screens
 
 ### Phase 8: Locking and operations
 
@@ -371,3 +438,4 @@ The implementation is complete when the system can:
 - allocate customer and supplier payments correctly, with bank giro / bank transfer as the default customer-payment flow
 - generate a quarterly VAT snapshot and versioned filing JSON from posted data only
 - lock the filed quarter and handle later corrections without rewriting history
+- guide a non-accountant user through the core purchase, payment, and VAT screens using embedded `(i)` help without requiring outside accounting knowledge for normal cases
