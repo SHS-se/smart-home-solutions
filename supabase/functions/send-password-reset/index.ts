@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
-import { getAppUrl } from "../_shared/app-url.ts";
+import { getRequestAppOrigin } from "../_shared/app-origin.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -117,6 +117,8 @@ const handler = async (req: Request): Promise<Response> => {
       );
     }
 
+    const appOrigin = getRequestAppOrigin(req);
+
     // Generate recovery link via admin API
     const { data: linkData, error: linkGenError } = await supabaseAdmin.auth.admin.generateLink({
       type: "recovery",
@@ -155,8 +157,7 @@ const handler = async (req: Request): Promise<Response> => {
     }
 
     // Use the shared frontend URL config so password reset matches other customer emails.
-    const appUrl = getAppUrl();
-    const verifyUrl = `${appUrl}/verify?code=${verificationCode}`;
+    const verifyUrl = `${appOrigin}/verify?code=${verificationCode}`;
 
     // Send branded email via Resend
     const htmlBody = `

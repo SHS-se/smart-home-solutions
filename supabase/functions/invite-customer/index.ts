@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
-import { getAppUrl } from "../_shared/app-url.ts";
+import { getRequestAppOrigin } from "../_shared/app-origin.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -96,6 +96,7 @@ const handler = async (req: Request): Promise<Response> => {
 
   try {
     const { customer_id }: InviteCustomerRequest = await req.json();
+    const appOrigin = getRequestAppOrigin(req);
 
     if (!customer_id) {
       return new Response(
@@ -222,8 +223,7 @@ const handler = async (req: Request): Promise<Response> => {
     }
 
     // Build branded verification URL from the shared app URL config.
-    const appUrl = getAppUrl();
-    const verifyUrl = `${appUrl}/verify?code=${verificationCode}`;
+    const verifyUrl = `${appOrigin}/verify?code=${verificationCode}`;
 
     // Send welcome email with branded link
     const customerName = escapeHtml(customer.name || "Valued Customer");

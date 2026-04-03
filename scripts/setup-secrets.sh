@@ -14,13 +14,13 @@ case "$ENV" in
     PROJECT_REF="vxqpgbzseckgceopitpm"
     STRIPE_MODE="test mode (sk_test_...)"
     APP_ENV_VALUE="test"
-    APP_URL_DEFAULT="https://preview--smarthomesolutions.lovable.app"
+    APP_ORIGIN_ALLOWLIST_DEFAULT="http://localhost:3000,http://localhost:3001,http://localhost:8080,https://preview--smarthomesolutions.lovable.app"
     ;;
   live|prod)
     PROJECT_REF="oosxndduqzhvrorgogaw"
     STRIPE_MODE="live mode (sk_live_...)"
     APP_ENV_VALUE="live"
-    APP_URL_DEFAULT="https://smarthomesolutions.se"
+    APP_ORIGIN_ALLOWLIST_DEFAULT="https://smarthomesolutions.se,http://localhost:3000,http://localhost:3001,http://localhost:8080,https://preview--smarthomesolutions.lovable.app"
     ;;
   *)
     echo "Usage: $0 [test|live]"
@@ -45,6 +45,19 @@ prompt_secret() {
   echo "$value"
 }
 
+prompt_secret_with_default() {
+  local name="$1"
+  local hint="$2"
+  local default_value="$3"
+  echo -n "  $name ($hint) [$default_value]: "
+  read -r value
+  if [ -n "$value" ]; then
+    echo "$value"
+  else
+    echo "$default_value"
+  fi
+}
+
 # Collect secrets
 echo "── Stripe ──────────────────────────────────────────────"
 STRIPE_KEY=$(prompt_secret "SHS_STRIPE_SECRET_KEY" "$STRIPE_MODE — stripe.com/apikeys")
@@ -64,12 +77,12 @@ SUPPORT_TO=$(prompt_secret "SUPPORT_TO" "support email, e.g. support@smarthomeso
 echo ""
 echo "── App config ──────────────────────────────────────────"
 echo "  APP_ENV → $APP_ENV_VALUE (auto-set)"
-echo "  APP_URL → $APP_URL_DEFAULT (auto-set)"
+APP_ORIGIN_ALLOWLIST=$(prompt_secret_with_default "APP_ORIGIN_ALLOWLIST" "comma-separated allowed frontend origins" "$APP_ORIGIN_ALLOWLIST_DEFAULT")
 
 # Build the secrets list, skipping blank entries
 SECRETS=()
 SECRETS+=("APP_ENV=$APP_ENV_VALUE")
-SECRETS+=("APP_URL=$APP_URL_DEFAULT")
+SECRETS+=("APP_ORIGIN_ALLOWLIST=$APP_ORIGIN_ALLOWLIST")
 
 [ -n "$STRIPE_KEY" ]     && SECRETS+=("SHS_STRIPE_SECRET_KEY=$STRIPE_KEY")
 [ -n "$STRIPE_WEBHOOK" ] && SECRETS+=("STRIPE_INVOICE_WEBHOOK_SECRET=$STRIPE_WEBHOOK")

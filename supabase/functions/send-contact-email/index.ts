@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { getAppUrl } from "../_shared/app-url.ts";
+import { getRequestAppOrigin } from "../_shared/app-origin.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -559,7 +559,8 @@ const handler = async (req: Request): Promise<Response> => {
       // For duplicates: still try onboarding if user doesn't exist in auth
       let onboardingSent = false;
       if (resendApiKey) {
-        onboardingSent = await handleOnboarding(supabase, resendApiKey, emailNormalized, trimmedName, getAppUrl());
+        const appOrigin = getRequestAppOrigin(req);
+        onboardingSent = await handleOnboarding(supabase, resendApiKey, emailNormalized, trimmedName, appOrigin);
       }
 
       return new Response(JSON.stringify({ success: true, onboarding: onboardingSent }), {
@@ -686,7 +687,8 @@ const handler = async (req: Request): Promise<Response> => {
     // ---- Onboarding: check if new user and send magic link ----
     let onboardingSent = false;
     if (resendApiKey) {
-      onboardingSent = await handleOnboarding(supabase, resendApiKey, emailNormalized, trimmedName, getAppUrl());
+      const appOrigin = getRequestAppOrigin(req);
+      onboardingSent = await handleOnboarding(supabase, resendApiKey, emailNormalized, trimmedName, appOrigin);
     }
 
     return new Response(JSON.stringify({ success: true, onboarding: onboardingSent }), {
@@ -700,9 +702,9 @@ const handler = async (req: Request): Promise<Response> => {
   } catch (error: any) {
     console.error("Unhandled error in send-contact-email:", error);
     return new Response(
-      JSON.stringify({ success: true }),
+      JSON.stringify({ error: error?.message || "Unexpected error" }),
       {
-        status: 200,
+        status: 500,
         headers: { "Content-Type": "application/json", ...corsHeaders },
       }
     );

@@ -51,7 +51,7 @@ const EXPORTED_SECRET_NAMES = [
   "CONTACT_TO",
   "SUPPORT_TO",
   "APP_ENV",
-  "APP_URL",
+  "APP_ORIGIN_ALLOWLIST",
 ];
 
 /** Serialize a single JS value to a safe SQL literal for non-JSONB columns */

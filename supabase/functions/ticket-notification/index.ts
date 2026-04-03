@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
-import { getAppUrl } from "../_shared/app-url.ts";
+import { tryGetRequestAppOrigin } from "../_shared/app-origin.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -67,21 +67,19 @@ const handler = async (req: Request): Promise<Response> => {
       comment = data;
     }
 
-    const portalUrl = getAppUrl();
-    const ticketUrl = `${portalUrl}/portal/tickets/${ticketNumber}`;
+    const appOrigin = tryGetRequestAppOrigin(req);
+    const ticketUrl = appOrigin ? `${appOrigin}/portal/tickets/${ticketNumber}` : null;
     const replyTo = `support+${ticket.email_token}@mail.smarthomesolutions.se`;
 
     // Determine recipient
     let toEmail: string;
     let subject: string;
-    let isStaffNotification = false;
 
     if (action === "created") {
       // New ticket - notify staff
       toEmail = Deno.env.get("SUPPORT_TO") || "support@smarthomesolutions.se";
       // Use simple subject for staff emails to improve email threading
       subject = `[${ticketNumber}] ${ticket.title}`;
-      isStaffNotification = true;
     } else if (comment?.author_type === "staff") {
       // Staff replied - notify customer
       toEmail = ticket.customers?.contact_email || "";
@@ -91,7 +89,6 @@ const handler = async (req: Request): Promise<Response> => {
       toEmail = Deno.env.get("SUPPORT_TO") || "support@smarthomesolutions.se";
       // Use simple subject for staff emails to improve email threading
       subject = `[${ticketNumber}] ${ticket.title}`;
-      isStaffNotification = true;
     }
 
     if (!toEmail) {
@@ -124,11 +121,13 @@ const handler = async (req: Request): Promise<Response> => {
             <p style="white-space: pre-wrap;">${escapeHtml(comment.body_markdown)}</p>
           </div>
         ` : ""}
-        <p style="margin-top: 20px;">
-          <a href="${ticketUrl}" style="background: #2D5F8D; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px;">
-            View Ticket
-          </a>
-        </p>
+        ${ticketUrl ? `
+          <p style="margin-top: 20px;">
+            <a href="${ticketUrl}" style="background: #2D5F8D; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px;">
+              View Ticket
+            </a>
+          </p>
+        ` : ""}
         <p style="color: #666; font-size: 12px; margin-top: 20px;">
           Reply to this email to add a comment to the ticket.
         </p>

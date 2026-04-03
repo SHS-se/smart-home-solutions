@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { Resend } from "npm:resend@2.0.0";
-import { getAppUrl } from "../_shared/app-url.ts";
+import { getRequestAppOrigin } from "../_shared/app-origin.ts";
 import { getAppEnvironment } from "../_shared/stripe-env.ts";
 
 const corsHeaders = {
@@ -159,6 +159,7 @@ serve(async (req) => {
     if (!customer?.contact_email) throw new Error("Customer has no email address");
     const customerName = customer.name || "Kund";
     const customerEmail = customer.contact_email;
+    const appOrigin = getRequestAppOrigin(req);
 
     // Get totals from the computed view
     const { data: totals } = await serviceClient
@@ -193,8 +194,7 @@ serve(async (req) => {
     const tokenExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
     // Build customer-facing links from the shared frontend URL config.
-    const appUrl = getAppUrl();
-    const viewUrl = `${appUrl}/portal/quote/${quote_id}?token=${tokenHex}`;
+    const viewUrl = `${appOrigin}/portal/quote/${quote_id}?token=${tokenHex}`;
 
     // Build email
     const emailParams = {
