@@ -14,13 +14,13 @@ case "$ENV" in
     PROJECT_REF="vxqpgbzseckgceopitpm"
     STRIPE_MODE="test mode (sk_test_...)"
     APP_ENV_VALUE="test"
-    APP_ORIGIN_ALLOWLIST_DEFAULT="http://localhost:3000,https://preview--smarthomesolutions.lovable.app"
+    APP_ORIGIN_ALLOWLIST_DEFAULT="http://localhost:3000,https://preview--smarthomesolutions.lovable.app,https://98b52ef2-a9b8-4c1d-b3d5-ed16c32dda05.lovableproject.com"
     ;;
   live|prod)
     PROJECT_REF="oosxndduqzhvrorgogaw"
     STRIPE_MODE="live mode (sk_live_...)"
     APP_ENV_VALUE="live"
-    APP_ORIGIN_ALLOWLIST_DEFAULT="https://smarthomesolutions.se,http://localhost:3000,https://preview--smarthomesolutions.lovable.app"
+    APP_ORIGIN_ALLOWLIST_DEFAULT="https://smarthomesolutions.se,http://localhost:3000,https://preview--smarthomesolutions.lovable.app,https://98b52ef2-a9b8-4c1d-b3d5-ed16c32dda05.lovableproject.com,https://id-preview--98b52ef2-a9b8-4c1d-b3d5-ed16c32dda05.lovable.app"
     ;;
   *)
     echo "Usage: $0 [test|live]"
