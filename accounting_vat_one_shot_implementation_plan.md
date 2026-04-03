@@ -23,6 +23,7 @@ Included in MVP:
 - supplier and purchase-document workflow
 - sales invoice integration from existing invoice flow
 - payments and allocations, including Stripe clearing/fees/payout timing
+- EU purchase handling in VAT and posting flows
 - period close/lock, corrections, audit log, integrity checks
 - VAT snapshot and versioned JSON export for filing
 
@@ -32,7 +33,7 @@ Explicitly out of scope:
 - fixed assets/depreciation
 - annual report/tax return beyond VAT
 - full bank-import automation
-- advanced EU/import VAT automation beyond review/warning paths
+- domestic reverse charge, import VAT, and other advanced VAT edge cases beyond ordinary EU purchases
 - inventory accounting
 - multi-company support
 - generic accounting rules engine
@@ -47,7 +48,7 @@ Explicitly out of scope:
 - corrections post into the next open period unless finance admin explicitly reopens a period
 - an opening-balance verification is required before any live historical posting/backfill
 
-If ROT/RUT, reverse charge, EU purchases, or import VAT are required for first release, that must be confirmed before Phase 6. Otherwise keep the data model extensible and ship domestic VAT only.
+Code the first release for domestic VAT plus ordinary EU purchases. ROT/RUT, domestic reverse charge, and import VAT stay out of scope for now, but the data model should remain extensible for them later.
 
 ## Core Data Model
 
@@ -160,6 +161,15 @@ If ROT/RUT, reverse charge, EU purchases, or import VAT are required for first r
 - debit deductible input VAT when allowed
 - credit accounts payable
 
+### EU supplier invoice
+
+- debit expense or asset for the net purchase amount
+- debit deductible input VAT when allowed
+- credit accounts payable
+- credit output VAT for the acquisition VAT amount
+
+Use line-level VAT codes so ordinary EU purchases can map to the required VAT boxes without introducing separate domestic reverse-charge logic.
+
 ### Supplier payment
 
 - debit accounts payable
@@ -235,7 +245,7 @@ If ROT/RUT, reverse charge, EU purchases, or import VAT are required for first r
 
 ## VAT MVP Rules
 
-- implement domestic VAT first
+- implement domestic VAT plus ordinary EU purchases first
 - line-level VAT is mandatory
 - store tax base, VAT amount, rate, and VAT code on posted lines
 - compute quarter totals from posted lines, not from mutable source objects
@@ -250,6 +260,11 @@ Minimum declaration support:
 - box 10
 - box 11
 - box 12
+- box 20
+- box 21
+- box 22
+- box 23
+- box 24
 - box 42
 - box 47
 - box 48
