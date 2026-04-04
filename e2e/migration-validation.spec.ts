@@ -347,6 +347,8 @@ async function createQuoteFromBom(page: Page): Promise<void> {
 }
 
 async function sendQuoteAndOpenPublicLink(page: Page, afterIso: string): Promise<string> {
+  expect(run.latestQuoteId, 'Latest quote ID is missing before sending quote email').toBeTruthy();
+
   await page.getByTestId('quote-send-email-button').click();
 
   const quoteEmail = await waitForEmail(config, {
@@ -358,7 +360,7 @@ async function sendQuoteAndOpenPublicLink(page: Page, afterIso: string): Promise
 
   const publicQuoteLink = pickFirstLink(
     quoteEmail,
-    (link) => link.includes('/portal/quote/'),
+    (link) => link.includes(`/portal/quote/${run.latestQuoteId}`),
     'public quote',
   );
   expectAppOrigin(publicQuoteLink, 'Quote');

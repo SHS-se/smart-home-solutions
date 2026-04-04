@@ -187,6 +187,7 @@ def fetch_recent_message(args: argparse.Namespace) -> Optional[Dict]:
         if status != "OK" or not data or not data[0]:
             return None
 
+        matched_messages: List[Tuple[datetime, int, Dict]] = []
         uids = data[0].split()
         for uid in reversed(uids[-200:]):
             status, message_data = connection.uid("fetch", uid, "(RFC822)")
@@ -211,7 +212,13 @@ def fetch_recent_message(args: argparse.Namespace) -> Optional[Dict]:
                 after_dt=after_dt,
             )
             if matched:
-                return payload
+                uid_value = int(uid.decode("ascii", errors="ignore") or "0")
+                payload_dt = normalize_dt(datetime.fromisoformat(payload["date"]))
+                matched_messages.append((payload_dt, uid_value, payload))
+
+        if matched_messages:
+            matched_messages.sort(key=lambda item: (item[0], item[1]), reverse=True)
+            return matched_messages[0][2]
 
         return None
     finally:
