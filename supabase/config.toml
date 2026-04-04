@@ -56,3 +56,9 @@ verify_jwt = false
 
 [functions.get-stripe-invoice-pdf]
 verify_jwt = false
+
+[functions.delete-contact]
+verify_jwt = false
+
+[functions.delete-customer]
+verify_jwt = false

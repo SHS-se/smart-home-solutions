@@ -48,7 +48,10 @@ get_process_cwd() {
 compute_edge_function_fingerprint() {
   (
     cd "$PROJECT_DIR"
-    find "$EDGE_FUNCTIONS_DIR" -type f | sort | while read -r file; do
+    {
+      find "$EDGE_FUNCTIONS_DIR" -type f
+      printf '%s\n' "supabase/config.toml"
+    } | sort | while read -r file; do
       printf '%s\n' "$file"
       shasum -a 256 "$file"
     done | shasum -a 256 | awk '{print $1}'
