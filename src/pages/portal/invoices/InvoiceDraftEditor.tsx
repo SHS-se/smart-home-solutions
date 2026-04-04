@@ -40,6 +40,7 @@ import { Send, Eye, Plus, Trash2, Loader2, Info, Link as LinkIcon, Package, Lock
 import { toast } from '@/hooks/use-toast';
 import SKUSelector from '@/components/portal/boms/SKUSelector';
 import { useInvoiceBomRevision } from '@/hooks/use-invoice-bom-revision';
+import { getEdgeFunctionErrorMessage } from '@/lib/edge-function-error';
 
 interface LineItem {
   id?: string;
@@ -321,7 +322,7 @@ const InvoiceDraftEditor: React.FC = () => {
           line_items: lineItems,
         },
       });
-      if (error) throw error;
+      if (error) throw new Error(await getEdgeFunctionErrorMessage(error));
       if (data?.error) throw new Error(data.error);
       return data;
     },

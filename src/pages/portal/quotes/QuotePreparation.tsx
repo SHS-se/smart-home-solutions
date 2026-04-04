@@ -28,6 +28,7 @@ import { toast } from '@/hooks/use-toast';
 import QuoteVersionDropdown from '@/components/portal/quotes/QuoteVersionDropdown';
 import { useQuoteVersioning } from '@/hooks/use-quote-versioning';
 import { getQuoteStatusBadge } from '@/lib/quote-status-badge';
+import { getEdgeFunctionErrorMessage } from '@/lib/edge-function-error';
 import BlurCommitInput from '@/components/ui/blur-commit-input';
 import {
   Select,
@@ -482,7 +483,7 @@ const QuotePreparation: React.FC = () => {
         },
       });
 
-      if (error) throw error;
+      if (error) throw new Error(await getEdgeFunctionErrorMessage(error));
 
       toast({ 
         title: t('Fakturautkast skapad!', 'Invoice draft created!'), 

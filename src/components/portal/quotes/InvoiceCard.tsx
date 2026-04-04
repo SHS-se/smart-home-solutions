@@ -14,6 +14,7 @@ import {
   Receipt,
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
+import { getEdgeFunctionErrorMessage } from '@/lib/edge-function-error';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -104,7 +105,7 @@ const InvoiceCard: React.FC<InvoiceCardProps> = ({ quote, invoiceId }) => {
       const { data, error } = await supabase.functions.invoke('create-invoice-from-quote', {
         body: { quote_id: quote.id },
       });
-      if (error) throw error;
+      if (error) throw new Error(await getEdgeFunctionErrorMessage(error));
       if (data.error) throw new Error(data.error);
 
       toast({

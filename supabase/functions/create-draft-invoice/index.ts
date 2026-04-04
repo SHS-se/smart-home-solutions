@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { getAppEnvironment } from "../_shared/app-env.ts";
+import { normalizeInvoiceLineType } from "../_shared/invoice-line-types.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -22,6 +23,22 @@ serve(async (req) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
     { auth: { persistSession: false } }
   );
+  let createdInvoiceId: string | null = null;
+
+  const cleanupDraftInvoice = async (invoiceId: string, reason: string) => {
+    const { error } = await supabaseClient
+      .from("invoices")
+      .delete()
+      .eq("id", invoiceId)
+      .eq("status", "draft");
+
+    if (error) {
+      logStep("Cleanup failed", { invoiceId, reason, error });
+      return;
+    }
+
+    logStep("Cleaned up partial draft invoice", { invoiceId, reason });
+  };
 
   try {
     const appEnv = getAppEnvironment();
@@ -116,6 +133,7 @@ serve(async (req) => {
     }
 
     logStep("Invoice record created", { invoiceId: invoice.id });
+    createdInvoiceId = invoice.id;
 
     // Insert line items from various sources
     const lineItemsToInsert: Array<{
@@ -134,17 +152,17 @@ serve(async (req) => {
 
     // If line_items are passed directly, use them
     if (line_items.length > 0) {
-      line_items.forEach((item: { line_type: string; description: string; sku?: string; sku_id?: string; quantity: number; unit_price: number; unit?: string; category?: string }, idx: number) => {
+      line_items.forEach((item: { line_type: string; description: string; sku?: string; sku_id?: string; quantity: number; unit_price: number; unit?: string; tax_rate?: number; category?: string }, idx: number) => {
         lineItemsToInsert.push({
           invoice_id: invoice.id,
-          line_type: item.line_type,
+          line_type: normalizeInvoiceLineType(item.line_type),
           description: item.description,
           sku: item.sku,
           sku_id: item.sku_id,
           quantity: item.quantity,
           unit_price: item.unit_price,
           unit: item.unit,
-          tax_rate: 25,
+          tax_rate: typeof item.tax_rate === "number" ? item.tax_rate : 25,
           category: item.category,
           sort_order: idx
         });
@@ -153,13 +171,9 @@ serve(async (req) => {
     // Otherwise, populate from quote lines
     else if (quote && quote.quote_lines) {
       quote.quote_lines.forEach((line: { section: string; description: string; original_sku_code?: string; sku_id?: string; quantity: number; unit_price_ex_vat?: number; unit_price?: number }, idx: number) => {
-        const lineType = line.section === 'hardware' ? 'hardware'
-          : line.section === 'labor' ? 'labor'
-          : 'travel_other';
-
         lineItemsToInsert.push({
           invoice_id: invoice.id,
-          line_type: lineType,
+          line_type: normalizeInvoiceLineType(line.section),
           description: line.description,
           sku: line.original_sku_code,
           sku_id: line.sku_id,
@@ -195,13 +209,14 @@ serve(async (req) => {
 
       if (lineItemsError) {
         logStep("Error inserting line items", { error: lineItemsError });
-      } else {
-        logStep("Line items inserted", { count: lineItemsToInsert.length });
+        throw new Error(`Failed to create invoice lines: ${lineItemsError.message}`);
       }
+
+      logStep("Line items inserted", { count: lineItemsToInsert.length });
     }
 
     // Create invoice event
-    await supabaseClient.from('invoice_events').insert({
+    const { error: invoiceEventError } = await supabaseClient.from('invoice_events').insert({
       invoice_id: invoice.id,
       event_type: 'invoice_created',
       metadata: {
@@ -209,6 +224,10 @@ serve(async (req) => {
       },
       created_by: user.id
     });
+
+    if (invoiceEventError) {
+      logStep("Invoice event insert failed", { invoiceId: invoice.id, error: invoiceEventError });
+    }
 
     logStep("Draft invoice created successfully");
 
@@ -222,6 +241,9 @@ serve(async (req) => {
     });
 
   } catch (error) {
+    if (createdInvoiceId) {
+      await cleanupDraftInvoice(createdInvoiceId, error instanceof Error ? error.message : String(error));
+    }
     const errorMessage = error instanceof Error ? error.message : String(error);
     logStep("ERROR", { message: errorMessage });
     return new Response(JSON.stringify({ error: errorMessage }), {

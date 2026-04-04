@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { getAppEnvironment } from "../_shared/app-env.ts";
+import { normalizeInvoiceLineType } from "../_shared/invoice-line-types.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -17,6 +18,8 @@ serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
+
+  let createdInvoiceId: string | null = null;
 
   try {
     const appEnv = getAppEnvironment();
@@ -98,6 +101,7 @@ serve(async (req) => {
 
     if (invoiceError) throw new Error(`Failed to create invoice record: ${invoiceError.message}`);
     logStep("Invoice record created", { invoiceId: invoiceRecord.id });
+    createdInvoiceId = invoiceRecord.id;
 
     // Copy quote_lines to invoice_line_items
     const invoiceLineItems = lineItems.map((item, idx) => ({
@@ -106,24 +110,38 @@ serve(async (req) => {
       quantity: item.quantity || 1,
       unit_price: item.unit_price_ex_vat || item.unit_price || 0,
       tax_rate: Math.round((item.vat_rate || 0.25) * 100),
-      line_type: item.section,
+      line_type: normalizeInvoiceLineType(item.section),
       sort_order: idx,
       sku: item.original_sku_code || null,
       sku_id: item.sku_id || null,
       category: item.section,
     }));
 
-    await serviceClient.from("invoice_line_items").insert(invoiceLineItems);
+    const { error: lineItemsError } = await serviceClient
+      .from("invoice_line_items")
+      .insert(invoiceLineItems);
+
+    if (lineItemsError) {
+      throw new Error(`Failed to create invoice lines: ${lineItemsError.message}`);
+    }
+
     logStep("Line items copied", { count: invoiceLineItems.length });
 
     // Update quote to reflect invoice creation
-    await serviceClient.from("quotes").update({
-      invoice_status: "draft",
-      status: "invoiced",
-    }).eq("id", quote_id);
+    const { error: quoteUpdateError } = await serviceClient
+      .from("quotes")
+      .update({
+        invoice_status: "draft",
+        status: "invoiced",
+      })
+      .eq("id", quote_id);
+
+    if (quoteUpdateError) {
+      throw new Error(`Failed to update quote status: ${quoteUpdateError.message}`);
+    }
 
     // Log event
-    await serviceClient.from("quote_events").insert({
+    const { error: quoteEventError } = await serviceClient.from("quote_events").insert({
       quote_id,
       event_type: "invoice_created",
       actor_type: "staff",
@@ -132,6 +150,10 @@ serve(async (req) => {
         invoice_id: invoiceRecord.id,
       },
     });
+
+    if (quoteEventError) {
+      logStep("Quote event insert failed", { quoteId: quote_id, error: quoteEventError });
+    }
 
     logStep("Done", { invoiceId: invoiceRecord.id });
 
@@ -146,6 +168,21 @@ serve(async (req) => {
 
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
+    if (createdInvoiceId) {
+      const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+      const serviceClient = createClient(supabaseUrl, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+      const { error: cleanupError } = await serviceClient
+        .from("invoices")
+        .delete()
+        .eq("id", createdInvoiceId)
+        .eq("status", "draft");
+
+      if (cleanupError) {
+        logStep("Cleanup failed", { invoiceId: createdInvoiceId, error: cleanupError });
+      } else {
+        logStep("Cleaned up partial draft invoice", { invoiceId: createdInvoiceId });
+      }
+    }
     logStep("ERROR", { message: msg });
     return new Response(JSON.stringify({ error: msg }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
