@@ -106,7 +106,7 @@ const RecordPaymentDialog: React.FC<RecordPaymentDialogProps> = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent data-testid="invoice-record-payment-dialog" className="max-w-lg">
         <DialogHeader>
           <DialogTitle>{t('Registrera betalning', 'Record payment')}</DialogTitle>
           <DialogDescription>
@@ -121,6 +121,7 @@ const RecordPaymentDialog: React.FC<RecordPaymentDialogProps> = ({
           <div>
             <Label htmlFor="payment-date">{t('Betalningsdatum', 'Payment date')}</Label>
             <Input
+              data-testid="invoice-payment-date-input"
               id="payment-date"
               type="date"
               value={paymentDate}
@@ -131,6 +132,7 @@ const RecordPaymentDialog: React.FC<RecordPaymentDialogProps> = ({
           <div>
             <Label htmlFor="payment-amount">{t('Belopp', 'Amount')}</Label>
             <Input
+              data-testid="invoice-payment-amount-input"
               id="payment-amount"
               type="number"
               step="0.01"
@@ -157,6 +159,7 @@ const RecordPaymentDialog: React.FC<RecordPaymentDialogProps> = ({
           <div>
             <Label htmlFor="payment-reference">{t('Referens', 'Reference')}</Label>
             <Input
+              data-testid="invoice-payment-reference-input"
               id="payment-reference"
               value={reference}
               onChange={(event) => setReference(event.target.value)}
@@ -178,7 +181,7 @@ const RecordPaymentDialog: React.FC<RecordPaymentDialogProps> = ({
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isSaving}>
             {t('Avbryt', 'Cancel')}
           </Button>
-          <Button onClick={handleSave} disabled={isSaving}>
+          <Button data-testid="invoice-payment-save-button" onClick={handleSave} disabled={isSaving}>
             {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             {t('Spara betalning', 'Save payment')}
           </Button>

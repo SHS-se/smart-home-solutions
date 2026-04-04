@@ -462,12 +462,18 @@ async function openPublicInvoiceAndVerify(page: Page, invoiceLink: string): Prom
 }
 
 async function recordInvoicePayment(page: Page): Promise<void> {
-  await expect(page.getByRole('button', { name: /registrera betalning|record payment/i })).toBeVisible();
-  await page.getByRole('button', { name: /registrera betalning|record payment/i }).click();
-  await expect(page.getByRole('dialog')).toBeVisible();
-  await expect(page.getByLabel(/Belopp|Amount/i)).toBeVisible();
-  await page.getByRole('button', { name: /spara betalning|save payment/i }).click();
-  await expect(page.getByRole('dialog')).toBeHidden();
+  await expect(page.getByTestId('invoice-record-payment-button')).toBeVisible();
+  await page.getByTestId('invoice-record-payment-button').click();
+
+  const dialog = page.getByTestId('invoice-record-payment-dialog');
+  const amountInput = page.getByTestId('invoice-payment-amount-input');
+
+  await expect(dialog).toBeVisible();
+  await expect(amountInput).toBeVisible();
+  await expect(amountInput).not.toHaveValue('');
+
+  await page.getByTestId('invoice-payment-save-button').click();
+  await expect(dialog).toBeHidden();
 }
 
 async function waitForInvoicePaid(page: Page): Promise<void> {

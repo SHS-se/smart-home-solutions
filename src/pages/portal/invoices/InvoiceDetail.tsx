@@ -556,6 +556,7 @@ const InvoiceDetail: React.FC = () => {
 
                   {!isVoid && !isPaid && invoice.status !== 'draft' && (
                     <Button
+                      data-testid="invoice-record-payment-button"
                       variant="outline"
                       className="w-full"
                       onClick={() => setShowPaymentDialog(true)}
