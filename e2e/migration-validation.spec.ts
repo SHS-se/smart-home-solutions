@@ -364,6 +364,8 @@ async function sendQuoteAndOpenPublicLink(page: Page, afterIso: string): Promise
     'public quote',
   );
   expectAppOrigin(publicQuoteLink, 'Quote');
+  console.log('[e2e] quote email subject:', quoteEmail.subject);
+  console.log('[e2e] public quote link:', publicQuoteLink);
   return publicQuoteLink;
 }
 
@@ -446,11 +448,14 @@ async function createFinalizeAndSendInvoice(page: Page): Promise<string> {
     timeoutMs: 180_000,
   });
 
-  return pickFirstLink(
+  const publicInvoiceLink = pickFirstLink(
     invoiceEmail,
     (link) => link.includes('/portal/invoice/') && !link.toLowerCase().includes('/pdf'),
     'public invoice',
   );
+  console.log('[e2e] invoice email subject:', invoiceEmail.subject);
+  console.log('[e2e] public invoice link:', publicInvoiceLink);
+  return publicInvoiceLink;
 }
 
 async function openPublicInvoiceAndVerify(page: Page, invoiceLink: string): Promise<void> {

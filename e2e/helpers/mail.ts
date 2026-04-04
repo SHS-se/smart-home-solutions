@@ -31,6 +31,10 @@ export async function waitForEmail(
   config: E2EConfig,
   options: WaitForEmailOptions,
 ): Promise<PolledEmail> {
+  console.log(
+    `[e2e] IMAP search: recipient=${options.recipient} after=${options.afterIso} subjects=${(options.subjectIncludes ?? []).join(' | ') || '(any)'}`,
+  );
+
   const args = [
     imapScriptPath,
     '--recipient',
@@ -65,7 +69,14 @@ export async function waitForEmail(
     throw new Error(stderr.trim());
   }
 
-  return JSON.parse(stdout) as PolledEmail;
+  const email = JSON.parse(stdout) as PolledEmail;
+  console.log(`[e2e] IMAP matched subject: ${email.subject}`);
+  console.log(`[e2e] IMAP matched date: ${email.date}`);
+  for (const link of email.links) {
+    console.log(`[e2e] IMAP link: ${link}`);
+  }
+
+  return email;
 }
 
 export function pickFirstLink(
@@ -73,9 +84,14 @@ export function pickFirstLink(
   matcher: (link: string) => boolean,
   label: string,
 ): string {
+  console.log(`[e2e] selecting ${label} link from email subject: ${email.subject}`);
   const link = email.links.find(matcher);
   if (!link) {
+    for (const candidate of email.links) {
+      console.log(`[e2e] candidate link (${label}): ${candidate}`);
+    }
     throw new Error(`Could not find ${label} link in email with subject "${email.subject}"`);
   }
+  console.log(`[e2e] selected ${label} link: ${link}`);
   return link;
 }
