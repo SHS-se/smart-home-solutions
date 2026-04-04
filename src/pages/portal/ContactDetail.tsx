@@ -182,15 +182,30 @@ const ContactDetail: React.FC = () => {
     if (!contact) return;
     setConverting(true);
     try {
-      // Create new customer
-      const { data: newCustomer, error: customerError } = await supabase
-        .from("customers")
-        .insert({ contact_id: contact.id })
-        .select("id")
-        .single();
+      // Idempotent: if a previous conversion attempt partially succeeded
+      // (customer row created but contact not linked), reuse that customer
+      // instead of inserting a duplicate that would violate the unique constraint
+      // on customers.contact_id.
+      let customerId: string;
 
-      if (customerError) throw customerError;
-      const customerId = newCustomer.id;
+      const { data: existingCustomer } = await supabase
+        .from("customers")
+        .select("id")
+        .eq("contact_id", contact.id)
+        .maybeSingle();
+
+      if (existingCustomer) {
+        customerId = existingCustomer.id;
+      } else {
+        const { data: newCustomer, error: customerError } = await supabase
+          .from("customers")
+          .insert({ contact_id: contact.id })
+          .select("id")
+          .single();
+
+        if (customerError) throw customerError;
+        customerId = newCustomer.id;
+      }
 
       // Update contact with customer reference
       const { error: updateError } = await supabase
