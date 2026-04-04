@@ -11,6 +11,9 @@ ENV="${1:-test}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 DEPLOY_MODE="${DEPLOY_EDGE_FUNCTIONS:-auto}"
+EDGE_FUNCTIONS_DIR=""
+DEPLOY_STATE_FILE=""
+EDGE_FUNCTION_FINGERPRINT=""
 
 should_deploy_edge_functions() {
   case "$DEPLOY_MODE" in
@@ -40,6 +43,32 @@ get_process_cwd() {
   lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1
 }
 
+compute_edge_function_fingerprint() {
+  (
+    cd "$PROJECT_DIR"
+    find "$EDGE_FUNCTIONS_DIR" -type f | sort | while read -r file; do
+      printf '%s\n' "$file"
+      shasum -a 256 "$file"
+    done | shasum -a 256 | awk '{print $1}'
+  )
+}
+
+edge_functions_changed_since_last_deploy() {
+  EDGE_FUNCTION_FINGERPRINT="$(compute_edge_function_fingerprint)"
+
+  if [ ! -f "$DEPLOY_STATE_FILE" ]; then
+    return 0
+  fi
+
+  LAST_DEPLOY_FINGERPRINT="$(cat "$DEPLOY_STATE_FILE")"
+  [ "$EDGE_FUNCTION_FINGERPRINT" != "$LAST_DEPLOY_FINGERPRINT" ]
+}
+
+record_edge_function_deploy() {
+  mkdir -p "$(dirname "$DEPLOY_STATE_FILE")"
+  printf '%s\n' "$EDGE_FUNCTION_FINGERPRINT" > "$DEPLOY_STATE_FILE"
+}
+
 case "$ENV" in
   test)
     PROJECT_REF="vxqpgbzseckgceopitpm"
@@ -56,6 +85,8 @@ case "$ENV" in
 esac
 
 SUPABASE_URL="https://${PROJECT_REF}.supabase.co"
+EDGE_FUNCTIONS_DIR="supabase/functions"
+DEPLOY_STATE_FILE="$PROJECT_DIR/supabase/.temp/dev-edge-functions-${PROJECT_REF}.sha"
 
 EXISTING_PID="$(get_listening_pid "$PORT")"
 if [ -n "$EXISTING_PID" ]; then
@@ -74,12 +105,32 @@ if [ -n "$EXISTING_PID" ]; then
 fi
 
 if should_deploy_edge_functions; then
-  echo "→ Deploying edge functions to $ENV ($PROJECT_REF)..."
-  (
-    cd "$PROJECT_DIR"
-    supabase functions deploy --project-ref "$PROJECT_REF" --use-api --yes
-  )
-  echo "✓ Edge functions deployed"
+  if [ "$DEPLOY_MODE" = "auto" ] || [ -z "$DEPLOY_MODE" ]; then
+    if edge_functions_changed_since_last_deploy; then
+      if [ -f "$DEPLOY_STATE_FILE" ]; then
+        echo "→ Edge functions changed since the last $ENV deploy; deploying..."
+      else
+        echo "→ No previous $ENV edge function deploy fingerprint found; deploying..."
+      fi
+      (
+        cd "$PROJECT_DIR"
+        supabase functions deploy --project-ref "$PROJECT_REF" --use-api --yes
+      )
+      record_edge_function_deploy
+      echo "✓ Edge functions deployed"
+    else
+      echo "→ Edge functions unchanged since the last $ENV deploy; skipping deploy"
+    fi
+  else
+    EDGE_FUNCTION_FINGERPRINT="$(compute_edge_function_fingerprint)"
+    echo "→ Deploying edge functions to $ENV ($PROJECT_REF)..."
+    (
+      cd "$PROJECT_DIR"
+      supabase functions deploy --project-ref "$PROJECT_REF" --use-api --yes
+    )
+    record_edge_function_deploy
+    echo "✓ Edge functions deployed"
+  fi
   echo ""
 elif [ "$ENV" = "live" ]; then
   echo "→ Skipping edge function deploy for live by default"
