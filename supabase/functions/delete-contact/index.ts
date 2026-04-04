@@ -88,25 +88,17 @@ serve(async (req: Request) => {
       await supabase.auth.admin.deleteUser(authUser.id);
     }
 
-    // 3. Delete linked customer records (and their dependent data)
-    const { data: linkedCustomers } = await supabase
+    // 3. Unlink any customers referencing this contact (nullify FK)
+    await supabase
       .from("customers")
-      .select("id")
+      .update({ contact_id: null })
       .eq("contact_id", contact_id);
 
-    if (linkedCustomers && linkedCustomers.length > 0) {
-      const customerIds = linkedCustomers.map(c => c.id);
-      // Delete home_answers, home_photos, tickets etc. for these customers
-      for (const cid of customerIds) {
-        await supabase.from("home_answers").delete().eq("customer_id", cid);
-        await supabase.from("home_photos").delete().eq("customer_id", cid);
-      }
-      // Delete the customer records themselves
-      await supabase
-        .from("customers")
-        .delete()
-        .eq("contact_id", contact_id);
-    }
+    // Also clear converted_to_customer_id on the contact to avoid FK issues
+    await supabase
+      .from("contacts")
+      .update({ converted_to_customer_id: null })
+      .eq("id", contact_id);
 
     // 4. Delete contact messages
     await supabase
