@@ -473,7 +473,7 @@ const QuotePreparation: React.FC = () => {
         })),
       ];
 
-      const { data, error } = await supabase.functions.invoke('create-draft-invoice', {
+      const { data, error, response } = await supabase.functions.invoke('create-draft-invoice', {
         body: {
           customer_id: quote.customer_id,
           bom_id: quote.bom_id,
@@ -483,7 +483,7 @@ const QuotePreparation: React.FC = () => {
         },
       });
 
-      if (error) throw new Error(await getEdgeFunctionErrorMessage(error));
+      if (error) throw new Error(await getEdgeFunctionErrorMessage(response ?? error));
 
       toast({ 
         title: t('Fakturautkast skapad!', 'Invoice draft created!'), 

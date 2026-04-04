@@ -1,7 +1,17 @@
+import {
+  FunctionsFetchError,
+  FunctionsHttpError,
+  FunctionsRelayError,
+} from '@supabase/supabase-js';
+
 type ResponseLike = {
   clone?: () => ResponseLike;
   json?: () => Promise<unknown>;
   text?: () => Promise<string>;
+  status?: number;
+  headers?: {
+    get?: (name: string) => string | null;
+  };
 };
 
 type ErrorWithContext = {
@@ -47,16 +57,34 @@ async function readErrorMessageFromContext(context: ResponseLike | undefined): P
 }
 
 export async function getEdgeFunctionErrorMessage(error: unknown): Promise<string> {
+  const response =
+    typeof error === "object" && error !== null
+      ? (error as ErrorWithContext).context
+      : undefined;
+
   const fallback =
     error instanceof Error
       ? error.message
       : typeof error === "string"
         ? error
         : "Unexpected edge function error";
+  const parsedMessage = await readErrorMessageFromContext(response);
+  if (parsedMessage) {
+    return parsedMessage;
+  }
 
-  const context = typeof error === "object" && error !== null
-    ? (error as ErrorWithContext).context
-    : undefined;
+  if (error instanceof FunctionsRelayError) {
+    return "Supabase relay could not reach the Edge Function";
+  }
 
-  return (await readErrorMessageFromContext(context)) ?? fallback;
+  if (error instanceof FunctionsFetchError) {
+    return error.message;
+  }
+
+  const status = response?.status;
+  if (error instanceof FunctionsHttpError && typeof status === "number") {
+    return `Edge Function failed with HTTP ${status}`;
+  }
+
+  return fallback;
 }

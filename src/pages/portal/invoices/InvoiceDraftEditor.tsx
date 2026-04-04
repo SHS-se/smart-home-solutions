@@ -312,7 +312,7 @@ const InvoiceDraftEditor: React.FC = () => {
     mutationFn: async () => {
       if (!selectedCustomerId) throw new Error('Customer is required');
       
-      const { data, error } = await supabase.functions.invoke('create-draft-invoice', {
+      const { data, error, response } = await supabase.functions.invoke('create-draft-invoice', {
         body: {
           customer_id: selectedCustomerId,
           bom_id: selectedBomId,
@@ -322,7 +322,7 @@ const InvoiceDraftEditor: React.FC = () => {
           line_items: lineItems,
         },
       });
-      if (error) throw new Error(await getEdgeFunctionErrorMessage(error));
+      if (error) throw new Error(await getEdgeFunctionErrorMessage(response ?? error));
       if (data?.error) throw new Error(data.error);
       return data;
     },

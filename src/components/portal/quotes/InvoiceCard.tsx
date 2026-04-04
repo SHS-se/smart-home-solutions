@@ -102,10 +102,10 @@ const InvoiceCard: React.FC<InvoiceCardProps> = ({ quote, invoiceId }) => {
   const handleCreateInvoice = async () => {
     setIsCreating(true);
     try {
-      const { data, error } = await supabase.functions.invoke('create-invoice-from-quote', {
+      const { data, error, response } = await supabase.functions.invoke('create-invoice-from-quote', {
         body: { quote_id: quote.id },
       });
-      if (error) throw new Error(await getEdgeFunctionErrorMessage(error));
+      if (error) throw new Error(await getEdgeFunctionErrorMessage(response ?? error));
       if (data.error) throw new Error(data.error);
 
       toast({
