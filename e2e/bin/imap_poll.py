@@ -17,6 +17,7 @@ from typing import Dict, List, Optional, Tuple
 
 LINK_RE = re.compile(r"https?://[^\s<>\"]+")
 HREF_RE = re.compile(r'href=[\"\']([^\"\']+)[\"\']', re.IGNORECASE)
+EMAIL_AFTER_GRACE_SECONDS = 15
 
 
 def require_env(name: str) -> str:
@@ -139,7 +140,7 @@ def candidate_matches(
         return False, {}
 
     msg_date = normalize_dt(parsedate_to_datetime(msg.get("Date")) if msg.get("Date") else None)
-    if msg_date < after_dt - timedelta(minutes=2):
+    if msg_date < after_dt - timedelta(seconds=EMAIL_AFTER_GRACE_SECONDS):
         return False, {}
 
     text, html = extract_parts(msg)
