@@ -49,7 +49,34 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.fetch-customer-invoice]
-verify_jwt = true
+verify_jwt = false
+
+[functions.create-draft-invoice]
+verify_jwt = false
+
+[functions.create-invoice-from-quote]
+verify_jwt = false
+
+[functions.finalize-new-invoice]
+verify_jwt = false
+
+[functions.finalize-invoice]
+verify_jwt = false
+
+[functions.record-invoice-payment]
+verify_jwt = false
+
+[functions.send-invoice-email]
+verify_jwt = false
+
+[functions.send-new-invoice-email]
+verify_jwt = false
+
+[functions.void-invoice]
+verify_jwt = false
+
+[functions.void-new-invoice]
+verify_jwt = false
 
 [functions.delete-contact]
 verify_jwt = false
