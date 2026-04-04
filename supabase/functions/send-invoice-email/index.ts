@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { Resend } from "https://esm.sh/resend@2.0.0";
 import { getRequestAppOrigin } from "../_shared/app-origin.ts";
 import { getAppEnvironment } from "../_shared/app-env.ts";
+import { buildInvoicePaymentDetails } from "../_shared/invoice-document.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -95,16 +96,21 @@ serve(async (req) => {
     const tokenHash = await hashToken(tokenHex);
     const tokenExpiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(); // 90 days
 
-    // Store token hash on the invoice
-    await serviceClient.from('invoices').update({
+    const previousTokenState = {
+      public_token_hash: invoice.public_token_hash ?? null,
+      public_token_expires_at: invoice.public_token_expires_at ?? null,
+    };
+
+    // Store the new token first so the emailed link becomes valid.
+    // If email delivery fails we restore the previous token state below.
+    const { error: tokenUpdateError } = await serviceClient.from('invoices').update({
       public_token_hash: tokenHash,
       public_token_expires_at: tokenExpiresAt,
-      sent_at: new Date().toISOString(),
-      last_emailed_at: new Date().toISOString(),
-      last_emailed_to: recipientEmail,
-      last_emailed_type: 'invoice',
       updated_at: new Date().toISOString(),
     }).eq('id', invoice.id);
+    if (tokenUpdateError) {
+      throw new Error(`Failed to prepare public invoice link: ${tokenUpdateError.message}`);
+    }
 
     const viewUrl = `${appOrigin}/portal/invoice/${invoice.id}?token=${tokenHex}`;
 
@@ -122,6 +128,12 @@ serve(async (req) => {
 
     const emailSubject = customSubject || `Faktura ${invoice.invoice_number} från Smart Home Solutions`;
     const invoiceNumber = invoice.invoice_number || invoice.id;
+    const paymentDetails = await buildInvoicePaymentDetails({
+      invoiceNumber,
+      amount: total,
+      dueDate: invoice.due_date,
+      currency: invoice.currency,
+    });
 
     // Build email HTML
     const htmlBody = `<!DOCTYPE html>
@@ -162,18 +174,36 @@ serve(async (req) => {
 </body>
 </html>`;
 
-    const textBody = `Faktura ${invoiceNumber} från Smart Home Solutions\n\nHej ${customerName},\n\n${customMessage || 'Här kommer din faktura.'}\n\nFakturanummer: ${invoiceNumber}\nFörfallodatum: ${dueDate}\nAtt betala: ${formatSEK(total)}\n\nVisa faktura: ${viewUrl}\n\nFrågor? Kontakta oss: support@smarthomesolutions.se\n`;
+    const textBody = `Faktura ${invoiceNumber} från Smart Home Solutions\n\nHej ${customerName},\n\n${customMessage || 'Här kommer din faktura.'}\n\nFakturanummer: ${invoiceNumber}\nFörfallodatum: ${dueDate}\nAtt betala: ${formatSEK(total)}\nBankgiro: ${paymentDetails.bankgiro_number || 'Ej konfigurerat'}\nBetalningsreferens: ${paymentDetails.payment_reference || invoiceNumber}\n\nVisa faktura: ${viewUrl}\n\nFrågor? Kontakta oss: support@smarthomesolutions.se\n`;
 
-    // Send via Resend
-    const resend = new Resend(resendApiKey);
-    const emailResult = await resend.emails.send({
-      from: "Smart Home Solutions <faktura@mail.smarthomesolutions.se>",
-      to: [recipientEmail],
-      subject: emailSubject,
-      html: htmlBody,
-      text: textBody,
-    });
+    let emailResult;
+    try {
+      const resend = new Resend(resendApiKey);
+      emailResult = await resend.emails.send({
+        from: "Smart Home Solutions <faktura@mail.smarthomesolutions.se>",
+        to: [recipientEmail],
+        subject: emailSubject,
+        html: htmlBody,
+        text: textBody,
+      });
+    } catch (emailError) {
+      await serviceClient.from('invoices').update({
+        public_token_hash: previousTokenState.public_token_hash,
+        public_token_expires_at: previousTokenState.public_token_expires_at,
+        updated_at: new Date().toISOString(),
+      }).eq('id', invoice.id);
+      throw emailError;
+    }
     logStep("Email sent", { emailId: emailResult.data?.id, to: recipientEmail });
+
+    const sentAt = new Date().toISOString();
+    await serviceClient.from('invoices').update({
+      sent_at: sentAt,
+      last_emailed_at: sentAt,
+      last_emailed_to: recipientEmail,
+      last_emailed_type: 'invoice',
+      updated_at: sentAt,
+    }).eq('id', invoice.id);
 
     // Create invoice event
     await serviceClient.from('invoice_events').insert({

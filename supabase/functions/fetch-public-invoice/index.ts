@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
+import { loadInvoiceDocumentData } from "../_shared/invoice-document.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -69,33 +70,7 @@ serve(async (req) => {
       });
     }
 
-    // Fetch customer info
-    const { data: customer } = await serviceClient
-      .from("customers_with_identity")
-      .select("name, contact_email, billing_street, billing_postcode, billing_city")
-      .eq("id", invoice.customer_id)
-      .single();
-
-    // Fetch line items
-    const { data: lineItems } = await serviceClient
-      .from("invoice_line_items")
-      .select("id, line_type, description, quantity, unit_price, tax_rate, sku, category, sort_order")
-      .eq("invoice_id", invoiceId)
-      .order("sort_order");
-
-    // Fetch computed totals
-    const { data: totals } = await serviceClient
-      .from("invoice_computed_totals")
-      .select("*")
-      .eq("invoice_id", invoiceId)
-      .single();
-
-    // Fetch payment history
-    const { data: payments } = await serviceClient
-      .from("invoice_payments")
-      .select("id, payment_date, amount, method, reference, note, created_at")
-      .eq("invoice_id", invoiceId)
-      .order("payment_date");
+    const invoiceDocument = await loadInvoiceDocumentData(serviceClient, invoiceId);
 
     // Update last_public_viewed_at
     await serviceClient.from("invoices").update({
@@ -111,30 +86,7 @@ serve(async (req) => {
 
     logStep("Invoice fetched successfully", { invoiceId, status: invoice.status });
 
-    return new Response(JSON.stringify({
-      id: invoice.id,
-      invoice_number: invoice.invoice_number,
-      status: invoice.status,
-      due_date: invoice.due_date,
-      currency: invoice.currency,
-      subtotal: totals?.subtotal ?? invoice.subtotal,
-      tax: totals?.tax ?? invoice.tax,
-      total: totals?.total ?? invoice.total,
-      created_at: invoice.created_at,
-      finalized_at: invoice.finalized_at,
-      issued_at: invoice.issued_at,
-      paid_at: invoice.paid_at,
-      voided_at: invoice.voided_at,
-      quote_number: invoice.quote_number,
-      customer_name: customer?.name || null,
-      customer_address: customer ? {
-        street: customer.billing_street,
-        postcode: customer.billing_postcode,
-        city: customer.billing_city,
-      } : null,
-      line_items: lineItems || [],
-      payments: payments || [],
-    }), {
+    return new Response(JSON.stringify(invoiceDocument), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 200,
     });

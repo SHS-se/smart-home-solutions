@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { PDFDocument, StandardFonts, rgb } from "https://esm.sh/pdf-lib@1.17.1";
 import { getAppEnvironment } from "../_shared/app-env.ts";
+import { loadInvoiceDocumentData } from "../_shared/invoice-document.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -27,6 +28,16 @@ function formatSEK(amount: number): string {
 function formatDate(dateStr: string | null): string {
   if (!dateStr) return "—";
   return new Date(dateStr).toLocaleDateString("sv-SE");
+}
+
+function dataUrlToBytes(dataUrl: string): Uint8Array {
+  const [, base64] = dataUrl.split(",", 2);
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
 }
 
 serve(async (req) => {
@@ -100,31 +111,8 @@ serve(async (req) => {
       }
     }
 
-    // Fetch full invoice data
-    const { data: invoice, error: invoiceError } = await serviceClient
-      .from("invoices")
-      .select("*, customer:customers_with_identity!invoices_customer_id_fkey(name, contact_email, billing_email, billing_street, billing_postcode, billing_city)")
-      .eq("id", invoiceId)
-      .single();
-
-    if (invoiceError || !invoice) throw new Error("Invoice not found");
+    const invoice = await loadInvoiceDocumentData(serviceClient, invoiceId);
     logStep("Invoice loaded", { invoiceNumber: invoice.invoice_number });
-
-    // Fetch line items
-    const { data: lineItems } = await serviceClient
-      .from("invoice_line_items")
-      .select("*")
-      .eq("invoice_id", invoiceId)
-      .order("sort_order");
-
-    // Fetch computed totals
-    const { data: totals } = await serviceClient
-      .from("invoice_computed_totals")
-      .select("*")
-      .eq("invoice_id", invoiceId)
-      .single();
-
-    const customer = (invoice as any).customer;
 
     // ===== Generate PDF =====
     const pdfDoc = await PDFDocument.create();
@@ -183,14 +171,17 @@ serve(async (req) => {
     let recipY = senderY - 30;
     page.drawText("Mottagare:", { x: leftMargin, y: recipY, font: fontBold, size: 9, color: gray });
     recipY -= 15;
-    page.drawText(customer?.name || "—", { x: leftMargin, y: recipY, font: fontBold, size: 10, color: black });
+    page.drawText(invoice.customer_name || "—", { x: leftMargin, y: recipY, font: fontBold, size: 10, color: black });
     recipY -= 13;
-    if (customer?.billing_street) {
-      page.drawText(customer.billing_street, { x: leftMargin, y: recipY, font, size: 9, color: black });
+    if (invoice.customer_address?.street) {
+      page.drawText(invoice.customer_address.street, { x: leftMargin, y: recipY, font, size: 9, color: black });
       recipY -= 13;
     }
-    if (customer?.billing_postcode || customer?.billing_city) {
-      page.drawText(`${customer.billing_postcode || ""} ${customer.billing_city || ""}`.trim(), { x: leftMargin, y: recipY, font, size: 9, color: black });
+    if (invoice.customer_address?.postcode || invoice.customer_address?.city) {
+      page.drawText(
+        `${invoice.customer_address?.postcode || ""} ${invoice.customer_address?.city || ""}`.trim(),
+        { x: leftMargin, y: recipY, font, size: 9, color: black },
+      );
       recipY -= 13;
     }
 
@@ -208,7 +199,7 @@ serve(async (req) => {
     y -= 20;
 
     // Table rows
-    for (const item of (lineItems || [])) {
+    for (const item of invoice.line_items) {
       if (y < 120) break; // Leave room for totals and payment block
 
       const qty = item.quantity || 1;
@@ -235,9 +226,9 @@ serve(async (req) => {
 
     // Totals block (right-aligned)
     const totalsX = 400;
-    const subtotal = totals?.subtotal || invoice.subtotal || 0;
-    const tax = totals?.tax || invoice.tax || 0;
-    const total = totals?.total || invoice.total || 0;
+    const subtotal = invoice.subtotal || 0;
+    const tax = invoice.tax || 0;
+    const total = invoice.total || 0;
 
     page.drawText("Summa exkl. moms:", { x: totalsX, y, font, size: 9, color: gray });
     page.drawText(formatSEK(subtotal), { x: 500, y, font, size: 9, color: black });
@@ -256,19 +247,47 @@ serve(async (req) => {
     page.drawText("Betalningsinformation", { x: leftMargin, y, font: fontBold, size: 10, color: black });
     y -= 16;
     page.drawText("Bankgiro:", { x: leftMargin, y, font, size: 9, color: gray });
-    page.drawText("XXXX-XXXX", { x: leftMargin + 100, y, font: fontBold, size: 9, color: black });
+    page.drawText(invoice.payment_details.bankgiro_number || "Ej konfigurerat", { x: leftMargin + 100, y, font: fontBold, size: 9, color: black });
     y -= 14;
     page.drawText("Betalningsref:", { x: leftMargin, y, font, size: 9, color: gray });
-    page.drawText(invoice.invoice_number || "—", { x: leftMargin + 100, y, font: fontBold, size: 9, color: black });
+    page.drawText(invoice.payment_details.payment_reference || "—", { x: leftMargin + 100, y, font: fontBold, size: 9, color: black });
     y -= 14;
     page.drawText("Belopp:", { x: leftMargin, y, font, size: 9, color: gray });
-    page.drawText(formatSEK(total), { x: leftMargin + 100, y, font: fontBold, size: 9, color: black });
+    page.drawText(formatSEK(invoice.payment_details.amount), { x: leftMargin + 100, y, font: fontBold, size: 9, color: black });
     y -= 14;
     page.drawText("Förfallodatum:", { x: leftMargin, y, font, size: 9, color: gray });
-    page.drawText(formatDate(invoice.due_date), { x: leftMargin + 100, y, font: fontBold, size: 9, color: black });
+    page.drawText(formatDate(invoice.payment_details.due_date), { x: leftMargin + 100, y, font: fontBold, size: 9, color: black });
     y -= 14;
     page.drawText("Mottagare:", { x: leftMargin, y, font, size: 9, color: gray });
-    page.drawText("Smart Home Solutions AB", { x: leftMargin + 100, y, font: fontBold, size: 9, color: black });
+    page.drawText(invoice.payment_details.payee_name, { x: leftMargin + 100, y, font: fontBold, size: 9, color: black });
+
+    if (invoice.payment_details.qr_data_url) {
+      const qrImage = await pdfDoc.embedPng(dataUrlToBytes(invoice.payment_details.qr_data_url));
+      page.drawImage(qrImage, {
+        x: rightMargin - 95,
+        y: y - 55,
+        width: 72,
+        height: 72,
+      });
+      page.drawText("QR", {
+        x: rightMargin - 60,
+        y: y + 18,
+        font: fontBold,
+        size: 8,
+        color: gray,
+      });
+    }
+
+    y -= 18;
+    page.drawText(invoice.payment_details.manual_payment_instruction, {
+      x: leftMargin,
+      y,
+      font,
+      size: 8,
+      color: gray,
+      maxWidth: 330,
+      lineHeight: 10,
+    });
 
     // Status watermark for paid/void
     if (invoice.status === "paid") {

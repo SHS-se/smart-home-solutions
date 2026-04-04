@@ -8,7 +8,6 @@ import PortalLayout from '@/components/portal/PortalLayout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   Table,
   TableBody,
@@ -33,6 +32,7 @@ import { format } from 'date-fns';
 import { sv } from 'date-fns/locale';
 import InvoiceEmailModal from '@/components/portal/invoices/InvoiceEmailModal';
 import InvoicePdfModal from '@/components/portal/invoices/InvoicePdfModal';
+import RecordPaymentDialog from '@/components/portal/invoices/RecordPaymentDialog';
 
 interface Invoice {
   id: string;
@@ -108,6 +108,8 @@ const getEventIcon = (eventType: string) => {
       return <CheckCircle2 className="h-4 w-4 text-yellow-500" />;
     case 'invoice_paid':
       return <CheckCircle2 className="h-4 w-4 text-green-500" />;
+    case 'payment_recorded':
+      return <CheckCircle2 className="h-4 w-4 text-green-500" />;
     case 'invoice_voided':
       return <XCircle className="h-4 w-4 text-destructive" />;
     case 'email_sent':
@@ -129,6 +131,10 @@ const getEventLabel = (eventType: string, t: (sv: string, en: string) => string)
       return t('Faktura fastställd', 'Invoice finalized');
     case 'invoice_paid':
       return t('Faktura betald', 'Invoice paid');
+    case 'payment_recorded':
+      return t('Betalning registrerad', 'Payment recorded');
+    case 'public_viewed':
+      return t('Publik fakturalank visad', 'Public invoice link viewed');
     case 'invoice_voided':
       return t('Faktura makulerad', 'Invoice voided');
     case 'email_sent':
@@ -146,9 +152,9 @@ const InvoiceDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
 
   const [showVoidDialog, setShowVoidDialog] = useState(false);
-  const [isVoiding, setIsVoiding] = useState(false);
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [showPdfModal, setShowPdfModal] = useState(false);
+  const [showPaymentDialog, setShowPaymentDialog] = useState(false);
 
   // Fetch invoice by invoice_number or id
   const { data: invoice, isLoading } = useQuery({
@@ -504,6 +510,11 @@ const InvoiceDetail: React.FC = () => {
                   <p>{invoice.due_date ? format(new Date(invoice.due_date), 'yyyy-MM-dd') : '—'}</p>
                 </div>
 
+                <div>
+                  <span className="text-sm text-muted-foreground">{t('Betalningsreferens', 'Payment reference')}</span>
+                  <p className="font-mono">{invoice.invoice_number || '—'}</p>
+                </div>
+
                 {/* Paid indicator */}
                 {isPaid && (
                   <div data-testid="invoice-paid-indicator" className="flex items-center gap-2 text-green-600 bg-green-50 dark:bg-green-950/30 rounded-md p-3">
@@ -537,6 +548,17 @@ const InvoiceDetail: React.FC = () => {
                     <Button data-testid="invoice-send-email-button" className="w-full" onClick={() => setShowEmailModal(true)}>
                       <Mail className="h-4 w-4 mr-2" />
                       {t('Skicka faktura', 'Send invoice')}
+                    </Button>
+                  )}
+
+                  {!isVoid && !isPaid && invoice.status !== 'draft' && (
+                    <Button
+                      variant="outline"
+                      className="w-full"
+                      onClick={() => setShowPaymentDialog(true)}
+                    >
+                      <CheckCircle2 className="h-4 w-4 mr-2" />
+                      {t('Registrera betalning', 'Record payment')}
                     </Button>
                   )}
 
@@ -638,6 +660,20 @@ const InvoiceDetail: React.FC = () => {
           onOpenChange={setShowPdfModal}
           invoiceId={invoice.id}
           invoiceNumber={invoice.invoice_number || invoice.id}
+        />
+      )}
+
+      {invoice && (
+        <RecordPaymentDialog
+          open={showPaymentDialog}
+          onOpenChange={setShowPaymentDialog}
+          invoiceId={invoice.id}
+          invoiceNumber={invoice.invoice_number}
+          invoiceTotal={invoice.total}
+          onRecorded={() => {
+            queryClient.invalidateQueries({ queryKey: ['invoice-detail', id] });
+            queryClient.invalidateQueries({ queryKey: ['invoice_events', invoice.id] });
+          }}
         />
       )}
     </PortalLayout>

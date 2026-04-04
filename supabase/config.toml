@@ -57,6 +57,9 @@ verify_jwt = false
 [functions.fetch-public-invoice]
 verify_jwt = false
 
+[functions.fetch-customer-invoice]
+verify_jwt = true
+
 [functions.delete-contact]
 verify_jwt = false
 

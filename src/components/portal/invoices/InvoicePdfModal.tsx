@@ -55,9 +55,9 @@ const InvoicePdfModal: React.FC<InvoicePdfModalProps> = ({
       try {
         // Build the URL for get-invoice-pdf — supports both authenticated and public token
         const supabaseUrl = (supabase as any).supabaseUrl || import.meta.env.VITE_SUPABASE_URL;
-        let url = `${supabaseUrl}/functions/v1/get-invoice-pdf?invoice_id=${invoiceId}`;
+        let url = `${supabaseUrl}/functions/v1/get-invoice-pdf?invoice_id=${encodeURIComponent(invoiceId)}`;
         if (publicToken) {
-          url += `&token=${publicToken}`;
+          url += `&token=${encodeURIComponent(publicToken)}`;
         }
 
         const headers: Record<string, string> = {};
@@ -67,7 +67,7 @@ const InvoicePdfModal: React.FC<InvoicePdfModalProps> = ({
             headers['Authorization'] = `Bearer ${session.access_token}`;
           }
         }
-        headers['apikey'] = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+        headers['apikey'] = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || '';
 
         const response = await fetch(url, { headers, cache: "no-store" });
 

@@ -74,76 +74,21 @@ serve(async (req) => {
       });
     }
 
-    // Set app environment for the DB function
-    await supabaseClient.rpc('set_app_environment', { env: appEnv });
+    const { data: finalizedInvoice, error: finalizeError } = await supabaseClient.rpc(
+      'finalize_local_invoice',
+      {
+        p_invoice_id: invoice.id,
+        p_app_env: appEnv,
+        p_created_by: user.id,
+      },
+    );
 
-    // Allocate invoice number via the gap-free DB function
-    const { data: invoiceNumber, error: allocError } = await supabaseClient
-      .rpc('allocate_invoice_number');
-
-    if (allocError || !invoiceNumber) {
-      throw new Error(`Failed to allocate invoice number: ${allocError?.message || 'no number returned'}`);
+    if (finalizeError || !finalizedInvoice) {
+      throw new Error(`Failed to finalize invoice: ${finalizeError?.message || 'no data returned'}`);
     }
+
+    const invoiceNumber = (finalizedInvoice as { invoice_number: string }).invoice_number;
     logStep("Invoice number allocated", { invoiceNumber });
-
-    // Get computed totals
-    const { data: totals } = await supabaseClient
-      .from('invoice_computed_totals')
-      .select('*')
-      .eq('invoice_id', invoice.id)
-      .single();
-
-    const now = new Date().toISOString();
-
-    // Update local invoice to open status
-    const { error: updateError } = await supabaseClient
-      .from('invoices')
-      .update({
-        invoice_number: invoiceNumber,
-        status: 'open',
-        finalized_at: now,
-        issued_at: now,
-        subtotal: totals?.subtotal || 0,
-        tax: totals?.tax || 0,
-        total: totals?.total || 0,
-        updated_at: now,
-      })
-      .eq('id', invoice.id);
-
-    if (updateError) {
-      throw new Error(`Failed to update invoice: ${updateError.message}`);
-    }
-
-    // Update quote with invoice data
-    await supabaseClient.from('quotes').update({
-      invoice_status: 'open',
-      invoice_number: invoiceNumber,
-      invoice_due_date: invoice.due_date,
-      invoice_subtotal: totals?.subtotal || 0,
-      invoice_vat: totals?.tax || 0,
-      invoice_total: totals?.total || 0,
-    }).eq('id', quote_id);
-
-    // Create billing event
-    await supabaseClient.from('billing_events').insert({
-      quote_id,
-      event_type: 'invoice_finalized',
-      metadata: {
-        invoice_number: invoiceNumber,
-        invoice_id: invoice.id,
-      },
-      created_by: user.id,
-    });
-
-    // Create invoice event
-    await supabaseClient.from('invoice_events').insert({
-      invoice_id: invoice.id,
-      event_type: 'invoice_finalized',
-      metadata: {
-        invoice_number: invoiceNumber,
-      },
-      created_by: user.id,
-    });
 
     logStep("Invoice finalization complete", { invoiceNumber });
 

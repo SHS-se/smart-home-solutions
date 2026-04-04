@@ -63,57 +63,21 @@ serve(async (req) => {
     if (invoiceError || !invoice) throw new Error("Invoice not found");
     if (invoice.status !== 'draft') throw new Error("Can only finalize draft invoices");
 
-    // Set app environment for the DB function
-    await supabaseClient.rpc('set_app_environment', { env: appEnv });
-
-    // Allocate invoice number via the gap-free DB function
-    const { data: invoiceNumber, error: allocError } = await supabaseClient
-      .rpc('allocate_invoice_number');
-
-    if (allocError || !invoiceNumber) {
-      throw new Error(`Failed to allocate invoice number: ${allocError?.message || 'no number returned'}`);
-    }
-    logStep("Invoice number allocated", { invoiceNumber });
-
-    // Get computed totals
-    const { data: totals } = await supabaseClient
-      .from('invoice_computed_totals')
-      .select('*')
-      .eq('invoice_id', invoice_id)
-      .single();
-
-    const now = new Date().toISOString();
-
-    // Update local invoice to open status
-    const { error: updateError } = await supabaseClient
-      .from('invoices')
-      .update({
-        invoice_number: invoiceNumber,
-        status: 'open',
-        due_date: invoice.due_date || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        finalized_at: now,
-        issued_at: now,
-        subtotal: totals?.subtotal || 0,
-        tax: totals?.tax || 0,
-        total: totals?.total || 0,
-        updated_at: now,
-      })
-      .eq('id', invoice_id);
-
-    if (updateError) {
-      logStep("Error updating invoice", { error: updateError });
-      throw new Error(`Failed to update invoice: ${updateError.message}`);
-    }
-
-    // Create event
-    await supabaseClient.from('invoice_events').insert({
-      invoice_id,
-      event_type: 'invoice_finalized',
-      metadata: {
-        invoice_number: invoiceNumber,
+    const { data: finalizedInvoice, error: finalizeError } = await supabaseClient.rpc(
+      'finalize_local_invoice',
+      {
+        p_invoice_id: invoice_id,
+        p_app_env: appEnv,
+        p_created_by: user.id,
       },
-      created_by: user.id
-    });
+    );
+
+    if (finalizeError || !finalizedInvoice) {
+      throw new Error(`Failed to finalize invoice: ${finalizeError?.message || 'no data returned'}`);
+    }
+
+    const invoiceNumber = (finalizedInvoice as { invoice_number: string }).invoice_number;
+    logStep("Invoice number allocated", { invoiceNumber });
 
     // Sync BOM items to match invoice hardware lines
     if (invoice.bom_id) {

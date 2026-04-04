@@ -61,6 +61,7 @@ serve(async (req) => {
     if (invoiceError || !invoice) throw new Error("Invoice not found");
     if (invoice.status === 'void') throw new Error("Cannot record payment on a voided invoice");
     if (invoice.status === 'draft') throw new Error("Cannot record payment on a draft invoice");
+    if (invoice.status === 'paid') throw new Error("Invoice is already marked as paid");
 
     logStep("Invoice loaded", { invoiceId: invoice.id, status: invoice.status });
 
@@ -95,9 +96,10 @@ serve(async (req) => {
 
     // If fully paid, mark invoice as paid
     if (totalPaid >= invoiceTotal) {
+      const paidAt = new Date(`${payment_date}T12:00:00Z`).toISOString();
       await supabaseClient.from('invoices').update({
         status: 'paid',
-        paid_at: new Date().toISOString(),
+        paid_at: paidAt,
         updated_at: new Date().toISOString(),
       }).eq('id', invoice_id);
       logStep("Invoice marked as paid");

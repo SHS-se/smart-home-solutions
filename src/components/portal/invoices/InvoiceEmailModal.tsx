@@ -71,6 +71,7 @@ Smart Home Solutions`;
           ? t('Kunden fick en länk till fakturan.', 'Customer received a link to the invoice.')
           : undefined,
       });
+      queryClient.invalidateQueries({ queryKey: ['invoice-detail'] });
       queryClient.invalidateQueries({ queryKey: ['invoice_events', invoice.id] });
       onOpenChange(false);
     },

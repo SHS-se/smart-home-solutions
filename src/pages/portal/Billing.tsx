@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Loader2, CreditCard, CheckCircle, AlertCircle, Eye, ArrowLeft } from 'lucide-react';
+import { Loader2, CreditCard, CheckCircle, AlertCircle, Eye, ArrowLeft, FileText } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -20,7 +20,6 @@ import CustomerViewLayout from '@/components/portal/CustomerViewLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
-import { useToast } from '@/hooks/use-toast';
 import { useTableSort, sortItems } from '@/hooks/use-table-sort';
 import InvoicePdfModal from '@/components/portal/invoices/InvoicePdfModal';
 
@@ -53,7 +52,6 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
   const { user, customerData, loading, isStaff } = useAuth();
   const navigate = useNavigate();
   const { t } = useLanguage();
-  const { toast } = useToast();
 
   const resolvedCustomerId = propCustomerId || customerData?.id;
   
@@ -514,13 +512,22 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
                       <TableCell className="text-center">{getStatusBadge(invoice.status)}</TableCell>
                       <TableCell className="text-center">
                         {canDownloadInvoice(invoice.status) ? (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handlePreviewInvoice(invoice)}
-                          >
-                            <Eye className="w-4 h-4" />
-                          </Button>
+                          <div className="flex items-center justify-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => navigate(`/portal/billing/invoices/${invoice.id}`)}
+                            >
+                              <FileText className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handlePreviewInvoice(invoice)}
+                            >
+                              <Eye className="w-4 h-4" />
+                            </Button>
+                          </div>
                         ) : (
                           <span className="text-muted-foreground">-</span>
                         )}
