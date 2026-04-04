@@ -127,7 +127,6 @@ const CustomerViewDashboard: React.FC = () => {
             onDeleted={() => navigate('/portal/customers')}
           />
         )}
-        </div>
 
         <CustomerDashboardCards
           basePath={basePath}
