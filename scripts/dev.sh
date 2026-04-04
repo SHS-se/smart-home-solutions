@@ -32,6 +32,14 @@ should_deploy_edge_functions() {
   esac
 }
 
+get_listening_pid() {
+  lsof -tiTCP:"$1" -sTCP:LISTEN 2>/dev/null | head -n 1
+}
+
+get_process_cwd() {
+  lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1
+}
+
 case "$ENV" in
   test)
     PROJECT_REF="vxqpgbzseckgceopitpm"
@@ -48,6 +56,22 @@ case "$ENV" in
 esac
 
 SUPABASE_URL="https://${PROJECT_REF}.supabase.co"
+
+EXISTING_PID="$(get_listening_pid "$PORT")"
+if [ -n "$EXISTING_PID" ]; then
+  EXISTING_CWD="$(get_process_cwd "$EXISTING_PID")"
+  echo "✗ Port $PORT is already in use by PID $EXISTING_PID"
+  if [ -n "$EXISTING_CWD" ]; then
+    echo "  Working directory: $EXISTING_CWD"
+    if [ "$EXISTING_CWD" != "$PROJECT_DIR" ]; then
+      echo "  This is not the current checkout."
+      echo "  Stop that server before starting this one."
+      exit 1
+    fi
+  fi
+  echo "  Stop the existing dev server or use a different port."
+  exit 1
+fi
 
 if should_deploy_edge_functions; then
   echo "→ Deploying edge functions to $ENV ($PROJECT_REF)..."
