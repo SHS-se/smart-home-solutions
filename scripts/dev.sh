@@ -1,13 +1,15 @@
 #!/bin/bash
 # dev.sh — Start the app locally against test or live Supabase
-# Usage: ./scripts/dev.sh [test|live]
+# Usage:
+#   ./scripts/dev.sh [test|live]
+#   ./scripts/dev.sh migrate [test|live]
 #
 # Fetches the anon key from the Supabase CLI, optionally deploys edge functions,
 # writes a .env.local file, then starts Vite on the correct port.
+# The linked Supabase project is kept on test unless a live command is requested.
 
 set -e
 
-ENV="${1:-test}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 DEPLOY_MODE="${DEPLOY_EDGE_FUNCTIONS:-auto}"
@@ -16,6 +18,18 @@ DEPLOY_STATE_FILE=""
 EDGE_FUNCTION_FINGERPRINT=""
 MISSING_REMOTE_EDGE_FUNCTIONS=""
 REMOTE_FUNCTION_CHECK_ERROR=""
+
+TEST_PROJECT_REF="vxqpgbzseckgceopitpm"
+LIVE_PROJECT_REF="oosxndduqzhvrorgogaw"
+COMMAND="serve"
+ENV="test"
+
+if [ "${1:-}" = "migrate" ]; then
+  COMMAND="migrate"
+  ENV="${2:-test}"
+else
+  ENV="${1:-test}"
+fi
 
 should_deploy_edge_functions() {
   case "$DEPLOY_MODE" in
@@ -132,22 +146,48 @@ record_edge_function_deploy() {
 
 case "$ENV" in
   test)
-    PROJECT_REF="vxqpgbzseckgceopitpm"
+    PROJECT_REF="$TEST_PROJECT_REF"
     PORT=3000
     ;;
   live|prod)
-    PROJECT_REF="oosxndduqzhvrorgogaw"
+    PROJECT_REF="$LIVE_PROJECT_REF"
     PORT=3001
     ;;
   *)
-    echo "Usage: $0 [test|live]"
+    echo "Usage:"
+    echo "  $0 [test|live]"
+    echo "  $0 migrate [test|live]"
     exit 1
     ;;
 esac
 
+link_project() {
+  echo "→ Linking Supabase CLI to $ENV ($PROJECT_REF)..."
+  (
+    cd "$PROJECT_DIR"
+    supabase link --project-ref "$PROJECT_REF" --yes
+  )
+}
+
+run_migrations() {
+  link_project
+  echo "→ Pushing database migrations to $ENV ($PROJECT_REF)..."
+  (
+    cd "$PROJECT_DIR"
+    supabase db push --linked --yes
+  )
+}
+
 SUPABASE_URL="https://${PROJECT_REF}.supabase.co"
 EDGE_FUNCTIONS_DIR="supabase/functions"
 DEPLOY_STATE_FILE="$PROJECT_DIR/supabase/.temp/dev-edge-functions-${PROJECT_REF}.sha"
+
+if [ "$COMMAND" = "migrate" ]; then
+  run_migrations
+  exit 0
+fi
+
+link_project
 
 EXISTING_PID="$(get_listening_pid "$PORT")"
 if [ -n "$EXISTING_PID" ]; then
