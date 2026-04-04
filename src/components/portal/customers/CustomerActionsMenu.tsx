@@ -6,20 +6,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { useToast } from '@/hooks/use-toast';
-import { supabase } from '@/integrations/supabase/client';
+import { DeleteCustomerDialog } from './DeleteCustomerDialog';
 
 interface CustomerActionsMenuProps {
   customerId: string;
@@ -33,38 +22,7 @@ export const CustomerActionsMenu: React.FC<CustomerActionsMenuProps> = ({
   onUpdated,
 }) => {
   const { t } = useLanguage();
-  const { toast } = useToast();
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
-
-  const handleDelete = async () => {
-    setIsDeleting(true);
-    try {
-      const { error } = await supabase
-        .from('customers')
-        .delete()
-        .eq('id', customerId);
-
-      if (error) throw error;
-
-      toast({
-        title: t('Borttagen', 'Deleted'),
-        description: t('Kunden har tagits bort', 'Customer has been deleted'),
-      });
-
-      onUpdated();
-    } catch (error: any) {
-      console.error('Error deleting customer:', error);
-      toast({
-        title: t('Fel', 'Error'),
-        description: error.message || t('Kunde inte ta bort kunden', 'Could not delete customer'),
-        variant: 'destructive',
-      });
-    } finally {
-      setIsDeleting(false);
-      setShowDeleteDialog(false);
-    }
-  };
 
   return (
     <>
@@ -88,33 +46,12 @@ export const CustomerActionsMenu: React.FC<CustomerActionsMenuProps> = ({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
-        <AlertDialogContent onClick={(e) => e.stopPropagation()}>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {t('Ta bort kund?', 'Delete customer?')}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {t(
-                `Är du säker på att du vill ta bort "${customerName}"? Denna åtgärd kan inte ångras.`,
-                `Are you sure you want to delete "${customerName}"? This action cannot be undone.`
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={isDeleting}>
-              {t('Avbryt', 'Cancel')}
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDelete}
-              disabled={isDeleting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {isDeleting ? t('Tar bort...', 'Deleting...') : t('Ta bort', 'Delete')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <DeleteCustomerDialog
+        open={showDeleteDialog}
+        onOpenChange={setShowDeleteDialog}
+        customerId={customerId}
+        onDeleted={onUpdated}
+      />
     </>
   );
 };

@@ -3,23 +3,13 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Loader2, ArrowLeft, Trash2 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog';
 import CustomerViewLayout from '@/components/portal/CustomerViewLayout';
 import CustomerDashboardCards from '@/components/portal/CustomerDashboardCards';
+import { DeleteCustomerDialog } from '@/components/portal/customers/DeleteCustomerDialog';
 import { useAuth } from '@/contexts/AuthContext';
 import { useViewedCustomer } from '@/contexts/ViewedCustomerContext';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { useToast } from '@/hooks/use-toast';
+
 import { supabase } from '@/integrations/supabase/client';
 
 const CustomerViewDashboard: React.FC = () => {
@@ -27,45 +17,19 @@ const CustomerViewDashboard: React.FC = () => {
   const { customerId, customerData, loading: customerLoading, error } = useViewedCustomer();
   const navigate = useNavigate();
   const { t } = useLanguage();
-  const { toast } = useToast();
+  
 
   const [ticketStats, setTicketStats] = useState({ open: 0, total: 0 });
   const [invoiceStats, setInvoiceStats] = useState({ total: 0, lastDate: null as string | null });
   const [quoteStats, setQuoteStats] = useState({ actionRequired: 0, total: 0 });
   const [homeProfileStats, setHomeProfileStats] = useState({ answered: 0, total: 0, photos: 0 });
   const [statsLoading, setStatsLoading] = useState(true);
-  const [isDeleting, setIsDeleting] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
   useEffect(() => {
     if (!authLoading && !user) navigate('/login');
     if (!authLoading && !isStaff) navigate('/portal');
   }, [user, isStaff, authLoading, navigate]);
-
-  const handleDeleteCustomer = async () => {
-    if (!customerId) return;
-    setIsDeleting(true);
-    try {
-      const { error: deleteError } = await supabase
-        .from('customers')
-        .delete()
-        .eq('id', customerId);
-      if (deleteError) throw deleteError;
-      toast({
-        title: t('Kund raderad', 'Customer deleted'),
-        description: t('Kunden har tagits bort.', 'The customer has been removed.'),
-      });
-      navigate('/portal/customers');
-    } catch (err) {
-      console.error('Error deleting customer:', err);
-      toast({
-        title: t('Fel', 'Error'),
-        description: t('Kunde inte radera kunden.', 'Could not delete the customer.'),
-        variant: 'destructive',
-      });
-    } finally {
-      setIsDeleting(false);
-    }
-  };
 
   useEffect(() => {
     const fetchStats = async () => {
@@ -149,37 +113,20 @@ const CustomerViewDashboard: React.FC = () => {
               {t('Visar kundvy', 'Viewing customer portal')}
             </p>
           </div>
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button variant="destructive" size="sm">
-                <Trash2 className="w-4 h-4 mr-2" />
-                {t('Radera', 'Delete')}
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>{t('Är du säker?', 'Are you sure?')}</AlertDialogTitle>
-                <AlertDialogDescription>
-                  {t(
-                    'Är du säker på att du vill radera denna kund? Denna åtgärd kan inte ångras.',
-                    'Are you sure you wish to delete this customer? This action cannot be undone.'
-                  )}
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>{t('Avbryt', 'Cancel')}</AlertDialogCancel>
-                <AlertDialogAction
-                  onClick={handleDeleteCustomer}
-                  disabled={isDeleting}
-                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                >
-                  {isDeleting && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
-                  {t('Bekräfta', 'Confirm')}
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+          <Button variant="destructive" size="sm" onClick={() => setShowDeleteDialog(true)}>
+            <Trash2 className="w-4 h-4 mr-2" />
+            {t('Radera', 'Delete')}
+          </Button>
         </div>
+
+        {customerId && (
+          <DeleteCustomerDialog
+            open={showDeleteDialog}
+            onOpenChange={setShowDeleteDialog}
+            customerId={customerId}
+            onDeleted={() => navigate('/portal/customers')}
+          />
+        )}
 
         <CustomerDashboardCards
           basePath={basePath}
