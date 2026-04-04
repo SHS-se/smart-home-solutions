@@ -96,7 +96,12 @@ serve(async (req) => {
       .eq('invoice_id', invoice_id);
 
     const totalPaid = (allPayments || []).reduce((sum, p) => sum + parseFloat(String(p.amount)), 0);
-    const invoiceTotal = invoice.total || 0;
+    const { data: computedTotals } = await serviceClient
+      .from('invoice_computed_totals')
+      .select('total')
+      .eq('invoice_id', invoice_id)
+      .maybeSingle();
+    const invoiceTotal = Number(computedTotals?.total ?? 0);
 
     logStep("Payment totals", { totalPaid, invoiceTotal });
 

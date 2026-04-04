@@ -43,7 +43,7 @@ serve(async (req) => {
     // Fetch invoice
     const { data: invoice, error: invoiceError } = await serviceClient
       .from("invoices")
-      .select("id, invoice_number, status, due_date, currency, subtotal, tax, total, customer_id, created_at, finalized_at, issued_at, paid_at, voided_at, sent_at, public_token_hash, public_token_expires_at, quote_number")
+      .select("id, invoice_number, status, due_date, currency, customer_id, created_at, finalized_at, issued_at, paid_at, voided_at, sent_at, public_token_hash, public_token_expires_at, quote_number")
       .eq("id", invoiceId)
       .single();
 

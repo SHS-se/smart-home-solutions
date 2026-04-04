@@ -121,7 +121,7 @@ serve(async (req) => {
       .eq('invoice_id', invoice.id)
       .single();
 
-    const total = totals?.total || invoice.total || 0;
+    const total = Number(totals?.total ?? 0);
     const dueDate = invoice.due_date
       ? new Date(invoice.due_date).toLocaleDateString("sv-SE")
       : "—";

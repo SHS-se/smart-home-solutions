@@ -67,9 +67,6 @@ interface LoadedInvoiceRow {
   status: string | null;
   due_date: string | null;
   currency: string | null;
-  subtotal: number | null;
-  tax: number | null;
-  total: number | null;
   created_at: string;
   finalized_at: string | null;
   issued_at: string | null;
@@ -188,7 +185,7 @@ export async function loadInvoiceDocumentData(
   const { data: invoice, error: invoiceError } = await serviceClient
     .from("invoices")
     .select(
-      "id, invoice_number, status, due_date, currency, subtotal, tax, total, customer_id, created_at, finalized_at, issued_at, paid_at, voided_at, quote_number, customer:customers_with_identity!invoices_customer_id_fkey(name, billing_street, billing_postcode, billing_city)",
+      "id, invoice_number, status, due_date, currency, customer_id, created_at, finalized_at, issued_at, paid_at, voided_at, quote_number, customer:customers_with_identity!invoices_customer_id_fkey(name, billing_street, billing_postcode, billing_city)",
     )
     .eq("id", invoiceId)
     .single();
@@ -217,9 +214,9 @@ export async function loadInvoiceDocumentData(
       .order("payment_date"),
   ]);
 
-  const subtotal = toNumber(totals?.subtotal ?? typedInvoice.subtotal ?? 0);
-  const tax = toNumber(totals?.tax ?? typedInvoice.tax ?? 0);
-  const total = toNumber(totals?.total ?? typedInvoice.total ?? 0);
+  const subtotal = toNumber(totals?.subtotal ?? 0);
+  const tax = toNumber(totals?.tax ?? 0);
+  const total = toNumber(totals?.total ?? 0);
   const paymentDetails = await buildInvoicePaymentDetails({
     invoiceNumber: typedInvoice.invoice_number,
     amount: total,
