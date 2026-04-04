@@ -14,6 +14,7 @@ import { Badge } from '@/components/ui/badge';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
+import { getResponseErrorMessage } from '@/lib/http-response';
 
 interface LinkedDataPreview {
   customer: { name: string | null; billing_email: string | null; contact_id: string | null } | null;
@@ -57,6 +58,7 @@ export const DeleteCustomerDialog: React.FC<DeleteCustomerDialogProps> = ({
       setLoading(true);
       try {
         const { data: session } = await supabase.auth.getSession();
+        const fallbackMessage = t('Kunde inte hämta kunddata', 'Could not fetch customer data');
         const response = await fetch(
           `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/delete-customer`,
           {
@@ -68,14 +70,19 @@ export const DeleteCustomerDialog: React.FC<DeleteCustomerDialogProps> = ({
             body: JSON.stringify({ customer_id: customerId, mode: 'preview' }),
           }
         );
-        if (!response.ok) throw new Error('Failed to fetch preview');
+        if (!response.ok) {
+          throw new Error(await getResponseErrorMessage(response, fallbackMessage));
+        }
         const data = await response.json();
         setPreview(data);
       } catch (err) {
+        const description = err instanceof Error
+          ? err.message
+          : t('Kunde inte hämta kunddata', 'Could not fetch customer data');
         console.error('Error fetching delete preview:', err);
         toast({
           title: t('Fel', 'Error'),
-          description: t('Kunde inte hämta kunddata', 'Could not fetch customer data'),
+          description,
           variant: 'destructive',
         });
         onOpenChange(false);
@@ -103,8 +110,12 @@ export const DeleteCustomerDialog: React.FC<DeleteCustomerDialogProps> = ({
         }
       );
       if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.error || 'Delete failed');
+        throw new Error(
+          await getResponseErrorMessage(
+            response,
+            t('Kunde inte radera kunden', 'Could not delete customer'),
+          ),
+        );
       }
       toast({
         title: t('Kund raderad', 'Customer deleted'),

@@ -35,11 +35,15 @@ serve(async (req: Request) => {
       });
     }
 
-    const { data: staffRow } = await supabase
+    const { data: staffRow, error: staffError } = await supabase
       .from("staff_users")
       .select("user_id")
       .eq("user_id", user.id)
       .maybeSingle();
+
+    if (staffError) {
+      throw new Error(`Failed to verify staff access: ${staffError.message}`);
+    }
 
     if (!staffRow) {
       return new Response(JSON.stringify({ error: "Forbidden" }), {
@@ -66,21 +70,39 @@ serve(async (req: Request) => {
         supabase.from("homes").select("id, name").eq("customer_id", customer_id),
       ]);
 
+      const previewError =
+        quotesRes.error ||
+        invoicesRes.error ||
+        ticketsRes.error ||
+        bomsRes.error ||
+        homesRes.error;
+
+      if (previewError) {
+        throw new Error(`Failed to load customer delete preview: ${previewError.message}`);
+      }
+
       // Get customer identity info
-      const { data: customerInfo } = await supabase
+      const { data: customerInfo, error: customerInfoError } = await supabase
         .from("customers_with_identity")
         .select("name, billing_email, contact_id")
         .eq("id", customer_id)
         .maybeSingle();
 
+      if (customerInfoError) {
+        throw new Error(`Failed to load customer identity: ${customerInfoError.message}`);
+      }
+
       // Check for linked contact
       let contactInfo = null;
       if (customerInfo?.contact_id) {
-        const { data: contact } = await supabase
+        const { data: contact, error: contactError } = await supabase
           .from("contacts")
           .select("id, name, email")
           .eq("id", customerInfo.contact_id)
           .maybeSingle();
+        if (contactError) {
+          throw new Error(`Failed to load linked contact: ${contactError.message}`);
+        }
         contactInfo = contact;
       }
 
@@ -95,6 +117,13 @@ serve(async (req: Request) => {
           supabase.from("home_photos").select("id", { count: "exact", head: true }).eq("customer_id", customer_id),
           supabase.from("device_instances").select("id", { count: "exact", head: true }).eq("customer_id", customer_id),
         ]);
+        const countError =
+          answersRes.error ||
+          photosRes.error ||
+          devicesRes.error;
+        if (countError) {
+          throw new Error(`Failed to load customer linked data counts: ${countError.message}`);
+        }
         homeAnswerCount = answersRes.count || 0;
         homePhotoCount = photosRes.count || 0;
         deviceCount = devicesRes.count || 0;

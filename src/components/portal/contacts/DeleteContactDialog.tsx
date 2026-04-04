@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
+import { getResponseErrorMessage } from '@/lib/http-response';
 
 interface ContactPreview {
   contact: { name: string; email: string; phone: string | null };
@@ -52,6 +53,7 @@ export const DeleteContactDialog: React.FC<DeleteContactDialogProps> = ({
       setLoading(true);
       try {
         const { data: session } = await supabase.auth.getSession();
+        const fallbackMessage = t('Kunde inte hämta kontaktdata', 'Could not fetch contact data');
         const response = await fetch(
           `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/delete-contact`,
           {
@@ -63,13 +65,18 @@ export const DeleteContactDialog: React.FC<DeleteContactDialogProps> = ({
             body: JSON.stringify({ contact_id: contactId, mode: 'preview' }),
           }
         );
-        if (!response.ok) throw new Error('Failed to fetch preview');
+        if (!response.ok) {
+          throw new Error(await getResponseErrorMessage(response, fallbackMessage));
+        }
         setPreview(await response.json());
       } catch (err) {
+        const description = err instanceof Error
+          ? err.message
+          : t('Kunde inte hämta kontaktdata', 'Could not fetch contact data');
         console.error('Error fetching contact delete preview:', err);
         toast({
           title: t('Fel', 'Error'),
-          description: t('Kunde inte hämta kontaktdata', 'Could not fetch contact data'),
+          description,
           variant: 'destructive',
         });
         onOpenChange(false);
@@ -97,8 +104,12 @@ export const DeleteContactDialog: React.FC<DeleteContactDialogProps> = ({
         }
       );
       if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.error || 'Delete failed');
+        throw new Error(
+          await getResponseErrorMessage(
+            response,
+            t('Kunde inte ta bort kontakten', 'Could not delete contact'),
+          ),
+        );
       }
       toast({
         title: t('Kontakt borttagen', 'Contact deleted'),

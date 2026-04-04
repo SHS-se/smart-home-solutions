@@ -36,11 +36,15 @@ serve(async (req: Request) => {
     }
 
     // Check staff role
-    const { data: staffRow } = await supabase
+    const { data: staffRow, error: staffError } = await supabase
       .from("staff_users")
       .select("user_id")
       .eq("user_id", user.id)
       .maybeSingle();
+
+    if (staffError) {
+      throw new Error(`Failed to verify staff access: ${staffError.message}`);
+    }
 
     if (!staffRow) {
       return new Response(JSON.stringify({ error: "Forbidden" }), {
@@ -79,19 +83,34 @@ serve(async (req: Request) => {
         supabase.from("contact_intake_events").select("id", { count: "exact", head: true }).eq("email_normalized", contact.email.toLowerCase().trim()),
       ]);
 
+      const previewError =
+        messagesRes.error ||
+        draftAnswersRes.error ||
+        intakeRes.error;
+
+      if (previewError) {
+        throw new Error(`Failed to load contact delete preview: ${previewError.message}`);
+      }
+
       // Check if there's a linked customer
       let linkedCustomer = null;
       if (contact.converted_to_customer_id) {
-        const { data: cust } = await supabase
+        const { data: cust, error: customerError } = await supabase
           .from("customers_with_identity")
           .select("id, name, billing_email")
           .eq("id", contact.converted_to_customer_id)
           .maybeSingle();
+        if (customerError) {
+          throw new Error(`Failed to load linked customer: ${customerError.message}`);
+        }
         linkedCustomer = cust;
       }
 
       // Check if auth user exists
-      const { data: { users } } = await supabase.auth.admin.listUsers();
+      const { data: { users }, error: usersError } = await supabase.auth.admin.listUsers();
+      if (usersError) {
+        throw new Error(`Failed to load auth users: ${usersError.message}`);
+      }
       const authUser = users?.find(
         (u) => u.email?.toLowerCase().trim() === contact.email.toLowerCase().trim()
       );

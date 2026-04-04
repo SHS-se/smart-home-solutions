@@ -14,6 +14,8 @@ DEPLOY_MODE="${DEPLOY_EDGE_FUNCTIONS:-auto}"
 EDGE_FUNCTIONS_DIR=""
 DEPLOY_STATE_FILE=""
 EDGE_FUNCTION_FINGERPRINT=""
+MISSING_REMOTE_EDGE_FUNCTIONS=""
+REMOTE_FUNCTION_CHECK_ERROR=""
 
 should_deploy_edge_functions() {
   case "$DEPLOY_MODE" in
@@ -51,6 +53,62 @@ compute_edge_function_fingerprint() {
       shasum -a 256 "$file"
     done | shasum -a 256 | awk '{print $1}'
   )
+}
+
+list_local_edge_functions() {
+  (
+    cd "$PROJECT_DIR"
+    for dir in "$EDGE_FUNCTIONS_DIR"/*; do
+      [ -d "$dir" ] || continue
+      name="$(basename "$dir")"
+      [ "$name" = "_shared" ] && continue
+      printf '%s\n' "$name"
+    done | sort
+  )
+}
+
+list_remote_edge_functions() {
+  supabase functions list --project-ref "$PROJECT_REF" --output json 2>/dev/null \
+    | python3 -c 'import json, sys
+data = json.load(sys.stdin)
+if isinstance(data, list):
+    items = data
+elif isinstance(data, dict):
+    items = data.get("functions", [])
+else:
+    items = []
+names = []
+for item in items:
+    if isinstance(item, dict):
+        name = item.get("name") or item.get("slug") or item.get("function_name") or item.get("id")
+        if isinstance(name, str) and name:
+            names.append(name)
+print("\n".join(sorted(set(names))))'
+}
+
+remote_edge_functions_are_synced() {
+  MISSING_REMOTE_EDGE_FUNCTIONS=""
+  REMOTE_FUNCTION_CHECK_ERROR=""
+
+  LOCAL_EDGE_FUNCTIONS="$(list_local_edge_functions)"
+  REMOTE_EDGE_FUNCTIONS="$(list_remote_edge_functions)" || {
+    REMOTE_FUNCTION_CHECK_ERROR="Could not query remote functions"
+    return 1
+  }
+
+  while IFS= read -r function_name; do
+    [ -n "$function_name" ] || continue
+    if ! printf '%s\n' "$REMOTE_EDGE_FUNCTIONS" | grep -Fxq "$function_name"; then
+      if [ -n "$MISSING_REMOTE_EDGE_FUNCTIONS" ]; then
+        MISSING_REMOTE_EDGE_FUNCTIONS="${MISSING_REMOTE_EDGE_FUNCTIONS}, "
+      fi
+      MISSING_REMOTE_EDGE_FUNCTIONS="${MISSING_REMOTE_EDGE_FUNCTIONS}${function_name}"
+    fi
+  done <<EOF
+$LOCAL_EDGE_FUNCTIONS
+EOF
+
+  [ -z "$MISSING_REMOTE_EDGE_FUNCTIONS" ]
 }
 
 edge_functions_changed_since_last_deploy() {
@@ -118,8 +176,21 @@ if should_deploy_edge_functions; then
       )
       record_edge_function_deploy
       echo "✓ Edge functions deployed"
-    else
+    elif remote_edge_functions_are_synced; then
       echo "→ Edge functions unchanged since the last $ENV deploy; skipping deploy"
+    else
+      if [ -n "$MISSING_REMOTE_EDGE_FUNCTIONS" ]; then
+        echo "→ Remote $ENV is missing edge functions: $MISSING_REMOTE_EDGE_FUNCTIONS"
+        echo "  Deploying to sync missing functions..."
+      else
+        echo "→ Could not verify remote edge functions; deploying to be safe..."
+      fi
+      (
+        cd "$PROJECT_DIR"
+        supabase functions deploy --project-ref "$PROJECT_REF" --use-api --yes
+      )
+      record_edge_function_deploy
+      echo "✓ Edge functions deployed"
     fi
   else
     EDGE_FUNCTION_FINGERPRINT="$(compute_edge_function_fingerprint)"
