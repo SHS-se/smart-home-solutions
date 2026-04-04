@@ -62,8 +62,9 @@ serve(async (req: Request) => {
 
     // ── PREVIEW MODE: return a summary of linked data ──
     if (mode === "preview") {
-      const [quotesRes, invoicesRes, ticketsRes, bomsRes, homesRes] = await Promise.all([
-        supabase.from("quotes").select("id, quote_number, status, total_inc_vat").eq("customer_id", customer_id),
+      const [quotesRes, quoteTotalsRes, invoicesRes, ticketsRes, bomsRes, homesRes] = await Promise.all([
+        supabase.from("quotes").select("id, quote_number, status").eq("customer_id", customer_id),
+        supabase.from("quote_computed_totals").select("quote_id, total_inc_vat"),
         supabase.from("invoices").select("id, invoice_number, status, amount").eq("customer_id", customer_id),
         supabase.from("tickets").select("id, ticket_number, title, status").eq("customer_id", customer_id),
         supabase.from("boms").select("id, project_name, version").eq("customer_id", customer_id),
@@ -72,6 +73,7 @@ serve(async (req: Request) => {
 
       const previewError =
         quotesRes.error ||
+        quoteTotalsRes.error ||
         invoicesRes.error ||
         ticketsRes.error ||
         bomsRes.error ||
@@ -80,6 +82,17 @@ serve(async (req: Request) => {
       if (previewError) {
         throw new Error(`Failed to load customer delete preview: ${previewError.message}`);
       }
+
+      const quoteTotalsById = new Map(
+        (quoteTotalsRes.data || [])
+          .filter((row) => row.quote_id)
+          .map((row) => [row.quote_id, row.total_inc_vat ?? null]),
+      );
+
+      const quotesWithTotals = (quotesRes.data || []).map((quote) => ({
+        ...quote,
+        total_inc_vat: quoteTotalsById.get(quote.id) ?? null,
+      }));
 
       // Get customer identity info
       const { data: customerInfo, error: customerInfoError } = await supabase
@@ -132,7 +145,7 @@ serve(async (req: Request) => {
       return new Response(JSON.stringify({
         customer: customerInfo,
         contact: contactInfo,
-        quotes: quotesRes.data || [],
+        quotes: quotesWithTotals,
         invoices: invoicesRes.data || [],
         tickets: ticketsRes.data || [],
         boms: bomsRes.data || [],
