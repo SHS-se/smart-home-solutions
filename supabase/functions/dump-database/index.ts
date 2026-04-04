@@ -43,8 +43,6 @@ async function encryptData(plaintext: string, passphrase: string): Promise<Uint8
 // Secrets exported from edge function env — ENCRYPTION_KEY itself is always excluded.
 // SUPABASE_* keys are auto-provisioned by the new project and never exported.
 const EXPORTED_SECRET_NAMES = [
-  "SHS_STRIPE_SECRET_KEY",
-  "STRIPE_INVOICE_WEBHOOK_SECRET",
   "RESEND_API_KEY",
   "RESEND_RECEIVING_API_KEY",
   "RESEND_SIGNING_SECRET",

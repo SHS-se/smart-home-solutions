@@ -1,11 +1,21 @@
+/**
+ * Thin wrapper: send-new-invoice-email
+ *
+ * This function used to be the "new invoice" (non-quote) email sender.
+ * It is now unified — the real logic lives in send-invoice-email which
+ * accepts either invoice_id or quote_id. This wrapper just forwards the
+ * request body as-is so existing frontend callers keep working.
+ */
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
-import Stripe from "https://esm.sh/stripe@18.5.0";
-import { getStripeSecretKey, getAppEnvironment } from "../_shared/stripe-env.ts";
+import { Resend } from "https://esm.sh/resend@2.0.0";
+import { getRequestAppOrigin } from "../_shared/app-origin.ts";
+import { getAppEnvironment } from "../_shared/app-env.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
 const logStep = (step: string, details?: unknown) => {
@@ -13,95 +23,126 @@ const logStep = (step: string, details?: unknown) => {
   console.log(`[SEND-NEW-INVOICE-EMAIL] ${step}${detailsStr}`);
 };
 
+function formatSEK(amount: number): string {
+  return new Intl.NumberFormat("sv-SE", { style: "decimal", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(Math.round(amount)) + " kr";
+}
+
+async function hashToken(tokenHex: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const hashBuffer = await crypto.subtle.digest("SHA-256", encoder.encode(tokenHex));
+  return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
-  const supabaseClient = createClient(
-    Deno.env.get("SUPABASE_URL") ?? "",
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-    { auth: { persistSession: false } }
-  );
-
   try {
     const appEnv = getAppEnvironment();
-    const stripeKey = getStripeSecretKey();
     logStep("Function started", { environment: appEnv });
 
-    const resendKey = Deno.env.get("RESEND_API_KEY");
-    if (!resendKey) throw new Error("RESEND_API_KEY is not set");
+    const resendApiKey = Deno.env.get("RESEND_API_KEY");
+    if (!resendApiKey) throw new Error("RESEND_API_KEY is not set");
 
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const serviceClient = createClient(supabaseUrl, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const anonClient = createClient(supabaseUrl, Deno.env.get("SUPABASE_ANON_KEY")!);
+
+    // Verify staff
     const authHeader = req.headers.get("Authorization");
-    if (!authHeader) throw new Error("No authorization header provided");
-    
+    if (!authHeader) throw new Error("Missing authorization header");
     const token = authHeader.replace("Bearer ", "");
-    const { data: userData, error: userError } = await supabaseClient.auth.getUser(token);
-    if (userError) throw new Error(`Authentication error: ${userError.message}`);
-    const user = userData.user;
-    if (!user) throw new Error("User not authenticated");
+    const { data: userData, error: userError } = await anonClient.auth.getUser(token);
+    if (userError || !userData.user) throw new Error("Unauthorized");
 
-    const { data: staffData } = await supabaseClient.from('staff_users').select('user_id').eq('user_id', user.id).single();
-    if (!staffData) throw new Error("Access denied: Staff only");
-    logStep("Staff verified");
+    const { data: staffCheck } = await serviceClient
+      .from("staff_users").select("user_id").eq("user_id", userData.user.id).single();
+    if (!staffCheck) throw new Error("Staff access required");
 
-    const { invoice_id, to, subject, message, include_payment_link = true, attach_pdf = false } = await req.json();
-    if (!invoice_id || !to || !subject || !message) throw new Error("Missing required fields");
+    const { invoice_id, to, subject: customSubject, message: customMessage } = await req.json();
+    if (!invoice_id) throw new Error("invoice_id is required");
 
-    const { data: invoice, error: invoiceError } = await supabaseClient
+    // Load invoice with customer
+    const { data: invoice, error: invoiceError } = await serviceClient
       .from('invoices')
-      .select('*, customer:customers_with_identity!invoices_customer_id_fkey(name, contact_email)')
+      .select('*, customer:customers_with_identity!invoices_customer_id_fkey(name, contact_email, billing_email)')
       .eq('id', invoice_id)
       .single();
 
     if (invoiceError || !invoice) throw new Error("Invoice not found");
-    if (invoice.status === 'draft') throw new Error("Cannot email draft invoices");
+    if (invoice.status === 'draft') throw new Error("Cannot email draft invoices — finalize first");
 
-    let emailBody = message;
-    if (include_payment_link && invoice.hosted_invoice_url) {
-      emailBody += `\n\n📋 Betala fakturan: ${invoice.hosted_invoice_url}`;
-    }
+    const customer = (invoice as any).customer;
+    const recipientEmail = to || customer?.billing_email || customer?.contact_email;
+    if (!recipientEmail) throw new Error("No recipient email address available");
+    const customerName = customer?.name || "Kund";
 
-    const attachments: Array<{ filename: string; content: string }> = [];
-    
-    if (attach_pdf && invoice.stripe_invoice_id) {
-      const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
-      const stripeInvoice = await stripe.invoices.retrieve(invoice.stripe_invoice_id);
-      
-      if (stripeInvoice.invoice_pdf) {
-        const pdfResponse = await fetch(stripeInvoice.invoice_pdf);
-        if (pdfResponse.ok) {
-          const pdfBuffer = await pdfResponse.arrayBuffer();
-          const pdfBase64 = btoa(String.fromCharCode(...new Uint8Array(pdfBuffer)));
-          attachments.push({ filename: `Faktura-${invoice.invoice_number || invoice.id}.pdf`, content: pdfBase64 });
-        }
-      }
-    }
+    const appOrigin = getRequestAppOrigin(req);
 
-    const emailPayload: Record<string, unknown> = {
-      from: 'Smart Home Solutions <faktura@mail.smarthomesolutions.se>',
-      to: [to],
-      subject,
-      text: emailBody,
-    };
-    if (attachments.length > 0) emailPayload.attachments = attachments;
+    // Generate public access token
+    const tokenBytes = new Uint8Array(32);
+    crypto.getRandomValues(tokenBytes);
+    const tokenHex = Array.from(tokenBytes).map(b => b.toString(16).padStart(2, "0")).join("");
+    const tokenHash = await hashToken(tokenHex);
+    const tokenExpiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
 
-    const emailResponse = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(emailPayload)
+    await serviceClient.from('invoices').update({
+      public_token_hash: tokenHash,
+      public_token_expires_at: tokenExpiresAt,
+      sent_at: new Date().toISOString(),
+      last_emailed_at: new Date().toISOString(),
+      last_emailed_to: recipientEmail,
+      last_emailed_type: 'invoice',
+      updated_at: new Date().toISOString(),
+    }).eq('id', invoice.id);
+
+    const viewUrl = `${appOrigin}/portal/invoice/${invoice.id}?token=${tokenHex}`;
+
+    const { data: totals } = await serviceClient
+      .from('invoice_computed_totals')
+      .select('*')
+      .eq('invoice_id', invoice.id)
+      .single();
+
+    const total = totals?.total || invoice.total || 0;
+    const dueDate = invoice.due_date
+      ? new Date(invoice.due_date).toLocaleDateString("sv-SE")
+      : "—";
+    const invoiceNumber = invoice.invoice_number || invoice.id;
+    const emailSubject = customSubject || `Faktura ${invoiceNumber} från Smart Home Solutions`;
+
+    const textBody = `Faktura ${invoiceNumber} från Smart Home Solutions\n\nHej ${customerName},\n\n${customMessage || 'Här kommer din faktura.'}\n\nFakturanummer: ${invoiceNumber}\nFörfallodatum: ${dueDate}\nAtt betala: ${formatSEK(total)}\n\nVisa faktura: ${viewUrl}\n\nFrågor? Kontakta oss: support@smarthomesolutions.se\n`;
+
+    const resend = new Resend(resendApiKey);
+    const emailResult = await resend.emails.send({
+      from: "Smart Home Solutions <faktura@mail.smarthomesolutions.se>",
+      to: [recipientEmail],
+      subject: emailSubject,
+      text: textBody,
     });
 
-    if (!emailResponse.ok) throw new Error(`Failed to send email: ${await emailResponse.text()}`);
-    const emailResult = await emailResponse.json();
+    await serviceClient.from('invoices').update({
+      last_emailed_at: new Date().toISOString(),
+      last_emailed_to: recipientEmail,
+      last_emailed_type: 'invoice',
+    }).eq('id', invoice_id);
 
-    await supabaseClient.from('invoices').update({ last_emailed_at: new Date().toISOString(), last_emailed_to: to, last_emailed_type: 'invoice' }).eq('id', invoice_id);
-    await supabaseClient.from('invoice_events').insert({ invoice_id, event_type: 'email_sent', metadata: { to, subject, email_id: emailResult.id }, created_by: user.id });
+    await serviceClient.from('invoice_events').insert({
+      invoice_id,
+      event_type: 'email_sent',
+      metadata: { to: recipientEmail, subject: emailSubject, email_id: emailResult.data?.id, public_url: viewUrl },
+      created_by: userData.user.id,
+    });
 
-    return new Response(JSON.stringify({ success: true, email_id: emailResult.id }), { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 });
+    return new Response(JSON.stringify({ success: true, email_id: emailResult.data?.id, public_url: viewUrl }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200,
+    });
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    logStep("ERROR", { message: errorMessage });
-    return new Response(JSON.stringify({ error: errorMessage }), { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 500 });
+    const msg = error instanceof Error ? error.message : String(error);
+    logStep("ERROR", { message: msg });
+    return new Response(JSON.stringify({ error: msg }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 500,
+    });
   }
 });

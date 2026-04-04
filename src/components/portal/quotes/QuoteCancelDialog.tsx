@@ -55,8 +55,8 @@ const QuoteCancelDialog: React.FC<QuoteCancelDialogProps> = ({
           </AlertDialogTitle>
           <AlertDialogDescription>
             {t(
-              `Detta kommer att avbryta offert #${quoteNumber} i Stripe och dölja den från den aktiva listan.`,
-              `This will cancel quote #${quoteNumber} in Stripe and hide it from the active list.`
+              `Detta kommer att avbryta offert #${quoteNumber} och dölja den från den aktiva listan.`,
+              `This will cancel quote #${quoteNumber} and hide it from the active list.`
             )}
           </AlertDialogDescription>
         </AlertDialogHeader>

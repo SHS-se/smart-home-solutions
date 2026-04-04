@@ -12,13 +12,11 @@ ENV="${1:-test}"
 case "$ENV" in
   test)
     PROJECT_REF="vxqpgbzseckgceopitpm"
-    STRIPE_MODE="test mode (sk_test_...)"
     APP_ENV_VALUE="test"
     APP_ORIGIN_ALLOWLIST_DEFAULT="http://localhost:3000,https://preview--smarthomesolutions.lovable.app,https://98b52ef2-a9b8-4c1d-b3d5-ed16c32dda05.lovableproject.com"
     ;;
   live|prod)
     PROJECT_REF="oosxndduqzhvrorgogaw"
-    STRIPE_MODE="live mode (sk_live_...)"
     APP_ENV_VALUE="live"
     APP_ORIGIN_ALLOWLIST_DEFAULT="https://smarthomesolutions.se,http://localhost:3000,https://preview--smarthomesolutions.lovable.app,https://98b52ef2-a9b8-4c1d-b3d5-ed16c32dda05.lovableproject.com,https://id-preview--98b52ef2-a9b8-4c1d-b3d5-ed16c32dda05.lovable.app"
     ;;
@@ -59,11 +57,6 @@ prompt_secret_with_default() {
 }
 
 # Collect secrets
-echo "── Stripe ──────────────────────────────────────────────"
-STRIPE_KEY=$(prompt_secret "SHS_STRIPE_SECRET_KEY" "$STRIPE_MODE — stripe.com/apikeys")
-STRIPE_WEBHOOK=$(prompt_secret "STRIPE_INVOICE_WEBHOOK_SECRET" "whsec_... — stripe.com/webhooks")
-
-echo ""
 echo "── Resend ──────────────────────────────────────────────"
 RESEND_KEY=$(prompt_secret "RESEND_API_KEY" "re_... — resend.com/api-keys")
 RESEND_RECEIVING=$(prompt_secret "RESEND_RECEIVING_API_KEY" "re_... — leave blank to reuse RESEND_API_KEY")
@@ -84,8 +77,6 @@ SECRETS=()
 SECRETS+=("APP_ENV=$APP_ENV_VALUE")
 SECRETS+=("APP_ORIGIN_ALLOWLIST=$APP_ORIGIN_ALLOWLIST")
 
-[ -n "$STRIPE_KEY" ]     && SECRETS+=("SHS_STRIPE_SECRET_KEY=$STRIPE_KEY")
-[ -n "$STRIPE_WEBHOOK" ] && SECRETS+=("STRIPE_INVOICE_WEBHOOK_SECRET=$STRIPE_WEBHOOK")
 [ -n "$RESEND_KEY" ]     && SECRETS+=("RESEND_API_KEY=$RESEND_KEY")
 [ -n "$RESEND_SIGNING" ] && SECRETS+=("RESEND_SIGNING_SECRET=$RESEND_SIGNING")
 [ -n "$CONTACT_TO" ]     && SECRETS+=("CONTACT_TO=$CONTACT_TO")

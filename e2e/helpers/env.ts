@@ -41,12 +41,6 @@ export interface E2EConfig {
   mailboxAddress: string;
   mailboxAliasPrefix: string;
   fixedCustomerEmail?: string;
-  stripe: {
-    cardNumber: string;
-    expiry: string;
-    cvc: string;
-    postalCode: string;
-  };
 }
 
 export interface RunContext {
@@ -108,12 +102,6 @@ export function loadE2EConfig(): E2EConfig {
     mailboxAddress,
     mailboxAliasPrefix: process.env.E2E_MAILBOX_ALIAS_PREFIX || 'e2e-migration',
     fixedCustomerEmail,
-    stripe: {
-      cardNumber: process.env.E2E_STRIPE_CARD_NUMBER || '4242424242424242',
-      expiry: process.env.E2E_STRIPE_CARD_EXPIRY || '12 / 34',
-      cvc: process.env.E2E_STRIPE_CARD_CVC || '123',
-      postalCode: process.env.E2E_STRIPE_POSTAL_CODE || '12345',
-    },
   };
 }
 

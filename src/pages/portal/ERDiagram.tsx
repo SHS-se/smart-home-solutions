@@ -23,7 +23,7 @@ const ERDiagram = () => {
   const [erdSource, setErdSource] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [envCheckLoading, setEnvCheckLoading] = useState(false);
-  const [envResults, setEnvResults] = useState<{ app_env: string; shs_stripe_key_prefix: string; old_stripe_key_prefix: string } | null>(null);
+  const [envResults, setEnvResults] = useState<{ app_env: string } | null>(null);
 
   const handleCheckEnv = async () => {
     setEnvCheckLoading(true);
@@ -162,8 +162,6 @@ const ERDiagram = () => {
               <p className="text-sm font-medium mb-1">Current Environment (this edge function instance):</p>
               <div className="font-mono text-sm space-y-1 bg-muted/50 p-3 rounded-md">
                 <p><span className="text-muted-foreground">APP_ENV:</span> <span className="font-semibold">{envResults.app_env}</span></p>
-                <p><span className="text-muted-foreground">SHS_STRIPE_SECRET_KEY:</span> <span className="font-semibold">{envResults.shs_stripe_key_prefix}</span></p>
-                <p><span className="text-muted-foreground">STRIPE_SECRET_KEY (deprecated):</span> <span className="font-semibold text-destructive">{envResults.old_stripe_key_prefix}</span></p>
               </div>
               <p className="text-xs text-muted-foreground mt-2">
                 Note: This shows the secrets for the environment where the edge function is running. 

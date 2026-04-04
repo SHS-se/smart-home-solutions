@@ -1,7 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
-import Stripe from "https://esm.sh/stripe@18.5.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
-import { getStripeSecretKey, getAppEnvironment } from "../_shared/stripe-env.ts";
+import { getAppEnvironment } from "../_shared/app-env.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -26,13 +25,12 @@ serve(async (req) => {
 
   try {
     const appEnv = getAppEnvironment();
-    const stripeKey = getStripeSecretKey();
     logStep("Function started", { environment: appEnv });
 
     // Authenticate staff user
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) throw new Error("No authorization header provided");
-    
+
     const token = authHeader.replace("Bearer ", "");
     const { data: userData, error: userError } = await supabaseClient.auth.getUser(token);
     if (userError) throw new Error(`Authentication error: ${userError.message}`);
@@ -51,9 +49,9 @@ serve(async (req) => {
     }
     logStep("Staff verified");
 
-    const { 
-      customer_id, 
-      bom_id, 
+    const {
+      customer_id,
+      bom_id,
       quote_id,
       due_date,
       line_items = []
@@ -62,15 +60,6 @@ serve(async (req) => {
     if (!customer_id) throw new Error("customer_id is required");
     logStep("Creating draft invoice", { customer_id, bom_id, quote_id });
 
-    // Fetch customer via identity view (identity columns live in contacts)
-    const { data: customer, error: customerError } = await supabaseClient
-      .from('customers_with_identity')
-      .select('id, name, billing_email, contact_email, phone')
-      .eq('id', customer_id)
-      .single();
-
-    if (customerError || !customer) throw new Error("Customer not found");
-    logStep("Customer loaded", { name: customer.name, billing_email: customer.billing_email });
     // Fetch BOM if provided
     let bom = null;
     let bomVersion = null;
@@ -80,7 +69,7 @@ serve(async (req) => {
         .select('*, bom_items(*, sku:skus(*))')
         .eq('id', bom_id)
         .single();
-      
+
       if (!bomError && bomData) {
         bom = bomData;
         bomVersion = bomData.version;
@@ -96,67 +85,17 @@ serve(async (req) => {
         .select('*, quote_lines(*)')
         .eq('id', quote_id)
         .single();
-      
+
       if (!quoteError && quoteData) {
         quote = quoteData;
         quoteNumber = quoteData.quote_number;
       }
     }
 
-    const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
-
-    // Find or create Stripe customer
-    const email = customer.billing_email || customer.contact_email;
-    if (!email) throw new Error("Customer has no email address configured");
-    let stripeCustomerId: string;
-    
-    const existingCustomers = await stripe.customers.list({
-      email: email,
-      limit: 1
-    });
-
-    if (existingCustomers.data.length > 0) {
-      stripeCustomerId = existingCustomers.data[0].id;
-      // Ensure Swedish locale is set on existing customers
-      if (!existingCustomers.data[0].preferred_locales?.includes('sv')) {
-        await stripe.customers.update(stripeCustomerId, { preferred_locales: ['sv'] });
-      }
-      logStep("Found existing Stripe customer", { stripeCustomerId });
-    } else {
-      const newCustomer = await stripe.customers.create({
-        email: email,
-        name: customer.name || undefined,
-        preferred_locales: ['sv'],
-        metadata: {
-          internal_customer_id: customer_id
-        }
-      });
-      stripeCustomerId = newCustomer.id;
-      logStep("Created Stripe customer", { stripeCustomerId });
-    }
-
-    // Create draft invoice in Stripe
-    const stripeInvoice = await stripe.invoices.create({
-      customer: stripeCustomerId,
-      collection_method: 'send_invoice',
-      days_until_due: due_date ? Math.ceil((new Date(due_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24)) : 30,
-      metadata: {
-        source: quote_id ? 'quote' : bom_id ? 'bom' : 'manual',
-        bom_id: bom_id || '',
-        quote_id: quote_id || '',
-      }
-    });
-
-    logStep("Created Stripe draft invoice", { 
-      stripeInvoiceId: stripeInvoice.id,
-      status: stripeInvoice.status 
-    });
-
-    // Create the invoice record in our database
+    // Create the invoice record in our database (draft — no invoice number yet)
     const { data: invoice, error: invoiceError } = await supabaseClient
       .from('invoices')
       .insert({
-        stripe_invoice_id: stripeInvoice.id,
         customer_id,
         bom_id: bom_id || null,
         bom_version: bomVersion,
@@ -165,7 +104,8 @@ serve(async (req) => {
         status: 'draft',
         due_date: due_date || null,
         currency: 'SEK',
-        created_by: user.id
+        created_by: user.id,
+        is_test: appEnv === 'test',
       })
       .select()
       .single();
@@ -177,7 +117,7 @@ serve(async (req) => {
 
     logStep("Invoice record created", { invoiceId: invoice.id });
 
-    // Insert line items from BOM or Quote
+    // Insert line items from various sources
     const lineItemsToInsert: Array<{
       invoice_id: string;
       line_type: string;
@@ -209,14 +149,14 @@ serve(async (req) => {
           sort_order: idx
         });
       });
-    } 
+    }
     // Otherwise, populate from quote lines
     else if (quote && quote.quote_lines) {
       quote.quote_lines.forEach((line: { section: string; description: string; original_sku_code?: string; sku_id?: string; quantity: number; unit_price_ex_vat?: number; unit_price?: number }, idx: number) => {
-        const lineType = line.section === 'hardware' ? 'hardware' 
-          : line.section === 'labor' ? 'labor' 
+        const lineType = line.section === 'hardware' ? 'hardware'
+          : line.section === 'labor' ? 'labor'
           : 'travel_other';
-        
+
         lineItemsToInsert.push({
           invoice_id: invoice.id,
           line_type: lineType,
@@ -265,7 +205,6 @@ serve(async (req) => {
       invoice_id: invoice.id,
       event_type: 'invoice_created',
       metadata: {
-        stripe_invoice_id: stripeInvoice.id,
         source: quote_id ? 'quote' : bom_id ? 'bom' : 'manual'
       },
       created_by: user.id
@@ -276,7 +215,6 @@ serve(async (req) => {
     return new Response(JSON.stringify({
       success: true,
       invoice_id: invoice.id,
-      stripe_invoice_id: stripeInvoice.id,
       status: 'draft'
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

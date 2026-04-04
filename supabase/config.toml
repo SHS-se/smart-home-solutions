@@ -51,10 +51,10 @@ verify_jwt = false
 [functions.send-quote-email]
 verify_jwt = false
 
-[functions.create-checkout]
+[functions.get-invoice-pdf]
 verify_jwt = false
 
-[functions.get-stripe-invoice-pdf]
+[functions.fetch-public-invoice]
 verify_jwt = false
 
 [functions.delete-contact]

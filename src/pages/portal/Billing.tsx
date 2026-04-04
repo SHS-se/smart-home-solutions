@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Loader2, CreditCard, Settings, CheckCircle, AlertCircle, Eye, ArrowLeft } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Loader2, CreditCard, CheckCircle, AlertCircle, Eye, ArrowLeft } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -29,12 +29,10 @@ type InvoiceSortColumn = 'issued_at' | 'due_date' | 'invoice_number' | 'computed
 interface Invoice {
   id: string;
   invoice_number: string | null;
-  stripe_invoice_id: string | null;
   issued_at: string | null;
   due_date: string | null;
   currency: string | null;
   status: string | null;
-  pdf_url: string | null;
   is_test?: boolean;
   computed_total: number | null;
 }
@@ -42,7 +40,6 @@ interface Invoice {
 interface SubscriptionStatus {
   subscribed: boolean;
   subscription_end: string | null;
-  stripe_subscription_id: string | null;
   cancel_at_period_end?: boolean;
 }
 
@@ -57,16 +54,13 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
   const navigate = useNavigate();
   const { t } = useLanguage();
   const { toast } = useToast();
-  const [searchParams] = useSearchParams();
-  
+
   const resolvedCustomerId = propCustomerId || customerData?.id;
   
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [invoicesLoading, setInvoicesLoading] = useState(true);
   const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus | null>(null);
   const [subscriptionLoading, setSubscriptionLoading] = useState(true);
-  const [checkoutLoading, setCheckoutLoading] = useState(false);
-  const [portalLoading, setPortalLoading] = useState(false);
   const [pdfModalOpen, setPdfModalOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
 
@@ -132,26 +126,12 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
     }
   }, [user, loading, navigate]);
 
-  // Show toast for checkout result (customer view only)
+  // Check subscription on load
   useEffect(() => {
-    if (isStaffView) return;
-    if (searchParams.get('success') === 'true') {
-      toast({
-        title: t('Prenumeration aktiverad!', 'Subscription activated!'),
-        description: t('Tack för din prenumeration.', 'Thank you for subscribing.'),
-      });
-      window.history.replaceState({}, '', '/portal/billing');
+    if (!loading && resolvedCustomerId) {
       checkSubscription();
-      syncInvoices();
-    } else if (searchParams.get('canceled') === 'true') {
-      toast({
-        title: t('Avbruten', 'Canceled'),
-        description: t('Betalningen avbröts.', 'Payment was canceled.'),
-        variant: 'destructive',
-      });
-      window.history.replaceState({}, '', '/portal/billing');
     }
-  }, [searchParams, isStaffView]);
+  }, [resolvedCustomerId, loading]);
 
   const checkSubscription = async () => {
     setSubscriptionLoading(true);
@@ -182,13 +162,10 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
         .select(`
           id,
           invoice_number,
-          stripe_invoice_id,
           issued_at,
           due_date,
-          amount,
           currency,
           status,
-          pdf_url,
           is_test
         `)
         .eq('customer_id', resolvedCustomerId)
@@ -218,21 +195,17 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
       }
 
       const mappedInvoices: Invoice[] = invoicesData.map((inv: any) => {
-        const stripeAmount = typeof inv.amount === 'number' ? inv.amount : null;
         const computed = totalsByInvoiceId.get(inv.id) ?? null;
-        const total = inv.stripe_invoice_id ? stripeAmount : (computed ?? stripeAmount);
-        
+
         return {
           id: inv.id,
           invoice_number: inv.invoice_number,
-          stripe_invoice_id: inv.stripe_invoice_id,
           issued_at: inv.issued_at,
           due_date: inv.due_date,
           currency: inv.currency,
           status: inv.status,
-          pdf_url: inv.pdf_url,
           is_test: inv.is_test,
-          computed_total: total,
+          computed_total: computed,
         };
       });
 
@@ -244,68 +217,11 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
     }
   };
 
-  const syncInvoices = async () => {
-    if (isStaffView) return;
-    try {
-      const { data, error } = await supabase.functions.invoke('sync-invoices');
-      if (error) throw error;
-      if (data?.synced > 0) {
-        fetchInvoices();
-      }
-    } catch (error) {
-      console.error('Error syncing invoices:', error);
-    }
-  };
-
   useEffect(() => {
     if (!loading && resolvedCustomerId) {
       fetchInvoices();
-      checkSubscription();
-      if (!isStaffView) {
-        syncInvoices();
-      }
     }
   }, [resolvedCustomerId, loading, isStaffView]);
-
-  const handleCheckout = async () => {
-    setCheckoutLoading(true);
-    try {
-      const { data, error } = await supabase.functions.invoke('create-checkout');
-      if (error) throw error;
-      if (data?.url) {
-        window.open(data.url, '_blank');
-      }
-    } catch (error) {
-      console.error('Error creating checkout:', error);
-      toast({
-        title: t('Fel', 'Error'),
-        description: t('Kunde inte starta betalning.', 'Could not start payment.'),
-        variant: 'destructive',
-      });
-    } finally {
-      setCheckoutLoading(false);
-    }
-  };
-
-  const handleManageSubscription = async () => {
-    setPortalLoading(true);
-    try {
-      const { data, error } = await supabase.functions.invoke('customer-portal');
-      if (error) throw error;
-      if (data?.url) {
-        window.open(data.url, '_blank');
-      }
-    } catch (error) {
-      console.error('Error opening customer portal:', error);
-      toast({
-        title: t('Fel', 'Error'),
-        description: t('Kunde inte öppna hanteringssidan.', 'Could not open management page.'),
-        variant: 'destructive',
-      });
-    } finally {
-      setPortalLoading(false);
-    }
-  };
 
   const Layout = isStaffView ? CustomerViewLayout : PortalLayout;
 
@@ -471,20 +387,9 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
                 )}
                 <p className="text-2xl font-semibold">249 kr<span className="text-sm font-normal text-muted-foreground">/{t('månad', 'month')}</span></p>
                 {!isStaffView && (
-                  <Button 
-                    variant="outline" 
-                    onClick={handleManageSubscription} 
-                    disabled={portalLoading}
-                  >
-                    {portalLoading ? (
-                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                    ) : (
-                      <Settings className="w-4 h-4 mr-2" />
-                    )}
-                    {subscriptionStatus.cancel_at_period_end 
-                      ? t('Återuppta prenumeration', 'Resume subscription')
-                      : t('Hantera prenumeration', 'Manage subscription')}
-                  </Button>
+                  <p className="text-sm text-muted-foreground">
+                    {t('Kontakta oss för att hantera din prenumeration.', 'Contact us to manage your subscription.')}
+                  </p>
                 )}
               </div>
             ) : (
@@ -495,22 +400,12 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
                     : t('Du har ingen aktiv prenumeration.', "You don't have an active subscription.")}
                 </p>
                 {!isStaffView && (
-                  <>
-                    <div className="p-4 border rounded-lg bg-muted/30">
-                      <p className="text-2xl font-semibold">249 kr<span className="text-sm font-normal text-muted-foreground">/{t('månad', 'month')}</span></p>
-                      <p className="text-sm text-muted-foreground mt-1">
-                        {t('Smart Home Solutions månadsabonnemang', 'Smart Home Solutions monthly subscription')}
-                      </p>
-                    </div>
-                    <Button onClick={handleCheckout} disabled={checkoutLoading}>
-                      {checkoutLoading ? (
-                        <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                      ) : (
-                        <CreditCard className="w-4 h-4 mr-2" />
-                      )}
-                      {t('Prenumerera nu', 'Subscribe now')}
-                    </Button>
-                  </>
+                  <div className="p-4 border rounded-lg bg-muted/30">
+                    <p className="text-2xl font-semibold">249 kr<span className="text-sm font-normal text-muted-foreground">/{t('månad', 'month')}</span></p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      {t('Kontakta oss för att starta en prenumeration.', 'Contact us to start a subscription.')}
+                    </p>
+                  </div>
                 )}
               </div>
             )}
@@ -618,7 +513,7 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
                       <TableCell className="text-center">{formatAmount(invoice.computed_total, invoice.currency)}</TableCell>
                       <TableCell className="text-center">{getStatusBadge(invoice.status)}</TableCell>
                       <TableCell className="text-center">
-                        {canDownloadInvoice(invoice.status) && invoice.stripe_invoice_id ? (
+                        {canDownloadInvoice(invoice.status) ? (
                           <Button
                             variant="ghost"
                             size="sm"
@@ -641,7 +536,7 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
         <InvoicePdfModal
           open={pdfModalOpen}
           onOpenChange={setPdfModalOpen}
-          stripeInvoiceId={selectedInvoice?.stripe_invoice_id ?? null}
+          invoiceId={selectedInvoice?.id ?? null}
           invoiceNumber={selectedInvoice?.invoice_number || selectedInvoice?.id.slice(0, 8) || ''}
         />
       </div>

@@ -1,7 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
-import Stripe from "https://esm.sh/stripe@18.5.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
-import { getStripeSecretKey, getAppEnvironment } from "../_shared/stripe-env.ts";
+import { getAppEnvironment } from "../_shared/app-env.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -14,44 +13,6 @@ const logStep = (step: string, details?: unknown) => {
   console.log(`[CREATE-INVOICE-FROM-QUOTE] ${step}${detailsStr}`);
 };
 
-// Swedish VAT rates
-const SUPPORTED_VAT_RATES = [0, 0.06, 0.12, 0.25];
-
-function normalizeVatRate(rate: number | undefined | null): number {
-  if (rate === undefined || rate === null) return 0.25;
-  return SUPPORTED_VAT_RATES.reduce((prev, curr) =>
-    Math.abs(curr - rate) < Math.abs(prev - rate) ? curr : prev
-  );
-}
-
-const taxRateCache: Map<number, string> = new Map();
-
-async function getOrCreateTaxRate(stripe: Stripe, vatRate: number): Promise<string> {
-  const percentage = Math.round(vatRate * 100);
-  if (taxRateCache.has(percentage)) return taxRateCache.get(percentage)!;
-
-  const existing = await stripe.taxRates.list({ limit: 100, active: true });
-  const match = existing.data.find(
-    (r: Stripe.TaxRate) => r.percentage === percentage && r.country === "SE" && r.inclusive === false
-  );
-
-  if (match) {
-    taxRateCache.set(percentage, match.id);
-    return match.id;
-  }
-
-  const displayName = percentage === 0 ? "Momsfritt" : `Moms ${percentage}%`;
-  const newRate = await stripe.taxRates.create({
-    display_name: displayName,
-    description: `Swedish VAT ${percentage}%`,
-    percentage,
-    country: "SE",
-    inclusive: false,
-  });
-  taxRateCache.set(percentage, newRate.id);
-  return newRate.id;
-}
-
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -59,7 +20,6 @@ serve(async (req) => {
 
   try {
     const appEnv = getAppEnvironment();
-    const stripeKey = getStripeSecretKey();
     logStep("Function started", { environment: appEnv });
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
@@ -91,22 +51,20 @@ serve(async (req) => {
     if (quoteError || !quote) throw new Error("Quote not found");
     logStep("Quote loaded", { quoteId: quote.id, status: quote.status });
 
-    if (quote.stripe_invoice_id) {
+    // Check if an invoice already exists for this quote
+    const { data: existingInvoice } = await serviceClient
+      .from("invoices")
+      .select("id")
+      .eq("quote_id", quote_id)
+      .maybeSingle();
+
+    if (existingInvoice) {
       throw new Error("Invoice already exists for this quote");
     }
 
     if (quote.status !== "accepted") {
       throw new Error("Quote must be accepted before creating an invoice");
     }
-
-    // Load customer
-    const { data: customer } = await serviceClient
-      .from("customers_with_identity")
-      .select("name, contact_email, billing_street, billing_postcode, billing_city")
-      .eq("id", quote.customer_id)
-      .single();
-
-    if (!customer) throw new Error("Customer not found");
 
     // Load quote line items
     const { data: lineItems } = await serviceClient
@@ -118,92 +76,13 @@ serve(async (req) => {
 
     if (!lineItems || lineItems.length === 0) throw new Error("No line items found");
 
-    const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
-
-    // Find or create Stripe customer by email
-    let stripeCustomer: Stripe.Customer;
-    if (customer.contact_email) {
-      const existing = await stripe.customers.list({ email: customer.contact_email, limit: 1 });
-      if (existing.data.length > 0) {
-        stripeCustomer = existing.data[0];
-        // Ensure Swedish locale is set on existing customers
-        if (!stripeCustomer.preferred_locales?.includes('sv')) {
-          stripeCustomer = await stripe.customers.update(stripeCustomer.id, { preferred_locales: ['sv'] }) as Stripe.Customer;
-        }
-      } else {
-        stripeCustomer = await stripe.customers.create({
-          name: customer.name || undefined,
-          email: customer.contact_email,
-          preferred_locales: ['sv'],
-          address: customer.billing_street ? {
-            line1: customer.billing_street,
-            postal_code: customer.billing_postcode || undefined,
-            city: customer.billing_city || undefined,
-            country: "SE",
-          } : undefined,
-        });
-      }
-    } else {
-      stripeCustomer = await stripe.customers.create({
-        name: customer.name || "Kund",
-        preferred_locales: ['sv'],
-      });
-    }
-    logStep("Stripe customer", { customerId: stripeCustomer.id });
-
-    // Create Stripe Invoice
-    const stripeInvoice = await stripe.invoices.create({
-      customer: stripeCustomer.id,
-      currency: "sek",
-      collection_method: "send_invoice",
-      days_until_due: 30,
-      metadata: {
-        internal_quote_id: quote_id,
-        quote_number: quote.quote_number || "",
-      },
-    });
-    logStep("Invoice created", { invoiceId: stripeInvoice.id });
-
-    // Add line items
-    for (const item of lineItems) {
-      const unitAmountCents = Math.round((item.unit_price_ex_vat || item.unit_price || 0) * 100);
-      const normalizedVat = normalizeVatRate(item.vat_rate);
-      const taxRateId = await getOrCreateTaxRate(stripe, normalizedVat);
-
-      const sectionLabel = item.section === "hardware" ? "Hårdvara"
-        : item.section === "labor" ? "Arbete"
-        : "Resa & övrigt";
-
-      await stripe.invoiceItems.create({
-        customer: stripeCustomer.id,
-        invoice: stripeInvoice.id,
-        description: `[${sectionLabel}] ${item.description}`,
-        quantity: item.quantity || 1,
-        unit_amount: unitAmountCents,
-        currency: "sek",
-        tax_rates: [taxRateId],
-      });
-    }
-
-    // Finalize the invoice
-    const finalizedInvoice = await stripe.invoices.finalizeInvoice(stripeInvoice.id);
-    logStep("Invoice finalized", { number: finalizedInvoice.number, status: finalizedInvoice.status });
-
-    // Create local invoice record
+    // Create local invoice record (draft — no invoice number yet)
     const invoiceData = {
       customer_id: quote.customer_id,
       quote_id,
-      stripe_invoice_id: finalizedInvoice.id,
-      invoice_number: finalizedInvoice.number,
-      status: finalizedInvoice.status || "open",
+      status: "draft",
       currency: "SEK",
-      amount: finalizedInvoice.amount_due ? finalizedInvoice.amount_due / 100 : null,
-      hosted_invoice_url: finalizedInvoice.hosted_invoice_url,
-      invoice_pdf_url: finalizedInvoice.invoice_pdf,
-      due_date: finalizedInvoice.due_date
-        ? new Date(finalizedInvoice.due_date * 1000).toISOString().split("T")[0]
-        : null,
-      finalized_at: new Date().toISOString(),
+      due_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
       bom_id: quote.bom_id,
       bom_version: quote.bom_version,
       quote_number: quote.quote_number,
@@ -235,20 +114,11 @@ serve(async (req) => {
     }));
 
     await serviceClient.from("invoice_line_items").insert(invoiceLineItems);
+    logStep("Line items copied", { count: invoiceLineItems.length });
 
-    // Update quote with invoice reference
+    // Update quote to reflect invoice creation
     await serviceClient.from("quotes").update({
-      stripe_invoice_id: finalizedInvoice.id,
-      invoice_status: finalizedInvoice.status || "open",
-      invoice_hosted_url: finalizedInvoice.hosted_invoice_url,
-      invoice_pdf_url: finalizedInvoice.invoice_pdf,
-      invoice_number: finalizedInvoice.number,
-      invoice_due_date: finalizedInvoice.due_date
-        ? new Date(finalizedInvoice.due_date * 1000).toISOString().split("T")[0]
-        : null,
-      invoice_subtotal: finalizedInvoice.subtotal ? finalizedInvoice.subtotal / 100 : null,
-      invoice_vat: finalizedInvoice.tax ? finalizedInvoice.tax / 100 : null,
-      invoice_total: finalizedInvoice.total ? finalizedInvoice.total / 100 : null,
+      invoice_status: "draft",
       status: "invoiced",
     }).eq("id", quote_id);
 
@@ -259,21 +129,16 @@ serve(async (req) => {
       actor_type: "staff",
       actor_email: userData.user.email,
       metadata: {
-        invoice_number: finalizedInvoice.number,
         invoice_id: invoiceRecord.id,
-        stripe_invoice_id: finalizedInvoice.id,
       },
     });
 
-    logStep("Done", { invoiceNumber: finalizedInvoice.number });
+    logStep("Done", { invoiceId: invoiceRecord.id });
 
     return new Response(JSON.stringify({
       success: true,
       invoice_id: invoiceRecord.id,
-      stripe_invoice_id: finalizedInvoice.id,
-      invoice_number: finalizedInvoice.number,
-      hosted_url: finalizedInvoice.hosted_invoice_url,
-      pdf_url: finalizedInvoice.invoice_pdf,
+      status: "draft",
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 200,

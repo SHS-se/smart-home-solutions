@@ -112,7 +112,21 @@ const QuotePreparation: React.FC = () => {
     enabled: isStaff && !!id,
   });
 
-  const hasInvoice = !!quote?.stripe_invoice_id;
+  // Check if an invoice already exists for this quote
+  const { data: linkedInvoice } = useQuery({
+    queryKey: ['quote_invoice', id],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('invoices')
+        .select('id')
+        .eq('quote_id', id!)
+        .limit(1)
+        .maybeSingle();
+      return data;
+    },
+    enabled: isStaff && !!id,
+  });
+  const hasInvoice = !!linkedInvoice;
 
   // Fetch ALL quote lines
   const { data: lines = [], isSuccess: linesLoaded } = useQuery({

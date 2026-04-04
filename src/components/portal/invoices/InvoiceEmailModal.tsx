@@ -13,19 +13,14 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
-import { Loader2, Send, Paperclip } from 'lucide-react';
+import { Loader2, Send } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 
 interface Invoice {
   id: string;
   invoice_number: string | null;
-  stripe_invoice_id: string | null;
-  hosted_invoice_url: string | null;
-  invoice_pdf_url: string | null;
-  customer?: { name: string | null; billing_email?: string | null } | null;
-  bom?: { project_name: string } | null;
+  customer?: { name: string | null; billing_email?: string | null; contact_email?: string | null } | null;
 }
 
 interface InvoiceEmailModalProps {
@@ -42,11 +37,11 @@ const InvoiceEmailModal: React.FC<InvoiceEmailModalProps> = ({
   const { t } = useLanguage();
   const queryClient = useQueryClient();
 
-  const defaultEmail = invoice.customer?.billing_email || '';
+  const defaultEmail = invoice.customer?.billing_email || invoice.customer?.contact_email || '';
   const defaultSubject = `Faktura ${invoice.invoice_number || ''} från Smart Home Solutions`;
   const defaultMessage = `Hej,
 
-Bifogat finner du faktura ${invoice.invoice_number || ''}.
+Här kommer din faktura ${invoice.invoice_number || ''}. Klicka på länken i e-postmeddelandet för att se fakturan och betalningsinformation.
 
 Med vänliga hälsningar,
 Smart Home Solutions`;
@@ -54,27 +49,28 @@ Smart Home Solutions`;
   const [to, setTo] = useState(defaultEmail);
   const [subject, setSubject] = useState(defaultSubject);
   const [message, setMessage] = useState(defaultMessage);
-  const [includePaymentLink, setIncludePaymentLink] = useState(true);
-  const [attachPdf, setAttachPdf] = useState(!!invoice.stripe_invoice_id);
 
   const sendMutation = useMutation({
     mutationFn: async () => {
-      const { data, error } = await supabase.functions.invoke('send-new-invoice-email', {
+      const { data, error } = await supabase.functions.invoke('send-invoice-email', {
         body: {
           invoice_id: invoice.id,
           to,
           subject,
           message,
-          include_payment_link: includePaymentLink,
-          attach_pdf: attachPdf,
         },
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
       return data;
     },
-    onSuccess: () => {
-      toast({ title: t('E-post skickad!', 'Email sent!') });
+    onSuccess: (data) => {
+      toast({
+        title: t('E-post skickad!', 'Email sent!'),
+        description: data?.public_url
+          ? t('Kunden fick en länk till fakturan.', 'Customer received a link to the invoice.')
+          : undefined,
+      });
       queryClient.invalidateQueries({ queryKey: ['invoice_events', invoice.id] });
       onOpenChange(false);
     },
@@ -93,7 +89,10 @@ Smart Home Solutions`;
         <DialogHeader>
           <DialogTitle>{t('Skicka faktura', 'Send invoice')}</DialogTitle>
           <DialogDescription>
-            {t('Skicka fakturan via e-post till kunden.', 'Send the invoice via email to the customer.')}
+            {t(
+              'Kunden får ett e-postmeddelande med en länk till fakturan och betalningsinformation.',
+              'The customer will receive an email with a link to the invoice and payment details.'
+            )}
           </DialogDescription>
         </DialogHeader>
 
@@ -126,32 +125,6 @@ Smart Home Solutions`;
               onChange={(e) => setMessage(e.target.value)}
               rows={6}
             />
-          </div>
-
-          <div className="space-y-2">
-            <div className="flex items-center space-x-2">
-              <Checkbox
-                id="include-payment"
-                checked={includePaymentLink}
-                onCheckedChange={(checked) => setIncludePaymentLink(!!checked)}
-                disabled={!invoice.hosted_invoice_url}
-              />
-              <Label htmlFor="include-payment" className="font-normal">
-                {t('Inkludera betalningslänk', 'Include payment link')}
-              </Label>
-            </div>
-            <div className="flex items-center space-x-2">
-              <Checkbox
-                id="attach-pdf"
-                checked={attachPdf}
-                onCheckedChange={(checked) => setAttachPdf(!!checked)}
-                disabled={!invoice.stripe_invoice_id}
-              />
-              <Label htmlFor="attach-pdf" className="font-normal flex items-center gap-1">
-                <Paperclip className="h-3 w-3" />
-                {t('Bifoga PDF-fil', 'Attach PDF file')}
-              </Label>
-            </div>
           </div>
         </div>
 

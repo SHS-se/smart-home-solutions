@@ -5,7 +5,6 @@ import { useAuth } from '@/contexts/AuthContext';
 interface SubscriptionStatus {
   subscribed: boolean;
   subscription_end: string | null;
-  stripe_subscription_id: string | null;
   cancel_at_period_end?: boolean;
 }
 
@@ -38,7 +37,7 @@ export function useSubscription(): UseSubscriptionReturn {
 
     // Staff always have access
     if (isStaff) {
-      setSubscriptionStatus({ subscribed: true, subscription_end: null, stripe_subscription_id: null });
+      setSubscriptionStatus({ subscribed: true, subscription_end: null });
       setLoading(false);
       return;
     }

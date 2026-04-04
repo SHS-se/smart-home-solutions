@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
-import Stripe from "https://esm.sh/stripe@18.5.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
+import { getAppEnvironment } from "../_shared/app-env.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -24,16 +24,13 @@ serve(async (req) => {
   );
 
   try {
-    logStep("Function started");
-
-    // WARNING: Use SHS_STRIPE_SECRET_KEY, NOT STRIPE_SECRET_KEY. See _shared/stripe-env.ts for details.
-    const stripeKey = Deno.env.get("SHS_STRIPE_SECRET_KEY");
-    if (!stripeKey) throw new Error("SHS_STRIPE_SECRET_KEY is not set");
+    const appEnv = getAppEnvironment();
+    logStep("Function started", { environment: appEnv });
 
     // Authenticate staff user
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) throw new Error("No authorization header provided");
-    
+
     const token = authHeader.replace("Bearer ", "");
     const { data: userData, error: userError } = await supabaseClient.auth.getUser(token);
     if (userError) throw new Error(`Authentication error: ${userError.message}`);
@@ -56,75 +53,105 @@ serve(async (req) => {
     if (!quote_id) throw new Error("quote_id is required");
     logStep("Processing quote", { quote_id });
 
-    // Fetch quote
-    const { data: quote, error: quoteError } = await supabaseClient
-      .from('quotes')
+    // Fetch the invoice linked to this quote
+    const { data: invoice, error: invoiceError } = await supabaseClient
+      .from('invoices')
       .select('*')
-      .eq('id', quote_id)
+      .eq('quote_id', quote_id)
       .single();
 
-    if (quoteError || !quote) throw new Error("Quote not found");
-
-    if (!quote.stripe_invoice_id) {
-      throw new Error("No invoice exists for this quote");
+    if (invoiceError || !invoice) throw new Error("No invoice found for this quote");
+    if (invoice.status !== 'draft') {
+      logStep("Invoice already finalized", { status: invoice.status });
+      return new Response(JSON.stringify({
+        success: true,
+        invoice_id: invoice.id,
+        invoice_number: invoice.invoice_number,
+        status: invoice.status,
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 200,
+      });
     }
 
-    const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
+    // Set app environment for the DB function
+    await supabaseClient.rpc('set_app_environment', { env: appEnv });
 
-    // Get the invoice first to check its status
-    const currentInvoice = await stripe.invoices.retrieve(quote.stripe_invoice_id);
-    logStep("Invoice retrieved", { status: currentInvoice.status });
+    // Allocate invoice number via the gap-free DB function
+    const { data: invoiceNumber, error: allocError } = await supabaseClient
+      .rpc('allocate_invoice_number');
 
-    let invoice = currentInvoice;
-
-    // Only finalize if still draft
-    if (currentInvoice.status === 'draft') {
-      invoice = await stripe.invoices.finalizeInvoice(quote.stripe_invoice_id);
-      logStep("Invoice finalized", { status: invoice.status });
-    } else {
-      logStep("Invoice already finalized", { status: currentInvoice.status });
+    if (allocError || !invoiceNumber) {
+      throw new Error(`Failed to allocate invoice number: ${allocError?.message || 'no number returned'}`);
     }
+    logStep("Invoice number allocated", { invoiceNumber });
 
-    // Update quote with latest invoice data
+    // Get computed totals
+    const { data: totals } = await supabaseClient
+      .from('invoice_computed_totals')
+      .select('*')
+      .eq('invoice_id', invoice.id)
+      .single();
+
+    const now = new Date().toISOString();
+
+    // Update local invoice to open status
     const { error: updateError } = await supabaseClient
-      .from('quotes')
+      .from('invoices')
       .update({
-        invoice_status: invoice.status || 'open',
-        invoice_hosted_url: invoice.hosted_invoice_url,
-        invoice_pdf_url: invoice.invoice_pdf,
-        invoice_number: invoice.number,
-        invoice_due_date: invoice.due_date ? new Date(invoice.due_date * 1000).toISOString().split('T')[0] : null,
-        invoice_subtotal: invoice.subtotal ? invoice.subtotal / 100 : null,
-        invoice_vat: invoice.tax ? invoice.tax / 100 : null,
-        invoice_total: invoice.total ? invoice.total / 100 : null,
+        invoice_number: invoiceNumber,
+        status: 'open',
+        finalized_at: now,
+        issued_at: now,
+        subtotal: totals?.subtotal || 0,
+        tax: totals?.tax || 0,
+        total: totals?.total || 0,
+        updated_at: now,
       })
-      .eq('id', quote_id);
+      .eq('id', invoice.id);
 
     if (updateError) {
-      throw new Error(`Failed to update quote: ${updateError.message}`);
+      throw new Error(`Failed to update invoice: ${updateError.message}`);
     }
+
+    // Update quote with invoice data
+    await supabaseClient.from('quotes').update({
+      invoice_status: 'open',
+      invoice_number: invoiceNumber,
+      invoice_due_date: invoice.due_date,
+      invoice_subtotal: totals?.subtotal || 0,
+      invoice_vat: totals?.tax || 0,
+      invoice_total: totals?.total || 0,
+    }).eq('id', quote_id);
 
     // Create billing event
     await supabaseClient.from('billing_events').insert({
       quote_id,
-      stripe_quote_id: quote.stripe_quote_id,
-      stripe_invoice_id: invoice.id,
       event_type: 'invoice_finalized',
-      metadata: { 
-        invoice_number: invoice.number,
-        invoice_status: invoice.status,
-        hosted_url: invoice.hosted_invoice_url,
+      metadata: {
+        invoice_number: invoiceNumber,
+        invoice_id: invoice.id,
       },
       created_by: user.id,
     });
 
-    logStep("Invoice finalization complete");
+    // Create invoice event
+    await supabaseClient.from('invoice_events').insert({
+      invoice_id: invoice.id,
+      event_type: 'invoice_finalized',
+      metadata: {
+        invoice_number: invoiceNumber,
+      },
+      created_by: user.id,
+    });
+
+    logStep("Invoice finalization complete", { invoiceNumber });
 
     return new Response(JSON.stringify({
       success: true,
-      invoice_status: invoice.status,
-      hosted_url: invoice.hosted_invoice_url,
-      pdf_url: invoice.invoice_pdf,
+      invoice_id: invoice.id,
+      invoice_number: invoiceNumber,
+      status: 'open',
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 200,

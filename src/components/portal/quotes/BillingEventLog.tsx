@@ -70,7 +70,7 @@ const BillingEventLog: React.FC<BillingEventLogProps> = ({ quoteId }) => {
   const getEventLabel = (eventType: string) => {
     const labels: Record<string, { sv: string; en: string }> = {
       quote_created: { sv: 'Offert skapad', en: 'Quote created' },
-      quote_sent: { sv: 'Offert skickad till Stripe', en: 'Quote sent to Stripe' },
+      quote_sent: { sv: 'Offert skickad', en: 'Quote sent' },
       quote_updated: { sv: 'Offert uppdaterad', en: 'Quote updated' },
       invoice_created: { sv: 'Faktura skapad', en: 'Invoice created' },
       invoice_finalized: { sv: 'Faktura fastställd', en: 'Invoice finalized' },

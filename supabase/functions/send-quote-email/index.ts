@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { Resend } from "https://esm.sh/resend@2.0.0";
 import { getRequestAppOrigin } from "../_shared/app-origin.ts";
-import { getAppEnvironment } from "../_shared/stripe-env.ts";
+import { getAppEnvironment } from "../_shared/app-env.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",

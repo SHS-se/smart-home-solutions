@@ -7,26 +7,28 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { AlertCircle, Download, ExternalLink, Loader2, X } from "lucide-react";
+import { AlertCircle, Download, Loader2, X } from "lucide-react";
 import PdfCanvasViewer from "@/components/portal/quotes/PdfCanvasViewer";
 import { supabase } from "@/integrations/supabase/client";
 
 interface InvoicePdfModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  stripeInvoiceId: string | null;
+  invoiceId: string | null;
   invoiceNumber: string;
+  /** Optional public token for unauthenticated access */
+  publicToken?: string;
 }
 
-const InvoicePdfModal: React.FC<InvoicePdfModalProps> = ({ 
-  open, 
-  onOpenChange, 
-  stripeInvoiceId, 
-  invoiceNumber 
+const InvoicePdfModal: React.FC<InvoicePdfModalProps> = ({
+  open,
+  onOpenChange,
+  invoiceId,
+  invoiceNumber,
+  publicToken,
 }) => {
   const { t } = useLanguage();
   const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
-  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [downloadBlobUrl, setDownloadBlobUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -40,37 +42,38 @@ const InvoicePdfModal: React.FC<InvoicePdfModalProps> = ({
     setDownloadBlobUrl(null);
   };
 
-  // Fetch PDF bytes when modal opens and stripeInvoiceId is present.
   useEffect(() => {
-    if (!open || !stripeInvoiceId) return;
+    if (!open || !invoiceId) return;
 
     let cancelled = false;
     setIsLoading(true);
     setError(null);
     setPdfBytes(null);
-    setPdfUrl(null);
     cleanupDownloadUrl();
 
     (async () => {
       try {
-        // Call edge function to get signed URL
-        const { data, error: fnError } = await supabase.functions.invoke('get-stripe-invoice-pdf', {
-          body: { stripe_invoice_id: stripeInvoiceId },
-        });
+        // Build the URL for get-invoice-pdf — supports both authenticated and public token
+        const supabaseUrl = (supabase as any).supabaseUrl || import.meta.env.VITE_SUPABASE_URL;
+        let url = `${supabaseUrl}/functions/v1/get-invoice-pdf?invoice_id=${invoiceId}`;
+        if (publicToken) {
+          url += `&token=${publicToken}`;
+        }
 
-        if (fnError) throw fnError;
-        if (data?.error) throw new Error(data.error);
+        const headers: Record<string, string> = {};
+        if (!publicToken) {
+          const { data: { session } } = await supabase.auth.getSession();
+          if (session?.access_token) {
+            headers['Authorization'] = `Bearer ${session.access_token}`;
+          }
+        }
+        headers['apikey'] = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
-        const signedUrl = data.url;
-        if (!signedUrl) throw new Error("No PDF URL returned");
+        const response = await fetch(url, { headers, cache: "no-store" });
 
-        if (cancelled) return;
-        setPdfUrl(signedUrl);
-
-        // Fetch the PDF bytes
-        const response = await fetch(signedUrl, { cache: "no-store" });
         if (!response.ok) {
-          throw new Error(`Failed to fetch PDF: ${response.status}`);
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || `Failed to generate PDF: ${response.status}`);
         }
 
         const blob = await response.blob();
@@ -79,9 +82,9 @@ const InvoicePdfModal: React.FC<InvoicePdfModalProps> = ({
 
         setPdfBytes(new Uint8Array(buffer));
 
-        const url = URL.createObjectURL(blob);
-        downloadUrlRef.current = url;
-        setDownloadBlobUrl(url);
+        const blobUrl = URL.createObjectURL(blob);
+        downloadUrlRef.current = blobUrl;
+        setDownloadBlobUrl(blobUrl);
       } catch (err) {
         if (cancelled) return;
         console.error("Error fetching PDF:", err);
@@ -91,41 +94,29 @@ const InvoicePdfModal: React.FC<InvoicePdfModalProps> = ({
       }
     })();
 
-    return () => {
-      cancelled = true;
-    };
-  }, [open, stripeInvoiceId]);
+    return () => { cancelled = true; };
+  }, [open, invoiceId, publicToken]);
 
-  // Cleanup on close/unmount
   useEffect(() => {
     if (!open) {
       setPdfBytes(null);
-      setPdfUrl(null);
       setError(null);
       cleanupDownloadUrl();
     }
   }, [open]);
 
   useEffect(() => {
-    return () => {
-      cleanupDownloadUrl();
-    };
+    return () => { cleanupDownloadUrl(); };
   }, []);
 
   const handleDownload = () => {
-    const url = downloadBlobUrl || pdfUrl;
-    if (!url) return;
+    if (!downloadBlobUrl) return;
     const link = document.createElement("a");
-    link.href = url;
-    link.download = `invoice-${invoiceNumber}.pdf`;
+    link.href = downloadBlobUrl;
+    link.download = `Faktura-${invoiceNumber}.pdf`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-  };
-
-  const handleOpenInNewTab = () => {
-    if (!pdfUrl) return;
-    window.open(pdfUrl, "_blank", "noopener,noreferrer");
   };
 
   return (
@@ -141,7 +132,7 @@ const InvoicePdfModal: React.FC<InvoicePdfModalProps> = ({
                 variant="outline"
                 size="sm"
                 onClick={handleDownload}
-                disabled={!downloadBlobUrl && !pdfUrl}
+                disabled={!downloadBlobUrl}
               >
                 <Download className="h-4 w-4 mr-2" />
                 {t('Ladda ner', 'Download')}
@@ -168,28 +159,16 @@ const InvoicePdfModal: React.FC<InvoicePdfModalProps> = ({
               <p className="text-center">
                 {t("Kunde inte ladda PDF-förhandsgranskning.", "Could not load PDF preview.")}
               </p>
-              <p className="text-sm text-center max-w-md">
-                {t(
-                  "Din webbläsare kan ha blockerat förhandsgranskningen. Prova att ladda ner filen eller öppna den i en ny flik.",
-                  "Your browser may have blocked the preview. Try downloading the file or opening it in a new tab."
-                )}
-              </p>
-              <div className="flex gap-3 mt-2">
-                <Button onClick={handleDownload} disabled={!pdfUrl}>
-                  <Download className="h-4 w-4 mr-2" />
-                  {t("Ladda ner", "Download")}
-                </Button>
-                <Button variant="outline" onClick={handleOpenInNewTab} disabled={!pdfUrl}>
-                  <ExternalLink className="h-4 w-4 mr-2" />
-                  {t("Öppna i ny flik", "Open in new tab")}
-                </Button>
-              </div>
+              <Button onClick={handleDownload} disabled={!downloadBlobUrl}>
+                <Download className="h-4 w-4 mr-2" />
+                {t("Ladda ner", "Download")}
+              </Button>
             </div>
           ) : pdfBytes ? (
             <PdfCanvasViewer data={pdfBytes} className="h-full" />
           ) : (
             <div className="flex items-center justify-center h-full text-muted-foreground">
-              {stripeInvoiceId
+              {invoiceId
                 ? t("Laddar PDF...", "Loading PDF...")
                 : t("Ingen PDF tillgänglig", "No PDF available")}
             </div>

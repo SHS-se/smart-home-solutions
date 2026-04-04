@@ -49,6 +49,7 @@ import InvoicesList from "./pages/portal/invoices/InvoicesList";
 import InvoiceDraftEditor from "./pages/portal/invoices/InvoiceDraftEditor";
 import InvoiceDetail from "./pages/portal/invoices/InvoiceDetail";
 import PublicQuotePage from "./pages/portal/PublicQuotePage";
+import PublicInvoicePage from "./pages/portal/PublicInvoicePage";
 import HomeProfile from "./pages/portal/HomeProfile";
 import EnergyModeling from "./pages/portal/EnergyModeling";
 import DeviceCatalog from "./pages/portal/DeviceCatalog";
@@ -160,6 +161,7 @@ const App = () => (
                 <Route path="/portal/quotes" element={<QuotesList />} />
                 <Route path="/portal/quotes/:id" element={<QuotePreparation />} />
                 <Route path="/portal/quote/:id" element={<PublicQuotePage />} />
+                <Route path="/portal/invoice/:id" element={<PublicInvoicePage />} />
                 <Route path="/portal/invoices" element={<InvoicesList />} />
                 <Route path="/portal/invoices/new" element={<InvoiceDraftEditor />} />
                 <Route path="/portal/invoices/:id" element={<InvoiceDetail />} />

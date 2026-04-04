@@ -1,7 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
-import Stripe from "https://esm.sh/stripe@18.5.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
-import { getStripeSecretKey, getAppEnvironment } from "../_shared/stripe-env.ts";
+import { getAppEnvironment } from "../_shared/app-env.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -26,19 +25,17 @@ serve(async (req) => {
 
   try {
     const appEnv = getAppEnvironment();
-    const stripeKey = getStripeSecretKey();
     logStep("Function started", { environment: appEnv });
 
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) throw new Error("No authorization header provided");
-    logStep("Authorization header found");
 
     const token = authHeader.replace("Bearer ", "");
     const { data: userData, error: userError } = await supabaseClient.auth.getUser(token);
     if (userError) throw new Error(`Authentication error: ${userError.message}`);
     const user = userData.user;
     if (!user?.email) throw new Error("User not authenticated or email not available");
-    logStep("User authenticated", { userId: user.id, email: user.email });
+    logStep("User authenticated", { userId: user.id });
 
     // Parse optional customer_id from request body
     let customerIdParam: string | null = null;
@@ -46,115 +43,69 @@ serve(async (req) => {
       const body = await req.json();
       customerIdParam = body?.customer_id || null;
     } catch {
-      // No body or invalid JSON — use default behavior
+      // No body or invalid JSON
     }
 
-    let lookupEmail = user.email;
+    let customerId: string | null = null;
 
     if (customerIdParam) {
       // Verify caller is staff
-      const { data: staffRow, error: staffError } = await supabaseClient
+      const { data: staffRow } = await supabaseClient
         .from("staff_users")
         .select("user_id")
         .eq("user_id", user.id)
         .maybeSingle();
 
-      if (staffError || !staffRow) {
-        throw new Error("Only staff can look up customer subscriptions");
-      }
-      logStep("Staff verified", { userId: user.id });
-
-      // Look up customer email from customers_with_identity view
-      const { data: custRow, error: custError } = await supabaseClient
-        .from("customers_with_identity")
-        .select("billing_email, contact_email")
-        .eq("id", customerIdParam)
+      if (!staffRow) throw new Error("Only staff can look up customer subscriptions");
+      customerId = customerIdParam;
+    } else {
+      // Look up the customer for this user
+      const { data: custRow } = await supabaseClient
+        .from("customers")
+        .select("id")
+        .eq("user_id", user.id)
         .maybeSingle();
 
-      if (custError || !custRow) {
-        throw new Error("Customer not found");
-      }
-
-      lookupEmail = custRow.billing_email || custRow.contact_email;
-      if (!lookupEmail) {
-        logStep("No email found for customer", { customerIdParam });
-        return new Response(JSON.stringify({ subscribed: false }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-          status: 200,
-        });
-      }
-      logStep("Using customer email for lookup", { lookupEmail });
+      customerId = custRow?.id || null;
     }
 
-    const stripe = new Stripe(stripeKey, { apiVersion: "2025-08-27.basil" });
-    const customers = await stripe.customers.list({ email: lookupEmail, limit: 1 });
-
-    if (customers.data.length === 0) {
-      logStep("No Stripe customer found");
+    if (!customerId) {
+      logStep("No customer found");
       return new Response(JSON.stringify({ subscribed: false }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 200,
       });
     }
 
-    const customerId = customers.data[0].id;
-    logStep("Found Stripe customer", { customerId });
+    // Read internal entitlement from customers table
+    const { data: customer } = await supabaseClient
+      .from("customers")
+      .select("subscription_active, subscription_expires_at")
+      .eq("id", customerId)
+      .single();
 
-    const subscriptions = await stripe.subscriptions.list({
-      customer: customerId,
-      status: "active",
-      limit: 1,
-    });
-    const hasActiveSub = subscriptions.data.length > 0;
-    let subscriptionEnd = null;
-    let stripeSubscriptionId = null;
-    let cancelAtPeriodEnd = false;
-
-    if (hasActiveSub) {
-      const subscription = subscriptions.data[0];
-      stripeSubscriptionId = subscription.id;
-      cancelAtPeriodEnd = subscription.cancel_at_period_end || false;
-      
-      logStep("Raw subscription data", { 
-        current_period_end: subscription.current_period_end,
-        current_period_end_type: typeof subscription.current_period_end,
-        cancel_at: subscription.cancel_at,
+    if (!customer) {
+      return new Response(JSON.stringify({ subscribed: false }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 200,
       });
-      
-      const endTimestamp = subscription.current_period_end || subscription.cancel_at;
-      if (endTimestamp) {
-        try {
-          if (typeof endTimestamp === 'number') {
-            subscriptionEnd = new Date(endTimestamp * 1000).toISOString();
-          } else if (typeof endTimestamp === 'string') {
-            subscriptionEnd = endTimestamp;
-          }
-        } catch (e) {
-          logStep("Could not parse subscription end date", { endTimestamp, error: String(e) });
-        }
-      }
-      
-      logStep("Active subscription found", { 
-        subscriptionId: subscription.id, 
-        endDate: subscriptionEnd,
-        cancelAtPeriodEnd 
-      });
-    } else {
-      logStep("No active subscription found");
     }
 
+    const isActive = customer.subscription_active &&
+      (!customer.subscription_expires_at || new Date(customer.subscription_expires_at) > new Date());
+
+    logStep("Subscription check", { customerId, active: isActive, expiresAt: customer.subscription_expires_at });
+
     return new Response(JSON.stringify({
-      subscribed: hasActiveSub,
-      subscription_end: subscriptionEnd,
-      stripe_subscription_id: stripeSubscriptionId,
-      cancel_at_period_end: cancelAtPeriodEnd,
+      subscribed: isActive,
+      subscription_end: customer.subscription_expires_at || null,
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 200,
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    logStep("ERROR in check-subscription", { message: errorMessage });
+    logStep("ERROR", { message: errorMessage });
     return new Response(JSON.stringify({ error: errorMessage }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 500,

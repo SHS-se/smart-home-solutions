@@ -35,9 +35,8 @@ import { cn } from '@/lib/utils';
 interface Invoice {
   id: string;
   invoice_number: string | null;
-  stripe_invoice_id: string | null;
   status: string;
-  
+
   due_date: string | null;
   total: number | null;
   created_at: string;
@@ -444,9 +443,9 @@ const InvoicesList: React.FC = () => {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
-                        {invoice.stripe_invoice_id && (
-                          <Button 
-                            variant="ghost" 
+                        {invoice.status !== 'draft' && (
+                          <Button
+                            variant="ghost"
                             size="icon"
                             onClick={(e) => {
                               e.stopPropagation();
@@ -470,7 +469,7 @@ const InvoicesList: React.FC = () => {
           <InvoicePdfModal
             open={!!pdfModalInvoice}
             onOpenChange={(open) => !open && setPdfModalInvoice(null)}
-            stripeInvoiceId={pdfModalInvoice.stripe_invoice_id}
+            invoiceId={pdfModalInvoice.id}
             invoiceNumber={pdfModalInvoice.invoice_number || pdfModalInvoice.id}
           />
         )}

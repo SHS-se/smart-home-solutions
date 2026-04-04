@@ -27,7 +27,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Eye, ExternalLink, FileText, Mail, XCircle, CheckCircle2, Loader2, Clock, AlertCircle } from 'lucide-react';
+import { Eye, FileText, Mail, XCircle, CheckCircle2, Loader2, Clock, AlertCircle } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 import { sv } from 'date-fns/locale';
@@ -37,7 +37,6 @@ import InvoicePdfModal from '@/components/portal/invoices/InvoicePdfModal';
 interface Invoice {
   id: string;
   invoice_number: string | null;
-  stripe_invoice_id: string | null;
   customer_id: string | null;
   bom_id: string | null;
   quote_id: string | null;
@@ -49,8 +48,6 @@ interface Invoice {
   subtotal: number | null;
   tax: number | null;
   total: number | null;
-  hosted_invoice_url: string | null;
-  invoice_pdf_url: string | null;
   finalized_at: string | null;
   paid_at: string | null;
   voided_at: string | null;
@@ -525,19 +522,10 @@ const InvoiceDetail: React.FC = () => {
 
                 {/* Action buttons */}
                 <div className="space-y-2 pt-2">
-                  {invoice.hosted_invoice_url && !isVoid && (
-                    <Button variant="outline" className="w-full" asChild>
-                      <a href={invoice.hosted_invoice_url} target="_blank" rel="noopener noreferrer">
-                        <ExternalLink className="h-4 w-4 mr-2" />
-                        {t('Öppna betalning', 'Open payment')}
-                      </a>
-                    </Button>
-                  )}
-
-                  {invoice.stripe_invoice_id && (
-                    <Button 
-                      variant="outline" 
-                      className="w-full" 
+                    {invoice.status !== 'draft' && (
+                    <Button
+                      variant="outline"
+                      className="w-full"
                       onClick={() => setShowPdfModal(true)}
                     >
                       <Eye className="h-4 w-4 mr-2" />
@@ -615,8 +603,8 @@ const InvoiceDetail: React.FC = () => {
             <AlertDialogTitle>{t('Makulera faktura?', 'Void invoice?')}</AlertDialogTitle>
             <AlertDialogDescription>
               {t(
-                'Detta makulerar fakturan i Stripe. Kunden kan inte längre betala via länken.',
-                'This will void the invoice in Stripe. The customer can no longer pay using the link.'
+                'Detta makulerar fakturan. Kunden kan inte längre betala via länken.',
+                'This will void the invoice. The customer can no longer pay using the link.'
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -648,7 +636,7 @@ const InvoiceDetail: React.FC = () => {
         <InvoicePdfModal
           open={showPdfModal}
           onOpenChange={setShowPdfModal}
-          stripeInvoiceId={invoice.stripe_invoice_id}
+          invoiceId={invoice.id}
           invoiceNumber={invoice.invoice_number || invoice.id}
         />
       )}

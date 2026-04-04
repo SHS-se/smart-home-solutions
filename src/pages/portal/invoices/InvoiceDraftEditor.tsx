@@ -58,7 +58,6 @@ interface LineItem {
 interface Invoice {
   id: string;
   invoice_number: string | null;
-  stripe_invoice_id: string | null;
   customer_id: string | null;
   bom_id: string | null;
   bom_version: number | null;
@@ -340,12 +339,11 @@ const InvoiceDraftEditor: React.FC = () => {
     },
   });
 
-  // Sync line items to Stripe
+  // Save line items locally
   const syncLinesMutation = useMutation({
     mutationFn: async () => {
       if (!invoiceId) throw new Error('No invoice ID');
-      
-      // First save line items locally
+
       await supabase.from('invoice_line_items').delete().eq('invoice_id', invoiceId);
       if (lineItems.length > 0) {
         const { error } = await supabase.from('invoice_line_items').insert(
@@ -370,14 +368,6 @@ const InvoiceDraftEditor: React.FC = () => {
         );
         if (error) throw error;
       }
-
-      // Then sync to Stripe
-      const { data, error } = await supabase.functions.invoke('sync-invoice-lines', {
-        body: { invoice_id: invoiceId },
-      });
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-      return data;
     },
     onSuccess: () => {
       toast({ title: t('Rader synkroniserade', 'Lines synced') });
