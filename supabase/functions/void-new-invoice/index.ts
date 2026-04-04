@@ -10,9 +10,15 @@ const corsHeaders = {
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
-  const supabaseClient = createClient(
-    Deno.env.get("SUPABASE_URL") ?? "",
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+  const serviceClient = createClient(
+    supabaseUrl,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+    { auth: { persistSession: false } }
+  );
+  const anonClient = createClient(
+    supabaseUrl,
+    Deno.env.get("SUPABASE_ANON_KEY") ?? "",
     { auth: { persistSession: false } }
   );
 
@@ -22,16 +28,17 @@ serve(async (req) => {
 
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) throw new Error("No authorization header provided");
-    const { data: userData } = await supabaseClient.auth.getUser(authHeader.replace("Bearer ", ""));
+    const { data: userData, error: userError } = await anonClient.auth.getUser(authHeader.replace("Bearer ", ""));
+    if (userError) throw new Error(`Authentication error: ${userError.message}`);
     if (!userData.user) throw new Error("User not authenticated");
 
-    const { data: staffData } = await supabaseClient.from('staff_users').select('user_id').eq('user_id', userData.user.id).single();
+    const { data: staffData } = await serviceClient.from('staff_users').select('user_id').eq('user_id', userData.user.id).single();
     if (!staffData) throw new Error("Access denied: Staff only");
 
     const { invoice_id, reason } = await req.json();
     if (!invoice_id) throw new Error("invoice_id is required");
 
-    const { data: invoice } = await supabaseClient.from('invoices').select('*').eq('id', invoice_id).single();
+    const { data: invoice } = await serviceClient.from('invoices').select('*').eq('id', invoice_id).single();
     if (!invoice) throw new Error("Invoice not found");
     if (invoice.status === 'paid') throw new Error("Cannot void a paid invoice");
     if (invoice.status === 'void') {
@@ -41,13 +48,13 @@ serve(async (req) => {
     }
 
     // Void locally — if still draft, just mark void; if open, also void
-    await supabaseClient.from('invoices').update({
+    await serviceClient.from('invoices').update({
       status: 'void',
       voided_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }).eq('id', invoice_id);
 
-    await supabaseClient.from('invoice_events').insert({
+    await serviceClient.from('invoice_events').insert({
       invoice_id,
       event_type: 'invoice_voided',
       metadata: { reason, previous_status: invoice.status },

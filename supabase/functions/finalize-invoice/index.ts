@@ -17,9 +17,15 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
-  const supabaseClient = createClient(
-    Deno.env.get("SUPABASE_URL") ?? "",
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+  const serviceClient = createClient(
+    supabaseUrl,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+    { auth: { persistSession: false } }
+  );
+  const anonClient = createClient(
+    supabaseUrl,
+    Deno.env.get("SUPABASE_ANON_KEY") ?? "",
     { auth: { persistSession: false } }
   );
 
@@ -32,13 +38,13 @@ serve(async (req) => {
     if (!authHeader) throw new Error("No authorization header provided");
 
     const token = authHeader.replace("Bearer ", "");
-    const { data: userData, error: userError } = await supabaseClient.auth.getUser(token);
+    const { data: userData, error: userError } = await anonClient.auth.getUser(token);
     if (userError) throw new Error(`Authentication error: ${userError.message}`);
     const user = userData.user;
     if (!user) throw new Error("User not authenticated");
 
     // Check if user is staff
-    const { data: staffData, error: staffError } = await supabaseClient
+    const { data: staffData, error: staffError } = await serviceClient
       .from('staff_users')
       .select('user_id')
       .eq('user_id', user.id)
@@ -54,7 +60,7 @@ serve(async (req) => {
     logStep("Processing quote", { quote_id });
 
     // Fetch the invoice linked to this quote
-    const { data: invoice, error: invoiceError } = await supabaseClient
+    const { data: invoice, error: invoiceError } = await serviceClient
       .from('invoices')
       .select('*')
       .eq('quote_id', quote_id)
@@ -74,7 +80,7 @@ serve(async (req) => {
       });
     }
 
-    const { data: finalizedInvoice, error: finalizeError } = await supabaseClient.rpc(
+    const { data: finalizedInvoice, error: finalizeError } = await serviceClient.rpc(
       'finalize_local_invoice',
       {
         p_invoice_id: invoice.id,

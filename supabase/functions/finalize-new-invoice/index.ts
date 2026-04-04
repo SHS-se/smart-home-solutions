@@ -17,9 +17,15 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
-  const supabaseClient = createClient(
-    Deno.env.get("SUPABASE_URL") ?? "",
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+  const serviceClient = createClient(
+    supabaseUrl,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+    { auth: { persistSession: false } }
+  );
+  const anonClient = createClient(
+    supabaseUrl,
+    Deno.env.get("SUPABASE_ANON_KEY") ?? "",
     { auth: { persistSession: false } }
   );
 
@@ -32,13 +38,13 @@ serve(async (req) => {
     if (!authHeader) throw new Error("No authorization header provided");
 
     const token = authHeader.replace("Bearer ", "");
-    const { data: userData, error: userError } = await supabaseClient.auth.getUser(token);
+    const { data: userData, error: userError } = await anonClient.auth.getUser(token);
     if (userError) throw new Error(`Authentication error: ${userError.message}`);
     const user = userData.user;
     if (!user) throw new Error("User not authenticated");
 
     // Check if user is staff
-    const { data: staffData, error: staffError } = await supabaseClient
+    const { data: staffData, error: staffError } = await serviceClient
       .from('staff_users')
       .select('user_id')
       .eq('user_id', user.id)
@@ -54,7 +60,7 @@ serve(async (req) => {
     logStep("Finalizing invoice", { invoice_id });
 
     // Fetch invoice
-    const { data: invoice, error: invoiceError } = await supabaseClient
+    const { data: invoice, error: invoiceError } = await serviceClient
       .from('invoices')
       .select('*')
       .eq('id', invoice_id)
@@ -63,7 +69,7 @@ serve(async (req) => {
     if (invoiceError || !invoice) throw new Error("Invoice not found");
     if (invoice.status !== 'draft') throw new Error("Can only finalize draft invoices");
 
-    const { data: finalizedInvoice, error: finalizeError } = await supabaseClient.rpc(
+    const { data: finalizedInvoice, error: finalizeError } = await serviceClient.rpc(
       'finalize_local_invoice',
       {
         p_invoice_id: invoice_id,
@@ -81,7 +87,7 @@ serve(async (req) => {
 
     // Sync BOM items to match invoice hardware lines
     if (invoice.bom_id) {
-      const { data: hardwareLines } = await supabaseClient
+      const { data: hardwareLines } = await serviceClient
         .from('invoice_line_items')
         .select('sku_id, quantity')
         .eq('invoice_id', invoice_id)
@@ -90,13 +96,13 @@ serve(async (req) => {
 
       if (hardwareLines && hardwareLines.length > 0) {
         const skuIds = hardwareLines.map(l => l.sku_id!);
-        const { data: skuCosts } = await supabaseClient
+        const { data: skuCosts } = await serviceClient
           .from('skus')
           .select('id, cost_ex_vat_computed')
           .in('id', skuIds);
         const costMap = new Map((skuCosts || []).map(s => [s.id, s.cost_ex_vat_computed]));
 
-        await supabaseClient
+        await serviceClient
           .from('bom_items')
           .delete()
           .eq('bom_id', invoice.bom_id);
@@ -108,7 +114,7 @@ serve(async (req) => {
           cost_ex_vat_at_time: costMap.get(line.sku_id!) ?? null,
         }));
 
-        const { error: bomInsertError } = await supabaseClient
+        const { error: bomInsertError } = await serviceClient
           .from('bom_items')
           .insert(bomItems);
 
@@ -120,7 +126,7 @@ serve(async (req) => {
       }
 
       // Enrich bom_events metadata with invoice identifiers
-      const { data: bomEvents } = await supabaseClient
+      const { data: bomEvents } = await serviceClient
         .from('bom_events')
         .select('id, metadata')
         .eq('event_type', 'revision_created')
@@ -129,7 +135,7 @@ serve(async (req) => {
       if (bomEvents && bomEvents.length > 0) {
         for (const evt of bomEvents) {
           const existingMeta = (evt.metadata as Record<string, unknown>) || {};
-          await supabaseClient
+          await serviceClient
             .from('bom_events')
             .update({
               metadata: {

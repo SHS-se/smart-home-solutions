@@ -18,15 +18,21 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
-  const supabaseClient = createClient(
-    Deno.env.get("SUPABASE_URL") ?? "",
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+  const serviceClient = createClient(
+    supabaseUrl,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+    { auth: { persistSession: false } }
+  );
+  const anonClient = createClient(
+    supabaseUrl,
+    Deno.env.get("SUPABASE_ANON_KEY") ?? "",
     { auth: { persistSession: false } }
   );
   let createdInvoiceId: string | null = null;
 
   const cleanupDraftInvoice = async (invoiceId: string, reason: string) => {
-    const { error } = await supabaseClient
+    const { error } = await serviceClient
       .from("invoices")
       .delete()
       .eq("id", invoiceId)
@@ -49,13 +55,13 @@ serve(async (req) => {
     if (!authHeader) throw new Error("No authorization header provided");
 
     const token = authHeader.replace("Bearer ", "");
-    const { data: userData, error: userError } = await supabaseClient.auth.getUser(token);
+    const { data: userData, error: userError } = await anonClient.auth.getUser(token);
     if (userError) throw new Error(`Authentication error: ${userError.message}`);
     const user = userData.user;
     if (!user) throw new Error("User not authenticated");
 
     // Check if user is staff
-    const { data: staffData, error: staffError } = await supabaseClient
+    const { data: staffData, error: staffError } = await serviceClient
       .from('staff_users')
       .select('user_id')
       .eq('user_id', user.id)
@@ -81,7 +87,7 @@ serve(async (req) => {
     let bom = null;
     let bomVersion = null;
     if (bom_id) {
-      const { data: bomData, error: bomError } = await supabaseClient
+      const { data: bomData, error: bomError } = await serviceClient
         .from('boms')
         .select('*, bom_items(*, sku:skus(*))')
         .eq('id', bom_id)
@@ -97,7 +103,7 @@ serve(async (req) => {
     let quote = null;
     let quoteNumber = null;
     if (quote_id) {
-      const { data: quoteData, error: quoteError } = await supabaseClient
+      const { data: quoteData, error: quoteError } = await serviceClient
         .from('quotes')
         .select('*, quote_lines(*)')
         .eq('id', quote_id)
@@ -110,7 +116,7 @@ serve(async (req) => {
     }
 
     // Create the invoice record in our database (draft — no invoice number yet)
-    const { data: invoice, error: invoiceError } = await supabaseClient
+    const { data: invoice, error: invoiceError } = await serviceClient
       .from('invoices')
       .insert({
         customer_id,
@@ -203,7 +209,7 @@ serve(async (req) => {
     }
 
     if (lineItemsToInsert.length > 0) {
-      const { error: lineItemsError } = await supabaseClient
+      const { error: lineItemsError } = await serviceClient
         .from('invoice_line_items')
         .insert(lineItemsToInsert);
 
@@ -216,7 +222,7 @@ serve(async (req) => {
     }
 
     // Create invoice event
-    const { error: invoiceEventError } = await supabaseClient.from('invoice_events').insert({
+    const { error: invoiceEventError } = await serviceClient.from('invoice_events').insert({
       invoice_id: invoice.id,
       event_type: 'invoice_created',
       metadata: {

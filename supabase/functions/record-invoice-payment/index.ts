@@ -17,9 +17,15 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
-  const supabaseClient = createClient(
-    Deno.env.get("SUPABASE_URL") ?? "",
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+  const serviceClient = createClient(
+    supabaseUrl,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+    { auth: { persistSession: false } }
+  );
+  const anonClient = createClient(
+    supabaseUrl,
+    Deno.env.get("SUPABASE_ANON_KEY") ?? "",
     { auth: { persistSession: false } }
   );
 
@@ -32,12 +38,12 @@ serve(async (req) => {
     if (!authHeader) throw new Error("No authorization header provided");
 
     const token = authHeader.replace("Bearer ", "");
-    const { data: userData, error: userError } = await supabaseClient.auth.getUser(token);
+    const { data: userData, error: userError } = await anonClient.auth.getUser(token);
     if (userError) throw new Error(`Authentication error: ${userError.message}`);
     const user = userData.user;
     if (!user) throw new Error("User not authenticated");
 
-    const { data: staffData } = await supabaseClient
+    const { data: staffData } = await serviceClient
       .from('staff_users')
       .select('user_id')
       .eq('user_id', user.id)
@@ -52,7 +58,7 @@ serve(async (req) => {
     if (amount === undefined || amount === null) throw new Error("amount is required");
 
     // Fetch invoice
-    const { data: invoice, error: invoiceError } = await supabaseClient
+    const { data: invoice, error: invoiceError } = await serviceClient
       .from('invoices')
       .select('*')
       .eq('id', invoice_id)
@@ -66,7 +72,7 @@ serve(async (req) => {
     logStep("Invoice loaded", { invoiceId: invoice.id, status: invoice.status });
 
     // Insert payment record
-    const { data: payment, error: paymentError } = await supabaseClient
+    const { data: payment, error: paymentError } = await serviceClient
       .from('invoice_payments')
       .insert({
         invoice_id,
@@ -84,7 +90,7 @@ serve(async (req) => {
     logStep("Payment recorded", { paymentId: payment.id, amount });
 
     // Calculate total payments for this invoice
-    const { data: allPayments } = await supabaseClient
+    const { data: allPayments } = await serviceClient
       .from('invoice_payments')
       .select('amount')
       .eq('invoice_id', invoice_id);
@@ -97,7 +103,7 @@ serve(async (req) => {
     // If fully paid, mark invoice as paid
     if (totalPaid >= invoiceTotal) {
       const paidAt = new Date(`${payment_date}T12:00:00Z`).toISOString();
-      await supabaseClient.from('invoices').update({
+      await serviceClient.from('invoices').update({
         status: 'paid',
         paid_at: paidAt,
         updated_at: new Date().toISOString(),
@@ -106,7 +112,7 @@ serve(async (req) => {
     }
 
     // Create invoice event
-    await supabaseClient.from('invoice_events').insert({
+    await serviceClient.from('invoice_events').insert({
       invoice_id,
       event_type: 'payment_recorded',
       metadata: {

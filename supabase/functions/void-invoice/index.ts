@@ -17,9 +17,15 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
-  const supabaseClient = createClient(
-    Deno.env.get("SUPABASE_URL") ?? "",
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+  const serviceClient = createClient(
+    supabaseUrl,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+    { auth: { persistSession: false } }
+  );
+  const anonClient = createClient(
+    supabaseUrl,
+    Deno.env.get("SUPABASE_ANON_KEY") ?? "",
     { auth: { persistSession: false } }
   );
 
@@ -32,12 +38,12 @@ serve(async (req) => {
     if (!authHeader) throw new Error("No authorization header provided");
 
     const token = authHeader.replace("Bearer ", "");
-    const { data: userData, error: userError } = await supabaseClient.auth.getUser(token);
+    const { data: userData, error: userError } = await anonClient.auth.getUser(token);
     if (userError) throw new Error(`Authentication error: ${userError.message}`);
     const user = userData.user;
     if (!user) throw new Error("User not authenticated");
 
-    const { data: staffData, error: staffError } = await supabaseClient
+    const { data: staffData, error: staffError } = await serviceClient
       .from('staff_users')
       .select('user_id')
       .eq('user_id', user.id)
@@ -53,7 +59,7 @@ serve(async (req) => {
     logStep("Processing quote", { quote_id });
 
     // Fetch the invoice linked to this quote
-    const { data: invoice, error: invoiceError } = await supabaseClient
+    const { data: invoice, error: invoiceError } = await serviceClient
       .from('invoices')
       .select('*')
       .eq('quote_id', quote_id)
@@ -79,19 +85,19 @@ serve(async (req) => {
     }
 
     // Void the invoice locally
-    await supabaseClient.from('invoices').update({
+    await serviceClient.from('invoices').update({
       status: 'void',
       voided_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }).eq('id', invoice.id);
 
     // Update quote
-    await supabaseClient.from('quotes').update({
+    await serviceClient.from('quotes').update({
       invoice_status: 'void',
     }).eq('id', quote_id);
 
     // Create billing event
-    await supabaseClient.from('billing_events').insert({
+    await serviceClient.from('billing_events').insert({
       quote_id,
       event_type: 'invoice_voided',
       metadata: {
@@ -103,7 +109,7 @@ serve(async (req) => {
     });
 
     // Create invoice event
-    await supabaseClient.from('invoice_events').insert({
+    await serviceClient.from('invoice_events').insert({
       invoice_id: invoice.id,
       event_type: 'invoice_voided',
       metadata: { reason: reason || null, previous_status: invoice.status },
