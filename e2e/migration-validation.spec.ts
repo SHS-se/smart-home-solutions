@@ -430,11 +430,12 @@ async function createFinalizeAndSendInvoice(page: Page): Promise<string> {
   await expect(page.getByTestId('invoice-finalize-button')).toBeVisible();
 
   await Promise.all([
-    page.waitForURL(/\/portal\/invoices\/[^/]+$/),
+    page.waitForURL(/\/portal\/invoices\/(?!new(?:[/?#]|$))[^/?#]+(?:[?#].*)?$/),
     page.getByTestId('invoice-finalize-button').click(),
   ]);
 
   run.latestInvoiceUrl = page.url();
+  console.log('[e2e] finalized invoice detail url:', run.latestInvoiceUrl);
 
   const invoiceEmailStartedAt = nowIso();
   await page.getByTestId('invoice-send-email-button').click();
