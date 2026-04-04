@@ -446,54 +446,28 @@ async function createFinalizeAndSendInvoice(page: Page): Promise<string> {
     timeoutMs: 180_000,
   });
 
-  return pickFirstLink(invoiceEmail, (link) => {
-    const parsed = new URL(link);
-    return parsed.hostname.includes('stripe.com') && !link.toLowerCase().includes('/pdf');
-  }, 'Stripe invoice');
-}
-
-async function fillStripeField(page: Page, selectors: string[], value: string, timeoutMs = 45_000): Promise<void> {
-  await expect(async () => {
-    for (const frame of page.frames()) {
-      for (const selector of selectors) {
-        const field = frame.locator(selector).first();
-        if ((await field.count()) === 0) continue;
-        if (!(await field.isVisible().catch(() => false))) continue;
-        await field.fill(value);
-        return;
-      }
-    }
-
-    throw new Error(`Could not find Stripe field using selectors: ${selectors.join(', ')}`);
-  }).toPass({ timeout: timeoutMs });
-}
-
-async function fillOptionalStripeField(page: Page, selectors: string[], value: string): Promise<void> {
-  try {
-    await fillStripeField(page, selectors, value, 10_000);
-  } catch {
-    // Some hosted invoice variants do not expose every optional field.
-  }
-}
-
-async function payStripeInvoice(page: Page, stripeLink: string): Promise<void> {
-  await page.goto(stripeLink);
-  await page.waitForLoadState('domcontentloaded');
-
-  await fillOptionalStripeField(page, ['input[autocomplete="cc-name"]', 'input[name="name"]'], run.customerName);
-  await fillStripeField(page, ['input[name="cardnumber"]', 'input[autocomplete="cc-number"]'], config.stripe.cardNumber);
-  await fillStripeField(page, ['input[name="exp-date"]', 'input[autocomplete="cc-exp"]'], config.stripe.expiry);
-  await fillStripeField(page, ['input[name="cvc"]', 'input[autocomplete="cc-csc"]'], config.stripe.cvc);
-  await fillOptionalStripeField(
-    page,
-    ['input[name="postalCode"]', 'input[autocomplete="postal-code"]'],
-    config.stripe.postalCode,
+  return pickFirstLink(
+    invoiceEmail,
+    (link) => link.includes('/portal/invoice/') && !link.toLowerCase().includes('/pdf'),
+    'public invoice',
   );
+}
 
-  const payButton = page.getByRole('button', { name: /betala|pay/i }).last();
-  await expect(payButton).toBeVisible({ timeout: 30_000 });
-  await payButton.click();
-  await page.waitForLoadState('networkidle').catch(() => {});
+async function openPublicInvoiceAndVerify(page: Page, invoiceLink: string): Promise<void> {
+  await page.goto(rewriteToAppOrigin(invoiceLink));
+  await page.waitForLoadState('domcontentloaded');
+  await expect(page.getByText(/Faktura TIN-|Faktura IN-/i)).toBeVisible();
+  await expect(page.getByText(/Betalningsinformation/i)).toBeVisible();
+  await expect(page.getByText(/Betalningsreferens:/i)).toBeVisible();
+}
+
+async function recordInvoicePayment(page: Page): Promise<void> {
+  await expect(page.getByRole('button', { name: /registrera betalning|record payment/i })).toBeVisible();
+  await page.getByRole('button', { name: /registrera betalning|record payment/i }).click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await expect(page.getByLabel(/Belopp|Amount/i)).toBeVisible();
+  await page.getByRole('button', { name: /spara betalning|save payment/i }).click();
+  await expect(page.getByRole('dialog')).toBeHidden();
 }
 
 async function waitForInvoicePaid(page: Page): Promise<void> {
@@ -586,8 +560,9 @@ test.describe.serial('Migration validation UI', () => {
 
     await waitForQuoteToBecomeAccepted(staffPage);
 
-    const stripeInvoiceLink = await createFinalizeAndSendInvoice(staffPage);
-    await payStripeInvoice(publicPage, stripeInvoiceLink);
+    const publicInvoiceLink = await createFinalizeAndSendInvoice(staffPage);
+    await openPublicInvoiceAndVerify(publicPage, publicInvoiceLink);
+    await recordInvoicePayment(staffPage);
     await waitForInvoicePaid(staffPage);
   });
 });
