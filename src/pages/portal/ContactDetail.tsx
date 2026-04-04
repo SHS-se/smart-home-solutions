@@ -190,22 +190,35 @@ const ContactDetail: React.FC = () => {
     if (!contact) return;
     setConverting(true);
     try {
-      // Create new customer
-      const { data: newCustomer, error: customerError } = await supabase
+      // Check if a customer already exists for this contact
+      const { data: existingCustomer } = await supabase
         .from('customers')
-        .insert({
-          contact_id: contact.id,
-        })
         .select('id')
-        .single();
+        .eq('contact_id', contact.id)
+        .maybeSingle();
 
-      if (customerError) throw customerError;
+      let customerId: string;
+
+      if (existingCustomer) {
+        // Customer already exists (previous partial conversion) — reuse it
+        customerId = existingCustomer.id;
+      } else {
+        // Create new customer
+        const { data: newCustomer, error: customerError } = await supabase
+          .from('customers')
+          .insert({ contact_id: contact.id })
+          .select('id')
+          .single();
+
+        if (customerError) throw customerError;
+        customerId = newCustomer.id;
+      }
 
       // Update contact with customer reference
       const { error: updateError } = await supabase
         .from('contacts')
         .update({
-          converted_to_customer_id: newCustomer.id,
+          converted_to_customer_id: customerId,
           converted_at: new Date().toISOString(),
         })
         .eq('id', contact.id);
@@ -216,7 +229,7 @@ const ContactDetail: React.FC = () => {
       const { error: linkError } = await supabase
         .from('customers')
         .update({ contact_id: contact.id })
-        .eq('id', newCustomer.id);
+        .eq('id', customerId);
 
       if (linkError) throw linkError;
 
@@ -230,7 +243,7 @@ const ContactDetail: React.FC = () => {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${session.session?.access_token}`,
           },
-          body: JSON.stringify({ customer_id: newCustomer.id }),
+          body: JSON.stringify({ customer_id: customerId }),
         }
       );
 
@@ -266,7 +279,7 @@ const ContactDetail: React.FC = () => {
       }
 
       // Navigate to the new customer
-      navigate(`/portal/customers/${newCustomer.id}/overview`);
+      navigate(`/portal/customers/${customerId}/overview`);
     } catch (error) {
       console.error('Error converting contact:', error);
       toast({
