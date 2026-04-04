@@ -9,7 +9,7 @@ import { DeleteCustomerDialog } from '@/components/portal/customers/DeleteCustom
 import { useAuth } from '@/contexts/AuthContext';
 import { useViewedCustomer } from '@/contexts/ViewedCustomerContext';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { useToast } from '@/hooks/use-toast';
+
 import { supabase } from '@/integrations/supabase/client';
 
 const CustomerViewDashboard: React.FC = () => {
