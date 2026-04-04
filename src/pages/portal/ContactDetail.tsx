@@ -190,29 +190,21 @@ const ContactDetail: React.FC = () => {
     if (!contact) return;
     setConverting(true);
     try {
-      // Check if a customer already exists for this contact
-      const { data: existingCustomer } = await supabase
+      // Clean up any orphaned customer from a previous failed conversion
+      await supabase
         .from('customers')
+        .delete()
+        .eq('contact_id', contact.id);
+
+      // Create new customer
+      const { data: newCustomer, error: customerError } = await supabase
+        .from('customers')
+        .insert({ contact_id: contact.id })
         .select('id')
-        .eq('contact_id', contact.id)
-        .maybeSingle();
+        .single();
 
-      let customerId: string;
-
-      if (existingCustomer) {
-        // Customer already exists (previous partial conversion) — reuse it
-        customerId = existingCustomer.id;
-      } else {
-        // Create new customer
-        const { data: newCustomer, error: customerError } = await supabase
-          .from('customers')
-          .insert({ contact_id: contact.id })
-          .select('id')
-          .single();
-
-        if (customerError) throw customerError;
-        customerId = newCustomer.id;
-      }
+      if (customerError) throw customerError;
+      const customerId = newCustomer.id;
 
       // Update contact with customer reference
       const { error: updateError } = await supabase
