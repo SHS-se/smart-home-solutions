@@ -17,7 +17,7 @@ const CustomerViewDashboard: React.FC = () => {
   const { customerId, customerData, loading: customerLoading, error } = useViewedCustomer();
   const navigate = useNavigate();
   const { t } = useLanguage();
-  const { toast } = useToast();
+  
 
   const [ticketStats, setTicketStats] = useState({ open: 0, total: 0 });
   const [invoiceStats, setInvoiceStats] = useState({ total: 0, lastDate: null as string | null });
