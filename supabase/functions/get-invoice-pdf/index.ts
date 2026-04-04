@@ -1,7 +1,8 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
-import { PDFDocument, StandardFonts, rgb } from "https://esm.sh/pdf-lib@1.17.1";
+import { PDFDocument, StandardFonts, degrees, rgb, type PDFPage, type PDFFont } from "https://esm.sh/pdf-lib@1.17.1";
 import { getAppEnvironment } from "../_shared/app-env.ts";
+import { INVOICE_COMPANY } from "../_shared/invoice-company.ts";
 import { loadInvoiceDocumentData } from "../_shared/invoice-document.ts";
 
 const corsHeaders = {
@@ -18,11 +19,26 @@ const logStep = (step: string, details?: unknown) => {
 async function hashToken(tokenHex: string): Promise<string> {
   const encoder = new TextEncoder();
   const hashBuffer = await crypto.subtle.digest("SHA-256", encoder.encode(tokenHex));
-  return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, "0")).join("");
+  return Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 function formatSEK(amount: number): string {
-  return new Intl.NumberFormat("sv-SE", { style: "decimal", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount) + " kr";
+  return new Intl.NumberFormat("sv-SE", {
+    style: "decimal",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(amount) + " kr";
+}
+
+function formatQuantity(quantity: number): string {
+  if (Number.isInteger(quantity)) {
+    return String(quantity);
+  }
+
+  return new Intl.NumberFormat("sv-SE", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }).format(quantity);
 }
 
 function formatDate(dateStr: string | null): string {
@@ -34,10 +50,81 @@ function dataUrlToBytes(dataUrl: string): Uint8Array {
   const [, base64] = dataUrl.split(",", 2);
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
+
   for (let i = 0; i < binary.length; i += 1) {
     bytes[i] = binary.charCodeAt(i);
   }
+
   return bytes;
+}
+
+function drawRightAlignedText(
+  page: PDFPage,
+  text: string,
+  rightX: number,
+  y: number,
+  font: PDFFont,
+  size: number,
+  color: ReturnType<typeof rgb>,
+) {
+  page.drawText(text, {
+    x: rightX - font.widthOfTextAtSize(text, size),
+    y,
+    font,
+    size,
+    color,
+  });
+}
+
+function drawMetadataRow(
+  page: PDFPage,
+  label: string,
+  value: string,
+  y: number,
+  font: PDFFont,
+  fontBold: PDFFont,
+  labelX: number,
+  valueRightX: number,
+  gray: ReturnType<typeof rgb>,
+  black: ReturnType<typeof rgb>,
+) {
+  page.drawText(label, { x: labelX, y, font, size: 8.5, color: gray });
+  drawRightAlignedText(page, value, valueRightX, y, fontBold, 8.5, black);
+}
+
+function drawShsLogo(
+  page: PDFPage,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  fontBold: PDFFont,
+  brandBlue: ReturnType<typeof rgb>,
+  white: ReturnType<typeof rgb>,
+) {
+  page.drawRectangle({
+    x,
+    y,
+    width,
+    height,
+    color: brandBlue,
+  });
+
+  page.drawSvgPath("M20 10 L45 2 L45 12 L70 20 L70 54 L44 62 L44 72 L20 64 L20 54 L4 50 L4 26 L20 22 Z", {
+    x: x + 5,
+    y: y + 4,
+    scale: Math.min(width / 78, height / 76),
+    borderColor: white,
+    borderWidth: 2.8,
+  });
+
+  page.drawText("SHS", {
+    x: x + 13,
+    y: y + height / 2 - 11,
+    font: fontBold,
+    size: 28,
+    color: white,
+  });
 }
 
 serve(async (req) => {
@@ -53,7 +140,6 @@ serve(async (req) => {
     const serviceClient = createClient(supabaseUrl, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const anonClient = createClient(supabaseUrl, Deno.env.get("SUPABASE_ANON_KEY")!);
 
-    // Parse request — supports both authenticated and public token access
     const url = new URL(req.url);
     const invoiceIdParam = url.searchParams.get("invoice_id");
     const tokenParam = url.searchParams.get("token");
@@ -61,7 +147,6 @@ serve(async (req) => {
     let invoiceId: string;
 
     if (tokenParam && invoiceIdParam) {
-      // Public token access — validate token
       const { data: invoice } = await serviceClient
         .from("invoices")
         .select("id, public_token_hash, public_token_expires_at")
@@ -75,38 +160,50 @@ serve(async (req) => {
       if (invoice.public_token_expires_at && new Date(invoice.public_token_expires_at) < new Date()) {
         throw new Error("Link expired");
       }
+
       invoiceId = invoice.id;
     } else {
-      // Authenticated access — check staff or customer ownership
       const authHeader = req.headers.get("Authorization");
       if (!authHeader) throw new Error("Missing authorization");
+
       const token = authHeader.replace("Bearer ", "");
       const { data: userData } = await anonClient.auth.getUser(token);
       if (!userData.user) throw new Error("Unauthorized");
 
-      // Try to get invoice_id from body or query
       let bodyInvoiceId: string | null = null;
+
       try {
         const body = await req.json();
         bodyInvoiceId = body.invoice_id;
       } catch {
         // No body
       }
+
       invoiceId = invoiceIdParam || bodyInvoiceId || "";
       if (!invoiceId) throw new Error("invoice_id is required");
 
-      // Verify access: staff can access any, customer can access own
       const { data: staffCheck } = await serviceClient
-        .from("staff_users").select("user_id").eq("user_id", userData.user.id).maybeSingle();
+        .from("staff_users")
+        .select("user_id")
+        .eq("user_id", userData.user.id)
+        .maybeSingle();
 
       if (!staffCheck) {
-        // Customer — verify ownership
         const { data: custCheck } = await serviceClient
-          .from("customers").select("id").eq("user_id", userData.user.id).maybeSingle();
+          .from("customers")
+          .select("id")
+          .eq("user_id", userData.user.id)
+          .maybeSingle();
+
         if (!custCheck) throw new Error("Access denied");
 
         const { data: invoiceCheck } = await serviceClient
-          .from("invoices").select("id").eq("id", invoiceId).eq("customer_id", custCheck.id).maybeSingle();
+          .from("invoices")
+          .select("id")
+          .eq("id", invoiceId)
+          .eq("customer_id", custCheck.id)
+          .maybeSingle();
+
         if (!invoiceCheck) throw new Error("Access denied");
       }
     }
@@ -114,186 +211,381 @@ serve(async (req) => {
     const invoice = await loadInvoiceDocumentData(serviceClient, invoiceId);
     logStep("Invoice loaded", { invoiceNumber: invoice.invoice_number });
 
-    // ===== Generate PDF =====
     const pdfDoc = await PDFDocument.create();
-    const page = pdfDoc.addPage([595.28, 841.89]); // A4
+    const page = pdfDoc.addPage([595.28, 841.89]);
     const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
     const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
     const { height } = page.getSize();
 
     const black = rgb(0, 0, 0);
-    const gray = rgb(0.4, 0.4, 0.4);
-    const lightGray = rgb(0.85, 0.85, 0.85);
+    const gray = rgb(0.38, 0.38, 0.38);
+    const lightGray = rgb(0.84, 0.86, 0.89);
+    const softGray = rgb(0.97, 0.98, 0.99);
+    const brandBlue = rgb(0.2, 0.41, 0.64);
+    const white = rgb(1, 1, 1);
 
     const leftMargin = 50;
     const rightMargin = 545;
-    let y = height - 50;
+    const contentWidth = rightMargin - leftMargin;
+    const metaLabelX = 372;
+    const metaValueRightX = rightMargin;
 
-    // Header: Company name
-    page.drawText("Smart Home Solutions AB", { x: leftMargin, y, font: fontBold, size: 16, color: black });
+    const customerPostcodeCity = [
+      invoice.customer_address?.postcode,
+      invoice.customer_address?.city,
+    ].filter(Boolean).join(" ") || "—";
 
-    // Test watermark
+    const logoWidth = 78;
+    const logoHeight = 68;
+    const headerTopY = height - 48;
+
+    drawShsLogo(page, leftMargin, headerTopY - logoHeight, logoWidth, logoHeight, fontBold, brandBlue, white);
+
+    const companyX = leftMargin + logoWidth + 16;
+    page.drawText(INVOICE_COMPANY.name, {
+      x: companyX,
+      y: headerTopY - 6,
+      font: fontBold,
+      size: 18,
+      color: black,
+    });
+    page.drawText(INVOICE_COMPANY.street, {
+      x: companyX,
+      y: headerTopY - 22,
+      font,
+      size: 9,
+      color: gray,
+    });
+    page.drawText(`${INVOICE_COMPANY.postcode} ${INVOICE_COMPANY.city}`, {
+      x: companyX,
+      y: headerTopY - 35,
+      font,
+      size: 9,
+      color: gray,
+    });
+    page.drawText(`Org.nr ${INVOICE_COMPANY.orgNumber} · VAT ${INVOICE_COMPANY.vatNumber}`, {
+      x: companyX,
+      y: headerTopY - 48,
+      font,
+      size: 8,
+      color: gray,
+    });
+    page.drawText(INVOICE_COMPANY.email, {
+      x: companyX,
+      y: headerTopY - 60,
+      font,
+      size: 8,
+      color: gray,
+    });
+
     if (appEnv === "test") {
-      page.drawText("TEST", { x: rightMargin - 60, y, font: fontBold, size: 14, color: rgb(0.9, 0.2, 0.2) });
+      page.drawText("TEST", {
+        x: rightMargin - 34,
+        y: headerTopY - 4,
+        font: fontBold,
+        size: 14,
+        color: rgb(0.88, 0.18, 0.18),
+      });
     }
 
-    y -= 30;
-
-    // Invoice metadata
-    page.drawText("FAKTURA", { x: leftMargin, y, font: fontBold, size: 22, color: black });
-
-    // Right side: invoice details
-    const metaX = 350;
-    page.drawText("Fakturanummer:", { x: metaX, y, font, size: 9, color: gray });
-    page.drawText(invoice.invoice_number || "—", { x: metaX + 100, y, font: fontBold, size: 9, color: black });
-    y -= 15;
-    page.drawText("Fakturadatum:", { x: metaX, y, font, size: 9, color: gray });
-    page.drawText(formatDate(invoice.issued_at || invoice.finalized_at), { x: metaX + 100, y, font, size: 9, color: black });
-    y -= 15;
-    page.drawText("Förfallodatum:", { x: metaX, y, font, size: 9, color: gray });
-    page.drawText(formatDate(invoice.due_date), { x: metaX + 100, y, font, size: 9, color: black });
-    y -= 15;
+    let metaY = headerTopY - 4;
+    drawMetadataRow(page, "Fakturanummer", invoice.invoice_number || "—", metaY, font, fontBold, metaLabelX, metaValueRightX, gray, black);
+    metaY -= 13;
+    drawMetadataRow(page, "Fakturadatum", formatDate(invoice.issued_at || invoice.finalized_at), metaY, font, fontBold, metaLabelX, metaValueRightX, gray, black);
+    metaY -= 13;
+    drawMetadataRow(page, "Förfallodatum", formatDate(invoice.due_date), metaY, font, fontBold, metaLabelX, metaValueRightX, gray, black);
     if (invoice.quote_number) {
-      page.drawText("Offertnummer:", { x: metaX, y, font, size: 9, color: gray });
-      page.drawText(invoice.quote_number, { x: metaX + 100, y, font, size: 9, color: black });
-      y -= 15;
+      metaY -= 13;
+      drawMetadataRow(page, "Offertnummer", invoice.quote_number, metaY, font, fontBold, metaLabelX, metaValueRightX, gray, black);
     }
 
-    // Sender block (left)
-    let senderY = height - 110;
-    page.drawText("Smart Home Solutions AB", { x: leftMargin, y: senderY, font: fontBold, size: 9, color: black });
-    senderY -= 13;
-    page.drawText("Org.nr: 559XXX-XXXX", { x: leftMargin, y: senderY, font, size: 8, color: gray });
-    senderY -= 13;
-    page.drawText("support@smarthomesolutions.se", { x: leftMargin, y: senderY, font, size: 8, color: gray });
+    let y = height - 164;
+    page.drawText("FAKTURA", {
+      x: leftMargin,
+      y,
+      font: fontBold,
+      size: 24,
+      color: brandBlue,
+    });
 
-    // Recipient block (left, below sender)
-    let recipY = senderY - 30;
-    page.drawText("Mottagare:", { x: leftMargin, y: recipY, font: fontBold, size: 9, color: gray });
-    recipY -= 15;
-    page.drawText(invoice.customer_name || "—", { x: leftMargin, y: recipY, font: fontBold, size: 10, color: black });
-    recipY -= 13;
-    if (invoice.customer_address?.street) {
-      page.drawText(invoice.customer_address.street, { x: leftMargin, y: recipY, font, size: 9, color: black });
-      recipY -= 13;
-    }
-    if (invoice.customer_address?.postcode || invoice.customer_address?.city) {
-      page.drawText(
-        `${invoice.customer_address?.postcode || ""} ${invoice.customer_address?.city || ""}`.trim(),
-        { x: leftMargin, y: recipY, font, size: 9, color: black },
-      );
-      recipY -= 13;
-    }
+    y -= 28;
 
-    // Line items table
-    y = Math.min(y, recipY) - 30;
+    const boxTopY = y;
+    const boxHeight = 104;
+    const sellerBoxWidth = 222;
+    const customerBoxX = 300;
+    const customerBoxWidth = rightMargin - customerBoxX;
 
-    // Table header
-    page.drawRectangle({ x: leftMargin, y: y - 2, width: rightMargin - leftMargin, height: 18, color: rgb(0.95, 0.95, 0.95) });
-    page.drawText("Beskrivning", { x: leftMargin + 5, y: y + 2, font: fontBold, size: 8, color: gray });
-    page.drawText("Antal", { x: 340, y: y + 2, font: fontBold, size: 8, color: gray });
-    page.drawText("á-pris", { x: 390, y: y + 2, font: fontBold, size: 8, color: gray });
-    page.drawText("Moms %", { x: 445, y: y + 2, font: fontBold, size: 8, color: gray });
-    page.drawText("Belopp", { x: 500, y: y + 2, font: fontBold, size: 8, color: gray });
+    page.drawRectangle({
+      x: leftMargin,
+      y: boxTopY - boxHeight,
+      width: sellerBoxWidth,
+      height: boxHeight,
+      color: softGray,
+      borderColor: lightGray,
+      borderWidth: 1,
+    });
+    page.drawRectangle({
+      x: customerBoxX,
+      y: boxTopY - boxHeight,
+      width: customerBoxWidth,
+      height: boxHeight,
+      color: softGray,
+      borderColor: lightGray,
+      borderWidth: 1,
+    });
+
+    page.drawText("Avsändare", {
+      x: leftMargin + 12,
+      y: boxTopY - 15,
+      font: fontBold,
+      size: 9,
+      color: gray,
+    });
+    page.drawText("Kund", {
+      x: customerBoxX + 12,
+      y: boxTopY - 15,
+      font: fontBold,
+      size: 9,
+      color: gray,
+    });
+
+    let sellerY = boxTopY - 32;
+    page.drawText(INVOICE_COMPANY.name, {
+      x: leftMargin + 12,
+      y: sellerY,
+      font: fontBold,
+      size: 10,
+      color: black,
+    });
+    sellerY -= 14;
+    page.drawText(`Org.nr: ${INVOICE_COMPANY.orgNumber}`, { x: leftMargin + 12, y: sellerY, font, size: 8.5, color: black });
+    sellerY -= 11;
+    page.drawText(`VAT nr: ${INVOICE_COMPANY.vatNumber}`, { x: leftMargin + 12, y: sellerY, font, size: 8.5, color: black });
+    sellerY -= 11;
+    page.drawText(`Adress: ${INVOICE_COMPANY.street}`, { x: leftMargin + 12, y: sellerY, font, size: 8.5, color: black });
+    sellerY -= 11;
+    page.drawText(`Postnr/Ort: ${INVOICE_COMPANY.postcode} ${INVOICE_COMPANY.city}`, {
+      x: leftMargin + 12,
+      y: sellerY,
+      font,
+      size: 8.5,
+      color: black,
+    });
+    sellerY -= 11;
+    page.drawText(INVOICE_COMPANY.email, { x: leftMargin + 12, y: sellerY, font, size: 8.5, color: gray });
+
+    let customerY = boxTopY - 32;
+    page.drawText(invoice.customer_name || "—", {
+      x: customerBoxX + 12,
+      y: customerY,
+      font: fontBold,
+      size: 10,
+      color: black,
+    });
+    customerY -= 14;
+    page.drawText(`Adress: ${invoice.customer_address?.street || "—"}`, {
+      x: customerBoxX + 12,
+      y: customerY,
+      font,
+      size: 8.5,
+      color: black,
+    });
+    customerY -= 11;
+    page.drawText(`Postnr/Ort: ${customerPostcodeCity}`, {
+      x: customerBoxX + 12,
+      y: customerY,
+      font,
+      size: 8.5,
+      color: black,
+    });
+
+    y = boxTopY - boxHeight - 24;
+
+    page.drawRectangle({
+      x: leftMargin,
+      y: y - 2,
+      width: contentWidth,
+      height: 18,
+      color: rgb(0.94, 0.96, 0.98),
+    });
+    page.drawText("Beskrivning", { x: leftMargin + 6, y: y + 2, font: fontBold, size: 8, color: gray });
+    page.drawText("Antal", { x: 332, y: y + 2, font: fontBold, size: 8, color: gray });
+    page.drawText("Á-pris", { x: 382, y: y + 2, font: fontBold, size: 8, color: gray });
+    page.drawText("Moms", { x: 444, y: y + 2, font: fontBold, size: 8, color: gray });
+    page.drawText("Belopp", { x: 492, y: y + 2, font: fontBold, size: 8, color: gray });
 
     y -= 20;
 
-    // Table rows
     for (const item of invoice.line_items) {
-      if (y < 120) break; // Leave room for totals and payment block
+      if (y < 250) break;
 
-      const qty = item.quantity || 1;
-      const price = item.unit_price || 0;
-      const lineTotal = qty * price;
+      const quantity = item.quantity || 1;
+      const unitPrice = item.unit_price || 0;
+      const lineTotal = quantity * unitPrice;
+      let description = item.description || "";
 
-      // Truncate long descriptions
-      let desc = item.description || "";
-      if (desc.length > 55) desc = desc.substring(0, 52) + "...";
+      if (description.length > 58) {
+        description = description.slice(0, 55) + "...";
+      }
 
-      page.drawText(desc, { x: leftMargin + 5, y, font, size: 8, color: black });
-      page.drawText(String(qty), { x: 340, y, font, size: 8, color: black });
-      page.drawText(formatSEK(price), { x: 390, y, font, size: 8, color: black });
-      page.drawText(`${item.tax_rate || 25}%`, { x: 445, y, font, size: 8, color: black });
-      page.drawText(formatSEK(lineTotal), { x: 500, y, font, size: 8, color: black });
+      page.drawText(description, {
+        x: leftMargin + 6,
+        y,
+        font,
+        size: 8,
+        color: black,
+        maxWidth: 285,
+      });
+      drawRightAlignedText(page, formatQuantity(quantity), 360, y, font, 8, black);
+      drawRightAlignedText(page, formatSEK(unitPrice), 434, y, font, 8, black);
+      drawRightAlignedText(page, `${item.tax_rate || 25}%`, 476, y, font, 8, black);
+      drawRightAlignedText(page, formatSEK(lineTotal), rightMargin - 6, y, font, 8, black);
 
       y -= 14;
     }
 
-    // Divider
-    y -= 5;
-    page.drawLine({ start: { x: leftMargin, y }, end: { x: rightMargin, y }, thickness: 0.5, color: lightGray });
-    y -= 15;
+    y -= 6;
+    page.drawLine({
+      start: { x: leftMargin, y },
+      end: { x: rightMargin, y },
+      thickness: 0.6,
+      color: lightGray,
+    });
 
-    // Totals block (right-aligned)
-    const totalsX = 400;
+    const totalsX = 392;
+    const amountRightX = rightMargin - 6;
     const subtotal = invoice.subtotal || 0;
     const tax = invoice.tax || 0;
     const total = invoice.total || 0;
 
-    page.drawText("Summa exkl. moms:", { x: totalsX, y, font, size: 9, color: gray });
-    page.drawText(formatSEK(subtotal), { x: 500, y, font, size: 9, color: black });
-    y -= 14;
-    page.drawText("Moms:", { x: totalsX, y, font, size: 9, color: gray });
-    page.drawText(formatSEK(tax), { x: 500, y, font, size: 9, color: black });
-    y -= 16;
-    page.drawLine({ start: { x: totalsX, y: y + 10 }, end: { x: rightMargin, y: y + 10 }, thickness: 0.5, color: lightGray });
-    page.drawText("Att betala:", { x: totalsX, y, font: fontBold, size: 11, color: black });
-    page.drawText(formatSEK(total), { x: 500, y, font: fontBold, size: 11, color: black });
+    let totalsY = y - 18;
+    page.drawText("Summa exkl. moms", { x: totalsX, y: totalsY, font, size: 9, color: gray });
+    drawRightAlignedText(page, formatSEK(subtotal), amountRightX, totalsY, font, 9, black);
+    totalsY -= 14;
+    page.drawText("Moms", { x: totalsX, y: totalsY, font, size: 9, color: gray });
+    drawRightAlignedText(page, formatSEK(tax), amountRightX, totalsY, font, 9, black);
+    totalsY -= 16;
+    page.drawLine({
+      start: { x: totalsX, y: totalsY + 10 },
+      end: { x: rightMargin, y: totalsY + 10 },
+      thickness: 0.6,
+      color: lightGray,
+    });
+    page.drawText("Att betala", { x: totalsX, y: totalsY, font: fontBold, size: 11, color: black });
+    drawRightAlignedText(page, formatSEK(total), amountRightX, totalsY, fontBold, 11, black);
 
-    // Payment block at bottom
-    y -= 40;
-    page.drawLine({ start: { x: leftMargin, y: y + 15 }, end: { x: rightMargin, y: y + 15 }, thickness: 0.5, color: lightGray });
+    const paymentTopY = 132;
+    page.drawLine({
+      start: { x: leftMargin, y: paymentTopY + 18 },
+      end: { x: rightMargin, y: paymentTopY + 18 },
+      thickness: 0.6,
+      color: lightGray,
+    });
 
-    page.drawText("Betalningsinformation", { x: leftMargin, y, font: fontBold, size: 10, color: black });
-    y -= 16;
-    page.drawText("Bankgiro:", { x: leftMargin, y, font, size: 9, color: gray });
-    page.drawText(invoice.payment_details.bankgiro_number || "Ej konfigurerat", { x: leftMargin + 100, y, font: fontBold, size: 9, color: black });
-    y -= 14;
-    page.drawText("Betalningsref:", { x: leftMargin, y, font, size: 9, color: gray });
-    page.drawText(invoice.payment_details.payment_reference || "—", { x: leftMargin + 100, y, font: fontBold, size: 9, color: black });
-    y -= 14;
-    page.drawText("Belopp:", { x: leftMargin, y, font, size: 9, color: gray });
-    page.drawText(formatSEK(invoice.payment_details.amount), { x: leftMargin + 100, y, font: fontBold, size: 9, color: black });
-    y -= 14;
-    page.drawText("Förfallodatum:", { x: leftMargin, y, font, size: 9, color: gray });
-    page.drawText(formatDate(invoice.payment_details.due_date), { x: leftMargin + 100, y, font: fontBold, size: 9, color: black });
-    y -= 14;
-    page.drawText("Mottagare:", { x: leftMargin, y, font, size: 9, color: gray });
-    page.drawText(invoice.payment_details.payee_name, { x: leftMargin + 100, y, font: fontBold, size: 9, color: black });
+    page.drawText("Betalningsinformation", {
+      x: leftMargin,
+      y: paymentTopY,
+      font: fontBold,
+      size: 10,
+      color: black,
+    });
+
+    let paymentY = paymentTopY - 18;
+    page.drawText("Bankgiro", { x: leftMargin, y: paymentY, font, size: 9, color: gray });
+    page.drawText(invoice.payment_details.bankgiro_number || "Ej konfigurerat", {
+      x: leftMargin + 104,
+      y: paymentY,
+      font: fontBold,
+      size: 9,
+      color: black,
+    });
+    paymentY -= 14;
+    page.drawText("Betalningsref.", { x: leftMargin, y: paymentY, font, size: 9, color: gray });
+    page.drawText(invoice.payment_details.payment_reference || "—", {
+      x: leftMargin + 104,
+      y: paymentY,
+      font: fontBold,
+      size: 9,
+      color: black,
+    });
+    paymentY -= 14;
+    page.drawText("Belopp", { x: leftMargin, y: paymentY, font, size: 9, color: gray });
+    page.drawText(formatSEK(invoice.payment_details.amount), {
+      x: leftMargin + 104,
+      y: paymentY,
+      font: fontBold,
+      size: 9,
+      color: black,
+    });
+    paymentY -= 14;
+    page.drawText("Förfallodatum", { x: leftMargin, y: paymentY, font, size: 9, color: gray });
+    page.drawText(formatDate(invoice.payment_details.due_date), {
+      x: leftMargin + 104,
+      y: paymentY,
+      font: fontBold,
+      size: 9,
+      color: black,
+    });
+    paymentY -= 14;
+    page.drawText("Mottagare", { x: leftMargin, y: paymentY, font, size: 9, color: gray });
+    page.drawText(invoice.payment_details.payee_name, {
+      x: leftMargin + 104,
+      y: paymentY,
+      font: fontBold,
+      size: 9,
+      color: black,
+    });
 
     if (invoice.payment_details.qr_data_url) {
       const qrImage = await pdfDoc.embedPng(dataUrlToBytes(invoice.payment_details.qr_data_url));
+      page.drawRectangle({
+        x: rightMargin - 92,
+        y: paymentTopY - 56,
+        width: 78,
+        height: 78,
+        color: white,
+        borderColor: lightGray,
+        borderWidth: 1,
+      });
       page.drawImage(qrImage, {
-        x: rightMargin - 95,
-        y: y - 55,
+        x: rightMargin - 89,
+        y: paymentTopY - 53,
         width: 72,
         height: 72,
       });
-      page.drawText("QR", {
-        x: rightMargin - 60,
-        y: y + 18,
-        font: fontBold,
-        size: 8,
-        color: gray,
-      });
     }
 
-    y -= 18;
     page.drawText(invoice.payment_details.manual_payment_instruction, {
       x: leftMargin,
-      y,
+      y: 64,
       font,
       size: 8,
       color: gray,
-      maxWidth: 330,
+      maxWidth: 360,
       lineHeight: 10,
     });
 
-    // Status watermark for paid/void
     if (invoice.status === "paid") {
-      page.drawText("BETALD", { x: 180, y: 400, font: fontBold, size: 60, color: rgb(0.0, 0.6, 0.0), opacity: 0.15, rotate: { type: 'degrees' as any, angle: 45 } });
+      page.drawText("BETALD", {
+        x: 182,
+        y: 396,
+        font: fontBold,
+        size: 58,
+        color: rgb(0.0, 0.55, 0.12),
+        opacity: 0.15,
+        rotate: degrees(45),
+      });
     } else if (invoice.status === "void") {
-      page.drawText("MAKULERAD", { x: 140, y: 400, font: fontBold, size: 50, color: rgb(0.8, 0.0, 0.0), opacity: 0.15, rotate: { type: 'degrees' as any, angle: 45 } });
+      page.drawText("MAKULERAD", {
+        x: 136,
+        y: 398,
+        font: fontBold,
+        size: 50,
+        color: rgb(0.8, 0.0, 0.0),
+        opacity: 0.15,
+        rotate: degrees(45),
+      });
     }
 
     const pdfBytes = await pdfDoc.save();
@@ -310,7 +602,6 @@ serve(async (req) => {
       },
       status: 200,
     });
-
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     logStep("ERROR", { message: msg });

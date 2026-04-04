@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import QRCode from "https://esm.sh/qrcode@1.5.4";
+import { INVOICE_COMPANY } from "./invoice-company.ts";
 
 export interface InvoiceDocumentLineItem {
   id: string;
@@ -87,11 +88,6 @@ function getConfiguredBankgiroNumber(): string | null {
   return raw.length > 0 ? raw : null;
 }
 
-function getConfiguredPayeeName(): string {
-  const raw = Deno.env.get("INVOICE_PAYEE_NAME")?.trim() || "";
-  return raw || "Smart Home Solutions AB";
-}
-
 function formatPaymentAmount(amount: number): string {
   return amount.toFixed(2);
 }
@@ -149,7 +145,7 @@ export async function buildInvoicePaymentDetails(args: {
 }): Promise<InvoicePaymentDetails> {
   const amount = toNumber(args.amount);
   const bankgiroNumber = getConfiguredBankgiroNumber();
-  const payeeName = getConfiguredPayeeName();
+  const payeeName = INVOICE_COMPANY.name;
   const currency = args.currency || "SEK";
   const qrPayload = buildInvoiceQrPayload({
     bankgiroNumber,

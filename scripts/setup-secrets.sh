@@ -72,14 +72,12 @@ echo "── App config ──────────────────�
 echo "  APP_ENV → $APP_ENV_VALUE (auto-set)"
 APP_ORIGIN_ALLOWLIST=$(prompt_secret_with_default "APP_ORIGIN_ALLOWLIST" "comma-separated allowed frontend origins" "$APP_ORIGIN_ALLOWLIST_DEFAULT")
 BANKGIRO_NUMBER=$(prompt_secret "BANKGIRO_NUMBER" "bankgiro number shown on invoices")
-INVOICE_PAYEE_NAME=$(prompt_secret_with_default "INVOICE_PAYEE_NAME" "payee name shown on invoices" "Smart Home Solutions AB")
 
 # Build the secrets list, skipping blank entries
 SECRETS=()
 SECRETS+=("APP_ENV=$APP_ENV_VALUE")
 SECRETS+=("APP_ORIGIN_ALLOWLIST=$APP_ORIGIN_ALLOWLIST")
 [ -n "$BANKGIRO_NUMBER" ] && SECRETS+=("BANKGIRO_NUMBER=$BANKGIRO_NUMBER")
-[ -n "$INVOICE_PAYEE_NAME" ] && SECRETS+=("INVOICE_PAYEE_NAME=$INVOICE_PAYEE_NAME")
 
 [ -n "$RESEND_KEY" ]     && SECRETS+=("RESEND_API_KEY=$RESEND_KEY")
 [ -n "$RESEND_SIGNING" ] && SECRETS+=("RESEND_SIGNING_SECRET=$RESEND_SIGNING")
