@@ -118,10 +118,10 @@ export const DeleteContactDialog: React.FC<DeleteContactDialogProps> = ({
     }
   };
 
-  const hasLinkedData = preview && (
-    preview.messages.length > 0 ||
-    preview.draftAnswerCount > 0 ||
-    preview.hasAuthUser
+  const hasLinkedData = preview != null && (
+    (preview.messages?.length ?? 0) > 0 ||
+    (preview.draftAnswerCount ?? 0) > 0 ||
+    !!preview.hasAuthUser
   );
 
   return (
