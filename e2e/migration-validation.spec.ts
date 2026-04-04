@@ -394,7 +394,7 @@ async function createBomRevisionAndReissueQuote(page: Page): Promise<string> {
   const [revisedSkuCode] = await addAvailableSkus(page, 1);
   run.revisedSkuCode = revisedSkuCode;
 
-  await expect(page.getByText(revisedSkuCode, { exact: false })).toBeVisible();
+  await expect(page.getByText(revisedSkuCode, { exact: true })).toBeVisible();
   await createQuoteFromBom(page);
 
   const secondSendStartedAt = nowIso();
