@@ -3,16 +3,17 @@
 # Usage:
 #   ./scripts/dev.sh [test|live]
 #   ./scripts/dev.sh migrate [test|live]
+#   ./scripts/dev.sh deploy [test|live] [--force]
 #
-# Fetches the anon key from the Supabase CLI, optionally deploys edge functions,
-# writes a .env.local file, then starts Vite on the correct port.
+# Fetches the anon key from the Supabase CLI, writes a .env.local file, and
+# starts Vite on the correct port. Database migrations and edge function deploys
+# are explicit commands.
 # The linked Supabase project is kept on test unless a live command is requested.
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-DEPLOY_MODE="${DEPLOY_EDGE_FUNCTIONS:-auto}"
 EDGE_FUNCTIONS_DIR=""
 DEPLOY_STATE_FILE=""
 EDGE_FUNCTION_FINGERPRINT=""
@@ -23,33 +24,41 @@ TEST_PROJECT_REF="vxqpgbzseckgceopitpm"
 LIVE_PROJECT_REF="oosxndduqzhvrorgogaw"
 COMMAND="serve"
 ENV="test"
+FORCE_DEPLOY=0
 
-if [ "${1:-}" = "migrate" ]; then
-  COMMAND="migrate"
-  ENV="${2:-test}"
-else
-  ENV="${1:-test}"
+if [ $# -gt 0 ]; then
+  case "${1:-}" in
+    migrate|deploy)
+      COMMAND="$1"
+      shift
+      ;;
+  esac
 fi
 
-should_deploy_edge_functions() {
-  case "$DEPLOY_MODE" in
-    1|true|TRUE|yes|YES)
-      return 0
+if [ $# -gt 0 ]; then
+  case "${1:-}" in
+    test|live|prod)
+      ENV="$1"
+      shift
       ;;
-    0|false|FALSE|no|NO)
-      return 1
-      ;;
-    auto|"")
-      [ "$ENV" = "test" ]
-      return
+  esac
+fi
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --force)
+      FORCE_DEPLOY=1
       ;;
     *)
-      echo "✗ Invalid DEPLOY_EDGE_FUNCTIONS value: $DEPLOY_MODE"
-      echo "  Use auto, true, or false."
+      echo "Usage:"
+      echo "  $0 [test|live]"
+      echo "  $0 migrate [test|live]"
+      echo "  $0 deploy [test|live] [--force]"
       exit 1
       ;;
   esac
-}
+  shift
+done
 
 get_listening_pid() {
   lsof -tiTCP:"$1" -sTCP:LISTEN 2>/dev/null | head -n 1
@@ -157,6 +166,7 @@ case "$ENV" in
     echo "Usage:"
     echo "  $0 [test|live]"
     echo "  $0 migrate [test|live]"
+    echo "  $0 deploy [test|live] [--force]"
     exit 1
     ;;
 esac
@@ -169,6 +179,18 @@ link_project() {
   )
 }
 
+restore_test_link() {
+  if [ "$PROJECT_REF" != "$LIVE_PROJECT_REF" ]; then
+    return 0
+  fi
+
+  echo "→ Restoring Supabase CLI link to test ($TEST_PROJECT_REF)..."
+  (
+    cd "$PROJECT_DIR"
+    supabase link --project-ref "$TEST_PROJECT_REF" --yes >/dev/null
+  ) || true
+}
+
 run_migrations() {
   link_project
   echo "→ Pushing database migrations to $ENV ($PROJECT_REF)..."
@@ -178,12 +200,76 @@ run_migrations() {
   )
 }
 
+run_edge_function_deploy() {
+  link_project
+  EDGE_FUNCTION_FINGERPRINT="$(compute_edge_function_fingerprint)"
+
+  if [ "$FORCE_DEPLOY" -eq 1 ]; then
+    echo "→ Force deploying edge functions to $ENV ($PROJECT_REF)..."
+    (
+      cd "$PROJECT_DIR"
+      supabase functions deploy --project-ref "$PROJECT_REF" --use-api --yes
+    )
+    record_edge_function_deploy
+    echo "✓ Edge functions deployed"
+    return 0
+  fi
+
+  if [ ! -f "$DEPLOY_STATE_FILE" ]; then
+    echo "→ No previous $ENV edge function deploy fingerprint found; deploying..."
+    (
+      cd "$PROJECT_DIR"
+      supabase functions deploy --project-ref "$PROJECT_REF" --use-api --yes
+    )
+    record_edge_function_deploy
+    echo "✓ Edge functions deployed"
+    return 0
+  fi
+
+  if edge_functions_changed_since_last_deploy; then
+    echo "→ Edge functions changed since the last $ENV deploy; deploying..."
+    (
+      cd "$PROJECT_DIR"
+      supabase functions deploy --project-ref "$PROJECT_REF" --use-api --yes
+    )
+    record_edge_function_deploy
+    echo "✓ Edge functions deployed"
+    return 0
+  fi
+
+  if remote_edge_functions_are_synced; then
+    echo "→ Edge functions unchanged since the last $ENV deploy; skipping deploy"
+    return 0
+  fi
+
+  if [ -n "$MISSING_REMOTE_EDGE_FUNCTIONS" ]; then
+    echo "→ Remote $ENV is missing edge functions: $MISSING_REMOTE_EDGE_FUNCTIONS"
+    echo "  Deploying to sync missing functions..."
+  else
+    echo "→ Could not verify remote edge functions; deploying to be safe..."
+  fi
+
+  (
+    cd "$PROJECT_DIR"
+    supabase functions deploy --project-ref "$PROJECT_REF" --use-api --yes
+  )
+  record_edge_function_deploy
+  echo "✓ Edge functions deployed"
+}
+
 SUPABASE_URL="https://${PROJECT_REF}.supabase.co"
 EDGE_FUNCTIONS_DIR="supabase/functions"
 DEPLOY_STATE_FILE="$PROJECT_DIR/supabase/.temp/dev-edge-functions-${PROJECT_REF}.sha"
 
+trap restore_test_link EXIT
+
 if [ "$COMMAND" = "migrate" ]; then
   run_migrations
+  exit 0
+fi
+
+if [ "$COMMAND" = "deploy" ]; then
+  run_edge_function_deploy
   exit 0
 fi
 
@@ -203,53 +289,6 @@ if [ -n "$EXISTING_PID" ]; then
   fi
   echo "  Stop the existing dev server or use a different port."
   exit 1
-fi
-
-if should_deploy_edge_functions; then
-  if [ "$DEPLOY_MODE" = "auto" ] || [ -z "$DEPLOY_MODE" ]; then
-    if edge_functions_changed_since_last_deploy; then
-      if [ -f "$DEPLOY_STATE_FILE" ]; then
-        echo "→ Edge functions changed since the last $ENV deploy; deploying..."
-      else
-        echo "→ No previous $ENV edge function deploy fingerprint found; deploying..."
-      fi
-      (
-        cd "$PROJECT_DIR"
-        supabase functions deploy --project-ref "$PROJECT_REF" --use-api --yes
-      )
-      record_edge_function_deploy
-      echo "✓ Edge functions deployed"
-    elif remote_edge_functions_are_synced; then
-      echo "→ Edge functions unchanged since the last $ENV deploy; skipping deploy"
-    else
-      if [ -n "$MISSING_REMOTE_EDGE_FUNCTIONS" ]; then
-        echo "→ Remote $ENV is missing edge functions: $MISSING_REMOTE_EDGE_FUNCTIONS"
-        echo "  Deploying to sync missing functions..."
-      else
-        echo "→ Could not verify remote edge functions; deploying to be safe..."
-      fi
-      (
-        cd "$PROJECT_DIR"
-        supabase functions deploy --project-ref "$PROJECT_REF" --use-api --yes
-      )
-      record_edge_function_deploy
-      echo "✓ Edge functions deployed"
-    fi
-  else
-    EDGE_FUNCTION_FINGERPRINT="$(compute_edge_function_fingerprint)"
-    echo "→ Deploying edge functions to $ENV ($PROJECT_REF)..."
-    (
-      cd "$PROJECT_DIR"
-      supabase functions deploy --project-ref "$PROJECT_REF" --use-api --yes
-    )
-    record_edge_function_deploy
-    echo "✓ Edge functions deployed"
-  fi
-  echo ""
-elif [ "$ENV" = "live" ]; then
-  echo "→ Skipping edge function deploy for live by default"
-  echo "  Set DEPLOY_EDGE_FUNCTIONS=true to force it."
-  echo ""
 fi
 
 echo "→ Fetching anon key for $ENV ($PROJECT_REF)..."
