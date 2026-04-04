@@ -495,7 +495,7 @@ Deno.serve(async (req) => {
 
       const fileName = `backup-${dateSlug}.zip`;
 
-      return new Response(zipBlob, {
+      return new Response(zipBlob as unknown as BodyInit, {
         headers: {
           ...corsHeaders,
           "Content-Type": "application/zip",

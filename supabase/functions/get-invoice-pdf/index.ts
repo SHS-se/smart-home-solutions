@@ -301,7 +301,7 @@ serve(async (req) => {
 
     const filename = `Faktura-${invoice.invoice_number || invoice.id}.pdf`;
 
-    return new Response(pdfBytes, {
+    return new Response(pdfBytes as unknown as BodyInit, {
       headers: {
         ...corsHeaders,
         "Content-Type": "application/pdf",
