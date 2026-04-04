@@ -185,7 +185,7 @@ Do not add a PDF storage column or bucket.
 
 ## Invoice Numbering Strategy
 
-You asked for numbering to continue the same way as now, while tolerating historical gaps.
+You asked for invoice numbers to be strictly sequential with no gaps.
 
 Implement that as a database function, not in TypeScript:
 
@@ -196,12 +196,15 @@ Implement that as a database function, not in TypeScript:
 - format it with the active prefix and width
 - lock allocation with a transaction-safe mechanism
   - `pg_advisory_xact_lock(...)` is the cleanest option here
-- call it only on finalize, never on draft creation
+- call it only at the point where you are certain the invoice is being issued
+- keep the number allocation, invoice state transition, and event write in one transaction so a failed issue does not burn a number
 
 Important guardrail:
 
 - do not reuse numbers that were already issued to real invoices, including voided invoices
-- do not backfill historical gaps
+- do not have any code path that skips a number after allocation
+- if staff can cancel before issue, do that while still in `draft`
+- once issued, a voided invoice keeps its number so the live sequence remains auditable and gap-free
 
 Practical pattern:
 
@@ -435,7 +438,8 @@ Update tests and docs that assume Stripe payment:
 - `docs/ui-test-migration-validation-plan.md`
   - remove Stripe hosted invoice and test-card steps
 - add unit tests for:
-  - invoice number allocation continues correctly when earlier gaps exist
+  - invoice number allocation is strictly sequential under repeated issue operations
+  - concurrent finalize attempts cannot allocate the same or skip an invoice number
   - OCR reference generation
   - QR payload builder
   - PDF generation smoke test
