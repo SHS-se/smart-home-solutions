@@ -49,7 +49,7 @@ serve(async (req: Request) => {
       });
     }
 
-    const { contact_id } = await req.json();
+    const { contact_id, mode } = await req.json();
     if (!contact_id) {
       return new Response(JSON.stringify({ error: "contact_id required" }), {
         status: 400,
@@ -57,10 +57,10 @@ serve(async (req: Request) => {
       });
     }
 
-    // Fetch contact email before deleting
+    // Fetch contact
     const { data: contact, error: contactError } = await supabase
       .from("contacts")
-      .select("id, email")
+      .select("id, name, email, phone, converted_to_customer_id")
       .eq("id", contact_id)
       .single();
 
@@ -71,6 +71,45 @@ serve(async (req: Request) => {
       });
     }
 
+    // ── PREVIEW MODE ──
+    if (mode === "preview") {
+      const [messagesRes, draftAnswersRes, intakeRes] = await Promise.all([
+        supabase.from("contact_messages").select("id, body, author_type, created_at").eq("contact_id", contact_id).order("created_at", { ascending: false }),
+        supabase.from("home_profile_draft_answers").select("id", { count: "exact", head: true }).eq("email", contact.email.toLowerCase().trim()),
+        supabase.from("contact_intake_events").select("id", { count: "exact", head: true }).eq("email_normalized", contact.email.toLowerCase().trim()),
+      ]);
+
+      // Check if there's a linked customer
+      let linkedCustomer = null;
+      if (contact.converted_to_customer_id) {
+        const { data: cust } = await supabase
+          .from("customers_with_identity")
+          .select("id, name, billing_email")
+          .eq("id", contact.converted_to_customer_id)
+          .maybeSingle();
+        linkedCustomer = cust;
+      }
+
+      // Check if auth user exists
+      const { data: { users } } = await supabase.auth.admin.listUsers();
+      const authUser = users?.find(
+        (u) => u.email?.toLowerCase().trim() === contact.email.toLowerCase().trim()
+      );
+
+      return new Response(JSON.stringify({
+        contact: { name: contact.name, email: contact.email, phone: contact.phone },
+        messages: messagesRes.data || [],
+        draftAnswerCount: draftAnswersRes.count || 0,
+        intakeEventCount: intakeRes.count || 0,
+        linkedCustomer,
+        hasAuthUser: !!authUser,
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+
+    // ── DELETE MODE ──
     const email = contact.email.toLowerCase().trim();
 
     // 1. Delete draft answers for this email

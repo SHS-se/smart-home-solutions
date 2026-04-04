@@ -8,17 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
+import { DeleteContactDialog } from "@/components/portal/contacts/DeleteContactDialog";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -56,7 +46,7 @@ const ContactDetail: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [messagesLoading, setMessagesLoading] = useState(true);
   const [converting, setConverting] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [replyText, setReplyText] = useState("");
   const [sending, setSending] = useState(false);
 
@@ -282,42 +272,6 @@ const ContactDetail: React.FC = () => {
     }
   };
 
-  const handleDelete = async () => {
-    if (!contact) return;
-    setDeleting(true);
-    try {
-      const { data: session } = await supabase.auth.getSession();
-      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/delete-contact`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.session?.access_token}`,
-        },
-        body: JSON.stringify({ contact_id: contact.id }),
-      });
-
-      if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.error || "Delete failed");
-      }
-
-      toast({
-        title: t("Kontakt borttagen", "Contact deleted"),
-        description: t("Kontakten har tagits bort.", "The contact has been deleted."),
-      });
-
-      navigate("/portal/contacts");
-    } catch (error) {
-      console.error("Error deleting contact:", error);
-      toast({
-        title: t("Fel", "Error"),
-        description: t("Kunde inte ta bort kontakten", "Could not delete contact"),
-        variant: "destructive",
-      });
-    } finally {
-      setDeleting(false);
-    }
-  };
 
   const getSourceIcon = (source: string) => {
     switch (source) {
@@ -403,29 +357,19 @@ const ContactDetail: React.FC = () => {
               {t("Gör till kund", "Convert to customer")}
             </Button>
 
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button variant="destructive" disabled={deleting}>
-                  {deleting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Trash2 className="w-4 h-4 mr-2" />}
-                  {t("Ta bort", "Delete")}
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>{t("Ta bort kontakt?", "Delete contact?")}</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    {t(
-                      "Denna åtgärd kan inte ångras. Kontakten kommer att tas bort permanent.",
-                      "This action cannot be undone. The contact will be permanently deleted.",
-                    )}
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>{t("Avbryt", "Cancel")}</AlertDialogCancel>
-                  <AlertDialogAction onClick={handleDelete}>{t("Ta bort", "Delete")}</AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+            <Button variant="destructive" onClick={() => setShowDeleteDialog(true)}>
+              <Trash2 className="w-4 h-4 mr-2" />
+              {t("Ta bort", "Delete")}
+            </Button>
+
+            {contact && (
+              <DeleteContactDialog
+                open={showDeleteDialog}
+                onOpenChange={setShowDeleteDialog}
+                contactId={contact.id}
+                onDeleted={() => navigate("/portal/contacts")}
+              />
+            )}
           </div>
         </div>
 
