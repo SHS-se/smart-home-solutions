@@ -350,6 +350,8 @@ export type Database = {
           site_city: string | null
           site_postcode: string | null
           site_street: string | null
+          subscription_active: boolean
+          subscription_expires_at: string | null
           user_id: string | null
         }
         Insert: {
@@ -365,6 +367,8 @@ export type Database = {
           site_city?: string | null
           site_postcode?: string | null
           site_street?: string | null
+          subscription_active?: boolean
+          subscription_expires_at?: string | null
           user_id?: string | null
         }
         Update: {
@@ -380,6 +384,8 @@ export type Database = {
           site_city?: string | null
           site_postcode?: string | null
           site_street?: string | null
+          subscription_active?: boolean
+          subscription_expires_at?: string | null
           user_id?: string | null
         }
         Relationships: [
@@ -1244,6 +1250,57 @@ export type Database = {
           },
         ]
       }
+      invoice_payments: {
+        Row: {
+          amount: number
+          created_at: string
+          created_by: string | null
+          id: string
+          invoice_id: string
+          method: string
+          note: string | null
+          payment_date: string
+          reference: string | null
+        }
+        Insert: {
+          amount: number
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          invoice_id: string
+          method?: string
+          note?: string | null
+          payment_date: string
+          reference?: string | null
+        }
+        Update: {
+          amount?: number
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          invoice_id?: string
+          method?: string
+          note?: string | null
+          payment_date?: string
+          reference?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "invoice_payments_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoice_computed_totals"
+            referencedColumns: ["invoice_id"]
+          },
+          {
+            foreignKeyName: "invoice_payments_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       invoices: {
         Row: {
           amount: number | null
@@ -1264,10 +1321,14 @@ export type Database = {
           last_emailed_at: string | null
           last_emailed_to: string | null
           last_emailed_type: string | null
+          last_public_viewed_at: string | null
           paid_at: string | null
           pdf_url: string | null
+          public_token_expires_at: string | null
+          public_token_hash: string | null
           quote_id: string | null
           quote_number: string | null
+          sent_at: string | null
           status: string | null
           stripe_invoice_id: string | null
           updated_at: string | null
@@ -1292,10 +1353,14 @@ export type Database = {
           last_emailed_at?: string | null
           last_emailed_to?: string | null
           last_emailed_type?: string | null
+          last_public_viewed_at?: string | null
           paid_at?: string | null
           pdf_url?: string | null
+          public_token_expires_at?: string | null
+          public_token_hash?: string | null
           quote_id?: string | null
           quote_number?: string | null
+          sent_at?: string | null
           status?: string | null
           stripe_invoice_id?: string | null
           updated_at?: string | null
@@ -1320,10 +1385,14 @@ export type Database = {
           last_emailed_at?: string | null
           last_emailed_to?: string | null
           last_emailed_type?: string | null
+          last_public_viewed_at?: string | null
           paid_at?: string | null
           pdf_url?: string | null
+          public_token_expires_at?: string | null
+          public_token_hash?: string | null
           quote_id?: string | null
           quote_number?: string | null
+          sent_at?: string | null
           status?: string | null
           stripe_invoice_id?: string | null
           updated_at?: string | null
@@ -2544,9 +2613,14 @@ export type Database = {
       }
     }
     Functions: {
+      allocate_invoice_number: { Args: never; Returns: string }
       can_access_ticket_storage: {
         Args: { storage_path: string }
         Returns: boolean
+      }
+      finalize_local_invoice: {
+        Args: { p_app_env: string; p_created_by?: string; p_invoice_id: string }
+        Returns: Json
       }
       generate_next_quote_number: { Args: never; Returns: string }
       get_customer_id_for_user: { Args: { _user_id: string }; Returns: string }
