@@ -218,7 +218,7 @@ const ContactDetail: React.FC = () => {
       const { error: updateError } = await supabase
         .from('contacts')
         .update({
-          converted_to_customer_id: newCustomer.id,
+          converted_to_customer_id: customerId,
           converted_at: new Date().toISOString(),
         })
         .eq('id', contact.id);
@@ -229,7 +229,7 @@ const ContactDetail: React.FC = () => {
       const { error: linkError } = await supabase
         .from('customers')
         .update({ contact_id: contact.id })
-        .eq('id', newCustomer.id);
+        .eq('id', customerId);
 
       if (linkError) throw linkError;
 
@@ -243,7 +243,7 @@ const ContactDetail: React.FC = () => {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${session.session?.access_token}`,
           },
-          body: JSON.stringify({ customer_id: newCustomer.id }),
+          body: JSON.stringify({ customer_id: customerId }),
         }
       );
 
@@ -279,7 +279,7 @@ const ContactDetail: React.FC = () => {
       }
 
       // Navigate to the new customer
-      navigate(`/portal/customers/${newCustomer.id}/overview`);
+      navigate(`/portal/customers/${customerId}/overview`);
     } catch (error) {
       console.error('Error converting contact:', error);
       toast({
