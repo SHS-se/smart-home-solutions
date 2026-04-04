@@ -7,6 +7,109 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+async function deleteCustomerCascade(supabase: ReturnType<typeof createClient>, customerId: string) {
+  // Get customer info
+  const { data: customer } = await supabase
+    .from("customers")
+    .select("id, user_id, contact_id")
+    .eq("id", customerId)
+    .single();
+
+  if (!customer) return;
+
+  // Get all linked IDs
+  const { data: homes } = await supabase.from("homes").select("id").eq("customer_id", customerId);
+  const homeIds = (homes || []).map((h: { id: string }) => h.id);
+
+  const { data: quotes } = await supabase.from("quotes").select("id").eq("customer_id", customerId);
+  const quoteIds = (quotes || []).map((q: { id: string }) => q.id);
+
+  const { data: invoices } = await supabase.from("invoices").select("id").eq("customer_id", customerId);
+  const invoiceIds = (invoices || []).map((i: { id: string }) => i.id);
+
+  const { data: devices } = await supabase.from("device_instances").select("id").eq("customer_id", customerId);
+  const deviceIds = (devices || []).map((d: { id: string }) => d.id);
+
+  // Device profiles and points
+  if (deviceIds.length > 0) {
+    const { data: profiles } = await supabase.from("device_profiles").select("id").in("device_id", deviceIds);
+    const profileIds = (profiles || []).map((p: { id: string }) => p.id);
+    if (profileIds.length > 0) {
+      await supabase.from("device_profile_points").delete().in("profile_id", profileIds);
+      await supabase.from("device_profiles").delete().in("device_id", deviceIds);
+    }
+  }
+
+  // Home-linked data
+  if (homeIds.length > 0) {
+    await supabase.from("home_device_assignments").delete().in("home_id", homeIds);
+    await supabase.from("energy_home_settings").delete().in("home_id", homeIds);
+    await supabase.from("home_answers").delete().in("home_id", homeIds);
+    await supabase.from("model_runs").delete().in("home_id", homeIds);
+  }
+
+  await supabase.from("device_instances").delete().eq("customer_id", customerId);
+  await supabase.from("home_photos").delete().eq("customer_id", customerId);
+
+  // Unlink primary_home_id then delete homes
+  await supabase.from("customers").update({ primary_home_id: null }).eq("id", customerId);
+  await supabase.from("homes").delete().eq("customer_id", customerId);
+
+  // Quote-related data
+  if (quoteIds.length > 0) {
+    await supabase.from("quote_events").delete().in("quote_id", quoteIds);
+    await supabase.from("quote_emails").delete().in("quote_id", quoteIds);
+    await supabase.from("quote_lines").delete().in("quote_id", quoteIds);
+    await supabase.from("quote_messages").delete().in("quote_id", quoteIds);
+    await supabase.from("billing_events").delete().in("quote_id", quoteIds);
+  }
+
+  // Invoice-related data
+  if (invoiceIds.length > 0) {
+    await supabase.from("invoice_events").delete().in("invoice_id", invoiceIds);
+    await supabase.from("invoice_line_items").delete().in("invoice_id", invoiceIds);
+    await supabase.from("invoice_payments").delete().in("invoice_id", invoiceIds);
+  }
+
+  await supabase.from("invoices").delete().eq("customer_id", customerId);
+
+  // Quotes (unlink self-references first)
+  if (quoteIds.length > 0) {
+    await supabase.from("quotes").update({
+      parent_quote_id: null,
+      supersedes_quote_id: null,
+      superseded_by_quote_id: null,
+    }).in("id", quoteIds);
+  }
+  await supabase.from("quotes").delete().eq("customer_id", customerId);
+
+  // BOMs
+  const { data: boms } = await supabase.from("boms").select("id").eq("customer_id", customerId);
+  const bomIds = (boms || []).map((b: { id: string }) => b.id);
+  if (bomIds.length > 0) {
+    await supabase.from("bom_events").delete().in("bom_id", bomIds);
+    await supabase.from("bom_items").delete().in("bom_id", bomIds);
+  }
+  await supabase.from("boms").delete().eq("customer_id", customerId);
+
+  // Tickets
+  await supabase.from("tickets").delete().eq("customer_id", customerId);
+
+  // Unlink contact FK on customer side
+  if (customer.contact_id) {
+    await supabase.from("customers").update({ contact_id: null }).eq("id", customerId);
+  }
+
+  // Delete customer record
+  const { error: deleteError } = await supabase.from("customers").delete().eq("id", customerId);
+  if (deleteError) throw deleteError;
+
+  // Delete auth user if exists
+  if (customer.user_id) {
+    await supabase.auth.admin.deleteUser(customer.user_id);
+  }
+}
+
 serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -35,7 +138,6 @@ serve(async (req: Request) => {
       });
     }
 
-    // Check staff role
     const { data: staffRow, error: staffError } = await supabase
       .from("staff_users")
       .select("user_id")
@@ -83,17 +185,24 @@ serve(async (req: Request) => {
         supabase.from("contact_intake_events").select("id", { count: "exact", head: true }).eq("email_normalized", contact.email.toLowerCase().trim()),
       ]);
 
-      const previewError =
-        messagesRes.error ||
-        draftAnswersRes.error ||
-        intakeRes.error;
-
+      const previewError = messagesRes.error || draftAnswersRes.error || intakeRes.error;
       if (previewError) {
         throw new Error(`Failed to load contact delete preview: ${previewError.message}`);
       }
 
-      // Check if there's a linked customer
+      // Check if there's a linked customer and gather its data
       let linkedCustomer = null;
+      let customerData: {
+        quotes: unknown[];
+        invoices: unknown[];
+        tickets: unknown[];
+        boms: unknown[];
+        homes: unknown[];
+        homeAnswerCount: number;
+        homePhotoCount: number;
+        deviceCount: number;
+      } | null = null;
+
       if (contact.converted_to_customer_id) {
         const { data: cust, error: customerError } = await supabase
           .from("customers_with_identity")
@@ -104,6 +213,31 @@ serve(async (req: Request) => {
           throw new Error(`Failed to load linked customer: ${customerError.message}`);
         }
         linkedCustomer = cust;
+
+        if (linkedCustomer) {
+          const cid = linkedCustomer.id;
+          const [quotesRes, invoicesRes, ticketsRes, bomsRes, homesRes, answersRes, photosRes, devicesRes] = await Promise.all([
+            supabase.from("quotes").select("id, quote_number, status").eq("customer_id", cid),
+            supabase.from("invoices").select("id, invoice_number, status").eq("customer_id", cid),
+            supabase.from("tickets").select("id, ticket_number, title, status").eq("customer_id", cid),
+            supabase.from("boms").select("id, project_name, version").eq("customer_id", cid),
+            supabase.from("homes").select("id, name").eq("customer_id", cid),
+            supabase.from("home_answers").select("id", { count: "exact", head: true }).eq("customer_id", cid),
+            supabase.from("home_photos").select("id", { count: "exact", head: true }).eq("customer_id", cid),
+            supabase.from("device_instances").select("id", { count: "exact", head: true }).eq("customer_id", cid),
+          ]);
+
+          customerData = {
+            quotes: quotesRes.data || [],
+            invoices: invoicesRes.data || [],
+            tickets: ticketsRes.data || [],
+            boms: bomsRes.data || [],
+            homes: homesRes.data || [],
+            homeAnswerCount: answersRes.count || 0,
+            homePhotoCount: photosRes.count || 0,
+            deviceCount: devicesRes.count || 0,
+          };
+        }
       }
 
       // Check if auth user exists
@@ -112,7 +246,7 @@ serve(async (req: Request) => {
         throw new Error(`Failed to load auth users: ${usersError.message}`);
       }
       const authUser = users?.find(
-        (u) => u.email?.toLowerCase().trim() === contact.email.toLowerCase().trim()
+        (u: { email?: string }) => u.email?.toLowerCase().trim() === contact.email.toLowerCase().trim()
       );
 
       return new Response(JSON.stringify({
@@ -121,6 +255,7 @@ serve(async (req: Request) => {
         draftAnswerCount: draftAnswersRes.count || 0,
         intakeEventCount: intakeRes.count || 0,
         linkedCustomer,
+        customerData,
         hasAuthUser: !!authUser,
       }), {
         status: 200,
@@ -131,56 +266,43 @@ serve(async (req: Request) => {
     // ── DELETE MODE ──
     const email = contact.email.toLowerCase().trim();
 
-    // 1. Delete draft answers for this email
-    await supabase
-      .from("home_profile_draft_answers")
-      .delete()
-      .eq("email", email);
+    // 1. Delete linked customer (cascade) if exists
+    if (contact.converted_to_customer_id) {
+      // Clear the FK from contact first to avoid circular issues
+      await supabase.from("contacts").update({ converted_to_customer_id: null }).eq("id", contact_id);
+      await deleteCustomerCascade(supabase, contact.converted_to_customer_id);
+    }
 
-    // 2. Delete auth user if exists (by email lookup)
+    // 2. Delete draft answers for this email
+    await supabase.from("home_profile_draft_answers").delete().eq("email", email);
+
+    // 3. Delete auth user if exists (and wasn't already deleted by customer cascade)
     const { data: { users } } = await supabase.auth.admin.listUsers();
     const authUser = users?.find(
-      (u) => u.email?.toLowerCase().trim() === email
+      (u: { email?: string }) => u.email?.toLowerCase().trim() === email
     );
     if (authUser) {
       await supabase.auth.admin.deleteUser(authUser.id);
     }
 
-    // 3. Unlink any customers referencing this contact (nullify FK)
-    await supabase
-      .from("customers")
-      .update({ contact_id: null })
-      .eq("contact_id", contact_id);
+    // 4. Unlink any customers still referencing this contact
+    await supabase.from("customers").update({ contact_id: null }).eq("contact_id", contact_id);
 
-    // Also clear converted_to_customer_id on the contact to avoid FK issues
-    await supabase
-      .from("contacts")
-      .update({ converted_to_customer_id: null })
-      .eq("id", contact_id);
+    // 5. Delete contact messages
+    await supabase.from("contact_messages").delete().eq("contact_id", contact_id);
 
-    // 4. Delete contact messages
-    await supabase
-      .from("contact_messages")
-      .delete()
-      .eq("contact_id", contact_id);
-
-    // 5. Delete the contact record
-    const { error: deleteError } = await supabase
-      .from("contacts")
-      .delete()
-      .eq("id", contact_id);
-
-    if (deleteError) {
-      throw deleteError;
-    }
+    // 6. Delete the contact record
+    const { error: deleteError } = await supabase.from("contacts").delete().eq("id", contact_id);
+    if (deleteError) throw deleteError;
 
     return new Response(JSON.stringify({ success: true }), {
       status: 200,
       headers: { "Content-Type": "application/json", ...corsHeaders },
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
     console.error("Error in delete-contact:", error);
-    return new Response(JSON.stringify({ error: error.message }), {
+    return new Response(JSON.stringify({ error: message }), {
       status: 500,
       headers: { "Content-Type": "application/json", ...corsHeaders },
     });
