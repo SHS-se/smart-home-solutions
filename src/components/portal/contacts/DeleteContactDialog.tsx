@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Loader2, AlertTriangle, MessageSquare, FileText, User, UserCheck } from 'lucide-react';
+import { Loader2, AlertTriangle, MessageSquare, FileText, User, UserCheck, Package, Receipt, TicketIcon, Home } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -15,12 +15,24 @@ import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { getResponseErrorMessage } from '@/lib/http-response';
 
+interface CustomerDataPreview {
+  quotes: Array<{ id: string; quote_number: string; status: string }>;
+  invoices: Array<{ id: string; invoice_number: string; status: string }>;
+  tickets: Array<{ id: string; ticket_number: string; title: string; status: string }>;
+  boms: Array<{ id: string; project_name: string; version: number }>;
+  homes: Array<{ id: string; name: string }>;
+  homeAnswerCount: number;
+  homePhotoCount: number;
+  deviceCount: number;
+}
+
 interface ContactPreview {
   contact: { name: string; email: string; phone: string | null };
   messages: Array<{ id: string; body: string; author_type: string; created_at: string }>;
   draftAnswerCount: number;
   intakeEventCount: number;
   linkedCustomer: { id: string; name: string | null; billing_email: string | null } | null;
+  customerData: CustomerDataPreview | null;
   hasAuthUser: boolean;
 }
 
@@ -116,11 +128,12 @@ export const DeleteContactDialog: React.FC<DeleteContactDialogProps> = ({
         description: t('Kontakten och all kopplad data har tagits bort.', 'Contact and all linked data have been removed.'),
       });
       onDeleted();
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : t('Kunde inte ta bort kontakten', 'Could not delete contact');
       console.error('Error deleting contact:', err);
       toast({
         title: t('Fel', 'Error'),
-        description: err.message || t('Kunde inte ta bort kontakten', 'Could not delete contact'),
+        description: message,
         variant: 'destructive',
       });
     } finally {
@@ -129,10 +142,12 @@ export const DeleteContactDialog: React.FC<DeleteContactDialogProps> = ({
     }
   };
 
+  const cd = preview?.customerData;
   const hasLinkedData = preview != null && (
     (preview.messages?.length ?? 0) > 0 ||
     (preview.draftAnswerCount ?? 0) > 0 ||
-    !!preview.hasAuthUser
+    !!preview.hasAuthUser ||
+    !!preview.linkedCustomer
   );
 
   return (
@@ -210,18 +225,53 @@ export const DeleteContactDialog: React.FC<DeleteContactDialogProps> = ({
               </div>
             )}
 
-            {/* Linked customer warning */}
+            {/* Linked customer — now shows cascade warning */}
             {preview.linkedCustomer && (
-              <div className="border-t pt-2 mt-2 text-muted-foreground">
-                <div className="flex items-center gap-2">
+              <div className="border-t pt-3 mt-3 space-y-2">
+                <div className="flex items-center gap-2 font-medium text-destructive">
                   <User className="w-4 h-4" />
                   <span>
                     {t(
-                      `Kopplad kund "${preview.linkedCustomer.name || preview.linkedCustomer.billing_email}" kommer att frikopplas men inte raderas.`,
-                      `Linked customer "${preview.linkedCustomer.name || preview.linkedCustomer.billing_email}" will be unlinked but not deleted.`
+                      `Kopplad kund "${preview.linkedCustomer.name || preview.linkedCustomer.billing_email}" kommer också att raderas`,
+                      `Linked customer "${preview.linkedCustomer.name || preview.linkedCustomer.billing_email}" will also be deleted`
                     )}
                   </span>
                 </div>
+
+                {cd && (
+                  <div className="ml-6 space-y-1 text-muted-foreground">
+                    {(cd.quotes?.length ?? 0) > 0 && (
+                      <div className="flex items-center gap-2">
+                        <Receipt className="w-3.5 h-3.5" />
+                        <span>{cd.quotes.length} {t('offerter', 'quotes')}</span>
+                      </div>
+                    )}
+                    {(cd.invoices?.length ?? 0) > 0 && (
+                      <div className="flex items-center gap-2">
+                        <FileText className="w-3.5 h-3.5" />
+                        <span>{cd.invoices.length} {t('fakturor', 'invoices')}</span>
+                      </div>
+                    )}
+                    {(cd.tickets?.length ?? 0) > 0 && (
+                      <div className="flex items-center gap-2">
+                        <TicketIcon className="w-3.5 h-3.5" />
+                        <span>{cd.tickets.length} {t('ärenden', 'tickets')}</span>
+                      </div>
+                    )}
+                    {(cd.boms?.length ?? 0) > 0 && (
+                      <div className="flex items-center gap-2">
+                        <Package className="w-3.5 h-3.5" />
+                        <span>{cd.boms.length} {t('materiallistor', 'BOMs')}</span>
+                      </div>
+                    )}
+                    {(cd.homes?.length ?? 0) > 0 && (
+                      <div className="flex items-center gap-2">
+                        <Home className="w-3.5 h-3.5" />
+                        <span>{cd.homes.length} {t('hem', 'homes')}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
