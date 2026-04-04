@@ -357,29 +357,19 @@ const ContactDetail: React.FC = () => {
               {t("Gör till kund", "Convert to customer")}
             </Button>
 
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button variant="destructive" disabled={deleting}>
-                  {deleting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Trash2 className="w-4 h-4 mr-2" />}
-                  {t("Ta bort", "Delete")}
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>{t("Ta bort kontakt?", "Delete contact?")}</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    {t(
-                      "Denna åtgärd kan inte ångras. Kontakten kommer att tas bort permanent.",
-                      "This action cannot be undone. The contact will be permanently deleted.",
-                    )}
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>{t("Avbryt", "Cancel")}</AlertDialogCancel>
-                  <AlertDialogAction onClick={handleDelete}>{t("Ta bort", "Delete")}</AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+            <Button variant="destructive" onClick={() => setShowDeleteDialog(true)}>
+              <Trash2 className="w-4 h-4 mr-2" />
+              {t("Ta bort", "Delete")}
+            </Button>
+
+            {contact && (
+              <DeleteContactDialog
+                open={showDeleteDialog}
+                onOpenChange={setShowDeleteDialog}
+                contactId={contact.id}
+                onDeleted={() => navigate("/portal/contacts")}
+              />
+            )}
           </div>
         </div>
 
