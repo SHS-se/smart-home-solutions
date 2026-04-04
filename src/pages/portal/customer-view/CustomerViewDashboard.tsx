@@ -113,36 +113,20 @@ const CustomerViewDashboard: React.FC = () => {
               {t('Visar kundvy', 'Viewing customer portal')}
             </p>
           </div>
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button variant="destructive" size="sm">
-                <Trash2 className="w-4 h-4 mr-2" />
-                {t('Radera', 'Delete')}
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>{t('Är du säker?', 'Are you sure?')}</AlertDialogTitle>
-                <AlertDialogDescription>
-                  {t(
-                    'Är du säker på att du vill radera denna kund? Denna åtgärd kan inte ångras.',
-                    'Are you sure you wish to delete this customer? This action cannot be undone.'
-                  )}
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>{t('Avbryt', 'Cancel')}</AlertDialogCancel>
-                <AlertDialogAction
-                  onClick={handleDeleteCustomer}
-                  disabled={isDeleting}
-                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                >
-                  {isDeleting && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
-                  {t('Bekräfta', 'Confirm')}
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+          <Button variant="destructive" size="sm" onClick={() => setShowDeleteDialog(true)}>
+            <Trash2 className="w-4 h-4 mr-2" />
+            {t('Radera', 'Delete')}
+          </Button>
+        </div>
+
+        {customerId && (
+          <DeleteCustomerDialog
+            open={showDeleteDialog}
+            onOpenChange={setShowDeleteDialog}
+            customerId={customerId}
+            onDeleted={() => navigate('/portal/customers')}
+          />
+        )}
         </div>
 
         <CustomerDashboardCards
