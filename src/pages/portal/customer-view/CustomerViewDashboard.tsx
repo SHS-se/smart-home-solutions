@@ -3,19 +3,9 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Loader2, ArrowLeft, Trash2 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog';
 import CustomerViewLayout from '@/components/portal/CustomerViewLayout';
 import CustomerDashboardCards from '@/components/portal/CustomerDashboardCards';
+import { DeleteCustomerDialog } from '@/components/portal/customers/DeleteCustomerDialog';
 import { useAuth } from '@/contexts/AuthContext';
 import { useViewedCustomer } from '@/contexts/ViewedCustomerContext';
 import { useLanguage } from '@/contexts/LanguageContext';
