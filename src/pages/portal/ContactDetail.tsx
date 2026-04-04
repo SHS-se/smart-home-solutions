@@ -46,7 +46,7 @@ const ContactDetail: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [messagesLoading, setMessagesLoading] = useState(true);
   const [converting, setConverting] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [replyText, setReplyText] = useState("");
   const [sending, setSending] = useState(false);
 
