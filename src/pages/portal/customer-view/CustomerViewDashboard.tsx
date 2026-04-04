@@ -24,38 +24,12 @@ const CustomerViewDashboard: React.FC = () => {
   const [quoteStats, setQuoteStats] = useState({ actionRequired: 0, total: 0 });
   const [homeProfileStats, setHomeProfileStats] = useState({ answered: 0, total: 0, photos: 0 });
   const [statsLoading, setStatsLoading] = useState(true);
-  const [isDeleting, setIsDeleting] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
   useEffect(() => {
     if (!authLoading && !user) navigate('/login');
     if (!authLoading && !isStaff) navigate('/portal');
   }, [user, isStaff, authLoading, navigate]);
-
-  const handleDeleteCustomer = async () => {
-    if (!customerId) return;
-    setIsDeleting(true);
-    try {
-      const { error: deleteError } = await supabase
-        .from('customers')
-        .delete()
-        .eq('id', customerId);
-      if (deleteError) throw deleteError;
-      toast({
-        title: t('Kund raderad', 'Customer deleted'),
-        description: t('Kunden har tagits bort.', 'The customer has been removed.'),
-      });
-      navigate('/portal/customers');
-    } catch (err) {
-      console.error('Error deleting customer:', err);
-      toast({
-        title: t('Fel', 'Error'),
-        description: t('Kunde inte radera kunden.', 'Could not delete the customer.'),
-        variant: 'destructive',
-      });
-    } finally {
-      setIsDeleting(false);
-    }
-  };
 
   useEffect(() => {
     const fetchStats = async () => {
