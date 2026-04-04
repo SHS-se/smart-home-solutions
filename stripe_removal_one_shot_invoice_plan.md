@@ -30,7 +30,9 @@ Stripe is currently wired into three separate areas:
   - `src/hooks/use-subscription.ts`
   - `src/pages/portal/Billing.tsx`
   - `src/components/portal/SubscriptionRequiredAlert.tsx`
-  - ticket pages using `useSubscription`
+  - `src/pages/portal/NewTicket.tsx` (uses `useSubscription`)
+  - `src/pages/portal/TicketDetail.tsx` (uses `useSubscription`)
+  - `src/pages/portal/TicketsList.tsx` (uses `useSubscription`)
 - UI assumptions that an invoice has a Stripe id, hosted payment page, and Stripe PDF:
   - `src/components/portal/invoices/InvoicePdfModal.tsx`
   - `src/components/portal/invoices/InvoiceEmailModal.tsx`
@@ -39,6 +41,20 @@ Stripe is currently wired into three separate areas:
   - `src/pages/portal/invoices/InvoiceDraftEditor.tsx`
   - `src/pages/portal/invoices/InvoicesList.tsx`
   - `src/pages/portal/Billing.tsx`
+  - `src/pages/portal/quotes/QuotePreparation.tsx` (checks `quote.stripe_invoice_id` to determine if invoice exists)
+  - `src/lib/stripe-dashboard.ts` (helper to build Stripe Dashboard URLs for invoices/customers)
+  - `src/components/portal/quotes/QuoteCancelDialog.tsx` (cancel dialog text mentions "Stripe")
+  - `src/components/portal/quotes/BillingEventLog.tsx` (event label "Quote sent to Stripe")
+- Diagnostics page displaying Stripe key info:
+  - `src/pages/portal/ERDiagram.tsx` (calls `check-env`, displays `SHS_STRIPE_SECRET_KEY` and `STRIPE_SECRET_KEY` prefixes)
+- Edge functions that import `stripe-env.ts` for non-Stripe reasons:
+  - `supabase/functions/send-quote-email/index.ts` (imports `getAppEnvironment` from `stripe-env.ts`)
+  - `supabase/functions/cancel-quote/index.ts` (comment referencing "no Stripe" — benign but the import chain may pull in `stripe-env.ts`)
+  - `supabase/functions/dump-database/index.ts` (lists `SHS_STRIPE_SECRET_KEY` and `STRIPE_INVOICE_WEBHOOK_SECRET` in its env dump)
+- Configuration and test infrastructure:
+  - `supabase/config.toml` (function config entry for `get-stripe-invoice-pdf`)
+  - `scripts/setup-secrets.sh` (prompts for `SHS_STRIPE_SECRET_KEY` and `STRIPE_INVOICE_WEBHOOK_SECRET`)
+  - `e2e/helpers/env.ts` (defines `stripe` test card config: card number, expiry, CVC, postal code)
 
 The current invoice number assignment is also tied to Stripe finalization in the active paths, even though the schema already has local invoice fields and an unused local sequence.
 
@@ -165,6 +181,7 @@ Stripe-specific schema handling:
   - `quotes.stripe_status`
   - `quotes.invoice_hosted_url`
   - `invoices.hosted_invoice_url`
+  - `customers.stripe_customer_id` (used by `create-invoice-from-quote`, `create-draft-invoice`, `sync-invoice-lines`, `sync-invoices`, `check-subscription`, `create-checkout`, `customer-portal` to look up or create Stripe customers)
   - Stripe metadata in `billing_events` and `invoice_events`
 - if you want zero Stripe residue in schema too, drop those columns in the same migration after backfilling anything still needed into generic fields
 - if you want lower migration risk, leave legacy Stripe columns in place but unused and unsurfaced
@@ -315,6 +332,18 @@ Replace or rewrite these functions:
   - delete
 - `check-env`
   - remove Stripe key diagnostics, keep `APP_ENV` only if this function still serves a purpose
+- `send-quote-email`
+  - change import from `stripe-env.ts` to the new `app-env.ts` for `getAppEnvironment`
+- `cancel-quote`
+  - verify no residual `stripe-env.ts` import; update if needed
+- `dump-database`
+  - remove `SHS_STRIPE_SECRET_KEY` and `STRIPE_INVOICE_WEBHOOK_SECRET` from the env dump listing
+- `supabase/config.toml`
+  - remove the `[functions.get-stripe-invoice-pdf]` entry
+  - add config entries for new functions (`get-invoice-pdf`, `fetch-public-invoice`, etc.)
+- `scripts/setup-secrets.sh`
+  - remove `SHS_STRIPE_SECRET_KEY` and `STRIPE_INVOICE_WEBHOOK_SECRET` prompts
+  - keep the script structure for any remaining secrets (Resend, Supabase, etc.)
 
 ## Frontend Changes
 
@@ -354,6 +383,29 @@ Update all invoice views to become shared-document aware:
   - stop calling `sync-invoices`
   - show invoice status and allow opening the local invoice page
   - allow PDF download on demand
+
+### Stripe Dashboard helper
+
+`src/lib/stripe-dashboard.ts` should be deleted entirely. Any UI that links to the Stripe Dashboard (e.g. staff shortcuts to view invoices/customers in Stripe) should be removed or replaced with links to the local invoice detail.
+
+### Quote cancel dialog and billing event log
+
+- `QuoteCancelDialog.tsx`: remove "in Stripe" from the cancel confirmation text
+- `BillingEventLog.tsx`: change "Quote sent to Stripe" label to something local (e.g. "Quote sent")
+
+### Quote preparation
+
+`QuotePreparation.tsx` should:
+
+- replace the `quote.stripe_invoice_id` check with a local invoice existence check (e.g. check for a linked invoice row directly)
+- remove any logic that assumes the invoice is a Stripe object
+
+### Diagnostics page
+
+`ERDiagram.tsx` should:
+
+- remove Stripe key display from the environment diagnostics panel
+- keep `APP_ENV` display if still useful
 
 ### Draft editing
 
@@ -418,7 +470,7 @@ Benefits:
 Delete the old cache behavior around:
 
 - `supabase/functions/get-stripe-invoice-pdf/index.ts`
-- the `invoice-pdfs` bucket and its policies if nothing else needs it
+- the `invoice-pdfs` bucket, its storage policies, and the migration that created them (`supabase/migrations/20260203144743_f7a20972-0d2f-4807-a163-ee9d6201f3af.sql` — add a new migration to drop the bucket and policies rather than editing the old migration)
 
 ## Test Changes
 
@@ -437,6 +489,12 @@ Update tests and docs that assume Stripe payment:
     - assert paid status updates both in staff view and public invoice page
 - `docs/ui-test-migration-validation-plan.md`
   - remove Stripe hosted invoice and test-card steps
+- `accounting_vat_implementation_plan.md`
+  - review and update Stripe references throughout (payment matching, Stripe fee handling, Stripe payout timing, source system references)
+  - some sections describe future Stripe integration for accounting — these should be rewritten to reflect the new payment model
+- `e2e/helpers/env.ts`
+  - remove the `stripe` test card configuration object (`cardNumber`, `expiry`, `cvc`, `postalCode`)
+  - remove any `E2E_STRIPE_*` environment variable references
 - add unit tests for:
   - invoice number allocation is strictly sequential under repeated issue operations
   - concurrent finalize attempts cannot allocate the same or skip an invoice number
@@ -457,7 +515,7 @@ Do the work in this order, but keep it as one branch and one merge:
 5. Replace invoice preview/download/email flows in the frontend with shared public/logged-in rendering.
 6. Add manual payment recording and paid-state updates.
 7. Replace subscription checks with internal entitlement reads.
-8. Delete Stripe-only functions, PDF storage cache logic, and dead UI code.
+8. Delete Stripe-only functions, PDF storage cache logic (`invoice-pdfs` bucket + policies), `src/lib/stripe-dashboard.ts`, and dead UI code.
 9. Regenerate Supabase types.
 10. Update tests and docs.
 
