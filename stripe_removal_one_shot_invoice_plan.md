@@ -64,23 +64,40 @@ The current invoice number assignment is also tied to Stripe finalization in the
 
 - Keep `APP_ENV`.
 - Delete Stripe runtime usage and the helper centered on `SHS_STRIPE_SECRET_KEY`.
-- Replace `supabase/functions/_shared/stripe-env.ts` with a small `app-env.ts` helper if you still want environment-aware prefixes, test watermarks, or profile selection.
+- Replace `supabase/functions/_shared/stripe-env.ts` with a small `app-env.ts` helper for environment-aware prefixes and any remaining test/live behavior.
 - Remove `SHS_STRIPE_SECRET_KEY`, `STRIPE_SECRET_KEY`, and `STRIPE_INVOICE_WEBHOOK_SECRET` from the runtime contract.
 
-### 2. Separate visible invoice numbers from bank payment references
+Concrete numbering rules driven by `APP_ENV`:
 
-This is the most important design correction.
+- if `APP_ENV = 'test'`
+  - quotes use `TQ-`
+  - invoices use `TIN-`
+- if `APP_ENV = 'live'`
+  - quotes use `Q-`
+  - invoices use `IN-`
 
-Your attached sample invoice at [/Users/phil/Documents/SHS/Invoice-swedish.pdf](/Users/phil/Documents/SHS/Invoice-swedish.pdf) uses a human-readable number like `TIN-0004`. That is fine for display, but it is a poor OCR reference for Bankgiro/internet bank payment entry.
+### 2. Use the invoice number itself as the payment reference for now
 
-Bankgirot's OCR guidance expects a numeric OCR reference with modulus-10 check digit handling, and Bankgirot's invoice-layout guidance explicitly recommends not relying on decorative invoice numbers with dashes or leading zeros as the payment reference.
+You decided to skip a separate OCR number for now and use:
 
-Recommended model:
+- the Bankgiro number
+- the invoice number
+- the amount
+- the due date
 
-- `invoice_number`: immutable, human-visible, same style you already want to keep.
-- `payment_reference`: immutable, numeric OCR reference used for Bankgiro payment and QR payload.
+That changes the plan materially:
 
-That lets you keep the visible numbering style while still generating something bank apps reliably accept.
+- remove the separate `payment_reference` concept from the first implementation
+- show the invoice number as both:
+  - the visible invoice number
+  - the payment reference customers are told to enter manually
+- attempt QR generation using the Bankgiro number plus invoice number plus amount and due date
+- validate scan behavior in real banking apps before treating this as finished
+
+This is explicitly an implementation experiment:
+
+- if banking apps reliably understand the QR and invoice-number reference, keep it simple
+- if they do not, the fallback is to add a proper numeric OCR/payment reference in a later change
 
 ### 3. Invoice delivery should mirror the quote workflow
 
@@ -125,7 +142,6 @@ After the migration:
 - line items remain the source of truth through `invoice_computed_totals`
 - finalizing an invoice does all of the following atomically:
   - allocate the next human invoice number using your local numbering rules
-  - allocate the numeric OCR payment reference
   - set `status = 'open'`
   - write an `invoice_finalized` event
 - sending an invoice does all of the following:
@@ -135,6 +151,7 @@ After the migration:
 - the public invoice page shows:
   - invoice details
   - Bankgiro payment details
+  - invoice number as the payment reference
   - QR code
   - current payment status
 - logged-in customers see the same invoices in billing history
@@ -148,7 +165,6 @@ After the migration:
 
 Add generic local-payment fields before removing Stripe-specific logic:
 
-- `invoices.payment_reference text unique`
 - `invoices.issued_at timestamptz`
 - `invoices.public_token_hash text`
 - `invoices.public_token_expires_at timestamptz`
@@ -225,11 +241,13 @@ Important guardrail:
 
 Practical pattern:
 
-- visible number in test: `TIN-0004` if that is the sandbox convention you want to keep
-- visible number in live: `IN-0001` use your chosen live prefix, driven by config
-- numeric OCR reference: separate number, checksum-protected, no formatting characters
+- quote number in test: `TQ-0001`
+- quote number in live: `Q-0001`
+- invoice number in test: `TIN-0001`
+- invoice number in live: `IN-0001`
+- use the invoice number itself as the payment reference for the first implementation
 
-## Bankgiro, OCR, And QR Design
+## Bankgiro And QR Design
 
 The new invoice should keep the visual structure of the attached sample:
 
@@ -245,7 +263,7 @@ The new invoice should keep the visual structure of the attached sample:
 Replace the current "Betala online" link with a payment block containing:
 
 - Bankgiro number
-- OCR/payment reference
+- invoice number / payment reference
 - amount
 - due date
 - payee name
@@ -267,18 +285,18 @@ Implementation approach:
 
 For the payment payload:
 
-- use the Bankgiro number plus numeric OCR reference plus amount plus payee metadata
-- do not encode the human invoice number as the payment reference
+- use the Bankgiro number plus invoice number plus amount plus due date plus payee metadata
 - add golden tests around the payload builder
 - verify the output with real bank-app scans before deploy
+- treat banking-app scan validation as a release gate for this feature
 
 Required business inputs before coding:
 
 - bankgiro number
 - payee name exactly as it should appear
-- whether you have Bankgiro OCR control configured
-- the desired live invoice prefix
-- whether sandbox should keep `TIN-` or use a separate test marker elsewhere on the PDF
+- confirm that `APP_ENV` should be the sole driver of these prefixes:
+  - test: `TQ-`, `TIN-`
+  - live: `Q-`, `IN-`
 
 ## Supabase Function Changes
 
@@ -294,7 +312,7 @@ Replace or rewrite these functions:
   - no Stripe invoice id
 - `finalize-invoice`
   - convert to local finalize logic for quote-origin invoices
-  - allocate invoice number and payment reference
+  - allocate invoice number
 - `finalize-new-invoice`
   - same local finalize behavior for generic draft invoices
 - `sync-invoice-lines`
@@ -376,7 +394,7 @@ Update all invoice views to become shared-document aware:
 - `InvoiceDetail`
   - remove hosted Stripe link and stored-PDF assumptions
   - add "Record payment" action
-  - show payment reference
+  - show invoice number as the payment reference
   - share main content rendering with the public page
 - `InvoicesList` and `Billing`
   - stop depending on `stripe_invoice_id`
@@ -498,8 +516,8 @@ Update tests and docs that assume Stripe payment:
 - add unit tests for:
   - invoice number allocation is strictly sequential under repeated issue operations
   - concurrent finalize attempts cannot allocate the same or skip an invoice number
-  - OCR reference generation
   - QR payload builder
+  - invoice-number-as-reference display and payload generation
   - PDF generation smoke test
   - public invoice token hashing and expiry checks
   - local payment recording
@@ -527,12 +545,12 @@ Do the work in this order, but keep it as one branch and one merge:
 - creating a draft invoice works
 - finalizing a draft invoice assigns:
   - a visible invoice number
-  - a numeric OCR/payment reference
   - no stored PDF artifact
 - sending an invoice emails a unique hard-to-guess public URL on your domain
 - the public invoice page loads without login and shows:
   - invoice details
   - payment details
+  - the invoice number as the payment reference
   - QR code
   - payment status
 - the logged-in invoice detail reuses the same main rendering code
@@ -546,7 +564,6 @@ Do the work in this order, but keep it as one branch and one merge:
 
 ## Notes From External Guidance
 
-- Bankgirot OCR reference control: [bankgirot.se](https://www.bankgirot.se/en/services/incoming-payments/bankgiro-receivables/ocr-reference-control/)
 - Bankgirot invoice layout guidance: [bankgirot.se](https://www.bankgirot.se/en/services/incoming-payments/bankgiro-receivables/right-designed-invoice/)
 
-Those sources are why I recommend separating `invoice_number` from `payment_reference` instead of trying to force `TIN-0004` directly into the Bankgiro/OCR/QR path.
+The current plan intentionally does not introduce a separate OCR reference. Instead, it uses the invoice number together with the Bankgiro details and treats QR scan behavior in real banking apps as something that must be validated in test before the live rollout is considered complete.
