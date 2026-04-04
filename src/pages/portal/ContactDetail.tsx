@@ -272,42 +272,6 @@ const ContactDetail: React.FC = () => {
     }
   };
 
-  const handleDelete = async () => {
-    if (!contact) return;
-    setDeleting(true);
-    try {
-      const { data: session } = await supabase.auth.getSession();
-      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/delete-contact`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.session?.access_token}`,
-        },
-        body: JSON.stringify({ contact_id: contact.id }),
-      });
-
-      if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.error || "Delete failed");
-      }
-
-      toast({
-        title: t("Kontakt borttagen", "Contact deleted"),
-        description: t("Kontakten har tagits bort.", "The contact has been deleted."),
-      });
-
-      navigate("/portal/contacts");
-    } catch (error) {
-      console.error("Error deleting contact:", error);
-      toast({
-        title: t("Fel", "Error"),
-        description: t("Kunde inte ta bort kontakten", "Could not delete contact"),
-        variant: "destructive",
-      });
-    } finally {
-      setDeleting(false);
-    }
-  };
 
   const getSourceIcon = (source: string) => {
     switch (source) {
