@@ -483,7 +483,7 @@ const QuotePreparation: React.FC = () => {
         },
       });
 
-      if (error) throw new Error(await getEdgeFunctionErrorMessage(response ?? error));
+      if (error) throw new Error(await getEdgeFunctionErrorMessage(error, response));
 
       toast({ 
         title: t('Fakturautkast skapad!', 'Invoice draft created!'), 

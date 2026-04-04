@@ -322,7 +322,7 @@ const InvoiceDraftEditor: React.FC = () => {
           line_items: lineItems,
         },
       });
-      if (error) throw new Error(await getEdgeFunctionErrorMessage(response ?? error));
+      if (error) throw new Error(await getEdgeFunctionErrorMessage(error, response));
       if (data?.error) throw new Error(data.error);
       return data;
     },

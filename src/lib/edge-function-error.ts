@@ -19,6 +19,18 @@ type ErrorWithContext = {
   context?: ResponseLike;
 };
 
+function isResponseLike(value: unknown): value is ResponseLike {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  return (
+    typeof (value as ResponseLike).json === "function" ||
+    typeof (value as ResponseLike).text === "function" ||
+    typeof (value as ResponseLike).status === "number"
+  );
+}
+
 async function readErrorMessageFromContext(context: ResponseLike | undefined): Promise<string | null> {
   if (!context) return null;
 
@@ -56,10 +68,15 @@ async function readErrorMessageFromContext(context: ResponseLike | undefined): P
   return null;
 }
 
-export async function getEdgeFunctionErrorMessage(error: unknown): Promise<string> {
-  const response =
+export async function getEdgeFunctionErrorMessage(error: unknown, response?: ResponseLike): Promise<string> {
+  const errorContext =
     typeof error === "object" && error !== null
       ? (error as ErrorWithContext).context
+      : undefined;
+  const parsedResponse = isResponseLike(response)
+    ? response
+    : isResponseLike(error)
+      ? error
       : undefined;
 
   const fallback =
@@ -68,7 +85,7 @@ export async function getEdgeFunctionErrorMessage(error: unknown): Promise<strin
       : typeof error === "string"
         ? error
         : "Unexpected edge function error";
-  const parsedMessage = await readErrorMessageFromContext(response);
+  const parsedMessage = await readErrorMessageFromContext(parsedResponse ?? errorContext);
   if (parsedMessage) {
     return parsedMessage;
   }
@@ -81,8 +98,12 @@ export async function getEdgeFunctionErrorMessage(error: unknown): Promise<strin
     return error.message;
   }
 
-  const status = response?.status;
-  if (error instanceof FunctionsHttpError && typeof status === "number") {
+  const status = parsedResponse?.status ?? errorContext?.status;
+  if (typeof status === "number" && error instanceof FunctionsHttpError) {
+    return `Edge Function failed with HTTP ${status}`;
+  }
+
+  if (typeof status === "number") {
     return `Edge Function failed with HTTP ${status}`;
   }
 
