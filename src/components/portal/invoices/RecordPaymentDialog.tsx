@@ -22,6 +22,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from '@/hooks/use-toast';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { getEdgeFunctionErrorMessage } from '@/lib/edge-function-error';
+import { getAuthenticatedFunctionHeaders } from '@/lib/supabase-function-auth';
 
 interface RecordPaymentDialogProps {
   open: boolean;
@@ -67,7 +69,8 @@ const RecordPaymentDialog: React.FC<RecordPaymentDialogProps> = ({
         throw new Error('Ange ett giltigt belopp');
       }
 
-      const { data, error } = await supabase.functions.invoke('record-invoice-payment', {
+      const { data, error, response } = await supabase.functions.invoke('record-invoice-payment', {
+        headers: await getAuthenticatedFunctionHeaders(),
         body: {
           invoice_id: invoiceId,
           payment_date: paymentDate,
@@ -78,7 +81,7 @@ const RecordPaymentDialog: React.FC<RecordPaymentDialogProps> = ({
         },
       });
 
-      if (error) throw error;
+      if (error) throw new Error(await getEdgeFunctionErrorMessage(error, response));
       if (data?.error) throw new Error(data.error);
 
       toast({

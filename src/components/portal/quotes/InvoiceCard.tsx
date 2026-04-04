@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { getEdgeFunctionErrorMessage } from '@/lib/edge-function-error';
+import { getAuthenticatedFunctionHeaders } from '@/lib/supabase-function-auth';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -103,6 +104,7 @@ const InvoiceCard: React.FC<InvoiceCardProps> = ({ quote, invoiceId }) => {
     setIsCreating(true);
     try {
       const { data, error, response } = await supabase.functions.invoke('create-invoice-from-quote', {
+        headers: await getAuthenticatedFunctionHeaders(),
         body: { quote_id: quote.id },
       });
       if (error) throw new Error(await getEdgeFunctionErrorMessage(error, response));
@@ -129,10 +131,11 @@ const InvoiceCard: React.FC<InvoiceCardProps> = ({ quote, invoiceId }) => {
   const handleFinalizeInvoice = async () => {
     setIsFinalizing(true);
     try {
-      const { data, error } = await supabase.functions.invoke('finalize-invoice', {
+      const { data, error, response } = await supabase.functions.invoke('finalize-invoice', {
+        headers: await getAuthenticatedFunctionHeaders(),
         body: { quote_id: quote.id },
       });
-      if (error) throw error;
+      if (error) throw new Error(await getEdgeFunctionErrorMessage(error, response));
       if (data.error) throw new Error(data.error);
 
       toast({
@@ -158,10 +161,11 @@ const InvoiceCard: React.FC<InvoiceCardProps> = ({ quote, invoiceId }) => {
   const handleVoidInvoice = async () => {
     setIsVoiding(true);
     try {
-      const { data, error } = await supabase.functions.invoke('void-invoice', {
+      const { data, error, response } = await supabase.functions.invoke('void-invoice', {
+        headers: await getAuthenticatedFunctionHeaders(),
         body: { quote_id: quote.id },
       });
-      if (error) throw error;
+      if (error) throw new Error(await getEdgeFunctionErrorMessage(error, response));
       if (data.error) throw new Error(data.error);
 
       toast({

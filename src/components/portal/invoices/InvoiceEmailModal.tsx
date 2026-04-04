@@ -16,6 +16,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Loader2, Send } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
+import { getEdgeFunctionErrorMessage } from '@/lib/edge-function-error';
+import { getAuthenticatedFunctionHeaders } from '@/lib/supabase-function-auth';
 
 interface Invoice {
   id: string;
@@ -52,7 +54,8 @@ Smart Home Solutions`;
 
   const sendMutation = useMutation({
     mutationFn: async () => {
-      const { data, error } = await supabase.functions.invoke('send-invoice-email', {
+      const { data, error, response } = await supabase.functions.invoke('send-invoice-email', {
+        headers: await getAuthenticatedFunctionHeaders(),
         body: {
           invoice_id: invoice.id,
           to,
@@ -60,7 +63,7 @@ Smart Home Solutions`;
           message,
         },
       });
-      if (error) throw error;
+      if (error) throw new Error(await getEdgeFunctionErrorMessage(error, response));
       if (data?.error) throw new Error(data.error);
       return data;
     },

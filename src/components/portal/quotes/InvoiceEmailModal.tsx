@@ -17,6 +17,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardContent } from '@/components/ui/card';
 import { Send, Loader2, ExternalLink, FileText } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
+import { getEdgeFunctionErrorMessage } from '@/lib/edge-function-error';
+import { getAuthenticatedFunctionHeaders } from '@/lib/supabase-function-auth';
 
 interface InvoiceEmailModalProps {
   open: boolean;
@@ -102,7 +104,8 @@ Smart Home Solutions`
 
     setIsSending(true);
     try {
-      const { data, error } = await supabase.functions.invoke('send-invoice-email', {
+      const { data, error, response } = await supabase.functions.invoke('send-invoice-email', {
+        headers: await getAuthenticatedFunctionHeaders(),
         body: {
           quote_id: quote.id,
           to: to.trim(),
@@ -113,7 +116,7 @@ Smart Home Solutions`
         },
       });
 
-      if (error) throw error;
+      if (error) throw new Error(await getEdgeFunctionErrorMessage(error, response));
       if (data.error) throw new Error(data.error);
 
       toast({

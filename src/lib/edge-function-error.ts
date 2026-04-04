@@ -68,6 +68,28 @@ async function readErrorMessageFromContext(context: ResponseLike | undefined): P
   return null;
 }
 
+function humanizeEdgeFunctionMessage(message: string): string {
+  const normalized = message.trim();
+
+  if (/^(authentication error:\s*)?invalid jwt$/i.test(normalized)) {
+    return 'The signed-in session for this environment is invalid. Sign out, sign back in, and try again.';
+  }
+
+  if (/jwt expired/i.test(normalized)) {
+    return 'Your session has expired. Sign in again and retry the action.';
+  }
+
+  if (/no authorization header provided|missing authorization header/i.test(normalized)) {
+    return 'No signed-in session was sent with the request. Reload the page and sign in again.';
+  }
+
+  if (/access denied: staff only|staff access required/i.test(normalized)) {
+    return 'This account is signed in but does not have staff access in the current environment.';
+  }
+
+  return normalized;
+}
+
 export async function getEdgeFunctionErrorMessage(error: unknown, response?: ResponseLike): Promise<string> {
   const errorContext =
     typeof error === "object" && error !== null
@@ -87,7 +109,7 @@ export async function getEdgeFunctionErrorMessage(error: unknown, response?: Res
         : "Unexpected edge function error";
   const parsedMessage = await readErrorMessageFromContext(parsedResponse ?? errorContext);
   if (parsedMessage) {
-    return parsedMessage;
+    return humanizeEdgeFunctionMessage(parsedMessage);
   }
 
   if (error instanceof FunctionsRelayError) {
@@ -107,5 +129,5 @@ export async function getEdgeFunctionErrorMessage(error: unknown, response?: Res
     return `Edge Function failed with HTTP ${status}`;
   }
 
-  return fallback;
+  return humanizeEdgeFunctionMessage(fallback);
 }

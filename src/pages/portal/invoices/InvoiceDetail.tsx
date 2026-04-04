@@ -33,6 +33,8 @@ import { sv } from 'date-fns/locale';
 import InvoiceEmailModal from '@/components/portal/invoices/InvoiceEmailModal';
 import InvoicePdfModal from '@/components/portal/invoices/InvoicePdfModal';
 import RecordPaymentDialog from '@/components/portal/invoices/RecordPaymentDialog';
+import { getEdgeFunctionErrorMessage } from '@/lib/edge-function-error';
+import { getAuthenticatedFunctionHeaders } from '@/lib/supabase-function-auth';
 
 interface Invoice {
   id: string;
@@ -233,10 +235,11 @@ const InvoiceDetail: React.FC = () => {
   // Void mutation
   const voidMutation = useMutation({
     mutationFn: async () => {
-      const { data, error } = await supabase.functions.invoke('void-new-invoice', {
+      const { data, error, response } = await supabase.functions.invoke('void-new-invoice', {
+        headers: await getAuthenticatedFunctionHeaders(),
         body: { invoice_id: invoice!.id },
       });
-      if (error) throw error;
+      if (error) throw new Error(await getEdgeFunctionErrorMessage(error, response));
       if (data?.error) throw new Error(data.error);
       return data;
     },

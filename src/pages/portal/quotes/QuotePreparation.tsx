@@ -29,6 +29,7 @@ import QuoteVersionDropdown from '@/components/portal/quotes/QuoteVersionDropdow
 import { useQuoteVersioning } from '@/hooks/use-quote-versioning';
 import { getQuoteStatusBadge } from '@/lib/quote-status-badge';
 import { getEdgeFunctionErrorMessage } from '@/lib/edge-function-error';
+import { getAuthenticatedFunctionHeaders } from '@/lib/supabase-function-auth';
 import BlurCommitInput from '@/components/ui/blur-commit-input';
 import {
   Select,
@@ -474,6 +475,7 @@ const QuotePreparation: React.FC = () => {
       ];
 
       const { data, error, response } = await supabase.functions.invoke('create-draft-invoice', {
+        headers: await getAuthenticatedFunctionHeaders(),
         body: {
           customer_id: quote.customer_id,
           bom_id: quote.bom_id,

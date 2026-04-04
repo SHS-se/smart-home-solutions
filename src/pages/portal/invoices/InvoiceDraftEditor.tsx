@@ -41,6 +41,7 @@ import { toast } from '@/hooks/use-toast';
 import SKUSelector from '@/components/portal/boms/SKUSelector';
 import { useInvoiceBomRevision } from '@/hooks/use-invoice-bom-revision';
 import { getEdgeFunctionErrorMessage } from '@/lib/edge-function-error';
+import { getAuthenticatedFunctionHeaders } from '@/lib/supabase-function-auth';
 
 interface LineItem {
   id?: string;
@@ -313,6 +314,7 @@ const InvoiceDraftEditor: React.FC = () => {
       if (!selectedCustomerId) throw new Error('Customer is required');
       
       const { data, error, response } = await supabase.functions.invoke('create-draft-invoice', {
+        headers: await getAuthenticatedFunctionHeaders(),
         body: {
           customer_id: selectedCustomerId,
           bom_id: selectedBomId,
@@ -392,10 +394,11 @@ const InvoiceDraftEditor: React.FC = () => {
       await syncLinesMutation.mutateAsync();
 
       // Then finalize
-      const { data, error } = await supabase.functions.invoke('finalize-new-invoice', {
+      const { data, error, response } = await supabase.functions.invoke('finalize-new-invoice', {
+        headers: await getAuthenticatedFunctionHeaders(),
         body: { invoice_id: invoiceId },
       });
-      if (error) throw error;
+      if (error) throw new Error(await getEdgeFunctionErrorMessage(error, response));
       if (data?.error) throw new Error(data.error);
       return data;
     },
