@@ -2,7 +2,7 @@
 
 ## Goal
 
-Ship one coherent migration that removes all runtime Stripe dependency from this repo while keeping `APP_ENV`, replacing Stripe-hosted invoices with your own generated PDF invoice, and preserving invoice numbering continuity.
+Ship one coherent migration that removes all runtime Stripe dependency from this repo while keeping `APP_ENV`, replacing Stripe-hosted invoices with your own invoice page and on-demand PDF generation, and preserving invoice numbering continuity.
 
 This is not a phased rollout plan. It is one implementation slice on one branch, followed by one verification pass and one deploy.
 
@@ -66,12 +66,26 @@ Recommended model:
 
 That lets you keep the visible numbering style while still generating something bank apps reliably accept.
 
-### 3. Finalized invoices own their PDF
+### 3. Invoice delivery should mirror the quote workflow
 
-- Generate the PDF locally when an invoice moves from `draft` to `open`.
-- Store the canonical PDF in Supabase Storage, not as a temporary Stripe cache.
-- Keep a stable storage path on the invoice record, for example `pdf_storage_path`.
-- Replace `get-stripe-invoice-pdf` with `get-invoice-pdf` that serves the locally generated document by `invoice_id`.
+Use the existing public quote pattern as the model, not email attachments and not stored PDFs.
+
+Recommended flow:
+
+- when an invoice is sent, generate a unique 32-byte token like `send-quote-email` already does
+- store only the token hash and expiry on the invoice record
+- email the customer a hard-to-guess public URL on your own site
+- render the invoice and payment details on that page without requiring login
+- show payment status on that page
+- if the customer wants a PDF, generate it on demand from the same invoice data and stream it directly back
+
+This is closer to the repo's existing design than a stored-PDF workflow because public quote links already exist in:
+
+- `supabase/functions/send-quote-email/index.ts`
+- `supabase/functions/fetch-public-quote/index.ts`
+- `src/pages/portal/PublicQuotePage.tsx`
+
+The invoice implementation should reuse that architecture instead of inventing a second model.
 
 ### 4. Payment status becomes internal, not webhook-driven
 
@@ -86,18 +100,6 @@ For this one-shot migration, implement the minimal correct replacement:
 
 Do not block this migration on bank import. Manual payment registration is enough to fully replace Stripe runtime behavior.
 
-### 5. Replace Stripe subscriptions with an internal entitlement source
-
-If Stripe must be removed completely, ticket access can no longer depend on Stripe checkout and portal sessions.
-
-Recommended replacement:
-
-- add a small internal entitlement model on the customer record or in a dedicated table
-- keep the existing product rule if you still want it: support tickets require active subscription
-- source that rule from your own database, not from Stripe
-
-This is smaller and safer than trying to bolt on a second external billing system inside the same migration.
-
 ## Target End State
 
 After the migration:
@@ -109,12 +111,19 @@ After the migration:
   - allocate the next human invoice number using your local numbering rules
   - allocate the numeric OCR payment reference
   - set `status = 'open'`
-  - generate the invoice PDF
-  - store the PDF in Supabase Storage
-  - persist the PDF storage path and public metadata
   - write an `invoice_finalized` event
-- emailing an invoice attaches the local PDF and includes Bankgiro payment instructions instead of a hosted payment link
-- invoice preview/download in staff and customer views uses the stored PDF
+- sending an invoice does all of the following:
+  - generates a quote-style public access token
+  - stores only the token hash and expiry
+  - sends an email containing the public invoice URL on your own site
+- the public invoice page shows:
+  - invoice details
+  - Bankgiro payment details
+  - QR code
+  - current payment status
+- logged-in customers see the same invoices in billing history
+- logged-in invoice detail and public invoice detail share the same rendering code
+- PDF download is generated on demand and never persisted
 - invoice paid state is updated by your own payment registration flow
 - subscription gating reads from your own database
 - no runtime code talks to Stripe
@@ -124,8 +133,13 @@ After the migration:
 Add generic local-payment fields before removing Stripe-specific logic:
 
 - `invoices.payment_reference text unique`
-- `invoices.pdf_storage_path text`
 - `invoices.issued_at timestamptz`
+- `invoices.public_token_hash text`
+- `invoices.public_token_expires_at timestamptz`
+- `invoices.last_public_viewed_at timestamptz`
+- `invoices.sent_at timestamptz`
+- `invoices.last_emailed_to text`
+- `invoices.last_emailed_at timestamptz`
 - `invoices.payment_method text` or keep this on a separate payments table
 - `invoices.outstanding_amount numeric` only if you want denormalized convenience
 - `customers.subscription_active boolean` and `customers.subscription_expires_at timestamptz`
@@ -161,15 +175,24 @@ My recommendation is:
 - keep legacy Stripe columns only if they preserve historical data you care about
 - do not keep any Stripe compatibility code paths
 
+For the public-link model, keep it simple and mirror quotes:
+
+- store one active public invoice token hash directly on `invoices`
+- overwrite it when the invoice is re-sent
+- hash-compare the incoming token in the public invoice fetch function
+
+Do not add a PDF storage column or bucket.
+
 ## Invoice Numbering Strategy
 
-You asked for numbering to continue the same way as now, incrementing with gaps.
+You asked for numbering to continue the same way as now, while tolerating historical gaps.
 
 Implement that as a database function, not in TypeScript:
 
 - create `allocate_invoice_number()` as a `SECURITY DEFINER` Postgres function
 - parse only invoice numbers that match the active display pattern
-- find the smallest missing positive number in that series
+- find the highest existing issued number in that series
+- allocate the next number after that
 - format it with the active prefix and width
 - lock allocation with a transaction-safe mechanism
   - `pg_advisory_xact_lock(...)` is the cleanest option here
@@ -178,12 +201,12 @@ Implement that as a database function, not in TypeScript:
 Important guardrail:
 
 - do not reuse numbers that were already issued to real invoices, including voided invoices
-- "fill gaps" should mean missing numbers in the sequence, not recycling numbers from an auditable document
+- do not backfill historical gaps
 
 Practical pattern:
 
 - visible number in test: `TIN-0004` if that is the sandbox convention you want to keep
-- visible number in live: use your chosen live prefix, driven by config
+- visible number in live: `IN-0001` use your chosen live prefix, driven by config
 - numeric OCR reference: separate number, checksum-protected, no formatting characters
 
 ## Bankgiro, OCR, And QR Design
@@ -208,6 +231,12 @@ Replace the current "Betala online" link with a payment block containing:
 - payee name
 - QR code
 - short fallback instruction for manual payment entry
+
+That same payment block should appear in:
+
+- the public invoice page reached from the email link
+- the logged-in customer invoice detail
+- the generated PDF
 
 Implementation approach:
 
@@ -246,7 +275,6 @@ Replace or rewrite these functions:
 - `finalize-invoice`
   - convert to local finalize logic for quote-origin invoices
   - allocate invoice number and payment reference
-  - generate and store PDF
 - `finalize-new-invoice`
   - same local finalize behavior for generic draft invoices
 - `sync-invoice-lines`
@@ -257,14 +285,21 @@ Replace or rewrite these functions:
   - never call Stripe
 - `get-stripe-invoice-pdf`
   - replace with `get-invoice-pdf`
-  - look up by local invoice id
-  - authorize by staff/customer ownership
-  - return a signed URL or stream bytes from the canonical storage object
+  - look up by local invoice id or by validated public token flow
+  - render PDF bytes on demand from invoice data
+  - stream the response directly
+  - do not write to storage
 - `send-invoice-email` and `send-new-invoice-email`
   - collapse into one local invoice email sender if possible
-  - remove payment-link logic
-  - attach the stored PDF
-  - optionally include Bankgiro payment details in plain text
+  - generate a new public invoice token exactly like the quote flow
+  - email the customer the public invoice URL
+  - include Bankgiro payment details in plain text if useful
+  - do not attach a stored PDF
+- add `fetch-public-invoice`
+  - mirror `fetch-public-quote`
+  - validate `invoice_id + token`
+  - return invoice lines, totals, payment block, customer-safe metadata, and current payment status
+- add `send-public-invoice-email` if you want the naming to match the public-link intent more clearly
 - `invoice-webhook`
   - delete entirely
 - `sync-invoices`
@@ -282,26 +317,40 @@ Replace or rewrite these functions:
 
 ### Invoice UI
 
-Update all invoice views to become local-document aware:
+Update all invoice views to become shared-document aware:
+
+- add a reusable invoice presentation component, for example `InvoiceDocumentView`
+  - accepts invoice data plus mode flags
+  - renders the invoice body, payment details, QR, and payment status
+  - is used by both the public page and the logged-in page
+- add a public invoice route mirroring quotes
+  - likely similar to `/portal/invoice/:id?token=...`
+  - or another public path if you want a cleaner customer-facing URL
+- add a `PublicInvoicePage` mirroring `PublicQuotePage`
+  - fetches via the new `fetch-public-invoice`
+  - no login required
+  - shows status but no edit actions
 
 - `InvoicePdfModal`
-  - accept `invoiceId` instead of `stripeInvoiceId`
+  - accept `invoiceId` or a token-backed public invoice descriptor
   - call the new `get-invoice-pdf`
+  - download bytes generated on demand
 - `InvoiceEmailModal`
-  - remove "include payment link"
-  - keep "attach PDF"
-  - show Bankgiro instruction preview instead
+  - change from attachment-oriented UX to public-link-oriented UX
+  - preview the public invoice URL and payment details
 - `InvoiceCard`
-  - replace "Open payment" with "Preview invoice" and "Download PDF"
+  - replace "Open payment" with "Open invoice" and "Download PDF"
   - remove Stripe wording
 - `InvoiceDetail`
-  - remove hosted Stripe link
+  - remove hosted Stripe link and stored-PDF assumptions
   - add "Record payment" action
   - show payment reference
+  - share main content rendering with the public page
 - `InvoicesList` and `Billing`
   - stop depending on `stripe_invoice_id`
   - stop calling `sync-invoices`
-  - show local PDF availability based on `pdf_storage_path`
+  - show invoice status and allow opening the local invoice page
+  - allow PDF download on demand
 
 ### Draft editing
 
@@ -311,6 +360,7 @@ Update all invoice views to become local-document aware:
 - stop syncing lines to Stripe
 - finalize locally
 - navigate using the local invoice number after finalize
+- use send-email to generate or refresh the public invoice token when the invoice is sent
 
 ### Subscription UI
 
@@ -321,16 +371,51 @@ Replace the Stripe subscription UX with your own data source:
 - `SubscriptionRequiredAlert` links to your billing/contact process instead of Stripe checkout
 - ticket pages continue to gate on a subscription flag if that rule still matters
 
-## Storage Changes
+## Public Invoice Access Model
 
-The current `invoice-pdfs` bucket is modeled as a user-scoped Stripe PDF cache. Change it into a canonical invoice-document bucket.
+Mirror the existing quote access pattern instead of inventing a new auth scheme.
 
-Update it so that:
+Recommended design:
 
-- staff can generate and replace a PDF for a draft/finalized invoice they are allowed to manage
-- customers can read only PDFs for their own invoices
-- path convention is invoice-centric, not auth-user-centric
-  - for example `invoices/<invoice-id>/invoice-<invoice_number>.pdf`
+- invoice email sender creates a random token and stores only its SHA-256 hash
+- customer gets a URL like `/portal/invoice/<invoice-id>?token=<raw-token>`
+- public invoice fetch function validates:
+  - invoice exists
+  - token hash matches
+  - token is not expired
+- successful public fetch updates `last_public_viewed_at`
+- invoice status shown publicly is read from the live invoice record
+
+This keeps the implementation aligned with:
+
+- `send-quote-email`
+- `fetch-public-quote`
+- `PublicQuotePage`
+
+and avoids building a second token architecture unless you later need multiple simultaneous invoice links.
+
+## PDF Generation Model
+
+Do not store PDFs in Supabase Storage.
+
+Recommended behavior:
+
+- build a shared invoice-to-PDF renderer
+- when the user clicks "Download PDF", call `get-invoice-pdf`
+- that function fetches current invoice data, renders PDF bytes, and returns them immediately
+- the browser downloads the file
+- nothing is persisted
+
+Benefits:
+
+- no wasted storage
+- no stale PDF copies after status changes
+- public page, logged-in page, and PDF all stay based on one data model
+
+Delete the old cache behavior around:
+
+- `supabase/functions/get-stripe-invoice-pdf/index.ts`
+- the `invoice-pdfs` bucket and its policies if nothing else needs it
 
 ## Test Changes
 
@@ -342,16 +427,19 @@ Update tests and docs that assume Stripe payment:
     - create invoice
     - finalize invoice
     - send invoice email
-    - assert PDF attachment or local PDF link exists
+    - assert the email contains a valid public invoice URL on your domain
+    - open the public invoice page and verify payment details and status are visible
+    - click download PDF and verify bytes are returned
     - record payment as staff
-    - assert paid status
+    - assert paid status updates both in staff view and public invoice page
 - `docs/ui-test-migration-validation-plan.md`
   - remove Stripe hosted invoice and test-card steps
 - add unit tests for:
-  - invoice number allocation with gaps
+  - invoice number allocation continues correctly when earlier gaps exist
   - OCR reference generation
   - QR payload builder
   - PDF generation smoke test
+  - public invoice token hashing and expiry checks
   - local payment recording
 
 ## Recommended Implementation Order Inside The One Branch
@@ -359,14 +447,15 @@ Update tests and docs that assume Stripe payment:
 Do the work in this order, but keep it as one branch and one merge:
 
 1. Add the DB migration for generic invoice/payment/subscription fields and allocation functions.
-2. Rewrite the invoice edge functions to be fully local.
-3. Add PDF generation and storage.
-4. Replace invoice preview/download/email flows in the frontend.
-5. Add manual payment recording and paid-state updates.
-6. Replace subscription checks with internal entitlement reads.
-7. Delete Stripe-only functions and dead UI code.
-8. Regenerate Supabase types.
-9. Update tests and docs.
+2. Add quote-style public invoice token fields and fetch/send functions.
+3. Rewrite the invoice edge functions to be fully local.
+4. Add on-demand PDF generation.
+5. Replace invoice preview/download/email flows in the frontend with shared public/logged-in rendering.
+6. Add manual payment recording and paid-state updates.
+7. Replace subscription checks with internal entitlement reads.
+8. Delete Stripe-only functions, PDF storage cache logic, and dead UI code.
+9. Regenerate Supabase types.
+10. Update tests and docs.
 
 ## Acceptance Criteria For The One-Shot Migration
 
@@ -377,12 +466,19 @@ Do the work in this order, but keep it as one branch and one merge:
 - finalizing a draft invoice assigns:
   - a visible invoice number
   - a numeric OCR/payment reference
-  - a stored PDF
+  - no stored PDF artifact
+- sending an invoice emails a unique hard-to-guess public URL on your domain
+- the public invoice page loads without login and shows:
+  - invoice details
+  - payment details
+  - QR code
+  - payment status
+- the logged-in invoice detail reuses the same main rendering code
 - the PDF resembles the attached invoice structurally
 - the PDF shows Bankgiro details and QR instead of an online payment link
-- invoice email attaches the generated PDF
+- PDF download works on demand and nothing is stored
 - staff can mark an invoice paid without Stripe
-- customer billing pages show the local invoice PDF correctly
+- customer billing pages show invoices in history when logged in
 - subscription-gated ticket pages no longer depend on Stripe
 - `APP_ENV` still works
 
