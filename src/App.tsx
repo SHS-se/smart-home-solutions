@@ -185,6 +185,19 @@ const App = () => (
                   <Route path="/portal/customers/:customerId/home-profile" element={<CustomerViewWrapper><CustomerViewHomeProfile /></CustomerViewWrapper>} />
                   <Route path="/portal/customers/:customerId/energy-modeling" element={<CustomerViewWrapper><CustomerViewEnergyModeling /></CustomerViewWrapper>} />
 
+                  {/* Accounting routes */}
+                  <Route path="/accounting" element={<AccountingOverview />} />
+                  <Route path="/accounting/overview" element={<AccountingOverview />} />
+                  <Route path="/accounting/periods" element={<AccountingPeriods />} />
+                  <Route path="/accounting/purchases" element={<PurchasesList />} />
+                  <Route path="/accounting/purchases/upload" element={<PurchaseUpload />} />
+                  <Route path="/accounting/purchases/:purchaseId" element={<PurchaseDetail />} />
+                  <Route path="/accounting/journal" element={<AccountingJournal />} />
+                  <Route path="/accounting/vat-periods" element={<VatPeriodsList />} />
+                  <Route path="/accounting/vat-periods/:periodId" element={<VatDeclarationFlow />} />
+                  <Route path="/accounting/manual-verifications/new" element={<ManualVerification />} />
+                  <Route path="/accounting/suppliers" element={<SuppliersList />} />
+
                   <Route path="*" element={<NotFound />} />
                 </Routes>
               </Suspense>
