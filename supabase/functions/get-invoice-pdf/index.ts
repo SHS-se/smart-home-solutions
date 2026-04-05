@@ -250,12 +250,13 @@ serve(async (req) => {
 
     const logoWidth = 74;
     const logoHeight = 68;
+    const logoTopOffset = 4;
     const headerTopY = height - 48;
     const companyNameSize = 18;
     const companyNameBaselineY = headerTopY - 12;
     const companyNameTopY = companyNameBaselineY + companyNameSize;
 
-    drawShsLogo(page, leftMargin, companyNameTopY, logoWidth, logoHeight, brandBlue, white);
+    drawShsLogo(page, leftMargin, companyNameTopY - logoTopOffset, logoWidth, logoHeight, brandBlue, white);
 
     const companyX = leftMargin + logoWidth + 16;
     page.drawText(INVOICE_COMPANY.name, {
