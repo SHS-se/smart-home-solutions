@@ -266,32 +266,13 @@ serve(async (req) => {
       size: companyNameSize,
       color: black,
     });
-    page.drawText(INVOICE_COMPANY.street, {
+    const tagline = "Make your home work for you";
+    const taglineSize = fontBold.widthOfTextAtSize(INVOICE_COMPANY.name, companyNameSize) / font.widthOfTextAtSize(tagline, 1);
+    page.drawText(tagline, {
       x: companyX,
       y: companyNameBaselineY - 16,
       font,
-      size: 9,
-      color: gray,
-    });
-    page.drawText(`${INVOICE_COMPANY.postcode} ${INVOICE_COMPANY.city}`, {
-      x: companyX,
-      y: companyNameBaselineY - 29,
-      font,
-      size: 9,
-      color: gray,
-    });
-    page.drawText(`Org.nr ${INVOICE_COMPANY.orgNumber} · VAT ${INVOICE_COMPANY.vatNumber}`, {
-      x: companyX,
-      y: companyNameBaselineY - 42,
-      font,
-      size: 8,
-      color: gray,
-    });
-    page.drawText(INVOICE_COMPANY.email, {
-      x: companyX,
-      y: companyNameBaselineY - 54,
-      font,
-      size: 8,
+      size: taglineSize,
       color: gray,
     });
 
