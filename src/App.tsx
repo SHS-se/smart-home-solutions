@@ -63,6 +63,18 @@ const CustomerViewOfferDetail = lazy(() => import("./pages/portal/customer-view/
 const CustomerViewHomeProfile = lazy(() => import("./pages/portal/customer-view/CustomerViewHomeProfile"));
 const CustomerViewEnergyModeling = lazy(() => import("./pages/portal/customer-view/CustomerViewEnergyModeling"));
 
+// Accounting pages
+const AccountingOverview = lazy(() => import("./pages/accounting/AccountingOverview"));
+const AccountingPeriods = lazy(() => import("./pages/accounting/AccountingPeriods"));
+const PurchasesList = lazy(() => import("./pages/accounting/PurchasesList"));
+const PurchaseUpload = lazy(() => import("./pages/accounting/PurchaseUpload"));
+const PurchaseDetail = lazy(() => import("./pages/accounting/PurchaseDetail"));
+const AccountingJournal = lazy(() => import("./pages/accounting/AccountingJournal"));
+const VatPeriodsList = lazy(() => import("./pages/accounting/VatPeriodsList"));
+const VatDeclarationFlow = lazy(() => import("./pages/accounting/VatDeclarationFlow"));
+const ManualVerification = lazy(() => import("./pages/accounting/ManualVerification"));
+const SuppliersList = lazy(() => import("./pages/accounting/SuppliersList"));
+
 const queryClient = new QueryClient();
 
 const RouteFallback = () => (
