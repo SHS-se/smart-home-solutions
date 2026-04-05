@@ -14,6 +14,363 @@ export type Database = {
   }
   public: {
     Tables: {
+      acc_journal_lines: {
+        Row: {
+          account: string
+          account_name: string | null
+          created_at: string
+          credit: number
+          debit: number
+          description: string | null
+          id: string
+          sort_order: number
+          verification_id: string
+        }
+        Insert: {
+          account: string
+          account_name?: string | null
+          created_at?: string
+          credit?: number
+          debit?: number
+          description?: string | null
+          id?: string
+          sort_order?: number
+          verification_id: string
+        }
+        Update: {
+          account?: string
+          account_name?: string | null
+          created_at?: string
+          credit?: number
+          debit?: number
+          description?: string | null
+          id?: string
+          sort_order?: number
+          verification_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "acc_journal_lines_verification_id_fkey"
+            columns: ["verification_id"]
+            isOneToOne: false
+            referencedRelation: "acc_verifications"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      acc_periods: {
+        Row: {
+          created_at: string
+          id: string
+          locked_at: string | null
+          locked_by: string | null
+          month: number
+          status: string
+          updated_at: string
+          year: number
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          locked_at?: string | null
+          locked_by?: string | null
+          month: number
+          status?: string
+          updated_at?: string
+          year: number
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          locked_at?: string | null
+          locked_by?: string | null
+          month?: number
+          status?: string
+          updated_at?: string
+          year?: number
+        }
+        Relationships: []
+      }
+      acc_purchase_lines: {
+        Row: {
+          created_at: string
+          description: string
+          expense_account: string
+          gross_amount: number
+          id: string
+          net_amount: number
+          notes: string | null
+          purchase_id: string
+          sort_order: number
+          vat_amount: number
+          vat_rate: number
+          vat_treatment: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string
+          expense_account?: string
+          gross_amount?: number
+          id?: string
+          net_amount?: number
+          notes?: string | null
+          purchase_id: string
+          sort_order?: number
+          vat_amount?: number
+          vat_rate?: number
+          vat_treatment?: string
+        }
+        Update: {
+          created_at?: string
+          description?: string
+          expense_account?: string
+          gross_amount?: number
+          id?: string
+          net_amount?: number
+          notes?: string | null
+          purchase_id?: string
+          sort_order?: number
+          vat_amount?: number
+          vat_rate?: number
+          vat_treatment?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "acc_purchase_lines_purchase_id_fkey"
+            columns: ["purchase_id"]
+            isOneToOne: false
+            referencedRelation: "acc_purchases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      acc_purchases: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          currency: string
+          description: string | null
+          document_date: string
+          document_file_path: string | null
+          document_quality_status: string
+          document_type: string
+          due_date: string | null
+          gross_amount: number
+          id: string
+          net_amount: number
+          notes: string | null
+          payment_source: string
+          posting_date: string | null
+          status: string
+          supplier_id: string | null
+          updated_at: string
+          vat_amount: number
+          vat_evidence_status: string
+          verification_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          currency?: string
+          description?: string | null
+          document_date: string
+          document_file_path?: string | null
+          document_quality_status?: string
+          document_type?: string
+          due_date?: string | null
+          gross_amount?: number
+          id?: string
+          net_amount?: number
+          notes?: string | null
+          payment_source?: string
+          posting_date?: string | null
+          status?: string
+          supplier_id?: string | null
+          updated_at?: string
+          vat_amount?: number
+          vat_evidence_status?: string
+          verification_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          currency?: string
+          description?: string | null
+          document_date?: string
+          document_file_path?: string | null
+          document_quality_status?: string
+          document_type?: string
+          due_date?: string | null
+          gross_amount?: number
+          id?: string
+          net_amount?: number
+          notes?: string | null
+          payment_source?: string
+          posting_date?: string | null
+          status?: string
+          supplier_id?: string | null
+          updated_at?: string
+          vat_amount?: number
+          vat_evidence_status?: string
+          verification_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "acc_purchases_supplier_id_fkey"
+            columns: ["supplier_id"]
+            isOneToOne: false
+            referencedRelation: "acc_suppliers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "acc_purchases_verification_id_fkey"
+            columns: ["verification_id"]
+            isOneToOne: false
+            referencedRelation: "acc_verifications"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      acc_suppliers: {
+        Row: {
+          country: string
+          created_at: string
+          id: string
+          name: string
+          notes: string | null
+          org_number: string | null
+          supplier_type: string
+          updated_at: string
+          vat_number: string | null
+        }
+        Insert: {
+          country?: string
+          created_at?: string
+          id?: string
+          name: string
+          notes?: string | null
+          org_number?: string | null
+          supplier_type?: string
+          updated_at?: string
+          vat_number?: string | null
+        }
+        Update: {
+          country?: string
+          created_at?: string
+          id?: string
+          name?: string
+          notes?: string | null
+          org_number?: string | null
+          supplier_type?: string
+          updated_at?: string
+          vat_number?: string | null
+        }
+        Relationships: []
+      }
+      acc_vat_periods: {
+        Row: {
+          created_at: string
+          deadline: string | null
+          filing_confirmation_path: string | null
+          filing_confirmed_at: string | null
+          id: string
+          notes: string | null
+          quarter: number
+          snapshot_created_at: string | null
+          snapshot_created_by: string | null
+          snapshot_data: Json | null
+          snapshot_hash: string | null
+          status: string
+          updated_at: string
+          year: number
+        }
+        Insert: {
+          created_at?: string
+          deadline?: string | null
+          filing_confirmation_path?: string | null
+          filing_confirmed_at?: string | null
+          id?: string
+          notes?: string | null
+          quarter: number
+          snapshot_created_at?: string | null
+          snapshot_created_by?: string | null
+          snapshot_data?: Json | null
+          snapshot_hash?: string | null
+          status?: string
+          updated_at?: string
+          year: number
+        }
+        Update: {
+          created_at?: string
+          deadline?: string | null
+          filing_confirmation_path?: string | null
+          filing_confirmed_at?: string | null
+          id?: string
+          notes?: string | null
+          quarter?: number
+          snapshot_created_at?: string | null
+          snapshot_created_by?: string | null
+          snapshot_data?: Json | null
+          snapshot_hash?: string | null
+          status?: string
+          updated_at?: string
+          year?: number
+        }
+        Relationships: []
+      }
+      acc_verifications: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          description: string
+          id: string
+          is_posted: boolean
+          period_id: string | null
+          posted_at: string | null
+          posted_by: string | null
+          source_id: string | null
+          source_type: string
+          verification_date: string
+          verification_number: string | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          description?: string
+          id?: string
+          is_posted?: boolean
+          period_id?: string | null
+          posted_at?: string | null
+          posted_by?: string | null
+          source_id?: string | null
+          source_type?: string
+          verification_date: string
+          verification_number?: string | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          description?: string
+          id?: string
+          is_posted?: boolean
+          period_id?: string | null
+          posted_at?: string | null
+          posted_by?: string | null
+          source_id?: string | null
+          source_type?: string
+          verification_date?: string
+          verification_number?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "acc_verifications_period_id_fkey"
+            columns: ["period_id"]
+            isOneToOne: false
+            referencedRelation: "acc_periods"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       billing_events: {
         Row: {
           created_at: string
@@ -2613,6 +2970,7 @@ export type Database = {
       }
     }
     Functions: {
+      allocate_acc_verification_number: { Args: never; Returns: string }
       allocate_invoice_number: { Args: never; Returns: string }
       can_access_ticket_storage: {
         Args: { storage_path: string }
