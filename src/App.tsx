@@ -63,6 +63,18 @@ const CustomerViewOfferDetail = lazy(() => import("./pages/portal/customer-view/
 const CustomerViewHomeProfile = lazy(() => import("./pages/portal/customer-view/CustomerViewHomeProfile"));
 const CustomerViewEnergyModeling = lazy(() => import("./pages/portal/customer-view/CustomerViewEnergyModeling"));
 
+// Accounting pages
+const AccountingOverview = lazy(() => import("./pages/accounting/AccountingOverview"));
+const AccountingPeriods = lazy(() => import("./pages/accounting/AccountingPeriods"));
+const PurchasesList = lazy(() => import("./pages/accounting/PurchasesList"));
+const PurchaseUpload = lazy(() => import("./pages/accounting/PurchaseUpload"));
+const PurchaseDetail = lazy(() => import("./pages/accounting/PurchaseDetail"));
+const AccountingJournal = lazy(() => import("./pages/accounting/AccountingJournal"));
+const VatPeriodsList = lazy(() => import("./pages/accounting/VatPeriodsList"));
+const VatDeclarationFlow = lazy(() => import("./pages/accounting/VatDeclarationFlow"));
+const ManualVerification = lazy(() => import("./pages/accounting/ManualVerification"));
+const SuppliersList = lazy(() => import("./pages/accounting/SuppliersList"));
+
 const queryClient = new QueryClient();
 
 const RouteFallback = () => (
@@ -172,6 +184,19 @@ const App = () => (
                   <Route path="/portal/customers/:customerId/offers/:quoteId" element={<CustomerViewWrapper><CustomerViewOfferDetail /></CustomerViewWrapper>} />
                   <Route path="/portal/customers/:customerId/home-profile" element={<CustomerViewWrapper><CustomerViewHomeProfile /></CustomerViewWrapper>} />
                   <Route path="/portal/customers/:customerId/energy-modeling" element={<CustomerViewWrapper><CustomerViewEnergyModeling /></CustomerViewWrapper>} />
+
+                  {/* Accounting routes */}
+                  <Route path="/accounting" element={<AccountingOverview />} />
+                  <Route path="/accounting/overview" element={<AccountingOverview />} />
+                  <Route path="/accounting/periods" element={<AccountingPeriods />} />
+                  <Route path="/accounting/purchases" element={<PurchasesList />} />
+                  <Route path="/accounting/purchases/upload" element={<PurchaseUpload />} />
+                  <Route path="/accounting/purchases/:purchaseId" element={<PurchaseDetail />} />
+                  <Route path="/accounting/journal" element={<AccountingJournal />} />
+                  <Route path="/accounting/vat-periods" element={<VatPeriodsList />} />
+                  <Route path="/accounting/vat-periods/:periodId" element={<VatDeclarationFlow />} />
+                  <Route path="/accounting/manual-verifications/new" element={<ManualVerification />} />
+                  <Route path="/accounting/suppliers" element={<SuppliersList />} />
 
                   <Route path="*" element={<NotFound />} />
                 </Routes>
