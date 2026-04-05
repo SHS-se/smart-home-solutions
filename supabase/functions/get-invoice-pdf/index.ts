@@ -252,8 +252,8 @@ serve(async (req) => {
     const logoHeight = 68;
     const headerTopY = height - 48;
     const companyNameSize = 18;
-    const companyNameTopY = headerTopY + 6;
-    const companyNameBaselineY = companyNameTopY - companyNameSize;
+    const companyNameBaselineY = headerTopY - 12;
+    const companyNameTopY = companyNameBaselineY + fontBold.heightAtSize(companyNameSize) - 2;
 
     drawShsLogo(page, leftMargin, companyNameTopY - logoHeight, logoWidth, logoHeight, brandBlue, white);
 
@@ -319,7 +319,7 @@ serve(async (req) => {
         x: leftMargin + fontBold.widthOfTextAtSize("FAKTURA", 24) + 14,
         y,
         font: fontBold,
-        size: 18,
+        size: 24,
         color: rgb(0.88, 0.18, 0.18),
       });
     }
