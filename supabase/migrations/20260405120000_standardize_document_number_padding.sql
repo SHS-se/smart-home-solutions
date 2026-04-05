@@ -187,71 +187,181 @@ BEGIN
 END;
 $$;
 
-UPDATE public.quotes
-SET quote_number = CASE
-  WHEN quote_number LIKE 'Q-%' THEN 'Q-' || LPAD(SUBSTRING(quote_number FROM 3), 6, '0')
-  WHEN quote_number LIKE 'TQ-%' THEN 'TQ-' || LPAD(SUBSTRING(quote_number FROM 4), 6, '0')
-  ELSE quote_number
-END
-WHERE quote_number ~ '^(Q|TQ)-\d+$';
+CREATE TEMP TABLE quote_number_migration_map (
+  quote_id uuid PRIMARY KEY,
+  new_quote_number text NOT NULL UNIQUE
+) ON COMMIT DROP;
 
-UPDATE public.invoices
-SET invoice_number = CASE
-  WHEN invoice_number LIKE 'IN-%' THEN 'IN-' || LPAD(SUBSTRING(invoice_number FROM 4), 6, '0')
-  WHEN invoice_number LIKE 'TIN-%' THEN 'TIN-' || LPAD(SUBSTRING(invoice_number FROM 5), 6, '0')
-  ELSE invoice_number
-END
-WHERE invoice_number ~ '^(IN|TIN)-\d+$';
-
-UPDATE public.quotes
-SET invoice_number = CASE
-  WHEN invoice_number LIKE 'IN-%' THEN 'IN-' || LPAD(SUBSTRING(invoice_number FROM 4), 6, '0')
-  WHEN invoice_number LIKE 'TIN-%' THEN 'TIN-' || LPAD(SUBSTRING(invoice_number FROM 5), 6, '0')
-  ELSE invoice_number
-END
-WHERE invoice_number ~ '^(IN|TIN)-\d+$';
-
-UPDATE public.billing_events
-SET metadata = jsonb_set(
-  metadata,
-  '{quote_number}',
-  to_jsonb(
+INSERT INTO quote_number_migration_map (quote_id, new_quote_number)
+WITH quote_rows AS (
+  SELECT
+    q.id,
+    q.created_at,
     CASE
-      WHEN metadata->>'quote_number' LIKE 'Q-%' THEN 'Q-' || LPAD(SUBSTRING(metadata->>'quote_number' FROM 3), 6, '0')
-      WHEN metadata->>'quote_number' LIKE 'TQ-%' THEN 'TQ-' || LPAD(SUBSTRING(metadata->>'quote_number' FROM 4), 6, '0')
-      ELSE metadata->>'quote_number'
-    END
-  )
-)
-WHERE metadata ? 'quote_number'
-  AND metadata->>'quote_number' ~ '^(Q|TQ)-\d+$';
-
-UPDATE public.billing_events
-SET metadata = jsonb_set(
-  metadata,
-  '{invoice_number}',
-  to_jsonb(
+      WHEN q.quote_number LIKE 'Q-%' THEN 'Q-'
+      ELSE 'TQ-'
+    END AS prefix,
     CASE
-      WHEN metadata->>'invoice_number' LIKE 'IN-%' THEN 'IN-' || LPAD(SUBSTRING(metadata->>'invoice_number' FROM 4), 6, '0')
-      WHEN metadata->>'invoice_number' LIKE 'TIN-%' THEN 'TIN-' || LPAD(SUBSTRING(metadata->>'invoice_number' FROM 5), 6, '0')
-      ELSE metadata->>'invoice_number'
-    END
-  )
+      WHEN q.quote_number LIKE 'Q-%' THEN SUBSTRING(q.quote_number FROM 3)::integer
+      ELSE SUBSTRING(q.quote_number FROM 4)::integer
+    END AS numeric_value
+  FROM public.quotes q
+  WHERE q.quote_number ~ '^(Q|TQ)-\d+$'
+),
+ranked AS (
+  SELECT
+    qr.*,
+    ROW_NUMBER() OVER (PARTITION BY qr.prefix, qr.numeric_value ORDER BY qr.created_at, qr.id) AS numeric_rank
+  FROM quote_rows qr
+),
+prefix_max AS (
+  SELECT
+    prefix,
+    COALESCE(MAX(numeric_value), 0) AS max_numeric_value
+  FROM ranked
+  GROUP BY prefix
+),
+duplicate_overflow AS (
+  SELECT
+    r.id,
+    pm.max_numeric_value
+      + ROW_NUMBER() OVER (PARTITION BY r.prefix ORDER BY r.numeric_value, r.created_at, r.id) AS reassigned_numeric
+  FROM ranked r
+  JOIN prefix_max pm USING (prefix)
+  WHERE r.numeric_rank > 1
 )
-WHERE metadata ? 'invoice_number'
-  AND metadata->>'invoice_number' ~ '^(IN|TIN)-\d+$';
+SELECT
+  r.id,
+  r.prefix || LPAD(COALESCE(d.reassigned_numeric, r.numeric_value)::text, 6, '0')
+FROM ranked r
+LEFT JOIN duplicate_overflow d ON d.id = r.id;
 
-UPDATE public.invoice_events
-SET metadata = jsonb_set(
-  metadata,
-  '{invoice_number}',
-  to_jsonb(
+UPDATE public.quotes q
+SET quote_number = '__quote_renumber__' || q.id::text
+FROM quote_number_migration_map m
+WHERE q.id = m.quote_id;
+
+UPDATE public.quotes q
+SET quote_number = m.new_quote_number
+FROM quote_number_migration_map m
+WHERE q.id = m.quote_id;
+
+CREATE TEMP TABLE invoice_number_migration_map (
+  invoice_id uuid PRIMARY KEY,
+  new_invoice_number text NOT NULL UNIQUE
+) ON COMMIT DROP;
+
+INSERT INTO invoice_number_migration_map (invoice_id, new_invoice_number)
+WITH invoice_rows AS (
+  SELECT
+    i.id,
+    i.created_at,
     CASE
-      WHEN metadata->>'invoice_number' LIKE 'IN-%' THEN 'IN-' || LPAD(SUBSTRING(metadata->>'invoice_number' FROM 4), 6, '0')
-      WHEN metadata->>'invoice_number' LIKE 'TIN-%' THEN 'TIN-' || LPAD(SUBSTRING(metadata->>'invoice_number' FROM 5), 6, '0')
-      ELSE metadata->>'invoice_number'
-    END
-  )
+      WHEN i.invoice_number LIKE 'IN-%' THEN 'IN-'
+      ELSE 'TIN-'
+    END AS prefix,
+    CASE
+      WHEN i.invoice_number LIKE 'IN-%' THEN SUBSTRING(i.invoice_number FROM 4)::integer
+      ELSE SUBSTRING(i.invoice_number FROM 5)::integer
+    END AS numeric_value
+  FROM public.invoices i
+  WHERE i.invoice_number ~ '^(IN|TIN)-\d+$'
+),
+ranked AS (
+  SELECT
+    ir.*,
+    ROW_NUMBER() OVER (PARTITION BY ir.prefix, ir.numeric_value ORDER BY ir.created_at, ir.id) AS numeric_rank
+  FROM invoice_rows ir
+),
+prefix_max AS (
+  SELECT
+    prefix,
+    COALESCE(MAX(numeric_value), 0) AS max_numeric_value
+  FROM ranked
+  GROUP BY prefix
+),
+duplicate_overflow AS (
+  SELECT
+    r.id,
+    pm.max_numeric_value
+      + ROW_NUMBER() OVER (PARTITION BY r.prefix ORDER BY r.numeric_value, r.created_at, r.id) AS reassigned_numeric
+  FROM ranked r
+  JOIN prefix_max pm USING (prefix)
+  WHERE r.numeric_rank > 1
 )
-WHERE metadata ? 'invoice_number'
-  AND metadata->>'invoice_number' ~ '^(IN|TIN)-\d+$';
+SELECT
+  r.id,
+  r.prefix || LPAD(COALESCE(d.reassigned_numeric, r.numeric_value)::text, 6, '0')
+FROM ranked r
+LEFT JOIN duplicate_overflow d ON d.id = r.id;
+
+UPDATE public.invoices i
+SET invoice_number = '__invoice_renumber__' || i.id::text
+FROM invoice_number_migration_map m
+WHERE i.id = m.invoice_id;
+
+UPDATE public.invoices i
+SET invoice_number = m.new_invoice_number
+FROM invoice_number_migration_map m
+WHERE i.id = m.invoice_id;
+
+UPDATE public.quotes q
+SET invoice_number = i.invoice_number
+FROM public.invoices i
+WHERE i.quote_id = q.id
+  AND i.invoice_number IS NOT NULL;
+
+UPDATE public.billing_events be
+SET metadata = jsonb_set(COALESCE(be.metadata, '{}'::jsonb), '{quote_number}', to_jsonb(q.quote_number))
+FROM public.quotes q
+WHERE be.quote_id = q.id
+  AND be.metadata ? 'quote_number'
+  AND q.quote_number IS NOT NULL;
+
+UPDATE public.billing_events be
+SET metadata = jsonb_set(COALESCE(be.metadata, '{}'::jsonb), '{invoice_number}', to_jsonb(q.invoice_number))
+FROM public.quotes q
+WHERE be.quote_id = q.id
+  AND be.metadata ? 'invoice_number'
+  AND q.invoice_number IS NOT NULL;
+
+UPDATE public.invoice_events ie
+SET metadata = jsonb_set(COALESCE(ie.metadata, '{}'::jsonb), '{invoice_number}', to_jsonb(i.invoice_number))
+FROM public.invoices i
+WHERE ie.invoice_id = i.id
+  AND ie.metadata ? 'invoice_number'
+  AND i.invoice_number IS NOT NULL;
+
+UPDATE public.document_sequences
+SET next_value = GREATEST(
+  next_value,
+  COALESCE((
+    SELECT MAX(
+      CASE
+        WHEN quote_number LIKE 'Q-%' THEN SUBSTRING(quote_number FROM 3)::integer
+        WHEN quote_number LIKE 'TQ-%' THEN SUBSTRING(quote_number FROM 4)::integer
+        ELSE NULL
+      END
+    ) + 1
+    FROM public.quotes
+    WHERE quote_number ~ '^(Q|TQ)-\d+$'
+  ), 1)
+)
+WHERE key = 'quote';
+
+UPDATE public.document_sequences
+SET next_value = GREATEST(
+  next_value,
+  COALESCE((
+    SELECT MAX(
+      CASE
+        WHEN invoice_number LIKE 'IN-%' THEN SUBSTRING(invoice_number FROM 4)::integer
+        WHEN invoice_number LIKE 'TIN-%' THEN SUBSTRING(invoice_number FROM 5)::integer
+        ELSE NULL
+      END
+    ) + 1
+    FROM public.invoices
+    WHERE invoice_number ~ '^(IN|TIN)-\d+$'
+  ), 1)
+)
+WHERE key = 'invoice';
