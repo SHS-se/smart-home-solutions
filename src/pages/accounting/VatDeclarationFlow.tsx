@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatSEK, PURCHASE_STATUS_LABELS } from '@/lib/accounting-utils';
 import { toast } from 'sonner';
-import { ArrowLeft, CheckCircle, AlertTriangle, Lock, Download, Upload, Info } from 'lucide-react';
+import { ArrowLeft, CheckCircle, AlertTriangle, Lock, Download, Upload, Info, FileText } from 'lucide-react';
 
 interface StepProps {
   number: number;
