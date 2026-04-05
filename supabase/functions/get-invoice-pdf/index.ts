@@ -253,7 +253,7 @@ serve(async (req) => {
     const headerTopY = height - 48;
     const companyNameSize = 18;
     const companyNameBaselineY = headerTopY - 12;
-    const companyNameTopY = companyNameBaselineY + fontBold.heightAtSize(companyNameSize) - 2;
+    const companyNameTopY = companyNameBaselineY + companyNameSize;
 
     drawShsLogo(page, leftMargin, companyNameTopY - logoHeight, logoWidth, logoHeight, brandBlue, white);
 
