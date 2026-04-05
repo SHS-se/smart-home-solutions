@@ -5,7 +5,7 @@ import { supabase } from '@/integrations/supabase/client';
 import AccountingLayout from '@/components/accounting/AccountingLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Calendar, Receipt, ShoppingCart, AlertCircle, ArrowRight } from 'lucide-react';
+import { Calendar, Receipt, ShoppingCart, AlertCircle, ArrowRight, BookOpen } from 'lucide-react';
 import { MONTH_NAMES_SV, PURCHASE_STATUS_LABELS, PURCHASE_STATUS_COLORS, formatSEK } from '@/lib/accounting-utils';
 
 const AccountingOverview: React.FC = () => {
