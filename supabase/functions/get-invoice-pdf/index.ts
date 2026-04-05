@@ -267,15 +267,11 @@ serve(async (req) => {
       color: black,
     });
     const tagline = "Make your home work for you";
-    const taglineSize = 14;
-    const companyNameWidth = fontBold.widthOfTextAtSize(INVOICE_COMPANY.name, companyNameSize);
-    const taglineWidth = font.widthOfTextAtSize(tagline, taglineSize);
-    const taglineCentreX = companyX + companyNameWidth / 2;
     page.drawText(tagline, {
-      x: taglineCentreX - taglineWidth / 2,
+      x: companyX,
       y: companyNameBaselineY - 16 - 4,
       font,
-      size: taglineSize,
+      size: 12,
       color: gray,
     });
 
