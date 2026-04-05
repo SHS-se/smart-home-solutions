@@ -238,41 +238,44 @@ serve(async (req) => {
     const logoWidth = 78;
     const logoHeight = 68;
     const headerTopY = height - 48;
+    const companyNameSize = 18;
+    const companyNameTopY = headerTopY + 6;
+    const companyNameBaselineY = companyNameTopY - companyNameSize;
 
-    drawShsLogo(page, leftMargin, headerTopY - logoHeight, logoWidth, logoHeight, fontBold, brandBlue, white);
+    drawShsLogo(page, leftMargin, companyNameTopY - logoHeight, logoWidth, logoHeight, fontBold, brandBlue, white);
 
     const companyX = leftMargin + logoWidth + 16;
     page.drawText(INVOICE_COMPANY.name, {
       x: companyX,
-      y: headerTopY - 6,
+      y: companyNameBaselineY,
       font: fontBold,
-      size: 18,
+      size: companyNameSize,
       color: black,
     });
     page.drawText(INVOICE_COMPANY.street, {
       x: companyX,
-      y: headerTopY - 22,
+      y: companyNameBaselineY - 16,
       font,
       size: 9,
       color: gray,
     });
     page.drawText(`${INVOICE_COMPANY.postcode} ${INVOICE_COMPANY.city}`, {
       x: companyX,
-      y: headerTopY - 35,
+      y: companyNameBaselineY - 29,
       font,
       size: 9,
       color: gray,
     });
     page.drawText(`Org.nr ${INVOICE_COMPANY.orgNumber} · VAT ${INVOICE_COMPANY.vatNumber}`, {
       x: companyX,
-      y: headerTopY - 48,
+      y: companyNameBaselineY - 42,
       font,
       size: 8,
       color: gray,
     });
     page.drawText(INVOICE_COMPANY.email, {
       x: companyX,
-      y: headerTopY - 60,
+      y: companyNameBaselineY - 54,
       font,
       size: 8,
       color: gray,
@@ -411,7 +414,7 @@ serve(async (req) => {
     });
     page.drawText("Beskrivning", { x: leftMargin + 6, y: y + 2, font: fontBold, size: 8, color: gray });
     page.drawText("Antal", { x: 332, y: y + 2, font: fontBold, size: 8, color: gray });
-    page.drawText("Á-pris", { x: 382, y: y + 2, font: fontBold, size: 8, color: gray });
+    page.drawText("á-pris", { x: 382, y: y + 2, font: fontBold, size: 8, color: gray });
     page.drawText("Moms", { x: 444, y: y + 2, font: fontBold, size: 8, color: gray });
     page.drawText("Belopp", { x: 492, y: y + 2, font: fontBold, size: 8, color: gray });
 
@@ -475,7 +478,7 @@ serve(async (req) => {
     page.drawText("Att betala", { x: totalsX, y: totalsY, font: fontBold, size: 11, color: black });
     drawRightAlignedText(page, formatSEK(total), amountRightX, totalsY, fontBold, 11, black);
 
-    const paymentTopY = 132;
+    const paymentTopY = totalsY - 40;
     page.drawLine({
       start: { x: leftMargin, y: paymentTopY + 18 },
       end: { x: rightMargin, y: paymentTopY + 18 },
@@ -558,7 +561,7 @@ serve(async (req) => {
 
     page.drawText(invoice.payment_details.manual_payment_instruction, {
       x: leftMargin,
-      y: 64,
+      y: paymentY - 22,
       font,
       size: 8,
       color: gray,

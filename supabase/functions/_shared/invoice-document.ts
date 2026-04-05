@@ -77,6 +77,10 @@ interface LoadedInvoiceRow {
   customer_id: string;
   customer: {
     name: string | null;
+    billing_same_as_site: boolean | null;
+    site_street: string | null;
+    site_postcode: string | null;
+    site_city: string | null;
     billing_street: string | null;
     billing_postcode: string | null;
     billing_city: string | null;
@@ -181,7 +185,7 @@ export async function loadInvoiceDocumentData(
   const { data: invoice, error: invoiceError } = await serviceClient
     .from("invoices")
     .select(
-      "id, invoice_number, status, due_date, currency, customer_id, created_at, finalized_at, issued_at, paid_at, voided_at, quote_number, customer:customers_with_identity!invoices_customer_id_fkey(name, billing_street, billing_postcode, billing_city)",
+      "id, invoice_number, status, due_date, currency, customer_id, created_at, finalized_at, issued_at, paid_at, voided_at, quote_number, customer:customers_with_identity!invoices_customer_id_fkey(name, billing_same_as_site, site_street, site_postcode, site_city, billing_street, billing_postcode, billing_city)",
     )
     .eq("id", invoiceId)
     .single();
@@ -213,6 +217,7 @@ export async function loadInvoiceDocumentData(
   const subtotal = toNumber(totals?.subtotal ?? 0);
   const tax = toNumber(totals?.tax ?? 0);
   const total = toNumber(totals?.total ?? 0);
+  const useSiteAddress = typedInvoice.customer?.billing_same_as_site === true;
   const paymentDetails = await buildInvoicePaymentDetails({
     invoiceNumber: typedInvoice.invoice_number,
     amount: total,
@@ -238,9 +243,9 @@ export async function loadInvoiceDocumentData(
     customer_name: typedInvoice.customer?.name || null,
     customer_address: typedInvoice.customer
       ? {
-          street: typedInvoice.customer.billing_street,
-          postcode: typedInvoice.customer.billing_postcode,
-          city: typedInvoice.customer.billing_city,
+          street: useSiteAddress ? typedInvoice.customer.site_street : typedInvoice.customer.billing_street,
+          postcode: useSiteAddress ? typedInvoice.customer.site_postcode : typedInvoice.customer.billing_postcode,
+          city: useSiteAddress ? typedInvoice.customer.site_city : typedInvoice.customer.billing_city,
         }
       : null,
     line_items: (lineItems || []).map((item) => ({
