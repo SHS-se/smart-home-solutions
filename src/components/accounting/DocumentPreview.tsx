@@ -7,10 +7,7 @@ import { Progress } from '@/components/ui/progress';
 import { Upload, ZoomIn, ZoomOut, ChevronLeft, ChevronRight, Eye, EyeOff, RefreshCw } from 'lucide-react';
 import type { WordPosition } from '@/lib/document-extraction';
 
-pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
-  import.meta.url,
-).toString();
+pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
 interface Props {
   file: File | null;
