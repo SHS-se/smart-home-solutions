@@ -2,13 +2,17 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { useLanguage } from '@/contexts/LanguageContext';
 import AccountingLayout from '@/components/accounting/AccountingLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Calendar, Receipt, ShoppingCart, AlertCircle, ArrowRight, BookOpen } from 'lucide-react';
-import { MONTH_NAMES_SV, PURCHASE_STATUS_LABELS, PURCHASE_STATUS_COLORS, formatSEK } from '@/lib/accounting-utils';
+import { MONTH_NAMES_SV, MONTH_NAMES_EN, PURCHASE_STATUS_LABELS, PURCHASE_STATUS_LABELS_EN, PURCHASE_STATUS_COLORS, formatSEK } from '@/lib/accounting-utils';
 
 const AccountingOverview: React.FC = () => {
+  const { t, language } = useLanguage();
+  const monthNames = language === 'sv' ? MONTH_NAMES_SV : MONTH_NAMES_EN;
+
   const { data: periods } = useQuery({
     queryKey: ['acc-periods'],
     queryFn: async () => {
@@ -49,26 +53,25 @@ const AccountingOverview: React.FC = () => {
   const blockedPurchases = purchases?.filter(p => p.status === 'blocked') || [];
   const reviewPurchases = purchases?.filter(p => p.status === 'in_review') || [];
 
-  // Action items
   const actionItems: Array<{ title: string; detail: string; href: string }> = [];
   if (draftPurchases.length > 0) {
     actionItems.push({
-      title: `${draftPurchases.length} utkast att granska`,
-      detail: 'Inköp',
+      title: t(`${draftPurchases.length} utkast att granska`, `${draftPurchases.length} drafts to review`),
+      detail: t('Inköp', 'Purchases'),
       href: '/accounting/purchases',
     });
   }
   if (blockedPurchases.length > 0) {
     actionItems.push({
-      title: `${blockedPurchases.length} blockerade inköp`,
-      detail: 'Kräver åtgärd',
+      title: t(`${blockedPurchases.length} blockerade inköp`, `${blockedPurchases.length} blocked purchases`),
+      detail: t('Kräver åtgärd', 'Action required'),
       href: '/accounting/purchases',
     });
   }
   if (reviewPurchases.length > 0) {
     actionItems.push({
-      title: `${reviewPurchases.length} inköp under granskning`,
-      detail: 'Inköp',
+      title: t(`${reviewPurchases.length} inköp under granskning`, `${reviewPurchases.length} purchases under review`),
+      detail: t('Inköp', 'Purchases'),
       href: '/accounting/purchases',
     });
   }
@@ -77,21 +80,20 @@ const AccountingOverview: React.FC = () => {
     <AccountingLayout>
       <div className="space-y-8">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Ekonomiöversikt</h1>
-          <p className="text-muted-foreground mt-1">Översikt över ekonomi och bokföring</p>
+          <h1 className="text-2xl font-bold text-foreground">{t('Ekonomiöversikt', 'Financial overview')}</h1>
+          <p className="text-muted-foreground mt-1">{t('Översikt över ekonomi och bokföring', 'Overview of finances and accounting')}</p>
         </div>
 
-        {/* Summary cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <Card className="border border-border">
             <CardContent className="p-5 flex justify-between items-start">
               <div>
-                <p className="text-xs text-muted-foreground">Aktuell period</p>
+                <p className="text-xs text-muted-foreground">{t('Aktuell period', 'Current period')}</p>
                 <p className="text-xl font-bold mt-1">
-                  {currentPeriod ? `${MONTH_NAMES_SV[currentPeriod.month]} ${currentPeriod.year}` : '–'}
+                  {currentPeriod ? `${monthNames[currentPeriod.month]} ${currentPeriod.year}` : '–'}
                 </p>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  {currentPeriod ? (currentPeriod.status === 'open' ? 'Öppen för bokföring' : currentPeriod.status) : ''}
+                  {currentPeriod ? (currentPeriod.status === 'open' ? t('Öppen för bokföring', 'Open for posting') : currentPeriod.status) : ''}
                 </p>
               </div>
               <Calendar className="w-5 h-5 text-primary-light" />
@@ -101,9 +103,9 @@ const AccountingOverview: React.FC = () => {
           <Card className="border border-border">
             <CardContent className="p-5 flex justify-between items-start">
               <div>
-                <p className="text-xs text-muted-foreground">Nästa momsdeklaration</p>
+                <p className="text-xs text-muted-foreground">{t('Nästa momsdeklaration', 'Next VAT declaration')}</p>
                 <p className="text-xl font-bold mt-1">
-                  {q1Vat?.deadline ? new Date(q1Vat.deadline).toLocaleDateString('sv-SE', { day: 'numeric', month: 'short', year: 'numeric' }) : '–'}
+                  {q1Vat?.deadline ? new Date(q1Vat.deadline).toLocaleDateString(language === 'sv' ? 'sv-SE' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '–'}
                 </p>
                 <p className="text-xs text-muted-foreground mt-0.5">Q1 2026</p>
               </div>
@@ -114,9 +116,9 @@ const AccountingOverview: React.FC = () => {
           <Card className="border border-border">
             <CardContent className="p-5 flex justify-between items-start">
               <div>
-                <p className="text-xs text-muted-foreground">Inköp att granska</p>
+                <p className="text-xs text-muted-foreground">{t('Inköp att granska', 'Purchases to review')}</p>
                 <p className="text-xl font-bold mt-1">{draftPurchases.length + reviewPurchases.length + blockedPurchases.length}</p>
-                <p className="text-xs text-muted-foreground mt-0.5">ej bokförda</p>
+                <p className="text-xs text-muted-foreground mt-0.5">{t('ej bokförda', 'not posted')}</p>
               </div>
               <ShoppingCart className="w-5 h-5 text-primary-light" />
             </CardContent>
@@ -125,12 +127,12 @@ const AccountingOverview: React.FC = () => {
           <Card className="border border-border">
             <CardContent className="p-5 flex justify-between items-start">
               <div>
-                <p className="text-xs text-muted-foreground">Bokförda inköp</p>
+                <p className="text-xs text-muted-foreground">{t('Bokförda inköp', 'Posted purchases')}</p>
                 <p className="text-xl font-bold mt-1">
                   {purchases ? formatSEK(purchases.filter(p => p.status === 'posted').reduce((s, p) => s + Number(p.gross_amount), 0)) : '–'}
                 </p>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  {purchases?.filter(p => p.status === 'posted').length || 0} poster
+                  {purchases?.filter(p => p.status === 'posted').length || 0} {t('poster', 'entries')}
                 </p>
               </div>
               <Receipt className="w-5 h-5 text-primary-light" />
@@ -138,14 +140,13 @@ const AccountingOverview: React.FC = () => {
           </Card>
         </div>
 
-        {/* Action items */}
         {actionItems.length > 0 && (
           <Card className="border border-border">
             <CardHeader className="pb-3">
               <div className="flex items-center gap-2">
                 <AlertCircle className="w-5 h-5 text-amber-500" />
-                <CardTitle className="text-lg">Kräver åtgärd</CardTitle>
-                <span className="text-sm text-muted-foreground ml-auto">{actionItems.length} poster</span>
+                <CardTitle className="text-lg">{t('Kräver åtgärd', 'Action required')}</CardTitle>
+                <span className="text-sm text-muted-foreground ml-auto">{actionItems.length} {t('poster', 'items')}</span>
               </div>
             </CardHeader>
             <CardContent className="pt-0 divide-y divide-border">
@@ -162,14 +163,13 @@ const AccountingOverview: React.FC = () => {
           </Card>
         )}
 
-        {/* Quick actions */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <Link to="/accounting/purchases/upload">
             <Card className="border border-border hover:shadow-soft transition-shadow cursor-pointer">
               <CardContent className="p-6">
                 <ShoppingCart className="w-8 h-8 text-primary mb-3" />
-                <h3 className="font-semibold">Ladda upp inköp</h3>
-                <p className="text-sm text-muted-foreground mt-1">Registrera nya leverantörsfakturor</p>
+                <h3 className="font-semibold">{t('Ladda upp inköp', 'Upload purchase')}</h3>
+                <p className="text-sm text-muted-foreground mt-1">{t('Registrera nya leverantörsfakturor', 'Register new supplier invoices')}</p>
               </CardContent>
             </Card>
           </Link>
@@ -178,8 +178,8 @@ const AccountingOverview: React.FC = () => {
             <Card className="border border-border hover:shadow-soft transition-shadow cursor-pointer">
               <CardContent className="p-6">
                 <Receipt className="w-8 h-8 text-primary mb-3" />
-                <h3 className="font-semibold">Momsdeklaration</h3>
-                <p className="text-sm text-muted-foreground mt-1">Granska och lämna in moms</p>
+                <h3 className="font-semibold">{t('Momsdeklaration', 'VAT declaration')}</h3>
+                <p className="text-sm text-muted-foreground mt-1">{t('Granska och lämna in moms', 'Review and submit VAT')}</p>
               </CardContent>
             </Card>
           </Link>
@@ -189,7 +189,7 @@ const AccountingOverview: React.FC = () => {
               <CardContent className="p-6">
                 <BookOpen className="w-8 h-8 text-primary mb-3" />
                 <h3 className="font-semibold">Journal</h3>
-                <p className="text-sm text-muted-foreground mt-1">Visa bokförda transaktioner</p>
+                <p className="text-sm text-muted-foreground mt-1">{t('Visa bokförda transaktioner', 'View posted transactions')}</p>
               </CardContent>
             </Card>
           </Link>

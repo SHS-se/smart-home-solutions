@@ -1,23 +1,18 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { useAuth } from '@/contexts/AuthContext';
+import { useLanguage } from '@/contexts/LanguageContext';
 import {
   LayoutDashboard,
-  Settings,
   Calendar,
   BookOpen,
   ShoppingCart,
   Users,
-  CreditCard,
-  BarChart3,
-  FileText,
   Receipt,
-  Shield,
   PenLine,
-  Home,
 } from 'lucide-react';
-import { isTestEnvironment } from '@/lib/environment';
 import UserMenu from '@/components/UserMenu';
+import LanguageToggle from '@/components/LanguageToggle';
+import ShsLogo from '@/components/ShsLogo';
 
 interface AccountingLayoutProps {
   children: React.ReactNode;
@@ -25,47 +20,54 @@ interface AccountingLayoutProps {
 
 interface NavItem {
   href: string;
-  label: string;
+  labelSv: string;
+  labelEn: string;
   icon: React.ReactNode;
 }
 
 interface NavGroup {
-  title: string;
+  titleSv: string;
+  titleEn: string;
   items: NavItem[];
 }
 
 const navGroups: NavGroup[] = [
   {
-    title: 'KONTROLL',
+    titleSv: 'KONTROLL',
+    titleEn: 'CONTROL',
     items: [
-      { href: '/accounting/overview', label: 'Översikt', icon: <LayoutDashboard className="w-4 h-4" /> },
-      { href: '/accounting/periods', label: 'Perioder', icon: <Calendar className="w-4 h-4" /> },
+      { href: '/accounting/overview', labelSv: 'Översikt', labelEn: 'Overview', icon: <LayoutDashboard className="w-4 h-4" /> },
+      { href: '/accounting/periods', labelSv: 'Perioder', labelEn: 'Periods', icon: <Calendar className="w-4 h-4" /> },
     ],
   },
   {
-    title: 'BOKFÖRING',
+    titleSv: 'BOKFÖRING',
+    titleEn: 'ACCOUNTING',
     items: [
-      { href: '/accounting/journal', label: 'Journal', icon: <BookOpen className="w-4 h-4" /> },
-      { href: '/accounting/manual-verifications/new', label: 'Manuell verifikation', icon: <PenLine className="w-4 h-4" /> },
+      { href: '/accounting/journal', labelSv: 'Journal', labelEn: 'Journal', icon: <BookOpen className="w-4 h-4" /> },
+      { href: '/accounting/manual-verifications/new', labelSv: 'Manuell verifikation', labelEn: 'Manual entry', icon: <PenLine className="w-4 h-4" /> },
     ],
   },
   {
-    title: 'INKÖP',
+    titleSv: 'INKÖP',
+    titleEn: 'PURCHASES',
     items: [
-      { href: '/accounting/purchases', label: 'Inköp', icon: <ShoppingCart className="w-4 h-4" /> },
-      { href: '/accounting/suppliers', label: 'Leverantörer', icon: <Users className="w-4 h-4" /> },
+      { href: '/accounting/purchases', labelSv: 'Inköp', labelEn: 'Purchases', icon: <ShoppingCart className="w-4 h-4" /> },
+      { href: '/accounting/suppliers', labelSv: 'Leverantörer', labelEn: 'Suppliers', icon: <Users className="w-4 h-4" /> },
     ],
   },
   {
-    title: 'MOMS',
+    titleSv: 'MOMS',
+    titleEn: 'VAT',
     items: [
-      { href: '/accounting/vat-periods', label: 'Momsperioder', icon: <Receipt className="w-4 h-4" /> },
+      { href: '/accounting/vat-periods', labelSv: 'Momsperioder', labelEn: 'VAT periods', icon: <Receipt className="w-4 h-4" /> },
     ],
   },
 ];
 
 const AccountingLayout: React.FC<AccountingLayoutProps> = ({ children }) => {
   const location = useLocation();
+  const { t } = useLanguage();
 
   const isActive = (path: string) => {
     if (path === '/accounting/overview') return location.pathname === '/accounting/overview' || location.pathname === '/accounting';
@@ -74,21 +76,15 @@ const AccountingLayout: React.FC<AccountingLayoutProps> = ({ children }) => {
 
   return (
     <div className="min-h-screen bg-background flex">
-      {isTestEnvironment() && (
-        <div className="fixed top-0 left-0 right-0 z-50 bg-amber-500 text-black text-center text-sm py-1 font-medium">
-          ⚠️ TESTMILJÖ – All data är endast för testning
-        </div>
-      )}
-
       {/* Sidebar */}
-      <aside className={`fixed left-0 top-0 bottom-0 w-56 bg-card border-r border-border flex flex-col ${isTestEnvironment() ? 'pt-8' : ''}`}>
+      <aside className="fixed left-0 top-0 bottom-0 w-56 bg-card border-r border-border flex flex-col">
         {/* Logo */}
         <div className="px-4 py-5 flex items-center gap-2.5">
           <Link to="/accounting/overview" className="flex items-center gap-2.5">
-            <Home className="w-5 h-5 text-primary" />
+            <ShsLogo size={36} />
             <div>
-              <div className="text-sm font-semibold text-foreground leading-tight">SHS</div>
-              <div className="text-xs text-muted-foreground leading-tight">Accounting</div>
+              <div className="text-sm font-semibold text-foreground leading-tight">Smart Home Solutions</div>
+              <div className="text-xs text-muted-foreground leading-tight">{t('Bokföring', 'Accounting')}</div>
             </div>
           </Link>
         </div>
@@ -96,9 +92,9 @@ const AccountingLayout: React.FC<AccountingLayoutProps> = ({ children }) => {
         {/* Nav */}
         <nav className="flex-1 overflow-y-auto px-3 pb-4">
           {navGroups.map((group) => (
-            <div key={group.title} className="mb-5">
+            <div key={group.titleSv} className="mb-5">
               <div className="text-[10px] font-semibold text-muted-foreground tracking-wider px-2 mb-1.5">
-                {group.title}
+                {t(group.titleSv, group.titleEn)}
               </div>
               {group.items.map((item) => (
                 <Link
@@ -111,7 +107,7 @@ const AccountingLayout: React.FC<AccountingLayoutProps> = ({ children }) => {
                   }`}
                 >
                   {item.icon}
-                  {item.label}
+                  {t(item.labelSv, item.labelEn)}
                 </Link>
               ))}
             </div>
@@ -122,7 +118,8 @@ const AccountingLayout: React.FC<AccountingLayoutProps> = ({ children }) => {
       {/* Main */}
       <div className="flex-1 ml-56">
         {/* Top bar */}
-        <header className={`sticky top-0 z-40 bg-card/95 backdrop-blur-sm border-b border-border h-14 flex items-center justify-end px-6 ${isTestEnvironment() ? 'mt-7' : ''}`}>
+        <header className="sticky top-0 z-40 bg-card/95 backdrop-blur-sm border-b border-border h-14 flex items-center justify-end px-6 gap-2">
+          <LanguageToggle />
           <UserMenu />
         </header>
 

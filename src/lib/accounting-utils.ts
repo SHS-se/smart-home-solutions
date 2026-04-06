@@ -14,11 +14,23 @@ export const PAYMENT_SOURCE_LABELS: Record<PaymentSource, string> = {
   company_bank: 'Företagskonto (1930)',
 };
 
+export const PAYMENT_SOURCE_LABELS_EN: Record<PaymentSource, string> = {
+  owner_paid: 'Owner funds (2018)',
+  company_bank: 'Company bank (1930)',
+};
+
 export const PURCHASE_STATUS_LABELS: Record<PurchaseStatus, string> = {
   draft: 'Utkast',
   in_review: 'Granskning',
   blocked: 'Blockerad',
   posted: 'Bokförd',
+};
+
+export const PURCHASE_STATUS_LABELS_EN: Record<PurchaseStatus, string> = {
+  draft: 'Draft',
+  in_review: 'In review',
+  blocked: 'Blocked',
+  posted: 'Posted',
 };
 
 export const PURCHASE_STATUS_COLORS: Record<PurchaseStatus, string> = {
@@ -36,11 +48,26 @@ export const VAT_TREATMENT_LABELS: Record<VatTreatment, string> = {
   needs_review: 'Kräver granskning',
 };
 
+export const VAT_TREATMENT_LABELS_EN: Record<VatTreatment, string> = {
+  domestic_deductible: 'Input VAT 25%',
+  reverse_charge: 'Reverse charge',
+  non_deductible: 'Non-deductible VAT',
+  no_vat: 'No VAT',
+  needs_review: 'Needs review',
+};
+
 export const PERIOD_STATUS_LABELS: Record<PeriodStatus, string> = {
   open: 'Öppen',
   review: 'Granskning',
   closed: 'Stängd',
   locked: 'Låst',
+};
+
+export const PERIOD_STATUS_LABELS_EN: Record<PeriodStatus, string> = {
+  open: 'Open',
+  review: 'Review',
+  closed: 'Closed',
+  locked: 'Locked',
 };
 
 export const PERIOD_STATUS_COLORS: Record<PeriodStatus, string> = {
@@ -53,6 +80,11 @@ export const PERIOD_STATUS_COLORS: Record<PeriodStatus, string> = {
 export const MONTH_NAMES_SV = [
   '', 'Januari', 'Februari', 'Mars', 'April', 'Maj', 'Juni',
   'Juli', 'Augusti', 'September', 'Oktober', 'November', 'December',
+];
+
+export const MONTH_NAMES_EN = [
+  '', 'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
 export const QUARTER_LABELS: Record<number, string> = {

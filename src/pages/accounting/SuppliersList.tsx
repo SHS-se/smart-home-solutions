@@ -1,31 +1,31 @@
 import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { useLanguage } from '@/contexts/LanguageContext';
 import AccountingLayout from '@/components/accounting/AccountingLayout';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 const SuppliersList: React.FC = () => {
+  const { t } = useLanguage();
+
   const { data: suppliers } = useQuery({
     queryKey: ['acc-suppliers'],
-    queryFn: async () => {
-      const { data } = await supabase.from('acc_suppliers').select('*').order('name');
-      return data || [];
-    },
+    queryFn: async () => { const { data } = await supabase.from('acc_suppliers').select('*').order('name'); return data || []; },
   });
 
   const SUPPLIER_TYPE_LABELS: Record<string, string> = {
-    domestic: 'Sverige',
+    domestic: t('Sverige', 'Sweden'),
     eu: 'EU',
-    non_eu: 'Utanför EU',
+    non_eu: t('Utanför EU', 'Outside EU'),
   };
 
   return (
     <AccountingLayout>
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Leverantörer</h1>
-          <p className="text-muted-foreground mt-1">Leverantörsregister</p>
+          <h1 className="text-2xl font-bold text-foreground">{t('Leverantörer', 'Suppliers')}</h1>
+          <p className="text-muted-foreground mt-1">{t('Leverantörsregister', 'Supplier registry')}</p>
         </div>
 
         <Card className="border border-border">
@@ -33,18 +33,18 @@ const SuppliersList: React.FC = () => {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="text-xs uppercase text-muted-foreground">Namn</TableHead>
-                  <TableHead className="text-xs uppercase text-muted-foreground">Org.nummer</TableHead>
-                  <TableHead className="text-xs uppercase text-muted-foreground">Momsnummer</TableHead>
-                  <TableHead className="text-xs uppercase text-muted-foreground">Typ</TableHead>
-                  <TableHead className="text-xs uppercase text-muted-foreground">Land</TableHead>
+                  <TableHead className="text-xs uppercase text-muted-foreground">{t('Namn', 'Name')}</TableHead>
+                  <TableHead className="text-xs uppercase text-muted-foreground">{t('Org.nummer', 'Reg. number')}</TableHead>
+                  <TableHead className="text-xs uppercase text-muted-foreground">{t('Momsnummer', 'VAT number')}</TableHead>
+                  <TableHead className="text-xs uppercase text-muted-foreground">{t('Typ', 'Type')}</TableHead>
+                  <TableHead className="text-xs uppercase text-muted-foreground">{t('Land', 'Country')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {suppliers?.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={5} className="text-center py-12 text-muted-foreground">
-                      Inga leverantörer registrerade. Leverantörer skapas automatiskt vid inköpsregistrering.
+                      {t('Inga leverantörer registrerade. Leverantörer skapas automatiskt vid inköpsregistrering.', 'No suppliers registered. Suppliers are created automatically when registering purchases.')}
                     </TableCell>
                   </TableRow>
                 ) : suppliers?.map(s => (
