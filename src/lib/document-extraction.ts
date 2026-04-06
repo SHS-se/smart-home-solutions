@@ -50,15 +50,17 @@ async function renderPdfPageToBlob(file: File): Promise<Blob> {
   const canvas = document.createElement('canvas');
   canvas.width = viewport.width;
   canvas.height = viewport.height;
-  await page.render({ canvasContext: canvas.getContext('2d')!, viewport }).promise;
+  const ctx = canvas.getContext('2d')!;
+  await page.render({ canvasContext: ctx, viewport, canvas } as never).promise;
   return new Promise((res, rej) => canvas.toBlob(b => b ? res(b) : rej(new Error('Render failed')), 'image/png'));
 }
 
 async function runOcr(input: File | Blob): Promise<ExtractionResult> {
   const { createWorker } = await import('tesseract.js');
   const worker = await createWorker('swe+eng');
-  const { data } = await worker.recognize(input);
+  const result = await worker.recognize(input);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const data = result.data as any;
   const words: WordPosition[] = (data.words || []).map((w: any) => ({
     text: w.text,
     x: w.bbox.x0,
