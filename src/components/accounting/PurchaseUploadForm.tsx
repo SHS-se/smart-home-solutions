@@ -34,6 +34,7 @@ const PurchaseUploadForm: React.FC<Props> = ({ file, parsedInvoice, extractedTex
     documentType: 'supplier_invoice',
     documentDate: '',
     dueDate: '',
+    currency: 'SEK',
     grossAmount: '',
     vatAmount: '',
     netAmount: '',
@@ -77,11 +78,12 @@ const PurchaseUploadForm: React.FC<Props> = ({ file, parsedInvoice, extractedTex
     if (parsedInvoice.invoiceNumber) { f.invoiceNumber = parsedInvoice.invoiceNumber; filled.add('invoiceNumber'); }
     if (parsedInvoice.invoiceDate) { f.documentDate = parsedInvoice.invoiceDate; filled.add('documentDate'); }
     if (parsedInvoice.dueDate) { f.dueDate = parsedInvoice.dueDate; filled.add('dueDate'); }
+    if (parsedInvoice.currency) { f.currency = parsedInvoice.currency; filled.add('currency'); }
     if (parsedInvoice.grossAmount != null) { f.grossAmount = String(parsedInvoice.grossAmount); filled.add('grossAmount'); }
     if (parsedInvoice.vatAmount != null) { f.vatAmount = String(parsedInvoice.vatAmount); filled.add('vatAmount'); }
     if (parsedInvoice.netAmount != null) { f.netAmount = String(parsedInvoice.netAmount); filled.add('netAmount'); }
 
-    const desc = generateDescription(parsedInvoice.supplierName, extractedText || '');
+    const desc = parsedInvoice.description || generateDescription(parsedInvoice.supplierName, extractedText || '');
     if (desc) { f.description = desc; filled.add('description'); }
 
     setForm(f);
@@ -120,6 +122,7 @@ const PurchaseUploadForm: React.FC<Props> = ({ file, parsedInvoice, extractedTex
           document_file_path: filePath,
           document_date: form.documentDate || new Date().toISOString().split('T')[0],
           due_date: form.dueDate || null,
+          currency: form.currency || 'SEK',
           gross_amount: Number(form.grossAmount) || 0,
           net_amount: Number(form.netAmount) || 0,
           vat_amount: Number(form.vatAmount) || 0,
@@ -224,6 +227,16 @@ const PurchaseUploadForm: React.FC<Props> = ({ file, parsedInvoice, extractedTex
             <AutoLabel text="Förfallodatum" field="dueDate" />
             <Input type="date" value={form.dueDate} onChange={(e) => updateField('dueDate', e.target.value)} />
           </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <AutoLabel text="Valuta" field="currency" />
+          <Input
+            value={form.currency}
+            onChange={(e) => updateField('currency', e.target.value.toUpperCase())}
+            placeholder="SEK"
+            maxLength={3}
+          />
         </div>
 
         {/* Amounts */}
