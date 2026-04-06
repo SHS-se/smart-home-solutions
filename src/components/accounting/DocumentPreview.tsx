@@ -11,14 +11,24 @@ import type { WordPosition } from '@/lib/document-extraction';
 pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
 interface Props {
-  file: File | null;
-  onFileSelect: (file: File) => void;
-  ocrWords: WordPosition[];
-  isExtracting: boolean;
-  extractionProgress: { message: string; pct: number };
+  file?: File | null;
+  fileUrl?: string | null;
+  fileName?: string | null;
+  onFileSelect?: (file: File) => void;
+  ocrWords?: WordPosition[];
+  isExtracting?: boolean;
+  extractionProgress?: { message: string; pct: number };
 }
 
-const DocumentPreview: React.FC<Props> = ({ file, onFileSelect, ocrWords, isExtracting, extractionProgress }) => {
+const DocumentPreview: React.FC<Props> = ({
+  file = null,
+  fileUrl: externalFileUrl = null,
+  fileName = null,
+  onFileSelect,
+  ocrWords = [],
+  isExtracting = false,
+  extractionProgress = { message: '', pct: 0 },
+}) => {
   const { t } = useLanguage();
   const [fileUrl, setFileUrl] = useState<string | null>(null);
   const [numPages, setNumPages] = useState(0);
@@ -27,27 +37,41 @@ const DocumentPreview: React.FC<Props> = ({ file, onFileSelect, ocrWords, isExtr
   const [showOverlay, setShowOverlay] = useState(false);
   const [naturalSize, setNaturalSize] = useState({ w: 0, h: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
-  const isPdf = file?.type === 'application/pdf' || file?.name.toLowerCase().endsWith('.pdf');
+  const resolvedFileName = file?.name || fileName || externalFileUrl || '';
+  const isPdf = file?.type === 'application/pdf' || resolvedFileName.toLowerCase().endsWith('.pdf');
+  const canSelectFile = !!onFileSelect;
 
   useEffect(() => {
-    if (!file) { setFileUrl(null); return; }
-    const url = URL.createObjectURL(file);
-    setFileUrl(url); setCurrentPage(1); setScale(1.0);
-    return () => URL.revokeObjectURL(url);
-  }, [file]);
+    if (file) {
+      const url = URL.createObjectURL(file);
+      setFileUrl(url);
+      setCurrentPage(1);
+      setScale(1.0);
+      return () => URL.revokeObjectURL(url);
+    }
 
-  const onDrop = useCallback((e: React.DragEvent) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) onFileSelect(f); }, [onFileSelect]);
+    setFileUrl(externalFileUrl);
+    setCurrentPage(1);
+    setScale(1.0);
+  }, [file, externalFileUrl]);
+
+  const onDrop = useCallback((e: React.DragEvent) => {
+    if (!onFileSelect) return;
+    e.preventDefault();
+    const selectedFile = e.dataTransfer.files[0];
+    if (selectedFile) onFileSelect(selectedFile);
+  }, [onFileSelect]);
   const triggerFileInput = () => document.getElementById('doc-upload-input')?.click();
 
-  const fileInput = (
+  const fileInput = canSelectFile ? (
     <input id="doc-upload-input" type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png,.heic,.heif"
       onChange={(e) => { if (e.target.files?.[0]) onFileSelect(e.target.files[0]); e.target.value = ''; }} />
-  );
+  ) : null;
 
-  if (!file || !fileUrl) {
+  if (!fileUrl) {
     return (
-      <div className="flex flex-col items-center justify-center border-2 border-dashed border-border rounded-xl p-16 h-full min-h-[400px] cursor-pointer hover:border-primary/40 hover:bg-muted/30 transition-colors"
-        onDragOver={(e) => e.preventDefault()} onDrop={onDrop} onClick={triggerFileInput}>
+      <div className={`flex flex-col items-center justify-center border-2 border-dashed border-border rounded-xl p-16 h-full min-h-[400px] transition-colors ${canSelectFile ? 'cursor-pointer hover:border-primary/40 hover:bg-muted/30' : ''}`}
+        onDragOver={(e) => canSelectFile && e.preventDefault()} onDrop={onDrop} onClick={() => canSelectFile && triggerFileInput()}>
         <Upload className="w-12 h-12 text-muted-foreground mb-4" />
         <p className="text-sm font-medium text-foreground">{t('Dra och släpp dokument här', 'Drag and drop document here')}</p>
         <p className="text-xs text-muted-foreground mt-1">PDF, JPG, PNG {t('eller', 'or')} HEIC</p>
@@ -78,9 +102,11 @@ const DocumentPreview: React.FC<Props> = ({ file, onFileSelect, ocrWords, isExtr
               {showOverlay ? t('Dölj text', 'Hide text') : t('Visa text', 'Show text')}
             </Button>
           )}
-          <Button size="sm" variant="ghost" className="h-7 text-xs gap-1" onClick={triggerFileInput}>
-            <RefreshCw className="h-3 w-3" /> {t('Byt fil', 'Change file')}
-          </Button>
+          {canSelectFile && (
+            <Button size="sm" variant="ghost" className="h-7 text-xs gap-1" onClick={triggerFileInput}>
+              <RefreshCw className="h-3 w-3" /> {t('Byt fil', 'Change file')}
+            </Button>
+          )}
         </div>
         {fileInput}
       </div>

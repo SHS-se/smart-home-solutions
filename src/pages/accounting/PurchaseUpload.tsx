@@ -58,7 +58,12 @@ const PurchaseUpload: React.FC = () => {
             <DocumentPreview file={file} onFileSelect={handleFileSelect} ocrWords={extractionResult?.words || []} isExtracting={isExtracting} extractionProgress={progress} />
           </div>
           <div className="lg:col-span-2">
-            <PurchaseUploadForm file={file} parsedInvoice={parsedInvoice} extractedText={extractionResult?.rawText || null} />
+            <PurchaseUploadForm
+              file={file}
+              parsedInvoice={parsedInvoice}
+              extractedText={extractionResult?.rawText || null}
+              onSaved={(purchaseId) => navigate(`/accounting/purchases/${purchaseId}`)}
+            />
           </div>
         </div>
       </div>

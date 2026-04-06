@@ -1,10 +1,13 @@
-import React, { useState } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import React from 'react';
+import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import type { Tables } from '@/integrations/supabase/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import AccountingLayout from '@/components/accounting/AccountingLayout';
+import DocumentPreview from '@/components/accounting/DocumentPreview';
+import PurchaseUploadForm from '@/components/accounting/PurchaseUploadForm';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -16,15 +19,14 @@ import {
   PAYMENT_SOURCE_LABELS, PAYMENT_SOURCE_LABELS_EN,
   VAT_TREATMENT_LABELS, VAT_TREATMENT_LABELS_EN,
   formatSEK, formatSEKDecimal, buildJournalPreview,
-  getPurchaseBlockers, getAccountName, getCreditAccount,
+  getPurchaseBlockers,
 } from '@/lib/accounting-utils';
 import type { PaymentSource, VatTreatment } from '@/lib/accounting-utils';
 import { toast } from 'sonner';
-import { ArrowLeft, AlertTriangle, Eye, FileText, CheckCircle } from 'lucide-react';
+import { ArrowLeft, AlertTriangle, Eye, CheckCircle } from 'lucide-react';
 
 const PurchaseDetail: React.FC = () => {
   const { purchaseId } = useParams<{ purchaseId: string }>();
-  const navigate = useNavigate();
   const { user } = useAuth();
   const { t, language } = useLanguage();
   const queryClient = useQueryClient();
@@ -49,6 +51,20 @@ const PurchaseDetail: React.FC = () => {
       return data || [];
     },
     enabled: !!purchaseId,
+  });
+  const supplierName = (purchase?.supplier as Tables<'acc_suppliers'> | null)?.name || '';
+
+  const { data: documentUrl, isLoading: isDocumentLoading } = useQuery({
+    queryKey: ['acc-purchase-document', purchaseId, purchase?.document_file_path],
+    queryFn: async () => {
+      if (!purchase?.document_file_path) return null;
+      const { data, error } = await supabase.storage
+        .from('purchase-documents')
+        .createSignedUrl(purchase.document_file_path, 3600);
+      if (error) throw error;
+      return data?.signedUrl || null;
+    },
+    enabled: !!purchase?.document_file_path,
   });
 
   const updateLine = useMutation({
@@ -80,7 +96,7 @@ const PurchaseDetail: React.FC = () => {
       const { data: verification, error: vErr } = await supabase.from('acc_verifications').insert({
         verification_number: verificationNumber,
         verification_date: purchase.posting_date || purchase.document_date,
-        description: purchase.description || `${t('Inköp', 'Purchase')} ${(purchase.supplier as any)?.name || ''}`.trim(),
+        description: purchase.description || `${t('Inköp', 'Purchase')} ${supplierName}`.trim(),
         period_id: period.id, source_type: 'purchase', source_id: purchase.id,
         is_posted: true, posted_at: new Date().toISOString(), posted_by: user?.id, created_by: user?.id,
       }).select().single();
@@ -122,6 +138,7 @@ const PurchaseDetail: React.FC = () => {
   const errors = blockers.filter(b => b.type === 'error');
   const warnings = blockers.filter(b => b.type === 'warning');
   const canPost = errors.length === 0 && purchase.status !== 'posted';
+  const primaryLine = lines?.[0] || null;
 
   const journalPreview = lines && lines.length > 0
     ? buildJournalPreview(
@@ -141,7 +158,7 @@ const PurchaseDetail: React.FC = () => {
           <div>
             <h1 className="text-2xl font-bold text-foreground">{t('Granska inköp', 'Review purchase')}</h1>
             <p className="text-muted-foreground text-sm mt-1">
-              {(purchase.supplier as any)?.name || t('Okänd leverantör', 'Unknown supplier')} · {purchase.document_date}
+              {supplierName || t('Okänd leverantör', 'Unknown supplier')} · {purchase.document_date}
             </p>
           </div>
           <Badge className={`${PURCHASE_STATUS_COLORS[purchase.status as keyof typeof PURCHASE_STATUS_COLORS]} border-0`}>
@@ -171,14 +188,20 @@ const PurchaseDetail: React.FC = () => {
             <Card className="border border-border">
               <CardHeader className="flex-row items-center justify-between">
                 <CardTitle className="text-base">{t('Underlag', 'Document')}</CardTitle>
-                {purchase.document_file_path && <Button variant="ghost" size="sm"><Eye className="w-4 h-4 mr-1" /> {t('Fullskärm', 'Full screen')}</Button>}
+                {documentUrl && (
+                  <Button variant="ghost" size="sm" onClick={() => window.open(documentUrl, '_blank', 'noopener,noreferrer')}>
+                    <Eye className="w-4 h-4 mr-1" /> {t('Fullskärm', 'Full screen')}
+                  </Button>
+                )}
               </CardHeader>
               <CardContent>
-                {purchase.document_file_path ? (
+                {isDocumentLoading ? (
                   <div className="bg-muted rounded-lg p-8 text-center">
-                    <FileText className="w-12 h-12 text-muted-foreground mx-auto mb-2" />
-                    <p className="text-sm text-muted-foreground">{t('PDF-förhandsvisning', 'PDF preview')}</p>
-                    <p className="text-xs text-muted-foreground">{purchase.document_file_path}</p>
+                    <p className="text-sm text-muted-foreground">{t('Laddar dokument...', 'Loading document...')}</p>
+                  </div>
+                ) : documentUrl ? (
+                  <div className="h-[28rem]">
+                    <DocumentPreview fileUrl={documentUrl} fileName={purchase.document_file_path} />
                   </div>
                 ) : (
                   <div className="bg-muted rounded-lg p-8 text-center">
@@ -259,28 +282,19 @@ const PurchaseDetail: React.FC = () => {
           </div>
 
           <div className="space-y-6">
-            <Card className="border border-border">
-              <CardHeader><CardTitle className="text-base">{t('Leverantör', 'Supplier')}</CardTitle></CardHeader>
-              <CardContent className="space-y-2 text-sm">
-                <div><p className="text-xs text-muted-foreground">{t('Namn', 'Name')}</p><p className="font-medium">{(purchase.supplier as any)?.name || '—'}</p></div>
-                {(purchase.supplier as any)?.org_number && <div><p className="text-xs text-muted-foreground">{t('Org.nummer', 'Reg. number')}</p><p>{(purchase.supplier as any).org_number}</p></div>}
-                {(purchase.supplier as any)?.country && <div><p className="text-xs text-muted-foreground">{t('Land', 'Country')}</p><p>{(purchase.supplier as any).country}</p></div>}
-              </CardContent>
-            </Card>
-
-            <Card className="border border-border">
-              <CardHeader><CardTitle className="text-base">{t('Dokumentdetaljer', 'Document details')}</CardTitle></CardHeader>
-              <CardContent className="space-y-2 text-sm">
-                <div><p className="text-xs text-muted-foreground">{t('Fakturadatum', 'Invoice date')}</p><p>{purchase.document_date}</p></div>
-                {purchase.posting_date && <div><p className="text-xs text-muted-foreground">{t('Bokföringsdatum', 'Posting date')}</p><p>{purchase.posting_date}</p></div>}
-                <div><p className="text-xs text-muted-foreground">{t('Betalkälla', 'Payment source')}</p><p>{paymentLabels[purchase.payment_source as keyof typeof paymentLabels]}</p></div>
-                <div><p className="text-xs text-muted-foreground">{t('Valuta', 'Currency')}</p><p>{purchase.currency}</p></div>
-              </CardContent>
-            </Card>
+            <PurchaseUploadForm
+              purchase={purchase}
+              purchaseLine={primaryLine}
+              disabled={purchase.status === 'posted'}
+              title={t('Utkastdetaljer', 'Draft details')}
+              submitLabel={t('Spara utkast', 'Save draft')}
+            />
 
             <Card className="border border-border">
               <CardHeader><CardTitle className="text-base">{t('Momssammanställning', 'VAT summary')}</CardTitle></CardHeader>
               <CardContent className="space-y-2 text-sm">
+                <div><p className="text-xs text-muted-foreground">{t('Betalkälla', 'Payment source')}</p><p>{paymentLabels[purchase.payment_source as keyof typeof paymentLabels]}</p></div>
+                {purchase.posting_date && <div><p className="text-xs text-muted-foreground">{t('Bokföringsdatum', 'Posting date')}</p><p>{purchase.posting_date}</p></div>}
                 <div className="flex justify-between"><span className="text-muted-foreground">{t('Nettobelopp', 'Net amount')}</span><span>{formatSEK(Number(purchase.net_amount))}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">{t('Moms 25%', 'VAT 25%')}</span><span>{formatSEK(Number(purchase.vat_amount))}</span></div>
                 <div className="flex justify-between font-semibold border-t border-border pt-2 mt-2"><span>{t('Totalt', 'Total')}</span><span>{formatSEK(Number(purchase.gross_amount))}</span></div>

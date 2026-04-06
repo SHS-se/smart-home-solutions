@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import type { Tables } from '@/integrations/supabase/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,26 +14,45 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { toast } from 'sonner';
 import { Save } from 'lucide-react';
 import { fuzzyMatchSupplier, generateDescription, type ParsedInvoice } from '@/lib/invoice-parser';
+import {
+  buildInvoiceNumberNote,
+  createEmptyPurchaseForm,
+  extractInvoiceNumberFromNotes,
+  inferSupplierMetadata,
+  inferVatTreatment,
+} from '@/lib/purchase-workflow';
 
 interface Props {
-  file: File | null;
-  parsedInvoice: ParsedInvoice | null;
-  extractedText: string | null;
+  file?: File | null;
+  parsedInvoice?: ParsedInvoice | null;
+  extractedText?: string | null;
+  purchase?: Tables<'acc_purchases'> | null;
+  purchaseLine?: Tables<'acc_purchase_lines'> | null;
+  disabled?: boolean;
+  title?: string;
+  submitLabel?: string;
+  onSaved?: (purchaseId: string) => void;
 }
 
-const PurchaseUploadForm: React.FC<Props> = ({ file, parsedInvoice, extractedText }) => {
-  const navigate = useNavigate();
+const PurchaseUploadForm: React.FC<Props> = ({
+  file = null,
+  parsedInvoice = null,
+  extractedText = null,
+  purchase = null,
+  purchaseLine = null,
+  disabled = false,
+  title,
+  submitLabel,
+  onSaved,
+}) => {
   const { user } = useAuth();
   const { t } = useLanguage();
   const queryClient = useQueryClient();
   const appliedRef = useRef<ParsedInvoice | null>(null);
+  const isEditing = !!purchase;
 
   const [autoFilled, setAutoFilled] = useState<Set<string>>(new Set());
-  const [form, setForm] = useState({
-    supplierId: '', newSupplierName: '', invoiceNumber: '', documentType: 'supplier_invoice',
-    documentDate: '', dueDate: '', currency: 'SEK', grossAmount: '', vatAmount: '', netAmount: '',
-    paymentSource: '', description: '',
-  });
+  const [form, setForm] = useState(createEmptyPurchaseForm);
 
   const { data: suppliers } = useQuery({
     queryKey: ['acc-suppliers'],
@@ -41,7 +60,27 @@ const PurchaseUploadForm: React.FC<Props> = ({ file, parsedInvoice, extractedTex
   });
 
   useEffect(() => {
-    if (!parsedInvoice || parsedInvoice === appliedRef.current) return;
+    if (!purchase) return;
+
+    setForm({
+      supplierId: purchase.supplier_id || '',
+      newSupplierName: '',
+      invoiceNumber: extractInvoiceNumberFromNotes(purchase.notes),
+      documentType: purchase.document_type || 'supplier_invoice',
+      documentDate: purchase.document_date || '',
+      dueDate: purchase.due_date || '',
+      currency: purchase.currency || 'SEK',
+      grossAmount: String(Number(purchase.gross_amount) || 0),
+      vatAmount: String(Number(purchase.vat_amount) || 0),
+      netAmount: String(Number(purchase.net_amount) || 0),
+      paymentSource: purchase.payment_source || '',
+      description: purchase.description || purchaseLine?.description || '',
+    });
+    setAutoFilled(new Set());
+  }, [purchase, purchaseLine]);
+
+  useEffect(() => {
+    if (isEditing || !parsedInvoice || parsedInvoice === appliedRef.current) return;
     appliedRef.current = parsedInvoice;
     const f = { ...form };
     const filled = new Set<string>();
@@ -64,7 +103,7 @@ const PurchaseUploadForm: React.FC<Props> = ({ file, parsedInvoice, extractedTex
     setForm(f);
     setAutoFilled(filled);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [parsedInvoice]);
+  }, [parsedInvoice, isEditing]);
 
   const updateField = (field: string, value: string) => {
     setForm(f => ({ ...f, [field]: value }));
@@ -74,11 +113,83 @@ const PurchaseUploadForm: React.FC<Props> = ({ file, parsedInvoice, extractedTex
   const saveDraft = useMutation({
     mutationFn: async () => {
       let supplierId = form.supplierId || null;
+      let supplierCountry: string | null = null;
+      let supplierType: string | null = null;
+
+      if (supplierId) {
+        const selectedSupplier = suppliers?.find((supplier) => supplier.id === supplierId);
+        supplierCountry = selectedSupplier?.country || null;
+        supplierType = selectedSupplier?.supplier_type || null;
+      }
+
       if (!supplierId && form.newSupplierName.trim()) {
-        const { data: ns, error } = await supabase.from('acc_suppliers').insert({ name: form.newSupplierName.trim() }).select().single();
+        const inferredSupplier = inferSupplierMetadata(parsedInvoice);
+        const { data: ns, error } = await supabase.from('acc_suppliers').insert({
+          name: form.newSupplierName.trim(),
+          country: inferredSupplier.country,
+          supplier_type: inferredSupplier.supplierType,
+          vat_number: inferredSupplier.vatNumber,
+        }).select().single();
         if (error) throw error;
         supplierId = ns.id;
+        supplierCountry = ns.country;
+        supplierType = ns.supplier_type;
       }
+
+      const purchasePayload = {
+        supplier_id: supplierId,
+        document_type: form.documentType,
+        document_date: form.documentDate || new Date().toISOString().split('T')[0],
+        due_date: form.dueDate || null,
+        currency: form.currency || 'SEK',
+        gross_amount: Number(form.grossAmount) || 0,
+        net_amount: Number(form.netAmount) || 0,
+        vat_amount: Number(form.vatAmount) || 0,
+        description: form.description,
+        payment_source: form.paymentSource || 'owner_paid',
+        notes: buildInvoiceNumberNote(form.invoiceNumber),
+      };
+
+      const inferredVatTreatment = inferVatTreatment({
+        parsedInvoice,
+        extractedText,
+        supplierCountry,
+        supplierType,
+      });
+      const linePayload = {
+        description: form.description || t('Hela beloppet', 'Full amount'),
+        net_amount: Number(form.netAmount) || 0,
+        vat_amount: Number(form.vatAmount) || 0,
+        gross_amount: Number(form.grossAmount) || 0,
+        vat_rate: parsedInvoice?.vatRate ?? purchaseLine?.vat_rate ?? 25,
+      };
+
+      if (purchase) {
+        const { error: purchaseError } = await supabase.from('acc_purchases').update(purchasePayload).eq('id', purchase.id);
+        if (purchaseError) throw purchaseError;
+
+        if (purchaseLine) {
+          const lineUpdates: Record<string, unknown> = { ...linePayload };
+          if (purchaseLine.vat_treatment === 'needs_review' && inferredVatTreatment !== 'needs_review') {
+            lineUpdates.vat_treatment = inferredVatTreatment;
+          }
+
+          const { error: lineError } = await supabase.from('acc_purchase_lines').update(lineUpdates).eq('id', purchaseLine.id);
+          if (lineError) throw lineError;
+        } else {
+          const { error: lineError } = await supabase.from('acc_purchase_lines').insert({
+            purchase_id: purchase.id,
+            ...linePayload,
+            expense_account: '4000',
+            vat_treatment: inferredVatTreatment,
+            sort_order: 0,
+          });
+          if (lineError) throw lineError;
+        }
+
+        return purchase.id;
+      }
+
       let filePath: string | null = null;
       if (file) {
         const ext = file.name.split('.').pop();
@@ -88,27 +199,33 @@ const PurchaseUploadForm: React.FC<Props> = ({ file, parsedInvoice, extractedTex
         filePath = path;
       }
       const { data: purchase, error } = await supabase.from('acc_purchases').insert({
-        supplier_id: supplierId, document_type: form.documentType, document_file_path: filePath,
-        document_date: form.documentDate || new Date().toISOString().split('T')[0],
-        due_date: form.dueDate || null, currency: form.currency || 'SEK',
-        gross_amount: Number(form.grossAmount) || 0, net_amount: Number(form.netAmount) || 0,
-        vat_amount: Number(form.vatAmount) || 0, description: form.description,
-        payment_source: form.paymentSource || 'owner_paid',
-        notes: form.invoiceNumber ? `${t('Leverantörens fakturanr', 'Supplier invoice no')}: ${form.invoiceNumber}` : null,
-        status: 'draft', created_by: user?.id,
+        ...purchasePayload,
+        document_file_path: filePath,
+        status: 'draft',
+        created_by: user?.id,
       }).select().single();
       if (error) throw error;
       await supabase.from('acc_purchase_lines').insert({
-        purchase_id: purchase.id, description: form.description || t('Hela beloppet', 'Full amount'),
-        net_amount: Number(form.netAmount) || 0, vat_amount: Number(form.vatAmount) || 0,
-        gross_amount: Number(form.grossAmount) || 0, expense_account: '4000', vat_treatment: 'needs_review', sort_order: 0,
+        purchase_id: purchase.id,
+        ...linePayload,
+        expense_account: '4000',
+        vat_treatment: inferredVatTreatment,
+        sort_order: 0,
       });
-      return purchase;
+      return purchase.id;
     },
-    onSuccess: (purchase) => {
+    onSuccess: (savedPurchaseId) => {
+      if (purchase?.id) {
+        queryClient.invalidateQueries({ queryKey: ['acc-purchase', purchase.id] });
+        queryClient.invalidateQueries({ queryKey: ['acc-purchase-lines', purchase.id] });
+      }
       queryClient.invalidateQueries({ queryKey: ['acc-purchases'] });
-      toast.success(t('Inköp sparat som utkast', 'Purchase saved as draft'));
-      navigate(`/accounting/purchases/${purchase.id}`);
+      toast.success(
+        isEditing
+          ? t('Utkast uppdaterat', 'Draft updated')
+          : t('Inköp sparat som utkast', 'Purchase saved as draft'),
+      );
+      onSaved?.(savedPurchaseId);
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -126,30 +243,40 @@ const PurchaseUploadForm: React.FC<Props> = ({ file, parsedInvoice, extractedTex
 
   return (
     <Card className="border border-border h-full overflow-auto">
-      <CardHeader className="pb-4"><CardTitle className="text-base">{t('Dokumentdetaljer', 'Document details')}</CardTitle></CardHeader>
+      <CardHeader className="pb-4"><CardTitle className="text-base">{title || t('Dokumentdetaljer', 'Document details')}</CardTitle></CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-1.5">
           <AutoLabel text={t('Leverantör', 'Supplier')} field="supplierId" />
-          <Select value={form.supplierId} onValueChange={(v) => { setForm(f => ({ ...f, supplierId: v, newSupplierName: '' })); setAutoFilled(af => { const n = new Set(af); n.delete('supplierId'); return n; }); }}>
+          <Select
+            value={form.supplierId}
+            disabled={disabled || saveDraft.isPending}
+            onValueChange={(v) => { setForm(f => ({ ...f, supplierId: v, newSupplierName: '' })); setAutoFilled(af => { const n = new Set(af); n.delete('supplierId'); return n; }); }}
+          >
             <SelectTrigger><SelectValue placeholder={t('Välj leverantör...', 'Select supplier...')} /></SelectTrigger>
             <SelectContent>{suppliers?.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
           </Select>
           {!form.supplierId && (
             <div>
               <AutoLabel text="" field="newSupplierName" />
-              <Input placeholder={t('Eller skapa ny leverantör...', 'Or create new supplier...')} value={form.newSupplierName} onChange={(e) => updateField('newSupplierName', e.target.value)} className="text-sm" />
+              <Input
+                placeholder={t('Eller skapa ny leverantör...', 'Or create new supplier...')}
+                value={form.newSupplierName}
+                disabled={disabled || saveDraft.isPending}
+                onChange={(e) => updateField('newSupplierName', e.target.value)}
+                className="text-sm"
+              />
             </div>
           )}
         </div>
 
         <div className="space-y-1.5">
           <AutoLabel text={t('Fakturanummer', 'Invoice number')} field="invoiceNumber" />
-          <Input value={form.invoiceNumber} onChange={(e) => updateField('invoiceNumber', e.target.value)} placeholder={t('Leverantörens ref...', 'Supplier ref...')} />
+          <Input value={form.invoiceNumber} disabled={disabled || saveDraft.isPending} onChange={(e) => updateField('invoiceNumber', e.target.value)} placeholder={t('Leverantörens ref...', 'Supplier ref...')} />
         </div>
 
         <div className="space-y-1.5">
           <Label className="text-xs text-muted-foreground">{t('Dokumenttyp', 'Document type')}</Label>
-          <Select value={form.documentType} onValueChange={(v) => updateField('documentType', v)}>
+          <Select value={form.documentType} disabled={disabled || saveDraft.isPending} onValueChange={(v) => updateField('documentType', v)}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="supplier_invoice">{t('Leverantörsfaktura', 'Supplier invoice')}</SelectItem>
@@ -162,37 +289,37 @@ const PurchaseUploadForm: React.FC<Props> = ({ file, parsedInvoice, extractedTex
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5">
             <AutoLabel text={t('Fakturadatum', 'Invoice date')} field="documentDate" />
-            <Input type="date" value={form.documentDate} onChange={(e) => updateField('documentDate', e.target.value)} />
+            <Input type="date" value={form.documentDate} disabled={disabled || saveDraft.isPending} onChange={(e) => updateField('documentDate', e.target.value)} />
           </div>
           <div className="space-y-1.5">
             <AutoLabel text={t('Förfallodatum', 'Due date')} field="dueDate" />
-            <Input type="date" value={form.dueDate} onChange={(e) => updateField('dueDate', e.target.value)} />
+            <Input type="date" value={form.dueDate} disabled={disabled || saveDraft.isPending} onChange={(e) => updateField('dueDate', e.target.value)} />
           </div>
         </div>
 
         <div className="space-y-1.5">
           <AutoLabel text={t('Valuta', 'Currency')} field="currency" />
-          <Input value={form.currency} onChange={(e) => updateField('currency', e.target.value.toUpperCase())} placeholder="SEK" maxLength={3} />
+          <Input value={form.currency} disabled={disabled || saveDraft.isPending} onChange={(e) => updateField('currency', e.target.value.toUpperCase())} placeholder="SEK" maxLength={3} />
         </div>
 
         <div className="grid grid-cols-3 gap-3">
           <div className="space-y-1.5">
             <AutoLabel text={t('Brutto', 'Gross')} field="grossAmount" />
-            <Input type="number" step="0.01" value={form.grossAmount} onChange={(e) => updateField('grossAmount', e.target.value)} placeholder="0" />
+            <Input type="number" step="0.01" disabled={disabled || saveDraft.isPending} value={form.grossAmount} onChange={(e) => updateField('grossAmount', e.target.value)} placeholder="0" />
           </div>
           <div className="space-y-1.5">
             <AutoLabel text={t('Moms', 'VAT')} field="vatAmount" />
-            <Input type="number" step="0.01" value={form.vatAmount} onChange={(e) => updateField('vatAmount', e.target.value)} placeholder="0" />
+            <Input type="number" step="0.01" disabled={disabled || saveDraft.isPending} value={form.vatAmount} onChange={(e) => updateField('vatAmount', e.target.value)} placeholder="0" />
           </div>
           <div className="space-y-1.5">
             <AutoLabel text={t('Netto', 'Net')} field="netAmount" />
-            <Input type="number" step="0.01" value={form.netAmount} onChange={(e) => updateField('netAmount', e.target.value)} placeholder="0" />
+            <Input type="number" step="0.01" disabled={disabled || saveDraft.isPending} value={form.netAmount} onChange={(e) => updateField('netAmount', e.target.value)} placeholder="0" />
           </div>
         </div>
 
         <div className="space-y-1.5">
           <Label className="text-xs text-muted-foreground">{t('Betalkälla', 'Payment source')}</Label>
-          <Select value={form.paymentSource} onValueChange={(v) => updateField('paymentSource', v)}>
+          <Select value={form.paymentSource} disabled={disabled || saveDraft.isPending} onValueChange={(v) => updateField('paymentSource', v)}>
             <SelectTrigger><SelectValue placeholder={t('Välj betalkälla...', 'Select payment source...')} /></SelectTrigger>
             <SelectContent>
               <SelectItem value="owner_paid">{t('Ägarens egna medel', 'Owner\'s own funds')}</SelectItem>
@@ -203,12 +330,14 @@ const PurchaseUploadForm: React.FC<Props> = ({ file, parsedInvoice, extractedTex
 
         <div className="space-y-1.5">
           <AutoLabel text={t('Beskrivning', 'Description')} field="description" />
-          <Textarea value={form.description} onChange={(e) => updateField('description', e.target.value)} placeholder={t('Vad är köpt...', 'What was purchased...')} rows={2} />
+          <Textarea value={form.description} disabled={disabled || saveDraft.isPending} onChange={(e) => updateField('description', e.target.value)} placeholder={t('Vad är köpt...', 'What was purchased...')} rows={2} />
         </div>
 
-        <Button onClick={() => saveDraft.mutate()} disabled={saveDraft.isPending} className="w-full gap-2">
+        <Button onClick={() => saveDraft.mutate()} disabled={disabled || saveDraft.isPending} className="w-full gap-2">
           <Save className="h-4 w-4" />
-          {saveDraft.isPending ? t('Sparar...', 'Saving...') : t('Spara utkast', 'Save draft')}
+          {saveDraft.isPending
+            ? t('Sparar...', 'Saving...')
+            : submitLabel || (isEditing ? t('Spara ändringar', 'Save changes') : t('Spara utkast', 'Save draft'))}
         </Button>
       </CardContent>
     </Card>
