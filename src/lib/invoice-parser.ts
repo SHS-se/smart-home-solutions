@@ -170,6 +170,9 @@ function parseDate(text: string): string | null {
   let m = text.match(/(\d{4})-(\d{2})-(\d{2})/);
   if (m) return `${m[1]}-${m[2]}-${m[3]}`;
 
+  m = text.match(/(\d{4})\/(\d{2})\/(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+
   m = text.match(/(\d{1,2})[./](\d{1,2})[./](\d{4})/);
   if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
 
@@ -266,7 +269,7 @@ function selectAmount(values: MoneyValue[], preferredCurrency: string | null): n
 function extractMoneyForLabel(text: string, labels: string[], stops: string[], preferredCurrency: string | null): number | null {
   for (const label of labels) {
     const re = new RegExp(
-      `(?:^|\\s)${escapeRegExp(label)}\\s*:?\\s+(?=(?:SEK|EUR|USD|kr|€|\\$|-?\\d))`,
+      `(?:^|\\s)${escapeRegExp(label)}\\s*:?\\s+(?=(?:SEK|EUR|USD|kr|€|\\$|-?\\d[\\d\\s.,]*[.,]\\d{2}))`,
       'i',
     );
     const match = re.exec(text);
@@ -316,6 +319,9 @@ function inferCurrency(text: string): string | null {
 }
 
 function extractSupplierName(lines: string[], normalizedText: string): string | null {
+  const leadingStorefront = normalizedText.match(/^(.+?)\s+(?:Receipt(?:\s*\/\s*VAT)?\s+Invoice|Tax Invoice|VAT Invoice)\b/i);
+  if (leadingStorefront) return cleanSupplierName(leadingStorefront[1]);
+
   const header = extractSectionAfterLabel(
     normalizedText,
     ['Tax Invoice', 'Invoice', 'Faktura'],
@@ -382,12 +388,12 @@ export function parseInvoiceText(rawText: string): ParsedInvoice {
   if (orgMatch) orgNumber = orgMatch[1];
 
   let vatNumber: string | null = null;
-  const vatValue = extractLabelValue(normalizedText, ['VAT Number', 'VAT No', 'VAT Nr', 'Stripe VAT Number']);
+  const vatValue = extractLabelValue(normalizedText, ['VAT Number', 'VAT No', 'VAT Nr', 'Stripe VAT Number', 'VAT ID']);
   if (vatValue) {
     const vatMatch = vatValue.match(/\b[A-Z]{2}\s?\d[\dA-Z ]+\b/i);
     if (vatMatch) vatNumber = vatMatch[0].replace(/\s+/g, ' ').trim();
   } else {
-    const fallbackVatMatch = normalizedText.match(/\b(?:SE|IE)\s?\d[\dA-Z ]+\b/i);
+    const fallbackVatMatch = normalizedText.match(/VAT ID:\s*([A-Z]{2}\s?\d[\dA-Z ]+)/i);
     if (fallbackVatMatch) vatNumber = fallbackVatMatch[0].replace(/\s+/g, ' ').trim();
   }
 
@@ -410,6 +416,10 @@ export function parseInvoiceText(rawText: string): ParsedInvoice {
     currency,
   );
   if (vatAmount !== null) conf.vatAmount = 0.95;
+  else if (/vat exempt|reverse charge/i.test(normalizedText)) {
+    vatAmount = 0;
+    conf.vatAmount = 0.85;
+  }
 
   let grossAmount = extractMoneyForLabel(
     normalizedText,
