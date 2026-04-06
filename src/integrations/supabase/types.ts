@@ -58,6 +58,60 @@ export type Database = {
           },
         ]
       }
+      acc_parser_corrections: {
+        Row: {
+          corrected_value: string
+          created_at: string
+          extracted_value: string | null
+          field_name: string
+          id: string
+          purchase_id: string | null
+          rule_used: string | null
+          source_snippet: string | null
+          supplier_id: string | null
+          supplier_name: string | null
+        }
+        Insert: {
+          corrected_value: string
+          created_at?: string
+          extracted_value?: string | null
+          field_name: string
+          id?: string
+          purchase_id?: string | null
+          rule_used?: string | null
+          source_snippet?: string | null
+          supplier_id?: string | null
+          supplier_name?: string | null
+        }
+        Update: {
+          corrected_value?: string
+          created_at?: string
+          extracted_value?: string | null
+          field_name?: string
+          id?: string
+          purchase_id?: string | null
+          rule_used?: string | null
+          source_snippet?: string | null
+          supplier_id?: string | null
+          supplier_name?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "acc_parser_corrections_purchase_id_fkey"
+            columns: ["purchase_id"]
+            isOneToOne: false
+            referencedRelation: "acc_purchases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "acc_parser_corrections_supplier_id_fkey"
+            columns: ["supplier_id"]
+            isOneToOne: false
+            referencedRelation: "acc_suppliers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       acc_periods: {
         Row: {
           created_at: string
@@ -227,6 +281,47 @@ export type Database = {
             columns: ["verification_id"]
             isOneToOne: false
             referencedRelation: "acc_verifications"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      acc_supplier_templates: {
+        Row: {
+          aliases: string[]
+          created_at: string
+          email_domains: string[]
+          field_rules: Json
+          id: string
+          layout_hints: Json
+          supplier_id: string
+          updated_at: string
+        }
+        Insert: {
+          aliases?: string[]
+          created_at?: string
+          email_domains?: string[]
+          field_rules?: Json
+          id?: string
+          layout_hints?: Json
+          supplier_id: string
+          updated_at?: string
+        }
+        Update: {
+          aliases?: string[]
+          created_at?: string
+          email_domains?: string[]
+          field_rules?: Json
+          id?: string
+          layout_hints?: Json
+          supplier_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "acc_supplier_templates_supplier_id_fkey"
+            columns: ["supplier_id"]
+            isOneToOne: true
+            referencedRelation: "acc_suppliers"
             referencedColumns: ["id"]
           },
         ]
