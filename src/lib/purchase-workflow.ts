@@ -62,6 +62,15 @@ export function buildInvoiceNumberNote(invoiceNumber: string): string | null {
   return `Supplier invoice no: ${trimmed}`;
 }
 
+export function resolveSavedPurchaseId(
+  existingPurchaseId: string | null | undefined,
+  createdPurchaseId: string | null | undefined,
+): string {
+  const resolvedId = existingPurchaseId || createdPurchaseId;
+  if (!resolvedId) throw new Error('Purchase id missing after save');
+  return resolvedId;
+}
+
 function normalizeVatNumber(vatNumber: string | null | undefined): string | null {
   const trimmed = vatNumber?.replace(/\s+/g, '').trim().toUpperCase();
   return trimmed || null;

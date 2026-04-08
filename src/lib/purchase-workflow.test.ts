@@ -1,6 +1,11 @@
 /// <reference lib="deno.ns" />
 
-import { inferSupplierMetadata, inferVatTreatment, extractInvoiceNumberFromNotes } from './purchase-workflow.ts';
+import {
+  inferSupplierMetadata,
+  inferVatTreatment,
+  extractInvoiceNumberFromNotes,
+  resolveSavedPurchaseId,
+} from './purchase-workflow.ts';
 import type { ParsedInvoice } from './invoice-parser.ts';
 
 function assertEqual<T>(actual: T, expected: T, label: string): void {
@@ -83,4 +88,9 @@ Deno.test('inferVatTreatment classifies Swedish VAT invoices as domestic deducti
   });
 
   assertEqual(vatTreatment, 'domestic_deductible', 'vatTreatment');
+});
+
+Deno.test('resolveSavedPurchaseId prefers newly created purchase id when creating a draft', () => {
+  const purchaseId = resolveSavedPurchaseId(null, 'new-purchase-id');
+  assertEqual(purchaseId, 'new-purchase-id', 'purchaseId');
 });

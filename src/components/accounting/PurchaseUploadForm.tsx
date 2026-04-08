@@ -20,6 +20,7 @@ import {
   extractInvoiceNumberFromNotes,
   inferSupplierMetadata,
   inferVatTreatment,
+  resolveSavedPurchaseId,
 } from '@/lib/purchase-workflow';
 
 interface Props {
@@ -205,14 +206,15 @@ const PurchaseUploadForm: React.FC<Props> = ({
         created_by: user?.id,
       }).select().single();
       if (error) throw error;
+      const savedPurchaseId = resolveSavedPurchaseId(purchase?.id, newPurchase?.id);
       await supabase.from('acc_purchase_lines').insert({
-        purchase_id: purchase.id,
+        purchase_id: savedPurchaseId,
         ...linePayload,
         expense_account: '4000',
         vat_treatment: inferredVatTreatment,
         sort_order: 0,
       });
-      return purchase.id;
+      return savedPurchaseId;
     },
     onSuccess: (savedPurchaseId) => {
       if (purchase?.id) {
