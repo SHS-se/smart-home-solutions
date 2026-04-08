@@ -15,6 +15,8 @@ const UBIQUITI_RAW_TEXT = `Ubiquiti Store Europe   Receipt / VAT Invoice  Ubiqui
 
 const AMAZON_RAW_TEXT = `Faktura  Sida 1 av 1  LU-BIO-04 Amazon EU S.à r.l. - 38 avenue John F. Kennedy, L-1855 Luxemburg, registrerat i Luxemburg (Registre de Commerce et des Sociétés (RCS)): B 101818 Amazon EU S.à r.l., Sverige Filial • Malmskillnadsgatan 36, 111 57 Stockholm, Sverige • momsnummer SE516412220101 • Registrerat i Bolagsverkets filialregister • Organisationsnummer: 516412-2201  Moms   Delsumma för artikel (exkl. moms) Delsumma moms 25 %   378,06 kr   94,52 kr Totalt   378,06 kr   94,52 kr  Totalsumma för faktura   472,58 kr Fakturauppgifter  Beställningsdatum   12 mars 2026 Ordernr   407-0705765-2582749  Betald  Referens-ID för betalning 3BOYvD8yTxgv7Yyv37yu Såld av Amazon EU S.à r.l., Sverige Filial Moms # SE516412220101 Fakturadatum/Leveransdatum   13 mars 2026 Fakturanr   SE6EK5YAEUI Summa att betala   472,58 kr  PHILIP CHEONG PORFYRVÄGEN 10, SE790519759101 TÄBY, 18734 SE  För kundsupport, gå till www.amazon.se/contact-us  Faktureringsadress  Philip Cheong Porfyrvägen 10, SE790519759101 TÄBY, 18734 SE  Leveransadress  Philip Cheong Porfyrvägen 10, SE790519759101 TÄBY, 18734 SE  Såld av  Amazon EU S.à r.l., Sverige Filial Malmskillnadsgatan 36 111 57 Stockholm Sverige Moms # SE516412220101  Beställningsinformation  Beskrivning   Antal   Enhetspris (exkl. moms) Moms   Enhetspris (inkl. moms) Delsumma för artikel (inkl. moms) Shelly Dimmer 2, Interruttore Varialuce Senza Fili, Confezione de 2, Wi-Fi, Nessun Hub o Neutro richiesto, Domotica, Compatibile con Alexa e Google Home, App iOS Android ASIN: B09RMQZ5ZY 1   458,06 kr   25 %   572,58 kr   572,58 kr Fraktavgifter   0,00 kr   0,00 kr   0,00 kr Kampanjer   -80,00 kr   -100,00 kr   -100,00 kr`;
 
+const AMAZON_MARKETPLACE_RAW_TEXT = `Faktura  Sida 1 av 1  Moms deklarerat av Amazon i leveranslandet  Moms   Delsumma för artikel (exkl. moms) Delsumma moms 25 %   2 319,20 kr   579,80 kr Totalt   2 319,20 kr   579,80 kr  Totalsumma för faktura   2 899,00 kr Fakturauppgifter  Beställningsdatum   29.01.2026 Ordernr   407-5695034-0067546  Betald  Referens-ID för betalning 2EeXGfSTDIRazDBkqpS8 Såld av Shenzhenshi LingKeYun Technology Co., Ltd. Fakturadatum/Leveransdatum   30.01.2026 Fakturanr   SE60000DWSE0PI Summa att betala   2 899,00 kr  PHILIP CHEONG PORFYRVÄGEN 10 TÄBY, 18734 SE  För kundsupport, gå till www.amazon.se/contact-us  Faktureringsadress  Philip Cheong Porfyrvägen 10 TÄBY, 18734 SE  Leveransadress  Philip Cheong Porfyrvägen 10 TÄBY, 18734 SE  Såld av  Shenzhenshi LingKeYun Technology Co., Ltd.  龙华 区 大浪街道 赖 屋山社区金城工 业 园第三 栋504  深圳市, 广 东, 518000  CN  Beställningsinformation  Beskrivning   Antal   Enhetspris (exkl. moms) Moms   Enhetspris (inkl. moms) Delsumma för artikel (inkl. moms) Beelink MINI-S13 minidator, 13:e generationens Intel Alder Lake-N150 processor (upp till 3,6 GHz) minidator, 16 GB RAM, 500GB SSD, affärsdator, dubbel HDMI/WiFi 6/BT 5.2/RJ45/WOL | B0DPC1LVRF ASIN: B0DPC1LVRF 1   2 319,20 kr   25 %   2 899,00 kr   2 899,00 kr Fraktavgifter   0,00 kr   0,00 kr   0,00 kr`;
+
 Deno.test('parseInvoiceText extracts Stripe tax invoice fields from flattened PDF text', () => {
   const parsed = parseInvoiceText(STRIPE_RAW_TEXT);
 
@@ -57,4 +59,19 @@ Deno.test('parseInvoiceText extracts Amazon Sweden invoice fields from flattened
   assertEqual(parsed.netAmount, 378.06, 'netAmount');
   assertEqual(parsed.vatRate, 25, 'vatRate');
   assertEqual(parsed.description, 'Shelly Dimmer 2 (Amazon inköp)', 'description');
+});
+
+Deno.test('parseInvoiceText extracts Amazon marketplace invoice VAT summary with spaced thousands separators', () => {
+  const parsed = parseInvoiceText(AMAZON_MARKETPLACE_RAW_TEXT);
+
+  assertEqual(parsed.supplierName, 'Shenzhenshi LingKeYun Technology Co., Ltd.', 'supplierName');
+  assertEqual(parsed.invoiceNumber, 'SE60000DWSE0PI', 'invoiceNumber');
+  assertEqual(parsed.invoiceDate, '2026-01-30', 'invoiceDate');
+  assertEqual(parsed.dueDate, null, 'dueDate');
+  assertEqual(parsed.currency, 'SEK', 'currency');
+  assertEqual(parsed.grossAmount, 2899, 'grossAmount');
+  assertEqual(parsed.vatAmount, 579.8, 'vatAmount');
+  assertEqual(parsed.netAmount, 2319.2, 'netAmount');
+  assertEqual(parsed.vatRate, 25, 'vatRate');
+  assertEqual(parsed.description, 'Beelink MINI-S13 minidator (Amazon inköp)', 'description');
 });

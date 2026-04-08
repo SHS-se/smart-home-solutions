@@ -432,7 +432,7 @@ function extractDescription(supplierName: string | null, rawText: string): strin
 }
 
 function extractSwedishVatSummary(text: string): { vatRate: number | null; netAmount: number | null; vatAmount: number | null } | null {
-  const match = text.match(/Delsumma moms\s+(\d{1,2})\s*%\s+([\d.,]+)\s*kr\s+([\d.,]+)\s*kr/i);
+  const match = text.match(/Delsumma moms\s+(\d{1,2})\s*%\s+([\d\s.,]+)\s*kr\s+([\d\s.,]+)\s*kr/i);
   if (!match) return null;
 
   return {
@@ -620,7 +620,7 @@ export function generateDescription(supplierName: string | null, rawText: string
   const text = normalizeWhitespace(rawText);
   const productName = extractProductName(text);
 
-  if (supplierName?.match(/\bAmazon\b/i) && productName) {
+  if ((supplierName?.match(/\bAmazon\b/i) || /amazon\.se\/contact-us|moms deklarerat av amazon|fakturauppgifter/i.test(text)) && productName) {
     return `${productName} (Amazon inköp)`;
   }
 
