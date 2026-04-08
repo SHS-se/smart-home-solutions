@@ -423,29 +423,18 @@ Deno.serve(async (req) => {
       await sql.end();
       log("SQL dump complete");
 
-      // Create ZIP stream
-      const zip = new Zip();
+      // Collect all ZIP entries as a flat object
+      const zipFiles: Record<string, Uint8Array> = {};
       const now = new Date().toISOString();
       const dateSlug = now.slice(0, 10);
 
-      const addTextFile = (path: string, content: string) => {
-        const entry = new ZipPassThrough(path);
-        zip.add(entry);
-        entry.push(strToU8(content), true);
-      };
+      // Add SQL dump
+      zipFiles[`backup-${dateSlug}.sql`] = strToU8(sqlDump);
 
-      const addBinaryFile = async (path: string, data: Uint8Array) => {
-        const entry = new ZipPassThrough(path);
-        zip.add(entry);
-        entry.push(data, true);
-      };
-
-      // Add SQL dump to ZIP
-      addTextFile(`backup-${dateSlug}.sql`, sqlDump);
-
-      // Add storage files to ZIP
-      const storageStats = await addStorageToZip(zip, serviceClient);
-      log("Storage export complete", storageStats);
+      // Add storage files
+      const storageResult = await collectStorageFiles(serviceClient);
+      Object.assign(zipFiles, storageResult.files);
+      log("Storage export complete", { bucketCount: storageResult.bucketCount, fileCount: storageResult.fileCount });
 
       // Export auth users with encrypted_password via direct SQL
       const dbUrl2 = Deno.env.get("SUPABASE_DB_URL")!;
@@ -467,16 +456,14 @@ Deno.serve(async (req) => {
         await sql2.end();
       }
 
-      // Encrypt auth users + secrets if ENCRYPTION_KEY is set.
-      // ENCRYPTION_KEY itself is never included in the export.
       const encryptionKey = Deno.env.get("ENCRYPTION_KEY");
 
       if (encryptionKey && allUsers.length > 0) {
         const encryptedAuth = await encryptData(JSON.stringify(allUsers, null, 2), encryptionKey);
-        await addBinaryFile("auth_users.enc", encryptedAuth);
+        zipFiles["auth_users.enc"] = encryptedAuth;
         log("Auth users encrypted → auth_users.enc");
       } else {
-        addTextFile("auth_users.json", JSON.stringify(allUsers, null, 2));
+        zipFiles["auth_users.json"] = strToU8(JSON.stringify(allUsers, null, 2));
         log(encryptionKey ? "Auth users unencrypted (no users)" : "Auth users unencrypted — set ENCRYPTION_KEY secret to encrypt");
       }
 
@@ -490,14 +477,14 @@ Deno.serve(async (req) => {
 
       if (encryptionKey && Object.keys(secrets).length > 0) {
         const encryptedSecrets = await encryptData(JSON.stringify(secrets), encryptionKey);
-        await addBinaryFile("secrets.enc", encryptedSecrets);
+        zipFiles["secrets.enc"] = encryptedSecrets;
         log("Secrets encrypted → secrets.enc");
       } else if (!encryptionKey) {
         log("ENCRYPTION_KEY not set — secrets not exported. Add ENCRYPTION_KEY as a Supabase secret to enable.");
       }
 
-      // Finalize ZIP
-      const zipBlob = await finalizeZip(zip);
+      // Create ZIP with no compression (STORE) — files are mostly already compressed
+      const zipBlob = zipSync(zipFiles, { level: 0 });
       log("ZIP generated", { sizeBytes: zipBlob.length });
 
       const fileName = `backup-${dateSlug}.zip`;
