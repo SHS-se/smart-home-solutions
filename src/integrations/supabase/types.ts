@@ -163,6 +163,7 @@ export type Database = {
           posting_date: string | null
           status: string
           supplier_id: string | null
+          supplier_invoice_number: string | null
           updated_at: string
           vat_amount: number
           vat_evidence_status: string
@@ -186,6 +187,7 @@ export type Database = {
           posting_date?: string | null
           status?: string
           supplier_id?: string | null
+          supplier_invoice_number?: string | null
           updated_at?: string
           vat_amount?: number
           vat_evidence_status?: string
@@ -209,6 +211,7 @@ export type Database = {
           posting_date?: string | null
           status?: string
           supplier_id?: string | null
+          supplier_invoice_number?: string | null
           updated_at?: string
           vat_amount?: number
           vat_evidence_status?: string

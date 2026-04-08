@@ -1,9 +1,11 @@
 /// <reference lib="deno.ns" />
 
 import {
+  findDuplicatePurchaseId,
   inferSupplierMetadata,
   inferVatTreatment,
   extractInvoiceNumberFromNotes,
+  normalizeSupplierInvoiceNumber,
   resolveSavedPurchaseId,
 } from './purchase-workflow.ts';
 import type { ParsedInvoice } from './invoice-parser.ts';
@@ -93,4 +95,22 @@ Deno.test('inferVatTreatment classifies Swedish VAT invoices as domestic deducti
 Deno.test('resolveSavedPurchaseId prefers newly created purchase id when creating a draft', () => {
   const purchaseId = resolveSavedPurchaseId(null, 'new-purchase-id');
   assertEqual(purchaseId, 'new-purchase-id', 'purchaseId');
+});
+
+Deno.test('normalizeSupplierInvoiceNumber trims and uppercases supplier invoice numbers', () => {
+  const invoiceNumber = normalizeSupplierInvoiceNumber(' se6ek5yaeui ');
+  assertEqual(invoiceNumber, 'SE6EK5YAEUI', 'invoiceNumber');
+});
+
+Deno.test('findDuplicatePurchaseId matches by supplier and normalized supplier invoice number', () => {
+  const duplicatePurchaseId = findDuplicatePurchaseId(
+    [
+      { id: 'existing-1', supplier_id: 'supplier-1', supplier_invoice_number: 'SE6EK5YAEUI' },
+      { id: 'existing-2', supplier_id: 'supplier-2', supplier_invoice_number: 'SE6EK5YAEUI' },
+    ],
+    'supplier-1',
+    ' se6ek5yaeui ',
+  );
+
+  assertEqual(duplicatePurchaseId, 'existing-1', 'duplicatePurchaseId');
 });

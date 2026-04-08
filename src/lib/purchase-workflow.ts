@@ -62,6 +62,29 @@ export function buildInvoiceNumberNote(invoiceNumber: string): string | null {
   return `Supplier invoice no: ${trimmed}`;
 }
 
+export function normalizeSupplierInvoiceNumber(invoiceNumber: string | null | undefined): string | null {
+  const normalized = invoiceNumber?.trim().toUpperCase() || '';
+  return normalized || null;
+}
+
+export function findDuplicatePurchaseId(
+  purchases: Array<{ id: string; supplier_id: string | null; supplier_invoice_number: string | null }>,
+  supplierId: string | null | undefined,
+  invoiceNumber: string | null | undefined,
+  excludePurchaseId?: string | null,
+): string | null {
+  const normalizedInvoiceNumber = normalizeSupplierInvoiceNumber(invoiceNumber);
+  if (!supplierId || !normalizedInvoiceNumber) return null;
+
+  const match = purchases.find((purchase) =>
+    purchase.id !== excludePurchaseId &&
+    purchase.supplier_id === supplierId &&
+    normalizeSupplierInvoiceNumber(purchase.supplier_invoice_number) === normalizedInvoiceNumber,
+  );
+
+  return match?.id || null;
+}
+
 export function resolveSavedPurchaseId(
   existingPurchaseId: string | null | undefined,
   createdPurchaseId: string | null | undefined,

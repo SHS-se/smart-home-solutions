@@ -18,8 +18,10 @@ import {
   buildInvoiceNumberNote,
   createEmptyPurchaseForm,
   extractInvoiceNumberFromNotes,
+  findDuplicatePurchaseId,
   inferSupplierMetadata,
   inferVatTreatment,
+  normalizeSupplierInvoiceNumber,
   resolveSavedPurchaseId,
 } from '@/lib/purchase-workflow';
 
@@ -66,7 +68,7 @@ const PurchaseUploadForm: React.FC<Props> = ({
     setForm({
       supplierId: purchase.supplier_id || '',
       newSupplierName: '',
-      invoiceNumber: extractInvoiceNumberFromNotes(purchase.notes),
+      invoiceNumber: purchase.supplier_invoice_number || extractInvoiceNumberFromNotes(purchase.notes),
       documentType: purchase.document_type || 'supplier_invoice',
       documentDate: purchase.document_date || '',
       dueDate: purchase.due_date || '',
@@ -137,8 +139,35 @@ const PurchaseUploadForm: React.FC<Props> = ({
         supplierType = ns.supplier_type;
       }
 
+      const supplierInvoiceNumber = normalizeSupplierInvoiceNumber(form.invoiceNumber);
+      if (supplierId && supplierInvoiceNumber) {
+        const { data: duplicateCandidates, error: duplicateCheckError } = await supabase
+          .from('acc_purchases')
+          .select('id, supplier_id, supplier_invoice_number')
+          .eq('supplier_id', supplierId)
+          .eq('supplier_invoice_number', supplierInvoiceNumber);
+        if (duplicateCheckError) throw duplicateCheckError;
+
+        const duplicatePurchaseId = findDuplicatePurchaseId(
+          duplicateCandidates || [],
+          supplierId,
+          supplierInvoiceNumber,
+          purchase?.id,
+        );
+
+        if (duplicatePurchaseId) {
+          throw new Error(
+            t(
+              'Den här leverantörsfakturan finns redan registrerad och kan inte sparas igen.',
+              'This supplier invoice is already registered and cannot be saved again.',
+            ),
+          );
+        }
+      }
+
       const purchasePayload = {
         supplier_id: supplierId,
+        supplier_invoice_number: supplierInvoiceNumber,
         document_type: form.documentType,
         document_date: form.documentDate || new Date().toISOString().split('T')[0],
         due_date: form.dueDate || null,
