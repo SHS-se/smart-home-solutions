@@ -490,7 +490,7 @@ Deno.serve(async (req) => {
       }
 
       // Generate ZIP
-      const zipBlob = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
+      const zipBlob = await zip.generateAsync({ type: "uint8array", compression: "STORE" });
       log("ZIP generated", { sizeBytes: zipBlob.length });
 
       const fileName = `backup-${dateSlug}.zip`;
