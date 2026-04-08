@@ -1,5 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import JSZip from "https://esm.sh/jszip@3.10.1";
+import { Zip, ZipPassThrough, strToU8 } from "https://esm.sh/fflate@0.8.2?target=deno";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -307,8 +307,11 @@ async function generateSqlDump(sql: any): Promise<string> {
   return lines.join("\n");
 }
 
-/** Download all files from all storage buckets and add to ZIP */
-async function addStorageToZip(zip: JSZip, serviceClient: any): Promise<{ bucketCount: number; fileCount: number }> {
+/** Stream all files from all storage buckets directly into a ZIP */
+async function addStorageToZip(
+  zip: Zip,
+  serviceClient: any,
+): Promise<{ bucketCount: number; fileCount: number }> {
   const { data: buckets, error: bucketsErr } = await serviceClient.storage.listBuckets();
   if (bucketsErr) {
     log("Error listing buckets", { error: bucketsErr.message });
@@ -316,17 +319,24 @@ async function addStorageToZip(zip: JSZip, serviceClient: any): Promise<{ bucket
   }
 
   let totalFiles = 0;
-  const storageFolder = zip.folder("storage")!;
-
-  // Also create a manifest of bucket metadata
   const manifest: Array<{ bucket: string; isPublic: boolean; files: string[] }> = [];
+
+  const addTextFile = (path: string, content: string) => {
+    const entry = new ZipPassThrough(path);
+    zip.add(entry);
+    entry.push(strToU8(content), true);
+  };
+
+  const addBinaryFile = async (path: string, data: Uint8Array) => {
+    const entry = new ZipPassThrough(path);
+    zip.add(entry);
+    entry.push(data, true);
+  };
 
   for (const bucket of buckets) {
     log("Processing bucket", { name: bucket.name, public: bucket.public });
-    const bucketFolder = storageFolder.folder(bucket.name)!;
     const bucketFiles: string[] = [];
 
-    // Recursively list all files in the bucket
     const listAll = async (prefix: string): Promise<void> => {
       const { data: items, error: listErr } = await serviceClient.storage
         .from(bucket.name)
@@ -343,32 +353,31 @@ async function addStorageToZip(zip: JSZip, serviceClient: any): Promise<{ bucket
         const fullPath = prefix ? `${prefix}/${item.name}` : item.name;
 
         if (item.id === null) {
-          // It's a folder, recurse
           await listAll(fullPath);
-        } else {
-          // It's a file, download it
-          try {
-            const { data: fileData, error: dlErr } = await serviceClient.storage
-              .from(bucket.name)
-              .download(fullPath);
+          continue;
+        }
 
-            if (dlErr) {
-              log("Error downloading file", { bucket: bucket.name, path: fullPath, error: dlErr.message });
-              continue;
-            }
+        try {
+          const { data: fileData, error: dlErr } = await serviceClient.storage
+            .from(bucket.name)
+            .download(fullPath);
 
-            if (fileData) {
-              const arrayBuf = await fileData.arrayBuffer();
-              bucketFolder.file(fullPath, arrayBuf);
-              bucketFiles.push(fullPath);
-              totalFiles++;
-              if (totalFiles % 25 === 0) {
-                log("Storage download progress", { filesDownloaded: totalFiles });
-              }
-            }
-          } catch (e) {
-            log("Error downloading file", { bucket: bucket.name, path: fullPath, error: String(e) });
+          if (dlErr) {
+            log("Error downloading file", { bucket: bucket.name, path: fullPath, error: dlErr.message });
+            continue;
           }
+
+          if (!fileData) continue;
+
+          const arrayBuf = await fileData.arrayBuffer();
+          await addBinaryFile(`storage/${bucket.name}/${fullPath}`, new Uint8Array(arrayBuf));
+          bucketFiles.push(fullPath);
+          totalFiles++;
+          if (totalFiles % 25 === 0) {
+            log("Storage download progress", { filesDownloaded: totalFiles });
+          }
+        } catch (e) {
+          log("Error downloading file", { bucket: bucket.name, path: fullPath, error: String(e) });
         }
       }
     };
@@ -378,10 +387,32 @@ async function addStorageToZip(zip: JSZip, serviceClient: any): Promise<{ bucket
     log("Bucket complete", { name: bucket.name, files: bucketFiles.length });
   }
 
-  // Add manifest JSON
-  storageFolder.file("_manifest.json", JSON.stringify(manifest, null, 2));
-
+  addTextFile("storage/_manifest.json", JSON.stringify(manifest, null, 2));
   return { bucketCount: buckets.length, fileCount: totalFiles };
+}
+
+async function finalizeZip(zip: Zip): Promise<Uint8Array> {
+  return await new Promise((resolve, reject) => {
+    const chunks: Uint8Array[] = [];
+    zip.ondata = (err, chunk, final) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      chunks.push(chunk);
+      if (final) {
+        const totalLength = chunks.reduce((sum, c) => sum + c.length, 0);
+        const out = new Uint8Array(totalLength);
+        let offset = 0;
+        for (const chunkPart of chunks) {
+          out.set(chunkPart, offset);
+          offset += chunkPart.length;
+        }
+        resolve(out);
+      }
+    };
+    zip.end();
+  });
 }
 
 Deno.serve(async (req) => {
@@ -428,13 +459,25 @@ Deno.serve(async (req) => {
       await sql.end();
       log("SQL dump complete");
 
-      // Create ZIP
-      const zip = new JSZip();
+      // Create ZIP stream
+      const zip = new Zip();
       const now = new Date().toISOString();
       const dateSlug = now.slice(0, 10);
 
+      const addTextFile = (path: string, content: string) => {
+        const entry = new ZipPassThrough(path);
+        zip.add(entry);
+        entry.push(strToU8(content), true);
+      };
+
+      const addBinaryFile = async (path: string, data: Uint8Array) => {
+        const entry = new ZipPassThrough(path);
+        zip.add(entry);
+        entry.push(data, true);
+      };
+
       // Add SQL dump to ZIP
-      zip.file(`backup-${dateSlug}.sql`, sqlDump);
+      addTextFile(`backup-${dateSlug}.sql`, sqlDump);
 
       // Add storage files to ZIP
       const storageStats = await addStorageToZip(zip, serviceClient);
@@ -466,10 +509,10 @@ Deno.serve(async (req) => {
 
       if (encryptionKey && allUsers.length > 0) {
         const encryptedAuth = await encryptData(JSON.stringify(allUsers, null, 2), encryptionKey);
-        zip.file("auth_users.enc", encryptedAuth);
+        await addBinaryFile("auth_users.enc", encryptedAuth);
         log("Auth users encrypted → auth_users.enc");
       } else {
-        zip.file("auth_users.json", JSON.stringify(allUsers, null, 2));
+        addTextFile("auth_users.json", JSON.stringify(allUsers, null, 2));
         log(encryptionKey ? "Auth users unencrypted (no users)" : "Auth users unencrypted — set ENCRYPTION_KEY secret to encrypt");
       }
 
@@ -483,14 +526,14 @@ Deno.serve(async (req) => {
 
       if (encryptionKey && Object.keys(secrets).length > 0) {
         const encryptedSecrets = await encryptData(JSON.stringify(secrets), encryptionKey);
-        zip.file("secrets.enc", encryptedSecrets);
+        await addBinaryFile("secrets.enc", encryptedSecrets);
         log("Secrets encrypted → secrets.enc");
       } else if (!encryptionKey) {
         log("ENCRYPTION_KEY not set — secrets not exported. Add ENCRYPTION_KEY as a Supabase secret to enable.");
       }
 
-      // Generate ZIP
-      const zipBlob = await zip.generateAsync({ type: "uint8array", compression: "STORE" });
+      // Finalize ZIP
+      const zipBlob = await finalizeZip(zip);
       log("ZIP generated", { sizeBytes: zipBlob.length });
 
       const fileName = `backup-${dateSlug}.zip`;
