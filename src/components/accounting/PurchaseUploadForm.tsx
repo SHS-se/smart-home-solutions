@@ -198,7 +198,7 @@ const PurchaseUploadForm: React.FC<Props> = ({
         if (error) throw error;
         filePath = path;
       }
-      const { data: purchase, error } = await supabase.from('acc_purchases').insert({
+      const { data: newPurchase, error } = await supabase.from('acc_purchases').insert({
         ...purchasePayload,
         document_file_path: filePath,
         status: 'draft',
