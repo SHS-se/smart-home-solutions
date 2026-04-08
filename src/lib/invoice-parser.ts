@@ -80,6 +80,22 @@ const SERVICE_MONTH_NAMES_SV: Record<string, string> = {
 };
 
 const FIELD_STOPS = [
+  'Faktura',
+  'Sida',
+  'Fakturauppgifter',
+  'Beställningsdatum',
+  'Ordernr',
+  'Betald',
+  'Referens-ID för betalning',
+  'Såld av',
+  'Fakturadatum/Leveransdatum',
+  'Fakturanr',
+  'Fakturanummer',
+  'Summa att betala',
+  'Faktureringsadress',
+  'Leveransadress',
+  'Beställningsinformation',
+  'Beskrivning',
   'Account Number',
   'Invoice Number',
   'Invoice Date',
@@ -140,6 +156,14 @@ function escapeRegExp(text: string): string {
 
 function cleanSupplierName(text: string): string {
   return text.replace(/\s+/g, ' ').trim().replace(/[;:]+$/, '');
+}
+
+function cleanProductName(text: string): string {
+  return text
+    .replace(/\s+/g, ' ')
+    .replace(/\s*ASIN:.*$/i, '')
+    .split(',')[0]
+    .trim();
 }
 
 function parseAmount(text: string): number | null {
@@ -319,6 +343,18 @@ function inferCurrency(text: string): string | null {
 }
 
 function extractSupplierName(lines: string[], normalizedText: string): string | null {
+  const soldBySection = extractSectionAfterLabel(
+    normalizedText,
+    ['Såld av', 'Sold by'],
+    ['Moms #', 'Moms', 'VAT', 'Fakturadatum', 'Invoice Date', 'Beställningsinformation', 'Billing Address', 'Leveransadress'],
+    160,
+  );
+  if (soldBySection) {
+    const company = soldBySection.match(COMPANY_SUFFIX_RE);
+    if (company) return cleanSupplierName(company[1]);
+    return cleanSupplierName(soldBySection.split(/\s{2,}/)[0]);
+  }
+
   const leadingStorefront = normalizedText.match(/^(.+?)\s+(?:Receipt(?:\s*\/\s*VAT)?\s+Invoice|Tax Invoice|VAT Invoice)\b/i);
   if (leadingStorefront) return cleanSupplierName(leadingStorefront[1]);
 
@@ -345,7 +381,7 @@ function extractSupplierName(lines: string[], normalizedText: string): string | 
 }
 
 function extractInvoiceNumber(text: string): string | null {
-  const direct = extractLabelValue(text, ['Invoice Number', 'Invoice No', 'Invoice #', 'Fakturanummer']);
+  const direct = extractLabelValue(text, ['Invoice Number', 'Invoice No', 'Invoice #', 'Fakturanr', 'Fakturanummer']);
   if (direct) {
     const token = direct.match(/[A-Z0-9][A-Z0-9._/-]{2,}/i);
     if (token) return token[0];
@@ -353,7 +389,7 @@ function extractInvoiceNumber(text: string): string | null {
 
   const invPats = [
     /invoice\s*(?:nr|number|no)?\.?\s*:?\s*([A-Z0-9][\w-]{2,40})/i,
-    /faktura\s*(?:nr|nummer|no)?\.?\s*:?\s*([A-Z0-9][\w-]{2,40})/i,
+    /faktura(?:nr|nummer|no)\.?\s*:?\s*([A-Z0-9][\w-]{2,40})/i,
   ];
   for (const pattern of invPats) {
     const match = text.match(pattern);
@@ -368,9 +404,42 @@ function extractDate(text: string, labels: string[]): string | null {
   return value ? parseDate(value) : null;
 }
 
+function extractProductName(text: string): string | null {
+  const amazonMatch = text.match(/Delsumma för artikel \(inkl\. moms\)\s+(.+?)\s+ASIN:/i);
+  if (amazonMatch) {
+    const productName = cleanProductName(amazonMatch[1]);
+    return productName || null;
+  }
+
+  const descriptionMatch = text.match(/Beskrivning\s+Antal\s+Enhetspris.*?\s+(.+?)\s+ASIN:/i);
+  if (descriptionMatch) {
+    const productName = cleanProductName(descriptionMatch[1]);
+    return productName || null;
+  }
+
+  const fallbackMatch = text.match(/(?:PRODUCT DESCRIPTION|Beskrivning)\s+.+?\s+([A-ZÅÄÖa-zåäö0-9][^€$]{5,120}?)\s+(?:ASIN:|Fraktavgifter|Shipping Amount)/i);
+  if (fallbackMatch) {
+    const productName = cleanProductName(fallbackMatch[1]);
+    return productName || null;
+  }
+
+  return null;
+}
+
 function extractDescription(supplierName: string | null, rawText: string): string | null {
   const description = generateDescription(supplierName, rawText);
   return description || null;
+}
+
+function extractSwedishVatSummary(text: string): { vatRate: number | null; netAmount: number | null; vatAmount: number | null } | null {
+  const match = text.match(/Delsumma moms\s+(\d{1,2})\s*%\s+([\d.,]+)\s*kr\s+([\d.,]+)\s*kr/i);
+  if (!match) return null;
+
+  return {
+    vatRate: Number(match[1]),
+    netAmount: parseAmount(`${match[2]} kr`),
+    vatAmount: parseAmount(`${match[3]} kr`),
+  };
 }
 
 /* ── Main parser ────────────────────────────────────── */
@@ -388,7 +457,7 @@ export function parseInvoiceText(rawText: string): ParsedInvoice {
   if (orgMatch) orgNumber = orgMatch[1];
 
   let vatNumber: string | null = null;
-  const vatValue = extractLabelValue(normalizedText, ['VAT Number', 'VAT No', 'VAT Nr', 'Stripe VAT Number', 'VAT ID']);
+  const vatValue = extractLabelValue(normalizedText, ['VAT Number', 'VAT No', 'VAT Nr', 'Stripe VAT Number', 'VAT ID', 'Moms #', 'momsnummer']);
   if (vatValue) {
     const vatMatch = vatValue.match(/\b[A-Z]{2}\s?\d[\dA-Z ]+\b/i);
     if (vatMatch) vatNumber = vatMatch[0].replace(/\s+/g, ' ').trim();
@@ -400,7 +469,7 @@ export function parseInvoiceText(rawText: string): ParsedInvoice {
   const invoiceNumber = extractInvoiceNumber(normalizedText);
   if (invoiceNumber) conf.invoiceNumber = 0.95;
 
-  const invoiceDate = extractDate(normalizedText, ['Invoice Date', 'Fakturadatum', 'Date']);
+  const invoiceDate = extractDate(normalizedText, ['Invoice Date', 'Fakturadatum', 'Fakturadatum/Leveransdatum', 'Date']);
   if (invoiceDate) conf.invoiceDate = 0.95;
 
   const dueDate = extractDate(normalizedText, ['Due Date', 'Förfallodatum', 'Förfaller']);
@@ -411,7 +480,7 @@ export function parseInvoiceText(rawText: string): ParsedInvoice {
 
   let vatAmount = extractMoneyForLabel(
     normalizedText,
-    ['Total VAT', 'VAT Amount', 'Varav moms', 'Moms'],
+    ['Total VAT', 'VAT Amount', 'Varav moms', 'Delsumma moms', 'Moms'],
     ['Total', 'Amount Due', 'Total VAT in EUR', 'Exchange Rates', 'Questions?'],
     currency,
   );
@@ -431,11 +500,23 @@ export function parseInvoiceText(rawText: string): ParsedInvoice {
 
   let netAmount = extractMoneyForLabel(
     normalizedText,
-    ['Net Amount', 'Netto', 'Subtotal', 'Delsumma', 'Exkl moms'],
+    ['Net Amount', 'Netto', 'Subtotal', 'Delsumma för artikel (exkl. moms)', 'Delsumma', 'Exkl moms'],
     ['VAT', 'Moms', 'Total', 'Amount Due', 'Questions?'],
     currency,
   );
   if (netAmount !== null) conf.netAmount = 0.9;
+
+  const swedishVatSummary = extractSwedishVatSummary(normalizedText);
+  if (swedishVatSummary) {
+    if (netAmount === null && swedishVatSummary.netAmount !== null) {
+      netAmount = swedishVatSummary.netAmount;
+      conf.netAmount = 0.95;
+    }
+    if (vatAmount === null && swedishVatSummary.vatAmount !== null) {
+      vatAmount = swedishVatSummary.vatAmount;
+      conf.vatAmount = 0.95;
+    }
+  }
 
   if (grossAmount === null || vatAmount === null || netAmount === null) {
     for (const line of lines) {
@@ -480,6 +561,9 @@ export function parseInvoiceText(rawText: string): ParsedInvoice {
       else if (Math.abs(ratio - 0.12) < 0.02) vatRate = 12;
       else if (Math.abs(ratio - 0.06) < 0.02) vatRate = 6;
     }
+  }
+  if (vatRate === null && swedishVatSummary?.vatRate != null) {
+    vatRate = swedishVatSummary.vatRate;
   }
 
   const description = extractDescription(supplierName, normalizedText);
@@ -534,6 +618,12 @@ export function fuzzyMatchSupplier(
 
 export function generateDescription(supplierName: string | null, rawText: string): string {
   const text = normalizeWhitespace(rawText);
+  const productName = extractProductName(text);
+
+  if (supplierName?.match(/\bAmazon\b/i) && productName) {
+    return `${productName} (Amazon inköp)`;
+  }
+
   const supplier =
     supplierName?.match(/\bStripe\b/i)
       ? 'Stripe'
@@ -563,6 +653,8 @@ export function generateDescription(supplierName: string | null, rawText: string
   let context = '';
   if (/stripe processing fees|fees for invoicing|stripe fees|fee amount|avgift/i.test(text)) {
     context = 'avgifter';
+  } else if (/amazon/i.test(text) && productName) {
+    context = productName;
   } else if (/subscription|prenumeration|abonnemang/i.test(text)) {
     context = 'abonnemang';
   } else if (/hosting/i.test(text)) {

@@ -25,6 +25,22 @@ const STRIPE_INVOICE: ParsedInvoice = {
   confidence: {},
 };
 
+const AMAZON_INVOICE: ParsedInvoice = {
+  supplierName: 'Amazon EU S.à r.l., Sverige Filial',
+  invoiceNumber: 'SE6EK5YAEUI',
+  invoiceDate: '2026-03-13',
+  dueDate: null,
+  grossAmount: 472.58,
+  netAmount: 378.06,
+  vatAmount: 94.52,
+  vatRate: 25,
+  currency: 'SEK',
+  orgNumber: null,
+  vatNumber: 'SE516412220101',
+  description: 'Shelly Dimmer 2 (Amazon inköp)',
+  confidence: {},
+};
+
 Deno.test('inferSupplierMetadata classifies VAT-numbered EU suppliers correctly', () => {
   const inferred = inferSupplierMetadata(STRIPE_INVOICE);
 
@@ -58,4 +74,13 @@ Deno.test('inferVatTreatment keeps foreign VAT out of deductible domestic treatm
 Deno.test('extractInvoiceNumberFromNotes supports legacy Swedish note prefix', () => {
   const invoiceNumber = extractInvoiceNumberFromNotes('Leverantörens fakturanr: EU4860167');
   assertEqual(invoiceNumber, 'EU4860167', 'invoiceNumber');
+});
+
+Deno.test('inferVatTreatment classifies Swedish VAT invoices as domestic deductible', () => {
+  const vatTreatment = inferVatTreatment({
+    parsedInvoice: AMAZON_INVOICE,
+    extractedText: 'Moms # SE516412220101',
+  });
+
+  assertEqual(vatTreatment, 'domestic_deductible', 'vatTreatment');
 });

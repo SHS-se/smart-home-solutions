@@ -13,6 +13,8 @@ The total above has been debited from your Stripe balance.  It is the responsibi
 
 const UBIQUITI_RAW_TEXT = `Ubiquiti Store Europe   Receipt / VAT Invoice  Ubiquiti International Holding B.V.  eu.store@ui.com  Invoice No.:   EU4860167  Invoice Date:   2026/03/10  Payment status:   Authorized  Billing Address  Smart Home Solutions  SE790519759101  Philip Cheong  Porfyrvägen 10  Täby, Stockholms län, 187 34, SE  +46 70 287 08 14  Shipping Address  Smart Home Solutions  SE790519759101  Philip Cheong  Porfyrvägen 10  Täby, 187 34, SE  +46 70 287 08 14  NO.   PRODUCT DESCRIPTION   HS CODE   QTY   PRICE   VAT TOTAL   TOTAL  1   Dream Router 7 (EU Version)  UDR7-EU   851762   1   250,00   €   0,00   €   250,00   €  Total Amount   250,00   €  Shipping Amount   6,80   €  Total   256,80   €  Ubiquiti International Holding B.V. Ekkersrijt 3102, Son, 5692 CC, NL, VAT ID: NL859253582B01. CoC: 72831995 VAT exempt intra-Community supply under Article 138 of the EU VAT Directive`;
 
+const AMAZON_RAW_TEXT = `Faktura  Sida 1 av 1  LU-BIO-04 Amazon EU S.à r.l. - 38 avenue John F. Kennedy, L-1855 Luxemburg, registrerat i Luxemburg (Registre de Commerce et des Sociétés (RCS)): B 101818 Amazon EU S.à r.l., Sverige Filial • Malmskillnadsgatan 36, 111 57 Stockholm, Sverige • momsnummer SE516412220101 • Registrerat i Bolagsverkets filialregister • Organisationsnummer: 516412-2201  Moms   Delsumma för artikel (exkl. moms) Delsumma moms 25 %   378,06 kr   94,52 kr Totalt   378,06 kr   94,52 kr  Totalsumma för faktura   472,58 kr Fakturauppgifter  Beställningsdatum   12 mars 2026 Ordernr   407-0705765-2582749  Betald  Referens-ID för betalning 3BOYvD8yTxgv7Yyv37yu Såld av Amazon EU S.à r.l., Sverige Filial Moms # SE516412220101 Fakturadatum/Leveransdatum   13 mars 2026 Fakturanr   SE6EK5YAEUI Summa att betala   472,58 kr  PHILIP CHEONG PORFYRVÄGEN 10, SE790519759101 TÄBY, 18734 SE  För kundsupport, gå till www.amazon.se/contact-us  Faktureringsadress  Philip Cheong Porfyrvägen 10, SE790519759101 TÄBY, 18734 SE  Leveransadress  Philip Cheong Porfyrvägen 10, SE790519759101 TÄBY, 18734 SE  Såld av  Amazon EU S.à r.l., Sverige Filial Malmskillnadsgatan 36 111 57 Stockholm Sverige Moms # SE516412220101  Beställningsinformation  Beskrivning   Antal   Enhetspris (exkl. moms) Moms   Enhetspris (inkl. moms) Delsumma för artikel (inkl. moms) Shelly Dimmer 2, Interruttore Varialuce Senza Fili, Confezione de 2, Wi-Fi, Nessun Hub o Neutro richiesto, Domotica, Compatibile con Alexa e Google Home, App iOS Android ASIN: B09RMQZ5ZY 1   458,06 kr   25 %   572,58 kr   572,58 kr Fraktavgifter   0,00 kr   0,00 kr   0,00 kr Kampanjer   -80,00 kr   -100,00 kr   -100,00 kr`;
+
 Deno.test('parseInvoiceText extracts Stripe tax invoice fields from flattened PDF text', () => {
   const parsed = parseInvoiceText(STRIPE_RAW_TEXT);
 
@@ -40,4 +42,19 @@ Deno.test('parseInvoiceText extracts Ubiquiti receipt totals from flattened PDF 
   assertEqual(parsed.vatAmount, 0, 'vatAmount');
   assertEqual(parsed.netAmount, 256.8, 'netAmount');
   assertEqual(parsed.vatRate, 0, 'vatRate');
+});
+
+Deno.test('parseInvoiceText extracts Amazon Sweden invoice fields from flattened PDF text', () => {
+  const parsed = parseInvoiceText(AMAZON_RAW_TEXT);
+
+  assertEqual(parsed.supplierName, 'Amazon EU S.à r.l., Sverige Filial', 'supplierName');
+  assertEqual(parsed.invoiceNumber, 'SE6EK5YAEUI', 'invoiceNumber');
+  assertEqual(parsed.invoiceDate, '2026-03-13', 'invoiceDate');
+  assertEqual(parsed.dueDate, null, 'dueDate');
+  assertEqual(parsed.currency, 'SEK', 'currency');
+  assertEqual(parsed.grossAmount, 472.58, 'grossAmount');
+  assertEqual(parsed.vatAmount, 94.52, 'vatAmount');
+  assertEqual(parsed.netAmount, 378.06, 'netAmount');
+  assertEqual(parsed.vatRate, 25, 'vatRate');
+  assertEqual(parsed.description, 'Shelly Dimmer 2 (Amazon inköp)', 'description');
 });
