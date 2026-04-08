@@ -459,13 +459,25 @@ Deno.serve(async (req) => {
       await sql.end();
       log("SQL dump complete");
 
-      // Create ZIP
-      const zip = new JSZip();
+      // Create ZIP stream
+      const zip = new Zip();
       const now = new Date().toISOString();
       const dateSlug = now.slice(0, 10);
 
+      const addTextFile = (path: string, content: string) => {
+        const entry = new ZipPassThrough(path);
+        zip.add(entry);
+        entry.push(strToU8(content), true);
+      };
+
+      const addBinaryFile = async (path: string, data: Uint8Array) => {
+        const entry = new ZipPassThrough(path);
+        zip.add(entry);
+        entry.push(data, true);
+      };
+
       // Add SQL dump to ZIP
-      zip.file(`backup-${dateSlug}.sql`, sqlDump);
+      addTextFile(`backup-${dateSlug}.sql`, sqlDump);
 
       // Add storage files to ZIP
       const storageStats = await addStorageToZip(zip, serviceClient);
@@ -497,10 +509,10 @@ Deno.serve(async (req) => {
 
       if (encryptionKey && allUsers.length > 0) {
         const encryptedAuth = await encryptData(JSON.stringify(allUsers, null, 2), encryptionKey);
-        zip.file("auth_users.enc", encryptedAuth);
+        await addBinaryFile("auth_users.enc", encryptedAuth);
         log("Auth users encrypted → auth_users.enc");
       } else {
-        zip.file("auth_users.json", JSON.stringify(allUsers, null, 2));
+        addTextFile("auth_users.json", JSON.stringify(allUsers, null, 2));
         log(encryptionKey ? "Auth users unencrypted (no users)" : "Auth users unencrypted — set ENCRYPTION_KEY secret to encrypt");
       }
 
@@ -514,14 +526,14 @@ Deno.serve(async (req) => {
 
       if (encryptionKey && Object.keys(secrets).length > 0) {
         const encryptedSecrets = await encryptData(JSON.stringify(secrets), encryptionKey);
-        zip.file("secrets.enc", encryptedSecrets);
+        await addBinaryFile("secrets.enc", encryptedSecrets);
         log("Secrets encrypted → secrets.enc");
       } else if (!encryptionKey) {
         log("ENCRYPTION_KEY not set — secrets not exported. Add ENCRYPTION_KEY as a Supabase secret to enable.");
       }
 
-      // Generate ZIP
-      const zipBlob = await zip.generateAsync({ type: "uint8array", compression: "STORE" });
+      // Finalize ZIP
+      const zipBlob = await finalizeZip(zip);
       log("ZIP generated", { sizeBytes: zipBlob.length });
 
       const fileName = `backup-${dateSlug}.zip`;
