@@ -307,31 +307,19 @@ async function generateSqlDump(sql: any): Promise<string> {
   return lines.join("\n");
 }
 
-/** Stream all files from all storage buckets directly into a ZIP */
-async function addStorageToZip(
-  zip: Zip,
+/** Collect all files from storage buckets into a flat record for zipping */
+async function collectStorageFiles(
   serviceClient: any,
-): Promise<{ bucketCount: number; fileCount: number }> {
+): Promise<{ files: Record<string, Uint8Array>; bucketCount: number; fileCount: number }> {
   const { data: buckets, error: bucketsErr } = await serviceClient.storage.listBuckets();
   if (bucketsErr) {
     log("Error listing buckets", { error: bucketsErr.message });
-    return { bucketCount: 0, fileCount: 0 };
+    return { files: {}, bucketCount: 0, fileCount: 0 };
   }
 
   let totalFiles = 0;
   const manifest: Array<{ bucket: string; isPublic: boolean; files: string[] }> = [];
-
-  const addTextFile = (path: string, content: string) => {
-    const entry = new ZipPassThrough(path);
-    zip.add(entry);
-    entry.push(strToU8(content), true);
-  };
-
-  const addBinaryFile = async (path: string, data: Uint8Array) => {
-    const entry = new ZipPassThrough(path);
-    zip.add(entry);
-    entry.push(data, true);
-  };
+  const files: Record<string, Uint8Array> = {};
 
   for (const bucket of buckets) {
     log("Processing bucket", { name: bucket.name, public: bucket.public });
@@ -370,7 +358,7 @@ async function addStorageToZip(
           if (!fileData) continue;
 
           const arrayBuf = await fileData.arrayBuffer();
-          await addBinaryFile(`storage/${bucket.name}/${fullPath}`, new Uint8Array(arrayBuf));
+          files[`storage/${bucket.name}/${fullPath}`] = new Uint8Array(arrayBuf);
           bucketFiles.push(fullPath);
           totalFiles++;
           if (totalFiles % 25 === 0) {
@@ -387,32 +375,8 @@ async function addStorageToZip(
     log("Bucket complete", { name: bucket.name, files: bucketFiles.length });
   }
 
-  addTextFile("storage/_manifest.json", JSON.stringify(manifest, null, 2));
-  return { bucketCount: buckets.length, fileCount: totalFiles };
-}
-
-async function finalizeZip(zip: Zip): Promise<Uint8Array> {
-  return await new Promise((resolve, reject) => {
-    const chunks: Uint8Array[] = [];
-    zip.ondata = (err, chunk, final) => {
-      if (err) {
-        reject(err);
-        return;
-      }
-      chunks.push(chunk);
-      if (final) {
-        const totalLength = chunks.reduce((sum, c) => sum + c.length, 0);
-        const out = new Uint8Array(totalLength);
-        let offset = 0;
-        for (const chunkPart of chunks) {
-          out.set(chunkPart, offset);
-          offset += chunkPart.length;
-        }
-        resolve(out);
-      }
-    };
-    zip.end();
-  });
+  files["storage/_manifest.json"] = strToU8(JSON.stringify(manifest, null, 2));
+  return { files, bucketCount: buckets.length, fileCount: totalFiles };
 }
 
 Deno.serve(async (req) => {
