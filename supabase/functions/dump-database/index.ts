@@ -1,5 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { Zip, ZipPassThrough, strToU8 } from "https://esm.sh/fflate@0.8.2?target=deno";
+import { zipSync, strToU8 } from "https://esm.sh/fflate@0.8.2?target=deno";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -307,31 +307,19 @@ async function generateSqlDump(sql: any): Promise<string> {
   return lines.join("\n");
 }
 
-/** Stream all files from all storage buckets directly into a ZIP */
-async function addStorageToZip(
-  zip: Zip,
+/** Collect all files from storage buckets into a flat record for zipping */
+async function collectStorageFiles(
   serviceClient: any,
-): Promise<{ bucketCount: number; fileCount: number }> {
+): Promise<{ files: Record<string, Uint8Array>; bucketCount: number; fileCount: number }> {
   const { data: buckets, error: bucketsErr } = await serviceClient.storage.listBuckets();
   if (bucketsErr) {
     log("Error listing buckets", { error: bucketsErr.message });
-    return { bucketCount: 0, fileCount: 0 };
+    return { files: {}, bucketCount: 0, fileCount: 0 };
   }
 
   let totalFiles = 0;
   const manifest: Array<{ bucket: string; isPublic: boolean; files: string[] }> = [];
-
-  const addTextFile = (path: string, content: string) => {
-    const entry = new ZipPassThrough(path);
-    zip.add(entry);
-    entry.push(strToU8(content), true);
-  };
-
-  const addBinaryFile = async (path: string, data: Uint8Array) => {
-    const entry = new ZipPassThrough(path);
-    zip.add(entry);
-    entry.push(data, true);
-  };
+  const files: Record<string, Uint8Array> = {};
 
   for (const bucket of buckets) {
     log("Processing bucket", { name: bucket.name, public: bucket.public });
@@ -370,7 +358,7 @@ async function addStorageToZip(
           if (!fileData) continue;
 
           const arrayBuf = await fileData.arrayBuffer();
-          await addBinaryFile(`storage/${bucket.name}/${fullPath}`, new Uint8Array(arrayBuf));
+          files[`storage/${bucket.name}/${fullPath}`] = new Uint8Array(arrayBuf);
           bucketFiles.push(fullPath);
           totalFiles++;
           if (totalFiles % 25 === 0) {
@@ -387,32 +375,8 @@ async function addStorageToZip(
     log("Bucket complete", { name: bucket.name, files: bucketFiles.length });
   }
 
-  addTextFile("storage/_manifest.json", JSON.stringify(manifest, null, 2));
-  return { bucketCount: buckets.length, fileCount: totalFiles };
-}
-
-async function finalizeZip(zip: Zip): Promise<Uint8Array> {
-  return await new Promise((resolve, reject) => {
-    const chunks: Uint8Array[] = [];
-    zip.ondata = (err, chunk, final) => {
-      if (err) {
-        reject(err);
-        return;
-      }
-      chunks.push(chunk);
-      if (final) {
-        const totalLength = chunks.reduce((sum, c) => sum + c.length, 0);
-        const out = new Uint8Array(totalLength);
-        let offset = 0;
-        for (const chunkPart of chunks) {
-          out.set(chunkPart, offset);
-          offset += chunkPart.length;
-        }
-        resolve(out);
-      }
-    };
-    zip.end();
-  });
+  files["storage/_manifest.json"] = strToU8(JSON.stringify(manifest, null, 2));
+  return { files, bucketCount: buckets.length, fileCount: totalFiles };
 }
 
 Deno.serve(async (req) => {
@@ -459,29 +423,18 @@ Deno.serve(async (req) => {
       await sql.end();
       log("SQL dump complete");
 
-      // Create ZIP stream
-      const zip = new Zip();
+      // Collect all ZIP entries as a flat object
+      const zipFiles: Record<string, Uint8Array> = {};
       const now = new Date().toISOString();
       const dateSlug = now.slice(0, 10);
 
-      const addTextFile = (path: string, content: string) => {
-        const entry = new ZipPassThrough(path);
-        zip.add(entry);
-        entry.push(strToU8(content), true);
-      };
+      // Add SQL dump
+      zipFiles[`backup-${dateSlug}.sql`] = strToU8(sqlDump);
 
-      const addBinaryFile = async (path: string, data: Uint8Array) => {
-        const entry = new ZipPassThrough(path);
-        zip.add(entry);
-        entry.push(data, true);
-      };
-
-      // Add SQL dump to ZIP
-      addTextFile(`backup-${dateSlug}.sql`, sqlDump);
-
-      // Add storage files to ZIP
-      const storageStats = await addStorageToZip(zip, serviceClient);
-      log("Storage export complete", storageStats);
+      // Add storage files
+      const storageResult = await collectStorageFiles(serviceClient);
+      Object.assign(zipFiles, storageResult.files);
+      log("Storage export complete", { bucketCount: storageResult.bucketCount, fileCount: storageResult.fileCount });
 
       // Export auth users with encrypted_password via direct SQL
       const dbUrl2 = Deno.env.get("SUPABASE_DB_URL")!;
@@ -503,16 +456,14 @@ Deno.serve(async (req) => {
         await sql2.end();
       }
 
-      // Encrypt auth users + secrets if ENCRYPTION_KEY is set.
-      // ENCRYPTION_KEY itself is never included in the export.
       const encryptionKey = Deno.env.get("ENCRYPTION_KEY");
 
       if (encryptionKey && allUsers.length > 0) {
         const encryptedAuth = await encryptData(JSON.stringify(allUsers, null, 2), encryptionKey);
-        await addBinaryFile("auth_users.enc", encryptedAuth);
+        zipFiles["auth_users.enc"] = encryptedAuth;
         log("Auth users encrypted → auth_users.enc");
       } else {
-        addTextFile("auth_users.json", JSON.stringify(allUsers, null, 2));
+        zipFiles["auth_users.json"] = strToU8(JSON.stringify(allUsers, null, 2));
         log(encryptionKey ? "Auth users unencrypted (no users)" : "Auth users unencrypted — set ENCRYPTION_KEY secret to encrypt");
       }
 
@@ -526,14 +477,14 @@ Deno.serve(async (req) => {
 
       if (encryptionKey && Object.keys(secrets).length > 0) {
         const encryptedSecrets = await encryptData(JSON.stringify(secrets), encryptionKey);
-        await addBinaryFile("secrets.enc", encryptedSecrets);
+        zipFiles["secrets.enc"] = encryptedSecrets;
         log("Secrets encrypted → secrets.enc");
       } else if (!encryptionKey) {
         log("ENCRYPTION_KEY not set — secrets not exported. Add ENCRYPTION_KEY as a Supabase secret to enable.");
       }
 
-      // Finalize ZIP
-      const zipBlob = await finalizeZip(zip);
+      // Create ZIP with no compression (STORE) — files are mostly already compressed
+      const zipBlob = zipSync(zipFiles, { level: 0 });
       log("ZIP generated", { sizeBytes: zipBlob.length });
 
       const fileName = `backup-${dateSlug}.zip`;
