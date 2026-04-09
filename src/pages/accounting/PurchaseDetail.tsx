@@ -29,6 +29,7 @@ import {
   getPurchaseExchangeSnapshot,
   isForeignCurrency,
 } from '@/lib/accounting-fx';
+import { allocateNextVerificationNumber } from '@/lib/verification-number';
 import { toast } from 'sonner';
 import { ArrowLeft, AlertTriangle, Eye, CheckCircle } from 'lucide-react';
 
@@ -181,13 +182,12 @@ const PurchaseDetail: React.FC = () => {
       const { data: period } = await supabase.from('acc_periods').select('id').eq('year', docDate.getFullYear()).eq('month', docDate.getMonth() + 1).single();
       if (!period) throw new Error(t('Ingen bokföringsperiod hittades för dokumentdatum', 'No accounting period found for document date'));
 
-      const { data: vNum, error: verificationNumberError } = await supabase.rpc('allocate_acc_verification_number');
-      if (verificationNumberError) throw verificationNumberError;
-      const verificationNumber = typeof vNum === 'string' && vNum.trim() ? vNum : null;
+      const verificationDate = purchase.posting_date || purchase.document_date;
+      const verificationNumber = await allocateNextVerificationNumber(supabase, verificationDate);
 
       const { data: verification, error: vErr } = await supabase.from('acc_verifications').insert({
         verification_number: verificationNumber,
-        verification_date: purchase.posting_date || purchase.document_date,
+        verification_date: verificationDate,
         description: purchase.description || `${t('Inköp', 'Purchase')} ${supplierName}`.trim(),
         period_id: period.id, source_type: 'purchase', source_id: purchase.id,
         is_posted: true, posted_at: new Date().toISOString(), posted_by: user?.id, created_by: user?.id,

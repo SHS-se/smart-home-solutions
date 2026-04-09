@@ -13,6 +13,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { MONTH_NAMES_SV, MONTH_NAMES_EN, getAccountName, formatSEKDecimal } from '@/lib/accounting-utils';
+import { allocateNextVerificationNumber } from '@/lib/verification-number';
 import { toast } from 'sonner';
 import { Plus, Trash2 } from 'lucide-react';
 
@@ -49,9 +50,9 @@ const ManualVerification: React.FC = () => {
       if (!isBalanced) throw new Error(t('Debet och kredit måste balansera', 'Debit and credit must balance'));
       if (!form.description.trim()) throw new Error(t('Beskrivning krävs', 'Description required'));
       if (!form.periodId) throw new Error(t('Välj en period', 'Select a period'));
-      const { data: vNum } = await supabase.rpc('allocate_acc_verification_number');
+      const vNum = await allocateNextVerificationNumber(supabase, form.date);
       const { data: verification, error: vErr } = await supabase.from('acc_verifications').insert({
-        verification_number: vNum as unknown as string, verification_date: form.date, description: form.description,
+        verification_number: vNum, verification_date: form.date, description: form.description,
         period_id: form.periodId, source_type: 'manual', is_posted: true, posted_at: new Date().toISOString(), posted_by: user?.id, created_by: user?.id,
       }).select().single();
       if (vErr) throw vErr;
