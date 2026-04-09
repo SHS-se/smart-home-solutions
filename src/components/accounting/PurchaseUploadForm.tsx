@@ -19,6 +19,7 @@ import {
   buildExchangeSnapshot,
   buildPurchasePersistence,
   formatCurrencyAmount,
+  getPurchaseExchangeSnapshot,
   isForeignCurrency,
   normalizeCurrency,
   parseAmount,
@@ -132,6 +133,7 @@ const PurchaseUploadForm: React.FC<Props> = ({
   const normalizedCurrency = normalizeCurrency(form.currency);
   const isForeignDocument = isForeignCurrency(normalizedCurrency);
   const documentDate = form.documentDate || new Date().toISOString().split('T')[0];
+  const persistedSnapshot = getPurchaseExchangeSnapshot(purchase);
   const originalAmounts = {
     gross: parseAmount(form.grossAmount),
     net: parseAmount(form.netAmount),
@@ -143,7 +145,7 @@ const PurchaseUploadForm: React.FC<Props> = ({
   const exchangeRatePreview = useQuery({
     queryKey: ['acc-ecb-rate-preview', normalizedCurrency, documentDate],
     queryFn: () => fetchSingleEcbExchangeRate({ currency: normalizedCurrency, documentDate }),
-    enabled: normalizedCurrency.length === 3 && !!documentDate && ['SEK', 'EUR', 'USD'].includes(normalizedCurrency),
+    enabled: !isEditing && normalizedCurrency.length === 3 && !!documentDate && ['SEK', 'EUR', 'USD'].includes(normalizedCurrency),
   });
 
   const effectiveOverrideRate = preserveExistingOverride
@@ -153,16 +155,35 @@ const PurchaseUploadForm: React.FC<Props> = ({
     ? (purchase?.exchange_rate_override_reason || '')
     : manualOverrideReason;
 
-  const exchangeSnapshot = exchangeRatePreview.data
-    ? buildExchangeSnapshot({
-        documentDate,
-        currency: normalizedCurrency,
-        originalAmounts,
-        lookup: exchangeRatePreview.data,
-        overrideRate: effectiveOverrideRate,
-        overrideReason: effectiveOverrideReason,
-      })
-    : null;
+  const hasPersistedEditableRate = normalizedCurrency === 'SEK'
+    || Boolean(persistedSnapshot.ecbExchangeRate || persistedSnapshot.exchangeRate);
+
+  const exchangeSnapshot = isEditing
+    ? hasPersistedEditableRate
+      ? buildExchangeSnapshot({
+          documentDate,
+          currency: normalizedCurrency,
+          originalAmounts,
+          lookup: {
+            currency: normalizedCurrency,
+            rate: persistedSnapshot.ecbExchangeRate || persistedSnapshot.exchangeRate || 1,
+            rateDate: persistedSnapshot.ecbExchangeRateDate || persistedSnapshot.exchangeRateDate || documentDate,
+            source: normalizedCurrency === 'SEK' ? 'SEK' : 'ECB',
+          },
+          overrideRate: effectiveOverrideRate ?? (persistedSnapshot.exchangeRateOverridden ? persistedSnapshot.exchangeRate : null),
+          overrideReason: effectiveOverrideReason || persistedSnapshot.exchangeRateOverrideReason,
+        })
+      : null
+    : exchangeRatePreview.data
+      ? buildExchangeSnapshot({
+          documentDate,
+          currency: normalizedCurrency,
+          originalAmounts,
+          lookup: exchangeRatePreview.data,
+          overrideRate: effectiveOverrideRate,
+          overrideReason: effectiveOverrideReason,
+        })
+      : null;
 
   const saveBlockedByFx = isForeignDocument && (
     exchangeRatePreview.isLoading ||

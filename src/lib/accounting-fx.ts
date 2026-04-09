@@ -167,14 +167,15 @@ export function buildExchangeSnapshot(params: {
   };
 }
 
-export function getPurchaseExchangeSnapshot(purchase: PurchaseLike): PurchaseExchangeSnapshot {
-  const originalCurrency = normalizeCurrency(purchase.original_currency || purchase.currency);
-  const originalGross = parseAmount(purchase.original_gross_amount ?? purchase.gross_amount);
-  const originalNet = parseAmount(purchase.original_net_amount ?? purchase.net_amount);
-  const originalVat = parseAmount(purchase.original_vat_amount ?? purchase.vat_amount);
-  const convertedGrossSek = parseAmount(purchase.converted_gross_amount_sek ?? purchase.gross_amount);
-  const convertedNetSek = parseAmount(purchase.converted_net_amount_sek ?? purchase.net_amount);
-  const convertedVatSek = parseAmount(purchase.converted_vat_amount_sek ?? purchase.vat_amount);
+export function getPurchaseExchangeSnapshot(purchase?: PurchaseLike | null): PurchaseExchangeSnapshot {
+  const safePurchase = purchase ?? {};
+  const originalCurrency = normalizeCurrency(safePurchase.original_currency || safePurchase.currency);
+  const originalGross = parseAmount(safePurchase.original_gross_amount ?? safePurchase.gross_amount);
+  const originalNet = parseAmount(safePurchase.original_net_amount ?? safePurchase.net_amount);
+  const originalVat = parseAmount(safePurchase.original_vat_amount ?? safePurchase.vat_amount);
+  const convertedGrossSek = parseAmount(safePurchase.converted_gross_amount_sek ?? safePurchase.gross_amount);
+  const convertedNetSek = parseAmount(safePurchase.converted_net_amount_sek ?? safePurchase.net_amount);
+  const convertedVatSek = parseAmount(safePurchase.converted_vat_amount_sek ?? safePurchase.vat_amount);
 
   return {
     gross: convertedGrossSek,
@@ -184,13 +185,13 @@ export function getPurchaseExchangeSnapshot(purchase: PurchaseLike): PurchaseExc
     originalGross,
     originalNet,
     originalVat,
-    exchangeRateSource: (purchase.exchange_rate_source as ExchangeRateSource | null) || (originalCurrency === BASE_CURRENCY ? 'SEK' : 'LEGACY_UNCONVERTED'),
-    exchangeRateDate: purchase.exchange_rate_date || purchase.document_date || null,
-    exchangeRate: parseAmount(purchase.exchange_rate),
-    exchangeRateOverridden: Boolean(purchase.exchange_rate_overridden),
-    exchangeRateOverrideReason: purchase.exchange_rate_override_reason || null,
-    ecbExchangeRate: parseAmount(purchase.ecb_exchange_rate),
-    ecbExchangeRateDate: purchase.ecb_exchange_rate_date || null,
+    exchangeRateSource: (safePurchase.exchange_rate_source as ExchangeRateSource | null) || (originalCurrency === BASE_CURRENCY ? 'SEK' : 'LEGACY_UNCONVERTED'),
+    exchangeRateDate: safePurchase.exchange_rate_date || safePurchase.document_date || null,
+    exchangeRate: parseAmount(safePurchase.exchange_rate),
+    exchangeRateOverridden: Boolean(safePurchase.exchange_rate_overridden),
+    exchangeRateOverrideReason: safePurchase.exchange_rate_override_reason || null,
+    ecbExchangeRate: parseAmount(safePurchase.ecb_exchange_rate),
+    ecbExchangeRateDate: safePurchase.ecb_exchange_rate_date || null,
     convertedGrossSek,
     convertedNetSek,
     convertedVatSek,
