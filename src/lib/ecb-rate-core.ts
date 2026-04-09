@@ -11,6 +11,7 @@ interface EcbRateDay {
   usdPerEur: number | null;
 }
 
+export const ECB_90_DAY_RATES_URL = 'https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist-90d.xml';
 export const ECB_HISTORICAL_RATES_URL = 'https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist.xml';
 
 export function normalizeEcbCurrency(currency: string): string {
@@ -88,17 +89,35 @@ export async function fetchEcbExchangeRatesDirect(
 ): Promise<ExchangeRateLookupResult[]> {
   if (requests.length === 0) return [];
 
-  const response = await fetchImpl(ECB_HISTORICAL_RATES_URL);
-  if (!response.ok) {
-    throw new Error(`ECB lookup failed with status ${response.status}`);
-  }
+  const loadDays = async (url: string): Promise<EcbRateDay[]> => {
+    const response = await fetchImpl(url);
+    if (!response.ok) {
+      throw new Error(`ECB lookup failed with status ${response.status}`);
+    }
 
-  const xml = await response.text();
-  const days = parseEcbHistoricalRates(xml);
-  if (days.length === 0) {
-    throw new Error('ECB historical rate file did not contain any SEK rates');
+    const xml = await response.text();
+    const days = parseEcbHistoricalRates(xml);
+    if (days.length === 0) {
+      throw new Error('ECB historical rate file did not contain any SEK rates');
+    }
+
+    return days;
+  };
+
+  let days = await loadDays(ECB_90_DAY_RATES_URL);
+
+  const missingFromRecentFeed = requests.some((request) => {
+    try {
+      resolveEcbExchangeRate(request, days);
+      return false;
+    } catch {
+      return true;
+    }
+  });
+
+  if (missingFromRecentFeed) {
+    days = await loadDays(ECB_HISTORICAL_RATES_URL);
   }
 
   return requests.map((request) => resolveEcbExchangeRate(request, days));
 }
-

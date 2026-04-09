@@ -83,3 +83,6 @@ verify_jwt = false
 
 [functions.delete-customer]
 verify_jwt = false
+
+[functions.fetch-ecb-exchange-rate]
+verify_jwt = false
