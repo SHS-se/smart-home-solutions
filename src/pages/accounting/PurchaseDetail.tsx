@@ -265,9 +265,9 @@ const PurchaseDetail: React.FC = () => {
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 space-y-6">
-            <Card className="border border-border">
+        <div className="grid grid-cols-1 items-stretch gap-6 lg:grid-cols-3">
+          <div className="flex h-full flex-col gap-6 lg:col-span-2">
+            <Card className="flex flex-1 flex-col border border-border">
               <CardHeader className="flex-row items-center justify-between">
                 <CardTitle className="text-base">{t('Underlag', 'Document')}</CardTitle>
                 {documentUrl && (
@@ -276,17 +276,17 @@ const PurchaseDetail: React.FC = () => {
                   </Button>
                 )}
               </CardHeader>
-              <CardContent>
+              <CardContent className="flex flex-1 flex-col">
                 {isDocumentLoading ? (
-                  <div className="bg-muted rounded-lg p-8 text-center">
+                  <div className="flex flex-1 items-center justify-center rounded-lg bg-muted p-8 text-center">
                     <p className="text-sm text-muted-foreground">{t('Laddar dokument...', 'Loading document...')}</p>
                   </div>
                 ) : documentUrl ? (
-                  <div className="h-[28rem]">
+                  <div className="min-h-[28rem] flex-1">
                     <DocumentPreview fileUrl={documentUrl} fileName={purchase.document_file_path} />
                   </div>
                 ) : (
-                  <div className="bg-muted rounded-lg p-8 text-center">
+                  <div className="flex flex-1 items-center justify-center rounded-lg bg-muted p-8 text-center">
                     <p className="text-sm text-muted-foreground">{t('Inget underlag uppladdat', 'No document uploaded')}</p>
                   </div>
                 )}
@@ -370,7 +370,7 @@ const PurchaseDetail: React.FC = () => {
             </Card>
           </div>
 
-          <div className="space-y-6">
+          <div className="flex h-full flex-col gap-6">
             <PurchaseUploadForm
               purchase={purchase}
               purchaseLine={primaryLine}
