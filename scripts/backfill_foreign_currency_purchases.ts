@@ -11,7 +11,7 @@ import {
 } from "../src/lib/accounting-fx.ts";
 import { buildJournalPreview } from "../src/lib/accounting-utils.ts";
 import type { PaymentSource, VatTreatment } from "../src/lib/accounting-utils.ts";
-import { fetchEcbExchangeRates } from "../src/lib/ecb-rates.ts";
+import { fetchEcbExchangeRatesDirect } from "../src/lib/ecb-rate-core.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -113,7 +113,7 @@ const uniqueRequests = Array.from(new Map(
     return [`${currency}:${purchase.document_date}`, { currency, documentDate: purchase.document_date }];
   }),
 ).values());
-const lookupResults = await fetchEcbExchangeRates(uniqueRequests);
+const lookupResults = await fetchEcbExchangeRatesDirect(uniqueRequests);
 const lookupMap = new Map(uniqueRequests.map((request, index) => [`${request.currency}:${request.documentDate}`, lookupResults[index]]));
 
 let backfilledPurchases = 0;
