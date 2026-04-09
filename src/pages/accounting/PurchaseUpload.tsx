@@ -62,6 +62,7 @@ const PurchaseUpload: React.FC = () => {
               file={file}
               parsedInvoice={parsedInvoice}
               extractedText={extractionResult?.rawText || null}
+              fillHeight
               onSaved={(purchaseId) => navigate(`/accounting/purchases/${purchaseId}`)}
             />
           </div>

@@ -32,6 +32,7 @@ interface Props {
   purchase?: Tables<'acc_purchases'> | null;
   purchaseLine?: Tables<'acc_purchase_lines'> | null;
   disabled?: boolean;
+  fillHeight?: boolean;
   title?: string;
   submitLabel?: string;
   onSaved?: (purchaseId: string) => void;
@@ -44,6 +45,7 @@ const PurchaseUploadForm: React.FC<Props> = ({
   purchase = null,
   purchaseLine = null,
   disabled = false,
+  fillHeight = false,
   title,
   submitLabel,
   onSaved,
@@ -273,7 +275,7 @@ const PurchaseUploadForm: React.FC<Props> = ({
   );
 
   return (
-    <Card className="border border-border h-full overflow-auto">
+    <Card className={`border border-border overflow-auto ${fillHeight ? 'h-full' : ''}`}>
       <CardHeader className="pb-4"><CardTitle className="text-base">{title || t('Dokumentdetaljer', 'Document details')}</CardTitle></CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-1.5">
