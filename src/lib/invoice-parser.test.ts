@@ -21,6 +21,8 @@ const OPENAI_RAW_TEXT = `Page 1 of 1  Invoice  Invoice number   56FB0333  0001  
 
 const OPENAI_RAW_TEXT_0002 = `Page 1 of 1  Invoice  Invoice number   56FB0333  0002  Date of issue   March 28, 2026 Date due   March 28, 2026 OpenAI VAT   EU372041333  OpenAI OpCo, LLC  1455 3rd Street San Francisco, California 94158 United States ar@openai.com EU OSS VAT EU372041333  Bill to  Phil Smith Porfyrvägen 10 SE  187 34 Täby Sweden phio@philbert.io SE VAT SE790519759101  Ship to  Phil Smith Porfyrvägen 10 SE  187 34 Täby Sweden  $5.05 USD due March 28, 2026  Pay online  Description   Qty   Unit price   Tax   Amount  OpenAI API usage credit   1   $5.05   0%   $5.05  Subtotal   $5.05 Total   $5.05  Amount due   $5.05 USD   1    Tax to be paid on reverse charge basis   1`;
 
+const LOVABLE_RAW_TEXT = `Page 1 of 1  Invoice  Invoice number   NQLFVPGN 0005  Date of issue   January 28, 2026 Date due   January 28, 2026  Lovable Labs Incorporated  1111b South Governors Avenue Dover, Delaware 19904 United States support@lovable.dev  Bill to  Philip Cheong Porfyrvägen 10 SE 187 34 Täby Sweden phio@philbert.io  €15.00 due January 28, 2026  Pay online  Credit Top-Up - 50 Credits  Description   Qty   Unit price   Tax   Amount  Build Credit Top-up Pro   50   €0.30   25% incl. (on €12.00 €15.00  Subtotal   €15.00 Total excluding tax   €12.00 VAT - Sweden 25% incl. on €12.00 €3.00 Total   €15.00  Amount due   €15.00`;
+
 Deno.test('parseInvoiceText extracts Stripe tax invoice fields from flattened PDF text', () => {
   const parsed = parseInvoiceText(STRIPE_RAW_TEXT);
 
@@ -99,4 +101,18 @@ Deno.test('parseInvoiceText preserves OpenAI invoice suffixes so consecutive inv
   assertEqual(parsed.invoiceNumber, '56FB0333-0002', 'invoiceNumber');
   assertEqual(parsed.currency, 'USD', 'currency');
   assertEqual(parsed.grossAmount, 5.05, 'grossAmount');
+});
+
+Deno.test('parseInvoiceText extracts Lovable invoice supplier, product description, and VAT-inclusive totals', () => {
+  const parsed = parseInvoiceText(LOVABLE_RAW_TEXT);
+
+  assertEqual(parsed.supplierName, 'Lovable Labs Incorporated', 'supplierName');
+  assertEqual(parsed.invoiceNumber, 'NQLFVPGN-0005', 'invoiceNumber');
+  assertEqual(parsed.invoiceDate, '2026-01-28', 'invoiceDate');
+  assertEqual(parsed.currency, 'EUR', 'currency');
+  assertEqual(parsed.grossAmount, 15, 'grossAmount');
+  assertEqual(parsed.netAmount, 12, 'netAmount');
+  assertEqual(parsed.vatAmount, 3, 'vatAmount');
+  assertEqual(parsed.vatRate, 25, 'vatRate');
+  assertEqual(parsed.description, 'Build Credit Top-up Pro', 'description');
 });
