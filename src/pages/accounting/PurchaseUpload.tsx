@@ -40,6 +40,14 @@ const PurchaseUpload: React.FC = () => {
     }
   }, [t]);
 
+  const handleFileClear = useCallback(() => {
+    setFile(null);
+    setIsExtracting(false);
+    setProgress({ message: '', pct: 0 });
+    setExtractionResult(null);
+    setParsedInvoice(null);
+  }, []);
+
   return (
     <AccountingLayout>
       <div className="space-y-4 h-full">
@@ -55,7 +63,14 @@ const PurchaseUpload: React.FC = () => {
 
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-6" style={{ minHeight: 'calc(100vh - 240px)' }}>
           <div className="lg:col-span-3 min-h-[400px]">
-            <DocumentPreview file={file} onFileSelect={handleFileSelect} ocrWords={extractionResult?.words || []} isExtracting={isExtracting} extractionProgress={progress} />
+            <DocumentPreview
+              file={file}
+              onFileSelect={handleFileSelect}
+              onFileClear={handleFileClear}
+              ocrWords={extractionResult?.words || []}
+              isExtracting={isExtracting}
+              extractionProgress={progress}
+            />
           </div>
           <div className="lg:col-span-2">
             <PurchaseUploadForm

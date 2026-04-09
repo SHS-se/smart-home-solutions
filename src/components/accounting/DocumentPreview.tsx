@@ -5,7 +5,7 @@ import 'react-pdf/dist/Page/AnnotationLayer.css';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
-import { Upload, ZoomIn, ZoomOut, ChevronLeft, ChevronRight, Eye, EyeOff, RefreshCw } from 'lucide-react';
+import { Upload, ZoomIn, ZoomOut, ChevronLeft, ChevronRight, Eye, EyeOff, Trash2 } from 'lucide-react';
 import type { WordPosition } from '@/lib/document-extraction';
 
 pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
@@ -15,6 +15,7 @@ interface Props {
   fileUrl?: string | null;
   fileName?: string | null;
   onFileSelect?: (file: File) => void;
+  onFileClear?: () => void;
   ocrWords?: WordPosition[];
   isExtracting?: boolean;
   extractionProgress?: { message: string; pct: number };
@@ -25,6 +26,7 @@ const DocumentPreview: React.FC<Props> = ({
   fileUrl: externalFileUrl = null,
   fileName = null,
   onFileSelect,
+  onFileClear,
   ocrWords = [],
   isExtracting = false,
   extractionProgress = { message: '', pct: 0 },
@@ -40,6 +42,7 @@ const DocumentPreview: React.FC<Props> = ({
   const resolvedFileName = file?.name || fileName || externalFileUrl || '';
   const isPdf = file?.type === 'application/pdf' || resolvedFileName.toLowerCase().endsWith('.pdf');
   const canSelectFile = !!onFileSelect;
+  const canClearFile = !!onFileClear;
 
   useEffect(() => {
     if (file) {
@@ -102,9 +105,9 @@ const DocumentPreview: React.FC<Props> = ({
               {showOverlay ? t('Dölj text', 'Hide text') : t('Visa text', 'Show text')}
             </Button>
           )}
-          {canSelectFile && (
-            <Button size="sm" variant="ghost" className="h-7 text-xs gap-1" onClick={triggerFileInput}>
-              <RefreshCw className="h-3 w-3" /> {t('Byt fil', 'Change file')}
+          {canClearFile && (
+            <Button size="sm" variant="ghost" className="h-7 text-xs gap-1" onClick={onFileClear}>
+              <Trash2 className="h-3 w-3" /> {t('Rensa fil', 'Clear file')}
             </Button>
           )}
         </div>
