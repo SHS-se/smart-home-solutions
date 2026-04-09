@@ -289,6 +289,9 @@ const PurchaseDetail: React.FC = () => {
     })),
     purchaseFx,
   );
+  const isReverseCharge = primaryLine?.vat_treatment === 'reverse_charge';
+  const convertedInvoiceAmountSek = isReverseCharge ? vatSummary.reverseChargeBaseSek : vatSummary.paymentAccountAmountSek;
+  const netVatEffectSek = vatSummary.reverseChargeOutputVatSek - vatSummary.reverseChargeInputVatSek;
 
   return (
     <AccountingLayout>
@@ -390,7 +393,7 @@ const PurchaseDetail: React.FC = () => {
                       <TableHead className="text-xs uppercase text-muted-foreground">{t('Beskrivning', 'Description')}</TableHead>
                       <TableHead className="text-xs uppercase text-muted-foreground">{t('Konto', 'Account')}</TableHead>
                       <TableHead className="text-xs uppercase text-muted-foreground">{t('Momsbehandling', 'VAT treatment')}</TableHead>
-                      <TableHead className="text-xs uppercase text-muted-foreground text-right">{t('Belopp', 'Amount')}</TableHead>
+                      <TableHead className="text-xs uppercase text-muted-foreground text-right">{t('Belopp (SEK)', 'Amount (SEK)')}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -469,33 +472,50 @@ const PurchaseDetail: React.FC = () => {
 
             <Card className="border border-border">
               <CardHeader><CardTitle className="text-base">{t('Momssammanställning', 'VAT summary')}</CardTitle></CardHeader>
-              <CardContent className="space-y-2 text-sm">
+              <CardContent className="space-y-4 text-sm">
                 <div><p className="text-xs text-muted-foreground">{t('Betalkälla', 'Payment source')}</p><p>{paymentLabels[purchase.payment_source as keyof typeof paymentLabels]}</p></div>
                 {purchase.posting_date && <div><p className="text-xs text-muted-foreground">{t('Bokföringsdatum', 'Posting date')}</p><p>{purchase.posting_date}</p></div>}
-                <div className="flex justify-between"><span className="text-muted-foreground">{t('Original valuta', 'Original currency')}</span><span>{purchaseFx.originalCurrency}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">{t('Originalt netto', 'Original net')}</span><span>{formatCurrencyAmount(purchaseFx.originalNet, purchaseFx.originalCurrency)}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">{t('Original moms', 'Original VAT')}</span><span>{formatCurrencyAmount(purchaseFx.originalVat, purchaseFx.originalCurrency)}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">{t('Originalt brutto', 'Original gross')}</span><span>{formatCurrencyAmount(purchaseFx.originalGross, purchaseFx.originalCurrency)}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">{t('Kurskälla', 'Rate source')}</span><span>{purchaseFx.exchangeRateSource}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">{t('Kursdatum', 'Rate date')}</span><span>{purchaseFx.exchangeRateDate || '—'}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">{t('Använd kurs', 'Applied rate')}</span><span>{formatExchangeRate(purchaseFx.exchangeRate)}</span></div>
+                <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t('Leverantörsfaktura', 'Supplier invoice')}</p>
+                  <div className="flex justify-between gap-4"><span className="text-muted-foreground">{t('Valuta', 'Currency')}</span><span>{purchaseFx.originalCurrency}</span></div>
+                  <div className="flex justify-between gap-4"><span className="text-muted-foreground">{t('Belopp', 'Amount')}</span><span>{formatCurrencyAmount(purchaseFx.originalGross, purchaseFx.originalCurrency)}</span></div>
+                  <div className="flex justify-between gap-4"><span className="text-muted-foreground">{t('Leverantörsmoms', 'Supplier VAT')}</span><span>{formatCurrencyAmount(purchaseFx.originalVat, purchaseFx.originalCurrency)}</span></div>
+                  <div className="flex justify-between gap-4"><span className="text-muted-foreground">{t('Belopp (SEK)', 'Amount (SEK)')}</span><span>{formatSEKDecimal(convertedInvoiceAmountSek)}</span></div>
+                </div>
+                <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t('Valutaomräkning', 'Currency conversion')}</p>
+                  <div className="flex justify-between gap-4"><span className="text-muted-foreground">{t('Original', 'Original')}</span><span>{formatCurrencyAmount(purchaseFx.originalGross, purchaseFx.originalCurrency)}</span></div>
+                  <div className="flex justify-between gap-4"><span className="text-muted-foreground">{t('ECB-kurs', 'ECB rate')}</span><span>{purchaseFx.exchangeRateDate ? `${formatExchangeRate(purchaseFx.exchangeRate)} (${purchaseFx.exchangeRateDate})` : formatExchangeRate(purchaseFx.exchangeRate)}</span></div>
+                  <div className="flex justify-between gap-4"><span className="text-muted-foreground">{t('Omräknat', 'Converted')}</span><span>{formatCurrencyAmount(convertedInvoiceAmountSek, 'SEK')}</span></div>
+                </div>
                 {purchaseFx.exchangeRateOverridden && (
                   <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
                     {t('Manuell överstyrning', 'Manual override')}: {purchaseFx.exchangeRateOverrideReason || '—'}
                   </div>
                 )}
-                <div className="flex justify-between"><span className="text-muted-foreground">{t('Omräknat netto', 'Converted net')}</span><span>{formatSEKDecimal(vatSummary.reverseChargeBaseSek > 0 ? vatSummary.reverseChargeBaseSek : purchaseFx.convertedNetSek)}</span></div>
-                {primaryLine?.vat_treatment === 'reverse_charge' ? (
-                  <>
-                    <div className="flex justify-between"><span className="text-muted-foreground">{t('Skattepliktig bas i SEK', 'Taxable base in SEK')}</span><span>{formatSEKDecimal(vatSummary.reverseChargeBaseSek)}</span></div>
-                    <div className="flex justify-between"><span className="text-muted-foreground">{t('Utgående moms i SEK', 'Output VAT in SEK')}</span><span>{formatSEKDecimal(vatSummary.reverseChargeOutputVatSek)}</span></div>
-                    <div className="flex justify-between"><span className="text-muted-foreground">{t('Ingående moms i SEK', 'Input VAT in SEK')}</span><span>{formatSEKDecimal(vatSummary.reverseChargeInputVatSek)}</span></div>
-                    <div className="flex justify-between"><span className="text-muted-foreground">{t('Nettoeffekt moms', 'Net VAT effect')}</span><span>{formatSEKDecimal(vatSummary.reverseChargeOutputVatSek - vatSummary.reverseChargeInputVatSek)}</span></div>
-                  </>
+                {isReverseCharge ? (
+                  <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-2">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t('Svensk moms', 'Swedish VAT')}</p>
+                    <p className="font-medium text-foreground">{t('Omvänd skattskyldighet (25%)', 'Reverse charge (25%)')}</p>
+                    <div className="flex justify-between gap-4"><span className="text-muted-foreground">{t('Skattepliktigt belopp (SEK)', 'Taxable amount (SEK)')}</span><span>{formatSEKDecimal(vatSummary.reverseChargeBaseSek)}</span></div>
+                    <div className="flex justify-between gap-4"><span className="text-muted-foreground">{t('Utgående moms (SEK)', 'Output VAT (SEK)')}</span><span>{formatSEKDecimal(vatSummary.reverseChargeOutputVatSek)}</span></div>
+                    <div className="flex justify-between gap-4"><span className="text-muted-foreground">{t('Ingående moms (SEK)', 'Input VAT (SEK)')}</span><span>{`-${formatSEKDecimal(vatSummary.reverseChargeInputVatSek)}`}</span></div>
+                    <div className="flex justify-between gap-4 font-medium"><span>{t('Nettoeffekt moms', 'Net VAT effect')}</span><span>{`${formatSEKDecimal(netVatEffectSek)} ${t('(neutral)', '(neutral)')}`}</span></div>
+                    <p className="text-xs text-muted-foreground pt-1">
+                      {t(
+                        'Omvänd skattskyldighet betyder att moms beräknas i Sverige i stället för att debiteras av leverantören. Utgående och ingående moms tar ut varandra.',
+                        'Reverse charge means VAT is calculated in Sweden instead of charged by the supplier. The output and input VAT cancel each other out.',
+                      )}
+                    </p>
+                  </div>
                 ) : (
-                  <div className="flex justify-between"><span className="text-muted-foreground">{t('Avdragsgill moms i SEK', 'Deductible VAT in SEK')}</span><span>{formatSEKDecimal(vatSummary.deductibleInputVatSek || purchaseFx.convertedVatSek)}</span></div>
+                  <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-2">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t('Svensk moms', 'Swedish VAT')}</p>
+                    <div className="flex justify-between gap-4"><span className="text-muted-foreground">{t('Avdragsgill moms (SEK)', 'Deductible VAT (SEK)')}</span><span>{formatSEKDecimal(vatSummary.deductibleInputVatSek || purchaseFx.convertedVatSek)}</span></div>
+                    <div className="flex justify-between gap-4 font-medium"><span>{t('Nettoeffekt moms', 'Net VAT effect')}</span><span>{formatSEKDecimal(vatSummary.deductibleInputVatSek > 0 ? -vatSummary.deductibleInputVatSek : 0)}</span></div>
+                  </div>
                 )}
-                <div className="flex justify-between font-semibold border-t border-border pt-2 mt-2"><span>{t('Betalningsbelopp i SEK', 'Payment amount in SEK')}</span><span>{formatSEKDecimal(vatSummary.paymentAccountAmountSek)}</span></div>
+                <div className="flex justify-between font-semibold border-t border-border pt-2"><span>{t('Betalningsbelopp (SEK)', 'Payment amount (SEK)')}</span><span>{formatSEKDecimal(vatSummary.paymentAccountAmountSek)}</span></div>
               </CardContent>
             </Card>
 

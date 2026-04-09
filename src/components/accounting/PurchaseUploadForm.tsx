@@ -474,8 +474,8 @@ const PurchaseUploadForm: React.FC<Props> = ({
               <span className="font-medium">{normalizedCurrency}</span>
             </div>
             <div className="flex justify-between gap-4">
-              <span className="text-muted-foreground">{t('Originalt netto', 'Original net')}</span>
-              <span>{formatCurrencyAmount(originalAmounts.net, normalizedCurrency)}</span>
+              <span className="text-muted-foreground">{t('Original', 'Original')}</span>
+              <span>{formatCurrencyAmount(originalAmounts.gross, normalizedCurrency)}</span>
             </div>
             <div className="flex justify-between gap-4">
               <span className="text-muted-foreground">
@@ -496,17 +496,15 @@ const PurchaseUploadForm: React.FC<Props> = ({
             {exchangeSnapshot && (
               <>
                 <div className="flex justify-between gap-4">
-                  <span className="text-muted-foreground">{t('Omräknat netto', 'Converted net')}</span>
-                  <span className="font-medium">{formatCurrencyAmount(exchangeSnapshot.convertedNetSek, 'SEK')}</span>
+                  <span className="text-muted-foreground">{t('Omräknat (SEK)', 'Converted (SEK)')}</span>
+                  <span className="font-medium">{formatCurrencyAmount(exchangeSnapshot.convertedGrossSek, 'SEK')}</span>
                 </div>
-                <div className="flex justify-between gap-4">
-                  <span className="text-muted-foreground">{t('Omräknad moms', 'Converted VAT')}</span>
-                  <span>{formatCurrencyAmount(exchangeSnapshot.convertedVatSek, 'SEK')}</span>
-                </div>
-                <div className="flex justify-between gap-4">
-                  <span className="text-muted-foreground">{t('Omräknat brutto', 'Converted gross')}</span>
-                  <span>{formatCurrencyAmount(exchangeSnapshot.convertedGrossSek, 'SEK')}</span>
-                </div>
+                {isForeignDocument && (
+                  <div className="flex justify-between gap-4">
+                    <span className="text-muted-foreground">{t('Leverantörsmoms (omräknad)', 'Supplier VAT (converted)')}</span>
+                    <span>{formatCurrencyAmount(exchangeSnapshot.convertedVatSek, 'SEK')}</span>
+                  </div>
+                )}
               </>
             )}
             {isForeignDocument && isAdmin && (
