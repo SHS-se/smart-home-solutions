@@ -18,10 +18,17 @@ import {
   PURCHASE_STATUS_LABELS, PURCHASE_STATUS_LABELS_EN, PURCHASE_STATUS_COLORS,
   PAYMENT_SOURCE_LABELS, PAYMENT_SOURCE_LABELS_EN,
   VAT_TREATMENT_LABELS, VAT_TREATMENT_LABELS_EN,
-  formatSEK, formatSEKDecimal, buildJournalPreview,
+  formatExchangeRate, formatSEK, formatSEKDecimal, buildJournalPreview,
   getPurchaseBlockers,
 } from '@/lib/accounting-utils';
 import type { PaymentSource, VatTreatment } from '@/lib/accounting-utils';
+import {
+  buildPurchaseVatSummary,
+  describeJournalOriginalAmount,
+  formatCurrencyAmount,
+  getPurchaseExchangeSnapshot,
+  isForeignCurrency,
+} from '@/lib/accounting-fx';
 import { toast } from 'sonner';
 import { ArrowLeft, AlertTriangle, Eye, CheckCircle } from 'lucide-react';
 
@@ -53,6 +60,8 @@ const PurchaseDetail: React.FC = () => {
     enabled: !!purchaseId,
   });
   const supplierName = (purchase?.supplier as Tables<'acc_suppliers'> | null)?.name || '';
+  const purchaseFx = getPurchaseExchangeSnapshot(purchase);
+  const isForeignDocument = isForeignCurrency(purchaseFx.originalCurrency);
 
   const { data: documentUrl, isLoading: isDocumentLoading } = useQuery({
     queryKey: ['acc-purchase-document', purchaseId, purchase?.document_file_path],
@@ -78,6 +87,16 @@ const PurchaseDetail: React.FC = () => {
   const postPurchase = useMutation({
     mutationFn: async () => {
       if (!purchase || !lines) throw new Error('Data missing');
+      if (isForeignDocument && (
+        purchaseFx.exchangeRateSource === 'LEGACY_UNCONVERTED' ||
+        !purchaseFx.exchangeRate ||
+        !purchaseFx.exchangeRateDate
+      )) {
+        throw new Error(t(
+          'Utkastet saknar giltig ECB-konvertering till SEK. Kör valutareparation innan bokföring.',
+          'This draft is missing a valid ECB conversion to SEK. Run currency repair before posting.',
+        ));
+      }
       const blockers = getPurchaseBlockers({
         ...purchase, supplier_id: purchase.supplier_id,
         lines: lines.map(l => ({ vat_treatment: l.vat_treatment, net_amount: Number(l.net_amount), vat_amount: Number(l.vat_amount), gross_amount: Number(l.gross_amount) })),
@@ -106,9 +125,36 @@ const PurchaseDetail: React.FC = () => {
         lines.map(l => ({ expense_account: l.expense_account, vat_treatment: l.vat_treatment as VatTreatment, net_amount: Number(l.net_amount), vat_amount: Number(l.vat_amount), gross_amount: Number(l.gross_amount), description: l.description })),
         purchase.payment_source as PaymentSource, purchase.description || '',
       );
-      const journalInserts = journalPreview.map((jl, i) => ({
-        verification_id: verification.id, account: jl.account, account_name: jl.accountName, description: jl.description, debit: jl.debit, credit: jl.credit, sort_order: i,
-      }));
+      const primaryVatTreatment = (lines[0]?.vat_treatment as VatTreatment | undefined) || 'needs_review';
+      const journalInserts = journalPreview.map((jl, i) => {
+        let originalAmount: number | null = null;
+        if (jl.account === '2641') {
+          originalAmount = describeJournalOriginalAmount('input_vat', primaryVatTreatment, purchaseFx);
+        } else if (jl.account === '2614' || jl.account === '2645') {
+          originalAmount = describeJournalOriginalAmount('reverse_charge_vat', primaryVatTreatment, purchaseFx);
+        } else if (jl.account === '2018' || jl.account === '1930') {
+          originalAmount = describeJournalOriginalAmount('payment', primaryVatTreatment, purchaseFx);
+        } else if (jl.debit > 0) {
+          originalAmount = describeJournalOriginalAmount('expense', primaryVatTreatment, purchaseFx);
+        }
+
+        return {
+          verification_id: verification.id,
+          account: jl.account,
+          account_name: jl.accountName,
+          description: jl.description,
+          debit: jl.debit,
+          credit: jl.credit,
+          sort_order: i,
+          original_currency: purchaseFx.originalCurrency,
+          original_amount: originalAmount,
+          exchange_rate_source: purchaseFx.exchangeRateSource,
+          exchange_rate_date: purchaseFx.exchangeRateDate,
+          exchange_rate: purchaseFx.exchangeRate,
+          exchange_rate_overridden: purchaseFx.exchangeRateOverridden,
+          converted_amount_sek: jl.debit > 0 ? jl.debit : jl.credit,
+        };
+      });
       const { error: jErr } = await supabase.from('acc_journal_lines').insert(journalInserts);
       if (jErr) throw jErr;
 
@@ -137,6 +183,20 @@ const PurchaseDetail: React.FC = () => {
   });
   const errors = blockers.filter(b => b.type === 'error');
   const warnings = blockers.filter(b => b.type === 'warning');
+  const fxPostingBlocked = isForeignDocument && (
+    purchaseFx.exchangeRateSource === 'LEGACY_UNCONVERTED' ||
+    !purchaseFx.exchangeRate ||
+    !purchaseFx.exchangeRateDate
+  );
+  if (fxPostingBlocked) {
+    errors.push({
+      type: 'error',
+      message: t(
+        'Utkastet saknar giltig ECB-konvertering till SEK. Kör valutareparation innan bokföring.',
+        'This draft is missing a valid ECB conversion to SEK. Run currency repair before posting.',
+      ),
+    });
+  }
   const canPost = errors.length === 0 && purchase.status !== 'posted';
   const primaryLine = lines?.[0] || null;
 
@@ -146,6 +206,17 @@ const PurchaseDetail: React.FC = () => {
         purchase.payment_source as PaymentSource, purchase.description || '',
       )
     : [];
+  const vatSummary = buildPurchaseVatSummary(
+    (lines || []).map((line) => ({
+      expense_account: line.expense_account,
+      vat_treatment: line.vat_treatment as VatTreatment,
+      net_amount: Number(line.net_amount),
+      vat_amount: Number(line.vat_amount),
+      gross_amount: Number(line.gross_amount),
+      description: line.description,
+    })),
+    purchaseFx,
+  );
 
   return (
     <AccountingLayout>
@@ -180,6 +251,20 @@ const PurchaseDetail: React.FC = () => {
           <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-start gap-3">
             <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
             <div>{warnings.map((b, i) => <p key={i} className="text-sm text-amber-800">{b.message}</p>)}</div>
+          </div>
+        )}
+
+        {isForeignDocument && purchaseFx.exchangeRateSource === 'LEGACY_UNCONVERTED' && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-start justify-between gap-4">
+            <div>
+              <p className="font-medium text-primary">{t('Valutaomräkning behöver repareras', 'Foreign-currency conversion needs repair')}</p>
+              <p className="text-sm text-blue-900/80 mt-1">
+                {t('Det här köpet skapades innan ECB-konvertering sparades korrekt. Reparera det innan bokföring eller momsgranskning.', 'This purchase was created before ECB conversion was persisted correctly. Repair it before posting or VAT review.')}
+              </p>
+            </div>
+            <Link to="/accounting/integrity/currency-repair">
+              <Button variant="outline" size="sm">{t('Öppna reparationskö', 'Open repair queue')}</Button>
+            </Link>
           </div>
         )}
 
@@ -246,7 +331,14 @@ const PurchaseDetail: React.FC = () => {
                             </Select>
                           )}
                         </TableCell>
-                        <TableCell className="text-right text-sm font-medium">{formatSEK(Number(line.gross_amount))}</TableCell>
+                        <TableCell className="text-right text-sm font-medium">
+                          <div>{formatSEKDecimal(Number(line.gross_amount))}</div>
+                          {isForeignDocument && lines?.length === 1 && (
+                            <div className="text-xs font-normal text-muted-foreground">
+                              {formatCurrencyAmount(purchaseFx.originalGross, purchaseFx.originalCurrency)}
+                            </div>
+                          )}
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -295,9 +387,30 @@ const PurchaseDetail: React.FC = () => {
               <CardContent className="space-y-2 text-sm">
                 <div><p className="text-xs text-muted-foreground">{t('Betalkälla', 'Payment source')}</p><p>{paymentLabels[purchase.payment_source as keyof typeof paymentLabels]}</p></div>
                 {purchase.posting_date && <div><p className="text-xs text-muted-foreground">{t('Bokföringsdatum', 'Posting date')}</p><p>{purchase.posting_date}</p></div>}
-                <div className="flex justify-between"><span className="text-muted-foreground">{t('Nettobelopp', 'Net amount')}</span><span>{formatSEK(Number(purchase.net_amount))}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">{t('Moms 25%', 'VAT 25%')}</span><span>{formatSEK(Number(purchase.vat_amount))}</span></div>
-                <div className="flex justify-between font-semibold border-t border-border pt-2 mt-2"><span>{t('Totalt', 'Total')}</span><span>{formatSEK(Number(purchase.gross_amount))}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">{t('Original valuta', 'Original currency')}</span><span>{purchaseFx.originalCurrency}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">{t('Originalt netto', 'Original net')}</span><span>{formatCurrencyAmount(purchaseFx.originalNet, purchaseFx.originalCurrency)}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">{t('Original moms', 'Original VAT')}</span><span>{formatCurrencyAmount(purchaseFx.originalVat, purchaseFx.originalCurrency)}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">{t('Originalt brutto', 'Original gross')}</span><span>{formatCurrencyAmount(purchaseFx.originalGross, purchaseFx.originalCurrency)}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">{t('Kurskälla', 'Rate source')}</span><span>{purchaseFx.exchangeRateSource}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">{t('Kursdatum', 'Rate date')}</span><span>{purchaseFx.exchangeRateDate || '—'}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">{t('Använd kurs', 'Applied rate')}</span><span>{formatExchangeRate(purchaseFx.exchangeRate)}</span></div>
+                {purchaseFx.exchangeRateOverridden && (
+                  <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+                    {t('Manuell överstyrning', 'Manual override')}: {purchaseFx.exchangeRateOverrideReason || '—'}
+                  </div>
+                )}
+                <div className="flex justify-between"><span className="text-muted-foreground">{t('Omräknat netto', 'Converted net')}</span><span>{formatSEKDecimal(vatSummary.reverseChargeBaseSek > 0 ? vatSummary.reverseChargeBaseSek : purchaseFx.convertedNetSek)}</span></div>
+                {primaryLine?.vat_treatment === 'reverse_charge' ? (
+                  <>
+                    <div className="flex justify-between"><span className="text-muted-foreground">{t('Skattepliktig bas i SEK', 'Taxable base in SEK')}</span><span>{formatSEKDecimal(vatSummary.reverseChargeBaseSek)}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">{t('Utgående moms i SEK', 'Output VAT in SEK')}</span><span>{formatSEKDecimal(vatSummary.reverseChargeOutputVatSek)}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">{t('Ingående moms i SEK', 'Input VAT in SEK')}</span><span>{formatSEKDecimal(vatSummary.reverseChargeInputVatSek)}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">{t('Nettoeffekt moms', 'Net VAT effect')}</span><span>{formatSEKDecimal(vatSummary.reverseChargeOutputVatSek - vatSummary.reverseChargeInputVatSek)}</span></div>
+                  </>
+                ) : (
+                  <div className="flex justify-between"><span className="text-muted-foreground">{t('Avdragsgill moms i SEK', 'Deductible VAT in SEK')}</span><span>{formatSEKDecimal(vatSummary.deductibleInputVatSek || purchaseFx.convertedVatSek)}</span></div>
+                )}
+                <div className="flex justify-between font-semibold border-t border-border pt-2 mt-2"><span>{t('Betalningsbelopp i SEK', 'Payment amount in SEK')}</span><span>{formatSEKDecimal(vatSummary.paymentAccountAmountSek)}</span></div>
               </CardContent>
             </Card>
 

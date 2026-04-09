@@ -1,4 +1,7 @@
 // Accounting utility functions
+function roundMoney(amount: number): number {
+  return Math.round((amount + 1e-9) * 100) / 100;
+}
 
 export type PaymentSource = 'owner_paid' | 'company_bank';
 export type PurchaseStatus = 'draft' | 'in_review' | 'blocked' | 'posted';
@@ -117,6 +120,15 @@ export function formatSEKDecimal(amount: number): string {
   }).format(amount) + ' kr';
 }
 
+export function formatExchangeRate(rate: number | null | undefined): string {
+  if (rate == null || !Number.isFinite(rate)) return '—';
+  return new Intl.NumberFormat('sv-SE', {
+    style: 'decimal',
+    minimumFractionDigits: 4,
+    maximumFractionDigits: 6,
+  }).format(rate);
+}
+
 /** Credit account based on payment source */
 export function getCreditAccount(paymentSource: PaymentSource): { account: string; name: string } {
   return paymentSource === 'owner_paid'
@@ -201,7 +213,7 @@ export function buildJournalPreview(
         credit: 0,
       });
       // Deemed output VAT (reverse charge)
-      const rcVat = Math.round(line.net_amount * 0.25 * 100) / 100;
+      const rcVat = roundMoney(line.net_amount * 0.25);
       journalLines.push({
         account: '2614',
         accountName: 'Utgående moms, omvänd skattskyldighet',

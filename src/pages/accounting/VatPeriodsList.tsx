@@ -52,6 +52,17 @@ const VatPeriodsList: React.FC = () => {
     },
   });
 
+  const { data: repairCaseCount } = useQuery({
+    queryKey: ['acc-currency-repair-open-count'],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('acc_currency_repair_cases')
+        .select('id, status')
+        .in('status', ['draft_can_auto_fix', 'posted_requires_correction', 'correction_proposed']);
+      return data?.length || 0;
+    },
+  });
+
   const q1Total = (q1PostedCount || 0) + (q1Issues || 0);
   const q1Readiness = q1Total > 0 ? Math.round((q1PostedCount || 0) / q1Total * 100) : 0;
 
@@ -75,6 +86,21 @@ const VatPeriodsList: React.FC = () => {
               </p>
               <Link to="/accounting/vat-periods/q1-2026">
                 <Button size="sm" variant="destructive" className="mt-2">{t('Granska nu', 'Review now')}</Button>
+              </Link>
+            </div>
+          </div>
+        )}
+
+        {repairCaseCount !== undefined && repairCaseCount > 0 && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-start gap-3">
+            <Info className="w-5 h-5 text-primary mt-0.5 shrink-0" />
+            <div>
+              <p className="font-medium text-primary">{t('Valutareparation krävs', 'Currency repair requires attention')}</p>
+              <p className="text-sm text-blue-900/80 mt-0.5">
+                {t(`${repairCaseCount} utländska inköp behöver repareras eller få korrigeringsförslag.`, `${repairCaseCount} foreign-currency purchases need repair or correction proposals.`)}
+              </p>
+              <Link to="/accounting/integrity/currency-repair">
+                <Button size="sm" variant="outline" className="mt-2">{t('Öppna valutareparation', 'Open currency repair')}</Button>
               </Link>
             </div>
           </div>

@@ -10,6 +10,15 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatSEK, PURCHASE_STATUS_LABELS, PURCHASE_STATUS_LABELS_EN } from '@/lib/accounting-utils';
+import {
+  detectForeignCurrencyIntegrityIssue,
+  formatCurrencyAmount,
+  getPurchaseExchangeSnapshot,
+  isForeignCurrency,
+  normalizeCurrency,
+  roundMoney,
+} from '@/lib/accounting-fx';
+import { fetchEcbExchangeRates } from '@/lib/ecb-rates';
 import { toast } from 'sonner';
 import { ArrowLeft, CheckCircle, AlertTriangle, Lock, Download, Upload, Info, FileText } from 'lucide-react';
 
@@ -65,36 +74,84 @@ const VatDeclarationFlow: React.FC = () => {
   const { data: purchases } = useQuery({
     queryKey: ['acc-q-purchases', year, quarter],
     queryFn: async () => {
-      const { data } = await supabase.from('acc_purchases').select('*, supplier:acc_suppliers(name)').gte('document_date', startDate).lte('document_date', endDate).order('document_date');
+      const { data } = await supabase
+        .from('acc_purchases')
+        .select('*, supplier:acc_suppliers(name, supplier_type), lines:acc_purchase_lines(*)')
+        .gte('document_date', startDate)
+        .lte('document_date', endDate)
+        .order('document_date');
       return data || [];
     },
   });
 
-  const { data: journalLines } = useQuery({
-    queryKey: ['acc-q-journal', year, quarter],
+  const foreignPurchases = (purchases || []).filter((purchase) => isForeignCurrency((purchase as any).original_currency || purchase.currency));
+  const { data: fxLookups } = useQuery({
+    queryKey: [
+      'acc-q-ecb-lookups',
+      foreignPurchases.map((purchase) => `${normalizeCurrency((purchase as any).original_currency || purchase.currency)}:${purchase.document_date}`).sort().join('|'),
+    ],
     queryFn: async () => {
-      const { data: verifications } = await supabase.from('acc_verifications').select('id').eq('is_posted', true);
-      if (!verifications?.length) return [];
-      const { data } = await supabase.from('acc_journal_lines').select('*, verification:acc_verifications(verification_date)').in('verification_id', verifications.map(v => v.id));
-      return (data || []).filter(l => { const d = (l.verification as any)?.verification_date; return d && d >= startDate && d <= endDate; });
+      const uniqueRequests = Array.from(new Map(
+        foreignPurchases.map((purchase) => {
+          const currency = normalizeCurrency((purchase as any).original_currency || purchase.currency);
+          const key = `${currency}:${purchase.document_date}`;
+          return [key, { currency, documentDate: purchase.document_date }];
+        }),
+      ).values());
+      return fetchEcbExchangeRates(uniqueRequests);
     },
+    enabled: foreignPurchases.length > 0,
   });
 
-  const unpostedPurchases = purchases?.filter(p => p.status !== 'posted') || [];
-  const hasBlockers = unpostedPurchases.length > 0;
+  const purchaseRows = (purchases || []).map((purchase) => ({
+    ...purchase,
+    supplier: (purchase as any).supplier || null,
+    lines: ((purchase as any).lines || []) as Array<any>,
+  }));
+  const unpostedPurchases = purchaseRows.filter(p => p.status !== 'posted');
+  const detectedCurrencyIssues = foreignPurchases.flatMap((purchase) => {
+    const currency = normalizeCurrency((purchase as any).original_currency || purchase.currency);
+    const lookup = (fxLookups || []).find((item) => item.currency === currency && item.documentDate === purchase.document_date);
+    if (!lookup) return [];
+    const expected = getPurchaseExchangeSnapshot({
+      ...purchase,
+      exchange_rate_source: lookup.source,
+      exchange_rate_date: lookup.rateDate,
+      exchange_rate: lookup.rate,
+      ecb_exchange_rate: lookup.rate,
+      ecb_exchange_rate_date: lookup.rateDate,
+      converted_gross_amount_sek: roundMoney(Number((purchase as any).original_gross_amount ?? purchase.gross_amount) * lookup.rate),
+      converted_net_amount_sek: roundMoney(Number((purchase as any).original_net_amount ?? purchase.net_amount) * lookup.rate),
+      converted_vat_amount_sek: roundMoney(Number((purchase as any).original_vat_amount ?? purchase.vat_amount) * lookup.rate),
+    });
+    const detected = detectForeignCurrencyIntegrityIssue(purchase, expected);
+    if (!detected) return [];
+    return [{ ...detected, purchase }];
+  });
+  const draftCurrencyIssues = detectedCurrencyIssues.filter((issue) => issue.status === 'draft_can_auto_fix');
+  const postedCurrencyIssues = detectedCurrencyIssues.filter((issue) => issue.status === 'posted_requires_correction');
+  const hasBlockers = unpostedPurchases.length > 0 || draftCurrencyIssues.length > 0;
+  const blockerCount = unpostedPurchases.length + draftCurrencyIssues.length;
 
-  const inputVat2641 = (journalLines || []).filter(l => l.account === '2641').reduce((s, l) => s + Number(l.debit) - Number(l.credit), 0);
-  const rcOutputVat2614 = (journalLines || []).filter(l => l.account === '2614').reduce((s, l) => s + Number(l.credit) - Number(l.debit), 0);
-  const rcInputVat2645 = (journalLines || []).filter(l => l.account === '2645').reduce((s, l) => s + Number(l.debit) - Number(l.credit), 0);
-  const rcBase = (journalLines || []).filter(l => l.account.startsWith('4') && Number(l.debit) > 0).reduce((s, l) => s + Number(l.debit), 0);
+  const postedPurchases = purchaseRows.filter((purchase) => purchase.status === 'posted');
+  const inputVat2641 = roundMoney(postedPurchases.reduce((sum, purchase) => sum + purchase.lines
+    .filter((line) => line.vat_treatment === 'domestic_deductible')
+    .reduce((lineSum, line) => lineSum + Number(line.vat_amount), 0), 0));
+  const rcBase = roundMoney(postedPurchases.reduce((sum, purchase) => sum + purchase.lines
+    .filter((line) => line.vat_treatment === 'reverse_charge')
+    .reduce((lineSum, line) => lineSum + Number(line.net_amount), 0), 0));
+  const rcOutputVat2614 = roundMoney(postedPurchases.reduce((sum, purchase) => sum + purchase.lines
+    .filter((line) => line.vat_treatment === 'reverse_charge')
+    .reduce((lineSum, line) => lineSum + roundMoney(Number(line.net_amount) * 0.25), 0), 0));
+  const rcInputVat2645 = rcOutputVat2614;
   const netVat = rcOutputVat2614 - inputVat2641 - rcInputVat2645;
 
   const declarationBoxes = [
     { box: '05', label: t('Försäljning inom Sverige (exkl. moms)', 'Sales within Sweden (excl. VAT)'), amount: 0, count: 0, note: t('Inga försäljningar i denna period', 'No sales in this period') },
     { box: '06', label: t('Utgående moms 25%', 'Output VAT 25%'), amount: 0, count: 0 },
-    { box: '10', label: t('Avdragsgill ingående moms', 'Deductible input VAT'), amount: inputVat2641, count: (journalLines || []).filter(l => l.account === '2641').length },
-    { box: '20', label: t('Inköp av varor från annat EU-land', 'Purchases from other EU countries'), amount: rcBase > 0 ? rcBase : 0, count: (journalLines || []).filter(l => l.account === '2614').length, highlight: rcBase > 0 },
-    { box: '21', label: t('Moms på inköp från annat EU-land', 'VAT on purchases from other EU countries'), amount: rcOutputVat2614, count: (journalLines || []).filter(l => l.account === '2614').length, highlight: rcOutputVat2614 > 0 },
+    { box: '10', label: t('Avdragsgill ingående moms', 'Deductible input VAT'), amount: inputVat2641, count: postedPurchases.flatMap((purchase) => purchase.lines).filter((line) => line.vat_treatment === 'domestic_deductible').length },
+    { box: '20', label: t('Omvänd skattskyldighet, beskattningsunderlag', 'Reverse-charge taxable base'), amount: rcBase > 0 ? rcBase : 0, count: postedPurchases.flatMap((purchase) => purchase.lines).filter((line) => line.vat_treatment === 'reverse_charge').length, highlight: rcBase > 0 },
+    { box: '21', label: t('Utgående moms på omvänd skattskyldighet', 'Reverse-charge output VAT'), amount: rcOutputVat2614, count: postedPurchases.flatMap((purchase) => purchase.lines).filter((line) => line.vat_treatment === 'reverse_charge').length, highlight: rcOutputVat2614 > 0 },
   ];
 
   const createSnapshot = useMutation({
@@ -102,7 +159,7 @@ const VatDeclarationFlow: React.FC = () => {
       if (hasBlockers) throw new Error(t('Alla inköp måste vara bokförda', 'All purchases must be posted'));
       const snapshotData = {
         quarter: `Q${quarter} ${year}`, period: `${startDate} – ${endDate}`, created_at: new Date().toISOString(),
-        created_by: user?.email || 'unknown', total_verifications: (journalLines || []).length,
+        created_by: user?.email || 'unknown', total_verifications: postedPurchases.length,
         declaration_boxes: declarationBoxes.map(b => ({ box: b.box, label: b.label, amount: b.amount })),
         net_vat: netVat, rules_version: '2025.4',
       };
@@ -171,10 +228,19 @@ const VatDeclarationFlow: React.FC = () => {
                 <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-start gap-3">
                   <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
                   <div>
-                    <p className="font-semibold text-amber-800">{t(`${unpostedPurchases.length} problem kvarstår`, `${unpostedPurchases.length} issues remaining`)}</p>
+                    <p className="font-semibold text-amber-800">{t(`${blockerCount} problem kvarstår`, `${blockerCount} issues remaining`)}</p>
                     <p className="text-sm text-amber-700">{t('Åtgärda alla problem innan du kan fortsätta till nästa steg.', 'Resolve all issues before proceeding to the next step.')}</p>
                   </div>
                 </div>
+                {draftCurrencyIssues.length > 0 && (
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                    <p className="font-medium text-red-800">{t('Valutaomräkning saknas på utkast', 'Draft foreign-currency conversion is missing')}</p>
+                    <p className="text-sm text-red-700 mt-1">
+                      {t('Kör autoreparation för utkasten innan momsperioden kan godkännas.', 'Run the draft auto-fix before this VAT period can be approved.')}
+                    </p>
+                    <Link to="/accounting/integrity/currency-repair"><Button size="sm" className="mt-3">{t('Öppna valutareparation', 'Open currency repair')}</Button></Link>
+                  </div>
+                )}
                 <Card className="border border-border">
                   <CardHeader><CardTitle>{t('Problem att åtgärda', 'Issues to resolve')}</CardTitle></CardHeader>
                   <CardContent className="divide-y divide-border">
@@ -194,6 +260,18 @@ const VatDeclarationFlow: React.FC = () => {
               <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-center gap-3">
                 <CheckCircle className="w-5 h-5 text-green-600" />
                 <p className="text-sm text-green-800">{t('Alla inköp är bokförda. Inga problem kvarstår.', 'All purchases are posted. No issues remaining.')}</p>
+              </div>
+            )}
+            {postedCurrencyIssues.length > 0 && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-start gap-3">
+                <Info className="w-5 h-5 text-primary mt-0.5 shrink-0" />
+                <div>
+                  <p className="font-medium text-primary">{t('Bokförda valutaköp kräver korrigeringsförslag', 'Posted foreign-currency purchases need correction proposals')}</p>
+                  <p className="text-sm text-blue-900/80 mt-1">
+                    {t('De bokförda beloppen ändras inte automatiskt. Gå till reparationskön för att skapa korrigeringsförslag och följa upp dem.', 'Posted amounts are not rewritten automatically. Use the repair queue to create correction proposals and follow them up.')}
+                  </p>
+                  <Link to="/accounting/integrity/currency-repair"><Button size="sm" variant="outline" className="mt-3">{t('Öppna reparationskö', 'Open repair queue')}</Button></Link>
+                </div>
               </div>
             )}
             <Button onClick={() => setCurrentStep(2)} disabled={hasBlockers}>{t('Fortsätt till avstämning', 'Continue to reconciliation')}</Button>
@@ -234,6 +312,42 @@ const VatDeclarationFlow: React.FC = () => {
                 </Table>
               </CardContent>
             </Card>
+            {foreignPurchases.length > 0 && (
+              <Card className="border border-border">
+                <CardHeader>
+                  <CardTitle>{t('Valutaköp i perioden', 'Foreign-currency purchases in the period')}</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>{t('Datum', 'Date')}</TableHead>
+                        <TableHead>{t('Leverantör', 'Supplier')}</TableHead>
+                        <TableHead>{t('Originalt belopp', 'Original amount')}</TableHead>
+                        <TableHead>{t('Kurs', 'Rate')}</TableHead>
+                        <TableHead className="text-right">{t('SEK-belopp', 'SEK amount')}</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {foreignPurchases.map((purchase) => {
+                        const snapshot = getPurchaseExchangeSnapshot(purchase);
+                        return (
+                          <TableRow key={purchase.id}>
+                            <TableCell className="text-sm">{purchase.document_date}</TableCell>
+                            <TableCell className="text-sm">{(purchase.supplier as any)?.name || '—'}</TableCell>
+                            <TableCell className="text-sm">{formatCurrencyAmount(snapshot.originalNet, snapshot.originalCurrency)}</TableCell>
+                            <TableCell className="text-sm">
+                              {snapshot.exchangeRateSource} · {snapshot.exchangeRateDate || '—'}
+                            </TableCell>
+                            <TableCell className="text-right text-sm">{formatSEK(snapshot.convertedNetSek)}</TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            )}
             <div className="flex gap-3">
               <Button onClick={() => setCurrentStep(3)}>{t('Godkänn och fortsätt', 'Approve and continue')}</Button>
               <Button variant="outline" onClick={() => setCurrentStep(1)}>{t('Tillbaka', 'Back')}</Button>

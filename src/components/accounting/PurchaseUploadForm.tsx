@@ -13,7 +13,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { toast } from 'sonner';
 import { Save } from 'lucide-react';
+import { formatExchangeRate } from '@/lib/accounting-utils';
 import { fuzzyMatchSupplier, generateDescription, type ParsedInvoice } from '@/lib/invoice-parser';
+import {
+  buildExchangeSnapshot,
+  buildPurchasePersistence,
+  formatCurrencyAmount,
+  isForeignCurrency,
+  normalizeCurrency,
+  parseAmount,
+} from '@/lib/accounting-fx';
+import { fetchSingleEcbExchangeRate } from '@/lib/ecb-rates';
 import {
   buildInvoiceNumberNote,
   createEmptyPurchaseForm,
@@ -50,7 +60,7 @@ const PurchaseUploadForm: React.FC<Props> = ({
   submitLabel,
   onSaved,
 }) => {
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const { t } = useLanguage();
   const queryClient = useQueryClient();
   const appliedRef = useRef<ParsedInvoice | null>(null);
@@ -58,6 +68,8 @@ const PurchaseUploadForm: React.FC<Props> = ({
 
   const [autoFilled, setAutoFilled] = useState<Set<string>>(new Set());
   const [form, setForm] = useState(createEmptyPurchaseForm);
+  const [manualExchangeRate, setManualExchangeRate] = useState('');
+  const [manualOverrideReason, setManualOverrideReason] = useState('');
 
   const { data: suppliers } = useQuery({
     queryKey: ['acc-suppliers'],
@@ -74,13 +86,15 @@ const PurchaseUploadForm: React.FC<Props> = ({
       documentType: purchase.document_type || 'supplier_invoice',
       documentDate: purchase.document_date || '',
       dueDate: purchase.due_date || '',
-      currency: purchase.currency || 'SEK',
-      grossAmount: String(Number(purchase.gross_amount) || 0),
-      vatAmount: String(Number(purchase.vat_amount) || 0),
-      netAmount: String(Number(purchase.net_amount) || 0),
+      currency: purchase.original_currency || purchase.currency || 'SEK',
+      grossAmount: String(Number(purchase.original_gross_amount ?? purchase.gross_amount) || 0),
+      vatAmount: String(Number(purchase.original_vat_amount ?? purchase.vat_amount) || 0),
+      netAmount: String(Number(purchase.original_net_amount ?? purchase.net_amount) || 0),
       paymentSource: purchase.payment_source || '',
       description: purchase.description || purchaseLine?.description || '',
     });
+    setManualExchangeRate(purchase.exchange_rate_overridden ? String(Number(purchase.exchange_rate) || '') : '');
+    setManualOverrideReason(purchase.exchange_rate_override_reason || '');
     setAutoFilled(new Set());
   }, [purchase, purchaseLine]);
 
@@ -114,6 +128,52 @@ const PurchaseUploadForm: React.FC<Props> = ({
     setForm(f => ({ ...f, [field]: value }));
     setAutoFilled(af => { const n = new Set(af); n.delete(field); return n; });
   };
+
+  const normalizedCurrency = normalizeCurrency(form.currency);
+  const isForeignDocument = isForeignCurrency(normalizedCurrency);
+  const documentDate = form.documentDate || new Date().toISOString().split('T')[0];
+  const originalAmounts = {
+    gross: parseAmount(form.grossAmount),
+    net: parseAmount(form.netAmount),
+    vat: parseAmount(form.vatAmount),
+  };
+  const parsedManualExchangeRate = manualExchangeRate.trim() ? parseAmount(manualExchangeRate) : null;
+  const preserveExistingOverride = Boolean(!isAdmin && purchase?.exchange_rate_overridden);
+
+  const exchangeRatePreview = useQuery({
+    queryKey: ['acc-ecb-rate-preview', normalizedCurrency, documentDate],
+    queryFn: () => fetchSingleEcbExchangeRate({ currency: normalizedCurrency, documentDate }),
+    enabled: normalizedCurrency.length === 3 && !!documentDate && ['SEK', 'EUR', 'USD'].includes(normalizedCurrency),
+  });
+
+  const effectiveOverrideRate = preserveExistingOverride
+    ? parseAmount(purchase?.exchange_rate)
+    : parsedManualExchangeRate;
+  const effectiveOverrideReason = preserveExistingOverride
+    ? (purchase?.exchange_rate_override_reason || '')
+    : manualOverrideReason;
+
+  const exchangeSnapshot = exchangeRatePreview.data
+    ? buildExchangeSnapshot({
+        documentDate,
+        currency: normalizedCurrency,
+        originalAmounts,
+        lookup: exchangeRatePreview.data,
+        overrideRate: effectiveOverrideRate,
+        overrideReason: effectiveOverrideReason,
+      })
+    : null;
+
+  const saveBlockedByFx = isForeignDocument && (
+    exchangeRatePreview.isLoading ||
+    !!exchangeRatePreview.error ||
+    !exchangeSnapshot ||
+    (manualExchangeRate.trim().length > 0 && (
+      !isAdmin ||
+      !manualOverrideReason.trim() ||
+      (parsedManualExchangeRate != null && parsedManualExchangeRate <= 0)
+    ))
+  );
 
   const saveDraft = useMutation({
     mutationFn: async () => {
@@ -167,19 +227,34 @@ const PurchaseUploadForm: React.FC<Props> = ({
         }
       }
 
+      const rateLookup = normalizedCurrency === 'SEK'
+        ? {
+            currency: 'SEK',
+            rate: 1,
+            rateDate: documentDate,
+            source: 'SEK' as const,
+          }
+        : await fetchSingleEcbExchangeRate({ currency: normalizedCurrency, documentDate });
+
+      const snapshot = buildExchangeSnapshot({
+        documentDate,
+        currency: normalizedCurrency,
+        originalAmounts,
+        lookup: rateLookup,
+        overrideRate: effectiveOverrideRate,
+        overrideReason: effectiveOverrideReason,
+      });
+
       const purchasePayload = {
         supplier_id: supplierId,
         supplier_invoice_number: supplierInvoiceNumber,
         document_type: form.documentType,
-        document_date: form.documentDate || new Date().toISOString().split('T')[0],
+        document_date: documentDate,
         due_date: form.dueDate || null,
-        currency: form.currency || 'SEK',
-        gross_amount: Number(form.grossAmount) || 0,
-        net_amount: Number(form.netAmount) || 0,
-        vat_amount: Number(form.vatAmount) || 0,
         description: form.description,
         payment_source: form.paymentSource || 'owner_paid',
         notes: buildInvoiceNumberNote(form.invoiceNumber),
+        ...buildPurchasePersistence(snapshot),
       };
 
       const inferredVatTreatment = inferVatTreatment({
@@ -190,9 +265,9 @@ const PurchaseUploadForm: React.FC<Props> = ({
       });
       const linePayload = {
         description: form.description || t('Hela beloppet', 'Full amount'),
-        net_amount: Number(form.netAmount) || 0,
-        vat_amount: Number(form.vatAmount) || 0,
-        gross_amount: Number(form.grossAmount) || 0,
+        net_amount: snapshot.convertedNetSek,
+        vat_amount: snapshot.convertedVatSek,
+        gross_amount: snapshot.convertedGrossSek,
         vat_rate: parsedInvoice?.vatRate ?? purchaseLine?.vat_rate ?? 25,
       };
 
@@ -337,18 +412,98 @@ const PurchaseUploadForm: React.FC<Props> = ({
 
         <div className="grid grid-cols-3 gap-3">
           <div className="space-y-1.5">
-            <AutoLabel text={t('Brutto', 'Gross')} field="grossAmount" />
+            <AutoLabel text={isForeignDocument ? t('Originalt brutto', 'Original gross') : t('Brutto', 'Gross')} field="grossAmount" />
             <Input type="number" step="0.01" disabled={disabled || saveDraft.isPending} value={form.grossAmount} onChange={(e) => updateField('grossAmount', e.target.value)} placeholder="0" />
           </div>
           <div className="space-y-1.5">
-            <AutoLabel text={t('Moms', 'VAT')} field="vatAmount" />
+            <AutoLabel text={isForeignDocument ? t('Original moms', 'Original VAT') : t('Moms', 'VAT')} field="vatAmount" />
             <Input type="number" step="0.01" disabled={disabled || saveDraft.isPending} value={form.vatAmount} onChange={(e) => updateField('vatAmount', e.target.value)} placeholder="0" />
           </div>
           <div className="space-y-1.5">
-            <AutoLabel text={t('Netto', 'Net')} field="netAmount" />
+            <AutoLabel text={isForeignDocument ? t('Originalt netto', 'Original net') : t('Netto', 'Net')} field="netAmount" />
             <Input type="number" step="0.01" disabled={disabled || saveDraft.isPending} value={form.netAmount} onChange={(e) => updateField('netAmount', e.target.value)} placeholder="0" />
           </div>
         </div>
+
+        {normalizedCurrency.length === 3 && ['SEK', 'EUR', 'USD'].includes(normalizedCurrency) && (
+          <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-2 text-sm">
+            <div className="flex justify-between gap-4">
+              <span className="text-muted-foreground">{t('Dokumentvaluta', 'Document currency')}</span>
+              <span className="font-medium">{normalizedCurrency}</span>
+            </div>
+            <div className="flex justify-between gap-4">
+              <span className="text-muted-foreground">{t('Originalt netto', 'Original net')}</span>
+              <span>{formatCurrencyAmount(originalAmounts.net, normalizedCurrency)}</span>
+            </div>
+            <div className="flex justify-between gap-4">
+              <span className="text-muted-foreground">
+                {normalizedCurrency === 'SEK'
+                  ? t('Växelkurs', 'Exchange rate')
+                  : t('ECB-kurs', 'ECB rate')}
+              </span>
+              <span>
+                {exchangeRatePreview.isLoading
+                  ? t('Hämtar...', 'Loading...')
+                  : exchangeRatePreview.error
+                    ? t('Kunde inte hämta', 'Lookup failed')
+                    : exchangeSnapshot
+                      ? `${exchangeSnapshot.exchangeRateSource === 'MANUAL_OVERRIDE' ? t('Manuell', 'Manual') : 'ECB'} ${exchangeSnapshot.exchangeRateDate ? `${t('på', 'on')} ${exchangeSnapshot.exchangeRateDate}` : ''}: ${formatExchangeRate(exchangeSnapshot.exchangeRate)}`
+                      : '—'}
+              </span>
+            </div>
+            {exchangeSnapshot && (
+              <>
+                <div className="flex justify-between gap-4">
+                  <span className="text-muted-foreground">{t('Omräknat netto', 'Converted net')}</span>
+                  <span className="font-medium">{formatCurrencyAmount(exchangeSnapshot.convertedNetSek, 'SEK')}</span>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <span className="text-muted-foreground">{t('Omräknad moms', 'Converted VAT')}</span>
+                  <span>{formatCurrencyAmount(exchangeSnapshot.convertedVatSek, 'SEK')}</span>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <span className="text-muted-foreground">{t('Omräknat brutto', 'Converted gross')}</span>
+                  <span>{formatCurrencyAmount(exchangeSnapshot.convertedGrossSek, 'SEK')}</span>
+                </div>
+              </>
+            )}
+            {isForeignDocument && isAdmin && (
+              <div className="border-t border-border pt-2 space-y-2">
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">{t('Manuell växelkurs', 'Manual exchange rate')}</Label>
+                  <Input
+                    type="number"
+                    step="0.0001"
+                    value={manualExchangeRate}
+                    disabled={disabled || saveDraft.isPending}
+                    onChange={(e) => setManualExchangeRate(e.target.value)}
+                    placeholder={t('Lämna tomt för ECB', 'Leave empty to use ECB')}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">{t('Orsak till manuell kurs', 'Reason for manual rate')}</Label>
+                  <Textarea
+                    value={manualOverrideReason}
+                    disabled={disabled || saveDraft.isPending || !manualExchangeRate.trim()}
+                    onChange={(e) => setManualOverrideReason(e.target.value)}
+                    placeholder={t('Krävs vid manuell överstyrning', 'Required for manual overrides')}
+                    rows={2}
+                  />
+                </div>
+              </div>
+            )}
+            {isForeignDocument && !isAdmin && purchase?.exchange_rate_overridden && (
+              <p className="text-xs text-amber-700">
+                {t('Växelkursen är manuellt överstyrd av admin och bevaras vid sparning.', 'This exchange rate was manually overridden by an admin and will be preserved when saving.')}
+              </p>
+            )}
+            {isForeignDocument && exchangeRatePreview.error && (
+              <p className="text-xs text-destructive">
+                {t('ECB-kursen kunde inte hämtas. Dokumentet kan inte sparas förrän kursen finns tillgänglig.', 'The ECB rate could not be fetched. The document cannot be saved until the rate is available.')}
+              </p>
+            )}
+          </div>
+        )}
 
         <div className="space-y-1.5">
           <Label className="text-xs text-muted-foreground">{t('Betalkälla', 'Payment source')}</Label>
@@ -366,7 +521,7 @@ const PurchaseUploadForm: React.FC<Props> = ({
           <Textarea value={form.description} disabled={disabled || saveDraft.isPending} onChange={(e) => updateField('description', e.target.value)} placeholder={t('Vad är köpt...', 'What was purchased...')} rows={2} />
         </div>
 
-        <Button onClick={() => saveDraft.mutate()} disabled={disabled || saveDraft.isPending} className="w-full gap-2">
+        <Button onClick={() => saveDraft.mutate()} disabled={disabled || saveDraft.isPending || saveBlockedByFx} className="w-full gap-2">
           <Save className="h-4 w-4" />
           {saveDraft.isPending
             ? t('Sparar...', 'Saving...')

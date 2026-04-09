@@ -13,6 +13,7 @@ import {
 import UserMenu from '@/components/UserMenu';
 import LanguageToggle from '@/components/LanguageToggle';
 import ShsLogo from '@/components/ShsLogo';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface AccountingLayoutProps {
   children: React.ReactNode;
@@ -68,6 +69,19 @@ const navGroups: NavGroup[] = [
 const AccountingLayout: React.FC<AccountingLayoutProps> = ({ children }) => {
   const location = useLocation();
   const { t } = useLanguage();
+  const { isAdmin } = useAuth();
+  const resolvedNavGroups = isAdmin
+    ? [
+        ...navGroups,
+        {
+          titleSv: 'INTEGRITET',
+          titleEn: 'INTEGRITY',
+          items: [
+            { href: '/accounting/integrity/currency-repair', labelSv: 'Valutareparation', labelEn: 'Currency repair', icon: <Receipt className="w-4 h-4" /> },
+          ],
+        },
+      ]
+    : navGroups;
 
   const isActive = (path: string) => {
     if (path === '/accounting/overview') return location.pathname === '/accounting/overview' || location.pathname === '/accounting';
@@ -91,7 +105,7 @@ const AccountingLayout: React.FC<AccountingLayoutProps> = ({ children }) => {
 
         {/* Nav */}
         <nav className="flex-1 overflow-y-auto px-3 pb-4">
-          {navGroups.map((group) => (
+          {resolvedNavGroups.map((group) => (
             <div key={group.titleSv} className="mb-5">
               <div className="text-[10px] font-semibold text-muted-foreground tracking-wider px-2 mb-1.5">
                 {t(group.titleSv, group.titleEn)}

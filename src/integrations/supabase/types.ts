@@ -14,37 +14,111 @@ export type Database = {
   }
   public: {
     Tables: {
+      acc_currency_repair_cases: {
+        Row: {
+          created_at: string
+          detected_reason: string
+          expected_snapshot: Json
+          id: string
+          note: string | null
+          proposal_snapshot: Json | null
+          purchase_id: string
+          reviewed_at: string | null
+          reviewed_by: string | null
+          status: string
+          stored_snapshot: Json
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          detected_reason: string
+          expected_snapshot?: Json
+          id?: string
+          note?: string | null
+          proposal_snapshot?: Json | null
+          purchase_id: string
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status: string
+          stored_snapshot?: Json
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          detected_reason?: string
+          expected_snapshot?: Json
+          id?: string
+          note?: string | null
+          proposal_snapshot?: Json | null
+          purchase_id?: string
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
+          stored_snapshot?: Json
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "acc_currency_repair_cases_purchase_id_fkey"
+            columns: ["purchase_id"]
+            isOneToOne: true
+            referencedRelation: "acc_purchases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       acc_journal_lines: {
         Row: {
           account: string
           account_name: string | null
+          converted_amount_sek: number | null
           created_at: string
           credit: number
           debit: number
           description: string | null
+          exchange_rate: number | null
+          exchange_rate_date: string | null
+          exchange_rate_overridden: boolean
+          exchange_rate_source: string | null
           id: string
+          original_amount: number | null
+          original_currency: string | null
           sort_order: number
           verification_id: string
         }
         Insert: {
           account: string
           account_name?: string | null
+          converted_amount_sek?: number | null
           created_at?: string
           credit?: number
           debit?: number
           description?: string | null
+          exchange_rate?: number | null
+          exchange_rate_date?: string | null
+          exchange_rate_overridden?: boolean
+          exchange_rate_source?: string | null
           id?: string
+          original_amount?: number | null
+          original_currency?: string | null
           sort_order?: number
           verification_id: string
         }
         Update: {
           account?: string
           account_name?: string | null
+          converted_amount_sek?: number | null
           created_at?: string
           credit?: number
           debit?: number
           description?: string | null
+          exchange_rate?: number | null
+          exchange_rate_date?: string | null
+          exchange_rate_overridden?: boolean
+          exchange_rate_source?: string | null
           id?: string
+          original_amount?: number | null
+          original_currency?: string | null
           sort_order?: number
           verification_id?: string
         }
@@ -148,6 +222,9 @@ export type Database = {
         Row: {
           created_at: string
           created_by: string | null
+          converted_gross_amount_sek: number | null
+          converted_net_amount_sek: number | null
+          converted_vat_amount_sek: number | null
           currency: string
           description: string | null
           document_date: string
@@ -155,10 +232,21 @@ export type Database = {
           document_quality_status: string
           document_type: string
           due_date: string | null
+          ecb_exchange_rate: number | null
+          ecb_exchange_rate_date: string | null
+          exchange_rate: number | null
+          exchange_rate_date: string | null
+          exchange_rate_override_reason: string | null
+          exchange_rate_overridden: boolean
+          exchange_rate_source: string
           gross_amount: number
           id: string
           net_amount: number
           notes: string | null
+          original_currency: string | null
+          original_gross_amount: number | null
+          original_net_amount: number | null
+          original_vat_amount: number | null
           payment_source: string
           posting_date: string | null
           status: string
@@ -172,6 +260,9 @@ export type Database = {
         Insert: {
           created_at?: string
           created_by?: string | null
+          converted_gross_amount_sek?: number | null
+          converted_net_amount_sek?: number | null
+          converted_vat_amount_sek?: number | null
           currency?: string
           description?: string | null
           document_date: string
@@ -179,10 +270,21 @@ export type Database = {
           document_quality_status?: string
           document_type?: string
           due_date?: string | null
+          ecb_exchange_rate?: number | null
+          ecb_exchange_rate_date?: string | null
+          exchange_rate?: number | null
+          exchange_rate_date?: string | null
+          exchange_rate_override_reason?: string | null
+          exchange_rate_overridden?: boolean
+          exchange_rate_source?: string
           gross_amount?: number
           id?: string
           net_amount?: number
           notes?: string | null
+          original_currency?: string | null
+          original_gross_amount?: number | null
+          original_net_amount?: number | null
+          original_vat_amount?: number | null
           payment_source?: string
           posting_date?: string | null
           status?: string
@@ -196,6 +298,9 @@ export type Database = {
         Update: {
           created_at?: string
           created_by?: string | null
+          converted_gross_amount_sek?: number | null
+          converted_net_amount_sek?: number | null
+          converted_vat_amount_sek?: number | null
           currency?: string
           description?: string | null
           document_date?: string
@@ -203,10 +308,21 @@ export type Database = {
           document_quality_status?: string
           document_type?: string
           due_date?: string | null
+          ecb_exchange_rate?: number | null
+          ecb_exchange_rate_date?: string | null
+          exchange_rate?: number | null
+          exchange_rate_date?: string | null
+          exchange_rate_override_reason?: string | null
+          exchange_rate_overridden?: boolean
+          exchange_rate_source?: string
           gross_amount?: number
           id?: string
           net_amount?: number
           notes?: string | null
+          original_currency?: string | null
+          original_gross_amount?: number | null
+          original_net_amount?: number | null
+          original_vat_amount?: number | null
           payment_source?: string
           posting_date?: string | null
           status?: string

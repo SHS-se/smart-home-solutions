@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PURCHASE_STATUS_LABELS, PURCHASE_STATUS_LABELS_EN, PURCHASE_STATUS_COLORS, formatSEK } from '@/lib/accounting-utils';
+import { formatCurrencyAmount, isForeignCurrency, normalizeCurrency } from '@/lib/accounting-fx';
 import { Plus, Filter } from 'lucide-react';
 
 const PurchasesList: React.FC = () => {
@@ -85,7 +86,14 @@ const PurchasesList: React.FC = () => {
                     <TableCell><Link to={`/accounting/purchases/${purchase.id}`} className="text-primary hover:underline font-medium text-sm">{purchase.id.slice(0, 8)}...</Link></TableCell>
                     <TableCell><span className="text-sm">{(purchase.supplier as any)?.name || '—'}</span></TableCell>
                     <TableCell className="text-sm text-muted-foreground">{purchase.document_date}</TableCell>
-                    <TableCell className="text-right text-sm font-medium">{formatSEK(Number(purchase.gross_amount))}</TableCell>
+                    <TableCell className="text-right text-sm font-medium">
+                      <div>{formatSEK(Number(purchase.converted_gross_amount_sek ?? purchase.gross_amount))}</div>
+                      {isForeignCurrency(purchase.original_currency || purchase.currency) && (
+                        <div className="text-xs font-normal text-muted-foreground">
+                          {formatCurrencyAmount(Number(purchase.original_gross_amount ?? purchase.gross_amount), normalizeCurrency(purchase.original_currency || purchase.currency))}
+                        </div>
+                      )}
+                    </TableCell>
                     <TableCell>
                       <Badge className={`${PURCHASE_STATUS_COLORS[purchase.status as keyof typeof PURCHASE_STATUS_COLORS]} border-0 text-xs`}>
                         {statusLabels[purchase.status as keyof typeof statusLabels]}

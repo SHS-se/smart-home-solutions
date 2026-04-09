@@ -7,7 +7,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { MONTH_NAMES_SV, MONTH_NAMES_EN, formatSEK, getAccountName } from '@/lib/accounting-utils';
+import { MONTH_NAMES_SV, MONTH_NAMES_EN, formatExchangeRate, formatSEK, getAccountName } from '@/lib/accounting-utils';
+import { formatCurrencyAmount, normalizeCurrency } from '@/lib/accounting-fx';
 import { Filter, Download, Info } from 'lucide-react';
 
 const AccountingJournal: React.FC = () => {
@@ -95,6 +96,7 @@ const AccountingJournal: React.FC = () => {
                   <TableHead className="text-xs uppercase text-muted-foreground">{t('Konto', 'Account')}</TableHead>
                   <TableHead className="text-xs uppercase text-muted-foreground">{t('Verifikation', 'Verification')}</TableHead>
                   <TableHead className="text-xs uppercase text-muted-foreground">{t('Beskrivning', 'Description')}</TableHead>
+                  <TableHead className="text-xs uppercase text-muted-foreground">{t('Original', 'Original')}</TableHead>
                   <TableHead className="text-xs uppercase text-muted-foreground text-right">{t('Debet', 'Debit')}</TableHead>
                   <TableHead className="text-xs uppercase text-muted-foreground text-right">{t('Kredit', 'Credit')}</TableHead>
                   <TableHead className="text-xs uppercase text-muted-foreground text-right">{t('Saldo', 'Balance')}</TableHead>
@@ -102,9 +104,9 @@ const AccountingJournal: React.FC = () => {
               </TableHeader>
               <TableBody>
                 {isLoading ? (
-                  <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">{t('Laddar...', 'Loading...')}</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={8} className="text-center py-8 text-muted-foreground">{t('Laddar...', 'Loading...')}</TableCell></TableRow>
                 ) : linesWithBalance.length === 0 ? (
-                  <TableRow><TableCell colSpan={7} className="text-center py-12 text-muted-foreground">{t('Inga bokförda transaktioner', 'No posted transactions')}</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={8} className="text-center py-12 text-muted-foreground">{t('Inga bokförda transaktioner', 'No posted transactions')}</TableCell></TableRow>
                 ) : (
                   linesWithBalance.map((line) => (
                     <TableRow key={line.id}>
@@ -114,6 +116,16 @@ const AccountingJournal: React.FC = () => {
                       </TableCell>
                       <TableCell className="text-sm text-primary">{line.verification_number}</TableCell>
                       <TableCell className="text-sm">{line.description || line.verification_description}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {line.original_amount && normalizeCurrency(line.original_currency) !== 'SEK' ? (
+                          <div className="space-y-0.5">
+                            <div>{formatCurrencyAmount(Number(line.original_amount), line.original_currency)}</div>
+                            <div>{line.exchange_rate_source || '—'} · {line.exchange_rate_date || '—'} · {formatExchangeRate(line.exchange_rate == null ? null : Number(line.exchange_rate))}</div>
+                          </div>
+                        ) : (
+                          '—'
+                        )}
+                      </TableCell>
                       <TableCell className="text-right text-sm">{Number(line.debit) > 0 ? formatSEK(Number(line.debit)) : '–'}</TableCell>
                       <TableCell className="text-right text-sm">{Number(line.credit) > 0 ? formatSEK(Number(line.credit)) : '–'}</TableCell>
                       <TableCell className="text-right text-sm font-medium">{line.balance >= 0 ? formatSEK(line.balance) : `–${formatSEK(Math.abs(line.balance))}`}</TableCell>
