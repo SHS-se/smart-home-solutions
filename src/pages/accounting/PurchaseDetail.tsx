@@ -181,8 +181,9 @@ const PurchaseDetail: React.FC = () => {
       const { data: period } = await supabase.from('acc_periods').select('id').eq('year', docDate.getFullYear()).eq('month', docDate.getMonth() + 1).single();
       if (!period) throw new Error(t('Ingen bokföringsperiod hittades för dokumentdatum', 'No accounting period found for document date'));
 
-      const { data: vNum } = await supabase.rpc('allocate_acc_verification_number');
-      const verificationNumber = vNum as unknown as string;
+      const { data: vNum, error: verificationNumberError } = await supabase.rpc('allocate_acc_verification_number');
+      if (verificationNumberError) throw verificationNumberError;
+      const verificationNumber = typeof vNum === 'string' && vNum.trim() ? vNum : null;
 
       const { data: verification, error: vErr } = await supabase.from('acc_verifications').insert({
         verification_number: verificationNumber,
@@ -234,12 +235,16 @@ const PurchaseDetail: React.FC = () => {
         status: 'posted', verification_id: verification.id, posting_date: purchase.posting_date || purchase.document_date,
       }).eq('id', purchase.id);
       if (pErr) throw pErr;
-      return verificationNumber;
+      return verification.verification_number || verificationNumber;
     },
     onSuccess: (vNum) => {
       queryClient.invalidateQueries({ queryKey: ['acc-purchase', purchaseId] });
       queryClient.invalidateQueries({ queryKey: ['acc-purchases'] });
-      toast.success(t(`Bokförd som ${vNum}`, `Posted as ${vNum}`));
+      toast.success(
+        vNum
+          ? t(`Bokförd som ${vNum}`, `Posted as ${vNum}`)
+          : t('Fakturan bokfördes', 'Invoice posted'),
+      );
     },
     onError: (e: Error) => toast.error(e.message),
   });
