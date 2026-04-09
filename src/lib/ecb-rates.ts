@@ -1,4 +1,3 @@
-import { supabase } from '@/integrations/supabase/client';
 import type { ExchangeRateLookupResult } from './accounting-fx';
 
 export interface EcbRateRequest {
@@ -6,24 +5,105 @@ export interface EcbRateRequest {
   documentDate: string;
 }
 
+interface EcbRateDay {
+  date: string;
+  sekPerEur: number;
+  usdPerEur: number | null;
+}
+
+const ECB_HISTORICAL_RATES_URL = 'https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist.xml';
+let cachedDaysPromise: Promise<EcbRateDay[]> | null = null;
+
+function normalizeCurrency(currency: string): string {
+  return currency.trim().toUpperCase();
+}
+
+function parseEcbHistoricalRates(xml: string): EcbRateDay[] {
+  const dayRegex = /<Cube\s+time=['"](\d{4}-\d{2}-\d{2})['"]>([\s\S]*?)<\/Cube>/g;
+  const sekRegex = /<Cube\s+currency=['"]SEK['"]\s+rate=['"]([\d.]+)['"]\s*\/>/;
+  const usdRegex = /<Cube\s+currency=['"]USD['"]\s+rate=['"]([\d.]+)['"]\s*\/>/;
+  const days: EcbRateDay[] = [];
+
+  let match: RegExpExecArray | null;
+  while ((match = dayRegex.exec(xml)) !== null) {
+    const [, date, body] = match;
+    const sekMatch = body.match(sekRegex);
+    if (!sekMatch) continue;
+    const usdMatch = body.match(usdRegex);
+
+    days.push({
+      date,
+      sekPerEur: Number(sekMatch[1]),
+      usdPerEur: usdMatch ? Number(usdMatch[1]) : null,
+    });
+  }
+
+  return days.sort((left, right) => right.date.localeCompare(left.date));
+}
+
+async function loadHistoricalRateDays(): Promise<EcbRateDay[]> {
+  if (!cachedDaysPromise) {
+    cachedDaysPromise = fetch(ECB_HISTORICAL_RATES_URL)
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`ECB lookup failed with status ${response.status}`);
+        }
+        return response.text();
+      })
+      .then((xml) => {
+        const days = parseEcbHistoricalRates(xml);
+        if (days.length === 0) {
+          throw new Error('ECB historical rate file did not contain any SEK rates');
+        }
+        return days;
+      });
+  }
+
+  return cachedDaysPromise;
+}
+
 export async function fetchEcbExchangeRates(requests: EcbRateRequest[]): Promise<ExchangeRateLookupResult[]> {
   if (requests.length === 0) return [];
 
-  const { data, error } = await supabase.functions.invoke('fetch-ecb-exchange-rate', {
-    body: {
-      requests: requests.map((request) => ({
-        currency: request.currency,
-        documentDate: request.documentDate,
-      })),
-    },
+  const days = await loadHistoricalRateDays();
+
+  return requests.map((request) => {
+    const currency = normalizeCurrency(request.currency);
+    if (currency === 'SEK') {
+      return {
+        currency,
+        rate: 1,
+        rateDate: request.documentDate,
+        source: 'SEK',
+      };
+    }
+
+    if (!['EUR', 'USD'].includes(currency)) {
+      throw new Error(`Unsupported currency: ${currency}`);
+    }
+
+    const day = days.find((candidate) => candidate.date <= request.documentDate && (currency !== 'USD' || candidate.usdPerEur != null));
+    if (!day) {
+      throw new Error(`No ECB rate found on or before ${request.documentDate} for ${currency}`);
+    }
+
+    const rate = currency === 'EUR'
+      ? day.sekPerEur
+      : day.usdPerEur
+        ? day.sekPerEur / day.usdPerEur
+        : null;
+
+    if (!rate) {
+      throw new Error(`No usable ECB ${currency} rate found on or before ${request.documentDate}`);
+    }
+
+    return {
+      currency,
+      rate: Number(rate.toFixed(8)),
+      rateDate: day.date,
+      source: 'ECB',
+    };
   });
-
-  if (error) throw error;
-  if (!data?.results || !Array.isArray(data.results)) {
-    throw new Error('ECB lookup returned no results');
-  }
-
-  return data.results as ExchangeRateLookupResult[];
 }
 
 export async function fetchSingleEcbExchangeRate(request: EcbRateRequest): Promise<ExchangeRateLookupResult> {

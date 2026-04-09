@@ -107,5 +107,5 @@ Deno.test('detectForeignCurrencyIntegrityIssue flags legacy foreign amounts stor
     throw new Error('Expected integrity issue to be detected');
   }
 
-  assertEqual(issue.status, 'posted_requires_correction', 'status');
+  assertEqual(issue.status, 'posted_requires_backfill', 'status');
 });

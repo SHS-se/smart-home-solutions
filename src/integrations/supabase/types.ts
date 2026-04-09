@@ -14,59 +14,6 @@ export type Database = {
   }
   public: {
     Tables: {
-      acc_currency_repair_cases: {
-        Row: {
-          created_at: string
-          detected_reason: string
-          expected_snapshot: Json
-          id: string
-          note: string | null
-          proposal_snapshot: Json | null
-          purchase_id: string
-          reviewed_at: string | null
-          reviewed_by: string | null
-          status: string
-          stored_snapshot: Json
-          updated_at: string
-        }
-        Insert: {
-          created_at?: string
-          detected_reason: string
-          expected_snapshot?: Json
-          id?: string
-          note?: string | null
-          proposal_snapshot?: Json | null
-          purchase_id: string
-          reviewed_at?: string | null
-          reviewed_by?: string | null
-          status: string
-          stored_snapshot?: Json
-          updated_at?: string
-        }
-        Update: {
-          created_at?: string
-          detected_reason?: string
-          expected_snapshot?: Json
-          id?: string
-          note?: string | null
-          proposal_snapshot?: Json | null
-          purchase_id?: string
-          reviewed_at?: string | null
-          reviewed_by?: string | null
-          status?: string
-          stored_snapshot?: Json
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "acc_currency_repair_cases_purchase_id_fkey"
-            columns: ["purchase_id"]
-            isOneToOne: true
-            referencedRelation: "acc_purchases"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       acc_journal_lines: {
         Row: {
           account: string

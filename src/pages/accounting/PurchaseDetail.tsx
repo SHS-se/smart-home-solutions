@@ -93,8 +93,8 @@ const PurchaseDetail: React.FC = () => {
         !purchaseFx.exchangeRateDate
       )) {
         throw new Error(t(
-          'Utkastet saknar giltig ECB-konvertering till SEK. Kör valutareparation innan bokföring.',
-          'This draft is missing a valid ECB conversion to SEK. Run currency repair before posting.',
+          'Utkastet saknar giltig ECB-konvertering till SEK. Kör FX-backfill innan bokföring.',
+          'This draft is missing a valid ECB conversion to SEK. Run the FX backfill before posting.',
         ));
       }
       const blockers = getPurchaseBlockers({
@@ -192,8 +192,8 @@ const PurchaseDetail: React.FC = () => {
     errors.push({
       type: 'error',
       message: t(
-        'Utkastet saknar giltig ECB-konvertering till SEK. Kör valutareparation innan bokföring.',
-        'This draft is missing a valid ECB conversion to SEK. Run currency repair before posting.',
+        'Utkastet saknar giltig ECB-konvertering till SEK. Kör FX-backfill innan bokföring.',
+        'This draft is missing a valid ECB conversion to SEK. Run the FX backfill before posting.',
       ),
     });
   }
@@ -255,16 +255,13 @@ const PurchaseDetail: React.FC = () => {
         )}
 
         {isForeignDocument && purchaseFx.exchangeRateSource === 'LEGACY_UNCONVERTED' && (
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-start justify-between gap-4">
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-start gap-4">
             <div>
-              <p className="font-medium text-primary">{t('Valutaomräkning behöver repareras', 'Foreign-currency conversion needs repair')}</p>
+              <p className="font-medium text-primary">{t('Valutaomräkning saknas', 'Foreign-currency conversion is missing')}</p>
               <p className="text-sm text-blue-900/80 mt-1">
-                {t('Det här köpet skapades innan ECB-konvertering sparades korrekt. Reparera det innan bokföring eller momsgranskning.', 'This purchase was created before ECB conversion was persisted correctly. Repair it before posting or VAT review.')}
+                {t('Det här köpet saknar sparad ECB-konvertering. Kör backfill-skriptet innan bokföring eller momsgranskning.', 'This purchase is missing a persisted ECB conversion. Run the FX backfill script before posting or VAT review.')}
               </p>
             </div>
-            <Link to="/accounting/integrity/currency-repair">
-              <Button variant="outline" size="sm">{t('Öppna reparationskö', 'Open repair queue')}</Button>
-            </Link>
           </div>
         )}
 

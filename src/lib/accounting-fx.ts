@@ -1,4 +1,4 @@
-import type { PaymentSource, VatTreatment } from './accounting-utils';
+import type { VatTreatment } from './accounting-utils';
 
 export const BASE_CURRENCY = 'SEK';
 const ROUNDING_EPSILON = 1e-9;
@@ -63,7 +63,7 @@ export interface DetectedCurrencyIntegrityIssue {
   reason: string;
   stored: PurchaseExchangeSnapshot;
   expected: PurchaseExchangeSnapshot;
-  status: 'draft_can_auto_fix' | 'posted_requires_correction';
+  status: 'draft_requires_backfill' | 'posted_requires_backfill';
 }
 
 export interface PurchaseLike {
@@ -340,7 +340,7 @@ export function detectForeignCurrencyIntegrityIssue(
     reason: issues.join('. '),
     stored,
     expected,
-    status: purchase.status === 'posted' ? 'posted_requires_correction' : 'draft_can_auto_fix',
+    status: purchase.status === 'posted' ? 'posted_requires_backfill' : 'draft_requires_backfill',
   };
 }
 
@@ -368,32 +368,4 @@ export function describeJournalOriginalAmount(
   if (kind === 'input_vat') return snapshot.originalVat;
   if (kind === 'reverse_charge_vat') return null;
   return derivePaymentAccountOriginalAmount(vatTreatment, snapshot);
-}
-
-export function buildPurchaseRepairProposal(params: {
-  purchaseId: string;
-  verificationNumber?: string | null;
-  paymentSource: PaymentSource;
-  lines: PurchaseLineAmounts[];
-  stored: PurchaseExchangeSnapshot;
-  expected: PurchaseExchangeSnapshot;
-}) {
-  const correctedLines = params.lines.map((line) => ({
-    account: line.expense_account,
-    vat_treatment: line.vat_treatment,
-    converted_net_amount_sek: line.net_amount,
-    converted_vat_amount_sek: line.vat_amount,
-    converted_gross_amount_sek: line.gross_amount,
-  }));
-
-  return {
-    purchase_id: params.purchaseId,
-    verification_number: params.verificationNumber || null,
-    payment_source: params.paymentSource,
-    original_currency: params.expected.originalCurrency,
-    stored_snapshot: params.stored,
-    corrected_snapshot: params.expected,
-    corrected_line_allocations: correctedLines,
-    action: 'Create reversal of the incorrect posted verification, then post a replacement verification using the corrected SEK amounts.',
-  };
 }

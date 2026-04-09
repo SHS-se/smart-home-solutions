@@ -15,10 +15,8 @@ import {
   formatCurrencyAmount,
   getPurchaseExchangeSnapshot,
   isForeignCurrency,
-  normalizeCurrency,
   roundMoney,
 } from '@/lib/accounting-fx';
-import { fetchEcbExchangeRates } from '@/lib/ecb-rates';
 import { toast } from 'sonner';
 import { ArrowLeft, CheckCircle, AlertTriangle, Lock, Download, Upload, Info, FileText } from 'lucide-react';
 
@@ -85,24 +83,6 @@ const VatDeclarationFlow: React.FC = () => {
   });
 
   const foreignPurchases = (purchases || []).filter((purchase) => isForeignCurrency((purchase as any).original_currency || purchase.currency));
-  const { data: fxLookups } = useQuery({
-    queryKey: [
-      'acc-q-ecb-lookups',
-      foreignPurchases.map((purchase) => `${normalizeCurrency((purchase as any).original_currency || purchase.currency)}:${purchase.document_date}`).sort().join('|'),
-    ],
-    queryFn: async () => {
-      const uniqueRequests = Array.from(new Map(
-        foreignPurchases.map((purchase) => {
-          const currency = normalizeCurrency((purchase as any).original_currency || purchase.currency);
-          const key = `${currency}:${purchase.document_date}`;
-          return [key, { currency, documentDate: purchase.document_date }];
-        }),
-      ).values());
-      return fetchEcbExchangeRates(uniqueRequests);
-    },
-    enabled: foreignPurchases.length > 0,
-  });
-
   const purchaseRows = (purchases || []).map((purchase) => ({
     ...purchase,
     supplier: (purchase as any).supplier || null,
@@ -110,28 +90,15 @@ const VatDeclarationFlow: React.FC = () => {
   }));
   const unpostedPurchases = purchaseRows.filter(p => p.status !== 'posted');
   const detectedCurrencyIssues = foreignPurchases.flatMap((purchase) => {
-    const currency = normalizeCurrency((purchase as any).original_currency || purchase.currency);
-    const lookup = (fxLookups || []).find((item) => item.currency === currency && item.documentDate === purchase.document_date);
-    if (!lookup) return [];
-    const expected = getPurchaseExchangeSnapshot({
-      ...purchase,
-      exchange_rate_source: lookup.source,
-      exchange_rate_date: lookup.rateDate,
-      exchange_rate: lookup.rate,
-      ecb_exchange_rate: lookup.rate,
-      ecb_exchange_rate_date: lookup.rateDate,
-      converted_gross_amount_sek: roundMoney(Number((purchase as any).original_gross_amount ?? purchase.gross_amount) * lookup.rate),
-      converted_net_amount_sek: roundMoney(Number((purchase as any).original_net_amount ?? purchase.net_amount) * lookup.rate),
-      converted_vat_amount_sek: roundMoney(Number((purchase as any).original_vat_amount ?? purchase.vat_amount) * lookup.rate),
-    });
+    const expected = getPurchaseExchangeSnapshot(purchase);
     const detected = detectForeignCurrencyIntegrityIssue(purchase, expected);
     if (!detected) return [];
     return [{ ...detected, purchase }];
   });
-  const draftCurrencyIssues = detectedCurrencyIssues.filter((issue) => issue.status === 'draft_can_auto_fix');
-  const postedCurrencyIssues = detectedCurrencyIssues.filter((issue) => issue.status === 'posted_requires_correction');
-  const hasBlockers = unpostedPurchases.length > 0 || draftCurrencyIssues.length > 0;
-  const blockerCount = unpostedPurchases.length + draftCurrencyIssues.length;
+  const backfillBlockedPurchases = detectedCurrencyIssues.map((issue) => issue.purchase);
+  const uniqueBlockedPurchaseIds = new Set([...unpostedPurchases, ...backfillBlockedPurchases].map((purchase) => purchase.id));
+  const hasBlockers = uniqueBlockedPurchaseIds.size > 0;
+  const blockerCount = uniqueBlockedPurchaseIds.size;
 
   const postedPurchases = purchaseRows.filter((purchase) => purchase.status === 'posted');
   const inputVat2641 = roundMoney(postedPurchases.reduce((sum, purchase) => sum + purchase.lines
@@ -181,7 +148,7 @@ const VatDeclarationFlow: React.FC = () => {
   });
 
   const steps: StepProps[] = [
-    { number: 1, label: t('Städa kö', 'Clean queue'), description: t('Åtgärda alla flaggade problem', 'Resolve all flagged issues'), status: currentStep > 1 ? 'done' : currentStep === 1 ? 'active' : 'pending' },
+    { number: 1, label: t('Datakontroll', 'Data checks'), description: t('Säkerställ bokförda SEK-värden', 'Confirm posted SEK values'), status: currentStep > 1 ? 'done' : currentStep === 1 ? 'active' : 'pending' },
     { number: 2, label: t('Avstämning', 'Reconciliation'), description: t('Kontrollera att allt stämmer', 'Verify everything matches'), status: currentStep > 2 ? 'done' : currentStep === 2 ? 'active' : 'pending' },
     { number: 3, label: t('Ögonblicksbild', 'Snapshot'), description: t('Skapa låst ögonblicksbild', 'Create locked snapshot'), status: currentStep > 3 ? 'done' : currentStep === 3 ? 'active' : 'pending' },
     { number: 4, label: t('Export & inlämning', 'Export & filing'), description: t('Exportera och lämna in', 'Export and submit'), status: currentStep === 4 ? 'active' : 'pending' },
@@ -232,13 +199,12 @@ const VatDeclarationFlow: React.FC = () => {
                     <p className="text-sm text-amber-700">{t('Åtgärda alla problem innan du kan fortsätta till nästa steg.', 'Resolve all issues before proceeding to the next step.')}</p>
                   </div>
                 </div>
-                {draftCurrencyIssues.length > 0 && (
+                {detectedCurrencyIssues.length > 0 && (
                   <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                    <p className="font-medium text-red-800">{t('Valutaomräkning saknas på utkast', 'Draft foreign-currency conversion is missing')}</p>
+                    <p className="font-medium text-red-800">{t('FX-backfill krävs innan momsperioden kan godkännas', 'FX backfill is required before this VAT period can be approved')}</p>
                     <p className="text-sm text-red-700 mt-1">
-                      {t('Kör autoreparation för utkasten innan momsperioden kan godkännas.', 'Run the draft auto-fix before this VAT period can be approved.')}
+                      {t('Kör backfill-skriptet så att SEK-värden sparas korrekt innan momsperioden godkänns.', 'Run the FX backfill script so the SEK values are persisted correctly before approving this VAT period.')}
                     </p>
-                    <Link to="/accounting/integrity/currency-repair"><Button size="sm" className="mt-3">{t('Öppna valutareparation', 'Open currency repair')}</Button></Link>
                   </div>
                 )}
                 <Card className="border border-border">
@@ -260,18 +226,6 @@ const VatDeclarationFlow: React.FC = () => {
               <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-center gap-3">
                 <CheckCircle className="w-5 h-5 text-green-600" />
                 <p className="text-sm text-green-800">{t('Alla inköp är bokförda. Inga problem kvarstår.', 'All purchases are posted. No issues remaining.')}</p>
-              </div>
-            )}
-            {postedCurrencyIssues.length > 0 && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-start gap-3">
-                <Info className="w-5 h-5 text-primary mt-0.5 shrink-0" />
-                <div>
-                  <p className="font-medium text-primary">{t('Bokförda valutaköp kräver korrigeringsförslag', 'Posted foreign-currency purchases need correction proposals')}</p>
-                  <p className="text-sm text-blue-900/80 mt-1">
-                    {t('De bokförda beloppen ändras inte automatiskt. Gå till reparationskön för att skapa korrigeringsförslag och följa upp dem.', 'Posted amounts are not rewritten automatically. Use the repair queue to create correction proposals and follow them up.')}
-                  </p>
-                  <Link to="/accounting/integrity/currency-repair"><Button size="sm" variant="outline" className="mt-3">{t('Öppna reparationskö', 'Open repair queue')}</Button></Link>
-                </div>
               </div>
             )}
             <Button onClick={() => setCurrentStep(2)} disabled={hasBlockers}>{t('Fortsätt till avstämning', 'Continue to reconciliation')}</Button>

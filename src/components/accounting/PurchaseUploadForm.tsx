@@ -141,11 +141,19 @@ const PurchaseUploadForm: React.FC<Props> = ({
   };
   const parsedManualExchangeRate = manualExchangeRate.trim() ? parseAmount(manualExchangeRate) : null;
   const preserveExistingOverride = Boolean(!isAdmin && purchase?.exchange_rate_overridden);
+  const hasPersistedEditableRate = normalizedCurrency === 'SEK'
+    || Boolean(persistedSnapshot.ecbExchangeRate || persistedSnapshot.exchangeRate);
+  const needsFreshRateLookup = normalizedCurrency === 'SEK'
+    ? !isEditing
+    : !isEditing ||
+      documentDate !== (purchase?.document_date || '') ||
+      normalizedCurrency !== normalizeCurrency(persistedSnapshot.originalCurrency) ||
+      !hasPersistedEditableRate;
 
   const exchangeRatePreview = useQuery({
     queryKey: ['acc-ecb-rate-preview', normalizedCurrency, documentDate],
     queryFn: () => fetchSingleEcbExchangeRate({ currency: normalizedCurrency, documentDate }),
-    enabled: !isEditing && normalizedCurrency.length === 3 && !!documentDate && ['SEK', 'EUR', 'USD'].includes(normalizedCurrency),
+    enabled: needsFreshRateLookup && normalizedCurrency.length === 3 && !!documentDate && ['SEK', 'EUR', 'USD'].includes(normalizedCurrency),
   });
 
   const effectiveOverrideRate = preserveExistingOverride
@@ -155,10 +163,7 @@ const PurchaseUploadForm: React.FC<Props> = ({
     ? (purchase?.exchange_rate_override_reason || '')
     : manualOverrideReason;
 
-  const hasPersistedEditableRate = normalizedCurrency === 'SEK'
-    || Boolean(persistedSnapshot.ecbExchangeRate || persistedSnapshot.exchangeRate);
-
-  const exchangeSnapshot = isEditing
+  const exchangeSnapshot = !needsFreshRateLookup && isEditing
     ? hasPersistedEditableRate
       ? buildExchangeSnapshot({
           documentDate,
