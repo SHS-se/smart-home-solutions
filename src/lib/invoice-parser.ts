@@ -80,6 +80,21 @@ const SERVICE_MONTH_NAMES_SV: Record<string, string> = {
 };
 
 const FIELD_STOPS = [
+  'Invoice',
+  'Invoice number',
+  'Date of issue',
+  'Date due',
+  'OpenAI VAT',
+  'Bill to',
+  'Ship to',
+  'Pay online',
+  'Description',
+  'Qty',
+  'Unit price',
+  'Tax',
+  'Amount',
+  'Subtotal',
+  'Amount due',
   'Faktura',
   'Sida',
   'Fakturauppgifter',
@@ -328,21 +343,46 @@ function inferCurrency(text: string): string | null {
     if (/\$/.test(transferCurrency)) return 'USD';
   }
 
+  const usdDueBanner = text.match(/\$[\d.,]+\s+USD\s+due\b/i);
+  if (usdDueBanner) return 'USD';
+
+  const amountDueSection = extractSectionAfterLabel(
+    text,
+    ['Amount due', 'Total due'],
+    ['Pay online', 'Description', 'Tax to be paid on reverse charge basis', 'Page'],
+    80,
+  );
+  const amountDueValues = amountDueSection ? parseMoneyValues(amountDueSection) : [];
+  if (amountDueValues.some((value) => value.currency)) {
+    return amountDueValues.find((value) => value.currency)?.currency || null;
+  }
+
   const totalSection = extractSectionAfterLabel(
     text,
     ['Total'],
     ['Debited from your Balance', 'Amount Due', 'Exchange Rates', 'Questions?', 'Page'],
   );
   const totalValues = totalSection ? parseMoneyValues(totalSection) : [];
-  if (totalValues.length) return totalValues[0].currency;
+  if (totalValues.some((value) => value.currency)) {
+    return totalValues.find((value) => value.currency)?.currency || null;
+  }
 
-  if (/\bSEK\b|kr/i.test(text)) return 'SEK';
-  if (/\bEUR\b|€/.test(text)) return 'EUR';
-  if (/\bUSD\b|\$/.test(text)) return 'USD';
+  const currencyCounts = {
+    SEK: (text.match(/\bSEK\b|(?<![A-Z])kr\b/gi) || []).length,
+    EUR: (text.match(/\bEUR\b|€/g) || []).length,
+    USD: (text.match(/\bUSD\b|\$/g) || []).length,
+  };
+
+  if (currencyCounts.USD > 0 && currencyCounts.USD >= currencyCounts.SEK && currencyCounts.USD >= currencyCounts.EUR) return 'USD';
+  if (currencyCounts.EUR > 0 && currencyCounts.EUR >= currencyCounts.SEK) return 'EUR';
+  if (currencyCounts.SEK > 0) return 'SEK';
   return null;
 }
 
 function extractSupplierName(lines: string[], normalizedText: string): string | null {
+  const openAiHeaderMatch = normalizedText.match(/OpenAI OpCo,\s*LLC/i);
+  if (openAiHeaderMatch) return 'OpenAI OpCo, LLC';
+
   const soldBySection = extractSectionAfterLabel(
     normalizedText,
     ['Såld av', 'Sold by'],
@@ -492,7 +532,7 @@ export function parseInvoiceText(rawText: string): ParsedInvoice {
 
   let grossAmount = extractMoneyForLabel(
     normalizedText,
-    ['Total', 'Amount Due', 'Total Amount', 'Att betala', 'Summa att betala'],
+    ['Total', 'Amount due', 'Amount Due', 'Total Amount', 'Att betala', 'Summa att betala'],
     ['Debited from your Balance', 'Exchange Rates', 'Questions?', 'Page'],
     currency,
   );
@@ -523,7 +563,7 @@ export function parseInvoiceText(rawText: string): ParsedInvoice {
       const amounts = line.match(AMOUNT_RE);
       if (!amounts) continue;
       const last = parseAmount(amounts[amounts.length - 1]);
-      if (last === null) continue;
+      if (last === null || last < 1) continue;
 
       if (grossAmount === null && GROSS_KW.some((kw) => kw.test(line)) && last >= 0) {
         grossAmount = last;

@@ -17,6 +17,8 @@ const AMAZON_RAW_TEXT = `Faktura  Sida 1 av 1  LU-BIO-04 Amazon EU S.à r.l. - 3
 
 const AMAZON_MARKETPLACE_RAW_TEXT = `Faktura  Sida 1 av 1  Moms deklarerat av Amazon i leveranslandet  Moms   Delsumma för artikel (exkl. moms) Delsumma moms 25 %   2 319,20 kr   579,80 kr Totalt   2 319,20 kr   579,80 kr  Totalsumma för faktura   2 899,00 kr Fakturauppgifter  Beställningsdatum   29.01.2026 Ordernr   407-5695034-0067546  Betald  Referens-ID för betalning 2EeXGfSTDIRazDBkqpS8 Såld av Shenzhenshi LingKeYun Technology Co., Ltd. Fakturadatum/Leveransdatum   30.01.2026 Fakturanr   SE60000DWSE0PI Summa att betala   2 899,00 kr  PHILIP CHEONG PORFYRVÄGEN 10 TÄBY, 18734 SE  För kundsupport, gå till www.amazon.se/contact-us  Faktureringsadress  Philip Cheong Porfyrvägen 10 TÄBY, 18734 SE  Leveransadress  Philip Cheong Porfyrvägen 10 TÄBY, 18734 SE  Såld av  Shenzhenshi LingKeYun Technology Co., Ltd.  龙华 区 大浪街道 赖 屋山社区金城工 业 园第三 栋504  深圳市, 广 东, 518000  CN  Beställningsinformation  Beskrivning   Antal   Enhetspris (exkl. moms) Moms   Enhetspris (inkl. moms) Delsumma för artikel (inkl. moms) Beelink MINI-S13 minidator, 13:e generationens Intel Alder Lake-N150 processor (upp till 3,6 GHz) minidator, 16 GB RAM, 500GB SSD, affärsdator, dubbel HDMI/WiFi 6/BT 5.2/RJ45/WOL | B0DPC1LVRF ASIN: B0DPC1LVRF 1   2 319,20 kr   25 %   2 899,00 kr   2 899,00 kr Fraktavgifter   0,00 kr   0,00 kr   0,00 kr`;
 
+const OPENAI_RAW_TEXT = `Page 1 of 1  Invoice  Invoice number   56FB0333  0001  Date of issue   March 26, 2026 Date due   March 26, 2026 OpenAI VAT   EU372041333  OpenAI OpCo, LLC  1455 3rd Street San Francisco, California 94158 United States ar@openai.com EU OSS VAT EU372041333  Bill to  Phil Smith Porfyrvägen 10 SE  187 34 Täby Sweden phio@philbert.io SE VAT SE790519759101  Ship to  Phil Smith Porfyrvägen 10 SE  187 34 Täby Sweden  $10.00 USD due March 26, 2026  Pay online  Description   Qty   Unit price   Tax   Amount  OpenAI API usage credit   1   $10.00   0%   $10.00  Subtotal   $10.00 Total   $10.00  Amount due   $10.00 USD   1    Tax to be paid on reverse charge basis   1`;
+
 Deno.test('parseInvoiceText extracts Stripe tax invoice fields from flattened PDF text', () => {
   const parsed = parseInvoiceText(STRIPE_RAW_TEXT);
 
@@ -74,4 +76,17 @@ Deno.test('parseInvoiceText extracts Amazon marketplace invoice VAT summary with
   assertEqual(parsed.netAmount, 2319.2, 'netAmount');
   assertEqual(parsed.vatRate, 25, 'vatRate');
   assertEqual(parsed.description, 'Beelink MINI-S13 minidator (Amazon inköp)', 'description');
+});
+
+Deno.test('parseInvoiceText keeps OpenAI invoice amounts in USD', () => {
+  const parsed = parseInvoiceText(OPENAI_RAW_TEXT);
+
+  assertEqual(parsed.supplierName, 'OpenAI OpCo, LLC', 'supplierName');
+  assertEqual(parsed.invoiceNumber, '56FB0333', 'invoiceNumber');
+  assertEqual(parsed.invoiceDate, '2026-03-26', 'invoiceDate');
+  assertEqual(parsed.currency, 'USD', 'currency');
+  assertEqual(parsed.grossAmount, 10, 'grossAmount');
+  assertEqual(parsed.vatAmount, 0, 'vatAmount');
+  assertEqual(parsed.netAmount, 10, 'netAmount');
+  assertEqual(parsed.vatRate, 0, 'vatRate');
 });
