@@ -32,6 +32,52 @@ import {
 import { toast } from 'sonner';
 import { ArrowLeft, AlertTriangle, Eye, CheckCircle } from 'lucide-react';
 
+const PURCHASE_DOCUMENT_BUCKET = 'purchase-documents';
+
+function safeDecodePath(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function normalizePurchaseDocumentPath(rawPath: string | null | undefined): string | null {
+  if (!rawPath) return null;
+
+  let normalizedPath = rawPath.trim();
+  if (!normalizedPath) return null;
+
+  normalizedPath = safeDecodePath(normalizedPath);
+
+  if (/^https?:\/\//i.test(normalizedPath)) {
+    try {
+      const url = new URL(normalizedPath);
+      normalizedPath = safeDecodePath(url.pathname);
+    } catch {
+      return normalizedPath;
+    }
+  }
+
+  normalizedPath = normalizedPath.replace(/^\/+/, '');
+
+  const knownPrefixes = [
+    `storage/v1/object/sign/${PURCHASE_DOCUMENT_BUCKET}/`,
+    `storage/v1/object/public/${PURCHASE_DOCUMENT_BUCKET}/`,
+    `storage/v1/object/authenticated/${PURCHASE_DOCUMENT_BUCKET}/`,
+    `${PURCHASE_DOCUMENT_BUCKET}/`,
+  ];
+
+  for (const prefix of knownPrefixes) {
+    if (normalizedPath.startsWith(prefix)) {
+      normalizedPath = normalizedPath.slice(prefix.length);
+      break;
+    }
+  }
+
+  return normalizedPath.replace(/^\/+/, '') || null;
+}
+
 const PurchaseDetail: React.FC = () => {
   const { purchaseId } = useParams<{ purchaseId: string }>();
   const { user } = useAuth();
@@ -63,17 +109,43 @@ const PurchaseDetail: React.FC = () => {
   const purchaseFx = getPurchaseExchangeSnapshot(purchase);
   const isForeignDocument = isForeignCurrency(purchaseFx.originalCurrency);
 
-  const { data: documentUrl, isLoading: isDocumentLoading } = useQuery({
+  const normalizedDocumentPath = normalizePurchaseDocumentPath(purchase?.document_file_path);
+
+  const { data: documentUrl, isLoading: isDocumentLoading, error: documentLoadError } = useQuery({
     queryKey: ['acc-purchase-document', purchaseId, purchase?.document_file_path],
     queryFn: async () => {
-      if (!purchase?.document_file_path) return null;
+      if (!purchase?.document_file_path || !normalizedDocumentPath) return null;
       const { data, error } = await supabase.storage
-        .from('purchase-documents')
-        .createSignedUrl(purchase.document_file_path, 3600);
-      if (error) throw error;
+        .from(PURCHASE_DOCUMENT_BUCKET)
+        .createSignedUrl(normalizedDocumentPath, 3600);
+      if (error) {
+        console.error('Failed to sign purchase document', {
+          purchaseId,
+          storedPath: purchase.document_file_path,
+          normalizedPath: normalizedDocumentPath,
+          error,
+        });
+        throw error;
+      }
+
+      if (normalizedDocumentPath !== purchase.document_file_path) {
+        const { error: updatePathError } = await supabase
+          .from('acc_purchases')
+          .update({ document_file_path: normalizedDocumentPath })
+          .eq('id', purchase.id);
+        if (updatePathError) {
+          console.error('Failed to normalize purchase document path', {
+            purchaseId,
+            storedPath: purchase.document_file_path,
+            normalizedPath: normalizedDocumentPath,
+            error: updatePathError,
+          });
+        }
+      }
+
       return data?.signedUrl || null;
     },
-    enabled: !!purchase?.document_file_path,
+    enabled: !!purchase?.document_file_path && !!normalizedDocumentPath,
   });
 
   const updateLine = useMutation({
@@ -287,7 +359,23 @@ const PurchaseDetail: React.FC = () => {
                   </div>
                 ) : (
                   <div className="flex flex-1 items-center justify-center rounded-lg bg-muted p-8 text-center">
-                    <p className="text-sm text-muted-foreground">{t('Inget underlag uppladdat', 'No document uploaded')}</p>
+                    <div className="space-y-2">
+                      <p className="text-sm text-muted-foreground">
+                        {purchase.document_file_path
+                          ? t('Dokumentet kunde inte öppnas från lagringen', 'The document could not be opened from storage')
+                          : t('Inget underlag uppladdat', 'No document uploaded')}
+                      </p>
+                      {purchase.document_file_path && (
+                        <p className="text-xs text-muted-foreground">
+                          {t('Kontrollera att filen fortfarande finns i bucketen purchase-documents.', 'Check that the file still exists in the purchase-documents bucket.')}
+                        </p>
+                      )}
+                      {documentLoadError && (
+                        <p className="text-xs text-destructive">
+                          {t('Signering av dokumentlänk misslyckades.', 'Signing the document URL failed.')}
+                        </p>
+                      )}
+                    </div>
                   </div>
                 )}
               </CardContent>
