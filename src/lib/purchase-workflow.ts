@@ -97,9 +97,55 @@ export function resolveSavedPurchaseId(
   return resolvedId;
 }
 
-function normalizeVatNumber(vatNumber: string | null | undefined): string | null {
+export function normalizeVatNumber(vatNumber: string | null | undefined): string | null {
   const trimmed = vatNumber?.replace(/\s+/g, '').trim().toUpperCase();
   return trimmed || null;
+}
+
+export function normalizeSupplierName(name: string | null | undefined): string | null {
+  const normalized = name
+    ?.trim()
+    .toUpperCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Z0-9]/g, '') || '';
+  return normalized || null;
+}
+
+export interface SupplierLookupCandidate {
+  id: string;
+  name: string;
+  vat_number?: string | null;
+}
+
+export function findExistingSupplier(
+  suppliers: SupplierLookupCandidate[],
+  params: {
+    supplierName?: string | null;
+    vatNumber?: string | null;
+  },
+): SupplierLookupCandidate | null {
+  const normalizedVatNumber = normalizeVatNumber(params.vatNumber);
+  if (normalizedVatNumber) {
+    const vatMatch = suppliers.find((supplier) => normalizeVatNumber(supplier.vat_number) === normalizedVatNumber);
+    if (vatMatch) return vatMatch;
+  }
+
+  const normalizedSupplierName = normalizeSupplierName(params.supplierName);
+  if (!normalizedSupplierName) return null;
+
+  const exactNameMatch = suppliers.find((supplier) => normalizeSupplierName(supplier.name) === normalizedSupplierName);
+  if (exactNameMatch) return exactNameMatch;
+
+  const containingNameMatch = suppliers.find((supplier) => {
+    const candidateName = normalizeSupplierName(supplier.name);
+    return candidateName && (
+      normalizedSupplierName.includes(candidateName) ||
+      candidateName.includes(normalizedSupplierName)
+    );
+  });
+
+  return containingNameMatch || null;
 }
 
 function getCountryFromVatNumber(vatNumber: string | null | undefined): string | null {

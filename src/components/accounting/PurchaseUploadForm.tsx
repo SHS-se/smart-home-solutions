@@ -29,6 +29,7 @@ import {
   buildInvoiceNumberNote,
   createEmptyPurchaseForm,
   extractInvoiceNumberFromNotes,
+  findExistingSupplier,
   findDuplicatePurchaseId,
   inferSupplierMetadata,
   inferVatTreatment,
@@ -124,6 +125,30 @@ const PurchaseUploadForm: React.FC<Props> = ({
     setAutoFilled(filled);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [parsedInvoice, isEditing]);
+
+  useEffect(() => {
+    if (isEditing || !suppliers?.length || form.supplierId || !form.newSupplierName.trim()) return;
+
+    const inferredSupplier = inferSupplierMetadata(parsedInvoice);
+    const existingSupplier = findExistingSupplier(suppliers, {
+      supplierName: form.newSupplierName,
+      vatNumber: inferredSupplier.vatNumber,
+    });
+
+    if (!existingSupplier) return;
+
+    setForm((currentForm) => ({
+      ...currentForm,
+      supplierId: existingSupplier.id,
+      newSupplierName: '',
+    }));
+    setAutoFilled((currentAutoFilled) => {
+      const nextAutoFilled = new Set(currentAutoFilled);
+      nextAutoFilled.add('supplierId');
+      nextAutoFilled.delete('newSupplierName');
+      return nextAutoFilled;
+    });
+  }, [form.newSupplierName, form.supplierId, isEditing, parsedInvoice, suppliers]);
 
   const updateField = (field: string, value: string) => {
     setForm(f => ({ ...f, [field]: value }));
@@ -231,16 +256,28 @@ const PurchaseUploadForm: React.FC<Props> = ({
 
       if (!supplierId && form.newSupplierName.trim()) {
         const inferredSupplier = inferSupplierMetadata(parsedInvoice);
-        const { data: ns, error } = await supabase.from('acc_suppliers').insert({
-          name: form.newSupplierName.trim(),
-          country: inferredSupplier.country,
-          supplier_type: inferredSupplier.supplierType,
-          vat_number: inferredSupplier.vatNumber,
-        }).select().single();
-        if (error) throw error;
-        supplierId = ns.id;
-        supplierCountry = ns.country;
-        supplierType = ns.supplier_type;
+        const existingSupplier = findExistingSupplier(suppliers || [], {
+          supplierName: form.newSupplierName,
+          vatNumber: inferredSupplier.vatNumber,
+        });
+
+        if (existingSupplier) {
+          supplierId = existingSupplier.id;
+          const selectedSupplier = suppliers?.find((supplier) => supplier.id === existingSupplier.id);
+          supplierCountry = selectedSupplier?.country || null;
+          supplierType = selectedSupplier?.supplier_type || null;
+        } else {
+          const { data: ns, error } = await supabase.from('acc_suppliers').insert({
+            name: form.newSupplierName.trim(),
+            country: inferredSupplier.country,
+            supplier_type: inferredSupplier.supplierType,
+            vat_number: inferredSupplier.vatNumber,
+          }).select().single();
+          if (error) throw error;
+          supplierId = ns.id;
+          supplierCountry = ns.country;
+          supplierType = ns.supplier_type;
+        }
       }
 
       const supplierInvoiceNumber = normalizeSupplierInvoiceNumber(form.invoiceNumber);

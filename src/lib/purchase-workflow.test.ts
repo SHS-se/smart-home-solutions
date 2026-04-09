@@ -1,11 +1,14 @@
 /// <reference lib="deno.ns" />
 
 import {
+  findExistingSupplier,
   findDuplicatePurchaseId,
   inferSupplierMetadata,
   inferVatTreatment,
   extractInvoiceNumberFromNotes,
+  normalizeSupplierName,
   normalizeSupplierInvoiceNumber,
+  normalizeVatNumber,
   resolveSavedPurchaseId,
 } from './purchase-workflow.ts';
 import type { ParsedInvoice } from './invoice-parser.ts';
@@ -130,4 +133,43 @@ Deno.test('findDuplicatePurchaseId does not treat OpenAI 0001 and 0002 invoices 
   );
 
   assertEqual(duplicatePurchaseId, null, 'duplicatePurchaseId');
+});
+
+Deno.test('findExistingSupplier prefers VAT-number match before creating a new supplier', () => {
+  const supplier = findExistingSupplier(
+    [
+      { id: 'amazon-existing', name: 'Amazon EU S.à r.l., Sverige Filial', vat_number: 'SE516412220101' },
+      { id: 'openai-existing', name: 'OpenAI OpCo, LLC', vat_number: null },
+    ],
+    {
+      supplierName: 'Amazon EU S.a r.l., Sverige Filial',
+      vatNumber: 'SE 516412220101',
+    },
+  );
+
+  assertEqual(supplier?.id || null, 'amazon-existing', 'supplierId');
+});
+
+Deno.test('findExistingSupplier matches normalized supplier names when VAT number is missing', () => {
+  const supplier = findExistingSupplier(
+    [
+      { id: 'openai-existing', name: 'OpenAI OpCo, LLC', vat_number: null },
+    ],
+    {
+      supplierName: 'OpenAI OpCo LLC',
+      vatNumber: null,
+    },
+  );
+
+  assertEqual(supplier?.id || null, 'openai-existing', 'supplierId');
+});
+
+Deno.test('normalizeSupplierName removes punctuation and accents for supplier matching', () => {
+  const supplierName = normalizeSupplierName('Amazon EU S.à r.l., Sverige Filial');
+  assertEqual(supplierName, 'AMAZONEUSARLSVERIGEFILIAL', 'supplierName');
+});
+
+Deno.test('normalizeVatNumber removes spaces and uppercases VAT numbers', () => {
+  const vatNumber = normalizeVatNumber(' se 516412220101 ');
+  assertEqual(vatNumber, 'SE516412220101', 'vatNumber');
 });
