@@ -19,6 +19,8 @@ const AMAZON_MARKETPLACE_RAW_TEXT = `Faktura  Sida 1 av 1  Moms deklarerat av Am
 
 const OPENAI_RAW_TEXT = `Page 1 of 1  Invoice  Invoice number   56FB0333  0001  Date of issue   March 26, 2026 Date due   March 26, 2026 OpenAI VAT   EU372041333  OpenAI OpCo, LLC  1455 3rd Street San Francisco, California 94158 United States ar@openai.com EU OSS VAT EU372041333  Bill to  Phil Smith Porfyrvägen 10 SE  187 34 Täby Sweden phio@philbert.io SE VAT SE790519759101  Ship to  Phil Smith Porfyrvägen 10 SE  187 34 Täby Sweden  $10.00 USD due March 26, 2026  Pay online  Description   Qty   Unit price   Tax   Amount  OpenAI API usage credit   1   $10.00   0%   $10.00  Subtotal   $10.00 Total   $10.00  Amount due   $10.00 USD   1    Tax to be paid on reverse charge basis   1`;
 
+const OPENAI_RAW_TEXT_0002 = `Page 1 of 1  Invoice  Invoice number   56FB0333  0002  Date of issue   March 28, 2026 Date due   March 28, 2026 OpenAI VAT   EU372041333  OpenAI OpCo, LLC  1455 3rd Street San Francisco, California 94158 United States ar@openai.com EU OSS VAT EU372041333  Bill to  Phil Smith Porfyrvägen 10 SE  187 34 Täby Sweden phio@philbert.io SE VAT SE790519759101  Ship to  Phil Smith Porfyrvägen 10 SE  187 34 Täby Sweden  $5.05 USD due March 28, 2026  Pay online  Description   Qty   Unit price   Tax   Amount  OpenAI API usage credit   1   $5.05   0%   $5.05  Subtotal   $5.05 Total   $5.05  Amount due   $5.05 USD   1    Tax to be paid on reverse charge basis   1`;
+
 Deno.test('parseInvoiceText extracts Stripe tax invoice fields from flattened PDF text', () => {
   const parsed = parseInvoiceText(STRIPE_RAW_TEXT);
 
@@ -82,11 +84,19 @@ Deno.test('parseInvoiceText keeps OpenAI invoice amounts in USD', () => {
   const parsed = parseInvoiceText(OPENAI_RAW_TEXT);
 
   assertEqual(parsed.supplierName, 'OpenAI OpCo, LLC', 'supplierName');
-  assertEqual(parsed.invoiceNumber, '56FB0333', 'invoiceNumber');
+  assertEqual(parsed.invoiceNumber, '56FB0333-0001', 'invoiceNumber');
   assertEqual(parsed.invoiceDate, '2026-03-26', 'invoiceDate');
   assertEqual(parsed.currency, 'USD', 'currency');
   assertEqual(parsed.grossAmount, 10, 'grossAmount');
   assertEqual(parsed.vatAmount, 0, 'vatAmount');
   assertEqual(parsed.netAmount, 10, 'netAmount');
   assertEqual(parsed.vatRate, 0, 'vatRate');
+});
+
+Deno.test('parseInvoiceText preserves OpenAI invoice suffixes so consecutive invoices are distinct', () => {
+  const parsed = parseInvoiceText(OPENAI_RAW_TEXT_0002);
+
+  assertEqual(parsed.invoiceNumber, '56FB0333-0002', 'invoiceNumber');
+  assertEqual(parsed.currency, 'USD', 'currency');
+  assertEqual(parsed.grossAmount, 5.05, 'grossAmount');
 });

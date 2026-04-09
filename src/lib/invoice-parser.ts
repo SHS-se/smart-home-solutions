@@ -423,8 +423,9 @@ function extractSupplierName(lines: string[], normalizedText: string): string | 
 function extractInvoiceNumber(text: string): string | null {
   const direct = extractLabelValue(text, ['Invoice Number', 'Invoice No', 'Invoice #', 'Fakturanr', 'Fakturanummer']);
   if (direct) {
-    const token = direct.match(/[A-Z0-9][A-Z0-9._/-]{2,}/i);
-    if (token) return token[0];
+    const compact = direct.replace(/\u0000/g, ' ').replace(/\s+/g, ' ').trim();
+    const multiPartToken = compact.match(/[A-Z0-9][A-Z0-9._/-]*(?:\s+[A-Z0-9][A-Z0-9._/-]*){0,3}/i);
+    if (multiPartToken) return multiPartToken[0].replace(/\s+/g, '-');
   }
 
   const invPats = [

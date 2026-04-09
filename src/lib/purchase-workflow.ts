@@ -63,7 +63,10 @@ export function buildInvoiceNumberNote(invoiceNumber: string): string | null {
 }
 
 export function normalizeSupplierInvoiceNumber(invoiceNumber: string | null | undefined): string | null {
-  const normalized = invoiceNumber?.trim().toUpperCase() || '';
+  const normalized = invoiceNumber
+    ?.trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '') || '';
   return normalized || null;
 }
 

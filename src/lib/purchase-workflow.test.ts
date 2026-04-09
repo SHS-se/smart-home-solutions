@@ -102,6 +102,11 @@ Deno.test('normalizeSupplierInvoiceNumber trims and uppercases supplier invoice 
   assertEqual(invoiceNumber, 'SE6EK5YAEUI', 'invoiceNumber');
 });
 
+Deno.test('normalizeSupplierInvoiceNumber removes separators so split invoice numbers still compare correctly', () => {
+  const invoiceNumber = normalizeSupplierInvoiceNumber('56FB0333-0001');
+  assertEqual(invoiceNumber, '56FB03330001', 'invoiceNumber');
+});
+
 Deno.test('findDuplicatePurchaseId matches by supplier and normalized supplier invoice number', () => {
   const duplicatePurchaseId = findDuplicatePurchaseId(
     [
@@ -113,4 +118,16 @@ Deno.test('findDuplicatePurchaseId matches by supplier and normalized supplier i
   );
 
   assertEqual(duplicatePurchaseId, 'existing-1', 'duplicatePurchaseId');
+});
+
+Deno.test('findDuplicatePurchaseId does not treat OpenAI 0001 and 0002 invoices as duplicates', () => {
+  const duplicatePurchaseId = findDuplicatePurchaseId(
+    [
+      { id: 'existing-openai-1', supplier_id: 'supplier-openai', supplier_invoice_number: '56FB0333-0001' },
+    ],
+    'supplier-openai',
+    '56FB0333-0002',
+  );
+
+  assertEqual(duplicatePurchaseId, null, 'duplicatePurchaseId');
 });
