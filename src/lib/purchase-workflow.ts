@@ -39,7 +39,7 @@ export function createEmptyPurchaseForm(): PurchaseFormValues {
     grossAmount: '',
     vatAmount: '',
     netAmount: '',
-    paymentSource: '',
+    paymentSource: 'owner_paid',
     description: '',
   };
 }

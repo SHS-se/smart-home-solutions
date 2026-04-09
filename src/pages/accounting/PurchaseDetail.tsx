@@ -31,7 +31,7 @@ import {
 } from '@/lib/accounting-fx';
 import { allocateNextVerificationNumber } from '@/lib/verification-number';
 import { toast } from 'sonner';
-import { ArrowLeft, AlertTriangle, Eye, CheckCircle } from 'lucide-react';
+import { ArrowLeft, AlertTriangle, Eye, CheckCircle, Plus } from 'lucide-react';
 
 const PURCHASE_DOCUMENT_BUCKET = 'purchase-documents';
 
@@ -312,9 +312,14 @@ const PurchaseDetail: React.FC = () => {
               {supplierName || t('Okänd leverantör', 'Unknown supplier')} · {purchase.document_date}
             </p>
           </div>
-          <Badge className={`${PURCHASE_STATUS_COLORS[purchase.status as keyof typeof PURCHASE_STATUS_COLORS]} border-0`}>
-            {statusLabels[purchase.status as keyof typeof statusLabels]}
-          </Badge>
+          <div className="flex items-center gap-3">
+            <Link to="/accounting/purchases/upload">
+              <Button><Plus className="w-4 h-4 mr-2" />{t('Ladda upp faktura', 'Upload invoice')}</Button>
+            </Link>
+            <Badge className={`${PURCHASE_STATUS_COLORS[purchase.status as keyof typeof PURCHASE_STATUS_COLORS]} border-0`}>
+              {statusLabels[purchase.status as keyof typeof statusLabels]}
+            </Badge>
+          </div>
         </div>
 
         {errors.length > 0 && purchase.status !== 'posted' && (
