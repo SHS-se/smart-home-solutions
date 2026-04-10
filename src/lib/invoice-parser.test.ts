@@ -27,6 +27,7 @@ const LOVABLE_RAW_TEXT = `Page 1 of 1  Invoice  Invoice number   NQLFVPGN 0005  
 
 const LOVABLE_RAW_TEXT_WITH_NUL = `Page 1 of 1  Invoice  Invoice number   NQLFVPGN \u0000 0006  Date of issue   January 29, 2026 Date due   January 29, 2026  Lovable Labs Incorporated  1111b South Governors Avenue Dover, Delaware 19904 United States support@lovable.dev  Bill to  Philip Cheong Porfyrvägen 10 SE \u0000 187 34 Täby Sweden phio@philbert.io  €15.00 due January 29, 2026  Pay online  Credit Top-Up - 50 Credits  Description   Qty   Unit price   Tax   Amount  Build Credit Top-up Pro   50   €0.30   25% incl. (on €12.00 \u0000  €15.00  Subtotal   €15.00 Total excluding tax   €12.00 VAT - Sweden   \u0000 25% incl. on €12.00 \u0000   €3.00 Total   €15.00  Amount due   €15.00`;
 const LOVABLE_SUBSCRIPTION_RAW_TEXT = `Invoice Invoice number NQLFVPGN-0001 Date of issue January 12, 2026 Date due January 12, 2026 Lovable Labs Incorporated 1111b South Governors Avenue Dover, Delaware 19904 United States support@lovable.dev Bill to Philip Cheong Porfyrvägen 10 SE-187 34 Täby Sweden phio@philbert.io €25.00 due January 12, 2026 Pay online Description Qty Unit price Tax Amount Pro 1 Jan 12 – Feb 12, 2026 1 €25.00 25% incl. (on €20.00) €25.00 Subtotal €25.00 Total excluding tax €20.00 VAT - Sweden (25% incl. on €20.00) €5.00 Total €25.00 Amount due €25.00 Page 1 of 1`;
+const LOVABLE_REVERSE_CHARGE_RAW_TEXT = `Invoice Invoice number NQLFVPGN-0017 Date of issue February 12, 2026 Date due February 12, 2026 Lovable 1111b South Governors Avenue Dover, Delaware 19904 United States support@lovable.dev EU OSS VAT EU372090612 GB VAT GB509006909 Bill to Philip Cheong Porfyrvägen 10 SE-187 34 Täby Sweden +46 70 287 08 14 phio@philbert.io SE VAT SE790519759101 €25.00 due February 12, 2026 Pay online Description Qty Unit price Tax Amount Pro 1 Feb 12–Mar 12, 2026 1 €25.00 0% €25.00 Subtotal €25.00 Total €25.00 Amount due €25.00 Tax to be paid on reverse charge basis Page 1 of 1`;
 const ANTHROPIC_RAW_TEXT = `Invoice Invoice number DSUQQKNL-0001 Date of issue March 26, 2026 Date due March 26, 2026 Anthropic, PBC 548 Market Street PMB 90375 San Francisco, California 94104 United States support@anthropic.com Bill to Phil's Individual Org Porfyrvägen 10 SE-187 34 Täby Sweden phio@philbert.io $12.50 USD due March 26, 2026 Pay online While we prefer electronic payment methods, any checks must be sent to the address below, NOT to our San Francisco office. PAYMENT ADDRESS: Anthropic, PBC P.O. Box 104477 Pasadena, CA 91189-4477 Description Qty Unit price Tax Amount One-time credit purchase 1 $10.00 25% $10.00 Subtotal $10.00 Total excluding tax $10.00 VAT - Sweden (25% on $10.00) $2.50 Total $12.50 Amount due $12.50 USD Page 1 of 1`;
 const ANTHROPIC_RAW_TEXT_WITHOUT_PAYMENT_ADDRESS = `Invoice
 Invoice number DSUQQKNL-0001
@@ -214,6 +215,24 @@ Deno.test('parseInvoiceText recognizes Lovable monthly subscription invoices', (
   assertEqual(parsed.vatAmount, 5, 'vatAmount');
   assertEqual(parsed.vatRate, 25, 'vatRate');
   assertEqual(parsed.description, 'Pro 1 Jan 12 – Feb 12', 'description');
+  assertEqual(parsed.fingerprint.id, 'lovable_invoice', 'fingerprint');
+  assertEqual(parsed.parserReviewRequired, false, 'parserReviewRequired');
+});
+
+Deno.test('parseInvoiceText recognizes Lovable reverse-charge subscription invoices', () => {
+  const parsed = parseInvoiceText(LOVABLE_REVERSE_CHARGE_RAW_TEXT);
+
+  assertEqual(parsed.supplierName, 'Lovable Labs Incorporated', 'supplierName');
+  assertEqual(parsed.supplierCountry, 'US', 'supplierCountry');
+  assertEqual(parsed.invoiceNumber, 'NQLFVPGN-0017', 'invoiceNumber');
+  assertEqual(parsed.invoiceDate, '2026-02-12', 'invoiceDate');
+  assertEqual(parsed.currency, 'EUR', 'currency');
+  assertEqual(parsed.grossAmount, 25, 'grossAmount');
+  assertEqual(parsed.netAmount, 25, 'netAmount');
+  assertEqual(parsed.vatAmount, 0, 'vatAmount');
+  assertEqual(parsed.vatRate, 0, 'vatRate');
+  assertEqual(parsed.vatNumber, 'EU372090612', 'vatNumber');
+  assertEqual(parsed.description, 'Pro 1 Feb 12–Mar 12', 'description');
   assertEqual(parsed.fingerprint.id, 'lovable_invoice', 'fingerprint');
   assertEqual(parsed.parserReviewRequired, false, 'parserReviewRequired');
 });

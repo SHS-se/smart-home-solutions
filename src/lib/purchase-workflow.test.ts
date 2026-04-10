@@ -79,6 +79,26 @@ const ANTHROPIC_INVOICE: ParsedInvoice = {
   parserReviewReasons: [],
 };
 
+const LOVABLE_REVERSE_CHARGE_INVOICE: ParsedInvoice = {
+  supplierName: 'Lovable Labs Incorporated',
+  supplierCountry: 'US',
+  invoiceNumber: 'NQLFVPGN-0017',
+  invoiceDate: '2026-02-12',
+  dueDate: null,
+  grossAmount: 25,
+  netAmount: 25,
+  vatAmount: 0,
+  vatRate: 0,
+  currency: 'EUR',
+  orgNumber: null,
+  vatNumber: 'EU372090612',
+  description: 'Pro 1 Feb 12–Mar 12',
+  confidence: {},
+  fingerprint: { id: 'lovable_invoice', label: 'Lovable invoice', recognized: true },
+  parserReviewRequired: false,
+  parserReviewReasons: [],
+};
+
 const AMAZON_MARKETPLACE_INVOICE: ParsedInvoice = {
   supplierName: 'Shenzhenshi LingKeYun Technology Co., Ltd.',
   supplierCountry: 'CN',
@@ -173,6 +193,15 @@ Deno.test('inferVatTreatment treats Anthropic invoices with Swedish VAT as domes
   });
 
   assertEqual(vatTreatment, 'domestic_deductible', 'vatTreatment');
+});
+
+Deno.test('inferVatTreatment treats Lovable reverse-charge invoices as reverse charge', () => {
+  const vatTreatment = inferVatTreatment({
+    parsedInvoice: LOVABLE_REVERSE_CHARGE_INVOICE,
+    extractedText: 'Tax to be paid on reverse charge basis SE VAT SE790519759101',
+  });
+
+  assertEqual(vatTreatment, 'reverse_charge', 'vatTreatment');
 });
 
 Deno.test('inferSupplierMetadata prefers parsed supplier country over marketplace VAT prefixes', () => {

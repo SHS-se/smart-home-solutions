@@ -245,7 +245,7 @@ const KNOWN_INVOICE_FINGERPRINTS: Array<{
     id: 'lovable_invoice',
     label: 'Lovable invoice',
     match: (text) => (
-      /lovable labs incorporated/i.test(text) &&
+      (/\blovable labs incorporated\b/i.test(text) || (/\blovable\b/i.test(text) && /support@lovable\.dev/i.test(text))) &&
       /pay online/i.test(text) &&
       /invoice number/i.test(text) &&
       (/\bamount due\b/i.test(text) || /€[\d.,]+\s+due\b/i.test(text))
@@ -569,6 +569,9 @@ function inferCurrency(text: string): string | null {
 function extractSupplierName(lines: string[], normalizedText: string): string | null {
   const openAiHeaderMatch = normalizedText.match(/OpenAI OpCo,\s*LLC/i);
   if (openAiHeaderMatch) return 'OpenAI OpCo, LLC';
+  if (/support@lovable\.dev/i.test(normalizedText) && /\blovable\b/i.test(normalizedText)) {
+    return 'Lovable Labs Incorporated';
+  }
 
   const sellerSectionAfterDates = extractSectionAfterLabel(
     normalizedText,
