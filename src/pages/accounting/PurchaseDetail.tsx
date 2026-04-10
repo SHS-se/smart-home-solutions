@@ -31,7 +31,7 @@ import {
 } from '@/lib/accounting-fx';
 import { allocateNextVerificationNumber } from '@/lib/verification-number';
 import { toast } from 'sonner';
-import { ArrowLeft, AlertTriangle, Eye, CheckCircle, Plus } from 'lucide-react';
+import { ArrowLeft, AlertTriangle, Eye, CheckCircle, ChevronLeft, ChevronRight, Plus } from 'lucide-react';
 
 const PURCHASE_DOCUMENT_BUCKET = 'purchase-documents';
 
@@ -105,6 +105,19 @@ const PurchaseDetail: React.FC = () => {
       return data || [];
     },
     enabled: !!purchaseId,
+  });
+  const { data: draftIds = [] } = useQuery({
+    queryKey: ['acc-purchase-draft-nav'],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('acc_purchases')
+        .select('id')
+        .eq('status', 'draft')
+        .order('document_date', { ascending: false })
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false });
+      return (data || []).map((row) => row.id);
+    },
   });
   const supplierName = (purchase?.supplier as Tables<'acc_suppliers'> | null)?.name || '';
   const purchaseFx = getPurchaseExchangeSnapshot(purchase);
@@ -276,6 +289,10 @@ const PurchaseDetail: React.FC = () => {
   }
   const canPost = errors.length === 0 && purchase.status !== 'posted';
   const primaryLine = lines?.[0] || null;
+  const isDraftPurchase = purchase.status === 'draft';
+  const currentDraftIndex = isDraftPurchase ? draftIds.indexOf(purchase.id) : -1;
+  const previousDraftId = currentDraftIndex > 0 ? draftIds[currentDraftIndex - 1] : null;
+  const nextDraftId = currentDraftIndex >= 0 && currentDraftIndex < draftIds.length - 1 ? draftIds[currentDraftIndex + 1] : null;
 
   const journalPreview = lines && lines.length > 0
     ? buildJournalPreview(
@@ -313,6 +330,44 @@ const PurchaseDetail: React.FC = () => {
             </p>
           </div>
           <div className="flex items-center gap-3">
+            {isDraftPurchase && currentDraftIndex >= 0 && (
+              <>
+                <div className="flex items-center gap-2">
+                  {previousDraftId ? (
+                    <Button variant="outline" size="sm" asChild>
+                      <Link to={`/accounting/purchases/${previousDraftId}`}>
+                        <ChevronLeft className="w-4 h-4 mr-1" />
+                        {t('Föregående', 'Previous')}
+                      </Link>
+                    </Button>
+                  ) : (
+                    <Button variant="outline" size="sm" disabled>
+                      <ChevronLeft className="w-4 h-4 mr-1" />
+                      {t('Föregående', 'Previous')}
+                    </Button>
+                  )}
+                  {nextDraftId ? (
+                    <Button variant="outline" size="sm" asChild>
+                      <Link to={`/accounting/purchases/${nextDraftId}`}>
+                        {t('Nästa', 'Next')}
+                        <ChevronRight className="w-4 h-4 ml-1" />
+                      </Link>
+                    </Button>
+                  ) : (
+                    <Button variant="outline" size="sm" disabled>
+                      {t('Nästa', 'Next')}
+                      <ChevronRight className="w-4 h-4 ml-1" />
+                    </Button>
+                  )}
+                </div>
+                <span className="text-sm text-muted-foreground">
+                  {t(
+                    `Utkast ${currentDraftIndex + 1} av ${draftIds.length}`,
+                    `Draft ${currentDraftIndex + 1} of ${draftIds.length}`,
+                  )}
+                </span>
+              </>
+            )}
             <Link to="/accounting/purchases/upload">
               <Button><Plus className="w-4 h-4 mr-2" />{t('Ladda upp faktura', 'Upload invoice')}</Button>
             </Link>

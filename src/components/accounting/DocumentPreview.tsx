@@ -15,10 +15,12 @@ interface Props {
   fileUrl?: string | null;
   fileName?: string | null;
   onFileSelect?: (file: File) => void;
+  onFilesSelect?: (files: File[]) => void;
   onFileClear?: () => void;
   ocrWords?: WordPosition[];
   isExtracting?: boolean;
   extractionProgress?: { message: string; pct: number };
+  allowMultiple?: boolean;
 }
 
 const DocumentPreview: React.FC<Props> = ({
@@ -26,10 +28,12 @@ const DocumentPreview: React.FC<Props> = ({
   fileUrl: externalFileUrl = null,
   fileName = null,
   onFileSelect,
+  onFilesSelect,
   onFileClear,
   ocrWords = [],
   isExtracting = false,
   extractionProgress = { message: '', pct: 0 },
+  allowMultiple = false,
 }) => {
   const { t } = useLanguage();
   const [fileUrl, setFileUrl] = useState<string | null>(null);
@@ -41,7 +45,7 @@ const DocumentPreview: React.FC<Props> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const resolvedFileName = file?.name || fileName || externalFileUrl || '';
   const isPdf = file?.type === 'application/pdf' || resolvedFileName.toLowerCase().endsWith('.pdf');
-  const canSelectFile = !!onFileSelect;
+  const canSelectFile = !!onFileSelect || !!onFilesSelect;
   const canClearFile = !!onFileClear;
 
   useEffect(() => {
@@ -58,17 +62,25 @@ const DocumentPreview: React.FC<Props> = ({
     setScale(1.0);
   }, [file, externalFileUrl]);
 
+  const handleSelectedFiles = useCallback((selectedFiles: File[]) => {
+    if (selectedFiles.length === 0) return;
+    if (selectedFiles.length > 1 && onFilesSelect) {
+      onFilesSelect(selectedFiles);
+      return;
+    }
+    if (selectedFiles[0] && onFileSelect) onFileSelect(selectedFiles[0]);
+  }, [onFileSelect, onFilesSelect]);
+
   const onDrop = useCallback((e: React.DragEvent) => {
-    if (!onFileSelect) return;
+    if (!onFileSelect && !onFilesSelect) return;
     e.preventDefault();
-    const selectedFile = e.dataTransfer.files[0];
-    if (selectedFile) onFileSelect(selectedFile);
-  }, [onFileSelect]);
+    handleSelectedFiles(Array.from(e.dataTransfer.files || []));
+  }, [handleSelectedFiles, onFileSelect, onFilesSelect]);
   const triggerFileInput = () => document.getElementById('doc-upload-input')?.click();
 
   const fileInput = canSelectFile ? (
-    <input id="doc-upload-input" type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png,.heic,.heif"
-      onChange={(e) => { if (e.target.files?.[0]) onFileSelect(e.target.files[0]); e.target.value = ''; }} />
+    <input id="doc-upload-input" type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png,.heic,.heif" multiple={allowMultiple}
+      onChange={(e) => { handleSelectedFiles(Array.from(e.target.files || [])); e.target.value = ''; }} />
   ) : null;
 
   if (!fileUrl) {
@@ -76,7 +88,11 @@ const DocumentPreview: React.FC<Props> = ({
       <div className={`flex flex-col items-center justify-center border-2 border-dashed border-border rounded-xl p-16 h-full min-h-[400px] transition-colors ${canSelectFile ? 'cursor-pointer hover:border-primary/40 hover:bg-muted/30' : ''}`}
         onDragOver={(e) => canSelectFile && e.preventDefault()} onDrop={onDrop} onClick={() => canSelectFile && triggerFileInput()}>
         <Upload className="w-12 h-12 text-muted-foreground mb-4" />
-        <p className="text-sm font-medium text-foreground">{t('Dra och släpp dokument här', 'Drag and drop document here')}</p>
+        <p className="text-sm font-medium text-foreground">
+          {allowMultiple
+            ? t('Dra och släpp dokument här', 'Drag and drop documents here')
+            : t('Dra och släpp dokument här', 'Drag and drop document here')}
+        </p>
         <p className="text-xs text-muted-foreground mt-1">PDF, JPG, PNG {t('eller', 'or')} HEIC</p>
         {fileInput}
       </div>

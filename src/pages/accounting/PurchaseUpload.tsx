@@ -1,24 +1,56 @@
 import React, { useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useAuth } from '@/contexts/AuthContext';
 import AccountingLayout from '@/components/accounting/AccountingLayout';
 import DocumentPreview from '@/components/accounting/DocumentPreview';
 import PurchaseUploadForm from '@/components/accounting/PurchaseUploadForm';
 import { extractDocumentContent, type ExtractionResult } from '@/lib/document-extraction';
 import { parseInvoiceText, type ParsedInvoice } from '@/lib/invoice-parser';
+import { buildPurchaseDraftDefaults, createPurchaseDraft } from '@/lib/purchase-drafts';
+import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Progress } from '@/components/ui/progress';
+import { ArrowLeft, ArrowRight, AlertTriangle, CheckCircle2, FileText, Loader2 } from 'lucide-react';
+
+interface BulkUploadResult {
+  fileName: string;
+  purchaseId?: string;
+  supplierName?: string | null;
+  invoiceNumber?: string | null;
+  error?: string;
+}
 
 const PurchaseUpload: React.FC = () => {
   const navigate = useNavigate();
   const { t } = useLanguage();
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
   const [file, setFile] = useState<File | null>(null);
   const [isExtracting, setIsExtracting] = useState(false);
   const [progress, setProgress] = useState({ message: '', pct: 0 });
   const [extractionResult, setExtractionResult] = useState<ExtractionResult | null>(null);
   const [parsedInvoice, setParsedInvoice] = useState<ParsedInvoice | null>(null);
+  const [bulkResults, setBulkResults] = useState<BulkUploadResult[]>([]);
+  const [bulkTotal, setBulkTotal] = useState(0);
+  const [bulkProcessed, setBulkProcessed] = useState(0);
+  const [isBulkProcessing, setIsBulkProcessing] = useState(false);
+
+  const { data: suppliers = [] } = useQuery({
+    queryKey: ['acc-suppliers'],
+    queryFn: async () => {
+      const { data } = await supabase.from('acc_suppliers').select('*').order('name');
+      return data || [];
+    },
+  });
 
   const handleFileSelect = useCallback(async (selectedFile: File) => {
+    setBulkResults([]);
+    setBulkTotal(0);
+    setBulkProcessed(0);
+    setIsBulkProcessing(false);
     setFile(selectedFile);
     setIsExtracting(true);
     setExtractionResult(null);
@@ -40,13 +72,110 @@ const PurchaseUpload: React.FC = () => {
     }
   }, [t]);
 
+  const handleFilesSelect = useCallback(async (selectedFiles: File[]) => {
+    if (selectedFiles.length <= 1) {
+      if (selectedFiles[0]) await handleFileSelect(selectedFiles[0]);
+      return;
+    }
+
+    setFile(null);
+    setIsExtracting(false);
+    setExtractionResult(null);
+    setParsedInvoice(null);
+    setBulkResults([]);
+    setBulkTotal(selectedFiles.length);
+    setBulkProcessed(0);
+    setIsBulkProcessing(true);
+    setProgress({ message: t('Skapar utkast...', 'Creating drafts...'), pct: 0 });
+
+    let currentSuppliers = [...suppliers];
+    const nextResults: BulkUploadResult[] = [];
+
+    for (const [index, currentFile] of selectedFiles.entries()) {
+      const basePct = Math.round((index / selectedFiles.length) * 100);
+      setProgress({
+        message: t(
+          `Analyserar ${currentFile.name} (${index + 1}/${selectedFiles.length})...`,
+          `Analyzing ${currentFile.name} (${index + 1}/${selectedFiles.length})...`,
+        ),
+        pct: basePct,
+      });
+
+      try {
+        const result = await extractDocumentContent(currentFile, (message, pct) => {
+          const normalizedPct = Math.min(99, Math.round((((index + pct / 100) / selectedFiles.length) * 100)));
+          setProgress({
+            message: `${message} (${index + 1}/${selectedFiles.length})`,
+            pct: normalizedPct,
+          });
+        });
+        const parsed = parseInvoiceText(result.rawText);
+        const values = buildPurchaseDraftDefaults({
+          parsedInvoice: parsed,
+          extractedText: result.rawText,
+          suppliers: currentSuppliers,
+        });
+        const createdDraft = await createPurchaseDraft({
+          supabase,
+          suppliers: currentSuppliers,
+          userId: user?.id,
+          file: currentFile,
+          parsedInvoice: parsed,
+          extractedText: result.rawText,
+          values,
+          duplicateInvoiceMessage: t(
+            'Den här leverantörsfakturan finns redan registrerad och kan inte sparas igen.',
+            'This supplier invoice is already registered and cannot be saved again.',
+          ),
+          fullAmountLabel: t('Hela beloppet', 'Full amount'),
+        });
+        currentSuppliers = createdDraft.suppliers;
+        nextResults.push({
+          fileName: currentFile.name,
+          purchaseId: createdDraft.purchaseId,
+          supplierName: parsed.supplierName,
+          invoiceNumber: parsed.invoiceNumber,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : t('Kunde inte skapa utkast', 'Could not create draft');
+        nextResults.push({
+          fileName: currentFile.name,
+          error: message,
+        });
+      }
+
+      setBulkResults([...nextResults]);
+      setBulkProcessed(index + 1);
+    }
+
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['acc-purchases'] }),
+      queryClient.invalidateQueries({ queryKey: ['acc-suppliers'] }),
+    ]);
+
+    setProgress({
+      message: t('Bulkuppladdning klar', 'Bulk upload complete'),
+      pct: 100,
+    });
+    setIsBulkProcessing(false);
+  }, [handleFileSelect, queryClient, suppliers, t, user?.id]);
+
   const handleFileClear = useCallback(() => {
     setFile(null);
     setIsExtracting(false);
     setProgress({ message: '', pct: 0 });
     setExtractionResult(null);
     setParsedInvoice(null);
+    setBulkResults([]);
+    setBulkTotal(0);
+    setBulkProcessed(0);
+    setIsBulkProcessing(false);
   }, []);
+
+  const successfulBulkResults = bulkResults.filter((result) => result.purchaseId);
+  const failedBulkResults = bulkResults.filter((result) => result.error);
+  const isBulkMode = isBulkProcessing || bulkResults.length > 0;
+  const firstCreatedDraftId = successfulBulkResults[0]?.purchaseId;
 
   return (
     <AccountingLayout>
@@ -63,23 +192,123 @@ const PurchaseUpload: React.FC = () => {
 
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-6" style={{ minHeight: 'calc(100vh - 240px)' }}>
           <div className="lg:col-span-3 min-h-[400px]">
-            <DocumentPreview
-              file={file}
-              onFileSelect={handleFileSelect}
-              onFileClear={handleFileClear}
-              ocrWords={extractionResult?.words || []}
-              isExtracting={isExtracting}
-              extractionProgress={progress}
-            />
+            {isBulkMode ? (
+              <Card className="h-full border border-border">
+                <CardHeader className="space-y-3">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <CardTitle className="text-base">{t('Bulkuppladdning', 'Bulk upload')}</CardTitle>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        {t(
+                          `${bulkProcessed} av ${bulkTotal} dokument behandlade`,
+                          `${bulkProcessed} of ${bulkTotal} documents processed`,
+                        )}
+                      </p>
+                    </div>
+                    <Button variant="ghost" size="sm" onClick={handleFileClear}>
+                      {t('Rensa', 'Clear')}
+                    </Button>
+                  </div>
+                  <Progress value={bulkTotal > 0 ? (bulkProcessed / bulkTotal) * 100 : 0} className="h-2" />
+                  <p className="text-sm text-muted-foreground">{progress.message}</p>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {bulkResults.map((result) => (
+                    <div key={`${result.fileName}-${result.purchaseId || result.error || 'pending'}`} className="rounded-lg border border-border p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-foreground truncate">{result.fileName}</p>
+                          {result.supplierName && (
+                            <p className="text-sm text-muted-foreground truncate">{result.supplierName}</p>
+                          )}
+                          {result.invoiceNumber && (
+                            <p className="text-xs text-muted-foreground">{result.invoiceNumber}</p>
+                          )}
+                          {result.error && (
+                            <p className="text-sm text-destructive mt-2">{result.error}</p>
+                          )}
+                        </div>
+                        {result.purchaseId ? (
+                          <CheckCircle2 className="h-5 w-5 text-green-600 shrink-0" />
+                        ) : result.error ? (
+                          <AlertTriangle className="h-5 w-5 text-destructive shrink-0" />
+                        ) : (
+                          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground shrink-0" />
+                        )}
+                      </div>
+                      {result.purchaseId && (
+                        <Link to={`/accounting/purchases/${result.purchaseId}`} className="inline-flex items-center gap-1 text-sm text-primary hover:underline mt-3">
+                          {t('Granska utkast', 'Review draft')}
+                          <ArrowRight className="h-4 w-4" />
+                        </Link>
+                      )}
+                    </div>
+                  ))}
+
+                  {bulkResults.length === 0 && (
+                    <div className="flex min-h-[12rem] items-center justify-center rounded-lg border border-dashed border-border text-sm text-muted-foreground">
+                      <div className="flex items-center gap-2">
+                        <FileText className="h-4 w-4" />
+                        <span>{t('Förbereder bulkuppladdning...', 'Preparing bulk upload...')}</span>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            ) : (
+              <DocumentPreview
+                file={file}
+                onFileSelect={handleFileSelect}
+                onFilesSelect={handleFilesSelect}
+                allowMultiple
+                onFileClear={handleFileClear}
+                ocrWords={extractionResult?.words || []}
+                isExtracting={isExtracting}
+                extractionProgress={progress}
+              />
+            )}
           </div>
           <div className="lg:col-span-2">
-            <PurchaseUploadForm
-              file={file}
-              parsedInvoice={parsedInvoice}
-              extractedText={extractionResult?.rawText || null}
-              fillHeight
-              onSaved={(purchaseId) => navigate(`/accounting/purchases/${purchaseId}`)}
-            />
+            {isBulkMode ? (
+              <Card className="border border-border">
+                <CardHeader>
+                  <CardTitle className="text-base">{t('Skapade utkast', 'Created drafts')}</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div className="rounded-lg border border-border p-3">
+                      <p className="text-xs text-muted-foreground">{t('Skapade', 'Created')}</p>
+                      <p className="text-2xl font-semibold">{successfulBulkResults.length}</p>
+                    </div>
+                    <div className="rounded-lg border border-border p-3">
+                      <p className="text-xs text-muted-foreground">{t('Misslyckades', 'Failed')}</p>
+                      <p className="text-2xl font-semibold">{failedBulkResults.length}</p>
+                    </div>
+                  </div>
+
+                  {firstCreatedDraftId ? (
+                    <Button className="w-full" onClick={() => navigate(`/accounting/purchases/${firstCreatedDraftId}`)}>
+                      {t('Granska första utkastet', 'Review first draft')}
+                    </Button>
+                  ) : null}
+
+                  <p className="text-sm text-muted-foreground">
+                    {t(
+                      'Bulkuppladdning skapar utkast direkt. Granska varje utkast innan bokföring.',
+                      'Bulk upload creates drafts immediately. Review each draft before posting.',
+                    )}
+                  </p>
+                </CardContent>
+              </Card>
+            ) : (
+              <PurchaseUploadForm
+                file={file}
+                parsedInvoice={parsedInvoice}
+                extractedText={extractionResult?.rawText || null}
+                fillHeight
+                onSaved={(purchaseId) => navigate(`/accounting/purchases/${purchaseId}`)}
+              />
+            )}
           </div>
         </div>
       </div>

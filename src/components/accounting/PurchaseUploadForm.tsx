@@ -14,7 +14,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { toast } from 'sonner';
 import { Save } from 'lucide-react';
 import { formatExchangeRate } from '@/lib/accounting-utils';
-import { fuzzyMatchSupplier, generateDescription, type ParsedInvoice } from '@/lib/invoice-parser';
+import type { ParsedInvoice } from '@/lib/invoice-parser';
 import {
   buildExchangeSnapshot,
   buildPurchasePersistence,
@@ -34,8 +34,8 @@ import {
   inferSupplierMetadata,
   inferVatTreatment,
   normalizeSupplierInvoiceNumber,
-  resolveSavedPurchaseId,
 } from '@/lib/purchase-workflow';
+import { buildPurchaseDraftDefaults, createPurchaseDraft } from '@/lib/purchase-drafts';
 
 interface Props {
   file?: File | null;
@@ -103,28 +103,27 @@ const PurchaseUploadForm: React.FC<Props> = ({
   useEffect(() => {
     if (isEditing || !parsedInvoice || parsedInvoice === appliedRef.current) return;
     appliedRef.current = parsedInvoice;
+    const defaults = buildPurchaseDraftDefaults({
+      parsedInvoice,
+      extractedText,
+      suppliers,
+    });
     const f = { ...form };
     const filled = new Set<string>();
-    if (parsedInvoice.supplierName) {
-      if (suppliers?.length) {
-        const match = fuzzyMatchSupplier(parsedInvoice.supplierName, suppliers);
-        if (match && match.score > 0.7) { f.supplierId = match.id; filled.add('supplierId'); }
-        else { f.newSupplierName = parsedInvoice.supplierName; filled.add('newSupplierName'); }
-      } else { f.newSupplierName = parsedInvoice.supplierName; filled.add('newSupplierName'); }
-    }
-    if (parsedInvoice.invoiceNumber) { f.invoiceNumber = parsedInvoice.invoiceNumber; filled.add('invoiceNumber'); }
-    if (parsedInvoice.invoiceDate) { f.documentDate = parsedInvoice.invoiceDate; filled.add('documentDate'); }
-    if (parsedInvoice.dueDate) { f.dueDate = parsedInvoice.dueDate; filled.add('dueDate'); }
-    if (parsedInvoice.currency) { f.currency = parsedInvoice.currency; filled.add('currency'); }
-    if (parsedInvoice.grossAmount != null) { f.grossAmount = String(parsedInvoice.grossAmount); filled.add('grossAmount'); }
-    if (parsedInvoice.vatAmount != null) { f.vatAmount = String(parsedInvoice.vatAmount); filled.add('vatAmount'); }
-    if (parsedInvoice.netAmount != null) { f.netAmount = String(parsedInvoice.netAmount); filled.add('netAmount'); }
-    const desc = parsedInvoice.description || generateDescription(parsedInvoice.supplierName, extractedText || '');
-    if (desc) { f.description = desc; filled.add('description'); }
+    if (parsedInvoice.supplierName && defaults.supplierId) { f.supplierId = defaults.supplierId; f.newSupplierName = ''; filled.add('supplierId'); }
+    else if (parsedInvoice.supplierName && defaults.newSupplierName) { f.newSupplierName = defaults.newSupplierName; filled.add('newSupplierName'); }
+    if (parsedInvoice.invoiceNumber && defaults.invoiceNumber) { f.invoiceNumber = defaults.invoiceNumber; filled.add('invoiceNumber'); }
+    if (parsedInvoice.invoiceDate && defaults.documentDate) { f.documentDate = defaults.documentDate; filled.add('documentDate'); }
+    if (parsedInvoice.dueDate && defaults.dueDate) { f.dueDate = defaults.dueDate; filled.add('dueDate'); }
+    if (parsedInvoice.currency && defaults.currency) { f.currency = defaults.currency; filled.add('currency'); }
+    if (parsedInvoice.grossAmount != null && defaults.grossAmount) { f.grossAmount = defaults.grossAmount; filled.add('grossAmount'); }
+    if (parsedInvoice.vatAmount != null && defaults.vatAmount) { f.vatAmount = defaults.vatAmount; filled.add('vatAmount'); }
+    if (parsedInvoice.netAmount != null && defaults.netAmount) { f.netAmount = defaults.netAmount; filled.add('netAmount'); }
+    if (defaults.description) { f.description = defaults.description; filled.add('description'); }
     setForm(f);
     setAutoFilled(filled);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [parsedInvoice, isEditing]);
+  }, [parsedInvoice, extractedText, isEditing, suppliers]);
 
   useEffect(() => {
     if (isEditing || !suppliers?.length || form.supplierId || !form.newSupplierName.trim()) return;
@@ -244,6 +243,24 @@ const PurchaseUploadForm: React.FC<Props> = ({
 
   const saveDraft = useMutation({
     mutationFn: async () => {
+      if (!purchase) {
+        const result = await createPurchaseDraft({
+          supabase,
+          suppliers: suppliers || [],
+          userId: user?.id,
+          file,
+          parsedInvoice,
+          extractedText,
+          values: form,
+          duplicateInvoiceMessage: t(
+            'Den här leverantörsfakturan finns redan registrerad och kan inte sparas igen.',
+            'This supplier invoice is already registered and cannot be saved again.',
+          ),
+          fullAmountLabel: t('Hela beloppet', 'Full amount'),
+        });
+        return result.purchaseId;
+      }
+
       let supplierId = form.supplierId || null;
       let supplierCountry: string | null = null;
       let supplierType: string | null = null;
@@ -350,62 +367,36 @@ const PurchaseUploadForm: React.FC<Props> = ({
         vat_rate: parsedInvoice?.vatRate ?? purchaseLine?.vat_rate ?? 25,
       };
 
-      if (purchase) {
-        const { error: purchaseError } = await supabase.from('acc_purchases').update(purchasePayload).eq('id', purchase.id);
-        if (purchaseError) throw purchaseError;
+      const { error: purchaseError } = await supabase.from('acc_purchases').update(purchasePayload).eq('id', purchase.id);
+      if (purchaseError) throw purchaseError;
 
-        if (purchaseLine) {
-          const lineUpdates: Record<string, unknown> = { ...linePayload };
-          if (purchaseLine.vat_treatment === 'needs_review' && inferredVatTreatment !== 'needs_review') {
-            lineUpdates.vat_treatment = inferredVatTreatment;
-          }
-
-          const { error: lineError } = await supabase.from('acc_purchase_lines').update(lineUpdates).eq('id', purchaseLine.id);
-          if (lineError) throw lineError;
-        } else {
-          const { error: lineError } = await supabase.from('acc_purchase_lines').insert({
-            purchase_id: purchase.id,
-            ...linePayload,
-            expense_account: '4000',
-            vat_treatment: inferredVatTreatment,
-            sort_order: 0,
-          });
-          if (lineError) throw lineError;
+      if (purchaseLine) {
+        const lineUpdates: Record<string, unknown> = { ...linePayload };
+        if (purchaseLine.vat_treatment === 'needs_review' && inferredVatTreatment !== 'needs_review') {
+          lineUpdates.vat_treatment = inferredVatTreatment;
         }
 
-        return purchase.id;
+        const { error: lineError } = await supabase.from('acc_purchase_lines').update(lineUpdates).eq('id', purchaseLine.id);
+        if (lineError) throw lineError;
+      } else {
+        const { error: lineError } = await supabase.from('acc_purchase_lines').insert({
+          purchase_id: purchase.id,
+          ...linePayload,
+          expense_account: '4000',
+          vat_treatment: inferredVatTreatment,
+          sort_order: 0,
+        });
+        if (lineError) throw lineError;
       }
 
-      let filePath: string | null = null;
-      if (file) {
-        const ext = file.name.split('.').pop();
-        const path = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-        const { error } = await supabase.storage.from('purchase-documents').upload(path, file);
-        if (error) throw error;
-        filePath = path;
-      }
-      const { data: newPurchase, error } = await supabase.from('acc_purchases').insert({
-        ...purchasePayload,
-        document_file_path: filePath,
-        status: 'draft',
-        created_by: user?.id,
-      }).select().single();
-      if (error) throw error;
-      const savedPurchaseId = resolveSavedPurchaseId(purchase?.id, newPurchase?.id);
-      await supabase.from('acc_purchase_lines').insert({
-        purchase_id: savedPurchaseId,
-        ...linePayload,
-        expense_account: '4000',
-        vat_treatment: inferredVatTreatment,
-        sort_order: 0,
-      });
-      return savedPurchaseId;
+      return purchase.id;
     },
     onSuccess: (savedPurchaseId) => {
       if (purchase?.id) {
         queryClient.invalidateQueries({ queryKey: ['acc-purchase', purchase.id] });
         queryClient.invalidateQueries({ queryKey: ['acc-purchase-lines', purchase.id] });
       }
+      queryClient.invalidateQueries({ queryKey: ['acc-suppliers'] });
       queryClient.invalidateQueries({ queryKey: ['acc-purchases'] });
       toast.success(
         isEditing
