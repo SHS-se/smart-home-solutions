@@ -185,10 +185,23 @@ export function inferVatTreatment(params: {
   supplierType?: string | null;
 }): VatTreatment {
   const vatAmount = params.parsedInvoice?.vatAmount ?? null;
+  const grossAmount = params.parsedInvoice?.grossAmount ?? null;
+  const currency = params.parsedInvoice?.currency ?? null;
   const normalizedCountry = params.supplierCountry?.toUpperCase() || inferSupplierMetadata(params.parsedInvoice).country;
   const supplierType = (params.supplierType as SupplierType | null) || getSupplierTypeFromCountry(normalizedCountry);
   const text = `${params.extractedText || ''} ${params.parsedInvoice?.vatNumber || ''}`.toLowerCase();
   const fingerprintId = params.parsedInvoice?.fingerprint.id;
+
+  if (
+    (fingerprintId === 'amazon_sweden_invoice' || fingerprintId === 'amazon_marketplace_invoice') &&
+    vatAmount !== null &&
+    vatAmount > 0 &&
+    grossAmount !== null &&
+    grossAmount < 4000 &&
+    currency === 'SEK'
+  ) {
+    return 'domestic_deductible';
+  }
 
   if (
     fingerprintId === 'anthropic_invoice' &&

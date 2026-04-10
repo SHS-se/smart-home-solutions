@@ -79,6 +79,26 @@ const ANTHROPIC_INVOICE: ParsedInvoice = {
   parserReviewReasons: [],
 };
 
+const AMAZON_MARKETPLACE_INVOICE: ParsedInvoice = {
+  supplierName: 'Shenzhenshi LingKeYun Technology Co., Ltd.',
+  supplierCountry: 'CN',
+  invoiceNumber: 'SE60000DWSE0PI',
+  invoiceDate: '2026-01-30',
+  dueDate: null,
+  grossAmount: 2899,
+  netAmount: 2319.2,
+  vatAmount: 579.8,
+  vatRate: 25,
+  currency: 'SEK',
+  orgNumber: null,
+  vatNumber: null,
+  description: 'Beelink MINI-S13 minidator (Amazon inköp)',
+  confidence: {},
+  fingerprint: { id: 'amazon_marketplace_invoice', label: 'Amazon marketplace invoice', recognized: true },
+  parserReviewRequired: false,
+  parserReviewReasons: [],
+};
+
 Deno.test('inferSupplierMetadata classifies VAT-numbered EU suppliers correctly', () => {
   const inferred = inferSupplierMetadata(STRIPE_INVOICE);
 
@@ -121,6 +141,29 @@ Deno.test('inferVatTreatment classifies Swedish VAT invoices as domestic deducti
   });
 
   assertEqual(vatTreatment, 'domestic_deductible', 'vatTreatment');
+});
+
+Deno.test('inferVatTreatment treats Amazon marketplace invoices under 4000 SEK as domestic deductible', () => {
+  const vatTreatment = inferVatTreatment({
+    parsedInvoice: AMAZON_MARKETPLACE_INVOICE,
+    extractedText: 'Moms deklarerat av Amazon i leveranslandet',
+  });
+
+  assertEqual(vatTreatment, 'domestic_deductible', 'vatTreatment');
+});
+
+Deno.test('inferVatTreatment keeps Amazon marketplace invoices at or above 4000 SEK out of domestic deductible treatment', () => {
+  const vatTreatment = inferVatTreatment({
+    parsedInvoice: {
+      ...AMAZON_MARKETPLACE_INVOICE,
+      grossAmount: 4000,
+      netAmount: 3200,
+      vatAmount: 800,
+    },
+    extractedText: 'Moms deklarerat av Amazon i leveranslandet',
+  });
+
+  assertEqual(vatTreatment, 'non_deductible', 'vatTreatment');
 });
 
 Deno.test('inferVatTreatment treats Anthropic invoices with Swedish VAT as domestic deductible', () => {
