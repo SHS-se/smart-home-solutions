@@ -23,6 +23,8 @@ const OPENAI_RAW_TEXT_0002 = `Page 1 of 1  Invoice  Invoice number   56FB0333  0
 
 const LOVABLE_RAW_TEXT = `Page 1 of 1  Invoice  Invoice number   NQLFVPGN 0005  Date of issue   January 28, 2026 Date due   January 28, 2026  Lovable Labs Incorporated  1111b South Governors Avenue Dover, Delaware 19904 United States support@lovable.dev  Bill to  Philip Cheong Porfyrvägen 10 SE 187 34 Täby Sweden phio@philbert.io  €15.00 due January 28, 2026  Pay online  Credit Top-Up - 50 Credits  Description   Qty   Unit price   Tax   Amount  Build Credit Top-up Pro   50   €0.30   25% incl. (on €12.00 €15.00  Subtotal   €15.00 Total excluding tax   €12.00 VAT - Sweden 25% incl. on €12.00 €3.00 Total   €15.00  Amount due   €15.00`;
 
+const LOVABLE_RAW_TEXT_WITH_NUL = `Page 1 of 1  Invoice  Invoice number   NQLFVPGN \u0000 0006  Date of issue   January 29, 2026 Date due   January 29, 2026  Lovable Labs Incorporated  1111b South Governors Avenue Dover, Delaware 19904 United States support@lovable.dev  Bill to  Philip Cheong Porfyrvägen 10 SE \u0000 187 34 Täby Sweden phio@philbert.io  €15.00 due January 29, 2026  Pay online  Credit Top-Up - 50 Credits  Description   Qty   Unit price   Tax   Amount  Build Credit Top-up Pro   50   €0.30   25% incl. (on €12.00 \u0000  €15.00  Subtotal   €15.00 Total excluding tax   €12.00 VAT - Sweden   \u0000 25% incl. on €12.00 \u0000   €3.00 Total   €15.00  Amount due   €15.00`;
+
 Deno.test('parseInvoiceText extracts Stripe tax invoice fields from flattened PDF text', () => {
   const parsed = parseInvoiceText(STRIPE_RAW_TEXT);
 
@@ -109,6 +111,20 @@ Deno.test('parseInvoiceText extracts Lovable invoice supplier, product descripti
   assertEqual(parsed.supplierName, 'Lovable Labs Incorporated', 'supplierName');
   assertEqual(parsed.invoiceNumber, 'NQLFVPGN-0005', 'invoiceNumber');
   assertEqual(parsed.invoiceDate, '2026-01-28', 'invoiceDate');
+  assertEqual(parsed.currency, 'EUR', 'currency');
+  assertEqual(parsed.grossAmount, 15, 'grossAmount');
+  assertEqual(parsed.netAmount, 12, 'netAmount');
+  assertEqual(parsed.vatAmount, 3, 'vatAmount');
+  assertEqual(parsed.vatRate, 25, 'vatRate');
+  assertEqual(parsed.description, 'Build Credit Top-up Pro', 'description');
+});
+
+Deno.test('parseInvoiceText ignores embedded NUL characters in Lovable PDF text extraction', () => {
+  const parsed = parseInvoiceText(LOVABLE_RAW_TEXT_WITH_NUL);
+
+  assertEqual(parsed.supplierName, 'Lovable Labs Incorporated', 'supplierName');
+  assertEqual(parsed.invoiceNumber, 'NQLFVPGN-0006', 'invoiceNumber');
+  assertEqual(parsed.invoiceDate, '2026-01-29', 'invoiceDate');
   assertEqual(parsed.currency, 'EUR', 'currency');
   assertEqual(parsed.grossAmount, 15, 'grossAmount');
   assertEqual(parsed.netAmount, 12, 'netAmount');

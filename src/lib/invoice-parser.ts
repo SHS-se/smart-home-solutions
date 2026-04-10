@@ -162,7 +162,11 @@ const MONEY_RE = /-?\d[\d\s.,]*\d\s*(?:kr|sek|€|eur|\$|usd)?/gi;
 const COMPANY_SUFFIX_RE = /([A-ZÅÄÖ][A-Za-zÅÄÖåäö0-9&.,'’\- ]{1,120}?(?:AB|ApS|AS|BV|Corp\.?|Corporation|GmbH|Inc\.?|Incorporated|Limited|LLC|Ltd\.?|Oy|PLC|S\.?A\.?R\.?L\.?|S\.?R\.?L\.?))(?:\s|$)/i;
 
 function normalizeWhitespace(text: string): string {
-  return text.replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+  return text
+    .replace(/\u0000/g, ' ')
+    .replace(/\u00a0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function escapeRegExp(text: string): string {
@@ -520,8 +524,9 @@ function extractInclusiveVatSummary(text: string): { vatRate: number | null; net
 
 export function parseInvoiceText(rawText: string): ParsedInvoice {
   const conf: Record<string, number> = {};
-  const normalizedText = normalizeWhitespace(rawText);
-  const lines = rawText.split('\n').map((line) => line.trim()).filter(Boolean);
+  const sanitizedRawText = rawText.replace(/\u0000/g, ' ');
+  const normalizedText = normalizeWhitespace(sanitizedRawText);
+  const lines = sanitizedRawText.split('\n').map((line) => line.trim()).filter(Boolean);
 
   const supplierName = extractSupplierName(lines, normalizedText);
   if (supplierName) conf.supplierName = 0.9;
