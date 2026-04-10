@@ -59,6 +59,26 @@ const AMAZON_INVOICE: ParsedInvoice = {
   parserReviewReasons: [],
 };
 
+const ANTHROPIC_INVOICE: ParsedInvoice = {
+  supplierName: 'Anthropic, PBC',
+  supplierCountry: 'US',
+  invoiceNumber: 'DSUQQKNL-0001',
+  invoiceDate: '2026-03-26',
+  dueDate: null,
+  grossAmount: 12.5,
+  netAmount: 10,
+  vatAmount: 2.5,
+  vatRate: 25,
+  currency: 'USD',
+  orgNumber: null,
+  vatNumber: null,
+  description: 'One-time credit purchase',
+  confidence: {},
+  fingerprint: { id: 'anthropic_invoice', label: 'Anthropic invoice', recognized: true },
+  parserReviewRequired: false,
+  parserReviewReasons: [],
+};
+
 Deno.test('inferSupplierMetadata classifies VAT-numbered EU suppliers correctly', () => {
   const inferred = inferSupplierMetadata(STRIPE_INVOICE);
 
@@ -98,6 +118,15 @@ Deno.test('inferVatTreatment classifies Swedish VAT invoices as domestic deducti
   const vatTreatment = inferVatTreatment({
     parsedInvoice: AMAZON_INVOICE,
     extractedText: 'Moms # SE516412220101',
+  });
+
+  assertEqual(vatTreatment, 'domestic_deductible', 'vatTreatment');
+});
+
+Deno.test('inferVatTreatment treats Anthropic invoices with Swedish VAT as domestic deductible', () => {
+  const vatTreatment = inferVatTreatment({
+    parsedInvoice: ANTHROPIC_INVOICE,
+    extractedText: 'VAT - Sweden (25% on $10.00) $2.50',
   });
 
   assertEqual(vatTreatment, 'domestic_deductible', 'vatTreatment');

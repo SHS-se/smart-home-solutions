@@ -188,6 +188,16 @@ export function inferVatTreatment(params: {
   const normalizedCountry = params.supplierCountry?.toUpperCase() || inferSupplierMetadata(params.parsedInvoice).country;
   const supplierType = (params.supplierType as SupplierType | null) || getSupplierTypeFromCountry(normalizedCountry);
   const text = `${params.extractedText || ''} ${params.parsedInvoice?.vatNumber || ''}`.toLowerCase();
+  const fingerprintId = params.parsedInvoice?.fingerprint.id;
+
+  if (
+    fingerprintId === 'anthropic_invoice' &&
+    vatAmount !== null &&
+    vatAmount > 0 &&
+    /vat\s*-\s*sweden/i.test(text)
+  ) {
+    return 'domestic_deductible';
+  }
 
   if (vatAmount !== null && vatAmount > 0) {
     return supplierType === 'domestic' ? 'domestic_deductible' : 'non_deductible';
