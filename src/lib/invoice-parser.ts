@@ -234,7 +234,12 @@ const KNOWN_INVOICE_FINGERPRINTS: Array<{
   {
     id: 'anthropic_invoice',
     label: 'Anthropic invoice',
-    match: (text) => /anthropic,\s*pbc/i.test(text) && /payment address:/i.test(text) && /pay online/i.test(text),
+    match: (text) => (
+      /anthropic,\s*pbc/i.test(text) &&
+      /invoice number/i.test(text) &&
+      /pay online/i.test(text) &&
+      (/\bamount due\b/i.test(text) || /\bUSD due\b/i.test(text))
+    ),
   },
   {
     id: 'lovable_invoice',
