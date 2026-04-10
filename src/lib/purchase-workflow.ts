@@ -166,7 +166,10 @@ export function inferSupplierMetadata(parsedInvoice: ParsedInvoice | null): {
   vatNumber: string | null;
 } {
   const vatNumber = normalizeVatNumber(parsedInvoice?.vatNumber);
-  const country = getCountryFromVatNumber(vatNumber) || 'SE';
+  const country =
+    parsedInvoice?.supplierCountry?.trim().toUpperCase() ||
+    getCountryFromVatNumber(vatNumber) ||
+    'SE';
 
   return {
     country,

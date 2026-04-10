@@ -21,6 +21,7 @@ function assertEqual<T>(actual: T, expected: T, label: string): void {
 
 const STRIPE_INVOICE: ParsedInvoice = {
   supplierName: 'Stripe Payments Europe, Limited',
+  supplierCountry: 'IE',
   invoiceNumber: 'T41QIV6Y-2026-03-01',
   invoiceDate: '2026-04-05',
   dueDate: null,
@@ -37,6 +38,7 @@ const STRIPE_INVOICE: ParsedInvoice = {
 
 const AMAZON_INVOICE: ParsedInvoice = {
   supplierName: 'Amazon EU S.à r.l., Sverige Filial',
+  supplierCountry: 'SE',
   invoiceNumber: 'SE6EK5YAEUI',
   invoiceDate: '2026-03-13',
   dueDate: null,
@@ -93,6 +95,29 @@ Deno.test('inferVatTreatment classifies Swedish VAT invoices as domestic deducti
   });
 
   assertEqual(vatTreatment, 'domestic_deductible', 'vatTreatment');
+});
+
+Deno.test('inferSupplierMetadata prefers parsed supplier country over marketplace VAT prefixes', () => {
+  const inferred = inferSupplierMetadata({
+    supplierName: 'ShenZhenShiYiDuoJinDianZiShangWuYouXianGongSi',
+    supplierCountry: 'CN',
+    invoiceNumber: 'SE6IPMBAEUD',
+    invoiceDate: '2026-02-03',
+    dueDate: null,
+    grossAmount: 112.98,
+    netAmount: 90.38,
+    vatAmount: 22.6,
+    vatRate: 25,
+    currency: 'SEK',
+    orgNumber: null,
+    vatNumber: null,
+    description: 'Ewwtrey 260 stycken M3-nylon sexkantskruvar',
+    confidence: {},
+  });
+
+  assertEqual(inferred.country, 'CN', 'country');
+  assertEqual(inferred.supplierType, 'non_eu', 'supplierType');
+  assertEqual(inferred.vatNumber, null, 'vatNumber');
 });
 
 Deno.test('resolveSavedPurchaseId prefers newly created purchase id when creating a draft', () => {

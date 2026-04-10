@@ -6,6 +6,7 @@
 
 export interface ParsedInvoice {
   supplierName: string | null;
+  supplierCountry: string | null;
   invoiceNumber: string | null;
   invoiceDate: string | null;
   dueDate: string | null;
@@ -160,6 +161,38 @@ const NET_KW = [
 const AMOUNT_RE = /-?\d[\d\s.,]*\d|-?\d/g;
 const MONEY_RE = /-?\d[\d\s.,]*\d\s*(?:kr|sek|€|eur|\$|usd)?/gi;
 const COMPANY_SUFFIX_RE = /([A-ZÅÄÖ][A-Za-zÅÄÖåäö0-9&.,'’\- ]{1,120}?(?:AB|ApS|AS|BV|Corp\.?|Corporation|GmbH|Inc\.?|Incorporated|Limited|LLC|Ltd\.?|Oy|PLC|S\.?A\.?R\.?L\.?|S\.?R\.?L\.?))(?:\s|$)/i;
+const VAT_NUMBER_RE = /\b([A-Z]{2}\s?[A-Z0-9]{2,14})\b/i;
+const SUPPLIER_COUNTRY_CODE_SET = new Set([
+  ...['AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR', 'DE', 'GR', 'HU', 'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL', 'PL', 'PT', 'RO', 'SK', 'SI', 'ES', 'SE'],
+  'CN',
+  'GB',
+  'NO',
+  'CH',
+  'US',
+]);
+const COUNTRY_NAME_TO_CODE: Array<[string, string]> = [
+  ['united states', 'US'],
+  ['usa', 'US'],
+  ['sverige', 'SE'],
+  ['sweden', 'SE'],
+  ['ireland', 'IE'],
+  ['luxemburg', 'LU'],
+  ['luxembourg', 'LU'],
+  ['nederländerna', 'NL'],
+  ['netherlands', 'NL'],
+  ['frankrike', 'FR'],
+  ['france', 'FR'],
+  ['bulgarien', 'BG'],
+  ['bulgaria', 'BG'],
+  ['kina', 'CN'],
+  ['china', 'CN'],
+  ['schweiz', 'CH'],
+  ['switzerland', 'CH'],
+  ['norge', 'NO'],
+  ['norway', 'NO'],
+  ['storbritannien', 'GB'],
+  ['united kingdom', 'GB'],
+];
 
 function normalizeWhitespace(text: string): string {
   return text
@@ -279,6 +312,48 @@ function extractSectionAfterLabel(text: string, labels: string[], stops: string[
     if (section) return section;
   }
   return null;
+}
+
+function extractSectionAfterLastLabel(text: string, labels: string[], stops: string[], maxChars = 120): string | null {
+  const candidateStarts: number[] = [];
+
+  for (const label of labels) {
+    const re = new RegExp(`(?:^|\\s)${escapeRegExp(label)}\\s*:?\\s+`, 'ig');
+    for (const match of text.matchAll(re)) {
+      candidateStarts.push(match.index + match[0].length);
+    }
+  }
+
+  const start = candidateStarts.sort((a, b) => b - a)[0];
+  if (start == null) return null;
+
+  const tail = text.slice(start, start + maxChars);
+  let end = tail.length;
+
+  for (const stop of stops) {
+    const stopMatch = new RegExp(`\\s${escapeRegExp(stop)}\\b`, 'i').exec(tail);
+    if (stopMatch && stopMatch.index < end) end = stopMatch.index;
+  }
+
+  const section = tail.slice(0, end).trim();
+  return section || null;
+}
+
+function extractSellerSection(text: string): string | null {
+  const soldBySection = extractSectionAfterLastLabel(
+    text,
+    ['Såld av', 'Sold by'],
+    ['Beställningsinformation', 'Billing Address', 'Leveransadress', 'Description', 'PRODUCT DESCRIPTION', 'Qty'],
+    320,
+  );
+  if (soldBySection) return soldBySection;
+
+  return extractSectionAfterLabel(
+    text,
+    ['Date due', 'Date of issue'],
+    ['Bill to', 'Ship to', 'Pay online', 'Description'],
+    260,
+  );
 }
 
 function parseMoneyValues(text: string): MoneyValue[] {
@@ -438,6 +513,67 @@ function extractSupplierName(lines: string[], normalizedText: string): string | 
   return null;
 }
 
+function extractSupplierCountry(text: string): string | null {
+  const sellerSection = extractSellerSection(text);
+  if (!sellerSection) return null;
+
+  const normalizedSellerSection = normalizeWhitespace(sellerSection);
+  const loweredSection = normalizedSellerSection.toLowerCase();
+
+  for (const [countryName, countryCode] of COUNTRY_NAME_TO_CODE) {
+    if (loweredSection.includes(countryName)) return countryCode;
+  }
+
+  const codeMatches = normalizedSellerSection.toUpperCase().match(/\b[A-Z]{2}\b/g) || [];
+  for (const match of codeMatches.reverse()) {
+    const candidate = match === 'UK' ? 'GB' : match;
+    if (SUPPLIER_COUNTRY_CODE_SET.has(candidate) && candidate !== 'EU') return candidate;
+  }
+
+  return null;
+}
+
+function extractSupplierVatNumber(text: string, supplierName: string | null): string | null {
+  const sellerSection = extractSellerSection(text);
+  if (sellerSection) {
+    const sanitizedSellerSection = sellerSection.replace(
+      /Moms deklarerat av Amazon.+?Moms #\s*[A-Z]{2}\s?\d[\dA-Z ]+/i,
+      ' ',
+    );
+    const sectionVatMatch = sanitizedSellerSection.match(
+      new RegExp(`\\b(?:VAT(?:\\s*(?:ID|Number|No|Nr))?|Stripe VAT Number|OpenAI VAT|EU OSS VAT|Moms #|momsnummer)\\s*[:#]?\\s*${VAT_NUMBER_RE.source}`, 'i'),
+    );
+    if (sectionVatMatch) return sectionVatMatch[1].replace(/\s+/g, ' ').trim();
+  }
+
+  const vatValue = extractLabelValue(
+    text,
+    ['VAT Number', 'VAT No', 'VAT Nr', 'Stripe VAT Number', 'VAT ID', 'momsnummer', 'OpenAI VAT', 'EU OSS VAT'],
+  );
+  if (vatValue) {
+    const vatMatch = vatValue.match(VAT_NUMBER_RE);
+    if (vatMatch) return vatMatch[0].replace(/\s+/g, ' ').trim();
+  }
+
+  const shouldTreatGenericMomsHashAsSupplierVat =
+    !!supplierName && /amazon/i.test(supplierName)
+      ? true
+      : !/moms deklarerat av amazon|vat declared by amazon/i.test(text);
+
+  if (shouldTreatGenericMomsHashAsSupplierVat) {
+    const genericMomsHash = extractLabelValue(text, ['Moms #']);
+    if (genericMomsHash) {
+      const vatMatch = genericMomsHash.match(VAT_NUMBER_RE);
+      if (vatMatch) return vatMatch[0].replace(/\s+/g, ' ').trim();
+    }
+  }
+
+  const fallbackVatMatch = text.match(new RegExp(`VAT ID:\\s*${VAT_NUMBER_RE.source}`, 'i'));
+  if (fallbackVatMatch) return fallbackVatMatch[1].replace(/\s+/g, ' ').trim();
+
+  return null;
+}
+
 function extractInvoiceNumber(text: string): string | null {
   const direct = extractLabelValue(text, ['Invoice Number', 'Invoice No', 'Invoice #', 'Fakturanr', 'Fakturanummer']);
   if (direct) {
@@ -530,20 +666,14 @@ export function parseInvoiceText(rawText: string): ParsedInvoice {
 
   const supplierName = extractSupplierName(lines, normalizedText);
   if (supplierName) conf.supplierName = 0.9;
+  const supplierCountry = extractSupplierCountry(normalizedText);
+  if (supplierCountry) conf.supplierCountry = 0.8;
 
   let orgNumber: string | null = null;
   const orgMatch = normalizedText.match(/(?:org\.?\s*(?:nr|nummer|no)?\.?\s*:?\s*)(\d{6}-?\d{4})/i);
   if (orgMatch) orgNumber = orgMatch[1];
 
-  let vatNumber: string | null = null;
-  const vatValue = extractLabelValue(normalizedText, ['VAT Number', 'VAT No', 'VAT Nr', 'Stripe VAT Number', 'VAT ID', 'Moms #', 'momsnummer']);
-  if (vatValue) {
-    const vatMatch = vatValue.match(/\b[A-Z]{2}\s?\d[\dA-Z ]+\b/i);
-    if (vatMatch) vatNumber = vatMatch[0].replace(/\s+/g, ' ').trim();
-  } else {
-    const fallbackVatMatch = normalizedText.match(/VAT ID:\s*([A-Z]{2}\s?\d[\dA-Z ]+)/i);
-    if (fallbackVatMatch) vatNumber = fallbackVatMatch[0].replace(/\s+/g, ' ').trim();
-  }
+  const vatNumber = extractSupplierVatNumber(normalizedText, supplierName);
 
   const invoiceNumber = extractInvoiceNumber(normalizedText);
   if (invoiceNumber) conf.invoiceNumber = 0.95;
@@ -661,6 +791,7 @@ export function parseInvoiceText(rawText: string): ParsedInvoice {
 
   return {
     supplierName,
+    supplierCountry,
     invoiceNumber,
     invoiceDate,
     dueDate,
