@@ -20,6 +20,9 @@ interface BulkUploadResult {
   purchaseId?: string;
   supplierName?: string | null;
   invoiceNumber?: string | null;
+  parserFingerprintLabel?: string;
+  parserReviewRequired?: boolean;
+  parserReviewReasons?: string[];
   error?: string;
 }
 
@@ -135,6 +138,9 @@ const PurchaseUpload: React.FC = () => {
           purchaseId: createdDraft.purchaseId,
           supplierName: parsed.supplierName,
           invoiceNumber: parsed.invoiceNumber,
+          parserFingerprintLabel: createdDraft.parserFingerprintLabel,
+          parserReviewRequired: createdDraft.parserReviewRequired,
+          parserReviewReasons: createdDraft.parserReviewReasons,
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : t('Kunde inte skapa utkast', 'Could not create draft');
@@ -174,6 +180,7 @@ const PurchaseUpload: React.FC = () => {
 
   const successfulBulkResults = bulkResults.filter((result) => result.purchaseId);
   const failedBulkResults = bulkResults.filter((result) => result.error);
+  const parserReviewResults = bulkResults.filter((result) => result.parserReviewRequired);
   const isBulkMode = isBulkProcessing || bulkResults.length > 0;
   const firstCreatedDraftId = successfulBulkResults[0]?.purchaseId;
 
@@ -224,11 +231,21 @@ const PurchaseUpload: React.FC = () => {
                           {result.invoiceNumber && (
                             <p className="text-xs text-muted-foreground">{result.invoiceNumber}</p>
                           )}
+                          {result.parserFingerprintLabel && (
+                            <p className="text-xs text-muted-foreground mt-2">{result.parserFingerprintLabel}</p>
+                          )}
+                          {result.parserReviewRequired && (
+                            <p className="text-sm text-amber-700 mt-2">
+                              {result.parserReviewReasons?.[0] || t('Parsern behöver granskas för den här layouten', 'The parser needs review for this layout')}
+                            </p>
+                          )}
                           {result.error && (
                             <p className="text-sm text-destructive mt-2">{result.error}</p>
                           )}
                         </div>
-                        {result.purchaseId ? (
+                        {result.purchaseId && result.parserReviewRequired ? (
+                          <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0" />
+                        ) : result.purchaseId ? (
                           <CheckCircle2 className="h-5 w-5 text-green-600 shrink-0" />
                         ) : result.error ? (
                           <AlertTriangle className="h-5 w-5 text-destructive shrink-0" />
@@ -286,6 +303,15 @@ const PurchaseUpload: React.FC = () => {
                     </div>
                   </div>
 
+                  {parserReviewResults.length > 0 && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                      {t(
+                        `${parserReviewResults.length} dokument behöver parsergranskning innan du litar på tolkningen fullt ut.`,
+                        `${parserReviewResults.length} documents need parser review before you rely on the extraction fully.`,
+                      )}
+                    </div>
+                  )}
+
                   {firstCreatedDraftId ? (
                     <Button className="w-full" onClick={() => navigate(`/accounting/purchases/${firstCreatedDraftId}`)}>
                       {t('Granska första utkastet', 'Review first draft')}
@@ -301,13 +327,25 @@ const PurchaseUpload: React.FC = () => {
                 </CardContent>
               </Card>
             ) : (
-              <PurchaseUploadForm
-                file={file}
-                parsedInvoice={parsedInvoice}
-                extractedText={extractionResult?.rawText || null}
-                fillHeight
-                onSaved={(purchaseId) => navigate(`/accounting/purchases/${purchaseId}`)}
-              />
+              <div className="space-y-4 h-full">
+                {parsedInvoice?.parserReviewRequired && (
+                  <Card className="border border-amber-200 bg-amber-50">
+                    <CardContent className="pt-6 space-y-1">
+                      <p className="text-sm font-medium text-amber-900">{parsedInvoice.fingerprint.label}</p>
+                      <p className="text-sm text-amber-800">
+                        {parsedInvoice.parserReviewReasons[0] || t('Parsern behöver granskas för den här layouten', 'The parser needs review for this layout')}
+                      </p>
+                    </CardContent>
+                  </Card>
+                )}
+                <PurchaseUploadForm
+                  file={file}
+                  parsedInvoice={parsedInvoice}
+                  extractedText={extractionResult?.rawText || null}
+                  fillHeight
+                  onSaved={(purchaseId) => navigate(`/accounting/purchases/${purchaseId}`)}
+                />
+              </div>
             )}
           </div>
         </div>

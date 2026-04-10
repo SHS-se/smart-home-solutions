@@ -34,6 +34,9 @@ const STRIPE_INVOICE: ParsedInvoice = {
   vatNumber: 'IE 3206488LH',
   description: 'Stripe avgifter mars 2026',
   confidence: {},
+  fingerprint: { id: 'stripe_tax_invoice', label: 'Stripe tax invoice', recognized: true },
+  parserReviewRequired: false,
+  parserReviewReasons: [],
 };
 
 const AMAZON_INVOICE: ParsedInvoice = {
@@ -51,6 +54,9 @@ const AMAZON_INVOICE: ParsedInvoice = {
   vatNumber: 'SE516412220101',
   description: 'Shelly Dimmer 2 (Amazon inköp)',
   confidence: {},
+  fingerprint: { id: 'amazon_sweden_invoice', label: 'Amazon Sweden invoice', recognized: true },
+  parserReviewRequired: false,
+  parserReviewReasons: [],
 };
 
 Deno.test('inferSupplierMetadata classifies VAT-numbered EU suppliers correctly', () => {
@@ -113,6 +119,9 @@ Deno.test('inferSupplierMetadata prefers parsed supplier country over marketplac
     vatNumber: null,
     description: 'Ewwtrey 260 stycken M3-nylon sexkantskruvar',
     confidence: {},
+    fingerprint: { id: 'amazon_marketplace_invoice', label: 'Amazon marketplace invoice', recognized: true },
+    parserReviewRequired: false,
+    parserReviewReasons: [],
   });
 
   assertEqual(inferred.country, 'CN', 'country');

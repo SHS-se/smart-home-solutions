@@ -26,6 +26,7 @@ const OPENAI_RAW_TEXT_0002 = `Page 1 of 1  Invoice  Invoice number   56FB0333  0
 const LOVABLE_RAW_TEXT = `Page 1 of 1  Invoice  Invoice number   NQLFVPGN 0005  Date of issue   January 28, 2026 Date due   January 28, 2026  Lovable Labs Incorporated  1111b South Governors Avenue Dover, Delaware 19904 United States support@lovable.dev  Bill to  Philip Cheong Porfyrvägen 10 SE 187 34 Täby Sweden phio@philbert.io  €15.00 due January 28, 2026  Pay online  Credit Top-Up - 50 Credits  Description   Qty   Unit price   Tax   Amount  Build Credit Top-up Pro   50   €0.30   25% incl. (on €12.00 €15.00  Subtotal   €15.00 Total excluding tax   €12.00 VAT - Sweden 25% incl. on €12.00 €3.00 Total   €15.00  Amount due   €15.00`;
 
 const LOVABLE_RAW_TEXT_WITH_NUL = `Page 1 of 1  Invoice  Invoice number   NQLFVPGN \u0000 0006  Date of issue   January 29, 2026 Date due   January 29, 2026  Lovable Labs Incorporated  1111b South Governors Avenue Dover, Delaware 19904 United States support@lovable.dev  Bill to  Philip Cheong Porfyrvägen 10 SE \u0000 187 34 Täby Sweden phio@philbert.io  €15.00 due January 29, 2026  Pay online  Credit Top-Up - 50 Credits  Description   Qty   Unit price   Tax   Amount  Build Credit Top-up Pro   50   €0.30   25% incl. (on €12.00 \u0000  €15.00  Subtotal   €15.00 Total excluding tax   €12.00 VAT - Sweden   \u0000 25% incl. on €12.00 \u0000   €3.00 Total   €15.00  Amount due   €15.00`;
+const UNKNOWN_LAYOUT_RAW_TEXT = `Supplier invoice Example Parts AB Reference 7721 Document date 2026-04-10 Customer Smart Home Solutions Total amount 1 245,00 kr`;
 
 Deno.test('parseInvoiceText extracts Stripe tax invoice fields from flattened PDF text', () => {
   const parsed = parseInvoiceText(STRIPE_RAW_TEXT);
@@ -40,6 +41,8 @@ Deno.test('parseInvoiceText extracts Stripe tax invoice fields from flattened PD
   assertEqual(parsed.netAmount, 290.03, 'netAmount');
   assertEqual(parsed.vatRate, 0, 'vatRate');
   assertEqual(parsed.description, 'Stripe avgifter mars 2026', 'description');
+  assertEqual(parsed.fingerprint.id, 'stripe_tax_invoice', 'fingerprint');
+  assertEqual(parsed.parserReviewRequired, false, 'parserReviewRequired');
 });
 
 Deno.test('parseInvoiceText extracts Ubiquiti receipt totals from flattened PDF text', () => {
@@ -54,6 +57,8 @@ Deno.test('parseInvoiceText extracts Ubiquiti receipt totals from flattened PDF 
   assertEqual(parsed.vatAmount, 0, 'vatAmount');
   assertEqual(parsed.netAmount, 256.8, 'netAmount');
   assertEqual(parsed.vatRate, 0, 'vatRate');
+  assertEqual(parsed.fingerprint.id, 'ubiquiti_receipt_invoice', 'fingerprint');
+  assertEqual(parsed.parserReviewRequired, false, 'parserReviewRequired');
 });
 
 Deno.test('parseInvoiceText extracts Amazon Sweden invoice fields from flattened PDF text', () => {
@@ -71,6 +76,8 @@ Deno.test('parseInvoiceText extracts Amazon Sweden invoice fields from flattened
   assertEqual(parsed.vatRate, 25, 'vatRate');
   assertEqual(parsed.vatNumber, 'SE516412220101', 'vatNumber');
   assertEqual(parsed.description, 'Shelly Dimmer 2 (Amazon inköp)', 'description');
+  assertEqual(parsed.fingerprint.id, 'amazon_sweden_invoice', 'fingerprint');
+  assertEqual(parsed.parserReviewRequired, false, 'parserReviewRequired');
 });
 
 Deno.test('parseInvoiceText extracts Amazon marketplace invoice VAT summary with spaced thousands separators', () => {
@@ -88,6 +95,8 @@ Deno.test('parseInvoiceText extracts Amazon marketplace invoice VAT summary with
   assertEqual(parsed.vatRate, 25, 'vatRate');
   assertEqual(parsed.vatNumber, null, 'vatNumber');
   assertEqual(parsed.description, 'Beelink MINI-S13 minidator (Amazon inköp)', 'description');
+  assertEqual(parsed.fingerprint.id, 'amazon_marketplace_invoice', 'fingerprint');
+  assertEqual(parsed.parserReviewRequired, false, 'parserReviewRequired');
 });
 
 Deno.test('parseInvoiceText ignores Amazon marketplace VAT registration when the seller is a non-EU supplier', () => {
@@ -102,6 +111,8 @@ Deno.test('parseInvoiceText ignores Amazon marketplace VAT registration when the
   assertEqual(parsed.vatAmount, 22.6, 'vatAmount');
   assertEqual(parsed.vatRate, 25, 'vatRate');
   assertEqual(parsed.vatNumber, null, 'vatNumber');
+  assertEqual(parsed.fingerprint.id, 'amazon_marketplace_invoice', 'fingerprint');
+  assertEqual(parsed.parserReviewRequired, false, 'parserReviewRequired');
 });
 
 Deno.test('parseInvoiceText keeps OpenAI invoice amounts in USD', () => {
@@ -116,6 +127,8 @@ Deno.test('parseInvoiceText keeps OpenAI invoice amounts in USD', () => {
   assertEqual(parsed.vatAmount, 0, 'vatAmount');
   assertEqual(parsed.netAmount, 10, 'netAmount');
   assertEqual(parsed.vatRate, 0, 'vatRate');
+  assertEqual(parsed.fingerprint.id, 'openai_invoice', 'fingerprint');
+  assertEqual(parsed.parserReviewRequired, false, 'parserReviewRequired');
 });
 
 Deno.test('parseInvoiceText preserves OpenAI invoice suffixes so consecutive invoices are distinct', () => {
@@ -124,6 +137,7 @@ Deno.test('parseInvoiceText preserves OpenAI invoice suffixes so consecutive inv
   assertEqual(parsed.invoiceNumber, '56FB0333-0002', 'invoiceNumber');
   assertEqual(parsed.currency, 'USD', 'currency');
   assertEqual(parsed.grossAmount, 5.05, 'grossAmount');
+  assertEqual(parsed.fingerprint.id, 'openai_invoice', 'fingerprint');
 });
 
 Deno.test('parseInvoiceText extracts Lovable invoice supplier, product description, and VAT-inclusive totals', () => {
@@ -139,6 +153,8 @@ Deno.test('parseInvoiceText extracts Lovable invoice supplier, product descripti
   assertEqual(parsed.vatAmount, 3, 'vatAmount');
   assertEqual(parsed.vatRate, 25, 'vatRate');
   assertEqual(parsed.description, 'Build Credit Top-up Pro', 'description');
+  assertEqual(parsed.fingerprint.id, 'lovable_invoice', 'fingerprint');
+  assertEqual(parsed.parserReviewRequired, false, 'parserReviewRequired');
 });
 
 Deno.test('parseInvoiceText ignores embedded NUL characters in Lovable PDF text extraction', () => {
@@ -153,4 +169,14 @@ Deno.test('parseInvoiceText ignores embedded NUL characters in Lovable PDF text 
   assertEqual(parsed.vatAmount, 3, 'vatAmount');
   assertEqual(parsed.vatRate, 25, 'vatRate');
   assertEqual(parsed.description, 'Build Credit Top-up Pro', 'description');
+  assertEqual(parsed.fingerprint.id, 'lovable_invoice', 'fingerprint');
+  assertEqual(parsed.parserReviewRequired, false, 'parserReviewRequired');
+});
+
+Deno.test('parseInvoiceText flags unknown invoice layouts for parser review', () => {
+  const parsed = parseInvoiceText(UNKNOWN_LAYOUT_RAW_TEXT);
+
+  assertEqual(parsed.fingerprint.id, 'unknown_layout', 'fingerprint');
+  assertEqual(parsed.fingerprint.recognized, false, 'fingerprint.recognized');
+  assertEqual(parsed.parserReviewRequired, true, 'parserReviewRequired');
 });

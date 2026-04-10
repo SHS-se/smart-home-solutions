@@ -19,6 +19,15 @@ export interface ParsedInvoice {
   vatNumber: string | null;
   description: string | null;
   confidence: Record<string, number>;
+  fingerprint: InvoiceFingerprint;
+  parserReviewRequired: boolean;
+  parserReviewReasons: string[];
+}
+
+export interface InvoiceFingerprint {
+  id: string;
+  label: string;
+  recognized: boolean;
 }
 
 type MoneyValue = {
@@ -194,12 +203,96 @@ const COUNTRY_NAME_TO_CODE: Array<[string, string]> = [
   ['united kingdom', 'GB'],
 ];
 
+const KNOWN_INVOICE_FINGERPRINTS: Array<{
+  id: string;
+  label: string;
+  match: (text: string) => boolean;
+}> = [
+  {
+    id: 'stripe_tax_invoice',
+    label: 'Stripe tax invoice',
+    match: (text) => /tax invoice/i.test(text) && /stripe vat number/i.test(text) && /service month/i.test(text),
+  },
+  {
+    id: 'amazon_sweden_invoice',
+    label: 'Amazon Sweden invoice',
+    match: (text) => /amazon\.se/i.test(text) && /fakturauppgifter/i.test(text) && /såld av amazon eu s\./i.test(text),
+  },
+  {
+    id: 'amazon_marketplace_invoice',
+    label: 'Amazon marketplace invoice',
+    match: (text) => (
+      (/amazon\.se/i.test(text) && /fakturauppgifter/i.test(text) && /såld av/i.test(text)) ||
+      (/moms deklarerat av amazon/i.test(text) && /såld av/i.test(text) && /fakturanr/i.test(text))
+    ),
+  },
+  {
+    id: 'openai_invoice',
+    label: 'OpenAI invoice',
+    match: (text) => /openai opco,\s*llc/i.test(text) && /openai vat/i.test(text) && /pay online/i.test(text),
+  },
+  {
+    id: 'lovable_invoice',
+    label: 'Lovable invoice',
+    match: (text) => /lovable labs incorporated/i.test(text) && /credit top-up - 50 credits/i.test(text) && /pay online/i.test(text),
+  },
+  {
+    id: 'ubiquiti_receipt_invoice',
+    label: 'Ubiquiti receipt / VAT invoice',
+    match: (text) => /ubiquiti store europe/i.test(text) && /receipt\s*\/\s*vat invoice/i.test(text) && /invoice no\.:/i.test(text),
+  },
+];
+
 function normalizeWhitespace(text: string): string {
   return text
     .replace(/\u0000/g, ' ')
     .replace(/\u00a0/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function detectInvoiceFingerprint(text: string): InvoiceFingerprint {
+  for (const fingerprint of KNOWN_INVOICE_FINGERPRINTS) {
+    if (fingerprint.match(text)) {
+      return {
+        id: fingerprint.id,
+        label: fingerprint.label,
+        recognized: true,
+      };
+    }
+  }
+
+  return {
+    id: 'unknown_layout',
+    label: 'Unknown invoice layout',
+    recognized: false,
+  };
+}
+
+function collectParserReviewReasons(params: {
+  fingerprint: InvoiceFingerprint;
+  supplierName: string | null;
+  invoiceNumber: string | null;
+  invoiceDate: string | null;
+  currencyDetected: boolean;
+  grossAmount: number | null;
+  netAmount: number | null;
+  vatAmount: number | null;
+}): string[] {
+  const reasons: string[] = [];
+
+  if (!params.fingerprint.recognized) {
+    reasons.push('Unknown invoice layout');
+  }
+  if (!params.supplierName) reasons.push('Supplier was not extracted');
+  if (!params.invoiceNumber) reasons.push('Invoice number was not extracted');
+  if (!params.invoiceDate) reasons.push('Invoice date was not extracted');
+  if (!params.currencyDetected) reasons.push('Currency fell back to default SEK');
+  if (params.grossAmount === null) reasons.push('Gross amount was not extracted');
+  if (params.netAmount === null) reasons.push('Net amount was not extracted');
+  if (params.vatAmount === null) reasons.push('VAT amount was not extracted');
+
+  return reasons;
 }
 
 function escapeRegExp(text: string): string {
@@ -663,6 +756,7 @@ export function parseInvoiceText(rawText: string): ParsedInvoice {
   const sanitizedRawText = rawText.replace(/\u0000/g, ' ');
   const normalizedText = normalizeWhitespace(sanitizedRawText);
   const lines = sanitizedRawText.split('\n').map((line) => line.trim()).filter(Boolean);
+  const fingerprint = detectInvoiceFingerprint(normalizedText);
 
   const supplierName = extractSupplierName(lines, normalizedText);
   if (supplierName) conf.supplierName = 0.9;
@@ -684,8 +778,9 @@ export function parseInvoiceText(rawText: string): ParsedInvoice {
   const dueDate = extractDate(normalizedText, ['Due Date', 'Förfallodatum', 'Förfaller']);
   if (dueDate) conf.dueDate = 0.9;
 
-  const currency = inferCurrency(normalizedText) || 'SEK';
-  conf.currency = 0.9;
+  const inferredCurrency = inferCurrency(normalizedText);
+  const currency = inferredCurrency || 'SEK';
+  conf.currency = inferredCurrency ? 0.9 : 0.2;
 
   let vatAmount = extractMoneyForLabel(
     normalizedText,
@@ -788,6 +883,16 @@ export function parseInvoiceText(rawText: string): ParsedInvoice {
 
   const description = extractDescription(supplierName, normalizedText);
   if (description) conf.description = 0.85;
+  const parserReviewReasons = collectParserReviewReasons({
+    fingerprint,
+    supplierName,
+    invoiceNumber,
+    invoiceDate,
+    currencyDetected: inferredCurrency !== null,
+    grossAmount,
+    netAmount,
+    vatAmount,
+  });
 
   return {
     supplierName,
@@ -804,6 +909,9 @@ export function parseInvoiceText(rawText: string): ParsedInvoice {
     vatNumber,
     description,
     confidence: conf,
+    fingerprint,
+    parserReviewRequired: parserReviewReasons.length > 0,
+    parserReviewReasons,
   };
 }
 

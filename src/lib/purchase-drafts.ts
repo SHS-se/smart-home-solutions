@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database, Tables } from '@/integrations/supabase/types';
+import type { DocumentQualityStatus } from './accounting-utils';
 import { fuzzyMatchSupplier, generateDescription, type ParsedInvoice } from './invoice-parser';
 import {
   buildExchangeSnapshot,
@@ -37,6 +38,10 @@ export interface CreatePurchaseDraftParams {
 export interface CreatePurchaseDraftResult {
   purchaseId: string;
   suppliers: SupplierRow[];
+  documentQualityStatus: DocumentQualityStatus;
+  parserReviewRequired: boolean;
+  parserReviewReasons: string[];
+  parserFingerprintLabel: string;
 }
 
 export function buildPurchaseDraftDefaults(params: {
@@ -177,6 +182,9 @@ export async function createPurchaseDraft(params: CreatePurchaseDraftParams): Pr
     notes: buildInvoiceNumberNote(values.invoiceNumber),
     ...buildPurchasePersistence(snapshot),
   };
+  const documentQualityStatus: DocumentQualityStatus = parsedInvoice
+    ? (parsedInvoice.parserReviewRequired ? 'insufficient' : 'sufficient')
+    : 'pending';
 
   const inferredVatTreatment = inferVatTreatment({
     parsedInvoice: parsedInvoice || null,
@@ -206,6 +214,7 @@ export async function createPurchaseDraft(params: CreatePurchaseDraftParams): Pr
     .insert({
       ...purchasePayload,
       document_file_path: filePath,
+      document_quality_status: documentQualityStatus,
       status: 'draft',
       created_by: userId,
     })
@@ -226,5 +235,9 @@ export async function createPurchaseDraft(params: CreatePurchaseDraftParams): Pr
   return {
     purchaseId: savedPurchaseId,
     suppliers,
+    documentQualityStatus,
+    parserReviewRequired: parsedInvoice?.parserReviewRequired || false,
+    parserReviewReasons: parsedInvoice?.parserReviewReasons || [],
+    parserFingerprintLabel: parsedInvoice?.fingerprint.label || 'Unknown invoice layout',
   };
 }
