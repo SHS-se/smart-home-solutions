@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -17,16 +17,38 @@ const PurchasesList: React.FC = () => {
   const { t, language } = useLanguage();
   const statusLabels = language === 'sv' ? PURCHASE_STATUS_LABELS : PURCHASE_STATUS_LABELS_EN;
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const supplierFilter = searchParams.get('supplier') || 'all';
+
+  const { data: suppliers } = useQuery({
+    queryKey: ['acc-suppliers'],
+    queryFn: async () => {
+      const { data } = await supabase.from('acc_suppliers').select('id, name').order('name');
+      return data || [];
+    },
+  });
+
+  const selectedSupplierName = supplierFilter !== 'all'
+    ? suppliers?.find((supplier) => supplier.id === supplierFilter)?.name || null
+    : null;
 
   const { data: purchases, isLoading } = useQuery({
-    queryKey: ['acc-purchases', statusFilter],
+    queryKey: ['acc-purchases', statusFilter, supplierFilter],
     queryFn: async () => {
       let query = supabase.from('acc_purchases').select('*, supplier:acc_suppliers(name)').order('document_date', { ascending: false });
       if (statusFilter !== 'all') query = query.eq('status', statusFilter);
+      if (supplierFilter !== 'all') query = query.eq('supplier_id', supplierFilter);
       const { data } = await query;
       return data || [];
     },
   });
+
+  const updateSupplierFilter = (value: string) => {
+    const nextParams = new URLSearchParams(searchParams);
+    if (value === 'all') nextParams.delete('supplier');
+    else nextParams.set('supplier', value);
+    setSearchParams(nextParams);
+  };
 
   return (
     <AccountingLayout>
@@ -41,7 +63,7 @@ const PurchasesList: React.FC = () => {
           </Link>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <Filter className="w-4 h-4 text-muted-foreground" />
           <span className="text-sm text-muted-foreground">{t('Filtrera:', 'Filter:')}</span>
           <Select value={statusFilter} onValueChange={setStatusFilter}>
@@ -54,6 +76,26 @@ const PurchasesList: React.FC = () => {
               <SelectItem value="posted">{t('Bokförd', 'Posted')}</SelectItem>
             </SelectContent>
           </Select>
+          <Select value={supplierFilter} onValueChange={updateSupplierFilter}>
+            <SelectTrigger className="w-72">
+              <SelectValue placeholder={t('Alla leverantörer', 'All suppliers')} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t('Alla leverantörer', 'All suppliers')}</SelectItem>
+              {suppliers?.map((supplier) => (
+                <SelectItem key={supplier.id} value={supplier.id}>{supplier.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {selectedSupplierName && (
+            <button
+              type="button"
+              onClick={() => updateSupplierFilter('all')}
+              className="text-sm text-primary hover:underline"
+            >
+              {t('Rensa leverantör', 'Clear supplier')}: {selectedSupplierName}
+            </button>
+          )}
         </div>
 
         <Card className="border border-border">

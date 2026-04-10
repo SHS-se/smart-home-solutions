@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -49,7 +50,11 @@ const SuppliersList: React.FC = () => {
                   </TableRow>
                 ) : suppliers?.map(s => (
                   <TableRow key={s.id}>
-                    <TableCell className="font-medium text-sm">{s.name}</TableCell>
+                    <TableCell className="font-medium text-sm">
+                      <Link to={`/accounting/purchases?supplier=${s.id}`} className="text-primary hover:underline">
+                        {s.name}
+                      </Link>
+                    </TableCell>
                     <TableCell className="text-sm text-muted-foreground">{s.org_number || '—'}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">{s.vat_number || '—'}</TableCell>
                     <TableCell className="text-sm">{SUPPLIER_TYPE_LABELS[s.supplier_type] || s.supplier_type}</TableCell>
