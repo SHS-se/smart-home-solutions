@@ -119,6 +119,26 @@ const AMAZON_MARKETPLACE_INVOICE: ParsedInvoice = {
   parserReviewReasons: [],
 };
 
+const MNU_INVOICE: ParsedInvoice = {
+  supplierName: 'a m punkt nu Sverige AB',
+  supplierCountry: 'SE',
+  invoiceNumber: '20533959',
+  invoiceDate: '2026-03-11',
+  dueDate: null,
+  grossAmount: 865,
+  netAmount: 692,
+  vatAmount: 173,
+  vatRate: 25,
+  currency: 'SEK',
+  orgNumber: '556871-8133',
+  vatNumber: 'SE556871813301',
+  description: 'Aqara Aqara Temperatur',
+  confidence: {},
+  fingerprint: { id: 'mnu_invoice', label: 'M.nu invoice', recognized: true },
+  parserReviewRequired: false,
+  parserReviewReasons: [],
+};
+
 Deno.test('inferSupplierMetadata classifies VAT-numbered EU suppliers correctly', () => {
   const inferred = inferSupplierMetadata(STRIPE_INVOICE);
 
@@ -158,6 +178,15 @@ Deno.test('inferVatTreatment classifies Swedish VAT invoices as domestic deducti
   const vatTreatment = inferVatTreatment({
     parsedInvoice: AMAZON_INVOICE,
     extractedText: 'Moms # SE516412220101',
+  });
+
+  assertEqual(vatTreatment, 'domestic_deductible', 'vatTreatment');
+});
+
+Deno.test('inferVatTreatment treats M.nu invoices as domestic deductible', () => {
+  const vatTreatment = inferVatTreatment({
+    parsedInvoice: MNU_INVOICE,
+    extractedText: 'Momsreg.nr SE556871813301 Moms (25%) 173.00 :-',
   });
 
   assertEqual(vatTreatment, 'domestic_deductible', 'vatTreatment');

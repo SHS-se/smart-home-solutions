@@ -121,6 +121,8 @@ const FIELD_STOPS = [
   'Leveransadress',
   'Beställningsinformation',
   'Beskrivning',
+  'Kundnummer',
+  'Betalning',
   'Account Number',
   'Invoice Number',
   'Invoice Date',
@@ -168,7 +170,7 @@ const NET_KW = [
   /summa\s*exkl/i,
 ];
 const AMOUNT_RE = /-?\d[\d\s.,]*\d|-?\d/g;
-const MONEY_RE = /-?\d[\d\s.,]*\d\s*(?:kr|sek|€|eur|\$|usd)?/gi;
+const MONEY_RE = /-?\d[\d\s.,]*\d\s*(?::-\b|kr|sek|€|eur|\$|usd)?/gi;
 const COMPANY_SUFFIX_RE = /([A-ZÅÄÖ][A-Za-zÅÄÖåäö0-9&.,'’\- ]{1,120}?(?:AB|ApS|AS|BV|Corp\.?|Corporation|GmbH|Inc\.?|Incorporated|Limited|LLC|Ltd\.?|Oy|PBC|PLC|S\.?A\.?R\.?L\.?|S\.?R\.?L\.?))(?:\s|$)/i;
 const VAT_NUMBER_RE = /\b([A-Z]{2}\s?[A-Z0-9]{2,14})\b/i;
 const SUPPLIER_COUNTRY_CODE_SET = new Set([
@@ -212,6 +214,11 @@ const KNOWN_INVOICE_FINGERPRINTS: Array<{
     id: 'stripe_tax_invoice',
     label: 'Stripe tax invoice',
     match: (text) => /tax invoice/i.test(text) && /stripe vat number/i.test(text) && /service month/i.test(text),
+  },
+  {
+    id: 'mnu_invoice',
+    label: 'M.nu invoice',
+    match: (text) => /info@m\.nu/i.test(text) && /fakturanr\/order-id/i.test(text) && /momsreg\.nr/i.test(text),
   },
   {
     id: 'amazon_sweden_invoice',
@@ -330,6 +337,7 @@ function parseAmount(text: string): number | null {
   let c = text
     .replace(/\u00a0/g, ' ')
     .replace(/(?:kr|sek|eur|usd|€|\$)/gi, '')
+    .replace(/:-/g, '')
     .replace(/\s/g, '')
     .trim();
   if (!c) return null;
@@ -563,12 +571,14 @@ function inferCurrency(text: string): string | null {
   if (currencyCounts.USD > 0 && currencyCounts.USD >= currencyCounts.SEK && currencyCounts.USD >= currencyCounts.EUR) return 'USD';
   if (currencyCounts.EUR > 0 && currencyCounts.EUR >= currencyCounts.SEK) return 'EUR';
   if (currencyCounts.SEK > 0) return 'SEK';
+  if (/:-/.test(text)) return 'SEK';
   return null;
 }
 
 function extractSupplierName(lines: string[], normalizedText: string): string | null {
   const openAiHeaderMatch = normalizedText.match(/OpenAI OpCo,\s*LLC/i);
   if (openAiHeaderMatch) return 'OpenAI OpCo, LLC';
+  if (/info@m\.nu/i.test(normalizedText)) return 'a m punkt nu Sverige AB';
   if (/support@lovable\.dev/i.test(normalizedText) && /\blovable\b/i.test(normalizedText)) {
     return 'Lovable Labs Incorporated';
   }
@@ -625,6 +635,9 @@ function extractSupplierName(lines: string[], normalizedText: string): string | 
 }
 
 function extractSupplierCountry(text: string): string | null {
+  if (/info@m\.nu/i.test(text)) return 'SE';
+  if (/stripe payments europe,\s*limited/i.test(text) && /ireland/i.test(text)) return 'IE';
+
   const sellerSection = extractSellerSection(text);
   if (!sellerSection) return null;
 
@@ -659,7 +672,7 @@ function extractSupplierVatNumber(text: string, supplierName: string | null): st
 
   const vatValue = extractLabelValue(
     text,
-    ['VAT Number', 'VAT No', 'VAT Nr', 'Stripe VAT Number', 'VAT ID', 'momsnummer', 'OpenAI VAT', 'EU OSS VAT'],
+    ['VAT Number', 'VAT No', 'VAT Nr', 'Stripe VAT Number', 'VAT ID', 'momsnummer', 'Momsreg.nr', 'Momsregnr', 'OpenAI VAT', 'EU OSS VAT'],
   );
   if (vatValue) {
     const vatMatch = vatValue.match(VAT_NUMBER_RE);
@@ -686,7 +699,7 @@ function extractSupplierVatNumber(text: string, supplierName: string | null): st
 }
 
 function extractInvoiceNumber(text: string): string | null {
-  const direct = extractLabelValue(text, ['Invoice Number', 'Invoice No', 'Invoice #', 'Fakturanr', 'Fakturanummer']);
+  const direct = extractLabelValue(text, ['Invoice Number', 'Invoice No', 'Invoice #', 'Fakturanr/Order-id', 'Fakturanr', 'Fakturanummer']);
   if (direct) {
     const compact = direct.replace(/\u0000/g, ' ').replace(/\s+/g, ' ').trim();
     const multiPartToken = compact.match(/[A-Z0-9][A-Z0-9._/-]*(?:\s+[A-Z0-9][A-Z0-9._/-]*){0,3}/i);
@@ -711,6 +724,12 @@ function extractDate(text: string, labels: string[]): string | null {
 }
 
 function extractProductName(text: string): string | null {
+  const mnuMatch = text.match(/Art\.nr:\s+Namn \/ Färg\s+Typ:\s+Pris\s+Moms\s+Summa\s+\S+\s+\d+\s+\S+\s+(.+?)\s+-\s+\d+st à/i);
+  if (mnuMatch) {
+    const productName = cleanProductName(mnuMatch[1]);
+    return productName || null;
+  }
+
   const genericEnglishMatch = text.match(/Description\s+Qty\s+Unit price\s+Tax\s+Amount\s+(.+?)\s+\d+\s+(?:€|\$|kr|SEK|EUR|USD)/i);
   if (genericEnglishMatch) {
     const productName = cleanProductName(genericEnglishMatch[1]);
@@ -751,6 +770,21 @@ function extractSwedishVatSummary(text: string): { vatRate: number | null; netAm
     vatRate: Number(match[1]),
     netAmount: parseAmount(`${match[2]} kr`),
     vatAmount: parseAmount(`${match[3]} kr`),
+  };
+}
+
+function extractSwedishSimpleInvoiceSummary(text: string): { vatRate: number | null; netAmount: number | null; vatAmount: number | null; grossAmount: number | null } | null {
+  const netMatch = text.match(/Netto\s*:?\s*([\d\s.,]+)\s*:-/i);
+  const vatMatch = text.match(/Moms\s*\((\d{1,2})%\)\s*:?\s*([\d\s.,]+)\s*:-/i);
+  const grossMatch = text.match(/Summa:\s*([\d\s.,]+)\s*:-/i);
+
+  if (!netMatch && !vatMatch && !grossMatch) return null;
+
+  return {
+    vatRate: vatMatch ? Number(vatMatch[1]) : null,
+    netAmount: netMatch ? parseAmount(netMatch[1]) : null,
+    vatAmount: vatMatch ? parseAmount(vatMatch[2]) : null,
+    grossAmount: grossMatch ? parseAmount(grossMatch[1]) : null,
   };
 }
 
@@ -829,6 +863,7 @@ export function parseInvoiceText(rawText: string): ParsedInvoice {
   if (netAmount !== null) conf.netAmount = 0.9;
 
   const swedishVatSummary = extractSwedishVatSummary(normalizedText);
+  const swedishSimpleInvoiceSummary = extractSwedishSimpleInvoiceSummary(normalizedText);
   const inclusiveVatSummary = extractInclusiveVatSummary(normalizedText);
   if (swedishVatSummary) {
     if (netAmount === null && swedishVatSummary.netAmount !== null) {
@@ -838,6 +873,20 @@ export function parseInvoiceText(rawText: string): ParsedInvoice {
     if (vatAmount === null && swedishVatSummary.vatAmount !== null) {
       vatAmount = swedishVatSummary.vatAmount;
       conf.vatAmount = 0.95;
+    }
+  }
+  if (swedishSimpleInvoiceSummary) {
+    if (netAmount === null && swedishSimpleInvoiceSummary.netAmount !== null) {
+      netAmount = swedishSimpleInvoiceSummary.netAmount;
+      conf.netAmount = 0.95;
+    }
+    if (vatAmount === null && swedishSimpleInvoiceSummary.vatAmount !== null) {
+      vatAmount = swedishSimpleInvoiceSummary.vatAmount;
+      conf.vatAmount = 0.95;
+    }
+    if (grossAmount === null && swedishSimpleInvoiceSummary.grossAmount !== null) {
+      grossAmount = swedishSimpleInvoiceSummary.grossAmount;
+      conf.grossAmount = 0.95;
     }
   }
   if (inclusiveVatSummary) {
@@ -896,7 +945,7 @@ export function parseInvoiceText(rawText: string): ParsedInvoice {
     }
   }
   if (vatRate === null) {
-    vatRate = swedishVatSummary?.vatRate ?? inclusiveVatSummary?.vatRate ?? null;
+    vatRate = swedishVatSummary?.vatRate ?? swedishSimpleInvoiceSummary?.vatRate ?? inclusiveVatSummary?.vatRate ?? null;
   }
 
   const description = extractDescription(supplierName, normalizedText);
