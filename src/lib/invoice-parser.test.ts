@@ -26,6 +26,7 @@ const OPENAI_RAW_TEXT_0002 = `Page 1 of 1  Invoice  Invoice number   56FB0333  0
 const LOVABLE_RAW_TEXT = `Page 1 of 1  Invoice  Invoice number   NQLFVPGN 0005  Date of issue   January 28, 2026 Date due   January 28, 2026  Lovable Labs Incorporated  1111b South Governors Avenue Dover, Delaware 19904 United States support@lovable.dev  Bill to  Philip Cheong Porfyrvägen 10 SE 187 34 Täby Sweden phio@philbert.io  €15.00 due January 28, 2026  Pay online  Credit Top-Up - 50 Credits  Description   Qty   Unit price   Tax   Amount  Build Credit Top-up Pro   50   €0.30   25% incl. (on €12.00 €15.00  Subtotal   €15.00 Total excluding tax   €12.00 VAT - Sweden 25% incl. on €12.00 €3.00 Total   €15.00  Amount due   €15.00`;
 
 const LOVABLE_RAW_TEXT_WITH_NUL = `Page 1 of 1  Invoice  Invoice number   NQLFVPGN \u0000 0006  Date of issue   January 29, 2026 Date due   January 29, 2026  Lovable Labs Incorporated  1111b South Governors Avenue Dover, Delaware 19904 United States support@lovable.dev  Bill to  Philip Cheong Porfyrvägen 10 SE \u0000 187 34 Täby Sweden phio@philbert.io  €15.00 due January 29, 2026  Pay online  Credit Top-Up - 50 Credits  Description   Qty   Unit price   Tax   Amount  Build Credit Top-up Pro   50   €0.30   25% incl. (on €12.00 \u0000  €15.00  Subtotal   €15.00 Total excluding tax   €12.00 VAT - Sweden   \u0000 25% incl. on €12.00 \u0000   €3.00 Total   €15.00  Amount due   €15.00`;
+const ANTHROPIC_RAW_TEXT = `Invoice Invoice number DSUQQKNL-0001 Date of issue March 26, 2026 Date due March 26, 2026 Anthropic, PBC 548 Market Street PMB 90375 San Francisco, California 94104 United States support@anthropic.com Bill to Phil's Individual Org Porfyrvägen 10 SE-187 34 Täby Sweden phio@philbert.io $12.50 USD due March 26, 2026 Pay online While we prefer electronic payment methods, any checks must be sent to the address below, NOT to our San Francisco office. PAYMENT ADDRESS: Anthropic, PBC P.O. Box 104477 Pasadena, CA 91189-4477 Description Qty Unit price Tax Amount One-time credit purchase 1 $10.00 25% $10.00 Subtotal $10.00 Total excluding tax $10.00 VAT - Sweden (25% on $10.00) $2.50 Total $12.50 Amount due $12.50 USD Page 1 of 1`;
 const UNKNOWN_LAYOUT_RAW_TEXT = `Supplier invoice Example Parts AB Reference 7721 Document date 2026-04-10 Customer Smart Home Solutions Total amount 1 245,00 kr`;
 
 Deno.test('parseInvoiceText extracts Stripe tax invoice fields from flattened PDF text', () => {
@@ -170,6 +171,23 @@ Deno.test('parseInvoiceText ignores embedded NUL characters in Lovable PDF text 
   assertEqual(parsed.vatRate, 25, 'vatRate');
   assertEqual(parsed.description, 'Build Credit Top-up Pro', 'description');
   assertEqual(parsed.fingerprint.id, 'lovable_invoice', 'fingerprint');
+  assertEqual(parsed.parserReviewRequired, false, 'parserReviewRequired');
+});
+
+Deno.test('parseInvoiceText extracts Anthropic invoice fields and recognizes the layout', () => {
+  const parsed = parseInvoiceText(ANTHROPIC_RAW_TEXT);
+
+  assertEqual(parsed.supplierName, 'Anthropic, PBC', 'supplierName');
+  assertEqual(parsed.supplierCountry, 'US', 'supplierCountry');
+  assertEqual(parsed.invoiceNumber, 'DSUQQKNL-0001', 'invoiceNumber');
+  assertEqual(parsed.invoiceDate, '2026-03-26', 'invoiceDate');
+  assertEqual(parsed.currency, 'USD', 'currency');
+  assertEqual(parsed.grossAmount, 12.5, 'grossAmount');
+  assertEqual(parsed.netAmount, 10, 'netAmount');
+  assertEqual(parsed.vatAmount, 2.5, 'vatAmount');
+  assertEqual(parsed.vatRate, 25, 'vatRate');
+  assertEqual(parsed.description, 'One-time credit purchase', 'description');
+  assertEqual(parsed.fingerprint.id, 'anthropic_invoice', 'fingerprint');
   assertEqual(parsed.parserReviewRequired, false, 'parserReviewRequired');
 });
 

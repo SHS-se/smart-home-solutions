@@ -169,7 +169,7 @@ const NET_KW = [
 ];
 const AMOUNT_RE = /-?\d[\d\s.,]*\d|-?\d/g;
 const MONEY_RE = /-?\d[\d\s.,]*\d\s*(?:kr|sek|€|eur|\$|usd)?/gi;
-const COMPANY_SUFFIX_RE = /([A-ZÅÄÖ][A-Za-zÅÄÖåäö0-9&.,'’\- ]{1,120}?(?:AB|ApS|AS|BV|Corp\.?|Corporation|GmbH|Inc\.?|Incorporated|Limited|LLC|Ltd\.?|Oy|PLC|S\.?A\.?R\.?L\.?|S\.?R\.?L\.?))(?:\s|$)/i;
+const COMPANY_SUFFIX_RE = /([A-ZÅÄÖ][A-Za-zÅÄÖåäö0-9&.,'’\- ]{1,120}?(?:AB|ApS|AS|BV|Corp\.?|Corporation|GmbH|Inc\.?|Incorporated|Limited|LLC|Ltd\.?|Oy|PBC|PLC|S\.?A\.?R\.?L\.?|S\.?R\.?L\.?))(?:\s|$)/i;
 const VAT_NUMBER_RE = /\b([A-Z]{2}\s?[A-Z0-9]{2,14})\b/i;
 const SUPPLIER_COUNTRY_CODE_SET = new Set([
   ...['AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR', 'DE', 'GR', 'HU', 'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL', 'PL', 'PT', 'RO', 'SK', 'SI', 'ES', 'SE'],
@@ -230,6 +230,11 @@ const KNOWN_INVOICE_FINGERPRINTS: Array<{
     id: 'openai_invoice',
     label: 'OpenAI invoice',
     match: (text) => /openai opco,\s*llc/i.test(text) && /openai vat/i.test(text) && /pay online/i.test(text),
+  },
+  {
+    id: 'anthropic_invoice',
+    label: 'Anthropic invoice',
+    match: (text) => /anthropic,\s*pbc/i.test(text) && /payment address:/i.test(text) && /pay online/i.test(text),
   },
   {
     id: 'lovable_invoice',
@@ -738,7 +743,7 @@ function extractSwedishVatSummary(text: string): { vatRate: number | null; netAm
 
 function extractInclusiveVatSummary(text: string): { vatRate: number | null; netAmount: number | null; vatAmount: number | null } | null {
   const match = text.match(
-    /VAT(?:\s*-\s*[A-Za-zÅÄÖåäö]+)?\s+\(?\s*(\d{1,2})%\s*incl\.?\s*on\s+((?:€|\$)?[\d\s.,]+(?:\s*(?:kr|sek|eur|usd))?)\s*\)?\s+((?:€|\$)?[\d\s.,]+(?:\s*(?:kr|sek|eur|usd))?)/i,
+    /VAT(?:\s*-\s*[A-Za-zÅÄÖåäö]+)?\s+\(?\s*(\d{1,2})%\s*(?:incl\.?\s*)?on\s+((?:€|\$)?[\d\s.,]+(?:\s*(?:kr|sek|eur|usd))?)\s*\)?\s+((?:€|\$)?[\d\s.,]+(?:\s*(?:kr|sek|eur|usd))?)/i,
   );
   if (!match) return null;
 

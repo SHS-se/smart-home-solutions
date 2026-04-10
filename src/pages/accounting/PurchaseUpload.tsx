@@ -104,7 +104,7 @@ const PurchaseUpload: React.FC = () => {
         nextResults.push({
           fileName: file.name,
           purchaseId: createdDraft.purchaseId,
-          supplierName: parsedInvoice.supplierName,
+          supplierName: parsedInvoice.fingerprint.recognized ? parsedInvoice.supplierName : null,
           invoiceNumber: parsedInvoice.invoiceNumber,
           parserFingerprintLabel: createdDraft.parserFingerprintLabel,
           parserReviewRequired: createdDraft.parserReviewRequired,

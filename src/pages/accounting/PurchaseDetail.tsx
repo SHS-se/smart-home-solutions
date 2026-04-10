@@ -1,5 +1,5 @@
 import React from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import type { Tables } from '@/integrations/supabase/types';
@@ -14,6 +14,17 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import {
   PURCHASE_STATUS_LABELS, PURCHASE_STATUS_LABELS_EN, PURCHASE_STATUS_COLORS,
   PAYMENT_SOURCE_LABELS, PAYMENT_SOURCE_LABELS_EN,
@@ -31,7 +42,7 @@ import {
 } from '@/lib/accounting-fx';
 import { allocateNextVerificationNumber } from '@/lib/verification-number';
 import { toast } from 'sonner';
-import { ArrowLeft, AlertTriangle, Eye, CheckCircle, ChevronLeft, ChevronRight, Plus } from 'lucide-react';
+import { ArrowLeft, AlertTriangle, Eye, CheckCircle, ChevronLeft, ChevronRight, Plus, Trash2 } from 'lucide-react';
 
 const PURCHASE_DOCUMENT_BUCKET = 'purchase-documents';
 
@@ -81,6 +92,7 @@ function normalizePurchaseDocumentPath(rawPath: string | null | undefined): stri
 
 const PurchaseDetail: React.FC = () => {
   const { purchaseId } = useParams<{ purchaseId: string }>();
+  const navigate = useNavigate();
   const { user } = useAuth();
   const { t, language } = useLanguage();
   const queryClient = useQueryClient();
@@ -168,6 +180,42 @@ const PurchaseDetail: React.FC = () => {
       if (error) throw error;
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['acc-purchase-lines', purchaseId] }),
+  });
+
+  const deleteDraft = useMutation({
+    mutationFn: async () => {
+      if (!purchase) throw new Error('Purchase missing');
+      if (purchase.status === 'posted') {
+        throw new Error(t('Bokförda inköp kan inte raderas', 'Posted purchases cannot be deleted'));
+      }
+
+      if (normalizedDocumentPath) {
+        const { error: storageError } = await supabase.storage
+          .from(PURCHASE_DOCUMENT_BUCKET)
+          .remove([normalizedDocumentPath]);
+        if (storageError) {
+          console.warn('Failed to remove purchase document during draft deletion', {
+            purchaseId: purchase.id,
+            normalizedPath: normalizedDocumentPath,
+            error: storageError,
+          });
+        }
+      }
+
+      const { error } = await supabase
+        .from('acc_purchases')
+        .delete()
+        .eq('id', purchase.id)
+        .eq('status', 'draft');
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['acc-purchases'] });
+      queryClient.invalidateQueries({ queryKey: ['acc-purchase-draft-nav'] });
+      toast.success(t('Utkast raderat', 'Draft deleted'));
+      navigate('/accounting/purchases');
+    },
+    onError: (error: Error) => toast.error(error.message),
   });
 
   const postPurchase = useMutation({
@@ -585,9 +633,38 @@ const PurchaseDetail: React.FC = () => {
             </Card>
 
             {purchase.status !== 'posted' && (
-              <Button className="w-full" disabled={!canPost || postPurchase.isPending} onClick={() => postPurchase.mutate()}>
-                {postPurchase.isPending ? t('Bokför...', 'Posting...') : t('Bokför faktura', 'Post invoice')}
-              </Button>
+              <div className="space-y-3">
+                <Button className="w-full" disabled={!canPost || postPurchase.isPending} onClick={() => postPurchase.mutate()}>
+                  {postPurchase.isPending ? t('Bokför...', 'Posting...') : t('Bokför faktura', 'Post invoice')}
+                </Button>
+                {isDraftPurchase && (
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button variant="destructive" className="w-full" disabled={deleteDraft.isPending}>
+                        <Trash2 className="w-4 h-4 mr-2" />
+                        {deleteDraft.isPending ? t('Raderar...', 'Deleting...') : t('Radera utkast', 'Delete draft')}
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>{t('Radera utkast?', 'Delete draft?')}</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          {t(
+                            'Det här tar bort utkastet och det uppladdade dokumentet. Bokförda inköp påverkas inte.',
+                            'This removes the draft and the uploaded document. Posted purchases are not affected.',
+                          )}
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>{t('Avbryt', 'Cancel')}</AlertDialogCancel>
+                        <AlertDialogAction onClick={() => deleteDraft.mutate()}>
+                          {t('Radera', 'Delete')}
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                )}
+              </div>
             )}
 
             {purchase.status === 'posted' && (

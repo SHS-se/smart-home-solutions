@@ -52,8 +52,10 @@ export function buildPurchaseDraftDefaults(params: {
   const form = createEmptyPurchaseForm();
   const parsedInvoice = params.parsedInvoice;
   if (!parsedInvoice) return form;
+  const trustSupplierIdentity = parsedInvoice.fingerprint.recognized;
+  const trustDerivedDescription = parsedInvoice.fingerprint.recognized;
 
-  if (parsedInvoice.supplierName) {
+  if (trustSupplierIdentity && parsedInvoice.supplierName) {
     const inferredSupplier = inferSupplierMetadata(parsedInvoice);
     const existingSupplier = findExistingSupplier(params.suppliers || [], {
       supplierName: parsedInvoice.supplierName,
@@ -79,7 +81,9 @@ export function buildPurchaseDraftDefaults(params: {
   if (parsedInvoice.vatAmount != null) form.vatAmount = String(parsedInvoice.vatAmount);
   if (parsedInvoice.netAmount != null) form.netAmount = String(parsedInvoice.netAmount);
 
-  const description = parsedInvoice.description || generateDescription(parsedInvoice.supplierName, params.extractedText || '');
+  const description = trustDerivedDescription
+    ? (parsedInvoice.description || generateDescription(parsedInvoice.supplierName, params.extractedText || ''))
+    : null;
   if (description) form.description = description;
 
   return form;
@@ -92,6 +96,7 @@ export async function createPurchaseDraft(params: CreatePurchaseDraftParams): Pr
   let supplierId = values.supplierId || null;
   let supplierCountry: string | null = null;
   let supplierType: string | null = null;
+  const shouldAutoCreateSupplier = parsedInvoice?.fingerprint.recognized !== false;
 
   if (supplierId) {
     const selectedSupplier = suppliers.find((supplier) => supplier.id === supplierId);
@@ -99,7 +104,7 @@ export async function createPurchaseDraft(params: CreatePurchaseDraftParams): Pr
     supplierType = selectedSupplier?.supplier_type || null;
   }
 
-  if (!supplierId && values.newSupplierName.trim()) {
+  if (shouldAutoCreateSupplier && !supplierId && values.newSupplierName.trim()) {
     const inferredSupplier = inferSupplierMetadata(parsedInvoice || null);
     const existingSupplier = findExistingSupplier(suppliers, {
       supplierName: values.newSupplierName,
