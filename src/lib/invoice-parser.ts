@@ -244,7 +244,12 @@ const KNOWN_INVOICE_FINGERPRINTS: Array<{
   {
     id: 'lovable_invoice',
     label: 'Lovable invoice',
-    match: (text) => /lovable labs incorporated/i.test(text) && /credit top-up - 50 credits/i.test(text) && /pay online/i.test(text),
+    match: (text) => (
+      /lovable labs incorporated/i.test(text) &&
+      /pay online/i.test(text) &&
+      /invoice number/i.test(text) &&
+      (/\bamount due\b/i.test(text) || /€[\d.,]+\s+due\b/i.test(text))
+    ),
   },
   {
     id: 'ubiquiti_receipt_invoice',
