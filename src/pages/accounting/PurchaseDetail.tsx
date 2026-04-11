@@ -376,7 +376,7 @@ const PurchaseDetail: React.FC = () => {
           <ArrowLeft className="w-4 h-4" /> {t('Tillbaka till lista', 'Back to list')}
         </Link>
 
-        <div className="flex items-start justify-between gap-4">
+        <div className="grid gap-4 lg:grid-cols-[1fr_auto_1fr] lg:items-start">
           <div className="space-y-1">
             <div className="flex items-center gap-3">
               <h1 className="text-2xl font-bold text-foreground">{t('Granska inköp', 'Review purchase')}</h1>
@@ -388,38 +388,38 @@ const PurchaseDetail: React.FC = () => {
               {supplierName || t('Okänd leverantör', 'Unknown supplier')} · {purchase.document_date}
             </p>
           </div>
-          <div className="flex flex-wrap items-center justify-end gap-3">
+          <div className="flex flex-col items-center justify-center gap-2 lg:pt-1">
             {isDraftPurchase && currentDraftIndex >= 0 && (
               <>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center justify-center gap-2">
                   {previousDraftId ? (
-                    <Button variant="outline" size="sm" asChild>
+                    <Button variant="outline" size="sm" className="w-32 justify-center" asChild>
                       <Link to={`/accounting/purchases/${previousDraftId}`}>
                         <ChevronLeft className="w-4 h-4 mr-1" />
                         {t('Föregående', 'Previous')}
                       </Link>
                     </Button>
                   ) : (
-                    <Button variant="outline" size="sm" disabled>
+                    <Button variant="outline" size="sm" className="w-32 justify-center" disabled>
                       <ChevronLeft className="w-4 h-4 mr-1" />
                       {t('Föregående', 'Previous')}
                     </Button>
                   )}
                   {nextDraftId ? (
-                    <Button variant="outline" size="sm" asChild>
+                    <Button variant="outline" size="sm" className="w-32 justify-center" asChild>
                       <Link to={`/accounting/purchases/${nextDraftId}`}>
                         {t('Nästa', 'Next')}
                         <ChevronRight className="w-4 h-4 ml-1" />
                       </Link>
                     </Button>
                   ) : (
-                    <Button variant="outline" size="sm" disabled>
+                    <Button variant="outline" size="sm" className="w-32 justify-center" disabled>
                       {t('Nästa', 'Next')}
                       <ChevronRight className="w-4 h-4 ml-1" />
                     </Button>
                   )}
                 </div>
-                <span className="text-sm text-muted-foreground">
+                <span className="text-sm text-center text-muted-foreground">
                   {t(
                     `Utkast ${currentDraftIndex + 1} av ${draftIds.length}`,
                     `Draft ${currentDraftIndex + 1} of ${draftIds.length}`,
@@ -427,6 +427,8 @@ const PurchaseDetail: React.FC = () => {
                 </span>
               </>
             )}
+          </div>
+          <div className="flex flex-wrap items-center justify-start gap-3 lg:justify-end">
             {purchase.status !== 'posted' && (
               <>
                 <Button
