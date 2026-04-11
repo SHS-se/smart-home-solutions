@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
@@ -96,6 +96,11 @@ const PurchaseDetail: React.FC = () => {
   const { user } = useAuth();
   const { t, language } = useLanguage();
   const queryClient = useQueryClient();
+  const [saveState, setSaveState] = useState({
+    isDirty: false,
+    isPending: false,
+    isBlocked: false,
+  });
 
   const statusLabels = language === 'sv' ? PURCHASE_STATUS_LABELS : PURCHASE_STATUS_LABELS_EN;
   const paymentLabels = language === 'sv' ? PAYMENT_SOURCE_LABELS : PAYMENT_SOURCE_LABELS_EN;
@@ -341,6 +346,7 @@ const PurchaseDetail: React.FC = () => {
   const currentDraftIndex = isDraftPurchase ? draftIds.indexOf(purchase.id) : -1;
   const previousDraftId = currentDraftIndex > 0 ? draftIds[currentDraftIndex - 1] : null;
   const nextDraftId = currentDraftIndex >= 0 && currentDraftIndex < draftIds.length - 1 ? draftIds[currentDraftIndex + 1] : null;
+  const canSave = purchase.status !== 'posted' && saveState.isDirty && !saveState.isPending && !saveState.isBlocked;
 
   const journalPreview = lines && lines.length > 0
     ? buildJournalPreview(
@@ -366,7 +372,7 @@ const PurchaseDetail: React.FC = () => {
   return (
     <AccountingLayout>
       <div className="space-y-6">
-        <Link to="/accounting/purchases" className="text-primary text-sm hover:underline flex items-center gap-1">
+        <Link to="/accounting/purchases" className="inline-flex w-fit items-center gap-1 text-primary text-sm hover:underline">
           <ArrowLeft className="w-4 h-4" /> {t('Tillbaka till lista', 'Back to list')}
         </Link>
 
@@ -424,13 +430,17 @@ const PurchaseDetail: React.FC = () => {
             {purchase.status !== 'posted' && (
               <>
                 <Button
-                  variant="outline"
+                  variant={saveState.isDirty ? 'default' : 'outline'}
+                  className={saveState.isDirty
+                    ? 'min-w-24 border border-warning/60 bg-warning text-warning-foreground hover:bg-warning/90'
+                    : 'min-w-24'}
+                  disabled={!canSave}
                   onClick={() => {
                     const submitEvent = new CustomEvent('purchase-detail-save');
                     window.dispatchEvent(submitEvent);
                   }}
                 >
-                  {t('Spara', 'Save')}
+                  {saveState.isPending ? t('Sparar...', 'Saving...') : t('Spara', 'Save')}
                 </Button>
                 <Button className="min-w-24" disabled={!canPost || postPurchase.isPending} onClick={() => postPurchase.mutate()}>
                   {postPurchase.isPending ? t('Bokför...', 'Posting...') : t('Bokför', 'Post')}
@@ -438,7 +448,7 @@ const PurchaseDetail: React.FC = () => {
                 {isDraftPurchase && (
                   <AlertDialog>
                     <AlertDialogTrigger asChild>
-                      <Button variant="destructive" disabled={deleteDraft.isPending}>
+                      <Button variant="destructive" className="min-w-24" disabled={deleteDraft.isPending}>
                         <Trash2 className="w-4 h-4 mr-2" />
                         {deleteDraft.isPending ? t('Raderar...', 'Deleting...') : t('Radera', 'Delete')}
                       </Button>
@@ -624,6 +634,7 @@ const PurchaseDetail: React.FC = () => {
               title={t('Utkastdetaljer', 'Draft details')}
               submitLabel={t('Spara', 'Save')}
               hideSubmitButton
+              onSaveStateChange={setSaveState}
             />
 
             <Card className="border border-border">

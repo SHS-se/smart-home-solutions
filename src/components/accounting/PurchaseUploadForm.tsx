@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import type { Tables } from '@/integrations/supabase/types';
@@ -48,7 +48,56 @@ interface Props {
   title?: string;
   submitLabel?: string;
   hideSubmitButton?: boolean;
+  onSaveStateChange?: (state: {
+    isDirty: boolean;
+    isPending: boolean;
+    isBlocked: boolean;
+  }) => void;
   onSaved?: (purchaseId: string) => void;
+}
+
+function normalizeComparableText(value: string): string {
+  return value.trim();
+}
+
+function normalizeComparableAmount(value: string): string {
+  const parsed = parseAmount(value);
+  if (parsed == null) return '';
+  return String(parsed);
+}
+
+function buildComparableDraftState(params: {
+  supplierId: string;
+  newSupplierName: string;
+  invoiceNumber: string;
+  documentType: string;
+  documentDate: string;
+  dueDate: string;
+  currency: string;
+  grossAmount: string;
+  vatAmount: string;
+  netAmount: string;
+  paymentSource: string;
+  description: string;
+  manualExchangeRate: string;
+  manualOverrideReason: string;
+}) {
+  return {
+    supplierId: normalizeComparableText(params.supplierId),
+    newSupplierName: normalizeComparableText(params.newSupplierName),
+    invoiceNumber: normalizeComparableText(params.invoiceNumber),
+    documentType: normalizeComparableText(params.documentType),
+    documentDate: normalizeComparableText(params.documentDate),
+    dueDate: normalizeComparableText(params.dueDate),
+    currency: normalizeComparableText(params.currency).toUpperCase(),
+    grossAmount: normalizeComparableAmount(params.grossAmount),
+    vatAmount: normalizeComparableAmount(params.vatAmount),
+    netAmount: normalizeComparableAmount(params.netAmount),
+    paymentSource: normalizeComparableText(params.paymentSource),
+    description: normalizeComparableText(params.description),
+    manualExchangeRate: normalizeComparableAmount(params.manualExchangeRate),
+    manualOverrideReason: normalizeComparableText(params.manualOverrideReason),
+  };
 }
 
 const PurchaseUploadForm: React.FC<Props> = ({
@@ -62,6 +111,7 @@ const PurchaseUploadForm: React.FC<Props> = ({
   title,
   submitLabel,
   hideSubmitButton = false,
+  onSaveStateChange,
   onSaved,
 }) => {
   const { user, isAdmin } = useAuth();
@@ -243,6 +293,49 @@ const PurchaseUploadForm: React.FC<Props> = ({
     ))
   );
 
+  const baselineDraftState = useMemo(() => {
+    if (!purchase) return null;
+
+    return buildComparableDraftState({
+      supplierId: purchase.supplier_id || '',
+      newSupplierName: '',
+      invoiceNumber: purchase.supplier_invoice_number || extractInvoiceNumberFromNotes(purchase.notes),
+      documentType: purchase.document_type || 'supplier_invoice',
+      documentDate: purchase.document_date || '',
+      dueDate: purchase.due_date || '',
+      currency: purchase.original_currency || purchase.currency || 'SEK',
+      grossAmount: String(Number(purchase.original_gross_amount ?? purchase.gross_amount) || 0),
+      vatAmount: String(Number(purchase.original_vat_amount ?? purchase.vat_amount) || 0),
+      netAmount: String(Number(purchase.original_net_amount ?? purchase.net_amount) || 0),
+      paymentSource: purchase.payment_source || '',
+      description: purchase.description || purchaseLine?.description || '',
+      manualExchangeRate: purchase.exchange_rate_overridden ? String(Number(purchase.exchange_rate) || '') : '',
+      manualOverrideReason: purchase.exchange_rate_override_reason || '',
+    });
+  }, [purchase, purchaseLine]);
+
+  const currentDraftState = useMemo(() => buildComparableDraftState({
+    supplierId: form.supplierId,
+    newSupplierName: form.newSupplierName,
+    invoiceNumber: form.invoiceNumber,
+    documentType: form.documentType,
+    documentDate: form.documentDate,
+    dueDate: form.dueDate,
+    currency: form.currency,
+    grossAmount: form.grossAmount,
+    vatAmount: form.vatAmount,
+    netAmount: form.netAmount,
+    paymentSource: form.paymentSource,
+    description: form.description,
+    manualExchangeRate,
+    manualOverrideReason,
+  }), [form, manualExchangeRate, manualOverrideReason]);
+
+  const isDirty = Boolean(
+    baselineDraftState &&
+    JSON.stringify(currentDraftState) !== JSON.stringify(baselineDraftState),
+  );
+
   const saveDraft = useMutation({
     mutationFn: async () => {
       if (!purchase) {
@@ -411,16 +504,24 @@ const PurchaseUploadForm: React.FC<Props> = ({
   });
 
   useEffect(() => {
+    onSaveStateChange?.({
+      isDirty,
+      isPending: saveDraft.isPending,
+      isBlocked: disabled || saveBlockedByFx,
+    });
+  }, [disabled, isDirty, onSaveStateChange, saveBlockedByFx, saveDraft.isPending]);
+
+  useEffect(() => {
     if (!hideSubmitButton) return undefined;
 
     const handleExternalSave = () => {
-      if (disabled || saveDraft.isPending || saveBlockedByFx) return;
+      if (!isDirty || disabled || saveDraft.isPending || saveBlockedByFx) return;
       saveDraft.mutate();
     };
 
     window.addEventListener('purchase-detail-save', handleExternalSave);
     return () => window.removeEventListener('purchase-detail-save', handleExternalSave);
-  }, [disabled, hideSubmitButton, saveBlockedByFx, saveDraft]);
+  }, [disabled, hideSubmitButton, isDirty, saveBlockedByFx, saveDraft]);
 
   const AutoLabel = ({ text, field }: { text: string; field: string }) => (
     <div className="flex items-center gap-1.5">
