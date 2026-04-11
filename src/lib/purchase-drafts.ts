@@ -17,6 +17,7 @@ import {
   inferSupplierMetadata,
   inferVatTreatment,
   normalizeSupplierInvoiceNumber,
+  preserveSupplierInvoiceNumber,
   resolveSavedPurchaseId,
   type PurchaseFormValues,
 } from './purchase-workflow';
@@ -136,19 +137,19 @@ export async function createPurchaseDraft(params: CreatePurchaseDraftParams): Pr
     }
   }
 
-  const supplierInvoiceNumber = normalizeSupplierInvoiceNumber(values.invoiceNumber);
-  if (supplierId && supplierInvoiceNumber) {
+  const supplierInvoiceNumber = preserveSupplierInvoiceNumber(values.invoiceNumber);
+  const normalizedSupplierInvoiceNumber = normalizeSupplierInvoiceNumber(values.invoiceNumber);
+  if (supplierId && normalizedSupplierInvoiceNumber) {
     const { data: duplicateCandidates, error: duplicateCheckError } = await supabase
       .from('acc_purchases')
       .select('id, supplier_id, supplier_invoice_number')
-      .eq('supplier_id', supplierId)
-      .eq('supplier_invoice_number', supplierInvoiceNumber);
+      .eq('supplier_id', supplierId);
     if (duplicateCheckError) throw duplicateCheckError;
 
     const duplicatePurchaseId = findDuplicatePurchaseId(
       duplicateCandidates || [],
       supplierId,
-      supplierInvoiceNumber,
+      normalizedSupplierInvoiceNumber,
     );
 
     if (duplicatePurchaseId) throw new Error(duplicateInvoiceMessage);

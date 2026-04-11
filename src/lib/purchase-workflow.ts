@@ -62,6 +62,28 @@ export function buildInvoiceNumberNote(invoiceNumber: string): string | null {
   return `Supplier invoice no: ${trimmed}`;
 }
 
+export function preserveSupplierInvoiceNumber(invoiceNumber: string | null | undefined): string | null {
+  const preserved = invoiceNumber?.replace(/\s+/g, ' ').trim() || '';
+  return preserved || null;
+}
+
+export function getDisplaySupplierInvoiceNumber(
+  storedInvoiceNumber: string | null | undefined,
+  notes: string | null | undefined,
+): string {
+  const preservedStoredNumber = preserveSupplierInvoiceNumber(storedInvoiceNumber);
+  const notedInvoiceNumber = preserveSupplierInvoiceNumber(extractInvoiceNumberFromNotes(notes));
+
+  if (
+    notedInvoiceNumber &&
+    normalizeSupplierInvoiceNumber(notedInvoiceNumber) === normalizeSupplierInvoiceNumber(preservedStoredNumber)
+  ) {
+    return notedInvoiceNumber;
+  }
+
+  return notedInvoiceNumber || preservedStoredNumber || '';
+}
+
 export function normalizeSupplierInvoiceNumber(invoiceNumber: string | null | undefined): string | null {
   const normalized = invoiceNumber
     ?.trim()
@@ -205,6 +227,15 @@ export function inferVatTreatment(params: {
 
   if (
     fingerprintId === 'anthropic_invoice' &&
+    vatAmount !== null &&
+    vatAmount > 0 &&
+    /vat\s*-\s*sweden/i.test(text)
+  ) {
+    return 'domestic_deductible';
+  }
+
+  if (
+    fingerprintId === 'lovable_invoice' &&
     vatAmount !== null &&
     vatAmount > 0 &&
     /vat\s*-\s*sweden/i.test(text)

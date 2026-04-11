@@ -58,6 +58,8 @@ const DocumentPreview: React.FC<Props> = ({
       setCurrentPage(1);
       setScale(1.0);
       setAutoScale(true);
+      setNaturalSize({ w: 0, h: 0 });
+      setPageSize({ w: 0, h: 0 });
       return () => URL.revokeObjectURL(url);
     }
 
@@ -65,6 +67,8 @@ const DocumentPreview: React.FC<Props> = ({
     setCurrentPage(1);
     setScale(1.0);
     setAutoScale(true);
+    setNaturalSize({ w: 0, h: 0 });
+    setPageSize({ w: 0, h: 0 });
   }, [file, externalFileUrl]);
 
   useEffect(() => {
@@ -204,9 +208,10 @@ const DocumentPreview: React.FC<Props> = ({
               renderAnnotationLayer={false}
               loading={null}
               onLoadSuccess={(page) => {
+                const viewport = page.getViewport({ scale: 1 });
                 setPageSize({
-                  w: page.originalWidth || page.width,
-                  h: page.originalHeight || page.height,
+                  w: viewport.width,
+                  h: viewport.height,
                 });
               }}
             />

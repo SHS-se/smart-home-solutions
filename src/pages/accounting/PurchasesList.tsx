@@ -18,6 +18,7 @@ import {
   formatSEK,
 } from '@/lib/accounting-utils';
 import { formatCurrencyAmount, isForeignCurrency, normalizeCurrency } from '@/lib/accounting-fx';
+import { getDisplaySupplierInvoiceNumber } from '@/lib/purchase-workflow';
 import { Plus, Filter, ChevronDown, ChevronUp } from 'lucide-react';
 
 type SortKey = 'supplier' | 'invoiceNumber' | 'vatTreatment' | 'documentDate' | 'amount' | 'status';
@@ -71,6 +72,8 @@ const PurchasesList: React.FC = () => {
     items.sort((leftPurchase, rightPurchase) => {
       const leftVatTreatment = (leftPurchase.lines as Array<{ vat_treatment: string }> | null)?.[0]?.vat_treatment || '';
       const rightVatTreatment = (rightPurchase.lines as Array<{ vat_treatment: string }> | null)?.[0]?.vat_treatment || '';
+      const leftInvoiceNumber = getDisplaySupplierInvoiceNumber(leftPurchase.supplier_invoice_number, leftPurchase.notes);
+      const rightInvoiceNumber = getDisplaySupplierInvoiceNumber(rightPurchase.supplier_invoice_number, rightPurchase.notes);
 
       let comparison = 0;
       switch (sortKey) {
@@ -78,7 +81,7 @@ const PurchasesList: React.FC = () => {
           comparison = collator.compare((leftPurchase.supplier as { name?: string } | null)?.name || '', (rightPurchase.supplier as { name?: string } | null)?.name || '');
           break;
         case 'invoiceNumber':
-          comparison = collator.compare(leftPurchase.supplier_invoice_number || '', rightPurchase.supplier_invoice_number || '');
+          comparison = collator.compare(leftInvoiceNumber, rightInvoiceNumber);
           break;
         case 'vatTreatment':
           comparison = collator.compare(
@@ -219,6 +222,7 @@ const PurchasesList: React.FC = () => {
                 ) : sortedPurchases.map((purchase) => {
                   const primaryVatTreatment = (purchase.lines as Array<{ vat_treatment: string }> | null)?.[0]?.vat_treatment || '';
                   const vatTreatmentLabel = vatLabels[primaryVatTreatment as keyof typeof vatLabels] || '—';
+                  const displayInvoiceNumber = getDisplaySupplierInvoiceNumber(purchase.supplier_invoice_number, purchase.notes);
 
                   return (
                   <TableRow
@@ -235,7 +239,7 @@ const PurchasesList: React.FC = () => {
                     }}
                   >
                     <TableCell><span className="text-sm font-medium">{(purchase.supplier as { name?: string } | null)?.name || '—'}</span></TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{purchase.supplier_invoice_number || '—'}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{displayInvoiceNumber || '—'}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">{vatTreatmentLabel}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">{purchase.document_date}</TableCell>
                     <TableCell className="text-right text-sm font-medium">

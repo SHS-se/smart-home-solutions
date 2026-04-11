@@ -6,9 +6,11 @@ import {
   inferSupplierMetadata,
   inferVatTreatment,
   extractInvoiceNumberFromNotes,
+  getDisplaySupplierInvoiceNumber,
   normalizeSupplierName,
   normalizeSupplierInvoiceNumber,
   normalizeVatNumber,
+  preserveSupplierInvoiceNumber,
   resolveSavedPurchaseId,
 } from './purchase-workflow.ts';
 import type { ParsedInvoice } from './invoice-parser.ts';
@@ -93,6 +95,26 @@ const LOVABLE_REVERSE_CHARGE_INVOICE: ParsedInvoice = {
   orgNumber: null,
   vatNumber: 'EU372090612',
   description: 'Pro 1 Feb 12–Mar 12',
+  confidence: {},
+  fingerprint: { id: 'lovable_invoice', label: 'Lovable invoice', recognized: true },
+  parserReviewRequired: false,
+  parserReviewReasons: [],
+};
+
+const LOVABLE_VAT_INVOICE: ParsedInvoice = {
+  supplierName: 'Lovable Labs Incorporated',
+  supplierCountry: 'US',
+  invoiceNumber: 'NQLFVPGN-0001',
+  invoiceDate: '2026-01-12',
+  dueDate: null,
+  grossAmount: 25,
+  netAmount: 20,
+  vatAmount: 5,
+  vatRate: 25,
+  currency: 'EUR',
+  orgNumber: null,
+  vatNumber: null,
+  description: 'Pro 1 Jan 12 – Feb 12',
   confidence: {},
   fingerprint: { id: 'lovable_invoice', label: 'Lovable invoice', recognized: true },
   parserReviewRequired: false,
@@ -233,6 +255,15 @@ Deno.test('inferVatTreatment treats Lovable reverse-charge invoices as reverse c
   assertEqual(vatTreatment, 'reverse_charge', 'vatTreatment');
 });
 
+Deno.test('inferVatTreatment treats Lovable invoices with Swedish VAT as domestic deductible', () => {
+  const vatTreatment = inferVatTreatment({
+    parsedInvoice: LOVABLE_VAT_INVOICE,
+    extractedText: 'VAT - Sweden (25% incl. on €20.00) €5.00',
+  });
+
+  assertEqual(vatTreatment, 'domestic_deductible', 'vatTreatment');
+});
+
 Deno.test('inferSupplierMetadata prefers parsed supplier country over marketplace VAT prefixes', () => {
   const inferred = inferSupplierMetadata({
     supplierName: 'ShenZhenShiYiDuoJinDianZiShangWuYouXianGongSi',
@@ -269,6 +300,11 @@ Deno.test('normalizeSupplierInvoiceNumber trims and uppercases supplier invoice 
   assertEqual(invoiceNumber, 'SE6EK5YAEUI', 'invoiceNumber');
 });
 
+Deno.test('preserveSupplierInvoiceNumber keeps invoice formatting while trimming whitespace', () => {
+  const invoiceNumber = preserveSupplierInvoiceNumber(' NQLFVPGN-0014 ');
+  assertEqual(invoiceNumber, 'NQLFVPGN-0014', 'invoiceNumber');
+});
+
 Deno.test('normalizeSupplierInvoiceNumber removes separators so split invoice numbers still compare correctly', () => {
   const invoiceNumber = normalizeSupplierInvoiceNumber('56FB0333-0001');
   assertEqual(invoiceNumber, '56FB03330001', 'invoiceNumber');
@@ -297,6 +333,15 @@ Deno.test('findDuplicatePurchaseId does not treat OpenAI 0001 and 0002 invoices 
   );
 
   assertEqual(duplicatePurchaseId, null, 'duplicatePurchaseId');
+});
+
+Deno.test('getDisplaySupplierInvoiceNumber prefers the formatted note value when it matches the stored invoice number', () => {
+  const invoiceNumber = getDisplaySupplierInvoiceNumber(
+    'T41QIV6Y20260301',
+    'Supplier invoice no: T41QIV6Y-2026-03-01',
+  );
+
+  assertEqual(invoiceNumber, 'T41QIV6Y-2026-03-01', 'invoiceNumber');
 });
 
 Deno.test('findExistingSupplier prefers VAT-number match before creating a new supplier', () => {

@@ -28,12 +28,13 @@ import { fetchSingleEcbExchangeRate } from '@/lib/ecb-rates';
 import {
   buildInvoiceNumberNote,
   createEmptyPurchaseForm,
-  extractInvoiceNumberFromNotes,
   findExistingSupplier,
   findDuplicatePurchaseId,
+  getDisplaySupplierInvoiceNumber,
   inferSupplierMetadata,
   inferVatTreatment,
   normalizeSupplierInvoiceNumber,
+  preserveSupplierInvoiceNumber,
 } from '@/lib/purchase-workflow';
 import { buildPurchaseDraftDefaults, createPurchaseDraft } from '@/lib/purchase-drafts';
 
@@ -136,7 +137,7 @@ const PurchaseUploadForm: React.FC<Props> = ({
     setForm({
       supplierId: purchase.supplier_id || '',
       newSupplierName: '',
-      invoiceNumber: purchase.supplier_invoice_number || extractInvoiceNumberFromNotes(purchase.notes),
+      invoiceNumber: getDisplaySupplierInvoiceNumber(purchase.supplier_invoice_number, purchase.notes),
       documentType: purchase.document_type || 'supplier_invoice',
       documentDate: purchase.document_date || '',
       dueDate: purchase.due_date || '',
@@ -392,19 +393,19 @@ const PurchaseUploadForm: React.FC<Props> = ({
         }
       }
 
-      const supplierInvoiceNumber = normalizeSupplierInvoiceNumber(form.invoiceNumber);
-      if (supplierId && supplierInvoiceNumber) {
+      const supplierInvoiceNumber = preserveSupplierInvoiceNumber(form.invoiceNumber);
+      const normalizedSupplierInvoiceNumber = normalizeSupplierInvoiceNumber(form.invoiceNumber);
+      if (supplierId && normalizedSupplierInvoiceNumber) {
         const { data: duplicateCandidates, error: duplicateCheckError } = await supabase
           .from('acc_purchases')
           .select('id, supplier_id, supplier_invoice_number')
-          .eq('supplier_id', supplierId)
-          .eq('supplier_invoice_number', supplierInvoiceNumber);
+          .eq('supplier_id', supplierId);
         if (duplicateCheckError) throw duplicateCheckError;
 
         const duplicatePurchaseId = findDuplicatePurchaseId(
           duplicateCandidates || [],
           supplierId,
-          supplierInvoiceNumber,
+          normalizedSupplierInvoiceNumber,
           purchase?.id,
         );
 
