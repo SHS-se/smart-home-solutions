@@ -19,7 +19,7 @@ import {
   roundMoney,
 } from '@/lib/accounting-fx';
 import { toast } from 'sonner';
-import { ArrowLeft, CheckCircle, AlertTriangle, Lock, Download, Upload, Info, FileText } from 'lucide-react';
+import { ArrowLeft, CheckCircle, AlertTriangle, Lock, Download, Upload, Info, FileText, ChevronDown, ChevronRight, ExternalLink } from 'lucide-react';
 
 interface StepProps { number: number; label: string; description: string; status: 'active' | 'done' | 'pending'; }
 
@@ -54,6 +54,7 @@ const VatDeclarationFlow: React.FC = () => {
   const { t, language } = useLanguage();
   const queryClient = useQueryClient();
   const [currentStep, setCurrentStep] = useState(1);
+  const [fxExpanded, setFxExpanded] = useState(true);
 
   const statusLabels = language === 'sv' ? PURCHASE_STATUS_LABELS : PURCHASE_STATUS_LABELS_EN;
 
@@ -114,6 +115,30 @@ const VatDeclarationFlow: React.FC = () => {
   const box06Amount = 0; // domestic output VAT on sales — not yet tracked
   const netVatPosition = roundMoney((box06Amount + rcOutputVat2614) - inputVat2641);
   const rcLineCount = postedPurchases.flatMap((p) => p.lines).filter((l) => l.vat_treatment === 'reverse_charge').length;
+
+  // Per-row data for the foreign purchases validation panel
+  const fxRowData = foreignPurchases.map((purchase) => {
+    const snapshot = getPurchaseExchangeSnapshot(purchase);
+    const purchaseLines = ((purchase as any).lines || []) as Array<any>;
+    const hasRC = purchaseLines.some((l: any) => l.vat_treatment === 'reverse_charge');
+    const hasDomDed = purchaseLines.some((l: any) => l.vat_treatment === 'domestic_deductible');
+    const vatType: 'reverse_charge' | 'domestic_deductible' | 'no_vat' =
+      hasRC ? 'reverse_charge' : hasDomDed ? 'domestic_deductible' : 'no_vat';
+    const rcBaseSek = hasRC ? snapshot.convertedNetSek : 0;
+    const rcVatSek = hasRC
+      ? roundMoney(purchaseLines
+          .filter((l: any) => l.vat_treatment === 'reverse_charge')
+          .reduce((s: number, l: any) => s + roundMoney(Number(l.net_amount) * 0.25), 0))
+      : 0;
+    const inputVatSek = hasDomDed ? snapshot.convertedVatSek : 0;
+    return { purchase, snapshot, vatType, rcBaseSek, rcVatSek, inputVatSek };
+  });
+  const fxTotalRcBase = roundMoney(fxRowData.reduce((s, r) => s + r.rcBaseSek, 0));
+  const fxTotalRcVat = roundMoney(fxRowData.reduce((s, r) => s + r.rcVatSek, 0));
+  const fxTotalInputVat = roundMoney(fxRowData.reduce((s, r) => s + r.inputVatSek, 0));
+  const fxRcCount = fxRowData.filter((r) => r.vatType === 'reverse_charge').length;
+  const fxTotalsMatchDeclaration =
+    Math.abs(fxTotalRcBase - rcBase) < 0.015 && Math.abs(fxTotalRcVat - rcOutputVat2614) < 0.015;
 
   const allLines = postedPurchases.flatMap((p) => p.lines);
   const declarationBoxes = [
@@ -404,58 +429,174 @@ const VatDeclarationFlow: React.FC = () => {
               </CardContent>
             </Card>
 
-            {/* Foreign-currency check */}
+            {/* Foreign purchases validation */}
             {foreignPurchases.length > 0 && (
               <Card className="border border-border">
-                <CardHeader>
-                  <CardTitle>{t('Valutakontroll', 'Foreign-currency check')}</CardTitle>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    {t(
-                      'Dessa inköp visas här så att SEK-omräkningen och rapporteringen av omvänd skattskyldighet kan kontrolleras innan momsögonblicksbilden låses.',
-                      'These purchases are shown here so the SEK conversion and reverse-charge reporting can be checked before locking the VAT snapshot.'
-                    )}
-                  </p>
+                <CardHeader className="pb-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <CardTitle>{t('Utländska inköp (validering)', 'Foreign purchases (validation)')}</CardTitle>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        {t(
+                          'Inköp i EUR/USD visas här för att verifiera valutakurser och omvänd skattskyldighet innan inlämning.',
+                          'These are purchases in EUR/USD. They are shown to verify exchange rates and reverse-charge VAT before submission.'
+                        )}
+                      </p>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setFxExpanded(!fxExpanded)}
+                      className="shrink-0 text-muted-foreground gap-1.5"
+                    >
+                      {fxExpanded
+                        ? <><ChevronDown className="w-4 h-4" />{t('Dölj', 'Collapse')}</>
+                        : <><ChevronRight className="w-4 h-4" />{t('Visa', 'Expand')}</>}
+                    </Button>
+                  </div>
                 </CardHeader>
-                <CardContent>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="text-xs uppercase text-muted-foreground">{t('Datum', 'Date')}</TableHead>
-                        <TableHead className="text-xs uppercase text-muted-foreground">{t('Leverantör', 'Supplier')}</TableHead>
-                        <TableHead className="text-xs uppercase text-muted-foreground">{t('Originalt belopp', 'Original amount')}</TableHead>
-                        <TableHead className="text-xs uppercase text-muted-foreground">{t('Kurs', 'Rate')}</TableHead>
-                        <TableHead className="text-xs uppercase text-muted-foreground text-right">{t('SEK-belopp', 'SEK amount')}</TableHead>
-                        <TableHead className="text-xs uppercase text-muted-foreground">{t('Ingår i rutor', 'Included in boxes')}</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {foreignPurchases.map((purchase) => {
-                        const snapshot = getPurchaseExchangeSnapshot(purchase);
-                        const purchaseLines = ((purchase as any).lines || []) as Array<any>;
-                        const includedBoxes = Array.from(new Set(purchaseLines.flatMap((line) => {
-                          if (line.vat_treatment === 'domestic_deductible') return ['10'];
-                          if (line.vat_treatment === 'reverse_charge') return ['20', '21'];
-                          return [] as string[];
-                        }))).sort();
-                        return (
-                          <TableRow key={purchase.id}>
-                            <TableCell className="text-sm">{purchase.document_date}</TableCell>
-                            <TableCell className="text-sm">{(purchase.supplier as any)?.name || '—'}</TableCell>
-                            <TableCell className="text-sm">{formatCurrencyAmount(snapshot.originalNet, snapshot.originalCurrency)}</TableCell>
-                            <TableCell className="text-sm text-muted-foreground">{snapshot.exchangeRateSource} · {snapshot.exchangeRateDate || '—'}</TableCell>
-                            <TableCell className="text-right text-sm font-medium">{formatSEK(snapshot.convertedNetSek)}</TableCell>
-                            <TableCell className="text-sm">
-                              {includedBoxes.length > 0
-                                ? includedBoxes.map((b) => (
-                                    <Badge key={b} variant="outline" className="text-xs mr-1">{b}</Badge>
-                                  ))
-                                : <span className="text-muted-foreground">—</span>}
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
+                <CardContent className="space-y-4">
+
+                  {/* Summary block */}
+                  <div className="bg-muted/40 rounded-lg p-4 space-y-3">
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      {t('Sammanfattning: utländska inköp', 'Foreign purchases summary')}
+                    </p>
+                    {fxTotalRcBase > 0 && (
+                      <div className="space-y-1.5 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">{t('Beskattningsunderlag (ruta 20)', 'Taxable base (Box 20)')}</span>
+                          <span className="font-medium">{formatSEK(fxTotalRcBase)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">{t('Utgående moms (ruta 21)', 'Output VAT (Box 21)')}</span>
+                          <span className="font-medium">{formatSEK(fxTotalRcVat)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">{t('Avdragen moms, omvänd skattskyldighet (del av ruta 10)', 'Deducted VAT, reverse charge (Box 10 part)')}</span>
+                          <span className="font-medium">{formatSEK(fxTotalRcVat)}</span>
+                        </div>
+                        <div className="flex justify-between items-center border-t border-border pt-1.5">
+                          <span className="font-medium text-sm">{t('Nettomomseffekt (omvänd skattskyldighet)', 'Net VAT effect (reverse charge)')}</span>
+                          <span className="flex items-center gap-1.5 font-semibold text-green-700">
+                            <CheckCircle className="w-3.5 h-3.5" />
+                            {formatSEK(0)}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                    {fxTotalInputVat > 0 && (
+                      <div className={`space-y-1 text-sm ${fxTotalRcBase > 0 ? 'border-t border-border/60 pt-3' : ''}`}>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">{t('Ingående moms från utländska inköp (del av ruta 10)', 'Input VAT from FX purchases (Box 10 part)')}</span>
+                          <span className="font-medium">{formatSEK(fxTotalInputVat)}</span>
+                        </div>
+                      </div>
+                    )}
+                    <p className="text-xs text-muted-foreground">
+                      {t(
+                        'Omvänd skattskyldighet: utgående och ingående moms är lika stora och tar ut varandra — ingen nettokontant effekt.',
+                        'Reverse charge VAT is both added and deducted, so the net effect is normally zero.'
+                      )}
+                    </p>
+                  </div>
+
+                  {/* Consistency checks */}
+                  <div className="space-y-1.5">
+                    <div className={`flex items-center gap-2 text-sm ${fxRcCount > 0 ? 'text-green-700' : 'text-muted-foreground'}`}>
+                      <CheckCircle className="w-4 h-4 shrink-0" />
+                      <span>{t(`${fxRcCount} omvändskattskyldiga transaktioner inkluderade`, `${fxRcCount} reverse-charge transactions included`)}</span>
+                    </div>
+                    <div className={`flex items-center gap-2 text-sm ${fxTotalsMatchDeclaration ? 'text-green-700' : 'text-amber-700'}`}>
+                      {fxTotalsMatchDeclaration
+                        ? <CheckCircle className="w-4 h-4 shrink-0" />
+                        : <AlertTriangle className="w-4 h-4 shrink-0" />}
+                      <span>{fxTotalsMatchDeclaration
+                        ? t('Summor stämmer med deklarationsrutor', 'Totals match VAT declaration')
+                        : t('Summorna stämmer inte med deklarationsrutorna — kontrollera att alla transaktioner är bokförda', 'Totals do not match the VAT declaration — check that all transactions are posted')}</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground pl-6">
+                      {t(
+                        'Svenska inköp ingår inte här — de räknas direkt in i ingående moms (ruta 10).',
+                        'Swedish purchases are not shown here — they are included directly in input VAT (Box 10).'
+                      )}
+                    </p>
+                  </div>
+
+                  {/* Per-transaction breakdown (collapsible) */}
+                  {fxExpanded && (
+                    <div className="space-y-2 pt-1">
+                      {fxRowData.map(({ purchase, snapshot, vatType, rcBaseSek, rcVatSek, inputVatSek }) => (
+                        <Link
+                          key={(purchase as any).id}
+                          to={`/accounting/purchases/${(purchase as any).id}`}
+                          className="block border border-border rounded-lg p-3 hover:border-primary/40 hover:bg-muted/30 transition-colors group"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                                <span className="text-xs text-muted-foreground tabular-nums">{(purchase as any).document_date}</span>
+                                <span className="font-medium text-sm">{(purchase.supplier as any)?.name || '—'}</span>
+                                <span className="text-sm text-muted-foreground">
+                                  {formatCurrencyAmount(snapshot.originalNet, snapshot.originalCurrency)}
+                                  {' → '}
+                                  <span className="font-medium text-foreground">{formatSEK(snapshot.convertedNetSek)}</span>
+                                </span>
+                                <span className="text-xs text-muted-foreground">
+                                  ({snapshot.exchangeRateSource} · {snapshot.exchangeRateDate || '—'})
+                                </span>
+                              </div>
+                              <div className="mt-1.5 space-y-0.5 text-xs text-muted-foreground pl-1 border-l-2 border-muted ml-0.5">
+                                {vatType === 'reverse_charge' && (<>
+                                  <div className="flex gap-2">
+                                    <span className="w-44 shrink-0">{t('→ Beskattningsunderlag (ruta 20):', '→ Taxable base (Box 20):')}</span>
+                                    <span className="font-medium text-foreground">{formatSEK(rcBaseSek)}</span>
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <span className="w-44 shrink-0">{t('→ Utgående moms (ruta 21):', '→ Output VAT (Box 21):')}</span>
+                                    <span className="font-medium text-foreground">{formatSEK(rcVatSek)}</span>
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <span className="w-44 shrink-0">{t('→ Avdragen moms (ruta 10):', '→ Deducted VAT (Box 10):')}</span>
+                                    <span className="font-medium text-foreground">{formatSEK(rcVatSek)}</span>
+                                  </div>
+                                </>)}
+                                {vatType === 'domestic_deductible' && (<>
+                                  <div className="flex gap-2">
+                                    <span className="w-44 shrink-0">{t('→ Avdragen moms (ruta 10):', '→ Deducted VAT (Box 10):')}</span>
+                                    <span className="font-medium text-foreground">{formatSEK(inputVatSek)}</span>
+                                  </div>
+                                  <div className="text-muted-foreground/70 italic">{t('→ Ingår inte i omvänd skattskyldighet', '→ Not included in reverse charge')}</div>
+                                </>)}
+                                {vatType === 'no_vat' && (
+                                  <div className="text-muted-foreground/70 italic">{t('→ Ingen moms — ingår inte i momsrutor', '→ No VAT — not included in any VAT box')}</div>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex flex-col items-end gap-2 shrink-0">
+                              <Badge
+                                variant="outline"
+                                className={`text-xs whitespace-nowrap ${
+                                  vatType === 'reverse_charge'
+                                    ? 'border-amber-300 text-amber-700 bg-amber-50'
+                                    : vatType === 'domestic_deductible'
+                                      ? 'border-blue-300 text-blue-700 bg-blue-50'
+                                      : 'border-muted text-muted-foreground'
+                                }`}
+                              >
+                                {vatType === 'reverse_charge'
+                                  ? t('Omvänd skattskyldighet', 'Reverse charge')
+                                  : vatType === 'domestic_deductible'
+                                    ? t('Ingående moms', 'Input VAT only')
+                                    : t('Ingen moms', 'No VAT')}
+                              </Badge>
+                              <ExternalLink className="w-3.5 h-3.5 text-muted-foreground group-hover:text-primary transition-colors" />
+                            </div>
+                          </div>
+                        </Link>
+                      ))}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             )}
