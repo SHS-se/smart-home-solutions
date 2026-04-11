@@ -120,11 +120,9 @@ export function formatCurrencyAmount(amount: number, currency: string, locale = 
 }
 
 export function convertDocumentAmounts(amounts: MonetaryAmounts, rate: number): MonetaryAmounts {
-  return {
-    gross: roundMoney(amounts.gross * rate),
-    net: roundMoney(amounts.net * rate),
-    vat: roundMoney(amounts.vat * rate),
-  };
+  const gross = roundMoney(amounts.gross * rate);
+  const net = roundMoney(amounts.net * rate);
+  return { gross, net, vat: roundMoney(gross - net) };
 }
 
 export function buildExchangeSnapshot(params: {

@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database, Tables } from '@/integrations/supabase/types';
 import type { DocumentQualityStatus } from './accounting-utils';
+import { suggestExpenseAccount } from './accounting-utils';
 import { fuzzyMatchSupplier, generateDescription, type ParsedInvoice } from './invoice-parser';
 import {
   buildExchangeSnapshot,
@@ -232,7 +233,7 @@ export async function createPurchaseDraft(params: CreatePurchaseDraftParams): Pr
   const { error: lineError } = await supabase.from('acc_purchase_lines').insert({
     purchase_id: savedPurchaseId,
     ...linePayload,
-    expense_account: '4000',
+    expense_account: suggestExpenseAccount(parsedInvoice?.fingerprint.id, parsedInvoice?.supplierName),
     vat_treatment: inferredVatTreatment,
     sort_order: 0,
   });

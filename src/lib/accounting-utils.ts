@@ -157,6 +157,7 @@ export const ACCOUNT_NAMES: Record<string, string> = {
   '6250': 'Datakommunikation',
   '6300': 'Företagsförsäkringar',
   '6530': 'Redovisningstjänster',
+  '6540': 'IT-tjänster',
   '6570': 'Bankkostnader',
   '6590': 'Övriga externa tjänster',
   '7600': 'Övriga personalkostnader',
@@ -164,6 +165,41 @@ export const ACCOUNT_NAMES: Record<string, string> = {
 
 export function getAccountName(account: string): string {
   return ACCOUNT_NAMES[account] || '';
+}
+
+const FINGERPRINT_ACCOUNT_MAP: Record<string, string> = {
+  stripe_tax_invoice:         '6590',
+  openai_invoice:             '6540',
+  anthropic_invoice:          '6540',
+  lovable_invoice:            '6540',
+  ubiquiti_receipt_invoice:   '5410',
+  amazon_sweden_invoice:      '5410',
+  amazon_marketplace_invoice: '5410',
+};
+
+const SUPPLIER_NAME_ACCOUNT_RULES: Array<{ pattern: RegExp; account: string }> = [
+  { pattern: /\bwebhallen\b/i, account: '5410' },
+  { pattern: /\bamazon\b/i,    account: '5410' },
+  { pattern: /\bkomplett\b/i,  account: '5410' },
+  { pattern: /\bopenai\b/i,    account: '6540' },
+  { pattern: /\banthrop/i,     account: '6540' },
+  { pattern: /\blovable\b/i,   account: '6540' },
+  { pattern: /\bstripe\b/i,    account: '6590' },
+];
+
+export function suggestExpenseAccount(
+  fingerprintId: string | null | undefined,
+  supplierName: string | null | undefined,
+): string {
+  if (fingerprintId && FINGERPRINT_ACCOUNT_MAP[fingerprintId]) {
+    return FINGERPRINT_ACCOUNT_MAP[fingerprintId];
+  }
+  if (supplierName) {
+    for (const rule of SUPPLIER_NAME_ACCOUNT_RULES) {
+      if (rule.pattern.test(supplierName)) return rule.account;
+    }
+  }
+  return '4000';
 }
 
 /** Build journal preview lines for a purchase */
