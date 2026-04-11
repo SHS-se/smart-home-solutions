@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Upload, ZoomIn, ZoomOut, ChevronLeft, ChevronRight, Eye, EyeOff, Trash2 } from 'lucide-react';
 import type { WordPosition } from '@/lib/document-extraction';
+import { computeFitScale, effectiveScaleFor } from '@/lib/document-preview-zoom';
 
 pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
@@ -83,21 +84,11 @@ const DocumentPreview: React.FC<Props> = ({
     const observer = new ResizeObserver(updateSize);
     observer.observe(element);
     return () => observer.disconnect();
-  }, []);
+  }, [fileUrl]);
 
-  const fitScale = (() => {
-    const contentSize = isPdf ? pageSize : naturalSize;
-    if (!autoScale || !contentSize.w || !contentSize.h || !containerSize.w || !containerSize.h) {
-      return null;
-    }
-
-    const paddingAllowance = 32;
-    const horizontalScale = Math.max((containerSize.w - paddingAllowance) / contentSize.w, 0.1);
-    const verticalScale = Math.max((containerSize.h - paddingAllowance) / contentSize.h, 0.1);
-    return Math.min(horizontalScale, verticalScale);
-  })();
-
-  const effectiveScale = autoScale ? fitScale ?? scale : scale;
+  const contentSize = isPdf ? pageSize : naturalSize;
+  const fitScale = autoScale ? computeFitScale(containerSize, contentSize) : null;
+  const effectiveScale = effectiveScaleFor(autoScale, fitScale, scale);
   const displayedImageWidth = naturalSize.w > 0 ? naturalSize.w * effectiveScale : undefined;
   const displayedPdfWidth = pageSize.w > 0 ? Math.max(1, Math.floor(pageSize.w * effectiveScale)) : undefined;
 
