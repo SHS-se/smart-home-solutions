@@ -179,7 +179,18 @@ const VatDeclarationFlow: React.FC = () => {
 
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            {t('Momsdeklaration', 'VAT declaration')} Q{quarter} {year} <Info className="w-5 h-5 text-primary cursor-help" />
+            {t('Momsdeklaration', 'VAT declaration')} Q{quarter} {year}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Info className="w-5 h-5 text-primary cursor-help" />
+              </TooltipTrigger>
+              <TooltipContent className="max-w-xs text-xs">
+                {t(
+                  'Momsdeklarationen sammanfattar ingående och utgående moms för kvartalet. Rapporten baseras på bokförda verifikationer i perioden.',
+                  'The VAT declaration summarises input and output VAT for the quarter. It is based on posted verifications within the period.'
+                )}
+              </TooltipContent>
+            </Tooltip>
           </h1>
           <p className="text-muted-foreground mt-1">
             {startMonth} – {endMonthName} {year}
@@ -237,7 +248,20 @@ const VatDeclarationFlow: React.FC = () => {
           <div className="space-y-4">
             <Card className="border border-border">
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">{t('Deklarationsrutor', 'Declaration boxes')} <Info className="w-4 h-4 text-primary cursor-help" /></CardTitle>
+                <CardTitle className="flex items-center gap-2">
+                  {t('Deklarationsrutor', 'Declaration boxes')}
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Info className="w-4 h-4 text-primary cursor-help" />
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-xs text-xs">
+                      {t(
+                        'Rutorna motsvarar fälten i Skatteverkets momsdeklarationsformulär. Beloppen beräknas automatiskt från bokförda verifikationer.',
+                        'The boxes correspond to fields on the Skatteverket VAT return form. Amounts are calculated automatically from posted verifications.'
+                      )}
+                    </TooltipContent>
+                  </Tooltip>
+                </CardTitle>
               </CardHeader>
               <CardContent>
                 <Table>
