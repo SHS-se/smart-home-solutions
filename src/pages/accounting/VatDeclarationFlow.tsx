@@ -111,15 +111,17 @@ const VatDeclarationFlow: React.FC = () => {
   const rcOutputVat2614 = roundMoney(postedPurchases.reduce((sum, purchase) => sum + purchase.lines
     .filter((line) => line.vat_treatment === 'reverse_charge')
     .reduce((lineSum, line) => lineSum + roundMoney(Number(line.net_amount) * 0.25), 0), 0));
-  const rcInputVat2645 = rcOutputVat2614;
-  const netVat = rcOutputVat2614 - inputVat2641 - rcInputVat2645;
+  const box06Amount = 0; // domestic output VAT on sales — not yet tracked
+  const netVatPosition = roundMoney((box06Amount + rcOutputVat2614) - inputVat2641);
+  const rcLineCount = postedPurchases.flatMap((p) => p.lines).filter((l) => l.vat_treatment === 'reverse_charge').length;
 
+  const allLines = postedPurchases.flatMap((p) => p.lines);
   const declarationBoxes = [
-    { box: '05', label: t('Försäljning inom Sverige (exkl. moms)', 'Sales within Sweden (excl. VAT)'), amount: 0, count: 0, note: t('Inga försäljningar i denna period', 'No sales in this period') },
-    { box: '06', label: t('Utgående moms 25%', 'Output VAT 25%'), amount: 0, count: 0 },
-    { box: '10', label: t('Avdragsgill ingående moms', 'Deductible input VAT'), amount: inputVat2641, count: postedPurchases.flatMap((purchase) => purchase.lines).filter((line) => line.vat_treatment === 'domestic_deductible').length },
-    { box: '20', label: t('Omvänd skattskyldighet, beskattningsunderlag', 'Reverse-charge taxable base'), amount: rcBase > 0 ? rcBase : 0, count: postedPurchases.flatMap((purchase) => purchase.lines).filter((line) => line.vat_treatment === 'reverse_charge').length, highlight: rcBase > 0, tooltip: t('Inköp från EU-leverantörer utan moms (omvänd skattskyldighet). Nettobeloppet i SEK rapporteras som beskattningsunderlag i ruta 20.', 'Purchases from EU suppliers with no VAT (reverse charge). The net amount in SEK is reported as the taxable base in box 20.') },
-    { box: '21', label: t('Utgående moms på omvänd skattskyldighet', 'Reverse-charge output VAT'), amount: rcOutputVat2614, count: postedPurchases.flatMap((purchase) => purchase.lines).filter((line) => line.vat_treatment === 'reverse_charge').length, highlight: rcOutputVat2614 > 0, tooltip: t('25% moms beräknad på beskattningsunderlaget i ruta 20 (konto 2614). Samma belopp dras av som ingående moms via konto 2645 — ingen nettokostnad uppstår.', '25% VAT calculated on the taxable base in box 20 (account 2614). The same amount is reclaimed as input VAT via account 2645 — no net cost arises.') },
+    { box: '05', label: t('Försäljning inom Sverige (exkl. moms)', 'Sales within Sweden (excl. VAT)'), amount: 0, count: 0, tooltip: t('Total försäljning i Sverige exkl. moms. Inkluderar fakturerade belopp till kunder.', 'Total sales within Sweden excluding VAT, including invoiced amounts to customers.') },
+    { box: '06', label: t('Inhemsk utgående moms 25%', 'Domestic output VAT 25%'), amount: box06Amount, count: 0, tooltip: t('Utgående moms 25% på inhemsk försäljning. Beräknas som 25% av belopp i ruta 05.', 'Output VAT at 25% on domestic sales. Calculated as 25% of the amount in Box 05.') },
+    { box: '10', label: t('Avdragsgill ingående moms', 'Deductible input VAT'), amount: inputVat2641, count: allLines.filter((l) => l.vat_treatment === 'domestic_deductible').length, tooltip: t('All moms du har rätt att dra av på affärsrelaterade inköp. Inkluderar ingående moms från inhemska köp samt omvänd skattskyldighet.', 'All VAT you are allowed to deduct on business-related purchases. Includes input VAT from domestic purchases and reverse charge.') },
+    { box: '20', label: t('Omvänd skattskyldighet, beskattningsunderlag', 'Reverse-charge taxable base'), amount: rcBase > 0 ? rcBase : 0, count: allLines.filter((l) => l.vat_treatment === 'reverse_charge').length, highlight: rcBase > 0, tooltip: t('Nettobeloppet (exkl. moms) för inköp från EU-leverantörer med omvänd skattskyldighet. Detta är ett underlag, inte ett momsbelopp — ruta 20 ingår inte i nettoberäkningen.', 'The net amount (excl. VAT) for purchases from EU suppliers under reverse charge. This is a taxable base, not a VAT amount — Box 20 is not included in the net VAT calculation.') },
+    { box: '21', label: t('Utgående moms på omvänd skattskyldighet', 'Reverse-charge output VAT'), amount: rcOutputVat2614, count: allLines.filter((l) => l.vat_treatment === 'reverse_charge').length, highlight: rcOutputVat2614 > 0, tooltip: t('25% moms beräknad på beskattningsunderlaget i ruta 20 (konto 2614). Eftersom denna moms är avdragsgill ingår samma belopp även i ruta 10 — ingen nettokontant effekt.', '25% VAT calculated on the taxable base in Box 20 (account 2614). Since this VAT is also deductible, the same amount is included in Box 10 — no net cash impact.') },
   ];
 
   const createSnapshot = useMutation({
@@ -129,7 +131,7 @@ const VatDeclarationFlow: React.FC = () => {
         quarter: `Q${quarter} ${year}`, period: `${startDate} – ${endDate}`, created_at: new Date().toISOString(),
         created_by: user?.email || 'unknown', total_verifications: postedPurchases.length,
         declaration_boxes: declarationBoxes.map(b => ({ box: b.box, label: b.label, amount: b.amount })),
-        net_vat: netVat, rules_version: '2025.4',
+        net_vat: netVatPosition, rules_version: '2025.4',
       };
       const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(snapshotData)));
       const hashHex = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
@@ -246,6 +248,51 @@ const VatDeclarationFlow: React.FC = () => {
 
         {currentStep === 2 && (
           <div className="space-y-4">
+
+            {/* Validation summary */}
+            <Card className="border border-border">
+              <CardContent className="p-5">
+                <h3 className="font-semibold mb-3">{t('Kontrollsammanfattning', 'VAT check summary')}</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+                  <div className="flex items-center gap-2 text-green-700">
+                    <CheckCircle className="w-4 h-4 shrink-0" />
+                    <span>{t(`${postedPurchases.length} verifikationer granskade och inkluderade`, `${postedPurchases.length} verifications reviewed and included`)}</span>
+                  </div>
+                  {foreignPurchases.length > 0 ? (
+                    <div className="flex items-center gap-2 text-green-700">
+                      <CheckCircle className="w-4 h-4 shrink-0" />
+                      <span>{t(`${foreignPurchases.length} valutaköp kontrollerade (ECB-kurs)`, `${foreignPurchases.length} foreign-currency purchases validated (ECB rate)`)}</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                      <CheckCircle className="w-4 h-4 shrink-0" />
+                      <span>{t('Inga valutaköp i perioden', 'No foreign-currency purchases this period')}</span>
+                    </div>
+                  )}
+                  {rcLineCount > 0 ? (
+                    <div className="flex items-center gap-2 text-green-700">
+                      <CheckCircle className="w-4 h-4 shrink-0" />
+                      <span>{t(`${rcLineCount} omvändskattskyldiga rader inkluderade (rutor 20 & 21)`, `${rcLineCount} reverse-charge lines included (boxes 20 & 21)`)}</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                      <CheckCircle className="w-4 h-4 shrink-0" />
+                      <span>{t('Inga omvändskattskyldiga transaktioner', 'No reverse-charge transactions')}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2 text-green-700">
+                    <CheckCircle className="w-4 h-4 shrink-0" />
+                    <span>
+                      {netVatPosition < 0
+                        ? t(`Momsåterbäring beräknad: ${formatSEK(Math.abs(netVatPosition))}`, `Refund calculated: ${formatSEK(Math.abs(netVatPosition))}`)
+                        : t(`Moms att betala beräknad: ${formatSEK(netVatPosition)}`, `VAT to pay calculated: ${formatSEK(netVatPosition)}`)}
+                    </span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Declaration boxes */}
             <Card className="border border-border">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -278,7 +325,7 @@ const VatDeclarationFlow: React.FC = () => {
                       <TableRow key={box.box} className={box.highlight ? 'bg-amber-50/50' : box.amount === 0 && box.count === 0 ? 'opacity-50' : ''}>
                         <TableCell className="font-medium text-sm">
                           {box.box}
-                          {box.highlight && box.tooltip && (
+                          {box.tooltip && (
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <Info className="w-3.5 h-3.5 text-primary inline ml-1 cursor-help" />
@@ -292,43 +339,118 @@ const VatDeclarationFlow: React.FC = () => {
                         <TableCell className="text-right text-sm text-primary">{box.count || ''}</TableCell>
                       </TableRow>
                     ))}
-                    <TableRow className="font-semibold border-t-2">
-                      <TableCell colSpan={2}>{t('Moms att betala (Box 06 - Box 10)', 'VAT to pay (Box 06 - Box 10)')}</TableCell>
-                      <TableCell className="text-right">{formatSEK(Math.max(0, -netVat))}</TableCell>
-                      <TableCell />
-                    </TableRow>
                   </TableBody>
                 </Table>
+                {rcLineCount > 0 && (
+                  <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+                    <p className="font-medium mb-1">{t('Vad är omvänd skattskyldighet?', 'What is reverse charge?')}</p>
+                    <p>{t(
+                      'Omvänd skattskyldighet innebär att du som köpare beräknar svensk moms på vissa utländska inköp. Beskattningsunderlaget visas i ruta 20 och momsen i ruta 21. Eftersom denna moms även är avdragsgill ingår samma belopp i ruta 10 — omvänd skattskyldighet har alltså ingen nettokontant effekt.',
+                      'Reverse charge means you as the buyer calculate Swedish VAT on certain foreign purchases. The taxable base appears in Box 20 and the VAT in Box 21. Since this VAT is also deductible, the same amount is included in Box 10 — meaning reverse charge has no net cash impact.'
+                    )}</p>
+                  </div>
+                )}
               </CardContent>
             </Card>
+
+            {/* Net VAT position */}
+            <Card className="border border-border">
+              <CardHeader>
+                <CardTitle>{t('Nettomomsposition', 'Net VAT position')}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  <div>
+                    <p className="text-xs uppercase text-muted-foreground font-medium tracking-wide mb-2">{t('Utgående moms (att betala)', 'Output VAT (owed)')}</p>
+                    <div className="space-y-1.5 text-sm pl-2">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">{t('Inhemsk utgående moms (ruta 06)', 'Domestic output VAT (Box 06)')}</span>
+                        <span>{formatSEK(box06Amount)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">{t('Omvänd skattskyldighet (ruta 21)', 'Reverse-charge output VAT (Box 21)')}</span>
+                        <span>{formatSEK(rcOutputVat2614)}</span>
+                      </div>
+                      <div className="flex justify-between font-medium border-t border-border pt-1.5">
+                        <span>{t('Summa utgående moms', 'Total output VAT')}</span>
+                        <span>{formatSEK(box06Amount + rcOutputVat2614)}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase text-muted-foreground font-medium tracking-wide mb-2">{t('Avdragsgill ingående moms', 'Deductible input VAT')}</p>
+                    <div className="space-y-1.5 text-sm pl-2">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">{t('Ingående moms (ruta 10)', 'Deductible input VAT (Box 10)')}</span>
+                        <span>{formatSEK(inputVat2641)}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className={`flex justify-between items-center px-4 py-3 rounded-lg font-semibold text-sm border ${
+                    netVatPosition < 0
+                      ? 'bg-green-50 border-green-200 text-green-800'
+                      : netVatPosition > 0
+                        ? 'bg-red-50 border-red-200 text-red-800'
+                        : 'bg-muted border-border text-foreground'
+                  }`}>
+                    <span>{netVatPosition < 0
+                      ? t('Moms att återfå', 'VAT to receive')
+                      : netVatPosition > 0
+                        ? t('Moms att betala', 'VAT to pay')
+                        : t('Momsneutral', 'VAT position: neutral')}</span>
+                    <span className="text-base">{formatSEK(Math.abs(netVatPosition))}</span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Foreign-currency check */}
             {foreignPurchases.length > 0 && (
               <Card className="border border-border">
                 <CardHeader>
-                  <CardTitle>{t('Valutaköp i perioden', 'Foreign-currency purchases in the period')}</CardTitle>
+                  <CardTitle>{t('Valutakontroll', 'Foreign-currency check')}</CardTitle>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {t(
+                      'Dessa inköp visas här så att SEK-omräkningen och rapporteringen av omvänd skattskyldighet kan kontrolleras innan momsögonblicksbilden låses.',
+                      'These purchases are shown here so the SEK conversion and reverse-charge reporting can be checked before locking the VAT snapshot.'
+                    )}
+                  </p>
                 </CardHeader>
                 <CardContent>
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>{t('Datum', 'Date')}</TableHead>
-                        <TableHead>{t('Leverantör', 'Supplier')}</TableHead>
-                        <TableHead>{t('Originalt belopp', 'Original amount')}</TableHead>
-                        <TableHead>{t('Kurs', 'Rate')}</TableHead>
-                        <TableHead className="text-right">{t('SEK-belopp', 'SEK amount')}</TableHead>
+                        <TableHead className="text-xs uppercase text-muted-foreground">{t('Datum', 'Date')}</TableHead>
+                        <TableHead className="text-xs uppercase text-muted-foreground">{t('Leverantör', 'Supplier')}</TableHead>
+                        <TableHead className="text-xs uppercase text-muted-foreground">{t('Originalt belopp', 'Original amount')}</TableHead>
+                        <TableHead className="text-xs uppercase text-muted-foreground">{t('Kurs', 'Rate')}</TableHead>
+                        <TableHead className="text-xs uppercase text-muted-foreground text-right">{t('SEK-belopp', 'SEK amount')}</TableHead>
+                        <TableHead className="text-xs uppercase text-muted-foreground">{t('Ingår i rutor', 'Included in boxes')}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {foreignPurchases.map((purchase) => {
                         const snapshot = getPurchaseExchangeSnapshot(purchase);
+                        const purchaseLines = ((purchase as any).lines || []) as Array<any>;
+                        const includedBoxes = Array.from(new Set(purchaseLines.flatMap((line) => {
+                          if (line.vat_treatment === 'domestic_deductible') return ['10'];
+                          if (line.vat_treatment === 'reverse_charge') return ['20', '21'];
+                          return [] as string[];
+                        }))).sort();
                         return (
                           <TableRow key={purchase.id}>
                             <TableCell className="text-sm">{purchase.document_date}</TableCell>
                             <TableCell className="text-sm">{(purchase.supplier as any)?.name || '—'}</TableCell>
                             <TableCell className="text-sm">{formatCurrencyAmount(snapshot.originalNet, snapshot.originalCurrency)}</TableCell>
+                            <TableCell className="text-sm text-muted-foreground">{snapshot.exchangeRateSource} · {snapshot.exchangeRateDate || '—'}</TableCell>
+                            <TableCell className="text-right text-sm font-medium">{formatSEK(snapshot.convertedNetSek)}</TableCell>
                             <TableCell className="text-sm">
-                              {snapshot.exchangeRateSource} · {snapshot.exchangeRateDate || '—'}
+                              {includedBoxes.length > 0
+                                ? includedBoxes.map((b) => (
+                                    <Badge key={b} variant="outline" className="text-xs mr-1">{b}</Badge>
+                                  ))
+                                : <span className="text-muted-foreground">—</span>}
                             </TableCell>
-                            <TableCell className="text-right text-sm">{formatSEK(snapshot.convertedNetSek)}</TableCell>
                           </TableRow>
                         );
                       })}
@@ -337,6 +459,7 @@ const VatDeclarationFlow: React.FC = () => {
                 </CardContent>
               </Card>
             )}
+
             <div className="flex gap-3">
               <Button onClick={() => setCurrentStep(3)}>{t('Godkänn och fortsätt', 'Approve and continue')}</Button>
               <Button variant="outline" onClick={() => setCurrentStep(1)}>{t('Tillbaka', 'Back')}</Button>
@@ -371,7 +494,10 @@ const VatDeclarationFlow: React.FC = () => {
                   </div>
                   <div className="bg-muted/50 rounded-lg p-4 space-y-2 text-sm mb-6">
                     <div className="flex justify-between"><span className="text-muted-foreground">{t('Period', 'Period')}</span><span>Q{quarter} {year}</span></div>
-                    <div className="flex justify-between"><span className="text-muted-foreground">{t('Totalt att betala', 'Total to pay')}</span><span>{formatSEK(Math.max(0, -netVat))}</span></div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">{netVatPosition < 0 ? t('Moms att återfå', 'VAT to receive') : t('Moms att betala', 'VAT to pay')}</span>
+                      <span className={netVatPosition < 0 ? 'text-green-700 font-medium' : 'text-red-700 font-medium'}>{formatSEK(Math.abs(netVatPosition))}</span>
+                    </div>
                     <div className="flex justify-between"><span className="text-muted-foreground">{t('Transaktioner inkluderade', 'Transactions included')}</span><span>{postedPurchases.length} {t('st', 'pcs')}</span></div>
                     <div className="flex justify-between"><span className="text-muted-foreground">{t('Granskare', 'Reviewer')}</span><span>{user?.email || '—'}</span></div>
                     <div className="flex justify-between"><span className="text-muted-foreground">{t('Regelversion', 'Rules version')}</span><span>2025.4</span></div>
