@@ -337,7 +337,7 @@ const VatDeclarationFlow: React.FC = () => {
                   <div className="bg-muted/50 rounded-lg p-4 space-y-2 text-sm mb-6">
                     <div className="flex justify-between"><span className="text-muted-foreground">{t('Period', 'Period')}</span><span>Q{quarter} {year}</span></div>
                     <div className="flex justify-between"><span className="text-muted-foreground">{t('Totalt att betala', 'Total to pay')}</span><span>{formatSEK(Math.max(0, -netVat))}</span></div>
-                    <div className="flex justify-between"><span className="text-muted-foreground">{t('Transaktioner inkluderade', 'Transactions included')}</span><span>{(journalLines || []).length} {t('st', 'pcs')}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">{t('Transaktioner inkluderade', 'Transactions included')}</span><span>{postedPurchases.length} {t('st', 'pcs')}</span></div>
                     <div className="flex justify-between"><span className="text-muted-foreground">{t('Granskare', 'Reviewer')}</span><span>{user?.email || '—'}</span></div>
                     <div className="flex justify-between"><span className="text-muted-foreground">{t('Regelversion', 'Rules version')}</span><span>2025.4</span></div>
                   </div>
