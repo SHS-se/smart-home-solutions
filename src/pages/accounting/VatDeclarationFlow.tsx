@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatSEK, PURCHASE_STATUS_LABELS, PURCHASE_STATUS_LABELS_EN } from '@/lib/accounting-utils';
 import {
   detectForeignCurrencyIntegrityIssue,
@@ -117,8 +118,8 @@ const VatDeclarationFlow: React.FC = () => {
     { box: '05', label: t('Försäljning inom Sverige (exkl. moms)', 'Sales within Sweden (excl. VAT)'), amount: 0, count: 0, note: t('Inga försäljningar i denna period', 'No sales in this period') },
     { box: '06', label: t('Utgående moms 25%', 'Output VAT 25%'), amount: 0, count: 0 },
     { box: '10', label: t('Avdragsgill ingående moms', 'Deductible input VAT'), amount: inputVat2641, count: postedPurchases.flatMap((purchase) => purchase.lines).filter((line) => line.vat_treatment === 'domestic_deductible').length },
-    { box: '20', label: t('Omvänd skattskyldighet, beskattningsunderlag', 'Reverse-charge taxable base'), amount: rcBase > 0 ? rcBase : 0, count: postedPurchases.flatMap((purchase) => purchase.lines).filter((line) => line.vat_treatment === 'reverse_charge').length, highlight: rcBase > 0 },
-    { box: '21', label: t('Utgående moms på omvänd skattskyldighet', 'Reverse-charge output VAT'), amount: rcOutputVat2614, count: postedPurchases.flatMap((purchase) => purchase.lines).filter((line) => line.vat_treatment === 'reverse_charge').length, highlight: rcOutputVat2614 > 0 },
+    { box: '20', label: t('Omvänd skattskyldighet, beskattningsunderlag', 'Reverse-charge taxable base'), amount: rcBase > 0 ? rcBase : 0, count: postedPurchases.flatMap((purchase) => purchase.lines).filter((line) => line.vat_treatment === 'reverse_charge').length, highlight: rcBase > 0, tooltip: t('Inköp från EU-leverantörer utan moms (omvänd skattskyldighet). Nettobeloppet i SEK rapporteras som beskattningsunderlag i ruta 20.', 'Purchases from EU suppliers with no VAT (reverse charge). The net amount in SEK is reported as the taxable base in box 20.') },
+    { box: '21', label: t('Utgående moms på omvänd skattskyldighet', 'Reverse-charge output VAT'), amount: rcOutputVat2614, count: postedPurchases.flatMap((purchase) => purchase.lines).filter((line) => line.vat_treatment === 'reverse_charge').length, highlight: rcOutputVat2614 > 0, tooltip: t('25% moms beräknad på beskattningsunderlaget i ruta 20 (konto 2614). Samma belopp dras av som ingående moms via konto 2645 — ingen nettokostnad uppstår.', '25% VAT calculated on the taxable base in box 20 (account 2614). The same amount is reclaimed as input VAT via account 2645 — no net cost arises.') },
   ];
 
   const createSnapshot = useMutation({
@@ -251,7 +252,17 @@ const VatDeclarationFlow: React.FC = () => {
                   <TableBody>
                     {declarationBoxes.map(box => (
                       <TableRow key={box.box} className={box.highlight ? 'bg-amber-50/50' : box.amount === 0 && box.count === 0 ? 'opacity-50' : ''}>
-                        <TableCell className="font-medium text-sm">{box.box}{box.highlight && <Info className="w-3.5 h-3.5 text-primary inline ml-1" />}</TableCell>
+                        <TableCell className="font-medium text-sm">
+                          {box.box}
+                          {box.highlight && box.tooltip && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Info className="w-3.5 h-3.5 text-primary inline ml-1 cursor-help" />
+                              </TooltipTrigger>
+                              <TooltipContent className="max-w-xs text-xs">{box.tooltip}</TooltipContent>
+                            </Tooltip>
+                          )}
+                        </TableCell>
                         <TableCell className="text-sm">{box.label}</TableCell>
                         <TableCell className="text-right text-sm font-medium">{formatSEK(box.amount)}</TableCell>
                         <TableCell className="text-right text-sm text-primary">{box.count || ''}</TableCell>
