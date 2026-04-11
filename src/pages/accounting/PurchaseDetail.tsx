@@ -123,13 +123,12 @@ const PurchaseDetail: React.FC = () => {
     },
     enabled: !!purchaseId,
   });
-  const { data: draftIds = [] } = useQuery({
-    queryKey: ['acc-purchase-draft-nav'],
+  const { data: purchaseIds = [] } = useQuery({
+    queryKey: ['acc-purchase-nav'],
     queryFn: async () => {
       const { data } = await supabase
         .from('acc_purchases')
         .select('id')
-        .eq('status', 'draft')
         .order('document_date', { ascending: false })
         .order('created_at', { ascending: false })
         .order('id', { ascending: false });
@@ -216,7 +215,7 @@ const PurchaseDetail: React.FC = () => {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['acc-purchases'] });
-      queryClient.invalidateQueries({ queryKey: ['acc-purchase-draft-nav'] });
+      queryClient.invalidateQueries({ queryKey: ['acc-purchase-nav'] });
       toast.success(t('Utkast raderat', 'Draft deleted'));
       navigate('/accounting/purchases');
     },
@@ -343,10 +342,17 @@ const PurchaseDetail: React.FC = () => {
   const canPost = errors.length === 0 && purchase.status !== 'posted';
   const primaryLine = lines?.[0] || null;
   const isDraftPurchase = purchase.status === 'draft';
-  const currentDraftIndex = isDraftPurchase ? draftIds.indexOf(purchase.id) : -1;
-  const previousDraftId = currentDraftIndex > 0 ? draftIds[currentDraftIndex - 1] : null;
-  const nextDraftId = currentDraftIndex >= 0 && currentDraftIndex < draftIds.length - 1 ? draftIds[currentDraftIndex + 1] : null;
+  const currentPurchaseIndex = purchaseIds.indexOf(purchase.id);
+  const previousPurchaseId = currentPurchaseIndex > 0 ? purchaseIds[currentPurchaseIndex - 1] : null;
+  const nextPurchaseId = currentPurchaseIndex >= 0 && currentPurchaseIndex < purchaseIds.length - 1 ? purchaseIds[currentPurchaseIndex + 1] : null;
   const canSave = purchase.status !== 'posted' && saveState.isDirty && !saveState.isPending && !saveState.isBlocked;
+  const canDelete = isDraftPurchase && !deleteDraft.isPending;
+  const deleteButtonContent = (
+    <>
+      <Trash2 className="w-4 h-4 mr-2" />
+      {deleteDraft.isPending ? t('Raderar...', 'Deleting...') : t('Radera', 'Delete')}
+    </>
+  );
 
   const journalPreview = lines && lines.length > 0
     ? buildJournalPreview(
@@ -389,12 +395,12 @@ const PurchaseDetail: React.FC = () => {
             </p>
           </div>
           <div className="flex flex-col items-center justify-center gap-2 lg:-mt-1">
-            {isDraftPurchase && currentDraftIndex >= 0 && (
+            {currentPurchaseIndex >= 0 && (
               <>
                 <div className="flex items-center justify-center gap-2">
-                  {previousDraftId ? (
+                  {previousPurchaseId ? (
                     <Button variant="outline" size="sm" className="w-32 justify-center" asChild>
-                      <Link to={`/accounting/purchases/${previousDraftId}`}>
+                      <Link to={`/accounting/purchases/${previousPurchaseId}`}>
                         <ChevronLeft className="w-4 h-4 mr-1" />
                         {t('Föregående', 'Previous')}
                       </Link>
@@ -405,9 +411,9 @@ const PurchaseDetail: React.FC = () => {
                       {t('Föregående', 'Previous')}
                     </Button>
                   )}
-                  {nextDraftId ? (
+                  {nextPurchaseId ? (
                     <Button variant="outline" size="sm" className="w-32 justify-center" asChild>
-                      <Link to={`/accounting/purchases/${nextDraftId}`}>
+                      <Link to={`/accounting/purchases/${nextPurchaseId}`}>
                         {t('Nästa', 'Next')}
                         <ChevronRight className="w-4 h-4 ml-1" />
                       </Link>
@@ -421,60 +427,59 @@ const PurchaseDetail: React.FC = () => {
                 </div>
                 <span className="text-sm text-center text-muted-foreground">
                   {t(
-                    `Utkast ${currentDraftIndex + 1} av ${draftIds.length}`,
-                    `Draft ${currentDraftIndex + 1} of ${draftIds.length}`,
+                    `Inköp ${currentPurchaseIndex + 1} av ${purchaseIds.length}`,
+                    `Purchase ${currentPurchaseIndex + 1} of ${purchaseIds.length}`,
                   )}
                 </span>
               </>
             )}
           </div>
           <div className="flex flex-wrap items-center justify-start gap-3 lg:-mt-1 lg:justify-end">
-            {purchase.status !== 'posted' && (
-              <>
-                <Button
-                  variant={saveState.isDirty ? 'default' : 'outline'}
-                  className={saveState.isDirty
-                    ? 'min-w-24 border border-warning/60 bg-warning text-warning-foreground hover:bg-warning/90'
-                    : 'min-w-24'}
-                  disabled={!canSave}
-                  onClick={() => {
-                    const submitEvent = new CustomEvent('purchase-detail-save');
-                    window.dispatchEvent(submitEvent);
-                  }}
-                >
-                  {saveState.isPending ? t('Sparar...', 'Saving...') : t('Spara', 'Save')}
-                </Button>
-                <Button className="min-w-24" disabled={!canPost || postPurchase.isPending} onClick={() => postPurchase.mutate()}>
-                  {postPurchase.isPending ? t('Bokför...', 'Posting...') : t('Bokför', 'Post')}
-                </Button>
-                {isDraftPurchase && (
-                  <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                      <Button variant="destructive" className="min-w-24" disabled={deleteDraft.isPending}>
-                        <Trash2 className="w-4 h-4 mr-2" />
-                        {deleteDraft.isPending ? t('Raderar...', 'Deleting...') : t('Radera', 'Delete')}
-                      </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>{t('Radera utkast?', 'Delete draft?')}</AlertDialogTitle>
-                        <AlertDialogDescription>
-                          {t(
-                            'Det här tar bort utkastet och det uppladdade dokumentet. Bokförda inköp påverkas inte.',
-                            'This removes the draft and the uploaded document. Posted purchases are not affected.',
-                          )}
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel>{t('Avbryt', 'Cancel')}</AlertDialogCancel>
-                        <AlertDialogAction onClick={() => deleteDraft.mutate()}>
-                          {t('Radera', 'Delete')}
-                        </AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
-                )}
-              </>
+            <Button
+              variant={saveState.isDirty ? 'default' : 'outline'}
+              className={saveState.isDirty
+                ? 'min-w-24 border border-warning/60 bg-warning text-warning-foreground hover:bg-warning/90'
+                : 'min-w-24'}
+              disabled={!canSave}
+              onClick={() => {
+                const submitEvent = new CustomEvent('purchase-detail-save');
+                window.dispatchEvent(submitEvent);
+              }}
+            >
+              {saveState.isPending ? t('Sparar...', 'Saving...') : t('Spara', 'Save')}
+            </Button>
+            <Button className="min-w-24" disabled={!canPost || postPurchase.isPending} onClick={() => postPurchase.mutate()}>
+              {postPurchase.isPending ? t('Bokför...', 'Posting...') : t('Bokför', 'Post')}
+            </Button>
+            {isDraftPurchase ? (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="destructive" className="min-w-24" disabled={!canDelete}>
+                    {deleteButtonContent}
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>{t('Radera utkast?', 'Delete draft?')}</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      {t(
+                        'Det här tar bort utkastet och det uppladdade dokumentet. Bokförda inköp påverkas inte.',
+                        'This removes the draft and the uploaded document. Posted purchases are not affected.',
+                      )}
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>{t('Avbryt', 'Cancel')}</AlertDialogCancel>
+                    <AlertDialogAction onClick={() => deleteDraft.mutate()}>
+                      {t('Radera', 'Delete')}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            ) : (
+              <Button variant="destructive" className="min-w-24" disabled>
+                {deleteButtonContent}
+              </Button>
             )}
           </div>
         </div>
