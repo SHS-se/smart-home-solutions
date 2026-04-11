@@ -40,8 +40,11 @@ const DocumentPreview: React.FC<Props> = ({
   const [numPages, setNumPages] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
   const [scale, setScale] = useState(1.0);
+  const [autoScale, setAutoScale] = useState(true);
   const [showOverlay, setShowOverlay] = useState(false);
   const [naturalSize, setNaturalSize] = useState({ w: 0, h: 0 });
+  const [pageSize, setPageSize] = useState({ w: 0, h: 0 });
+  const [containerSize, setContainerSize] = useState({ w: 0, h: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
   const resolvedFileName = file?.name || fileName || externalFileUrl || '';
   const isPdf = file?.type === 'application/pdf' || resolvedFileName.toLowerCase().endsWith('.pdf');
@@ -54,13 +57,63 @@ const DocumentPreview: React.FC<Props> = ({
       setFileUrl(url);
       setCurrentPage(1);
       setScale(1.0);
+      setAutoScale(true);
       return () => URL.revokeObjectURL(url);
     }
 
     setFileUrl(externalFileUrl);
     setCurrentPage(1);
     setScale(1.0);
+    setAutoScale(true);
   }, [file, externalFileUrl]);
+
+  useEffect(() => {
+    const element = containerRef.current;
+    if (!element) return undefined;
+
+    const updateSize = () => {
+      setContainerSize({
+        w: element.clientWidth,
+        h: element.clientHeight,
+      });
+    };
+
+    updateSize();
+
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  const fitScale = (() => {
+    const contentSize = isPdf ? pageSize : naturalSize;
+    if (!autoScale || !contentSize.w || !contentSize.h || !containerSize.w || !containerSize.h) {
+      return null;
+    }
+
+    const paddingAllowance = 32;
+    const horizontalScale = Math.max((containerSize.w - paddingAllowance) / contentSize.w, 0.1);
+    const verticalScale = Math.max((containerSize.h - paddingAllowance) / contentSize.h, 0.1);
+    return Math.min(horizontalScale, verticalScale);
+  })();
+
+  const effectiveScale = autoScale ? fitScale ?? scale : scale;
+  const displayedImageWidth = naturalSize.w > 0 ? naturalSize.w * effectiveScale : undefined;
+  const displayedPdfWidth = pageSize.w > 0 ? Math.max(1, Math.floor(pageSize.w * effectiveScale)) : undefined;
+
+  const handleZoomOut = () => {
+    setAutoScale(false);
+    setScale(Math.max(0.5, effectiveScale - 0.25));
+  };
+
+  const handleZoomIn = () => {
+    setAutoScale(false);
+    setScale(Math.min(3, effectiveScale + 0.25));
+  };
+
+  const handleAutoScale = () => {
+    setAutoScale(true);
+  };
 
   const handleSelectedFiles = useCallback((selectedFiles: File[]) => {
     if (selectedFiles.length === 0) return;
@@ -103,9 +156,12 @@ const DocumentPreview: React.FC<Props> = ({
     <div className="flex flex-col h-full border border-border rounded-xl overflow-hidden bg-muted/20">
       <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-background shrink-0">
         <div className="flex items-center gap-1">
-          <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setScale(s => Math.max(0.5, s - 0.25))}><ZoomOut className="h-3.5 w-3.5" /></Button>
-          <span className="text-xs w-10 text-center tabular-nums text-muted-foreground">{Math.round(scale * 100)}%</span>
-          <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setScale(s => Math.min(3, s + 0.25))}><ZoomIn className="h-3.5 w-3.5" /></Button>
+          <Button size="icon" variant="ghost" className="h-7 w-7" onClick={handleZoomOut}><ZoomOut className="h-3.5 w-3.5" /></Button>
+          <span className="text-xs w-10 text-center tabular-nums text-muted-foreground">{Math.round(effectiveScale * 100)}%</span>
+          <Button size="icon" variant="ghost" className="h-7 w-7" onClick={handleZoomIn}><ZoomIn className="h-3.5 w-3.5" /></Button>
+          <Button size="sm" variant={autoScale ? 'outline' : 'ghost'} className="h-7 px-2 text-xs" onClick={handleAutoScale}>
+            {t('Auto', 'Auto')}
+          </Button>
         </div>
         {isPdf && numPages > 1 && (
           <div className="flex items-center gap-1">
@@ -141,13 +197,25 @@ const DocumentPreview: React.FC<Props> = ({
           <Document file={fileUrl} onLoadSuccess={({ numPages: n }) => setNumPages(n)}
             loading={<p className="text-sm text-muted-foreground p-8">{t('Laddar PDF...', 'Loading PDF...')}</p>}
             error={<p className="text-sm text-destructive p-8">{t('Kunde inte ladda PDF', 'Could not load PDF')}</p>}>
-            <Page pageNumber={currentPage} scale={scale} renderTextLayer={true} renderAnnotationLayer={false} loading={null} />
+            <Page
+              pageNumber={currentPage}
+              width={displayedPdfWidth}
+              renderTextLayer={true}
+              renderAnnotationLayer={false}
+              loading={null}
+              onLoadSuccess={(page) => {
+                setPageSize({
+                  w: page.originalWidth || page.width,
+                  h: page.originalHeight || page.height,
+                });
+              }}
+            />
           </Document>
         ) : (
-          <div className="relative inline-block" style={{ transform: `scale(${scale})`, transformOrigin: 'top center' }}>
+          <div className="relative inline-block" style={{ width: displayedImageWidth ? `${displayedImageWidth}px` : undefined }}>
             <img src={fileUrl} alt={t('Dokument', 'Document')}
               onLoad={(e) => { const img = e.target as HTMLImageElement; setNaturalSize({ w: img.naturalWidth, h: img.naturalHeight }); }}
-              className="max-w-full select-none" draggable={false} />
+              className="block w-full select-none" draggable={false} />
             {ocrWords.length > 0 && naturalSize.w > 0 && (
               <div className="absolute inset-0" style={{ pointerEvents: 'auto' }}>
                 {ocrWords.map((word, i) => (

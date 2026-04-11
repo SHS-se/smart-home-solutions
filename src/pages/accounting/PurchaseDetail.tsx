@@ -388,7 +388,7 @@ const PurchaseDetail: React.FC = () => {
               {supplierName || t('Okänd leverantör', 'Unknown supplier')} · {purchase.document_date}
             </p>
           </div>
-          <div className="flex flex-col items-center justify-center gap-2 lg:pt-1">
+          <div className="flex flex-col items-center justify-center gap-2 lg:-mt-1">
             {isDraftPurchase && currentDraftIndex >= 0 && (
               <>
                 <div className="flex items-center justify-center gap-2">
@@ -428,7 +428,7 @@ const PurchaseDetail: React.FC = () => {
               </>
             )}
           </div>
-          <div className="flex flex-wrap items-center justify-start gap-3 lg:justify-end">
+          <div className="flex flex-wrap items-center justify-start gap-3 lg:-mt-1 lg:justify-end">
             {purchase.status !== 'posted' && (
               <>
                 <Button
