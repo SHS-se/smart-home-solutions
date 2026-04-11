@@ -28,6 +28,7 @@ import { fetchSingleEcbExchangeRate } from '@/lib/ecb-rates';
 import {
   buildInvoiceNumberNote,
   createEmptyPurchaseForm,
+  extractInvoiceNumberFromNotes,
   findExistingSupplier,
   findDuplicatePurchaseId,
   inferSupplierMetadata,
