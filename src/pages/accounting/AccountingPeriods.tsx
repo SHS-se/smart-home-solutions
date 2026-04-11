@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { MONTH_NAMES_SV, MONTH_NAMES_EN, PERIOD_STATUS_LABELS, PERIOD_STATUS_LABELS_EN, PERIOD_STATUS_COLORS } from '@/lib/accounting-utils';
 import { toast } from 'sonner';
 import { Lock, Unlock, Info } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 const AccountingPeriods: React.FC = () => {
   const queryClient = useQueryClient();
@@ -67,7 +68,20 @@ const AccountingPeriods: React.FC = () => {
     <AccountingLayout>
       <div className="space-y-8">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">{t('Räkenskapsår och perioder', 'Fiscal years and periods')}</h1>
+          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
+            {t('Räkenskapsår och perioder', 'Fiscal years and periods')}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Info className="w-5 h-5 text-primary cursor-help" />
+              </TooltipTrigger>
+              <TooltipContent side="right" className="max-w-xs text-xs">
+                {t(
+                  'Bokföringsperioder delar upp året i hanterbara delar (månader). En "öppen" period kan ta emot nya transaktioner. "Stängd" innebär att inga fler poster bör läggas till. "Låst" betyder att perioden är permanent förseglad för revisionsändamål.',
+                  'Accounting periods divide the year into manageable chunks (months). An "open" period can receive new transactions. "Closed" means no more entries should be added. "Locked" means the period is permanently sealed for audit purposes.'
+                )}
+              </TooltipContent>
+            </Tooltip>
+          </h1>
           <p className="text-muted-foreground mt-1">{t('Hantera bokföringsperioder och räkenskapsår', 'Manage accounting periods and fiscal years')}</p>
         </div>
 

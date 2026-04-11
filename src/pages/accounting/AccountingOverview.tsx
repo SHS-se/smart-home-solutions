@@ -6,7 +6,8 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import AccountingLayout from '@/components/accounting/AccountingLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Calendar, Receipt, ShoppingCart, AlertCircle, ArrowRight, BookOpen } from 'lucide-react';
+import { Calendar, Receipt, ShoppingCart, AlertCircle, ArrowRight, BookOpen, Info } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { MONTH_NAMES_SV, MONTH_NAMES_EN, PURCHASE_STATUS_LABELS, PURCHASE_STATUS_LABELS_EN, PURCHASE_STATUS_COLORS, formatSEK } from '@/lib/accounting-utils';
 
 const AccountingOverview: React.FC = () => {
@@ -80,7 +81,20 @@ const AccountingOverview: React.FC = () => {
     <AccountingLayout>
       <div className="space-y-8">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">{t('Ekonomiöversikt', 'Financial overview')}</h1>
+          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
+            {t('Ekonomiöversikt', 'Financial overview')}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Info className="w-5 h-5 text-primary cursor-help" />
+              </TooltipTrigger>
+              <TooltipContent side="right" className="max-w-xs text-xs">
+                {t(
+                  'Din bokföringsöversikt. Här ser du aktuell period, kommande momsfrist och fakturor som väntar på att bokföras. "Bokföra" innebär att en transaktion officiellt registreras i räkenskaperna.',
+                  'Your accounting dashboard. See the current period, upcoming VAT deadline, and invoices waiting to be posted. "Posting" means a transaction is officially recorded in your books.'
+                )}
+              </TooltipContent>
+            </Tooltip>
+          </h1>
           <p className="text-muted-foreground mt-1">{t('Översikt över ekonomi och bokföring', 'Overview of finances and accounting')}</p>
         </div>
 

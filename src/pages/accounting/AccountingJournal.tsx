@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { MONTH_NAMES_SV, MONTH_NAMES_EN, formatExchangeRate, formatSEK, getAccountName } from '@/lib/accounting-utils';
 import { formatCurrencyAmount, normalizeCurrency } from '@/lib/accounting-fx';
 import { Filter, Download, Info } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 const AccountingJournal: React.FC = () => {
   const { t, language } = useLanguage();
@@ -49,17 +50,54 @@ const AccountingJournal: React.FC = () => {
   let balance = 0;
   const linesWithBalance = (journalData || []).reverse().map(l => { balance += Number(l.debit) - Number(l.credit); return { ...l, balance }; }).reverse();
 
+  const exportToCsv = () => {
+    if (!linesWithBalance.length) return;
+    const headers = [t('Datum', 'Date'), t('Konto', 'Account'), t('Kontonamn', 'Account name'), t('Verifikation', 'Verification'), t('Beskrivning', 'Description'), t('Original', 'Original'), t('Debet (SEK)', 'Debit (SEK)'), t('Kredit (SEK)', 'Credit (SEK)'), t('Saldo (SEK)', 'Balance (SEK)')];
+    const rows = linesWithBalance.map(l => [
+      l.verification_date,
+      l.account,
+      l.account_name || getAccountName(l.account) || '',
+      l.verification_number,
+      l.description || l.verification_description || '',
+      l.original_amount && normalizeCurrency(l.original_currency) !== 'SEK'
+        ? `${formatCurrencyAmount(Number(l.original_amount), l.original_currency)} @ ${l.exchange_rate_date} ${formatExchangeRate(l.exchange_rate == null ? null : Number(l.exchange_rate))}`
+        : '',
+      Number(l.debit) > 0 ? Number(l.debit).toFixed(2) : '',
+      Number(l.credit) > 0 ? Number(l.credit).toFixed(2) : '',
+      l.balance.toFixed(2),
+    ]);
+    const csv = [headers, ...rows].map(r => r.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `journal-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <AccountingLayout>
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-              Journal <Info className="w-5 h-5 text-primary cursor-help" />
+              Journal
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Info className="w-5 h-5 text-primary cursor-help" />
+                </TooltipTrigger>
+                <TooltipContent side="right" className="max-w-xs text-xs">
+                  {t(
+                    'Journalen är en kronologisk lista över alla bokförda transaktioner. Varje händelse (t.ex. ett inköp) skapar en "verifikation" med minst en debetrad och en kreditrad — dessa måste alltid balansera. Tänk på det som den fullständiga historiken för allt som hänt i bokföringen.',
+                    'The journal is a chronological record of every posted transaction. Each event (e.g. a purchase) creates a "verification" with at least one debit line and one credit line — these must always balance. Think of it as the complete history of everything that has happened in your books.'
+                  )}
+                </TooltipContent>
+              </Tooltip>
             </h1>
             <p className="text-muted-foreground mt-1">{t('Kronologisk lista över alla bokförda transaktioner', 'Chronological list of all posted transactions')}</p>
           </div>
-          <Button variant="outline" size="sm"><Download className="w-4 h-4 mr-2" /> {t('Exportera', 'Export')}</Button>
+          <Button variant="outline" size="sm" onClick={exportToCsv} disabled={!linesWithBalance.length}><Download className="w-4 h-4 mr-2" /> {t('Exportera CSV', 'Export CSV')}</Button>
         </div>
 
         <div className="flex items-center gap-4">

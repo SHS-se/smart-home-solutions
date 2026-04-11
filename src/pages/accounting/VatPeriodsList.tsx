@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { QUARTER_LABELS, QUARTER_MONTHS, formatSEK } from '@/lib/accounting-utils';
 import { Calendar, AlertCircle, CheckCircle, Info } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 const VAT_STATUS_LABELS: Record<string, Record<string, string>> = {
   sv: { open: 'Öppen', in_review: 'Granskning', approved: 'Godkänd', filed: 'Inlämnad', locked: 'Låst' },
@@ -60,7 +61,18 @@ const VatPeriodsList: React.FC = () => {
       <div className="space-y-8">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            {t('Momsperioder', 'VAT periods')} <Info className="w-5 h-5 text-primary cursor-help" />
+            {t('Momsperioder', 'VAT periods')}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Info className="w-5 h-5 text-primary cursor-help" />
+              </TooltipTrigger>
+              <TooltipContent side="right" className="max-w-xs text-xs">
+                {t(
+                  'Moms (mervärdesskatt) är en konsumtionsskatt som företag samlar in åt staten. Varje kvartal rapporterar du hur mycket moms du fått in (utgående moms) och hur mycket du betalat på inköp (ingående moms). Skillnaden redovisas till Skatteverket.',
+                  'VAT (Value Added Tax) is a consumption tax that businesses collect on behalf of the government. Each quarter you report how much VAT you charged customers (output VAT) and how much you paid on purchases (input VAT). The difference is reported to the Tax Agency.'
+                )}
+              </TooltipContent>
+            </Tooltip>
           </h1>
           <p className="text-muted-foreground mt-1">{t('Kvartalsvis momsrapportering och inlämning', 'Quarterly VAT reporting and submission')}</p>
         </div>

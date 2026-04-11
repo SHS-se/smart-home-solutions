@@ -18,7 +18,8 @@ import {
   formatSEK,
 } from '@/lib/accounting-utils';
 import { formatCurrencyAmount, isForeignCurrency, normalizeCurrency } from '@/lib/accounting-fx';
-import { Plus, Filter, ChevronDown, ChevronUp } from 'lucide-react';
+import { Plus, Filter, ChevronDown, ChevronUp, Info } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 type SortKey = 'supplier' | 'invoiceNumber' | 'vatTreatment' | 'documentDate' | 'amount' | 'status';
 type SortDirection = 'asc' | 'desc';
@@ -148,7 +149,20 @@ const PurchasesList: React.FC = () => {
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-foreground">{t('Inköp', 'Purchases')}</h1>
+            <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
+              {t('Inköp', 'Purchases')}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Info className="w-5 h-5 text-primary cursor-help" />
+                </TooltipTrigger>
+                <TooltipContent side="right" className="max-w-xs text-xs">
+                  {t(
+                    'Inköp är fakturor du fått från leverantörer. Varje faktura granskas och "bokförs" — det vill säga registreras officiellt i journalen. Statusarna: Utkast (ej granskat) → Granskning → Bokförd (klar). Blockerad innebär att något måste åtgärdas först.',
+                    'Purchases are invoices you have received from suppliers. Each invoice is reviewed and "posted" — officially recorded in the journal. Statuses: Draft (not reviewed) → In review → Posted (done). Blocked means something needs fixing first.'
+                  )}
+                </TooltipContent>
+              </Tooltip>
+            </h1>
             <p className="text-muted-foreground mt-1">{t('Leverantörsfakturor och kvitton', 'Supplier invoices and receipts')}</p>
           </div>
           <Link to="/accounting/purchases/upload">

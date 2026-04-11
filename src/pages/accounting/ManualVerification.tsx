@@ -15,7 +15,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { MONTH_NAMES_SV, MONTH_NAMES_EN, getAccountName, formatSEKDecimal } from '@/lib/accounting-utils';
 import { allocateNextVerificationNumber } from '@/lib/verification-number';
 import { toast } from 'sonner';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, Info } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface ManualLine { id: string; account: string; debit: string; credit: string; }
 
@@ -76,7 +77,20 @@ const ManualVerification: React.FC = () => {
     <AccountingLayout>
       <div className="max-w-3xl space-y-6">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">{t('Manuell verifikation', 'Manual verification')}</h1>
+          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
+            {t('Manuell verifikation', 'Manual verification')}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Info className="w-5 h-5 text-primary cursor-help" />
+              </TooltipTrigger>
+              <TooltipContent side="right" className="max-w-xs text-xs">
+                {t(
+                  'En verifikation är en bokföringspost med matchande debet- och kreditrader. Varje krona som debiteras ett konto måste krediteras ett annat — de måste alltid balansera. Manuella poster används för korrigeringar, bankavgifter eller omklassificeringar som inte kommer från en faktura.',
+                  'A verification is a journal entry with matching debit and credit lines. Every amount debited to one account must be credited to another — they must always balance. Manual entries are used for corrections, bank fees, or reclassifications that don\'t come from an invoice.'
+                )}
+              </TooltipContent>
+            </Tooltip>
+          </h1>
           <p className="text-muted-foreground mt-1">{t('Skapa en manuell journalpost', 'Create a manual journal entry')}</p>
         </div>
 
