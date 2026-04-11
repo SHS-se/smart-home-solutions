@@ -6,7 +6,6 @@ import {
   inferSupplierMetadata,
   inferVatTreatment,
   extractInvoiceNumberFromNotes,
-  getDisplaySupplierInvoiceNumber,
   normalizeSupplierName,
   normalizeSupplierInvoiceNumber,
   normalizeVatNumber,
@@ -333,15 +332,6 @@ Deno.test('findDuplicatePurchaseId does not treat OpenAI 0001 and 0002 invoices 
   );
 
   assertEqual(duplicatePurchaseId, null, 'duplicatePurchaseId');
-});
-
-Deno.test('getDisplaySupplierInvoiceNumber prefers the formatted note value when it matches the stored invoice number', () => {
-  const invoiceNumber = getDisplaySupplierInvoiceNumber(
-    'T41QIV6Y20260301',
-    'Supplier invoice no: T41QIV6Y-2026-03-01',
-  );
-
-  assertEqual(invoiceNumber, 'T41QIV6Y-2026-03-01', 'invoiceNumber');
 });
 
 Deno.test('findExistingSupplier prefers VAT-number match before creating a new supplier', () => {

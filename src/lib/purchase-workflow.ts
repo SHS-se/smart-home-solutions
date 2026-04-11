@@ -67,23 +67,6 @@ export function preserveSupplierInvoiceNumber(invoiceNumber: string | null | und
   return preserved || null;
 }
 
-export function getDisplaySupplierInvoiceNumber(
-  storedInvoiceNumber: string | null | undefined,
-  notes: string | null | undefined,
-): string {
-  const preservedStoredNumber = preserveSupplierInvoiceNumber(storedInvoiceNumber);
-  const notedInvoiceNumber = preserveSupplierInvoiceNumber(extractInvoiceNumberFromNotes(notes));
-
-  if (
-    notedInvoiceNumber &&
-    normalizeSupplierInvoiceNumber(notedInvoiceNumber) === normalizeSupplierInvoiceNumber(preservedStoredNumber)
-  ) {
-    return notedInvoiceNumber;
-  }
-
-  return notedInvoiceNumber || preservedStoredNumber || '';
-}
-
 export function normalizeSupplierInvoiceNumber(invoiceNumber: string | null | undefined): string | null {
   const normalized = invoiceNumber
     ?.trim()

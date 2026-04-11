@@ -30,7 +30,6 @@ import {
   createEmptyPurchaseForm,
   findExistingSupplier,
   findDuplicatePurchaseId,
-  getDisplaySupplierInvoiceNumber,
   inferSupplierMetadata,
   inferVatTreatment,
   normalizeSupplierInvoiceNumber,
@@ -137,7 +136,7 @@ const PurchaseUploadForm: React.FC<Props> = ({
     setForm({
       supplierId: purchase.supplier_id || '',
       newSupplierName: '',
-      invoiceNumber: getDisplaySupplierInvoiceNumber(purchase.supplier_invoice_number, purchase.notes),
+      invoiceNumber: purchase.supplier_invoice_number || '',
       documentType: purchase.document_type || 'supplier_invoice',
       documentDate: purchase.document_date || '',
       dueDate: purchase.due_date || '',
