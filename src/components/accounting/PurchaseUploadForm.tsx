@@ -47,6 +47,7 @@ interface Props {
   fillHeight?: boolean;
   title?: string;
   submitLabel?: string;
+  hideSubmitButton?: boolean;
   onSaved?: (purchaseId: string) => void;
 }
 
@@ -60,6 +61,7 @@ const PurchaseUploadForm: React.FC<Props> = ({
   fillHeight = false,
   title,
   submitLabel,
+  hideSubmitButton = false,
   onSaved,
 }) => {
   const { user, isAdmin } = useAuth();
@@ -408,6 +410,18 @@ const PurchaseUploadForm: React.FC<Props> = ({
     onError: (e: Error) => toast.error(e.message),
   });
 
+  useEffect(() => {
+    if (!hideSubmitButton) return undefined;
+
+    const handleExternalSave = () => {
+      if (disabled || saveDraft.isPending || saveBlockedByFx) return;
+      saveDraft.mutate();
+    };
+
+    window.addEventListener('purchase-detail-save', handleExternalSave);
+    return () => window.removeEventListener('purchase-detail-save', handleExternalSave);
+  }, [disabled, hideSubmitButton, saveBlockedByFx, saveDraft]);
+
   const AutoLabel = ({ text, field }: { text: string; field: string }) => (
     <div className="flex items-center gap-1.5">
       <Label className="text-xs text-muted-foreground">{text}</Label>
@@ -589,12 +603,14 @@ const PurchaseUploadForm: React.FC<Props> = ({
           <Textarea value={form.description} disabled={disabled || saveDraft.isPending} onChange={(e) => updateField('description', e.target.value)} placeholder={t('Vad är köpt...', 'What was purchased...')} rows={2} />
         </div>
 
-        <Button onClick={() => saveDraft.mutate()} disabled={disabled || saveDraft.isPending || saveBlockedByFx} className="w-full gap-2">
-          <Save className="h-4 w-4" />
-          {saveDraft.isPending
-            ? t('Sparar...', 'Saving...')
-            : submitLabel || (isEditing ? t('Spara ändringar', 'Save changes') : t('Spara utkast', 'Save draft'))}
-        </Button>
+        {!hideSubmitButton && (
+          <Button onClick={() => saveDraft.mutate()} disabled={disabled || saveDraft.isPending || saveBlockedByFx} className="w-full gap-2">
+            <Save className="h-4 w-4" />
+            {saveDraft.isPending
+              ? t('Sparar...', 'Saving...')
+              : submitLabel || (isEditing ? t('Spara ändringar', 'Save changes') : t('Spara utkast', 'Save draft'))}
+          </Button>
+        )}
       </CardContent>
     </Card>
   );

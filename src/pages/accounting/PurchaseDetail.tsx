@@ -42,7 +42,7 @@ import {
 } from '@/lib/accounting-fx';
 import { allocateNextVerificationNumber } from '@/lib/verification-number';
 import { toast } from 'sonner';
-import { ArrowLeft, AlertTriangle, Eye, CheckCircle, ChevronLeft, ChevronRight, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, AlertTriangle, Eye, CheckCircle, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react';
 
 const PURCHASE_DOCUMENT_BUCKET = 'purchase-documents';
 
@@ -370,14 +370,19 @@ const PurchaseDetail: React.FC = () => {
           <ArrowLeft className="w-4 h-4" /> {t('Tillbaka till lista', 'Back to list')}
         </Link>
 
-        <div className="flex items-start justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-foreground">{t('Granska inköp', 'Review purchase')}</h1>
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl font-bold text-foreground">{t('Granska inköp', 'Review purchase')}</h1>
+              <Badge className={`${PURCHASE_STATUS_COLORS[purchase.status as keyof typeof PURCHASE_STATUS_COLORS]} border-0`}>
+                {statusLabels[purchase.status as keyof typeof statusLabels]}
+              </Badge>
+            </div>
             <p className="text-muted-foreground text-sm mt-1">
               {supplierName || t('Okänd leverantör', 'Unknown supplier')} · {purchase.document_date}
             </p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center justify-end gap-3">
             {isDraftPurchase && currentDraftIndex >= 0 && (
               <>
                 <div className="flex items-center gap-2">
@@ -416,12 +421,49 @@ const PurchaseDetail: React.FC = () => {
                 </span>
               </>
             )}
-            <Link to="/accounting/purchases/upload">
-              <Button><Plus className="w-4 h-4 mr-2" />{t('Ladda upp faktura', 'Upload invoice')}</Button>
-            </Link>
-            <Badge className={`${PURCHASE_STATUS_COLORS[purchase.status as keyof typeof PURCHASE_STATUS_COLORS]} border-0`}>
-              {statusLabels[purchase.status as keyof typeof statusLabels]}
-            </Badge>
+            {purchase.status !== 'posted' && (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    const submitEvent = new CustomEvent('purchase-detail-save');
+                    window.dispatchEvent(submitEvent);
+                  }}
+                >
+                  {t('Spara', 'Save')}
+                </Button>
+                <Button className="min-w-24" disabled={!canPost || postPurchase.isPending} onClick={() => postPurchase.mutate()}>
+                  {postPurchase.isPending ? t('Bokför...', 'Posting...') : t('Bokför', 'Post')}
+                </Button>
+                {isDraftPurchase && (
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button variant="destructive" disabled={deleteDraft.isPending}>
+                        <Trash2 className="w-4 h-4 mr-2" />
+                        {deleteDraft.isPending ? t('Raderar...', 'Deleting...') : t('Radera', 'Delete')}
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>{t('Radera utkast?', 'Delete draft?')}</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          {t(
+                            'Det här tar bort utkastet och det uppladdade dokumentet. Bokförda inköp påverkas inte.',
+                            'This removes the draft and the uploaded document. Posted purchases are not affected.',
+                          )}
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>{t('Avbryt', 'Cancel')}</AlertDialogCancel>
+                        <AlertDialogAction onClick={() => deleteDraft.mutate()}>
+                          {t('Radera', 'Delete')}
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                )}
+              </>
+            )}
           </div>
         </div>
 
@@ -580,7 +622,8 @@ const PurchaseDetail: React.FC = () => {
               purchaseLine={primaryLine}
               disabled={purchase.status === 'posted'}
               title={t('Utkastdetaljer', 'Draft details')}
-              submitLabel={t('Spara utkast', 'Save draft')}
+              submitLabel={t('Spara', 'Save')}
+              hideSubmitButton
             />
 
             <Card className="border border-border">
@@ -631,41 +674,6 @@ const PurchaseDetail: React.FC = () => {
                 <div className="flex justify-between font-semibold border-t border-border pt-2"><span>{t('Betalningsbelopp (SEK)', 'Payment amount (SEK)')}</span><span>{formatSEKDecimal(vatSummary.paymentAccountAmountSek)}</span></div>
               </CardContent>
             </Card>
-
-            {purchase.status !== 'posted' && (
-              <div className="space-y-3">
-                <Button className="w-full" disabled={!canPost || postPurchase.isPending} onClick={() => postPurchase.mutate()}>
-                  {postPurchase.isPending ? t('Bokför...', 'Posting...') : t('Bokför faktura', 'Post invoice')}
-                </Button>
-                {isDraftPurchase && (
-                  <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                      <Button variant="destructive" className="w-full" disabled={deleteDraft.isPending}>
-                        <Trash2 className="w-4 h-4 mr-2" />
-                        {deleteDraft.isPending ? t('Raderar...', 'Deleting...') : t('Radera utkast', 'Delete draft')}
-                      </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>{t('Radera utkast?', 'Delete draft?')}</AlertDialogTitle>
-                        <AlertDialogDescription>
-                          {t(
-                            'Det här tar bort utkastet och det uppladdade dokumentet. Bokförda inköp påverkas inte.',
-                            'This removes the draft and the uploaded document. Posted purchases are not affected.',
-                          )}
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel>{t('Avbryt', 'Cancel')}</AlertDialogCancel>
-                        <AlertDialogAction onClick={() => deleteDraft.mutate()}>
-                          {t('Radera', 'Delete')}
-                        </AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
-                )}
-              </div>
-            )}
 
             {purchase.status === 'posted' && (
               <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-center gap-2">
