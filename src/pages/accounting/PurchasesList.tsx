@@ -55,6 +55,28 @@ const PurchasesList: React.FC = () => {
     '30': t('Ruta 30', 'Box 30'),
     '48': t('Ruta 48', 'Box 48'),
   };
+  const declarationBoxTooltips: Record<DeclarationBoxFilter, string> = {
+    '20': t(
+      'Rutbeloppet för ruta 20 är summan av nettobeloppen för matchande inköp av varor från andra EU-länder. Tabellen visar exakta ören, medan deklarationsrutan avrundas till hela kronor.',
+      'The box amount for box 20 is the sum of net amounts for matching purchases of goods from other EU countries. This table shows exact cents, while the declaration box is rounded to whole kronor.',
+    ),
+    '21': t(
+      'Rutbeloppet för ruta 21 är summan av nettobeloppen för matchande inköp av tjänster från andra EU-länder. Tabellen visar exakta ören, medan deklarationsrutan avrundas till hela kronor.',
+      'The box amount for box 21 is the sum of net amounts for matching purchases of services from other EU countries. This table shows exact cents, while the declaration box is rounded to whole kronor.',
+    ),
+    '22': t(
+      'Rutbeloppet för ruta 22 är summan av nettobeloppen för matchande inköp av tjänster från länder utanför EU. Tabellen visar exakta ören, medan deklarationsrutan avrundas till hela kronor.',
+      'The box amount for box 22 is the sum of net amounts for matching purchases of services from outside the EU. This table shows exact cents, while the declaration box is rounded to whole kronor.',
+    ),
+    '30': t(
+      'Rutbeloppet för ruta 30 är 25 % av nettobeloppet för varje matchande rad med omvänd skattskyldighet, summerat över urvalet. Tabellen visar exakta ören, medan deklarationsrutan avrundas till hela kronor.',
+      'The box amount for box 30 is 25% of the net amount for each matching reverse-charge line, summed across the filtered result. This table shows exact cents, while the declaration box is rounded to whole kronor.',
+    ),
+    '48': t(
+      'Rutbeloppet för ruta 48 är summan av ingående moms på avdragsgilla svenska inköp plus 25 % av nettobeloppet för matchande rader med omvänd skattskyldighet. Tabellen visar exakta ören, medan deklarationsrutan avrundas till hela kronor.',
+      'The box amount for box 48 is the sum of input VAT on deductible domestic purchases plus 25% of the net amount for matching reverse-charge lines. This table shows exact cents, while the declaration box is rounded to whole kronor.',
+    ),
+  };
 
   const { data: suppliers } = useQuery({
     queryKey: ['acc-suppliers'],
@@ -331,10 +353,7 @@ const PurchasesList: React.FC = () => {
                         <Info className="h-4 w-4 cursor-help text-primary" />
                       </TooltipTrigger>
                       <TooltipContent side="right" className="max-w-sm text-xs">
-                        {t(
-                          'Rutbelopp beräknas per matchande rad: ruta 20, 21 och 22 summerar nettobeloppet. Ruta 30 summerar 25 % av nettobeloppet för omvänd skattskyldighet. Ruta 48 summerar ingående moms för avdragsgilla svenska inköp plus 25 % av nettobeloppet för omvänd skattskyldighet. Tabellen visar exakta ören, medan deklarationsrutan avrundas till hela kronor.',
-                          'Box amount is calculated per matching line: boxes 20, 21, and 22 sum the net amount. Box 30 sums 25% of the net amount for reverse-charge purchases. Box 48 sums input VAT for deductible domestic purchases plus 25% of the net amount for reverse-charge purchases. This table shows exact cents, while the declaration box is rounded to whole kronor.'
-                        )}
+                        {declarationBoxTooltips[declarationBoxFilter]}
                       </TooltipContent>
                     </Tooltip>
                   )}
