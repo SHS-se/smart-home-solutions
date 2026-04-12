@@ -455,7 +455,7 @@ const VatDeclarationFlow: React.FC = () => {
               )}
               <div className="flex gap-3">
                 <Button onClick={() => setCurrentStep(3)} disabled={reconciliationHasErrors}>
-                  {t('Ser bra ut — fortsätt till ögonblicksbild', 'Looks good — continue to snapshot')}
+                  {t('Godkänn och fortsätt till ögonblicksbild', 'Approve and continue to snapshot')}
                 </Button>
                 <Button variant="outline" onClick={() => setCurrentStep(1)}>{t('Tillbaka', 'Back')}</Button>
               </div>
