@@ -176,7 +176,7 @@ const VatDeclarationFlow: React.FC = () => {
         quarter: `Q${quarter} ${year}`, period: `${startDate} – ${endDate}`, created_at: new Date().toISOString(),
         created_by: user?.email || 'unknown', total_verifications: postedPurchases.length,
         declaration_boxes: declarationBoxes.map(b => ({ box: b.box, label: b.label, amount: b.amount })),
-        net_vat: netVatPosition, rules_version: '2025.4',
+        net_vat: netVatPosition, rules_version: __GIT_COMMIT__,
       };
       const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(snapshotData)));
       const hashHex = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
@@ -497,7 +497,7 @@ const VatDeclarationFlow: React.FC = () => {
                     </div>
                     <div className="flex justify-between"><span className="text-muted-foreground">{t('Transaktioner inkluderade', 'Transactions included')}</span><span>{postedPurchases.length} {t('st', 'pcs')}</span></div>
                     <div className="flex justify-between"><span className="text-muted-foreground">{t('Granskare', 'Reviewer')}</span><span>{user?.email || '—'}</span></div>
-                    <div className="flex justify-between"><span className="text-muted-foreground">{t('Regelversion', 'Rules version')}</span><span>2025.4</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">{t('Regelversion (git)', 'Rules commit (git)')}</span><span className="font-mono text-xs">{__GIT_COMMIT__.slice(0, 10)}</span></div>
                   </div>
                   <div className="flex gap-3">
                     <Button onClick={() => createSnapshot.mutate()} disabled={createSnapshot.isPending}>
