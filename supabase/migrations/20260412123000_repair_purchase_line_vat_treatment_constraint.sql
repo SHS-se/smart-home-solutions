@@ -1,7 +1,3 @@
-UPDATE public.acc_purchase_lines
-SET vat_treatment = 'needs_review'
-WHERE vat_treatment = 'reverse_charge';
-
 ALTER TABLE public.acc_purchase_lines
   DROP CONSTRAINT IF EXISTS acc_purchase_lines_vat_treatment_check;
 
