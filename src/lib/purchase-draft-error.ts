@@ -78,8 +78,6 @@ function describeUnknownError(error: unknown, fallbackMessage: string): Omit<Pur
   const details = dedupeStrings([
     readString(errorLike.details),
     readString(errorLike.hint) ? `Hint: ${readString(errorLike.hint)}` : null,
-    code ? `Code: ${code}` : null,
-    status !== null ? `HTTP ${status}` : null,
   ]);
 
   return {
