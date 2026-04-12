@@ -38,6 +38,16 @@ export interface DeclarationBoxPurchaseLike {
   }>;
 }
 
+export interface DeclarationBoxLineTotals {
+  gross: number;
+  net: number;
+  vat: number;
+}
+
+function roundToCents(amount: number): number {
+  return Math.round(amount * 100) / 100;
+}
+
 export function roundVatDeclarationAmount(amount: number): number {
   return Math.round(amount);
 }
@@ -92,30 +102,80 @@ export function isDeclarationBoxFilter(value: string | null | undefined): value 
   return value === '20' || value === '21' || value === '22' || value === '30' || value === '48';
 }
 
-export function purchaseMatchesDeclarationBox(
-  purchase: DeclarationBoxPurchaseLike,
+export function lineMatchesDeclarationBox(
+  line: DeclarationBoxPurchaseLike['lines'][number],
   box: DeclarationBoxFilter,
 ): boolean {
   switch (box) {
     case '20':
-      return purchase.lines.some((line) => line.vat_treatment === 'reverse_charge_eu_goods');
+      return line.vat_treatment === 'reverse_charge_eu_goods';
     case '21':
-      return purchase.lines.some((line) => line.vat_treatment === 'reverse_charge_eu_services');
+      return line.vat_treatment === 'reverse_charge_eu_services';
     case '22':
-      return purchase.lines.some((line) => line.vat_treatment === 'reverse_charge_non_eu_services');
+      return line.vat_treatment === 'reverse_charge_non_eu_services';
     case '30':
-      return purchase.lines.some((line) =>
+      return (
         line.vat_treatment === 'reverse_charge_eu_goods' ||
         line.vat_treatment === 'reverse_charge_eu_services' ||
-        line.vat_treatment === 'reverse_charge_non_eu_services');
+        line.vat_treatment === 'reverse_charge_non_eu_services'
+      );
     case '48':
-      return purchase.lines.some((line) =>
+      return (
         line.vat_treatment === 'domestic_deductible' ||
         line.vat_treatment === 'reverse_charge_eu_goods' ||
         line.vat_treatment === 'reverse_charge_eu_services' ||
-        line.vat_treatment === 'reverse_charge_non_eu_services');
+        line.vat_treatment === 'reverse_charge_non_eu_services'
+      );
     default:
       return false;
+  }
+}
+
+export function purchaseMatchesDeclarationBox(
+  purchase: DeclarationBoxPurchaseLike,
+  box: DeclarationBoxFilter,
+): boolean {
+  return purchase.lines.some((line) => lineMatchesDeclarationBox(line, box));
+}
+
+export function summarizeDeclarationBoxLines(
+  lines: DeclarationBoxPurchaseLike['lines'],
+  box: DeclarationBoxFilter,
+): DeclarationBoxLineTotals {
+  return lines.reduce<DeclarationBoxLineTotals>((summary, line) => {
+    if (!lineMatchesDeclarationBox(line, box)) return summary;
+
+    return {
+      gross: summary.gross + Number(line.gross_amount ?? 0),
+      net: summary.net + Number(line.net_amount ?? 0),
+      vat: summary.vat + Number(line.vat_amount ?? 0),
+    };
+  }, { gross: 0, net: 0, vat: 0 });
+}
+
+export function calculateDeclarationBoxAmount(
+  lines: DeclarationBoxPurchaseLike['lines'],
+  box: DeclarationBoxFilter,
+): number {
+  const matchingLines = lines.filter((line) => lineMatchesDeclarationBox(line, box));
+
+  switch (box) {
+    case '20':
+    case '21':
+    case '22':
+      return matchingLines.reduce((sum, line) => sum + Number(line.net_amount ?? 0), 0);
+    case '30':
+      return matchingLines.reduce((sum, line) => sum + roundToCents(Number(line.net_amount ?? 0) * 0.25), 0);
+    case '48':
+      return matchingLines.reduce((sum, line) => {
+        if (line.vat_treatment === 'domestic_deductible') {
+          return sum + Number(line.vat_amount ?? 0);
+        }
+
+        return sum + roundToCents(Number(line.net_amount ?? 0) * 0.25);
+      }, 0);
+    default:
+      return 0;
   }
 }
 

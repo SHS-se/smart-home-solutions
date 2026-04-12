@@ -16,9 +16,16 @@ import {
   VAT_TREATMENT_LABELS,
   VAT_TREATMENT_LABELS_EN,
   formatSEK,
+  formatSEKDecimal,
 } from '@/lib/accounting-utils';
 import { formatCurrencyAmount, isForeignCurrency, normalizeCurrency } from '@/lib/accounting-fx';
-import { isDeclarationBoxFilter, purchaseMatchesDeclarationBox, type DeclarationBoxFilter } from '@/lib/vat-declaration';
+import {
+  calculateDeclarationBoxAmount,
+  isDeclarationBoxFilter,
+  purchaseMatchesDeclarationBox,
+  summarizeDeclarationBoxLines,
+  type DeclarationBoxFilter,
+} from '@/lib/vat-declaration';
 import { Plus, Filter, ChevronDown, ChevronUp, Info } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
@@ -134,6 +141,52 @@ const PurchasesList: React.FC = () => {
 
     return items;
   }, [collator, purchases, sortDirection, sortKey, statusLabels, vatLabels]);
+
+  const summary = useMemo(() => {
+    if (declarationBoxFilter === 'all') {
+      return (purchases || []).reduce((totals, purchase) => ({
+        count: totals.count + 1,
+        gross: totals.gross + Number(purchase.converted_gross_amount_sek ?? purchase.gross_amount ?? 0),
+        net: totals.net + Number(purchase.converted_net_amount_sek ?? purchase.net_amount ?? 0),
+        vat: totals.vat + Number(purchase.converted_vat_amount_sek ?? purchase.vat_amount ?? 0),
+        declarationAmount: null as number | null,
+      }), {
+        count: 0,
+        gross: 0,
+        net: 0,
+        vat: 0,
+        declarationAmount: null as number | null,
+      });
+    }
+
+    return (purchases || []).reduce((totals, purchase) => {
+      const lines = ((purchase.lines as Array<{
+        vat_treatment: string;
+        gross_amount?: number | null;
+        net_amount?: number | null;
+        vat_amount?: number | null;
+      }> | null) || []);
+      const lineTotals = summarizeDeclarationBoxLines(lines, declarationBoxFilter);
+
+      return {
+        count: totals.count + 1,
+        gross: totals.gross + lineTotals.gross,
+        net: totals.net + lineTotals.net,
+        vat: totals.vat + lineTotals.vat,
+        declarationAmount: (totals.declarationAmount ?? 0) + calculateDeclarationBoxAmount(lines, declarationBoxFilter),
+      };
+    }, {
+      count: 0,
+      gross: 0,
+      net: 0,
+      vat: 0,
+      declarationAmount: 0 as number | null,
+    });
+  }, [declarationBoxFilter, purchases]);
+
+  const summaryTitle = declarationBoxFilter === 'all'
+    ? t('Sammanfattning för urvalet', 'Selection summary')
+    : t(`Sammanfattning för ${declarationBoxLabels[declarationBoxFilter]}`, `Summary for ${declarationBoxLabels[declarationBoxFilter]}`);
 
   const updateParam = (key: string, value: string) => {
     const nextParams = new URLSearchParams(searchParams);
@@ -267,6 +320,27 @@ const PurchasesList: React.FC = () => {
         </div>
 
         <Card className="border border-border">
+          <div className="border-b border-border bg-muted/10 px-6 py-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div className="space-y-1">
+                <p className="text-sm font-medium text-foreground">{summaryTitle}</p>
+                <p className="text-xs text-muted-foreground">
+                  {dateFrom || dateTo
+                    ? `${dateFrom || '…'}${dateTo ? ` – ${dateTo}` : ''}`
+                    : t('Alla datum i nuvarande filter', 'All dates in the current filter')}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-muted-foreground">
+                <span>{t('Transaktioner', 'Transactions')}: <span className="font-medium text-foreground">{summary.count}</span></span>
+                <span>{t('Brutto', 'Gross')}: <span className="font-medium text-foreground">{formatSEKDecimal(summary.gross)}</span></span>
+                <span>{t('Netto', 'Net')}: <span className="font-medium text-foreground">{formatSEKDecimal(summary.net)}</span></span>
+                <span>{t('Moms', 'VAT')}: <span className="font-medium text-foreground">{formatSEKDecimal(summary.vat)}</span></span>
+                {summary.declarationAmount !== null && (
+                  <span>{t('Rutbelopp', 'Box amount')}: <span className="font-medium text-foreground">{formatSEKDecimal(summary.declarationAmount)}</span></span>
+                )}
+              </div>
+            </div>
+          </div>
           <CardContent className="p-0">
             <Table>
               <TableHeader>

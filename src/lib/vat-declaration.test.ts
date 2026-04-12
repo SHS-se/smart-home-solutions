@@ -2,9 +2,12 @@
 
 import {
   buildSkatteverketXml,
+  calculateDeclarationBoxAmount,
   finalizeVatDeclarationAmounts,
-  purchaseMatchesDeclarationBox,
   isDeclarationBoxFilter,
+  lineMatchesDeclarationBox,
+  purchaseMatchesDeclarationBox,
+  summarizeDeclarationBoxLines,
   validateSkatteverketXml,
 } from './vat-declaration.ts';
 
@@ -118,4 +121,26 @@ Deno.test('purchaseMatchesDeclarationBox maps purchases to declaration box filte
   assertEqual(purchaseMatchesDeclarationBox(purchase, '30'), true, 'box30');
   assertEqual(purchaseMatchesDeclarationBox(purchase, '48'), true, 'box48');
   assertEqual(purchaseMatchesDeclarationBox(purchase, '20'), false, 'box20');
+});
+
+Deno.test('lineMatchesDeclarationBox and box calculations mirror declaration logic', () => {
+  const lines = [
+    { vat_treatment: 'reverse_charge_non_eu_services', gross_amount: 125, net_amount: 100, vat_amount: 0 },
+    { vat_treatment: 'domestic_deductible', gross_amount: 250, net_amount: 200, vat_amount: 50 },
+  ];
+
+  assertEqual(lineMatchesDeclarationBox(lines[0], '22'), true, 'lineBox22');
+  assertEqual(lineMatchesDeclarationBox(lines[1], '22'), false, 'lineBox22Domestic');
+
+  const box22Summary = summarizeDeclarationBoxLines(lines, '22');
+  assertEqual(box22Summary.gross, 125, 'box22Gross');
+  assertEqual(box22Summary.net, 100, 'box22Net');
+  assertEqual(box22Summary.vat, 0, 'box22Vat');
+  assertEqual(calculateDeclarationBoxAmount(lines, '22'), 100, 'box22Amount');
+
+  const box48Summary = summarizeDeclarationBoxLines(lines, '48');
+  assertEqual(box48Summary.gross, 375, 'box48Gross');
+  assertEqual(box48Summary.net, 300, 'box48Net');
+  assertEqual(box48Summary.vat, 50, 'box48Vat');
+  assertEqual(calculateDeclarationBoxAmount(lines, '48'), 75, 'box48Amount');
 });
