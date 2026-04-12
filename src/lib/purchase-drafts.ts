@@ -8,6 +8,7 @@ import {
   buildPurchasePersistence,
   normalizeCurrency,
   parseAmount,
+  type ExchangeRateLookupResult,
 } from './accounting-fx';
 import { fetchSingleEcbExchangeRate } from './ecb-rates';
 import {
@@ -35,6 +36,7 @@ export interface CreatePurchaseDraftParams {
   values: PurchaseFormValues;
   duplicateInvoiceMessage: string;
   fullAmountLabel: string;
+  exchangeRateLookup?: ExchangeRateLookupResult;
 }
 
 export interface CreatePurchaseDraftResult {
@@ -170,7 +172,7 @@ export async function createPurchaseDraft(params: CreatePurchaseDraftParams): Pr
         rateDate: documentDate,
         source: 'SEK' as const,
       }
-    : await fetchSingleEcbExchangeRate({ currency: normalizedCurrency, documentDate });
+    : params.exchangeRateLookup ?? await fetchSingleEcbExchangeRate({ currency: normalizedCurrency, documentDate });
   const snapshot = buildExchangeSnapshot({
     documentDate,
     currency: normalizedCurrency,

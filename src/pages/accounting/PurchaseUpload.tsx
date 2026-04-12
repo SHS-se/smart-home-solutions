@@ -5,8 +5,15 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { useAuth } from '@/contexts/AuthContext';
 import AccountingLayout from '@/components/accounting/AccountingLayout';
 import DocumentPreview from '@/components/accounting/DocumentPreview';
+import type { ExchangeRateLookupResult } from '@/lib/accounting-fx';
 import { extractDocumentContent } from '@/lib/document-extraction';
 import { parseInvoiceText } from '@/lib/invoice-parser';
+import { fetchEcbExchangeRates } from '@/lib/ecb-rates';
+import {
+  buildPurchaseImportRateLookupMap,
+  buildPurchaseImportRateKey,
+  collectUniquePurchaseImportRateRequests,
+} from '@/lib/purchase-import-exchange-rates';
 import { buildPurchaseDraftDefaults, createPurchaseDraft } from '@/lib/purchase-drafts';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
@@ -23,6 +30,15 @@ interface UploadResult {
   parserReviewRequired?: boolean;
   parserReviewReasons?: string[];
   error?: string;
+}
+
+interface PreparedUploadDraft {
+  file: File;
+  extractedText: string;
+  parsedInvoice: ReturnType<typeof parseInvoiceText>;
+  values: ReturnType<typeof buildPurchaseDraftDefaults>;
+  documentDate: string;
+  exchangeRateKey: string | null;
 }
 
 const PurchaseUpload: React.FC = () => {
@@ -58,6 +74,7 @@ const PurchaseUpload: React.FC = () => {
 
     let currentSuppliers = [...suppliers];
     const nextResults: UploadResult[] = [];
+    const preparedDrafts: PreparedUploadDraft[] = [];
 
     for (const [index, file] of selectedFiles.entries()) {
       setProgress({
@@ -85,30 +102,20 @@ const PurchaseUpload: React.FC = () => {
           extractedText: extraction.rawText,
           suppliers: currentSuppliers,
         });
-        const createdDraft = await createPurchaseDraft({
-          supabase,
-          suppliers: currentSuppliers,
-          userId: user?.id,
-          file,
-          parsedInvoice,
-          extractedText: extraction.rawText,
-          values,
-          duplicateInvoiceMessage: t(
-            'Den här leverantörsfakturan finns redan registrerad och kan inte sparas igen.',
-            'This supplier invoice is already registered and cannot be saved again.',
-          ),
-          fullAmountLabel: t('Hela beloppet', 'Full amount'),
-        });
-        currentSuppliers = createdDraft.suppliers;
+        const documentDate = values.documentDate || new Date().toISOString().split('T')[0];
+        const rateRequests = collectUniquePurchaseImportRateRequests([
+          { currency: values.currency, documentDate },
+        ]);
 
-        nextResults.push({
-          fileName: file.name,
-          purchaseId: createdDraft.purchaseId,
-          supplierName: parsedInvoice.fingerprint.recognized ? parsedInvoice.supplierName : null,
-          invoiceNumber: parsedInvoice.invoiceNumber,
-          parserFingerprintLabel: createdDraft.parserFingerprintLabel,
-          parserReviewRequired: createdDraft.parserReviewRequired,
-          parserReviewReasons: createdDraft.parserReviewReasons,
+        preparedDrafts.push({
+          file,
+          extractedText: extraction.rawText,
+          parsedInvoice,
+          values,
+          documentDate,
+          exchangeRateKey: rateRequests[0]
+            ? buildPurchaseImportRateKey(rateRequests[0].currency, rateRequests[0].documentDate)
+            : null,
         });
       } catch (error) {
         nextResults.push({
@@ -120,7 +127,91 @@ const PurchaseUpload: React.FC = () => {
       }
 
       setUploadResults([...nextResults]);
-      setUploadProcessed(index + 1);
+    }
+
+    setUploadProcessed(nextResults.length);
+
+    const rateRequests = collectUniquePurchaseImportRateRequests(
+      preparedDrafts.map((draft) => ({
+        currency: draft.values.currency,
+        documentDate: draft.documentDate,
+      })),
+    );
+    const duplicateInvoiceMessage = t(
+      'Den här leverantörsfakturan finns redan registrerad och kan inte sparas igen.',
+      'This supplier invoice is already registered and cannot be saved again.',
+    );
+    const fullAmountLabel = t('Hela beloppet', 'Full amount');
+
+    let rateLookupMap = new Map<string, ExchangeRateLookupResult>();
+    let rateLookupError: string | null = null;
+
+    if (rateRequests.length > 0) {
+      setProgress({
+        message: t('Hämtar ECB-kurser...', 'Fetching ECB rates...'),
+        pct: 72,
+      });
+
+      try {
+        const rateResults = await fetchEcbExchangeRates(rateRequests);
+        rateLookupMap = buildPurchaseImportRateLookupMap(rateRequests, rateResults);
+      } catch (error) {
+        rateLookupError = error instanceof Error
+          ? error.message
+          : t('Kunde inte hämta ECB-kurser', 'Could not fetch ECB rates');
+      }
+    }
+
+    for (const [index, draft] of preparedDrafts.entries()) {
+      setProgress({
+        message: t(
+          `Sparar ${draft.file.name} (${index + 1}/${preparedDrafts.length})...`,
+          `Saving ${draft.file.name} (${index + 1}/${preparedDrafts.length})...`,
+        ),
+        pct: 75 + Math.round(((index) / Math.max(preparedDrafts.length, 1)) * 24),
+      });
+
+      try {
+        if (draft.exchangeRateKey && rateLookupError) {
+          throw new Error(rateLookupError);
+        }
+
+        const createdDraft = await createPurchaseDraft({
+          supabase,
+          suppliers: currentSuppliers,
+          userId: user?.id,
+          file: draft.file,
+          parsedInvoice: draft.parsedInvoice,
+          extractedText: draft.extractedText,
+          values: draft.values,
+          duplicateInvoiceMessage,
+          fullAmountLabel,
+          exchangeRateLookup: draft.exchangeRateKey
+            ? rateLookupMap.get(draft.exchangeRateKey)
+            : undefined,
+        });
+        currentSuppliers = createdDraft.suppliers;
+
+        nextResults.push({
+          fileName: draft.file.name,
+          purchaseId: createdDraft.purchaseId,
+          supplierName: draft.parsedInvoice.fingerprint.recognized ? draft.parsedInvoice.supplierName : null,
+          invoiceNumber: draft.parsedInvoice.invoiceNumber,
+          parserFingerprintLabel: createdDraft.parserFingerprintLabel,
+          parserReviewRequired: createdDraft.parserReviewRequired,
+          parserReviewReasons: createdDraft.parserReviewReasons,
+        });
+      } catch (error) {
+        nextResults.push({
+          fileName: draft.file.name,
+          error: error instanceof Error
+            ? error.message
+            : t('Kunde inte skapa utkast', 'Could not create draft'),
+        });
+      }
+
+      setUploadResults([...nextResults]);
+      setUploadProcessed(nextResults.length);
     }
 
     await Promise.all([
