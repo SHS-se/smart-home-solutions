@@ -55,7 +55,7 @@ Deno.test('buildPurchaseVatSummary calculates reverse-charge VAT in SEK only', (
   const summary = buildPurchaseVatSummary([
     {
       expense_account: '4000',
-      vat_treatment: 'reverse_charge',
+      vat_treatment: 'reverse_charge_non_eu_services',
       net_amount: snapshot.convertedNetSek,
       vat_amount: snapshot.convertedVatSek,
       gross_amount: snapshot.convertedGrossSek,

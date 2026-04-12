@@ -1,5 +1,5 @@
-import type { VatTreatment } from './accounting-utils';
-import { isReverseChargeTreatment } from './accounting-utils';
+import type { VatTreatment } from './accounting-utils.ts';
+import { isReverseChargeTreatment } from './accounting-utils.ts';
 
 export const BASE_CURRENCY = 'SEK';
 const ROUNDING_EPSILON = 1e-9;

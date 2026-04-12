@@ -1,4 +1,4 @@
-import type { ExchangeRateLookupResult } from './accounting-fx';
+import type { ExchangeRateLookupResult } from './accounting-fx.ts';
 
 export interface EcbRateRequest {
   currency: string;
