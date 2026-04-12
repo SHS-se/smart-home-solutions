@@ -323,7 +323,22 @@ const PurchasesList: React.FC = () => {
           <div className="border-b border-border bg-muted/10 px-6 py-4">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div className="space-y-1">
-                <p className="text-sm font-medium text-foreground">{summaryTitle}</p>
+                <div className="flex items-center gap-1.5">
+                  <p className="text-sm font-medium text-foreground">{summaryTitle}</p>
+                  {declarationBoxFilter !== 'all' && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="h-4 w-4 cursor-help text-primary" />
+                      </TooltipTrigger>
+                      <TooltipContent side="right" className="max-w-sm text-xs">
+                        {t(
+                          'Rutbelopp beräknas per matchande rad: ruta 20, 21 och 22 summerar nettobeloppet. Ruta 30 summerar 25 % av nettobeloppet för omvänd skattskyldighet. Ruta 48 summerar ingående moms för avdragsgilla svenska inköp plus 25 % av nettobeloppet för omvänd skattskyldighet. Tabellen visar exakta ören, medan deklarationsrutan avrundas till hela kronor.',
+                          'Box amount is calculated per matching line: boxes 20, 21, and 22 sum the net amount. Box 30 sums 25% of the net amount for reverse-charge purchases. Box 48 sums input VAT for deductible domestic purchases plus 25% of the net amount for reverse-charge purchases. This table shows exact cents, while the declaration box is rounded to whole kronor.'
+                        )}
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
+                </div>
                 <p className="text-xs text-muted-foreground">
                   {dateFrom || dateTo
                     ? `${dateFrom || '…'}${dateTo ? ` – ${dateTo}` : ''}`
