@@ -135,12 +135,6 @@ const VatDeclarationFlow: React.FC = () => {
   const blockerCount = uniqueBlockedPurchaseIds.size;
 
   const postedPurchases = purchaseRows.filter((purchase) => purchase.status === 'posted');
-  const declarationBoxPurchaseSummary = useMemo(() => ({
-    count: postedPurchases.length,
-    gross: roundMoney(postedPurchases.reduce((sum, purchase) => sum + Number(purchase.converted_gross_amount_sek ?? purchase.gross_amount), 0)),
-    net: roundMoney(postedPurchases.reduce((sum, purchase) => sum + Number(purchase.converted_net_amount_sek ?? purchase.net_amount), 0)),
-    vat: roundMoney(postedPurchases.reduce((sum, purchase) => sum + Number(purchase.converted_vat_amount_sek ?? purchase.vat_amount), 0)),
-  }), [postedPurchases]);
 
   const buildDeclarationBoxLink = (box: DeclarationBoxFilter): string => {
     const params = new URLSearchParams();
@@ -690,12 +684,6 @@ const VatDeclarationFlow: React.FC = () => {
                     </TooltipContent>
                   </Tooltip>
                 </CardTitle>
-                <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
-                  <span>{t('Bokförda inköp', 'Posted purchases')}: <span className="font-medium text-foreground">{declarationBoxPurchaseSummary.count}</span></span>
-                  <span>{t('Brutto', 'Gross')}: <span className="font-medium text-foreground">{formatSEK(declarationBoxPurchaseSummary.gross)}</span></span>
-                  <span>{t('Netto', 'Net')}: <span className="font-medium text-foreground">{formatSEK(declarationBoxPurchaseSummary.net)}</span></span>
-                  <span>{t('Moms', 'VAT')}: <span className="font-medium text-foreground">{formatSEK(declarationBoxPurchaseSummary.vat)}</span></span>
-                </div>
               </CardHeader>
               <CardContent>
                 <Table>
