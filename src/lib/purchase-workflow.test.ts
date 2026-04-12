@@ -160,6 +160,26 @@ const MNU_INVOICE: ParsedInvoice = {
   parserReviewReasons: [],
 };
 
+const BBQKEES_INVOICE: ParsedInvoice = {
+  supplierName: 'BBQKees Electronics B.V.',
+  supplierCountry: 'NL',
+  invoiceNumber: '2026031600',
+  invoiceDate: '2026-03-26',
+  dueDate: null,
+  grossAmount: 111.72,
+  netAmount: 100,
+  vatAmount: 0,
+  vatRate: 0,
+  currency: 'EUR',
+  orgNumber: null,
+  vatNumber: 'NL868180038B01',
+  description: 'Gateway E32 V2 KIT (Ethernet + WiFi Edition V2 KIT)',
+  confidence: {},
+  fingerprint: { id: 'bbqkees_invoice', label: 'BBQKees invoice', recognized: true },
+  parserReviewRequired: false,
+  parserReviewReasons: [],
+};
+
 Deno.test('inferSupplierMetadata classifies VAT-numbered EU suppliers correctly', () => {
   const inferred = inferSupplierMetadata(STRIPE_INVOICE);
 
@@ -211,6 +231,15 @@ Deno.test('inferVatTreatment treats M.nu invoices as domestic deductible', () =>
   });
 
   assertEqual(vatTreatment, 'domestic_deductible', 'vatTreatment');
+});
+
+Deno.test('inferVatTreatment classifies BBQKees invoices as reverse charge EU goods', () => {
+  const vatTreatment = inferVatTreatment({
+    parsedInvoice: BBQKEES_INVOICE,
+    extractedText: 'VAT exempt intra community supply',
+  });
+
+  assertEqual(vatTreatment, 'reverse_charge_eu_goods', 'vatTreatment');
 });
 
 Deno.test('inferVatTreatment treats Amazon marketplace invoices under 4000 SEK as domestic deductible', () => {

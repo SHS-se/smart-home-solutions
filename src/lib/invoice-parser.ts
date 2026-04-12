@@ -263,6 +263,16 @@ const KNOWN_INVOICE_FINGERPRINTS: Array<{
     label: 'Ubiquiti receipt / VAT invoice',
     match: (text) => /ubiquiti store europe/i.test(text) && /receipt\s*\/\s*vat invoice/i.test(text) && /invoice no\.:/i.test(text),
   },
+  {
+    id: 'bbqkees_invoice',
+    label: 'BBQKees invoice',
+    match: (text) => (
+      /bbqkees electronics b\.v\./i.test(text) &&
+      /shop@bbqkees-electronics\.nl/i.test(text) &&
+      /invoice number/i.test(text) &&
+      /order number/i.test(text)
+    ),
+  },
 ];
 
 function normalizeWhitespace(text: string): string {
@@ -578,6 +588,7 @@ function inferCurrency(text: string): string | null {
 function extractSupplierName(lines: string[], normalizedText: string): string | null {
   const openAiHeaderMatch = normalizedText.match(/OpenAI OpCo,\s*LLC/i);
   if (openAiHeaderMatch) return 'OpenAI OpCo, LLC';
+  if (/bbqkees electronics b\.v\./i.test(normalizedText)) return 'BBQKees Electronics B.V.';
   if (/info@m\.nu/i.test(normalizedText)) return 'a m punkt nu Sverige AB';
   if (/support@lovable\.dev/i.test(normalizedText) && /\blovable\b/i.test(normalizedText)) {
     return 'Lovable Labs Incorporated';
@@ -636,6 +647,7 @@ function extractSupplierName(lines: string[], normalizedText: string): string | 
 
 function extractSupplierCountry(text: string): string | null {
   if (/info@m\.nu/i.test(text)) return 'SE';
+  if (/bbqkees electronics b\.v\./i.test(text) && /netherlands/i.test(text)) return 'NL';
   if (/stripe payments europe,\s*limited/i.test(text) && /ireland/i.test(text)) return 'IE';
 
   const sellerSection = extractSellerSection(text);
@@ -658,6 +670,11 @@ function extractSupplierCountry(text: string): string | null {
 }
 
 function extractSupplierVatNumber(text: string, supplierName: string | null): string | null {
+  if (/bbqkees electronics b\.v\./i.test(text)) {
+    const bbqKeesVatMatch = text.match(/\bVAT\s*:\s*(NL\s?[A-Z0-9]{2,14})\b/i);
+    if (bbqKeesVatMatch) return bbqKeesVatMatch[1].replace(/\s+/g, ' ').trim();
+  }
+
   const sellerSection = extractSellerSection(text);
   if (sellerSection) {
     const sanitizedSellerSection = sellerSection.replace(
@@ -724,6 +741,12 @@ function extractDate(text: string, labels: string[]): string | null {
 }
 
 function extractProductName(text: string): string | null {
+  const bbqKeesMatch = text.match(/Product\s+HS Code\s+Quantity\s+Total\s+VAT\s+Price\s+(.+?)\s+VAT EXEMPT\s+SKU:/i);
+  if (bbqKeesMatch) {
+    const productName = cleanProductName(bbqKeesMatch[1]);
+    return productName || null;
+  }
+
   const mnuMatch = text.match(/Art\.nr:\s+Namn \/ Färg\s+Typ:\s+Pris\s+Moms\s+Summa\s+\S+\s+\d+\s+\S+\s+(.+?)\s+-\s+\d+st à/i);
   if (mnuMatch) {
     const productName = cleanProductName(mnuMatch[1]);

@@ -13,6 +13,7 @@ The total above has been debited from your Stripe balance.  It is the responsibi
 const MNU_RAW_TEXT = `a m punkt nu Sverige AB  Älvsby Industriväg 29C, 139 52 Värmdö, Sverige Kontaktinformation: info@m.nu, 013-353403 (Vi föredrar kontakt via epost)  Organisationsnummer:   556871-8133  Momsreg.nr:   SE556871813301  Godkänd för F-skatt  Följesedel  Faktura-/Leveransadress  Philip Cheong Philip Cheong Porfyrvägen 10 18734 TÄBY Sweden  Faktureringsadress  Philip Cheong Philip Cheong Porfyrvägen 10 18734 TÄBY Sweden  Orderdatum:   2026-02-25  Fakturadatum:   2026-03-11  Fakturanr/Order-id:   20533959  Kundnummer:   73501  Betalning:   collectorcheckout  Hylla   Antal   Art.nr:   Namn / Färg   Typ:   Pris   Moms   Summa  DC5   4   TH-S02D   Aqara Aqara Temperatur, Luftfuktighet & Lufttryck - T1 / N/A   -   4st à 199.00 :-   25%   796.00 :- Fraktsätt   69.00 :- Netto   692.00 :- Moms (25%)   173.00 :-  Summa:   865.00 :-`;
 
 const UBIQUITI_RAW_TEXT = `Ubiquiti Store Europe   Receipt / VAT Invoice  Ubiquiti International Holding B.V.  eu.store@ui.com  Invoice No.:   EU4860167  Invoice Date:   2026/03/10  Payment status:   Authorized  Billing Address  Smart Home Solutions  SE790519759101  Philip Cheong  Porfyrvägen 10  Täby, Stockholms län, 187 34, SE  +46 70 287 08 14  Shipping Address  Smart Home Solutions  SE790519759101  Philip Cheong  Porfyrvägen 10  Täby, 187 34, SE  +46 70 287 08 14  NO.   PRODUCT DESCRIPTION   HS CODE   QTY   PRICE   VAT TOTAL   TOTAL  1   Dream Router 7 (EU Version)  UDR7-EU   851762   1   250,00   €   0,00   €   250,00   €  Total Amount   250,00   €  Shipping Amount   6,80   €  Total   256,80   €  Ubiquiti International Holding B.V. Ekkersrijt 3102, Son, 5692 CC, NL, VAT ID: NL859253582B01. CoC: 72831995 VAT exempt intra-Community supply under Article 138 of the EU VAT Directive`;
+const BBQKEES_RAW_TEXT = `BBQKees Electronics B.V. Meuleneind 5 5528 CJ Hoogeloon Netherlands shop@bbqkees-electronics.nl KvK: 97682829 VAT: NL868180038B01 +31624253658 INVOICE Smart Home Solutions Philip Cheong Porfyrvägen 10 187 34 Täby Sweden VAT #: SE 790519759101 phil@smarthomesolutions.se Invoice Number: 2026031600 Invoice Date: 26/03/2026 Order Number: 24859 Order Date: 26/03/2026 Payment Method: Card Product HS Code Quantity Total VAT Price Gateway E32 V2 KIT (Ethernet + WiFi Edition V2 KIT) VAT EXEMPT SKU: E32-v2-KIT-1 Weight: 0.35 kg 84718000 1 €100,00 €0,00 €100,00 Subtotal €100,00 Shipping €10,22 Payment Fee €1,50 Total €111,72 This is a VAT exempt intra community supply General terms and conditions apply: bbqkees.com/terms-and-conditions`;
 
 const AMAZON_RAW_TEXT = `Faktura  Sida 1 av 1  LU-BIO-04 Amazon EU S.à r.l. - 38 avenue John F. Kennedy, L-1855 Luxemburg, registrerat i Luxemburg (Registre de Commerce et des Sociétés (RCS)): B 101818 Amazon EU S.à r.l., Sverige Filial • Malmskillnadsgatan 36, 111 57 Stockholm, Sverige • momsnummer SE516412220101 • Registrerat i Bolagsverkets filialregister • Organisationsnummer: 516412-2201  Moms   Delsumma för artikel (exkl. moms) Delsumma moms 25 %   378,06 kr   94,52 kr Totalt   378,06 kr   94,52 kr  Totalsumma för faktura   472,58 kr Fakturauppgifter  Beställningsdatum   12 mars 2026 Ordernr   407-0705765-2582749  Betald  Referens-ID för betalning 3BOYvD8yTxgv7Yyv37yu Såld av Amazon EU S.à r.l., Sverige Filial Moms # SE516412220101 Fakturadatum/Leveransdatum   13 mars 2026 Fakturanr   SE6EK5YAEUI Summa att betala   472,58 kr  PHILIP CHEONG PORFYRVÄGEN 10, SE790519759101 TÄBY, 18734 SE  För kundsupport, gå till www.amazon.se/contact-us  Faktureringsadress  Philip Cheong Porfyrvägen 10, SE790519759101 TÄBY, 18734 SE  Leveransadress  Philip Cheong Porfyrvägen 10, SE790519759101 TÄBY, 18734 SE  Såld av  Amazon EU S.à r.l., Sverige Filial Malmskillnadsgatan 36 111 57 Stockholm Sverige Moms # SE516412220101  Beställningsinformation  Beskrivning   Antal   Enhetspris (exkl. moms) Moms   Enhetspris (inkl. moms) Delsumma för artikel (inkl. moms) Shelly Dimmer 2, Interruttore Varialuce Senza Fili, Confezione de 2, Wi-Fi, Nessun Hub o Neutro richiesto, Domotica, Compatibile con Alexa e Google Home, App iOS Android ASIN: B09RMQZ5ZY 1   458,06 kr   25 %   572,58 kr   572,58 kr Fraktavgifter   0,00 kr   0,00 kr   0,00 kr Kampanjer   -80,00 kr   -100,00 kr   -100,00 kr`;
 
@@ -107,6 +108,24 @@ Deno.test('parseInvoiceText extracts Ubiquiti receipt totals from flattened PDF 
   assertEqual(parsed.netAmount, 256.8, 'netAmount');
   assertEqual(parsed.vatRate, 0, 'vatRate');
   assertEqual(parsed.fingerprint.id, 'ubiquiti_receipt_invoice', 'fingerprint');
+  assertEqual(parsed.parserReviewRequired, false, 'parserReviewRequired');
+});
+
+Deno.test('parseInvoiceText extracts BBQKees invoice fields from flattened PDF text', () => {
+  const parsed = parseInvoiceText(BBQKEES_RAW_TEXT);
+
+  assertEqual(parsed.supplierName, 'BBQKees Electronics B.V.', 'supplierName');
+  assertEqual(parsed.supplierCountry, 'NL', 'supplierCountry');
+  assertEqual(parsed.invoiceNumber, '2026031600', 'invoiceNumber');
+  assertEqual(parsed.invoiceDate, '2026-03-26', 'invoiceDate');
+  assertEqual(parsed.currency, 'EUR', 'currency');
+  assertEqual(parsed.grossAmount, 111.72, 'grossAmount');
+  assertEqual(parsed.netAmount, 100, 'netAmount');
+  assertEqual(parsed.vatAmount, 0, 'vatAmount');
+  assertEqual(parsed.vatRate, 0, 'vatRate');
+  assertEqual(parsed.vatNumber, 'NL868180038B01', 'vatNumber');
+  assertEqual(parsed.description, 'Gateway E32 V2 KIT (Ethernet + WiFi Edition V2 KIT)', 'description');
+  assertEqual(parsed.fingerprint.id, 'bbqkees_invoice', 'fingerprint');
   assertEqual(parsed.parserReviewRequired, false, 'parserReviewRequired');
 });
 

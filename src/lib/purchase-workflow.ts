@@ -187,6 +187,7 @@ export function inferSupplierMetadata(parsedInvoice: ParsedInvoice | null): {
 /** Fingerprints known to represent physical goods */
 const GOODS_FINGERPRINTS = new Set([
   'ubiquiti_receipt_invoice',
+  'bbqkees_invoice',
   'amazon_sweden_invoice',
   'amazon_marketplace_invoice',
 ]);
