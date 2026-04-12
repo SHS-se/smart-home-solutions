@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -28,13 +28,27 @@ import { ArrowLeft, CheckCircle, AlertTriangle, Lock, Download, Upload, Info, Fi
 
 interface StepProps { number: number; label: string; description: string; status: 'active' | 'done' | 'pending'; }
 
-const StepIndicator: React.FC<{ steps: StepProps[]; currentStep: number }> = ({ steps }) => (
+interface VatWorkflowState {
+  dataChecksApprovedAt?: string;
+  reconciliationApprovedAt?: string;
+}
+
+const StepIndicator: React.FC<{
+  steps: StepProps[];
+  maxAccessibleStep: number;
+  onSelectStep: (step: number) => void;
+}> = ({ steps, maxAccessibleStep, onSelectStep }) => (
   <Card className="border border-border">
     <CardContent className="p-6">
       <div className="flex items-center justify-between">
         {steps.map((step, i) => (
           <React.Fragment key={step.number}>
-            <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => onSelectStep(step.number)}
+              disabled={step.number > maxAccessibleStep}
+              className="flex items-center gap-3 text-left disabled:cursor-not-allowed"
+            >
               <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-semibold shrink-0 ${
                 step.status === 'done' || step.status === 'active' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
               }`}>
@@ -44,7 +58,7 @@ const StepIndicator: React.FC<{ steps: StepProps[]; currentStep: number }> = ({ 
                 <p className={`text-sm font-medium ${step.status === 'pending' ? 'text-muted-foreground' : 'text-foreground'}`}>{step.label}</p>
                 <p className="text-xs text-muted-foreground">{step.description}</p>
               </div>
-            </div>
+            </button>
             {i < steps.length - 1 && <div className="flex-1 h-px bg-border mx-4" />}
           </React.Fragment>
         ))}
@@ -53,12 +67,22 @@ const StepIndicator: React.FC<{ steps: StepProps[]; currentStep: number }> = ({ 
   </Card>
 );
 
+function parseVatWorkflowState(value: unknown): VatWorkflowState {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const record = value as Record<string, unknown>;
+
+  return {
+    dataChecksApprovedAt: typeof record.dataChecksApprovedAt === 'string' ? record.dataChecksApprovedAt : undefined,
+    reconciliationApprovedAt: typeof record.reconciliationApprovedAt === 'string' ? record.reconciliationApprovedAt : undefined,
+  };
+}
+
 const VatDeclarationFlow: React.FC = () => {
   const { periodId } = useParams<{ periodId: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
   const { t, language } = useLanguage();
   const queryClient = useQueryClient();
-  const [currentStep, setCurrentStep] = useState(1);
   const [validationExpanded, setValidationExpanded] = useState(false);
   const [generatedXml, setGeneratedXml] = useState<string | null>(null);
   const [xmlValidationErrors, setXmlValidationErrors] = useState<string[]>([]);
@@ -221,6 +245,29 @@ const VatDeclarationFlow: React.FC = () => {
     },
   ];
   const reconciliationHasErrors = validationChecks.some((c) => !c.ok);
+  const workflowState = useMemo(() => parseVatWorkflowState(vatPeriod?.workflow_state), [vatPeriod?.workflow_state]);
+  const dataChecksApproved = Boolean(workflowState.dataChecksApprovedAt) || Boolean(workflowState.reconciliationApprovedAt) || Boolean(vatPeriod?.snapshot_data);
+  const reconciliationApproved = Boolean(workflowState.reconciliationApprovedAt) || Boolean(vatPeriod?.snapshot_data);
+  const maxAccessibleStep = vatPeriod?.snapshot_data
+    ? 4
+    : reconciliationApproved
+      ? 3
+      : dataChecksApproved
+        ? 2
+        : 1;
+  const requestedStep = Number(searchParams.get('step') || '');
+  const normalizedRequestedStep = Number.isInteger(requestedStep) && requestedStep >= 1 && requestedStep <= 4
+    ? requestedStep
+    : null;
+  const currentStep = normalizedRequestedStep === null
+    ? maxAccessibleStep
+    : Math.min(normalizedRequestedStep, maxAccessibleStep);
+
+  const goToStep = (step: number, replace = false) => {
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set('step', String(step));
+    setSearchParams(nextParams, { replace });
+  };
 
   /** Skatteverket XML element names mapped to box numbers */
   const declarationBoxes = [
@@ -283,16 +330,88 @@ const VatDeclarationFlow: React.FC = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['acc-vat-period'] });
       toast.success(t('Ögonblicksbild skapad', 'Snapshot created'));
-      setCurrentStep(4);
+      goToStep(4);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const approveDataChecks = useMutation({
+    mutationFn: async () => {
+      if (hasBlockers) throw new Error(t('Alla problem måste åtgärdas först', 'All issues must be resolved first'));
+      if (!vatPeriod) throw new Error(t('Momsperioden kunde inte laddas', 'VAT period could not be loaded'));
+
+      const nextWorkflowState: VatWorkflowState = {
+        ...workflowState,
+        dataChecksApprovedAt: workflowState.dataChecksApprovedAt || new Date().toISOString(),
+      };
+      const nextStatus = vatPeriod.status === 'open' ? 'in_review' : vatPeriod.status;
+      const { error } = await supabase
+        .from('acc_vat_periods')
+        .update({ workflow_state: nextWorkflowState, status: nextStatus })
+        .eq('year', year)
+        .eq('quarter', quarter);
+
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['acc-vat-period'] });
+      goToStep(2);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const approveReconciliation = useMutation({
+    mutationFn: async () => {
+      if (reconciliationHasErrors) throw new Error(t('Åtgärda avstämningsproblemen först', 'Fix reconciliation issues first'));
+      if (!vatPeriod) throw new Error(t('Momsperioden kunde inte laddas', 'VAT period could not be loaded'));
+
+      const approvedAt = new Date().toISOString();
+      const nextWorkflowState: VatWorkflowState = {
+        ...workflowState,
+        dataChecksApprovedAt: workflowState.dataChecksApprovedAt || approvedAt,
+        reconciliationApprovedAt: workflowState.reconciliationApprovedAt || approvedAt,
+      };
+      const nextStatus = vatPeriod.status === 'open' ? 'in_review' : vatPeriod.status;
+      const { error } = await supabase
+        .from('acc_vat_periods')
+        .update({ workflow_state: nextWorkflowState, status: nextStatus })
+        .eq('year', year)
+        .eq('quarter', quarter);
+
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['acc-vat-period'] });
+      goToStep(3);
     },
     onError: (e: Error) => toast.error(e.message),
   });
 
   const steps: StepProps[] = [
-    { number: 1, label: t('Datakontroll', 'Data checks'), description: t('Säkerställ bokförda SEK-värden', 'Confirm posted SEK values'), status: currentStep > 1 ? 'done' : currentStep === 1 ? 'active' : 'pending' },
-    { number: 2, label: t('Avstämning', 'Reconciliation'), description: t('Kontrollera att allt stämmer', 'Verify everything matches'), status: currentStep > 2 ? 'done' : currentStep === 2 ? 'active' : 'pending' },
-    { number: 3, label: t('Ögonblicksbild', 'Snapshot'), description: t('Skapa låst ögonblicksbild', 'Create locked snapshot'), status: currentStep > 3 ? 'done' : currentStep === 3 ? 'active' : 'pending' },
-    { number: 4, label: t('Export & inlämning', 'Export & filing'), description: t('Exportera och lämna in', 'Export and submit'), status: currentStep === 4 ? 'active' : 'pending' },
+    {
+      number: 1,
+      label: t('Datakontroll', 'Data checks'),
+      description: t('Säkerställ bokförda SEK-värden', 'Confirm posted SEK values'),
+      status: currentStep === 1 ? 'active' : dataChecksApproved ? 'done' : 'pending',
+    },
+    {
+      number: 2,
+      label: t('Avstämning', 'Reconciliation'),
+      description: t('Kontrollera att allt stämmer', 'Verify everything matches'),
+      status: currentStep === 2 ? 'active' : reconciliationApproved ? 'done' : 'pending',
+    },
+    {
+      number: 3,
+      label: t('Ögonblicksbild', 'Snapshot'),
+      description: t('Skapa låst ögonblicksbild', 'Create locked snapshot'),
+      status: currentStep === 3 ? 'active' : vatPeriod?.snapshot_data ? 'done' : 'pending',
+    },
+    {
+      number: 4,
+      label: t('Export & inlämning', 'Export & filing'),
+      description: t('Exportera och lämna in', 'Export and submit'),
+      status: currentStep === 4 ? 'active' : 'pending',
+    },
   ];
 
   const declarationXmlBoxes = useMemo(() => declarationBoxes.map((box) => ({
@@ -305,6 +424,12 @@ const VatDeclarationFlow: React.FC = () => {
     setXmlValidationErrors([]);
     setXmlValidationWarnings([]);
   }, [quarter, year, vatPeriod?.snapshot_hash, JSON.stringify(declarationXmlBoxes)]);
+
+  useEffect(() => {
+    if (normalizedRequestedStep !== currentStep) {
+      goToStep(currentStep, normalizedRequestedStep === null);
+    }
+  }, [currentStep, normalizedRequestedStep]);
 
   const generateValidatedXml = () => {
     // Last month of the quarter determines the period code
@@ -382,7 +507,13 @@ const VatDeclarationFlow: React.FC = () => {
           </p>
         </div>
 
-        <StepIndicator steps={steps} currentStep={currentStep} />
+        <StepIndicator
+          steps={steps}
+          maxAccessibleStep={maxAccessibleStep}
+          onSelectStep={(step) => {
+            if (step <= maxAccessibleStep) goToStep(step);
+          }}
+        />
 
         {currentStep === 1 && (
           <div className="space-y-4">
@@ -424,7 +555,11 @@ const VatDeclarationFlow: React.FC = () => {
                 <p className="text-sm text-green-800">{t('Alla inköp är bokförda. Inga problem kvarstår.', 'All purchases are posted. No issues remaining.')}</p>
               </div>
             )}
-            <Button onClick={() => setCurrentStep(2)} disabled={hasBlockers}>{t('Fortsätt till avstämning', 'Continue to reconciliation')}</Button>
+            <Button onClick={() => approveDataChecks.mutate()} disabled={hasBlockers || approveDataChecks.isPending}>
+              {approveDataChecks.isPending
+                ? t('Sparar...', 'Saving...')
+                : t('Fortsätt till avstämning', 'Continue to reconciliation')}
+            </Button>
           </div>
         )}
 
@@ -613,10 +748,12 @@ const VatDeclarationFlow: React.FC = () => {
                 </div>
               )}
               <div className="flex gap-3">
-                <Button onClick={() => setCurrentStep(3)} disabled={reconciliationHasErrors}>
-                  {t('Godkänn och fortsätt till ögonblicksbild', 'Approve and continue to snapshot')}
+                <Button onClick={() => approveReconciliation.mutate()} disabled={reconciliationHasErrors || approveReconciliation.isPending}>
+                  {approveReconciliation.isPending
+                    ? t('Sparar...', 'Saving...')
+                    : t('Godkänn och fortsätt till ögonblicksbild', 'Approve and continue to snapshot')}
                 </Button>
-                <Button variant="outline" onClick={() => setCurrentStep(1)}>{t('Tillbaka', 'Back')}</Button>
+                <Button variant="outline" onClick={() => goToStep(1)}>{t('Tillbaka', 'Back')}</Button>
               </div>
             </div>
 
@@ -662,12 +799,12 @@ const VatDeclarationFlow: React.FC = () => {
                     <Button onClick={() => createSnapshot.mutate()} disabled={createSnapshot.isPending}>
                       <Lock className="w-4 h-4 mr-2" />{createSnapshot.isPending ? t('Skapar...', 'Creating...') : t('Skapa ögonblicksbild', 'Create snapshot')}
                     </Button>
-                    <Button variant="outline" onClick={() => setCurrentStep(2)}>{t('Tillbaka', 'Back')}</Button>
+                    <Button variant="outline" onClick={() => goToStep(2)}>{t('Tillbaka', 'Back')}</Button>
                   </div>
                 </CardContent>
               </Card>
             )}
-            {vatPeriod?.snapshot_data && <Button onClick={() => setCurrentStep(4)}>{t('Fortsätt till export', 'Continue to export')}</Button>}
+            {vatPeriod?.snapshot_data && <Button onClick={() => goToStep(4)}>{t('Fortsätt till export', 'Continue to export')}</Button>}
           </div>
         )}
 

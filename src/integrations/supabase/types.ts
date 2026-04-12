@@ -348,6 +348,7 @@ export type Database = {
           snapshot_hash: string | null
           status: string
           updated_at: string
+          workflow_state: Json
           year: number
         }
         Insert: {
@@ -364,6 +365,7 @@ export type Database = {
           snapshot_hash?: string | null
           status?: string
           updated_at?: string
+          workflow_state?: Json
           year: number
         }
         Update: {
@@ -380,6 +382,7 @@ export type Database = {
           snapshot_hash?: string | null
           status?: string
           updated_at?: string
+          workflow_state?: Json
           year?: number
         }
         Relationships: []
