@@ -1,3 +1,6 @@
+ALTER TABLE public.acc_purchase_lines
+  DROP CONSTRAINT IF EXISTS acc_purchase_lines_vat_treatment_check;
+
 UPDATE public.acc_purchase_lines AS lines
 SET vat_treatment = CASE
   WHEN suppliers.supplier_type = 'eu' THEN 'reverse_charge_eu_services'
@@ -21,9 +24,6 @@ BEGIN
     RAISE EXCEPTION 'Legacy reverse_charge vat_treatment rows remain after normalization';
   END IF;
 END $$;
-
-ALTER TABLE public.acc_purchase_lines
-  DROP CONSTRAINT IF EXISTS acc_purchase_lines_vat_treatment_check;
 
 ALTER TABLE public.acc_purchase_lines
   ADD CONSTRAINT acc_purchase_lines_vat_treatment_check
