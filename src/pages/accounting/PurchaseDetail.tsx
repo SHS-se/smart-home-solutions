@@ -43,7 +43,7 @@ import {
 } from '@/lib/accounting-fx';
 import { allocateNextVerificationNumber } from '@/lib/verification-number';
 import { toast } from 'sonner';
-import { ArrowLeft, AlertTriangle, Eye, CheckCircle, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react';
+import { ArrowLeft, AlertTriangle, Eye, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react';
 
 const PURCHASE_DOCUMENT_BUCKET = 'purchase-documents';
 
@@ -110,7 +110,11 @@ const PurchaseDetail: React.FC = () => {
   const { data: purchase, isLoading } = useQuery({
     queryKey: ['acc-purchase', purchaseId],
     queryFn: async () => {
-      const { data } = await supabase.from('acc_purchases').select('*, supplier:acc_suppliers(*)').eq('id', purchaseId!).single();
+      const { data } = await supabase
+        .from('acc_purchases')
+        .select('*, supplier:acc_suppliers(*), verification:acc_verifications(id, verification_number)')
+        .eq('id', purchaseId!)
+        .single();
       return data;
     },
     enabled: !!purchaseId,
@@ -137,6 +141,9 @@ const PurchaseDetail: React.FC = () => {
     },
   });
   const supplier = purchase?.supplier as Tables<'acc_suppliers'> | null;
+  const verification = (purchase as typeof purchase & {
+    verification?: { id: string; verification_number: string | null } | null;
+  })?.verification || null;
   const supplierName = supplier?.name || '';
   const supplierType = supplier?.supplier_type as 'domestic' | 'eu' | 'non_eu' | undefined;
 
@@ -429,6 +436,51 @@ const PurchaseDetail: React.FC = () => {
   const isReverseCharge = primaryLine ? isReverseChargeTreatment(primaryLine.vat_treatment) : false;
   const convertedInvoiceAmountSek = isReverseCharge ? vatSummary.reverseChargeBaseSek : vatSummary.paymentAccountAmountSek;
   const netVatEffectSek = vatSummary.reverseChargeOutputVatSek - vatSummary.reverseChargeInputVatSek;
+  const declarationBoxBadges: Array<{ text: string; className: string }> = [];
+  if (lines && lines.length > 0 && !lines.some((line) => line.vat_treatment === 'needs_review')) {
+    if (lines.some((line) => line.vat_treatment === 'domestic_deductible')) {
+      declarationBoxBadges.push({
+        text: t('Ruta 48 – Avdragsgill ingående moms', 'Box 48 – Deductible input VAT'),
+        className: 'bg-primary/10 text-primary',
+      });
+    }
+    if (lines.some((line) => line.vat_treatment === 'reverse_charge_eu_goods')) {
+      declarationBoxBadges.push({
+        text: t('Ruta 20 – Inköp av varor från annat EU-land', 'Box 20 – EU goods purchases'),
+        className: 'bg-amber-100 text-amber-800',
+      });
+    }
+    if (lines.some((line) => line.vat_treatment === 'reverse_charge_eu_services')) {
+      declarationBoxBadges.push({
+        text: t('Ruta 21 – Inköp av tjänster från annat EU-land', 'Box 21 – EU services purchases'),
+        className: 'bg-amber-100 text-amber-800',
+      });
+    }
+    if (lines.some((line) => line.vat_treatment === 'reverse_charge_non_eu_services')) {
+      declarationBoxBadges.push({
+        text: t('Ruta 22 – Inköp av tjänster utom EU', 'Box 22 – Non-EU services purchases'),
+        className: 'bg-amber-100 text-amber-800',
+      });
+    }
+    if (lines.some((line) => isReverseChargeTreatment(line.vat_treatment))) {
+      declarationBoxBadges.push({
+        text: t('Ruta 30 – Utgående moms 25 % på inköp', 'Box 30 – Output VAT 25% on purchases'),
+        className: 'bg-amber-100 text-amber-800',
+      });
+      declarationBoxBadges.push({
+        text: t('Ruta 48 – Avdragsgill ingående moms (omvänd)', 'Box 48 – Deductible input VAT (reverse charge)'),
+        className: 'bg-primary/10 text-primary',
+      });
+    }
+    if (lines.every((line) => line.vat_treatment === 'non_deductible' || line.vat_treatment === 'no_vat')) {
+      declarationBoxBadges.push({
+        text: t('Ingen deklarationsruta – ej avdragsgill', 'No declaration box – non-deductible'),
+        className: 'bg-muted text-muted-foreground',
+      });
+    }
+  }
+  const verificationLink = purchase.verification_id ? `/accounting/journal?verification=${purchase.verification_id}` : null;
+  const verificationLabel = verification?.verification_number || purchase.verification_id || null;
 
   return (
     <AccountingLayout>
@@ -567,6 +619,40 @@ const PurchaseDetail: React.FC = () => {
           </div>
         )}
 
+        {(declarationBoxBadges.length > 0 || verificationLink) && (
+          <Card className="border border-border">
+            <CardContent className="p-4">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    {t('Deklarationsrutor', 'Declaration boxes')}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {declarationBoxBadges.map((badge) => (
+                      <span
+                        key={badge.text}
+                        className={`inline-flex items-center rounded-md px-2.5 py-1 text-xs font-medium ${badge.className}`}
+                      >
+                        {badge.text}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                {verificationLink && verificationLabel && (
+                  <div className="space-y-2 lg:text-right">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      {t('Verifikation', 'Verification')}
+                    </p>
+                    <Link to={verificationLink} className="text-sm font-medium text-primary hover:underline">
+                      {verificationLabel}
+                    </Link>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         <div className="grid grid-cols-1 items-stretch gap-6 lg:grid-cols-3">
           <div className="flex h-full flex-col gap-6 lg:col-span-2">
             <Card className="flex flex-1 flex-col border border-border">
@@ -687,48 +773,6 @@ const PurchaseDetail: React.FC = () => {
               </CardContent>
             </Card>
 
-            {lines && lines.length > 0 && !lines.some(l => l.vat_treatment === 'needs_review') && (
-              <div className="rounded-lg border border-border bg-muted/30 px-4 py-3">
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">{t('Deklarationsrutor', 'Declaration boxes')}</p>
-                <div className="flex flex-wrap gap-2">
-                  {lines.some(l => l.vat_treatment === 'domestic_deductible') && (
-                    <span className="inline-flex items-center rounded-md bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
-                      {t('Ruta 48 – Avdragsgill ingående moms', 'Box 48 – Deductible input VAT')}
-                    </span>
-                  )}
-                  {lines.some(l => l.vat_treatment === 'reverse_charge_eu_goods') && (
-                    <span className="inline-flex items-center rounded-md bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800">
-                      {t('Ruta 20 – Inköp av varor från annat EU-land', 'Box 20 – EU goods purchases')}
-                    </span>
-                  )}
-                  {lines.some(l => l.vat_treatment === 'reverse_charge_eu_services') && (
-                    <span className="inline-flex items-center rounded-md bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800">
-                      {t('Ruta 21 – Inköp av tjänster från annat EU-land', 'Box 21 – EU services purchases')}
-                    </span>
-                  )}
-                  {lines.some(l => l.vat_treatment === 'reverse_charge_non_eu_services') && (
-                    <span className="inline-flex items-center rounded-md bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800">
-                      {t('Ruta 22 – Inköp av tjänster utom EU', 'Box 22 – Non-EU services purchases')}
-                    </span>
-                  )}
-                  {lines.some(l => isReverseChargeTreatment(l.vat_treatment)) && (
-                    <>
-                      <span className="inline-flex items-center rounded-md bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800">
-                        {t('Ruta 30 – Utgående moms 25 % på inköp', 'Box 30 – Output VAT 25% on purchases')}
-                      </span>
-                      <span className="inline-flex items-center rounded-md bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
-                        {t('Ruta 48 – Avdragsgill ingående moms (omvänd)', 'Box 48 – Deductible input VAT (reverse charge)')}
-                      </span>
-                    </>
-                  )}
-                  {lines.every(l => l.vat_treatment === 'non_deductible' || l.vat_treatment === 'no_vat') && (
-                    <span className="inline-flex items-center rounded-md bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
-                      {t('Ingen deklarationsruta – ej avdragsgill', 'No declaration box – non-deductible')}
-                    </span>
-                  )}
-                </div>
-              </div>
-            )}
           </div>
 
           <div className="flex h-full flex-col gap-6">
@@ -790,13 +834,6 @@ const PurchaseDetail: React.FC = () => {
                 <div className="flex justify-between font-semibold border-t border-border pt-2"><span>{t('Betalningsbelopp (SEK)', 'Payment amount (SEK)')}</span><span>{formatSEKDecimal(vatSummary.paymentAccountAmountSek)}</span></div>
               </CardContent>
             </Card>
-
-            {purchase.status === 'posted' && (
-              <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-center gap-2">
-                <CheckCircle className="w-5 h-5 text-green-600" />
-                <span className="text-sm text-green-800 font-medium">{t('Bokförd', 'Posted')}</span>
-              </div>
-            )}
           </div>
         </div>
       </div>

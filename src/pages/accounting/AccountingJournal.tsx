@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Link, useSearchParams } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useLanguage } from '@/contexts/LanguageContext';
 import AccountingLayout from '@/components/accounting/AccountingLayout';
@@ -15,8 +16,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 const AccountingJournal: React.FC = () => {
   const { t, language } = useLanguage();
   const monthNames = language === 'sv' ? MONTH_NAMES_SV : MONTH_NAMES_EN;
-  const [periodFilter, setPeriodFilter] = useState<string>('all');
-  const [accountFilter, setAccountFilter] = useState<string>('all');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const periodFilter = searchParams.get('period') || 'all';
+  const accountFilter = searchParams.get('account') || 'all';
+  const verificationFilter = searchParams.get('verification') || 'all';
 
   const { data: periods } = useQuery({
     queryKey: ['acc-periods'],
@@ -26,11 +29,24 @@ const AccountingJournal: React.FC = () => {
     },
   });
 
+  const { data: verificationOptions } = useQuery({
+    queryKey: ['acc-verification-options'],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('acc_verifications')
+        .select('id, verification_number, verification_date, description, period_id')
+        .eq('is_posted', true)
+        .order('verification_date', { ascending: false });
+      return data || [];
+    },
+  });
+
   const { data: journalData, isLoading } = useQuery({
-    queryKey: ['acc-journal', periodFilter, accountFilter],
+    queryKey: ['acc-journal', periodFilter, accountFilter, verificationFilter],
     queryFn: async () => {
       let vQuery = supabase.from('acc_verifications').select('id, verification_number, verification_date, description, period_id').eq('is_posted', true).order('verification_date', { ascending: false });
       if (periodFilter !== 'all') vQuery = vQuery.eq('period_id', periodFilter);
+      if (verificationFilter !== 'all') vQuery = vQuery.eq('id', verificationFilter);
       const { data: verifications } = await vQuery;
       if (!verifications || verifications.length === 0) return [];
       const vIds = verifications.map(v => v.id);
@@ -43,6 +59,29 @@ const AccountingJournal: React.FC = () => {
       });
     },
   });
+
+  const filteredVerificationOptions = useMemo(() => {
+    if (periodFilter === 'all') return verificationOptions || [];
+    return (verificationOptions || []).filter((verification) => verification.period_id === periodFilter);
+  }, [periodFilter, verificationOptions]);
+
+  const selectedVerification = filteredVerificationOptions.find((verification) => verification.id === verificationFilter)
+    || verificationOptions?.find((verification) => verification.id === verificationFilter)
+    || null;
+  const verificationSelectOptions = useMemo(() => {
+    if (!selectedVerification) return filteredVerificationOptions;
+    if (filteredVerificationOptions.some((verification) => verification.id === selectedVerification.id)) {
+      return filteredVerificationOptions;
+    }
+    return [selectedVerification, ...filteredVerificationOptions];
+  }, [filteredVerificationOptions, selectedVerification]);
+
+  const updateParam = (key: string, value: string) => {
+    const nextParams = new URLSearchParams(searchParams);
+    if (value === 'all' || value === '') nextParams.delete(key);
+    else nextParams.set(key, value);
+    setSearchParams(nextParams);
+  };
 
   const uniqueAccounts = [...new Set((journalData || []).map(l => l.account))].sort();
   const totalDebit = (journalData || []).reduce((s, l) => s + Number(l.debit), 0);
@@ -160,7 +199,7 @@ const AccountingJournal: React.FC = () => {
           <span className="text-sm text-muted-foreground">{t('Filtrera:', 'Filter:')}</span>
           <div className="flex items-center gap-2">
             <span className="text-sm">{t('Period:', 'Period:')}</span>
-            <Select value={periodFilter} onValueChange={setPeriodFilter}>
+            <Select value={periodFilter} onValueChange={(value) => updateParam('period', value)}>
               <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">{t('Alla perioder', 'All periods')}</SelectItem>
@@ -170,7 +209,7 @@ const AccountingJournal: React.FC = () => {
           </div>
           <div className="flex items-center gap-2">
             <span className="text-sm">{t('Konto:', 'Account:')}</span>
-            <Select value={accountFilter} onValueChange={setAccountFilter}>
+            <Select value={accountFilter} onValueChange={(value) => updateParam('account', value)}>
               <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">{t('Alla konton', 'All accounts')}</SelectItem>
@@ -178,6 +217,29 @@ const AccountingJournal: React.FC = () => {
               </SelectContent>
             </Select>
           </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm">{t('Verifikation:', 'Verification:')}</span>
+            <Select value={verificationFilter} onValueChange={(value) => updateParam('verification', value)}>
+              <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t('Alla verifikationer', 'All verifications')}</SelectItem>
+                {verificationSelectOptions.map((verification) => (
+                  <SelectItem key={verification.id} value={verification.id}>
+                    {verification.verification_number} · {verification.verification_date}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {selectedVerification && (
+            <button
+              type="button"
+              onClick={() => updateParam('verification', 'all')}
+              className="text-sm text-primary hover:underline"
+            >
+              {t('Rensa verifikation', 'Clear verification')}: {selectedVerification.verification_number}
+            </button>
+          )}
         </div>
 
         <Card className="border border-border">
@@ -207,7 +269,11 @@ const AccountingJournal: React.FC = () => {
                       <TableCell>
                         <div><span className="text-sm font-semibold">{line.account}</span><p className="text-xs text-muted-foreground">{line.account_name || getAccountName(line.account)}</p></div>
                       </TableCell>
-                      <TableCell className="text-sm text-primary">{line.verification_number}</TableCell>
+                      <TableCell className="text-sm text-primary">
+                        <Link to={`/accounting/journal?verification=${line.verification_id}`} className="hover:underline">
+                          {line.verification_number}
+                        </Link>
+                      </TableCell>
                       <TableCell className="text-sm">{line.description || line.verification_description}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">
                         {line.original_amount && normalizeCurrency(line.original_currency) !== 'SEK' ? (
