@@ -16,6 +16,7 @@ import {
   isForeignCurrency,
   roundMoney,
 } from '@/lib/accounting-fx';
+import { buildSkatteverketXml, finalizeVatDeclarationAmounts } from '@/lib/vat-declaration';
 import { toast } from 'sonner';
 import { ArrowLeft, CheckCircle, AlertTriangle, Lock, Download, Upload, Info, FileText, ChevronDown, ChevronUp } from 'lucide-react';
 
@@ -113,23 +114,41 @@ const VatDeclarationFlow: React.FC = () => {
   const sumNetByTreatment = (treatment: string) => roundMoney(postedPurchases.reduce(
     (sum, p) => sum + p.lines.filter((l) => l.vat_treatment === treatment)
       .reduce((lineSum, l) => lineSum + Number(l.net_amount), 0), 0));
-  const box20 = sumNetByTreatment('reverse_charge_eu_goods');       // InkopVaruAnnatEg
-  const box21 = sumNetByTreatment('reverse_charge_eu_services');    // InkopTjanstAnnatEg
-  const box22 = sumNetByTreatment('reverse_charge_non_eu_services');// InkopTjanstUtomEg
+  const box20Raw = sumNetByTreatment('reverse_charge_eu_goods');       // InkopVaruAnnatEg
+  const box21Raw = sumNetByTreatment('reverse_charge_eu_services');    // InkopTjanstAnnatEg
+  const box22Raw = sumNetByTreatment('reverse_charge_non_eu_services');// InkopTjanstUtomEg
   // Section D: Output VAT on purchases (reverse-charge output VAT)
-  const box30 = roundMoney(postedPurchases.reduce((sum, p) => sum + p.lines
+  const box30Raw = roundMoney(postedPurchases.reduce((sum, p) => sum + p.lines
     .filter((l) => isReverseChargeTreatment(l.vat_treatment))
     .reduce((lineSum, l) => lineSum + roundMoney(Number(l.net_amount) * 0.25), 0), 0)); // MomsInkopUtgHog
-  const box31 = 0; // MomsInkopUtgMedel — 12% on RC purchases (not applicable)
-  const box32 = 0; // MomsInkopUtgLag — 6% on RC purchases (not applicable)
+  const box31Raw = 0; // MomsInkopUtgMedel — 12% on RC purchases (not applicable)
+  const box32Raw = 0; // MomsInkopUtgLag — 6% on RC purchases (not applicable)
   // Section F: Deductible input VAT
   const domesticInputVat = roundMoney(postedPurchases.reduce((sum, p) => sum + p.lines
     .filter((l) => l.vat_treatment === 'domestic_deductible')
     .reduce((lineSum, l) => lineSum + Number(l.vat_amount), 0), 0));
-  const rcInputVat = box30; // Reverse-charge input VAT = output VAT (net zero)
-  const box48 = roundMoney(domesticInputVat + rcInputVat); // MomsIngAvdr
-  // Section G: MomsBetala = (10+11+12+30+31+32) - 48
-  const momsBetala = roundMoney((box10 + box11 + box12 + box30 + box31 + box32) - box48);
+  const rcInputVat = box30Raw; // Reverse-charge input VAT = output VAT (net zero)
+  const roundedDeclarationAmounts = finalizeVatDeclarationAmounts({
+    box05,
+    box10,
+    box11,
+    box12,
+    box20: box20Raw,
+    box21: box21Raw,
+    box22: box22Raw,
+    box30: box30Raw,
+    box31: box31Raw,
+    box32: box32Raw,
+    box48: roundMoney(domesticInputVat + rcInputVat),
+  });
+  const box20 = roundedDeclarationAmounts.box20;
+  const box21 = roundedDeclarationAmounts.box21;
+  const box22 = roundedDeclarationAmounts.box22;
+  const box30 = roundedDeclarationAmounts.box30;
+  const box31 = roundedDeclarationAmounts.box31;
+  const box32 = roundedDeclarationAmounts.box32;
+  const box48 = roundedDeclarationAmounts.box48;
+  const momsBetala = roundedDeclarationAmounts.momsBetala;
   const rcLineCount = postedPurchases.flatMap((p) => p.lines).filter((l) => isReverseChargeTreatment(l.vat_treatment)).length;
 
   const allLines = postedPurchases.flatMap((p) => p.lines);
@@ -201,27 +220,6 @@ const VatDeclarationFlow: React.FC = () => {
     { box: '49', xmlTag: 'MomsBetala', label: t('Moms att betala eller återfå', 'VAT to pay or receive'), amount: momsBetala, count: 0, section: 'G' },
   ];
 
-  /** Build Skatteverket eSKDUpload XML (ISO-8859-1, integer amounts) */
-  const buildSkatteverketXml = (orgNr: string, periodYYYYMM: string): string => {
-    const lines: string[] = [
-      '<?xml version="1.0" encoding="ISO-8859-1"?>',
-      '<!DOCTYPE eSKDUpload PUBLIC "-//Skatteverket, Sweden//DTD Skatteverket eSKDUpload-DTD Version 6.0//SV" "https://www1.skatteverket.se/demoeskd/eSKDUpload_6p0.dtd">',
-      '<eSKDUpload Version="6.0">',
-      `<OrgNr>${orgNr}</OrgNr>`,
-      '<Moms>',
-      `<Period>${periodYYYYMM}</Period>`,
-    ];
-    // Only include boxes with non-zero amounts (Skatteverket allows omitting zero boxes)
-    for (const b of declarationBoxes) {
-      if (b.xmlTag === 'MomsBetala' || Math.round(b.amount) !== 0) {
-        lines.push(`<${b.xmlTag}>${Math.round(b.amount)}</${b.xmlTag}>`);
-      }
-    }
-    lines.push('</Moms>');
-    lines.push('</eSKDUpload>');
-    return lines.join('\n');
-  };
-
   const createSnapshot = useMutation({
     mutationFn: async () => {
       if (hasBlockers) throw new Error(t('Alla inköp måste vara bokförda', 'All purchases must be posted'));
@@ -267,7 +265,10 @@ const VatDeclarationFlow: React.FC = () => {
     // Last month of the quarter determines the period code
     const periodYYYYMM = `${year}${String(quarter * 3).padStart(2, '0')}`;
     const orgNr = '790519-7591'; // SHS org number
-    const xml = buildSkatteverketXml(orgNr, periodYYYYMM);
+    const xml = buildSkatteverketXml(orgNr, periodYYYYMM, declarationBoxes.map((box) => ({
+      xmlTag: box.xmlTag,
+      amount: box.amount,
+    })));
     // Encode as ISO-8859-1
     const encoder = new TextEncoder();
     const blob = new Blob([encoder.encode(xml)], { type: 'application/xml; charset=ISO-8859-1' });
