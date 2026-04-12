@@ -366,9 +366,15 @@ const PurchasesList: React.FC = () => {
               </div>
               <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-muted-foreground">
                 <span>{t('Transaktioner', 'Transactions')}: <span className="font-medium text-foreground">{summary.count}</span></span>
-                <span>{t('Brutto', 'Gross')}: <span className="font-medium text-foreground">{formatSEKDecimal(summary.gross)}</span></span>
-                <span>{t('Netto', 'Net')}: <span className="font-medium text-foreground">{formatSEKDecimal(summary.net)}</span></span>
-                <span>{t('Moms', 'VAT')}: <span className="font-medium text-foreground">{formatSEKDecimal(summary.vat)}</span></span>
+                {declarationBoxFilter === 'all' && (
+                  <span>{t('Brutto', 'Gross')}: <span className="font-medium text-foreground">{formatSEKDecimal(summary.gross)}</span></span>
+                )}
+                {declarationBoxFilter === 'all' && (
+                  <span>{t('Netto', 'Net')}: <span className="font-medium text-foreground">{formatSEKDecimal(summary.net)}</span></span>
+                )}
+                {declarationBoxFilter === 'all' && (
+                  <span>{t('Moms', 'VAT')}: <span className="font-medium text-foreground">{formatSEKDecimal(summary.vat)}</span></span>
+                )}
                 {summary.declarationAmount !== null && (
                   <span>{t('Rutbelopp', 'Box amount')}: <span className="font-medium text-foreground">{formatSEKDecimal(summary.declarationAmount)}</span></span>
                 )}
