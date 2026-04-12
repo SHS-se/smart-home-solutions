@@ -8,7 +8,6 @@ import {
   ShoppingCart,
   Users,
   Receipt,
-  PenLine,
 } from 'lucide-react';
 import UserMenu from '@/components/UserMenu';
 import LanguageToggle from '@/components/LanguageToggle';
@@ -45,7 +44,6 @@ const navGroups: NavGroup[] = [
     titleEn: 'ACCOUNTING',
     items: [
       { href: '/accounting/journal', labelSv: 'Journal', labelEn: 'Journal', icon: <BookOpen className="w-4 h-4" /> },
-      { href: '/accounting/manual-verifications/new', labelSv: 'Manuell verifikation', labelEn: 'Manual entry', icon: <PenLine className="w-4 h-4" /> },
     ],
   },
   {

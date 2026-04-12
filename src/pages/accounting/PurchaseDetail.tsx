@@ -135,7 +135,22 @@ const PurchaseDetail: React.FC = () => {
       return (data || []).map((row) => row.id);
     },
   });
-  const supplierName = (purchase?.supplier as Tables<'acc_suppliers'> | null)?.name || '';
+  const supplier = purchase?.supplier as Tables<'acc_suppliers'> | null;
+  const supplierName = supplier?.name || '';
+  const supplierType = supplier?.supplier_type as 'domestic' | 'eu' | 'non_eu' | undefined;
+
+  const targetPeriodMonth = purchase?.document_date ? new Date(purchase.document_date).getMonth() + 1 : null;
+  const targetPeriodYear = purchase?.document_date ? new Date(purchase.document_date).getFullYear() : null;
+
+  const { data: targetPeriod } = useQuery({
+    queryKey: ['acc-period-for-date', targetPeriodYear, targetPeriodMonth],
+    queryFn: async () => {
+      const { data } = await supabase.from('acc_periods').select('id, status').eq('year', targetPeriodYear!).eq('month', targetPeriodMonth!).single();
+      return data;
+    },
+    enabled: !!targetPeriodYear && !!targetPeriodMonth,
+  });
+
   const purchaseFx = getPurchaseExchangeSnapshot(purchase);
   const isForeignDocument = isForeignCurrency(purchaseFx.originalCurrency);
 
@@ -339,6 +354,45 @@ const PurchaseDetail: React.FC = () => {
       ),
     });
   }
+
+  // Supplier type vs VAT treatment consistency
+  if (supplierType && lines && lines.length > 0) {
+    for (const line of lines) {
+      if (line.vat_treatment === 'needs_review') continue;
+      if ((supplierType === 'eu' || supplierType === 'non_eu') && line.vat_treatment === 'domestic_deductible') {
+        warnings.push({
+          type: 'warning',
+          message: t(
+            `Leverantören är ${supplierType === 'eu' ? 'EU' : 'utom-EU'} men momsbehandlingen är "Ingående moms 25%". Bör den vara "Omvänd skattskyldighet"?`,
+            `Supplier is ${supplierType === 'eu' ? 'EU' : 'non-EU'} but VAT treatment is "Input VAT 25%". Should it be "Reverse charge"?`,
+          ),
+        });
+        break;
+      }
+      if (supplierType === 'domestic' && line.vat_treatment === 'reverse_charge') {
+        warnings.push({
+          type: 'warning',
+          message: t(
+            'Leverantören är inhemsk men momsbehandlingen är "Omvänd skattskyldighet". Bör den vara "Ingående moms 25%"?',
+            'Supplier is domestic but VAT treatment is "Reverse charge". Should it be "Input VAT 25%"?',
+          ),
+        });
+        break;
+      }
+    }
+  }
+
+  // Period status warning
+  if (targetPeriod && (targetPeriod.status === 'closed' || targetPeriod.status === 'locked')) {
+    errors.push({
+      type: 'error',
+      message: t(
+        `Bokföringsperioden för ${purchase.document_date} är ${targetPeriod.status === 'locked' ? 'låst' : 'stängd'}. Öppna perioden innan bokföring.`,
+        `The accounting period for ${purchase.document_date} is ${targetPeriod.status}. Reopen the period before posting.`,
+      ),
+    });
+  }
+
   const canPost = errors.length === 0 && purchase.status !== 'posted';
   const primaryLine = lines?.[0] || null;
   const isDraftPurchase = purchase.status === 'draft';
@@ -631,6 +685,37 @@ const PurchaseDetail: React.FC = () => {
                 </Table>
               </CardContent>
             </Card>
+
+            {lines && lines.length > 0 && !lines.some(l => l.vat_treatment === 'needs_review') && (
+              <div className="rounded-lg border border-border bg-muted/30 px-4 py-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">{t('Deklarationsrutor', 'Declaration boxes')}</p>
+                <div className="flex flex-wrap gap-2">
+                  {lines.some(l => l.vat_treatment === 'domestic_deductible') && (
+                    <span className="inline-flex items-center rounded-md bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+                      {t('Ruta 10 – Avdragsgill ingående moms', 'Box 10 – Deductible input VAT')}
+                    </span>
+                  )}
+                  {lines.some(l => l.vat_treatment === 'reverse_charge') && (
+                    <>
+                      <span className="inline-flex items-center rounded-md bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800">
+                        {t('Ruta 20 – Omvänd skattskyldighet, beskattningsunderlag', 'Box 20 – Reverse-charge taxable base')}
+                      </span>
+                      <span className="inline-flex items-center rounded-md bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800">
+                        {t('Ruta 21 – Omvänd skattskyldighet, moms', 'Box 21 – Reverse-charge VAT')}
+                      </span>
+                      <span className="inline-flex items-center rounded-md bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+                        {t('Ruta 10 – Avdragsgill ingående moms (omvänd)', 'Box 10 – Deductible input VAT (reverse charge)')}
+                      </span>
+                    </>
+                  )}
+                  {lines.every(l => l.vat_treatment === 'non_deductible' || l.vat_treatment === 'no_vat') && (
+                    <span className="inline-flex items-center rounded-md bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
+                      {t('Ingen deklarationsruta – ej avdragsgill', 'No declaration box – non-deductible')}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="flex h-full flex-col gap-6">

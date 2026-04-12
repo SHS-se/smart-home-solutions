@@ -72,7 +72,6 @@ const PurchaseDetail = lazy(() => import("./pages/accounting/PurchaseDetail"));
 const AccountingJournal = lazy(() => import("./pages/accounting/AccountingJournal"));
 const VatPeriodsList = lazy(() => import("./pages/accounting/VatPeriodsList"));
 const VatDeclarationFlow = lazy(() => import("./pages/accounting/VatDeclarationFlow"));
-const ManualVerification = lazy(() => import("./pages/accounting/ManualVerification"));
 const SuppliersList = lazy(() => import("./pages/accounting/SuppliersList"));
 
 const queryClient = new QueryClient();
@@ -195,7 +194,6 @@ const App = () => (
                   <Route path="/accounting/journal" element={<AccountingJournal />} />
                   <Route path="/accounting/vat-periods" element={<VatPeriodsList />} />
                   <Route path="/accounting/vat-periods/:periodId" element={<VatDeclarationFlow />} />
-                  <Route path="/accounting/manual-verifications/new" element={<ManualVerification />} />
                   <Route path="/accounting/suppliers" element={<SuppliersList />} />
 
                   <Route path="*" element={<NotFound />} />

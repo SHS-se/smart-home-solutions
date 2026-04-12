@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { MONTH_NAMES_SV, MONTH_NAMES_EN, PERIOD_STATUS_LABELS, PERIOD_STATUS_LABELS_EN, PERIOD_STATUS_COLORS } from '@/lib/accounting-utils';
 import { toast } from 'sonner';
-import { Lock, Unlock, Info } from 'lucide-react';
+import { Lock, Unlock, Info, AlertTriangle } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 const AccountingPeriods: React.FC = () => {
@@ -32,6 +32,20 @@ const AccountingPeriods: React.FC = () => {
       const { data } = await supabase.from('acc_verifications').select('period_id, id').eq('is_posted', true);
       const counts: Record<string, number> = {};
       (data || []).forEach(v => { counts[v.period_id!] = (counts[v.period_id!] || 0) + 1; });
+      return counts;
+    },
+  });
+
+  const { data: unpostedByPeriod } = useQuery({
+    queryKey: ['acc-unposted-by-period'],
+    queryFn: async () => {
+      const { data } = await supabase.from('acc_purchases').select('document_date, status').neq('status', 'posted');
+      const counts: Record<string, number> = {};
+      (data || []).forEach(p => {
+        const d = new Date(p.document_date);
+        const key = `${d.getFullYear()}-${d.getMonth() + 1}`;
+        counts[key] = (counts[key] || 0) + 1;
+      });
       return counts;
     },
   });
@@ -132,7 +146,19 @@ const AccountingPeriods: React.FC = () => {
                         {statusLabels[period.status as keyof typeof statusLabels]}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-muted-foreground">{verificationCounts?.[period.id] || 0} {t('bokförda', 'posted')}</TableCell>
+                    <TableCell>
+                      <span className="text-muted-foreground">{verificationCounts?.[period.id] || 0} {t('bokförda', 'posted')}</span>
+                      {(() => {
+                        const key = `${period.year}-${period.month}`;
+                        const unposted = unpostedByPeriod?.[key] || 0;
+                        return unposted > 0 ? (
+                          <span className="inline-flex items-center gap-1 ml-2 text-amber-700 text-xs">
+                            <AlertTriangle className="w-3.5 h-3.5" />
+                            {unposted} {t('ej bokförda', 'unposted')}
+                          </span>
+                        ) : null;
+                      })()}
+                    </TableCell>
                     <TableCell className="text-right">{getActionButton(period)}</TableCell>
                   </TableRow>
                 ))}

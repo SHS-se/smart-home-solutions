@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { MONTH_NAMES_SV, MONTH_NAMES_EN, formatExchangeRate, formatSEK, getAccountName } from '@/lib/accounting-utils';
 import { formatCurrencyAmount, normalizeCurrency } from '@/lib/accounting-fx';
-import { Filter, Download, Info } from 'lucide-react';
+import { Filter, Download, Info, AlertTriangle, CheckCircle } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 const AccountingJournal: React.FC = () => {
@@ -49,6 +49,18 @@ const AccountingJournal: React.FC = () => {
   const totalCredit = (journalData || []).reduce((s, l) => s + Number(l.credit), 0);
   let balance = 0;
   const linesWithBalance = (journalData || []).reverse().map(l => { balance += Number(l.debit) - Number(l.credit); return { ...l, balance }; }).reverse();
+  const isGloballyBalanced = linesWithBalance.length > 0 && Math.abs(totalDebit - totalCredit) < 0.01;
+
+  // Check each verification balances individually
+  const verificationBalances = new Map<string, { debit: number; credit: number; number: string }>();
+  for (const line of journalData || []) {
+    const vId = line.verification_id;
+    const entry = verificationBalances.get(vId) || { debit: 0, credit: 0, number: line.verification_number || vId };
+    entry.debit += Number(line.debit);
+    entry.credit += Number(line.credit);
+    verificationBalances.set(vId, entry);
+  }
+  const unbalancedVerifications = [...verificationBalances.values()].filter(v => Math.abs(v.debit - v.credit) >= 0.01);
 
   const exportToCsv = () => {
     if (!linesWithBalance.length) return;
@@ -99,6 +111,37 @@ const AccountingJournal: React.FC = () => {
           </div>
           <Button variant="outline" size="sm" onClick={exportToCsv} disabled={!linesWithBalance.length}><Download className="w-4 h-4 mr-2" /> {t('Exportera CSV', 'Export CSV')}</Button>
         </div>
+
+        {linesWithBalance.length > 0 && unbalancedVerifications.length > 0 && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-red-600 mt-0.5 shrink-0" />
+            <div>
+              <p className="font-medium text-red-800">{t('Obalanserade verifikationer', 'Unbalanced verifications')}</p>
+              <ul className="text-sm text-red-700 mt-1 space-y-0.5">
+                {unbalancedVerifications.map(v => (
+                  <li key={v.number}>
+                    {v.number}: {t('debet', 'debit')} {formatSEK(v.debit)}, {t('kredit', 'credit')} {formatSEK(v.credit)} ({t('differens', 'difference')}: {formatSEK(Math.abs(v.debit - v.credit))})
+                  </li>
+                ))}
+              </ul>
+              <p className="text-xs text-red-600 mt-2">
+                {t('Varje verifikation måste ha lika debet och kredit. Korrigera felaktiga poster innan periodstängning.', 'Each verification must have equal debit and credit. Correct the entries before closing the period.')}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {linesWithBalance.length > 0 && unbalancedVerifications.length === 0 && !isGloballyBalanced && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
+            <div>
+              <p className="font-medium text-amber-800">{t('Journalen balanserar inte', 'Journal does not balance')}</p>
+              <p className="text-sm text-amber-700">
+                {t('Total debet och kredit skiljer sig med', 'Total debit and credit differ by')} {formatSEK(Math.abs(totalDebit - totalCredit))}. {t('Kontrollera att alla verifikationer är korrekt registrerade.', 'Check that all verifications are correctly recorded.')}
+              </p>
+            </div>
+          </div>
+        )}
 
         <div className="flex items-center gap-4">
           <Filter className="w-4 h-4 text-muted-foreground" />
