@@ -9,6 +9,7 @@ import type { ExchangeRateLookupResult } from '@/lib/accounting-fx';
 import { extractDocumentContent } from '@/lib/document-extraction';
 import { parseInvoiceText } from '@/lib/invoice-parser';
 import { fetchEcbExchangeRates } from '@/lib/ecb-rates';
+import { describePurchaseDraftError, toPurchaseDraftError, type PurchaseDraftErrorStage } from '@/lib/purchase-draft-error';
 import {
   buildPurchaseImportRateLookupMap,
   buildPurchaseImportRateKey,
@@ -30,6 +31,9 @@ interface UploadResult {
   parserReviewRequired?: boolean;
   parserReviewReasons?: string[];
   error?: string;
+  errorStage?: PurchaseDraftErrorStage;
+  errorDetails?: string[];
+  errorCode?: string | null;
 }
 
 interface PreparedUploadDraft {
@@ -51,6 +55,25 @@ const PurchaseUpload: React.FC = () => {
   const [uploadTotal, setUploadTotal] = useState(0);
   const [uploadProcessed, setUploadProcessed] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
+
+  const getErrorStageLabel = useCallback((stage: PurchaseDraftErrorStage) => {
+    switch (stage) {
+      case 'supplier_create':
+        return t('Leverantör skapades inte', 'Supplier creation failed');
+      case 'duplicate_check':
+        return t('Dublettkontroll misslyckades', 'Duplicate check failed');
+      case 'exchange_rate_lookup':
+        return t('ECB-kurs kunde inte hämtas', 'ECB lookup failed');
+      case 'document_upload':
+        return t('Dokumentet kunde inte laddas upp', 'Document upload failed');
+      case 'purchase_insert':
+        return t('Utkastposten kunde inte sparas', 'Draft record insert failed');
+      case 'line_insert':
+        return t('Konteringsraden kunde inte sparas', 'Draft line insert failed');
+      default:
+        return t('Oväntat fel', 'Unexpected failure');
+    }
+  }, [t]);
 
   const { data: suppliers = [] } = useQuery({
     queryKey: ['acc-suppliers'],
@@ -118,11 +141,13 @@ const PurchaseUpload: React.FC = () => {
             : null,
         });
       } catch (error) {
+        const described = describePurchaseDraftError(error, t('Kunde inte skapa utkast', 'Could not create draft'));
         nextResults.push({
           fileName: file.name,
-          error: error instanceof Error
-            ? error.message
-            : t('Kunde inte skapa utkast', 'Could not create draft'),
+          error: described.message,
+          errorStage: described.stage,
+          errorDetails: described.details,
+          errorCode: described.code,
         });
       }
 
@@ -144,7 +169,7 @@ const PurchaseUpload: React.FC = () => {
     const fullAmountLabel = t('Hela beloppet', 'Full amount');
 
     let rateLookupMap = new Map<string, ExchangeRateLookupResult>();
-    let rateLookupError: string | null = null;
+    let rateLookupError: unknown = null;
 
     if (rateRequests.length > 0) {
       setProgress({
@@ -156,9 +181,13 @@ const PurchaseUpload: React.FC = () => {
         const rateResults = await fetchEcbExchangeRates(rateRequests);
         rateLookupMap = buildPurchaseImportRateLookupMap(rateRequests, rateResults);
       } catch (error) {
-        rateLookupError = error instanceof Error
-          ? error.message
-          : t('Kunde inte hämta ECB-kurser', 'Could not fetch ECB rates');
+        rateLookupError = toPurchaseDraftError(error, {
+          stage: 'exchange_rate_lookup',
+          fallbackMessage: t('Kunde inte hämta ECB-kurser', 'Could not fetch ECB rates'),
+          extraDetails: [
+            `Requests: ${rateRequests.length}`,
+          ],
+        });
       }
     }
 
@@ -173,7 +202,7 @@ const PurchaseUpload: React.FC = () => {
 
       try {
         if (draft.exchangeRateKey && rateLookupError) {
-          throw new Error(rateLookupError);
+          throw rateLookupError;
         }
 
         const createdDraft = await createPurchaseDraft({
@@ -202,11 +231,13 @@ const PurchaseUpload: React.FC = () => {
           parserReviewReasons: createdDraft.parserReviewReasons,
         });
       } catch (error) {
+        const described = describePurchaseDraftError(error, t('Kunde inte skapa utkast', 'Could not create draft'));
         nextResults.push({
           fileName: draft.file.name,
-          error: error instanceof Error
-            ? error.message
-            : t('Kunde inte skapa utkast', 'Could not create draft'),
+          error: described.message,
+          errorStage: described.stage,
+          errorDetails: described.details,
+          errorCode: described.code,
         });
       }
 
@@ -309,7 +340,24 @@ const PurchaseUpload: React.FC = () => {
                             </p>
                           )}
                           {result.error && (
-                            <p className="text-sm text-destructive mt-2">{result.error}</p>
+                            <div className="mt-2 space-y-1">
+                              <p className="text-sm text-destructive">{result.error}</p>
+                              {result.errorStage && (
+                                <p className="text-xs text-muted-foreground">
+                                  {t('Steg', 'Stage')}: {getErrorStageLabel(result.errorStage)}
+                                </p>
+                              )}
+                              {result.errorCode && (
+                                <p className="text-xs text-muted-foreground">
+                                  {t('Kod', 'Code')}: {result.errorCode}
+                                </p>
+                              )}
+                              {result.errorDetails?.map((detail) => (
+                                <p key={`${result.fileName}-${detail}`} className="text-xs text-muted-foreground whitespace-pre-wrap break-words">
+                                  {detail}
+                                </p>
+                              ))}
+                            </div>
                           )}
                         </div>
                         {result.purchaseId && result.parserReviewRequired ? (

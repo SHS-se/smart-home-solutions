@@ -11,6 +11,7 @@ import {
   type ExchangeRateLookupResult,
 } from './accounting-fx';
 import { fetchSingleEcbExchangeRate } from './ecb-rates';
+import { PurchaseDraftError, toPurchaseDraftError } from './purchase-draft-error';
 import {
   buildInvoiceNumberNote,
   createEmptyPurchaseForm,
@@ -121,17 +122,31 @@ export async function createPurchaseDraft(params: CreatePurchaseDraftParams): Pr
       supplierCountry = selectedSupplier?.country || null;
       supplierType = selectedSupplier?.supplier_type || null;
     } else {
-      const { data: createdSupplier, error: supplierError } = await supabase
-        .from('acc_suppliers')
-        .insert({
-          name: values.newSupplierName.trim(),
-          country: inferredSupplier.country,
-          supplier_type: inferredSupplier.supplierType,
-          vat_number: inferredSupplier.vatNumber,
-        })
-        .select()
-        .single();
-      if (supplierError) throw supplierError;
+      let createdSupplier;
+      try {
+        const supplierResult = await supabase
+          .from('acc_suppliers')
+          .insert({
+            name: values.newSupplierName.trim(),
+            country: inferredSupplier.country,
+            supplier_type: inferredSupplier.supplierType,
+            vat_number: inferredSupplier.vatNumber,
+          })
+          .select()
+          .single();
+        createdSupplier = supplierResult.data;
+        if (supplierResult.error) throw supplierResult.error;
+      } catch (error) {
+        throw toPurchaseDraftError(error, {
+          stage: 'supplier_create',
+          fallbackMessage: 'Could not create supplier for purchase draft',
+          extraDetails: [
+            `Supplier: ${values.newSupplierName.trim()}`,
+            `Country: ${inferredSupplier.country}`,
+            `Supplier type: ${inferredSupplier.supplierType}`,
+          ],
+        });
+      }
 
       supplierId = createdSupplier.id;
       supplierCountry = createdSupplier.country;
@@ -143,11 +158,24 @@ export async function createPurchaseDraft(params: CreatePurchaseDraftParams): Pr
   const supplierInvoiceNumber = preserveSupplierInvoiceNumber(values.invoiceNumber);
   const normalizedSupplierInvoiceNumber = normalizeSupplierInvoiceNumber(values.invoiceNumber);
   if (supplierId && normalizedSupplierInvoiceNumber) {
-    const { data: duplicateCandidates, error: duplicateCheckError } = await supabase
-      .from('acc_purchases')
-      .select('id, supplier_id, supplier_invoice_number')
-      .eq('supplier_id', supplierId);
-    if (duplicateCheckError) throw duplicateCheckError;
+    let duplicateCandidates;
+    try {
+      const duplicateResult = await supabase
+        .from('acc_purchases')
+        .select('id, supplier_id, supplier_invoice_number')
+        .eq('supplier_id', supplierId);
+      duplicateCandidates = duplicateResult.data;
+      if (duplicateResult.error) throw duplicateResult.error;
+    } catch (error) {
+      throw toPurchaseDraftError(error, {
+        stage: 'duplicate_check',
+        fallbackMessage: 'Could not validate duplicate supplier invoice',
+        extraDetails: [
+          `Supplier id: ${supplierId}`,
+          `Supplier invoice number: ${supplierInvoiceNumber ?? normalizedSupplierInvoiceNumber}`,
+        ],
+      });
+    }
 
     const duplicatePurchaseId = findDuplicatePurchaseId(
       duplicateCandidates || [],
@@ -155,7 +183,17 @@ export async function createPurchaseDraft(params: CreatePurchaseDraftParams): Pr
       normalizedSupplierInvoiceNumber,
     );
 
-    if (duplicatePurchaseId) throw new Error(duplicateInvoiceMessage);
+    if (duplicatePurchaseId) {
+      throw new PurchaseDraftError({
+        message: duplicateInvoiceMessage,
+        stage: 'duplicate_check',
+        details: [
+          `Supplier id: ${supplierId}`,
+          `Supplier invoice number: ${supplierInvoiceNumber ?? normalizedSupplierInvoiceNumber}`,
+          `Existing draft id: ${duplicatePurchaseId}`,
+        ],
+      });
+    }
   }
 
   const normalizedCurrency = normalizeCurrency(values.currency);
@@ -172,7 +210,20 @@ export async function createPurchaseDraft(params: CreatePurchaseDraftParams): Pr
         rateDate: documentDate,
         source: 'SEK' as const,
       }
-    : params.exchangeRateLookup ?? await fetchSingleEcbExchangeRate({ currency: normalizedCurrency, documentDate });
+    : params.exchangeRateLookup ?? await (async () => {
+        try {
+          return await fetchSingleEcbExchangeRate({ currency: normalizedCurrency, documentDate });
+        } catch (error) {
+          throw toPurchaseDraftError(error, {
+            stage: 'exchange_rate_lookup',
+            fallbackMessage: 'Could not fetch ECB exchange rate for purchase draft',
+            extraDetails: [
+              `Currency: ${normalizedCurrency}`,
+              `Document date: ${documentDate}`,
+            ],
+          });
+        }
+      })();
   const snapshot = buildExchangeSnapshot({
     documentDate,
     currency: normalizedCurrency,
@@ -213,33 +264,70 @@ export async function createPurchaseDraft(params: CreatePurchaseDraftParams): Pr
   if (params.file) {
     const ext = params.file.name.split('.').pop();
     const path = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-    const { error: uploadError } = await supabase.storage.from('purchase-documents').upload(path, params.file);
-    if (uploadError) throw uploadError;
+    try {
+      const { error: uploadError } = await supabase.storage.from('purchase-documents').upload(path, params.file);
+      if (uploadError) throw uploadError;
+    } catch (error) {
+      throw toPurchaseDraftError(error, {
+        stage: 'document_upload',
+        fallbackMessage: 'Could not upload purchase document',
+        extraDetails: [
+          `File: ${params.file.name}`,
+          'Bucket: purchase-documents',
+        ],
+      });
+    }
     filePath = path;
   }
 
-  const { data: newPurchase, error: purchaseError } = await supabase
-    .from('acc_purchases')
-    .insert({
-      ...purchasePayload,
-      document_file_path: filePath,
-      document_quality_status: documentQualityStatus,
-      status: 'draft',
-      created_by: userId,
-    })
-    .select()
-    .single();
-  if (purchaseError) throw purchaseError;
+  let newPurchase;
+  try {
+    const purchaseResult = await supabase
+      .from('acc_purchases')
+      .insert({
+        ...purchasePayload,
+        document_file_path: filePath,
+        document_quality_status: documentQualityStatus,
+        status: 'draft',
+        created_by: userId,
+      })
+      .select()
+      .single();
+    newPurchase = purchaseResult.data;
+    if (purchaseResult.error) throw purchaseResult.error;
+  } catch (error) {
+    throw toPurchaseDraftError(error, {
+      stage: 'purchase_insert',
+      fallbackMessage: 'Could not create purchase draft record',
+      extraDetails: [
+        `Currency: ${normalizedCurrency}`,
+        `Document date: ${documentDate}`,
+        `Supplier invoice number: ${supplierInvoiceNumber ?? 'missing'}`,
+      ],
+    });
+  }
 
   const savedPurchaseId = resolveSavedPurchaseId(null, newPurchase?.id);
-  const { error: lineError } = await supabase.from('acc_purchase_lines').insert({
-    purchase_id: savedPurchaseId,
-    ...linePayload,
-    expense_account: suggestExpenseAccount(parsedInvoice?.fingerprint.id, parsedInvoice?.supplierName),
-    vat_treatment: inferredVatTreatment,
-    sort_order: 0,
-  });
-  if (lineError) throw lineError;
+  try {
+    const { error: lineError } = await supabase.from('acc_purchase_lines').insert({
+      purchase_id: savedPurchaseId,
+      ...linePayload,
+      expense_account: suggestExpenseAccount(parsedInvoice?.fingerprint.id, parsedInvoice?.supplierName),
+      vat_treatment: inferredVatTreatment,
+      sort_order: 0,
+    });
+    if (lineError) throw lineError;
+  } catch (error) {
+    throw toPurchaseDraftError(error, {
+      stage: 'line_insert',
+      fallbackMessage: 'Could not create purchase draft line',
+      extraDetails: [
+        `Purchase id: ${savedPurchaseId}`,
+        `VAT treatment: ${inferredVatTreatment}`,
+        `Expense account: ${suggestExpenseAccount(parsedInvoice?.fingerprint.id, parsedInvoice?.supplierName)}`,
+      ],
+    });
+  }
 
   return {
     purchaseId: savedPurchaseId,
