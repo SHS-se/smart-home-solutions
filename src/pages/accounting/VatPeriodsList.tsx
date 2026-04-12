@@ -159,12 +159,12 @@ const VatPeriodsList: React.FC = () => {
           <div className="text-sm">
             <p className="font-medium text-primary">{t('Momsrapportering steg för steg', 'VAT reporting step by step')}</p>
             <ol className="list-decimal list-inside text-muted-foreground mt-2 space-y-1">
-              <li>{t('Bokför alla inköp i kvartalet', 'Post all purchases in the quarter')}</li>
-              <li>{t('Granska och åtgärda alla flaggade transaktioner', 'Review and resolve all flagged transactions')}</li>
-              <li>{t('Kontrollera momsberäkningarna i varje deklarationsruta', 'Verify VAT calculations in each declaration box')}</li>
-              <li>{t('Godkänn och skapa en ögonblicksbild av rapporten', 'Approve and create a snapshot of the report')}</li>
-              <li>{t('Exportera underlag för inlämning', 'Export documents for submission')}</li>
-              <li>{t('Ladda upp bekräftelse från Skatteverket', 'Upload confirmation from the Tax Agency')}</li>
+              <li>{t('Ladda upp och bokför alla inköp i kvartalet — valideringar sker automatiskt vid bokföring', 'Upload and post all purchases for the quarter — validations run automatically on posting')}</li>
+              <li>{t('Öppna kvartalsperioden och kör datakontroll — åtgärda eventuella blockerare', 'Open the quarter period and run data checks — resolve any blockers')}</li>
+              <li>{t('Granska nettomomspositionen och verifiera deklarationsrutorna', 'Review the net VAT position and verify the declaration boxes')}</li>
+              <li>{t('Skapa en låst ögonblicksbild av deklarationen', 'Create a locked snapshot of the declaration')}</li>
+              <li>{t('Ladda ner underlaget och fyll i Skatteverkets e-tjänst manuellt', 'Download the report and manually enter the figures in the Tax Agency e-service')}</li>
+              <li>{t('Ladda upp bekräftelsen från Skatteverket för arkivering', 'Upload the Tax Agency confirmation for archiving')}</li>
             </ol>
           </div>
         </div>
