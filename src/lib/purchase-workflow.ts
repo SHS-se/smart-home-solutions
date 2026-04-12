@@ -1,5 +1,6 @@
 import type { ParsedInvoice } from './invoice-parser';
 import type { SupplierType, VatTreatment } from './accounting-utils';
+import { isReverseChargeTreatment } from './accounting-utils';
 
 const EU_COUNTRY_CODES = new Set([
   'AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR', 'DE', 'GR',
@@ -183,6 +184,28 @@ export function inferSupplierMetadata(parsedInvoice: ParsedInvoice | null): {
   };
 }
 
+/** Fingerprints known to represent physical goods */
+const GOODS_FINGERPRINTS = new Set([
+  'ubiquiti_receipt_invoice',
+  'amazon_sweden_invoice',
+  'amazon_marketplace_invoice',
+]);
+
+/** Infer whether a purchase is goods or services based on fingerprint. Defaults to services. */
+function inferGoodsOrServices(fingerprintId: string | null | undefined): 'goods' | 'services' {
+  if (fingerprintId && GOODS_FINGERPRINTS.has(fingerprintId)) return 'goods';
+  return 'services';
+}
+
+/** Pick the specific reverse-charge VatTreatment based on supplier type and goods/services classification */
+function pickReverseChargeTreatment(supplierType: SupplierType, goodsOrServices: 'goods' | 'services'): VatTreatment {
+  if (supplierType === 'eu') {
+    return goodsOrServices === 'goods' ? 'reverse_charge_eu_goods' : 'reverse_charge_eu_services';
+  }
+  // Non-EU purchases of goods would be imports (Box 50) — but for services it's Box 22
+  return 'reverse_charge_non_eu_services';
+}
+
 export function inferVatTreatment(params: {
   parsedInvoice: ParsedInvoice | null;
   extractedText: string | null;
@@ -196,6 +219,7 @@ export function inferVatTreatment(params: {
   const supplierType = (params.supplierType as SupplierType | null) || getSupplierTypeFromCountry(normalizedCountry);
   const text = `${params.extractedText || ''} ${params.parsedInvoice?.vatNumber || ''}`.toLowerCase();
   const fingerprintId = params.parsedInvoice?.fingerprint.id;
+  const goodsOrServices = inferGoodsOrServices(fingerprintId);
 
   if (
     (fingerprintId === 'amazon_sweden_invoice' || fingerprintId === 'amazon_marketplace_invoice') &&
@@ -231,11 +255,11 @@ export function inferVatTreatment(params: {
   }
 
   if (/(reverse charge|omvänd skattskyldighet|intra-community supply|vat exempt)/i.test(text)) {
-    return 'reverse_charge';
+    return pickReverseChargeTreatment(supplierType, goodsOrServices);
   }
 
   if (vatAmount === 0) {
-    if (supplierType === 'eu') return 'reverse_charge';
+    if (supplierType === 'eu') return pickReverseChargeTreatment('eu', goodsOrServices);
     if (supplierType === 'non_eu') return 'no_vat';
     if (/(momsfri|no vat|without vat|ingen moms)/i.test(text)) return 'no_vat';
   }

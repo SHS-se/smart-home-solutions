@@ -81,7 +81,7 @@ CREATE TABLE public.acc_purchase_lines (
   purchase_id uuid NOT NULL REFERENCES public.acc_purchases(id) ON DELETE CASCADE,
   description text NOT NULL DEFAULT '',
   expense_account text NOT NULL DEFAULT '4000',
-  vat_treatment text NOT NULL DEFAULT 'needs_review' CHECK (vat_treatment IN ('domestic_deductible', 'reverse_charge', 'non_deductible', 'no_vat', 'needs_review')),
+  vat_treatment text NOT NULL DEFAULT 'needs_review' CHECK (vat_treatment IN ('domestic_deductible', 'reverse_charge_eu_goods', 'reverse_charge_eu_services', 'reverse_charge_non_eu_services', 'non_deductible', 'no_vat', 'needs_review')),
   net_amount numeric(12,2) NOT NULL DEFAULT 0,
   vat_amount numeric(12,2) NOT NULL DEFAULT 0,
   gross_amount numeric(12,2) NOT NULL DEFAULT 0,

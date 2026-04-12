@@ -5,7 +5,21 @@ function roundMoney(amount: number): number {
 
 export type PaymentSource = 'owner_paid' | 'company_bank';
 export type PurchaseStatus = 'draft' | 'in_review' | 'blocked' | 'posted';
-export type VatTreatment = 'domestic_deductible' | 'reverse_charge' | 'non_deductible' | 'no_vat' | 'needs_review';
+export type VatTreatment =
+  | 'domestic_deductible'            // Swedish purchase with deductible input VAT (→ Box 48)
+  | 'reverse_charge_eu_goods'        // Goods from another EU country (→ Box 20, 30, 48)
+  | 'reverse_charge_eu_services'     // Services from another EU country (→ Box 21, 30, 48)
+  | 'reverse_charge_non_eu_services' // Services from outside EU (→ Box 22, 30, 48)
+  | 'non_deductible'                 // Foreign VAT not deductible
+  | 'no_vat'                         // Zero-rated / VAT-exempt
+  | 'needs_review';                  // Pending classification
+
+/** Returns true for any reverse-charge VAT treatment */
+export function isReverseChargeTreatment(treatment: string): boolean {
+  return treatment === 'reverse_charge_eu_goods' ||
+         treatment === 'reverse_charge_eu_services' ||
+         treatment === 'reverse_charge_non_eu_services';
+}
 export type PeriodStatus = 'open' | 'review' | 'closed' | 'locked';
 export type VatPeriodStatus = 'open' | 'in_review' | 'approved' | 'filed' | 'locked';
 export type DocumentQualityStatus = 'pending' | 'sufficient' | 'insufficient' | 'not_checked';
@@ -45,7 +59,9 @@ export const PURCHASE_STATUS_COLORS: Record<PurchaseStatus, string> = {
 
 export const VAT_TREATMENT_LABELS: Record<VatTreatment, string> = {
   domestic_deductible: 'Ingående moms 25%',
-  reverse_charge: 'Omvänd skattskyldighet',
+  reverse_charge_eu_goods: 'Omvänd skattskyldighet – EU varor (ruta 20)',
+  reverse_charge_eu_services: 'Omvänd skattskyldighet – EU tjänster (ruta 21)',
+  reverse_charge_non_eu_services: 'Omvänd skattskyldighet – utom-EU tjänster (ruta 22)',
   non_deductible: 'Ej avdragsgill moms',
   no_vat: 'Ingen moms',
   needs_review: 'Kräver granskning',
@@ -53,7 +69,9 @@ export const VAT_TREATMENT_LABELS: Record<VatTreatment, string> = {
 
 export const VAT_TREATMENT_LABELS_EN: Record<VatTreatment, string> = {
   domestic_deductible: 'Input VAT 25%',
-  reverse_charge: 'Reverse charge',
+  reverse_charge_eu_goods: 'Reverse charge – EU goods (box 20)',
+  reverse_charge_eu_services: 'Reverse charge – EU services (box 21)',
+  reverse_charge_non_eu_services: 'Reverse charge – non-EU services (box 22)',
   non_deductible: 'Non-deductible VAT',
   no_vat: 'No VAT',
   needs_review: 'Needs review',
@@ -239,7 +257,7 @@ export function buildJournalPreview(
         credit: 0,
       });
       totalCredit += line.gross_amount;
-    } else if (line.vat_treatment === 'reverse_charge') {
+    } else if (isReverseChargeTreatment(line.vat_treatment)) {
       // Expense at net
       journalLines.push({
         account: line.expense_account,

@@ -168,13 +168,13 @@ Deno.test('inferSupplierMetadata classifies VAT-numbered EU suppliers correctly'
   assertEqual(inferred.vatNumber, 'IE3206488LH', 'vatNumber');
 });
 
-Deno.test('inferVatTreatment defaults EU zero-VAT invoices to reverse charge', () => {
+Deno.test('inferVatTreatment defaults EU zero-VAT invoices to reverse charge EU services', () => {
   const vatTreatment = inferVatTreatment({
     parsedInvoice: STRIPE_INVOICE,
     extractedText: 'Reverse Charge VAT may be applicable.',
   });
 
-  assertEqual(vatTreatment, 'reverse_charge', 'vatTreatment');
+  assertEqual(vatTreatment, 'reverse_charge_eu_services', 'vatTreatment');
 });
 
 Deno.test('inferVatTreatment keeps foreign VAT out of deductible domestic treatment', () => {
@@ -245,13 +245,14 @@ Deno.test('inferVatTreatment treats Anthropic invoices with Swedish VAT as domes
   assertEqual(vatTreatment, 'domestic_deductible', 'vatTreatment');
 });
 
-Deno.test('inferVatTreatment treats Lovable reverse-charge invoices as reverse charge', () => {
+Deno.test('inferVatTreatment treats Lovable reverse-charge invoices as non-EU services reverse charge', () => {
   const vatTreatment = inferVatTreatment({
     parsedInvoice: LOVABLE_REVERSE_CHARGE_INVOICE,
     extractedText: 'Tax to be paid on reverse charge basis SE VAT SE790519759101',
   });
 
-  assertEqual(vatTreatment, 'reverse_charge', 'vatTreatment');
+  // Lovable is US-based (non-EU), so services from outside EU → box 22
+  assertEqual(vatTreatment, 'reverse_charge_non_eu_services', 'vatTreatment');
 });
 
 Deno.test('inferVatTreatment treats Lovable invoices with Swedish VAT as domestic deductible', () => {

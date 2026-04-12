@@ -29,6 +29,7 @@ import {
   PURCHASE_STATUS_LABELS, PURCHASE_STATUS_LABELS_EN, PURCHASE_STATUS_COLORS,
   PAYMENT_SOURCE_LABELS, PAYMENT_SOURCE_LABELS_EN,
   VAT_TREATMENT_LABELS, VAT_TREATMENT_LABELS_EN,
+  isReverseChargeTreatment,
   formatExchangeRate, formatSEK, formatSEKDecimal, buildJournalPreview,
   getPurchaseBlockers,
 } from '@/lib/accounting-utils';
@@ -369,7 +370,7 @@ const PurchaseDetail: React.FC = () => {
         });
         break;
       }
-      if (supplierType === 'domestic' && line.vat_treatment === 'reverse_charge') {
+      if (supplierType === 'domestic' && isReverseChargeTreatment(line.vat_treatment)) {
         warnings.push({
           type: 'warning',
           message: t(
@@ -425,7 +426,7 @@ const PurchaseDetail: React.FC = () => {
     })),
     purchaseFx,
   );
-  const isReverseCharge = primaryLine?.vat_treatment === 'reverse_charge';
+  const isReverseCharge = primaryLine ? isReverseChargeTreatment(primaryLine.vat_treatment) : false;
   const convertedInvoiceAmountSek = isReverseCharge ? vatSummary.reverseChargeBaseSek : vatSummary.paymentAccountAmountSek;
   const netVatEffectSek = vatSummary.reverseChargeOutputVatSek - vatSummary.reverseChargeInputVatSek;
 
@@ -692,19 +693,31 @@ const PurchaseDetail: React.FC = () => {
                 <div className="flex flex-wrap gap-2">
                   {lines.some(l => l.vat_treatment === 'domestic_deductible') && (
                     <span className="inline-flex items-center rounded-md bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
-                      {t('Ruta 10 – Avdragsgill ingående moms', 'Box 10 – Deductible input VAT')}
+                      {t('Ruta 48 – Avdragsgill ingående moms', 'Box 48 – Deductible input VAT')}
                     </span>
                   )}
-                  {lines.some(l => l.vat_treatment === 'reverse_charge') && (
+                  {lines.some(l => l.vat_treatment === 'reverse_charge_eu_goods') && (
+                    <span className="inline-flex items-center rounded-md bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800">
+                      {t('Ruta 20 – Inköp av varor från annat EU-land', 'Box 20 – EU goods purchases')}
+                    </span>
+                  )}
+                  {lines.some(l => l.vat_treatment === 'reverse_charge_eu_services') && (
+                    <span className="inline-flex items-center rounded-md bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800">
+                      {t('Ruta 21 – Inköp av tjänster från annat EU-land', 'Box 21 – EU services purchases')}
+                    </span>
+                  )}
+                  {lines.some(l => l.vat_treatment === 'reverse_charge_non_eu_services') && (
+                    <span className="inline-flex items-center rounded-md bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800">
+                      {t('Ruta 22 – Inköp av tjänster utom EU', 'Box 22 – Non-EU services purchases')}
+                    </span>
+                  )}
+                  {lines.some(l => isReverseChargeTreatment(l.vat_treatment)) && (
                     <>
                       <span className="inline-flex items-center rounded-md bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800">
-                        {t('Ruta 20 – Omvänd skattskyldighet, beskattningsunderlag', 'Box 20 – Reverse-charge taxable base')}
-                      </span>
-                      <span className="inline-flex items-center rounded-md bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800">
-                        {t('Ruta 21 – Omvänd skattskyldighet, moms', 'Box 21 – Reverse-charge VAT')}
+                        {t('Ruta 30 – Utgående moms 25 % på inköp', 'Box 30 – Output VAT 25% on purchases')}
                       </span>
                       <span className="inline-flex items-center rounded-md bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
-                        {t('Ruta 10 – Avdragsgill ingående moms (omvänd)', 'Box 10 – Deductible input VAT (reverse charge)')}
+                        {t('Ruta 48 – Avdragsgill ingående moms (omvänd)', 'Box 48 – Deductible input VAT (reverse charge)')}
                       </span>
                     </>
                   )}

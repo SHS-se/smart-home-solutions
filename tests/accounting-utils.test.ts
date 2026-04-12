@@ -152,8 +152,8 @@ Deno.test("buildJournalPreview — domestic deductible balances (debit == credit
   assertEquals(Math.abs(totalDebit - totalCredit) < 0.01, true, `Debit ${totalDebit} != Credit ${totalCredit}`);
 });
 
-Deno.test("buildJournalPreview — reverse charge creates 4 lines with neutral VAT", () => {
-  const lines = [makeLine({ vat_treatment: "reverse_charge", net_amount: 95, vat_amount: 0, gross_amount: 95 })];
+Deno.test("buildJournalPreview — reverse charge EU services creates 4 lines with neutral VAT", () => {
+  const lines = [makeLine({ vat_treatment: "reverse_charge_eu_services", net_amount: 95, vat_amount: 0, gross_amount: 95 })];
   const result = buildJournalPreview(lines, "owner_paid", "RC purchase");
 
   assertEquals(result.length, 4);
@@ -171,8 +171,8 @@ Deno.test("buildJournalPreview — reverse charge creates 4 lines with neutral V
   assertEquals(result[3].credit, 95);
 });
 
-Deno.test("buildJournalPreview — reverse charge balances (debit == credit)", () => {
-  const lines = [makeLine({ vat_treatment: "reverse_charge", net_amount: 97, vat_amount: 0, gross_amount: 97 })];
+Deno.test("buildJournalPreview — reverse charge EU services balances (debit == credit)", () => {
+  const lines = [makeLine({ vat_treatment: "reverse_charge_eu_services", net_amount: 97, vat_amount: 0, gross_amount: 97 })];
   const result = buildJournalPreview(lines, "owner_paid", "");
   const totalDebit = result.reduce((s, l) => s + l.debit, 0);
   const totalCredit = result.reduce((s, l) => s + l.credit, 0);
@@ -301,10 +301,10 @@ Deno.test("getPurchaseBlockers — insufficient VAT evidence with deductible VAT
   assertEquals(blockers.some(b => b.type === "error" && b.message.includes("underlag")), true);
 });
 
-Deno.test("getPurchaseBlockers — insufficient VAT evidence with reverse_charge is not an error", () => {
+Deno.test("getPurchaseBlockers — insufficient VAT evidence with reverse charge EU services is not an error", () => {
   const blockers = getPurchaseBlockers(makePurchase({
     vat_evidence_status: "insufficient",
-    lines: [{ vat_treatment: "reverse_charge", net_amount: 100, vat_amount: 0, gross_amount: 100 }],
+    lines: [{ vat_treatment: "reverse_charge_eu_services", net_amount: 100, vat_amount: 0, gross_amount: 100 }],
     gross_amount: 100,
     net_amount: 100,
     vat_amount: 0,

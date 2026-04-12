@@ -210,7 +210,7 @@ Deno.test("allocateConvertedLineAmounts — single line gets full amount", () =>
   });
   const lines: PurchaseLineAmounts[] = [{
     expense_account: "6540",
-    vat_treatment: "reverse_charge",
+    vat_treatment: "reverse_charge_eu_services",
     gross_amount: 10,
     net_amount: 10,
     vat_amount: 0,
@@ -245,9 +245,9 @@ Deno.test("allocateConvertedLineAmounts — rounding remainder goes to last line
     converted_vat_amount_sek: 0,
   });
   const lines: PurchaseLineAmounts[] = [
-    { expense_account: "6540", vat_treatment: "reverse_charge", gross_amount: 1, net_amount: 1, vat_amount: 0 },
-    { expense_account: "6540", vat_treatment: "reverse_charge", gross_amount: 1, net_amount: 1, vat_amount: 0 },
-    { expense_account: "6540", vat_treatment: "reverse_charge", gross_amount: 1, net_amount: 1, vat_amount: 0 },
+    { expense_account: "6540", vat_treatment: "reverse_charge_eu_services", gross_amount: 1, net_amount: 1, vat_amount: 0 },
+    { expense_account: "6540", vat_treatment: "reverse_charge_eu_services", gross_amount: 1, net_amount: 1, vat_amount: 0 },
+    { expense_account: "6540", vat_treatment: "reverse_charge_eu_services", gross_amount: 1, net_amount: 1, vat_amount: 0 },
   ];
   const result = allocateConvertedLineAmounts(lines, snapshot);
   const totalGross = result.reduce((s, l) => s + l.gross_amount, 0);
@@ -292,15 +292,18 @@ Deno.test("buildPurchaseVatSummary — reverse charge", () => {
   });
   const lines: PurchaseLineAmounts[] = [{
     expense_account: "6540",
-    vat_treatment: "reverse_charge",
+    vat_treatment: "reverse_charge_eu_services",
     gross_amount: 95,
     net_amount: 95,
     vat_amount: 0,
   }];
   const result = buildPurchaseVatSummary(lines, snapshot);
+  assertEquals(result.euServicesPurchaseBaseSek, 95); // Box 21
+  assertEquals(result.euGoodsPurchaseBaseSek, 0);     // Box 20
+  assertEquals(result.nonEuServicesPurchaseBaseSek, 0); // Box 22
   assertEquals(result.reverseChargeBaseSek, 95);
-  assertEquals(result.reverseChargeOutputVatSek, 23.75); // 95 * 0.25
-  assertEquals(result.reverseChargeInputVatSek, 23.75); // same — neutral
+  assertEquals(result.reverseChargeOutputVatSek, 23.75); // 95 * 0.25 → Box 30
+  assertEquals(result.reverseChargeInputVatSek, 23.75); // same — neutral → Box 48
   assertEquals(result.paymentAccountAmountSek, 95); // net for RC
   assertEquals(result.deductibleInputVatSek, 0);
 });
@@ -431,14 +434,14 @@ Deno.test("detectForeignCurrencyIntegrityIssue — draft vs posted status", () =
 
 // ─── derivePaymentAccountOriginalAmount ─────────────────────────────────────────
 
-Deno.test("derivePaymentAccountOriginalAmount — reverse charge uses net", () => {
+Deno.test("derivePaymentAccountOriginalAmount — reverse charge EU services uses net", () => {
   const snapshot = getPurchaseExchangeSnapshot({
     original_currency: "USD",
     original_gross_amount: 10,
     original_net_amount: 10,
     original_vat_amount: 0,
   });
-  assertEquals(derivePaymentAccountOriginalAmount("reverse_charge", snapshot), 10);
+  assertEquals(derivePaymentAccountOriginalAmount("reverse_charge_eu_services", snapshot), 10);
 });
 
 Deno.test("derivePaymentAccountOriginalAmount — domestic deductible uses gross", () => {
@@ -483,7 +486,7 @@ Deno.test("describeJournalOriginalAmount — reverse_charge_vat returns null", (
     original_vat_amount: 0,
     exchange_rate_source: "ECB",
   });
-  assertEquals(describeJournalOriginalAmount("reverse_charge_vat", "reverse_charge", snapshot), null);
+  assertEquals(describeJournalOriginalAmount("reverse_charge_vat", "reverse_charge_eu_services", snapshot), null);
 });
 
 Deno.test("describeJournalOriginalAmount — input_vat returns original VAT", () => {

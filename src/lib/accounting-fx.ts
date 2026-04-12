@@ -1,4 +1,5 @@
 import type { VatTreatment } from './accounting-utils';
+import { isReverseChargeTreatment } from './accounting-utils';
 
 export const BASE_CURRENCY = 'SEK';
 const ROUNDING_EPSILON = 1e-9;
@@ -48,8 +49,17 @@ export interface PurchaseLineAmounts {
 export interface PurchaseVatSummary {
   paymentAccountAmountSek: number;
   deductibleInputVatSek: number;
+  /** Box 20: EU goods purchases taxable base */
+  euGoodsPurchaseBaseSek: number;
+  /** Box 21: EU services purchases taxable base */
+  euServicesPurchaseBaseSek: number;
+  /** Box 22: Non-EU services purchases taxable base */
+  nonEuServicesPurchaseBaseSek: number;
+  /** Total reverse-charge base (sum of boxes 20+21+22) */
   reverseChargeBaseSek: number;
+  /** Box 30: Output VAT 25% on reverse-charge purchases */
   reverseChargeOutputVatSek: number;
+  /** Included in Box 48: Input VAT on reverse-charge (equals output) */
   reverseChargeInputVatSek: number;
   nonDeductibleVatIncludedSek: number;
   totalGrossSek: number;
@@ -262,14 +272,22 @@ export function buildPurchaseVatSummary(lines: PurchaseLineAmounts[], snapshot: 
   const deductibleInputVatSek = roundMoney(lines
     .filter((line) => line.vat_treatment === 'domestic_deductible')
     .reduce((sum, line) => sum + parseAmount(line.vat_amount), 0));
-  const reverseChargeBaseSek = roundMoney(lines
-    .filter((line) => line.vat_treatment === 'reverse_charge')
+
+  const sumNetByTreatment = (treatment: string) => roundMoney(lines
+    .filter((line) => line.vat_treatment === treatment)
     .reduce((sum, line) => sum + parseAmount(line.net_amount), 0));
+
+  const euGoodsPurchaseBaseSek = sumNetByTreatment('reverse_charge_eu_goods');
+  const euServicesPurchaseBaseSek = sumNetByTreatment('reverse_charge_eu_services');
+  const nonEuServicesPurchaseBaseSek = sumNetByTreatment('reverse_charge_non_eu_services');
+  const reverseChargeBaseSek = roundMoney(euGoodsPurchaseBaseSek + euServicesPurchaseBaseSek + nonEuServicesPurchaseBaseSek);
+
   const reverseChargeVatLines = lines
-    .filter((line) => line.vat_treatment === 'reverse_charge')
+    .filter((line) => isReverseChargeTreatment(line.vat_treatment))
     .map((line) => roundMoney(parseAmount(line.net_amount) * 0.25));
   const reverseChargeOutputVatSek = roundMoney(reverseChargeVatLines.reduce((sum, amount) => sum + amount, 0));
   const reverseChargeInputVatSek = reverseChargeOutputVatSek;
+
   const nonDeductibleVatIncludedSek = roundMoney(lines
     .filter((line) => line.vat_treatment === 'non_deductible')
     .reduce((sum, line) => sum + parseAmount(line.gross_amount) - parseAmount(line.net_amount), 0));
@@ -284,6 +302,9 @@ export function buildPurchaseVatSummary(lines: PurchaseLineAmounts[], snapshot: 
   return {
     paymentAccountAmountSek,
     deductibleInputVatSek,
+    euGoodsPurchaseBaseSek,
+    euServicesPurchaseBaseSek,
+    nonEuServicesPurchaseBaseSek,
     reverseChargeBaseSek,
     reverseChargeOutputVatSek,
     reverseChargeInputVatSek,
@@ -300,7 +321,7 @@ export function derivePaymentAccountOriginalAmount(
   vatTreatment: VatTreatment,
   snapshot: PurchaseExchangeSnapshot,
 ): number {
-  if (vatTreatment === 'reverse_charge' || vatTreatment === 'no_vat') {
+  if (isReverseChargeTreatment(vatTreatment) || vatTreatment === 'no_vat') {
     return snapshot.originalNet;
   }
   return snapshot.originalGross;
