@@ -21,6 +21,12 @@ export interface VatDeclarationXmlBox {
   amount: number;
 }
 
+export interface VatDeclarationXmlValidationResult {
+  ok: boolean;
+  errors: string[];
+  warnings: string[];
+}
+
 export function roundVatDeclarationAmount(amount: number): number {
   return Math.round(amount);
 }
@@ -69,4 +75,109 @@ export function buildSkatteverketXml(
   lines.push('</Moms>');
   lines.push('</eSKDUpload>');
   return lines.join('\n');
+}
+
+function parseSingleTag(xml: string, tagName: string): string | null {
+  const escaped = tagName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = xml.match(new RegExp(`<${escaped}>([^<]+)</${escaped}>`));
+  return match ? match[1].trim() : null;
+}
+
+function parseSection(xml: string, tagName: string): string | null {
+  const escaped = tagName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = xml.match(new RegExp(`<${escaped}>([\\s\\S]*?)</${escaped}>`));
+  return match ? match[1] : null;
+}
+
+function parseIntegerTag(xml: string, tagName: string): { raw: string | null; value: number | null } {
+  const raw = parseSingleTag(xml, tagName);
+  if (raw === null || !/^-?\d+$/.test(raw)) {
+    return { raw, value: null };
+  }
+  return { raw, value: Number(raw) };
+}
+
+export function validateSkatteverketXml(params: {
+  xml: string;
+  expectedOrgNr: string;
+  expectedPeriodYYYYMM: string;
+  declarationBoxes: VatDeclarationXmlBox[];
+}): VatDeclarationXmlValidationResult {
+  const { xml, expectedOrgNr, expectedPeriodYYYYMM, declarationBoxes } = params;
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  if (!xml.startsWith('<?xml version="1.0" encoding="ISO-8859-1"?>')) {
+    errors.push('Missing or incorrect XML declaration.');
+  }
+
+  if (!xml.includes('<!DOCTYPE eSKDUpload PUBLIC "-//Skatteverket, Sweden//DTD Skatteverket eSKDUpload-DTD Version 6.0//SV"')) {
+    errors.push('Missing or incorrect Skatteverket DTD declaration.');
+  }
+
+  if (!/<eSKDUpload\s+Version="6\.0">/.test(xml)) {
+    errors.push('Root element eSKDUpload with Version="6.0" is missing.');
+  }
+
+  const orgNr = parseSingleTag(xml, 'OrgNr');
+  if (orgNr !== expectedOrgNr) {
+    errors.push(`OrgNr mismatch: expected ${expectedOrgNr}, got ${orgNr ?? 'missing'}.`);
+  }
+
+  const momsSection = parseSection(xml, 'Moms');
+  if (!momsSection) {
+    errors.push('Missing Moms section.');
+  } else {
+    const period = parseSingleTag(momsSection, 'Period');
+    if (period !== expectedPeriodYYYYMM) {
+      errors.push(`Period mismatch: expected ${expectedPeriodYYYYMM}, got ${period ?? 'missing'}.`);
+    }
+
+    const momsTagMatches = [...momsSection.matchAll(/<([A-Za-z][A-Za-z0-9]*)>/g)].map((match) => match[1]);
+    const allowedTags = new Set(['Period', ...declarationBoxes.map((box) => box.xmlTag)]);
+    for (const tag of momsTagMatches) {
+      if (!allowedTags.has(tag)) {
+        warnings.push(`Unexpected VAT tag in Moms section: ${tag}.`);
+      }
+    }
+
+    const expectedTagAmounts = new Map(
+      declarationBoxes
+        .filter((box) => box.xmlTag === 'MomsBetala' || box.amount !== 0)
+        .map((box) => [box.xmlTag, box.amount]),
+    );
+
+    for (const [xmlTag, amount] of expectedTagAmounts.entries()) {
+      const parsed = parseIntegerTag(momsSection, xmlTag);
+      if (parsed.value === null) {
+        errors.push(`Missing or non-integer value for ${xmlTag}.`);
+        continue;
+      }
+      if (parsed.value !== amount) {
+        errors.push(`${xmlTag} mismatch: expected ${amount}, got ${parsed.value}.`);
+      }
+    }
+
+    const parsedBox10 = parseIntegerTag(momsSection, 'MomsUtgHog').value ?? 0;
+    const parsedBox11 = parseIntegerTag(momsSection, 'MomsUtgMedel').value ?? 0;
+    const parsedBox12 = parseIntegerTag(momsSection, 'MomsUtgLag').value ?? 0;
+    const parsedBox30 = parseIntegerTag(momsSection, 'MomsInkopUtgHog').value ?? 0;
+    const parsedBox31 = parseIntegerTag(momsSection, 'MomsInkopUtgMedel').value ?? 0;
+    const parsedBox32 = parseIntegerTag(momsSection, 'MomsInkopUtgLag').value ?? 0;
+    const parsedBox48 = parseIntegerTag(momsSection, 'MomsIngAvdr').value ?? 0;
+    const parsedMomsBetala = parseIntegerTag(momsSection, 'MomsBetala').value;
+    const expectedMomsBetala = (parsedBox10 + parsedBox11 + parsedBox12 + parsedBox30 + parsedBox31 + parsedBox32) - parsedBox48;
+
+    if (parsedMomsBetala === null) {
+      errors.push('Missing or non-integer value for MomsBetala.');
+    } else if (parsedMomsBetala !== expectedMomsBetala) {
+      errors.push(`MomsBetala does not reconcile with the XML values: expected ${expectedMomsBetala}, got ${parsedMomsBetala}.`);
+    }
+  }
+
+  return {
+    ok: errors.length === 0,
+    errors,
+    warnings,
+  };
 }

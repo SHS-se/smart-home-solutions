@@ -1,6 +1,10 @@
 /// <reference lib="deno.ns" />
 
-import { buildSkatteverketXml, finalizeVatDeclarationAmounts } from './vat-declaration.ts';
+import {
+  buildSkatteverketXml,
+  finalizeVatDeclarationAmounts,
+  validateSkatteverketXml,
+} from './vat-declaration.ts';
 
 function assertEqual<T>(actual: T, expected: T, label: string): void {
   if (actual !== expected) {
@@ -40,4 +44,56 @@ Deno.test('buildSkatteverketXml emits internally consistent integer VAT boxes', 
   if (!xml.includes('<MomsBetala>-1683</MomsBetala>')) {
     throw new Error('Expected XML to contain the reconciled MomsBetala value');
   }
+});
+
+Deno.test('validateSkatteverketXml accepts a generated XML file that matches expectations', () => {
+  const xml = buildSkatteverketXml('790519-7591', '202603', [
+    { xmlTag: 'InkopTjanstUtomEg', amount: 1731 },
+    { xmlTag: 'MomsInkopUtgHog', amount: 433 },
+    { xmlTag: 'MomsIngAvdr', amount: 2116 },
+    { xmlTag: 'MomsBetala', amount: -1683 },
+  ]);
+
+  const result = validateSkatteverketXml({
+    xml,
+    expectedOrgNr: '790519-7591',
+    expectedPeriodYYYYMM: '202603',
+    declarationBoxes: [
+      { xmlTag: 'InkopTjanstUtomEg', amount: 1731 },
+      { xmlTag: 'MomsInkopUtgHog', amount: 433 },
+      { xmlTag: 'MomsIngAvdr', amount: 2116 },
+      { xmlTag: 'MomsBetala', amount: -1683 },
+    ],
+  });
+
+  assertEqual(result.ok, true, 'ok');
+  assertEqual(result.errors.length, 0, 'errorCount');
+});
+
+Deno.test('validateSkatteverketXml rejects non-reconciling MomsBetala values', () => {
+  const xml = buildSkatteverketXml('790519-7591', '202603', [
+    { xmlTag: 'InkopTjanstUtomEg', amount: 1731 },
+    { xmlTag: 'MomsInkopUtgHog', amount: 433 },
+    { xmlTag: 'MomsIngAvdr', amount: 2116 },
+    { xmlTag: 'MomsBetala', amount: -1684 },
+  ]);
+
+  const result = validateSkatteverketXml({
+    xml,
+    expectedOrgNr: '790519-7591',
+    expectedPeriodYYYYMM: '202603',
+    declarationBoxes: [
+      { xmlTag: 'InkopTjanstUtomEg', amount: 1731 },
+      { xmlTag: 'MomsInkopUtgHog', amount: 433 },
+      { xmlTag: 'MomsIngAvdr', amount: 2116 },
+      { xmlTag: 'MomsBetala', amount: -1683 },
+    ],
+  });
+
+  assertEqual(result.ok, false, 'ok');
+  assertEqual(
+    result.errors.some((error) => error.includes('MomsBetala does not reconcile')),
+    true,
+    'reconciliationError',
+  );
 });

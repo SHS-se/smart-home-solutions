@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
@@ -16,7 +16,7 @@ import {
   isForeignCurrency,
   roundMoney,
 } from '@/lib/accounting-fx';
-import { buildSkatteverketXml, finalizeVatDeclarationAmounts } from '@/lib/vat-declaration';
+import { buildSkatteverketXml, finalizeVatDeclarationAmounts, validateSkatteverketXml } from '@/lib/vat-declaration';
 import { toast } from 'sonner';
 import { ArrowLeft, CheckCircle, AlertTriangle, Lock, Download, Upload, Info, FileText, ChevronDown, ChevronUp } from 'lucide-react';
 
@@ -54,6 +54,9 @@ const VatDeclarationFlow: React.FC = () => {
   const queryClient = useQueryClient();
   const [currentStep, setCurrentStep] = useState(1);
   const [validationExpanded, setValidationExpanded] = useState(false);
+  const [generatedXml, setGeneratedXml] = useState<string | null>(null);
+  const [xmlValidationErrors, setXmlValidationErrors] = useState<string[]>([]);
+  const [xmlValidationWarnings, setXmlValidationWarnings] = useState<string[]>([]);
 
   const statusLabels = language === 'sv' ? PURCHASE_STATUS_LABELS : PURCHASE_STATUS_LABELS_EN;
 
@@ -253,25 +256,53 @@ const VatDeclarationFlow: React.FC = () => {
     { number: 4, label: t('Export & inlämning', 'Export & filing'), description: t('Exportera och lämna in', 'Export and submit'), status: currentStep === 4 ? 'active' : 'pending' },
   ];
 
-  const downloadJsonExport = () => {
-    if (!vatPeriod?.snapshot_data) return;
-    const blob = new Blob([JSON.stringify(vatPeriod.snapshot_data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = `vat-declaration-q${quarter}-${year}.json`; a.click();
-    URL.revokeObjectURL(url);
-  };
+  const declarationXmlBoxes = useMemo(() => declarationBoxes.map((box) => ({
+    xmlTag: box.xmlTag,
+    amount: box.amount,
+  })), [declarationBoxes]);
 
-  const downloadXmlExport = () => {
+  useEffect(() => {
+    setGeneratedXml(null);
+    setXmlValidationErrors([]);
+    setXmlValidationWarnings([]);
+  }, [quarter, year, vatPeriod?.snapshot_hash, JSON.stringify(declarationXmlBoxes)]);
+
+  const generateValidatedXml = () => {
     // Last month of the quarter determines the period code
     const periodYYYYMM = `${year}${String(quarter * 3).padStart(2, '0')}`;
     const orgNr = '790519-7591'; // SHS org number
-    const xml = buildSkatteverketXml(orgNr, periodYYYYMM, declarationBoxes.map((box) => ({
-      xmlTag: box.xmlTag,
-      amount: box.amount,
-    })));
+    const xml = buildSkatteverketXml(orgNr, periodYYYYMM, declarationXmlBoxes);
+    const validation = validateSkatteverketXml({
+      xml,
+      expectedOrgNr: orgNr,
+      expectedPeriodYYYYMM: periodYYYYMM,
+      declarationBoxes: declarationXmlBoxes,
+    });
+
+    setXmlValidationErrors(validation.errors);
+    setXmlValidationWarnings(validation.warnings);
+
+    if (!validation.ok) {
+      setGeneratedXml(null);
+      throw new Error(validation.errors[0] || t('XML-validering misslyckades', 'XML validation failed'));
+    }
+
+    setGeneratedXml(xml);
+    if (validation.warnings.length > 0) {
+      toast.warning(t('XML skapad med varningar', 'XML generated with warnings'));
+    } else {
+      toast.success(t('XML skapad och validerad', 'XML generated and validated'));
+    }
+  };
+
+  const downloadXmlExport = () => {
+    if (!generatedXml) {
+      generateValidatedXml();
+      return;
+    }
     // Encode as ISO-8859-1
     const encoder = new TextEncoder();
-    const blob = new Blob([encoder.encode(xml)], { type: 'application/xml; charset=ISO-8859-1' });
+    const blob = new Blob([encoder.encode(generatedXml)], { type: 'application/xml; charset=ISO-8859-1' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href = url; a.download = `momsdeklaration-${year}-q${quarter}.xml`; a.click();
     URL.revokeObjectURL(url);
@@ -607,29 +638,39 @@ const VatDeclarationFlow: React.FC = () => {
                       <FileText className="w-8 h-8 text-primary" />
                       <div>
                         <p className="font-medium">{t('Skatteverket XML (eSKDUpload)', 'Skatteverket XML (eSKDUpload)')}</p>
-                        <p className="text-xs text-muted-foreground">{t('Fil för direkt uppladdning till Skatteverket', 'File for direct upload to Skatteverket')}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {generatedXml
+                            ? t('Validerad fil redo för uppladdning till Skatteverket', 'Validated file ready for upload to Skatteverket')
+                            : t('Generera och validera filen innan nedladdning', 'Generate and validate the file before downloading')}
+                        </p>
                       </div>
                     </div>
-                    <Button onClick={downloadXmlExport}><Download className="w-4 h-4 mr-2" /> {t('Ladda ner XML', 'Download XML')}</Button>
-                  </div>
-                  <div className="flex items-center justify-between p-4 bg-muted/30 rounded-lg">
-                    <div className="flex items-center gap-3">
-                      <FileText className="w-8 h-8 text-muted-foreground" />
-                      <div>
-                        <p className="font-medium">{t('JSON-underlag', 'JSON backup')}</p>
-                        <p className="text-xs text-muted-foreground">{t('Intern arkivkopia med ögonblicksbild', 'Internal archive copy with snapshot')}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-4">
-                      {vatPeriod?.snapshot_hash && <span className="text-xs text-muted-foreground font-mono">Hash: {vatPeriod.snapshot_hash.slice(0, 10)}...</span>}
-                      <Button variant="outline" onClick={downloadJsonExport}><Download className="w-4 h-4 mr-2" /> {t('Ladda ner JSON', 'Download JSON')}</Button>
-                    </div>
+                    <Button onClick={downloadXmlExport}>
+                      <Download className="w-4 h-4 mr-2" />
+                      {generatedXml
+                        ? t('Ladda ner XML', 'Download XML')
+                        : t('Generera XML', 'Generate XML')}
+                    </Button>
                   </div>
                 </div>
+                {(xmlValidationErrors.length > 0 || xmlValidationWarnings.length > 0 || generatedXml) && (
+                  <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-2">
+                    <p className="text-sm font-medium">{t('XML-validering', 'XML validation')}</p>
+                    {generatedXml && xmlValidationErrors.length === 0 && (
+                      <p className="text-sm text-green-700">{t('XML-filen matchar förväntad struktur och summering.', 'The XML file matches the expected structure and totals.')}</p>
+                    )}
+                    {xmlValidationErrors.map((error) => (
+                      <p key={error} className="text-sm text-destructive">{error}</p>
+                    ))}
+                    {xmlValidationWarnings.map((warning) => (
+                      <p key={warning} className="text-sm text-amber-700">{warning}</p>
+                    ))}
+                  </div>
+                )}
                 <div>
                   <h4 className="font-medium mb-3">{t('Inlämning till Skatteverket', 'Submission to the Tax Agency')}</h4>
                   <ol className="list-decimal list-inside text-sm text-muted-foreground space-y-1.5">
-                    <li>{t('Ladda ner XML-filen ovan', 'Download the XML file above')}</li>
+                    <li>{t('Generera och ladda ner XML-filen ovan', 'Generate and download the XML file above')}</li>
                     <li>{t('Logga in på Skatteverkets webbplats', 'Log in to the Tax Agency website')}</li>
                     <li>{t('Navigera till "Lämna momsdeklaration via fil"', 'Navigate to "Submit VAT declaration via file"')}</li>
                     <li>{t('Ladda upp XML-filen', 'Upload the XML file')}</li>
