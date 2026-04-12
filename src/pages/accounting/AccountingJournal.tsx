@@ -112,6 +112,18 @@ const AccountingJournal: React.FC = () => {
           <Button variant="outline" size="sm" onClick={exportToCsv} disabled={!linesWithBalance.length}><Download className="w-4 h-4 mr-2" /> {t('Exportera CSV', 'Export CSV')}</Button>
         </div>
 
+        {linesWithBalance.length > 0 && isGloballyBalanced && unbalancedVerifications.length === 0 && (
+          <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 flex items-center gap-2.5">
+            <CheckCircle className="w-4 h-4 text-green-600 shrink-0" />
+            <span className="text-sm text-green-800">
+              {t(
+                `Alla ${verificationBalances.size} verifikationer balanserar · Total debet/kredit: ${formatSEK(totalDebit)}`,
+                `All ${verificationBalances.size} verifications balance · Total debit/credit: ${formatSEK(totalDebit)}`,
+              )}
+            </span>
+          </div>
+        )}
+
         {linesWithBalance.length > 0 && unbalancedVerifications.length > 0 && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
             <AlertTriangle className="w-5 h-5 text-red-600 mt-0.5 shrink-0" />

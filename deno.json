@@ -1,0 +1,12 @@
+{
+  "tasks": {
+    "test": "deno test --no-check --allow-read tests/"
+  },
+  "imports": {
+    "@/": "./src/"
+  },
+  "compilerOptions": {
+    "strict": false,
+    "noImplicitAny": false
+  }
+}
