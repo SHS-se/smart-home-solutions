@@ -21,10 +21,21 @@ export interface VatDeclarationXmlBox {
   amount: number;
 }
 
+export type DeclarationBoxFilter = '20' | '21' | '22' | '30' | '48';
+
 export interface VatDeclarationXmlValidationResult {
   ok: boolean;
   errors: string[];
   warnings: string[];
+}
+
+export interface DeclarationBoxPurchaseLike {
+  lines: Array<{
+    vat_treatment: string;
+    gross_amount?: number | null;
+    net_amount?: number | null;
+    vat_amount?: number | null;
+  }>;
 }
 
 export function roundVatDeclarationAmount(amount: number): number {
@@ -75,6 +86,37 @@ export function buildSkatteverketXml(
   lines.push('</Moms>');
   lines.push('</eSKDUpload>');
   return lines.join('\n');
+}
+
+export function isDeclarationBoxFilter(value: string | null | undefined): value is DeclarationBoxFilter {
+  return value === '20' || value === '21' || value === '22' || value === '30' || value === '48';
+}
+
+export function purchaseMatchesDeclarationBox(
+  purchase: DeclarationBoxPurchaseLike,
+  box: DeclarationBoxFilter,
+): boolean {
+  switch (box) {
+    case '20':
+      return purchase.lines.some((line) => line.vat_treatment === 'reverse_charge_eu_goods');
+    case '21':
+      return purchase.lines.some((line) => line.vat_treatment === 'reverse_charge_eu_services');
+    case '22':
+      return purchase.lines.some((line) => line.vat_treatment === 'reverse_charge_non_eu_services');
+    case '30':
+      return purchase.lines.some((line) =>
+        line.vat_treatment === 'reverse_charge_eu_goods' ||
+        line.vat_treatment === 'reverse_charge_eu_services' ||
+        line.vat_treatment === 'reverse_charge_non_eu_services');
+    case '48':
+      return purchase.lines.some((line) =>
+        line.vat_treatment === 'domestic_deductible' ||
+        line.vat_treatment === 'reverse_charge_eu_goods' ||
+        line.vat_treatment === 'reverse_charge_eu_services' ||
+        line.vat_treatment === 'reverse_charge_non_eu_services');
+    default:
+      return false;
+  }
 }
 
 function parseSingleTag(xml: string, tagName: string): string | null {

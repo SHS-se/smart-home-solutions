@@ -16,7 +16,13 @@ import {
   isForeignCurrency,
   roundMoney,
 } from '@/lib/accounting-fx';
-import { buildSkatteverketXml, finalizeVatDeclarationAmounts, validateSkatteverketXml } from '@/lib/vat-declaration';
+import {
+  buildSkatteverketXml,
+  finalizeVatDeclarationAmounts,
+  purchaseMatchesDeclarationBox,
+  validateSkatteverketXml,
+  type DeclarationBoxFilter,
+} from '@/lib/vat-declaration';
 import { toast } from 'sonner';
 import { ArrowLeft, CheckCircle, AlertTriangle, Lock, Download, Upload, Info, FileText, ChevronDown, ChevronUp } from 'lucide-react';
 
@@ -105,6 +111,21 @@ const VatDeclarationFlow: React.FC = () => {
   const blockerCount = uniqueBlockedPurchaseIds.size;
 
   const postedPurchases = purchaseRows.filter((purchase) => purchase.status === 'posted');
+  const declarationBoxPurchaseSummary = useMemo(() => ({
+    count: postedPurchases.length,
+    gross: roundMoney(postedPurchases.reduce((sum, purchase) => sum + Number(purchase.converted_gross_amount_sek ?? purchase.gross_amount), 0)),
+    net: roundMoney(postedPurchases.reduce((sum, purchase) => sum + Number(purchase.converted_net_amount_sek ?? purchase.net_amount), 0)),
+    vat: roundMoney(postedPurchases.reduce((sum, purchase) => sum + Number(purchase.converted_vat_amount_sek ?? purchase.vat_amount), 0)),
+  }), [postedPurchases]);
+
+  const buildDeclarationBoxLink = (box: DeclarationBoxFilter): string => {
+    const params = new URLSearchParams();
+    params.set('status', 'posted');
+    params.set('declarationBox', box);
+    params.set('dateFrom', startDate);
+    params.set('dateTo', endDate);
+    return `/accounting/purchases?${params.toString()}`;
+  };
 
   // ── Skatteverket box calculations ──────────────────────────────────────────
   // Section A: Taxable sales bases (not yet tracked — no sales invoices)
@@ -204,24 +225,42 @@ const VatDeclarationFlow: React.FC = () => {
   /** Skatteverket XML element names mapped to box numbers */
   const declarationBoxes = [
     // Section A: Taxable sales
-    { box: '05', xmlTag: 'ForsMomsEjAnnan', label: t('Momspliktig försäljning (ej i 06, 07, 08)', 'Taxable sales (not in 06, 07, 08)'), amount: box05, count: 0, section: 'A' },
+    { box: '05', xmlTag: 'ForsMomsEjAnnan', label: t('Momspliktig försäljning (ej i 06, 07, 08)', 'Taxable sales (not in 06, 07, 08)'), amount: box05, count: 0, section: 'A', filterBox: null },
     // Section B: Output VAT on sales
-    { box: '10', xmlTag: 'MomsUtgHog', label: t('Utgående moms 25 %', 'Output VAT 25%'), amount: box10, count: 0, section: 'B' },
-    { box: '11', xmlTag: 'MomsUtgMedel', label: t('Utgående moms 12 %', 'Output VAT 12%'), amount: box11, count: 0, section: 'B' },
-    { box: '12', xmlTag: 'MomsUtgLag', label: t('Utgående moms 6 %', 'Output VAT 6%'), amount: box12, count: 0, section: 'B' },
+    { box: '10', xmlTag: 'MomsUtgHog', label: t('Utgående moms 25 %', 'Output VAT 25%'), amount: box10, count: 0, section: 'B', filterBox: null },
+    { box: '11', xmlTag: 'MomsUtgMedel', label: t('Utgående moms 12 %', 'Output VAT 12%'), amount: box11, count: 0, section: 'B', filterBox: null },
+    { box: '12', xmlTag: 'MomsUtgLag', label: t('Utgående moms 6 %', 'Output VAT 6%'), amount: box12, count: 0, section: 'B', filterBox: null },
     // Section C: Taxable purchases (reverse-charge bases)
-    { box: '20', xmlTag: 'InkopVaruAnnatEg', label: t('Inköp av varor från annat EU-land', 'Purchases of goods from other EU country'), amount: box20, count: allLines.filter((l: any) => l.vat_treatment === 'reverse_charge_eu_goods').length, highlight: box20 > 0, section: 'C' },
-    { box: '21', xmlTag: 'InkopTjanstAnnatEg', label: t('Inköp av tjänster från annat EU-land', 'Purchases of services from other EU country'), amount: box21, count: allLines.filter((l: any) => l.vat_treatment === 'reverse_charge_eu_services').length, highlight: box21 > 0, section: 'C' },
-    { box: '22', xmlTag: 'InkopTjanstUtomEg', label: t('Inköp av tjänster från land utanför EU', 'Purchases of services from outside EU'), amount: box22, count: allLines.filter((l: any) => l.vat_treatment === 'reverse_charge_non_eu_services').length, highlight: box22 > 0, section: 'C' },
+    { box: '20', xmlTag: 'InkopVaruAnnatEg', label: t('Inköp av varor från annat EU-land', 'Purchases of goods from other EU country'), amount: box20, highlight: box20 > 0, section: 'C', filterBox: '20' as const },
+    { box: '21', xmlTag: 'InkopTjanstAnnatEg', label: t('Inköp av tjänster från annat EU-land', 'Purchases of services from other EU country'), amount: box21, highlight: box21 > 0, section: 'C', filterBox: '21' as const },
+    { box: '22', xmlTag: 'InkopTjanstUtomEg', label: t('Inköp av tjänster från land utanför EU', 'Purchases of services from outside EU'), amount: box22, highlight: box22 > 0, section: 'C', filterBox: '22' as const },
     // Section D: Output VAT on purchases
-    { box: '30', xmlTag: 'MomsInkopUtgHog', label: t('Utgående moms 25 % på inköp', 'Output VAT 25% on purchases'), amount: box30, count: rcLineCount, highlight: box30 > 0, section: 'D' },
-    { box: '31', xmlTag: 'MomsInkopUtgMedel', label: t('Utgående moms 12 % på inköp', 'Output VAT 12% on purchases'), amount: box31, count: 0, section: 'D' },
-    { box: '32', xmlTag: 'MomsInkopUtgLag', label: t('Utgående moms 6 % på inköp', 'Output VAT 6% on purchases'), amount: box32, count: 0, section: 'D' },
+    { box: '30', xmlTag: 'MomsInkopUtgHog', label: t('Utgående moms 25 % på inköp', 'Output VAT 25% on purchases'), amount: box30, highlight: box30 > 0, section: 'D', filterBox: '30' as const },
+    { box: '31', xmlTag: 'MomsInkopUtgMedel', label: t('Utgående moms 12 % på inköp', 'Output VAT 12% on purchases'), amount: box31, count: 0, section: 'D', filterBox: null },
+    { box: '32', xmlTag: 'MomsInkopUtgLag', label: t('Utgående moms 6 % på inköp', 'Output VAT 6% on purchases'), amount: box32, count: 0, section: 'D', filterBox: null },
     // Section F: Input VAT
-    { box: '48', xmlTag: 'MomsIngAvdr', label: t('Ingående moms att dra av', 'Deductible input VAT'), amount: box48, count: allLines.filter((l: any) => l.vat_treatment === 'domestic_deductible' || isReverseChargeTreatment(l.vat_treatment)).length, section: 'F' },
+    { box: '48', xmlTag: 'MomsIngAvdr', label: t('Ingående moms att dra av', 'Deductible input VAT'), amount: box48, section: 'F', filterBox: '48' as const },
     // Section G: VAT to pay or receive
-    { box: '49', xmlTag: 'MomsBetala', label: t('Moms att betala eller återfå', 'VAT to pay or receive'), amount: momsBetala, count: 0, section: 'G' },
-  ];
+    { box: '49', xmlTag: 'MomsBetala', label: t('Moms att betala eller återfå', 'VAT to pay or receive'), amount: momsBetala, count: 0, section: 'G', filterBox: null },
+  ].map((box) => {
+    if (!box.filterBox) {
+      return {
+        ...box,
+        count: box.count ?? 0,
+        matchingPurchases: [] as typeof postedPurchases,
+      };
+    }
+
+    const matchingPurchases = postedPurchases.filter((purchase) =>
+      purchaseMatchesDeclarationBox({ lines: purchase.lines }, box.filterBox),
+    );
+
+    return {
+      ...box,
+      count: matchingPurchases.length,
+      matchingPurchases,
+    };
+  });
 
   const createSnapshot = useMutation({
     mutationFn: async () => {
@@ -516,6 +555,12 @@ const VatDeclarationFlow: React.FC = () => {
                     </TooltipContent>
                   </Tooltip>
                 </CardTitle>
+                <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+                  <span>{t('Bokförda inköp', 'Posted purchases')}: <span className="font-medium text-foreground">{declarationBoxPurchaseSummary.count}</span></span>
+                  <span>{t('Brutto', 'Gross')}: <span className="font-medium text-foreground">{formatSEK(declarationBoxPurchaseSummary.gross)}</span></span>
+                  <span>{t('Netto', 'Net')}: <span className="font-medium text-foreground">{formatSEK(declarationBoxPurchaseSummary.net)}</span></span>
+                  <span>{t('Moms', 'VAT')}: <span className="font-medium text-foreground">{formatSEK(declarationBoxPurchaseSummary.vat)}</span></span>
+                </div>
               </CardHeader>
               <CardContent>
                 <Table>
@@ -543,7 +588,15 @@ const VatDeclarationFlow: React.FC = () => {
                         </TableCell>
                         <TableCell className="text-sm">{box.label}</TableCell>
                         <TableCell className="text-right text-sm font-medium">{formatSEK(box.amount)}</TableCell>
-                        <TableCell className="text-right text-sm text-primary">{box.count || ''}</TableCell>
+                        <TableCell className="text-right text-sm">
+                          {box.filterBox && box.count > 0 ? (
+                            <Link to={buildDeclarationBoxLink(box.filterBox)} className="text-primary hover:underline">
+                              {box.count}
+                            </Link>
+                          ) : (
+                            <span className={box.count ? 'text-foreground' : 'text-muted-foreground'}>{box.count || ''}</span>
+                          )}
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>

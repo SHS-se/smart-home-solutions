@@ -18,6 +18,7 @@ import {
   formatSEK,
 } from '@/lib/accounting-utils';
 import { formatCurrencyAmount, isForeignCurrency, normalizeCurrency } from '@/lib/accounting-fx';
+import { isDeclarationBoxFilter, purchaseMatchesDeclarationBox, type DeclarationBoxFilter } from '@/lib/vat-declaration';
 import { Plus, Filter, ChevronDown, ChevronUp, Info } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
@@ -29,11 +30,24 @@ const PurchasesList: React.FC = () => {
   const { t, language } = useLanguage();
   const statusLabels = language === 'sv' ? PURCHASE_STATUS_LABELS : PURCHASE_STATUS_LABELS_EN;
   const vatLabels = language === 'sv' ? VAT_TREATMENT_LABELS : VAT_TREATMENT_LABELS_EN;
-  const [statusFilter, setStatusFilter] = useState<string>('all');
   const [sortKey, setSortKey] = useState<SortKey>('documentDate');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [searchParams, setSearchParams] = useSearchParams();
+  const statusFilter = searchParams.get('status') || 'all';
   const supplierFilter = searchParams.get('supplier') || 'all';
+  const declarationBoxParam = searchParams.get('declarationBox');
+  const declarationBoxFilter: DeclarationBoxFilter | 'all' = isDeclarationBoxFilter(declarationBoxParam)
+    ? declarationBoxParam
+    : 'all';
+  const dateFrom = searchParams.get('dateFrom') || '';
+  const dateTo = searchParams.get('dateTo') || '';
+  const declarationBoxLabels: Record<DeclarationBoxFilter, string> = {
+    '20': t('Ruta 20', 'Box 20'),
+    '21': t('Ruta 21', 'Box 21'),
+    '22': t('Ruta 22', 'Box 22'),
+    '30': t('Ruta 30', 'Box 30'),
+    '48': t('Ruta 48', 'Box 48'),
+  };
 
   const { data: suppliers } = useQuery({
     queryKey: ['acc-suppliers'],
@@ -48,17 +62,26 @@ const PurchasesList: React.FC = () => {
     : null;
 
   const { data: purchases, isLoading } = useQuery({
-    queryKey: ['acc-purchases', statusFilter, supplierFilter],
+    queryKey: ['acc-purchases', statusFilter, supplierFilter, declarationBoxFilter, dateFrom, dateTo],
     queryFn: async () => {
       let query = supabase
         .from('acc_purchases')
-        .select('*, supplier:acc_suppliers(name), lines:acc_purchase_lines(vat_treatment)')
+        .select('*, supplier:acc_suppliers(name), lines:acc_purchase_lines(vat_treatment, gross_amount, net_amount, vat_amount)')
         .order('document_date', { ascending: false })
         .order('created_at', { ascending: false });
       if (statusFilter !== 'all') query = query.eq('status', statusFilter);
       if (supplierFilter !== 'all') query = query.eq('supplier_id', supplierFilter);
+      if (dateFrom) query = query.gte('document_date', dateFrom);
+      if (dateTo) query = query.lte('document_date', dateTo);
       const { data } = await query;
-      return data || [];
+      const items = data || [];
+      if (declarationBoxFilter === 'all') return items;
+      return items.filter((purchase) =>
+        purchaseMatchesDeclarationBox(
+          { lines: ((purchase.lines as Array<{ vat_treatment: string; gross_amount: number; net_amount: number; vat_amount: number }> | null) || []) },
+          declarationBoxFilter,
+        ),
+      );
     },
   });
 
@@ -112,12 +135,16 @@ const PurchasesList: React.FC = () => {
     return items;
   }, [collator, purchases, sortDirection, sortKey, statusLabels, vatLabels]);
 
-  const updateSupplierFilter = (value: string) => {
+  const updateParam = (key: string, value: string) => {
     const nextParams = new URLSearchParams(searchParams);
-    if (value === 'all') nextParams.delete('supplier');
-    else nextParams.set('supplier', value);
+    if (value === 'all' || value === '') nextParams.delete(key);
+    else nextParams.set(key, value);
     setSearchParams(nextParams);
   };
+
+  const updateSupplierFilter = (value: string) => updateParam('supplier', value);
+  const updateStatusFilter = (value: string) => updateParam('status', value);
+  const updateDeclarationBoxFilter = (value: string) => updateParam('declarationBox', value);
 
   const toggleSort = (nextKey: SortKey) => {
     if (sortKey === nextKey) {
@@ -173,7 +200,7 @@ const PurchasesList: React.FC = () => {
         <div className="flex flex-wrap items-center gap-3">
           <Filter className="w-4 h-4 text-muted-foreground" />
           <span className="text-sm text-muted-foreground">{t('Filtrera:', 'Filter:')}</span>
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <Select value={statusFilter} onValueChange={updateStatusFilter}>
             <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">{t('Alla', 'All')}</SelectItem>
@@ -194,6 +221,17 @@ const PurchasesList: React.FC = () => {
               ))}
             </SelectContent>
           </Select>
+          <Select value={declarationBoxFilter} onValueChange={updateDeclarationBoxFilter}>
+            <SelectTrigger className="w-40">
+              <SelectValue placeholder={t('Alla rutor', 'All boxes')} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t('Alla rutor', 'All boxes')}</SelectItem>
+              {(['20', '21', '22', '30', '48'] as DeclarationBoxFilter[]).map((box) => (
+                <SelectItem key={box} value={box}>{declarationBoxLabels[box]}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           {selectedSupplierName && (
             <button
               type="button"
@@ -201,6 +239,29 @@ const PurchasesList: React.FC = () => {
               className="text-sm text-primary hover:underline"
             >
               {t('Rensa leverantör', 'Clear supplier')}: {selectedSupplierName}
+            </button>
+          )}
+          {declarationBoxFilter !== 'all' && (
+            <button
+              type="button"
+              onClick={() => updateDeclarationBoxFilter('all')}
+              className="text-sm text-primary hover:underline"
+            >
+              {t('Rensa ruta', 'Clear box')}: {declarationBoxLabels[declarationBoxFilter]}
+            </button>
+          )}
+          {(dateFrom || dateTo) && (
+            <button
+              type="button"
+              onClick={() => {
+                const nextParams = new URLSearchParams(searchParams);
+                nextParams.delete('dateFrom');
+                nextParams.delete('dateTo');
+                setSearchParams(nextParams);
+              }}
+              className="text-sm text-primary hover:underline"
+            >
+              {t('Rensa period', 'Clear period')}: {dateFrom || '…'}{dateTo ? ` – ${dateTo}` : ''}
             </button>
           )}
         </div>

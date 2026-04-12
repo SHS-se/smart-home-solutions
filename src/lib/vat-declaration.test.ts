@@ -3,6 +3,8 @@
 import {
   buildSkatteverketXml,
   finalizeVatDeclarationAmounts,
+  purchaseMatchesDeclarationBox,
+  isDeclarationBoxFilter,
   validateSkatteverketXml,
 } from './vat-declaration.ts';
 
@@ -96,4 +98,24 @@ Deno.test('validateSkatteverketXml rejects non-reconciling MomsBetala values', (
     true,
     'reconciliationError',
   );
+});
+
+Deno.test('isDeclarationBoxFilter accepts only supported purchase declaration box filters', () => {
+  assertEqual(isDeclarationBoxFilter('22'), true, 'box22');
+  assertEqual(isDeclarationBoxFilter('48'), true, 'box48');
+  assertEqual(isDeclarationBoxFilter('49'), false, 'box49');
+});
+
+Deno.test('purchaseMatchesDeclarationBox maps purchases to declaration box filters', () => {
+  const purchase = {
+    lines: [
+      { vat_treatment: 'reverse_charge_non_eu_services' },
+      { vat_treatment: 'domestic_deductible' },
+    ],
+  };
+
+  assertEqual(purchaseMatchesDeclarationBox(purchase, '22'), true, 'box22');
+  assertEqual(purchaseMatchesDeclarationBox(purchase, '30'), true, 'box30');
+  assertEqual(purchaseMatchesDeclarationBox(purchase, '48'), true, 'box48');
+  assertEqual(purchaseMatchesDeclarationBox(purchase, '20'), false, 'box20');
 });
