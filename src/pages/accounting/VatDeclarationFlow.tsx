@@ -103,6 +103,20 @@ const VatDeclarationFlow: React.FC = () => {
     queryFn: async () => { const { data } = await supabase.from('acc_vat_periods').select('*').eq('year', year).eq('quarter', quarter).single(); return data; },
   });
 
+  const quarterMonths = [(quarter - 1) * 3 + 1, (quarter - 1) * 3 + 2, quarter * 3];
+  const { data: monthlyPeriods } = useQuery({
+    queryKey: ['acc-periods-for-quarter', year, quarter],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('acc_periods')
+        .select('id, year, month, status')
+        .eq('year', year)
+        .in('month', quarterMonths);
+      return data || [];
+    },
+  });
+  const openMonthlyPeriods = (monthlyPeriods || []).filter(p => p.status === 'open');
+
   const { data: purchases } = useQuery({
     queryKey: ['acc-q-purchases', year, quarter],
     queryFn: async () => {
@@ -131,8 +145,9 @@ const VatDeclarationFlow: React.FC = () => {
   });
   const backfillBlockedPurchases = detectedCurrencyIssues.map((issue) => issue.purchase);
   const uniqueBlockedPurchaseIds = new Set([...unpostedPurchases, ...backfillBlockedPurchases].map((purchase) => purchase.id));
-  const hasBlockers = uniqueBlockedPurchaseIds.size > 0;
-  const blockerCount = uniqueBlockedPurchaseIds.size;
+  const hasOpenPeriods = openMonthlyPeriods.length > 0;
+  const hasBlockers = uniqueBlockedPurchaseIds.size > 0 || hasOpenPeriods;
+  const blockerCount = uniqueBlockedPurchaseIds.size + (hasOpenPeriods ? 1 : 0);
 
   const postedPurchases = purchaseRows.filter((purchase) => purchase.status === 'posted');
 
@@ -196,6 +211,16 @@ const VatDeclarationFlow: React.FC = () => {
   const allLines = postedPurchases.flatMap((p) => p.lines);
   const needsReviewLines = allLines.filter((l: any) => l.vat_treatment === 'needs_review');
   const validationChecks: Array<{ label: string; ok: boolean; issueLink?: string }> = [
+    {
+      label: hasOpenPeriods
+        ? t(
+            `${openMonthlyPeriods.length} bokföringsperiod${openMonthlyPeriods.length > 1 ? 'er' : ''} fortfarande öppen${openMonthlyPeriods.length > 1 ? 'a' : ''}`,
+            `${openMonthlyPeriods.length} accounting period${openMonthlyPeriods.length > 1 ? 's' : ''} still open`,
+          )
+        : t('Alla bokföringsperioder i kvartalet stängda', 'All accounting periods in the quarter closed'),
+      ok: !hasOpenPeriods,
+      issueLink: hasOpenPeriods ? '/accounting/periods' : undefined,
+    },
     {
       label: unpostedPurchases.length === 0
         ? t(`Alla ${postedPurchases.length} transaktioner bokförda och inkluderade`, `All ${postedPurchases.length} transactions posted and included`)
@@ -520,6 +545,30 @@ const VatDeclarationFlow: React.FC = () => {
                     <p className="text-sm text-amber-700">{t('Åtgärda alla problem innan du kan fortsätta till nästa steg.', 'Resolve all issues before proceeding to the next step.')}</p>
                   </div>
                 </div>
+                {hasOpenPeriods && (
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
+                    <AlertTriangle className="w-5 h-5 text-red-600 mt-0.5 shrink-0" />
+                    <div>
+                      <p className="font-medium text-red-800">
+                        {t(
+                          `Bokföringsperioder${openMonthlyPeriods.length > 1 ? 'na' : 'en'} måste stängas innan momsdeklarationen kan påbörjas`,
+                          `Accounting period${openMonthlyPeriods.length > 1 ? 's' : ''} must be closed before the VAT declaration can proceed`,
+                        )}
+                      </p>
+                      <p className="text-sm text-red-700 mt-1">
+                        {openMonthlyPeriods.map(p => {
+                          const monthNames = language === 'sv'
+                            ? ['', 'Januari', 'Februari', 'Mars', 'April', 'Maj', 'Juni', 'Juli', 'Augusti', 'September', 'Oktober', 'November', 'December']
+                            : ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+                          return `${monthNames[p.month]} ${p.year}`;
+                        }).join(', ')}
+                      </p>
+                      <Link to="/accounting/periods">
+                        <Button size="sm" variant="destructive" className="mt-2">{t('Gå till perioder', 'Go to periods')}</Button>
+                      </Link>
+                    </div>
+                  </div>
+                )}
                 {detectedCurrencyIssues.length > 0 && (
                   <div className="bg-red-50 border border-red-200 rounded-lg p-4">
                     <p className="font-medium text-red-800">{t('FX-backfill krävs innan momsperioden kan godkännas', 'FX backfill is required before this VAT period can be approved')}</p>
@@ -546,7 +595,7 @@ const VatDeclarationFlow: React.FC = () => {
             ) : (
               <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-center gap-3">
                 <CheckCircle className="w-5 h-5 text-green-600" />
-                <p className="text-sm text-green-800">{t('Alla inköp är bokförda. Inga problem kvarstår.', 'All purchases are posted. No issues remaining.')}</p>
+                <p className="text-sm text-green-800">{t('Alla bokföringsperioder stängda och inköp bokförda. Inga problem kvarstår.', 'All accounting periods closed and purchases posted. No issues remaining.')}</p>
               </div>
             )}
             <Button onClick={() => approveDataChecks.mutate()} disabled={hasBlockers || approveDataChecks.isPending}>

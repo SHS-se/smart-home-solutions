@@ -53,8 +53,17 @@ const VatPeriodsList: React.FC = () => {
     },
   });
 
+  const { data: q1OpenPeriods } = useQuery({
+    queryKey: ['acc-q1-open-periods'],
+    queryFn: async () => {
+      const { data } = await supabase.from('acc_periods').select('id, month, status').eq('year', 2026).in('month', [1, 2, 3]).eq('status', 'open');
+      return data?.length || 0;
+    },
+  });
+
   const q1Total = (q1PostedCount || 0) + (q1Issues || 0);
   const q1Readiness = q1Total > 0 ? Math.round((q1PostedCount || 0) / q1Total * 100) : 0;
+  const q1HasOpenPeriods = (q1OpenPeriods || 0) > 0;
 
   return (
     <AccountingLayout>
@@ -77,17 +86,27 @@ const VatPeriodsList: React.FC = () => {
           <p className="text-muted-foreground mt-1">{t('Kvartalsvis momsrapportering och inlämning', 'Quarterly VAT reporting and submission')}</p>
         </div>
 
-        {q1Issues !== undefined && q1Issues > 0 && (
+        {((q1Issues !== undefined && q1Issues > 0) || q1HasOpenPeriods) && (
           <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-start gap-3">
             <AlertCircle className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
             <div>
               <p className="font-medium text-amber-800">{t('Q1 2026 kräver granskning', 'Q1 2026 needs review')}</p>
               <p className="text-sm text-amber-700 mt-0.5">
-                {t(`${q1Issues} inköp ej bokförda. Deadline 12 maj 2026.`, `${q1Issues} purchases not posted. Deadline 12 May 2026.`)}
+                {[
+                  q1HasOpenPeriods ? t(`${q1OpenPeriods} bokföringsperiod${(q1OpenPeriods || 0) > 1 ? 'er' : ''} ej stängd${(q1OpenPeriods || 0) > 1 ? 'a' : ''}`, `${q1OpenPeriods} accounting period${(q1OpenPeriods || 0) > 1 ? 's' : ''} not closed`) : null,
+                  (q1Issues || 0) > 0 ? t(`${q1Issues} inköp ej bokförda`, `${q1Issues} purchases not posted`) : null,
+                ].filter(Boolean).join('. ')}.{' '}
+                {t('Deadline 12 maj 2026.', 'Deadline 12 May 2026.')}
               </p>
-              <Link to="/accounting/vat-periods/q1-2026">
-                <Button size="sm" variant="destructive" className="mt-2">{t('Granska nu', 'Review now')}</Button>
-              </Link>
+              {q1HasOpenPeriods ? (
+                <Link to="/accounting/periods">
+                  <Button size="sm" variant="destructive" className="mt-2">{t('Stäng perioder', 'Close periods')}</Button>
+                </Link>
+              ) : (
+                <Link to="/accounting/vat-periods/q1-2026">
+                  <Button size="sm" variant="destructive" className="mt-2">{t('Granska nu', 'Review now')}</Button>
+                </Link>
+              )}
             </div>
           </div>
         )}
@@ -96,7 +115,9 @@ const VatPeriodsList: React.FC = () => {
           {(vatPeriods || []).map((vp) => {
             const isQ1 = vp.year === 2026 && vp.quarter === 1;
             const readiness = isQ1 ? q1Readiness : 0;
-            const issues = isQ1 ? q1Issues || 0 : 0;
+            const purchaseIssues = isQ1 ? q1Issues || 0 : 0;
+            const openPeriods = isQ1 ? q1OpenPeriods || 0 : 0;
+            const issues = purchaseIssues + (openPeriods > 0 ? 1 : 0);
             const periodSlug = `q${vp.quarter}-${vp.year}`;
 
             return (
