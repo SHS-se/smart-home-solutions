@@ -167,11 +167,11 @@ export type Database = {
       }
       acc_purchases: {
         Row: {
-          created_at: string
-          created_by: string | null
           converted_gross_amount_sek: number | null
           converted_net_amount_sek: number | null
           converted_vat_amount_sek: number | null
+          created_at: string
+          created_by: string | null
           currency: string
           description: string | null
           document_date: string
@@ -183,8 +183,8 @@ export type Database = {
           ecb_exchange_rate_date: string | null
           exchange_rate: number | null
           exchange_rate_date: string | null
-          exchange_rate_override_reason: string | null
           exchange_rate_overridden: boolean
+          exchange_rate_override_reason: string | null
           exchange_rate_source: string
           gross_amount: number
           id: string
@@ -205,11 +205,11 @@ export type Database = {
           verification_id: string | null
         }
         Insert: {
-          created_at?: string
-          created_by?: string | null
           converted_gross_amount_sek?: number | null
           converted_net_amount_sek?: number | null
           converted_vat_amount_sek?: number | null
+          created_at?: string
+          created_by?: string | null
           currency?: string
           description?: string | null
           document_date: string
@@ -221,8 +221,8 @@ export type Database = {
           ecb_exchange_rate_date?: string | null
           exchange_rate?: number | null
           exchange_rate_date?: string | null
-          exchange_rate_override_reason?: string | null
           exchange_rate_overridden?: boolean
+          exchange_rate_override_reason?: string | null
           exchange_rate_source?: string
           gross_amount?: number
           id?: string
@@ -243,11 +243,11 @@ export type Database = {
           verification_id?: string | null
         }
         Update: {
-          created_at?: string
-          created_by?: string | null
           converted_gross_amount_sek?: number | null
           converted_net_amount_sek?: number | null
           converted_vat_amount_sek?: number | null
+          created_at?: string
+          created_by?: string | null
           currency?: string
           description?: string | null
           document_date?: string
@@ -259,8 +259,8 @@ export type Database = {
           ecb_exchange_rate_date?: string | null
           exchange_rate?: number | null
           exchange_rate_date?: string | null
-          exchange_rate_override_reason?: string | null
           exchange_rate_overridden?: boolean
+          exchange_rate_override_reason?: string | null
           exchange_rate_source?: string
           gross_amount?: number
           id?: string
