@@ -288,6 +288,26 @@ Deno.test("getPurchaseBlockers — line total mismatch is an error", () => {
   assertEquals(blockers.some(b => b.type === "error" && b.message.includes("totalbelopp")), true);
 });
 
+Deno.test("getPurchaseBlockers — EU reverse charge must use full invoice total as VAT base", () => {
+  const blockers = getPurchaseBlockers(makePurchase({
+    lines: [{ vat_treatment: "reverse_charge_eu_goods", net_amount: 1084.05, vat_amount: 0, gross_amount: 1211.10 }],
+    gross_amount: 1211.10,
+    net_amount: 1084.05,
+    vat_amount: 0,
+  }));
+  assertEquals(blockers.some(b => b.type === "error" && b.message.includes("hela fakturabeloppet")), true);
+});
+
+Deno.test("getPurchaseBlockers — EU reverse charge passes when VAT base matches full invoice total", () => {
+  const blockers = getPurchaseBlockers(makePurchase({
+    lines: [{ vat_treatment: "reverse_charge_eu_goods", net_amount: 1211.10, vat_amount: 0, gross_amount: 1211.10 }],
+    gross_amount: 1211.10,
+    net_amount: 1211.10,
+    vat_amount: 0,
+  }));
+  assertEquals(blockers.some(b => b.type === "error" && b.message.includes("hela fakturabeloppet")), false);
+});
+
 Deno.test("getPurchaseBlockers — insufficient document quality is a warning", () => {
   const blockers = getPurchaseBlockers(makePurchase({ document_quality_status: "insufficient" }));
   const warnings = blockers.filter(b => b.type === "warning");

@@ -20,6 +20,11 @@ export function isReverseChargeTreatment(treatment: string): boolean {
          treatment === 'reverse_charge_eu_services' ||
          treatment === 'reverse_charge_non_eu_services';
 }
+
+function isEuReverseChargeTreatment(treatment: string): boolean {
+  return treatment === 'reverse_charge_eu_goods' ||
+         treatment === 'reverse_charge_eu_services';
+}
 export type PeriodStatus = 'open' | 'review' | 'closed' | 'locked';
 export type VatPeriodStatus = 'open' | 'in_review' | 'approved' | 'filed' | 'locked';
 export type DocumentQualityStatus = 'pending' | 'sufficient' | 'insufficient' | 'not_checked';
@@ -366,6 +371,18 @@ export function getPurchaseBlockers(purchase: {
   const lineTotal = purchase.lines.reduce((sum, l) => sum + l.gross_amount, 0);
   if (purchase.lines.length > 0 && Math.abs(lineTotal - purchase.gross_amount) > 0.5) {
     blockers.push({ type: 'error', message: 'Radbelopp stämmer inte med totalbelopp' });
+  }
+
+  const euReverseChargeLines = purchase.lines.filter((line) => isEuReverseChargeTreatment(line.vat_treatment));
+  const hasOnlyEuReverseChargeLines = euReverseChargeLines.length > 0 && euReverseChargeLines.length === purchase.lines.length;
+  if (hasOnlyEuReverseChargeLines && Math.abs(purchase.vat_amount) <= 0.5) {
+    const reverseChargeBase = euReverseChargeLines.reduce((sum, line) => sum + line.net_amount, 0);
+    if (Math.abs(reverseChargeBase - purchase.gross_amount) > 0.5) {
+      blockers.push({
+        type: 'error',
+        message: 'Omvänd skattskyldighet måste beräknas på hela fakturabeloppet inklusive frakt och avgifter',
+      });
+    }
   }
 
   if (purchase.document_quality_status === 'insufficient') {
