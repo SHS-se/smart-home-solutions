@@ -41,7 +41,6 @@ export class PurchaseDraftError extends Error {
     cause?: unknown;
   }) {
     super(params.message);
-    if (params.cause) this.cause = params.cause;
     this.name = 'PurchaseDraftError';
     this.stage = params.stage;
     this.details = params.details ?? [];
