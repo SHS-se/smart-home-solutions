@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
@@ -366,7 +366,7 @@ const VatDeclarationFlow: React.FC = () => {
       const nextStatus = vatPeriod.status === 'open' ? 'in_review' : vatPeriod.status;
       const { error } = await supabase
         .from('acc_vat_periods')
-        .update({ workflow_state: nextWorkflowState, status: nextStatus })
+        .update({ workflow_state: nextWorkflowState as any, status: nextStatus })
         .eq('year', year)
         .eq('quarter', quarter);
 
@@ -393,7 +393,7 @@ const VatDeclarationFlow: React.FC = () => {
       const nextStatus = vatPeriod.status === 'open' ? 'in_review' : vatPeriod.status;
       const { error } = await supabase
         .from('acc_vat_periods')
-        .update({ workflow_state: nextWorkflowState, status: nextStatus })
+        .update({ workflow_state: nextWorkflowState as any, status: nextStatus })
         .eq('year', year)
         .eq('quarter', quarter);
 
@@ -749,12 +749,12 @@ const VatDeclarationFlow: React.FC = () => {
                       <TableRow key={box.box} className={box.highlight ? 'bg-amber-50/50' : box.amount === 0 && box.count === 0 ? 'opacity-50' : ''}>
                         <TableCell className="font-medium text-sm">
                           {box.box}
-                          {box.tooltip && (
+                          {'tooltip' in box && box.tooltip && (
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <Info className="w-3.5 h-3.5 text-primary inline ml-1 cursor-help" />
                               </TooltipTrigger>
-                              <TooltipContent className="max-w-xs text-xs">{box.tooltip}</TooltipContent>
+                              <TooltipContent className="max-w-xs text-xs">{('tooltip' in box ? box.tooltip : '') as ReactNode}</TooltipContent>
                             </Tooltip>
                           )}
                         </TableCell>

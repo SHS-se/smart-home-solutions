@@ -40,7 +40,7 @@ export class PurchaseDraftError extends Error {
     status?: number | null;
     cause?: unknown;
   }) {
-    super(params.message, { cause: params.cause });
+    super(params.message);
     this.name = 'PurchaseDraftError';
     this.stage = params.stage;
     this.details = params.details ?? [];
