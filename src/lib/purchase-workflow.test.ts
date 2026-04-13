@@ -5,6 +5,7 @@ import {
   findDuplicatePurchaseId,
   inferSupplierMetadata,
   inferVatTreatment,
+  normalizeEuReverseChargeOriginalAmounts,
   extractInvoiceNumberFromNotes,
   normalizeSupplierName,
   normalizeSupplierInvoiceNumber,
@@ -240,6 +241,36 @@ Deno.test('inferVatTreatment classifies BBQKees invoices as reverse charge EU go
   });
 
   assertEqual(vatTreatment, 'reverse_charge_eu_goods', 'vatTreatment');
+});
+
+Deno.test('normalizeEuReverseChargeOriginalAmounts uses full invoice total as EU reverse-charge VAT base', () => {
+  const normalized = normalizeEuReverseChargeOriginalAmounts({
+    originalAmounts: {
+      gross: 111.72,
+      net: 100,
+      vat: 0,
+    },
+    vatTreatment: 'reverse_charge_eu_goods',
+  });
+
+  assertEqual(normalized.gross, 111.72, 'gross');
+  assertEqual(normalized.net, 111.72, 'net');
+  assertEqual(normalized.vat, 0, 'vat');
+});
+
+Deno.test('normalizeEuReverseChargeOriginalAmounts leaves non-EU reverse-charge amounts unchanged', () => {
+  const normalized = normalizeEuReverseChargeOriginalAmounts({
+    originalAmounts: {
+      gross: 111.72,
+      net: 100,
+      vat: 0,
+    },
+    vatTreatment: 'reverse_charge_non_eu_services',
+  });
+
+  assertEqual(normalized.gross, 111.72, 'gross');
+  assertEqual(normalized.net, 100, 'net');
+  assertEqual(normalized.vat, 0, 'vat');
 });
 
 Deno.test('inferVatTreatment treats Amazon marketplace invoices under 4000 SEK as domestic deductible', () => {

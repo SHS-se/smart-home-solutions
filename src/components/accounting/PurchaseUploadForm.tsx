@@ -33,6 +33,7 @@ import {
   findDuplicatePurchaseId,
   inferSupplierMetadata,
   inferVatTreatment,
+  normalizeEuReverseChargeOriginalAmounts,
   normalizeSupplierInvoiceNumber,
   preserveSupplierInvoiceNumber,
 } from '@/lib/purchase-workflow';
@@ -134,6 +135,15 @@ const PurchaseUploadForm: React.FC<Props> = ({
   useEffect(() => {
     if (!purchase) return;
 
+    const normalizedStoredAmounts = normalizeEuReverseChargeOriginalAmounts({
+      originalAmounts: {
+        gross: Number(purchase.original_gross_amount ?? purchase.gross_amount) || 0,
+        net: Number(purchase.original_net_amount ?? purchase.net_amount) || 0,
+        vat: Number(purchase.original_vat_amount ?? purchase.vat_amount) || 0,
+      },
+      vatTreatment: purchaseLine?.vat_treatment,
+    });
+
     setForm({
       supplierId: purchase.supplier_id || '',
       newSupplierName: '',
@@ -142,9 +152,9 @@ const PurchaseUploadForm: React.FC<Props> = ({
       documentDate: purchase.document_date || '',
       dueDate: purchase.due_date || '',
       currency: purchase.original_currency || purchase.currency || 'SEK',
-      grossAmount: String(Number(purchase.original_gross_amount ?? purchase.gross_amount) || 0),
-      vatAmount: String(Number(purchase.original_vat_amount ?? purchase.vat_amount) || 0),
-      netAmount: String(Number(purchase.original_net_amount ?? purchase.net_amount) || 0),
+      grossAmount: String(normalizedStoredAmounts.gross),
+      vatAmount: String(normalizedStoredAmounts.vat),
+      netAmount: String(normalizedStoredAmounts.net),
       paymentSource: purchase.payment_source || '',
       description: purchase.description || purchaseLine?.description || '',
     });
@@ -213,11 +223,22 @@ const PurchaseUploadForm: React.FC<Props> = ({
   const persistedSnapshot = getPurchaseExchangeSnapshot(purchase);
   const hasDocumentContext = Boolean(purchase || file);
   const shouldShowExchangeSection = hasDocumentContext || isEditing;
-  const originalAmounts = {
-    gross: parseAmount(form.grossAmount),
-    net: parseAmount(form.netAmount),
-    vat: parseAmount(form.vatAmount),
-  };
+  const selectedSupplier = suppliers?.find((supplier) => supplier.id === form.supplierId) || null;
+  const previewSupplierMetadata = parsedInvoice ? inferSupplierMetadata(parsedInvoice) : null;
+  const previewVatTreatment = inferVatTreatment({
+    parsedInvoice,
+    extractedText,
+    supplierCountry: selectedSupplier?.country || previewSupplierMetadata?.country || null,
+    supplierType: selectedSupplier?.supplier_type || previewSupplierMetadata?.supplierType || null,
+  });
+  const originalAmounts = normalizeEuReverseChargeOriginalAmounts({
+    originalAmounts: {
+      gross: parseAmount(form.grossAmount),
+      net: parseAmount(form.netAmount),
+      vat: parseAmount(form.vatAmount),
+    },
+    vatTreatment: previewVatTreatment,
+  });
   const parsedManualExchangeRate = manualExchangeRate.trim() ? parseAmount(manualExchangeRate) : null;
   const preserveExistingOverride = Boolean(!isAdmin && purchase?.exchange_rate_overridden);
   const hasPersistedEditableRate = normalizedCurrency === 'SEK'
@@ -297,6 +318,15 @@ const PurchaseUploadForm: React.FC<Props> = ({
   const baselineDraftState = useMemo(() => {
     if (!purchase) return null;
 
+    const normalizedStoredAmounts = normalizeEuReverseChargeOriginalAmounts({
+      originalAmounts: {
+        gross: Number(purchase.original_gross_amount ?? purchase.gross_amount) || 0,
+        net: Number(purchase.original_net_amount ?? purchase.net_amount) || 0,
+        vat: Number(purchase.original_vat_amount ?? purchase.vat_amount) || 0,
+      },
+      vatTreatment: purchaseLine?.vat_treatment,
+    });
+
     return buildComparableDraftState({
       supplierId: purchase.supplier_id || '',
       newSupplierName: '',
@@ -305,9 +335,9 @@ const PurchaseUploadForm: React.FC<Props> = ({
       documentDate: purchase.document_date || '',
       dueDate: purchase.due_date || '',
       currency: purchase.original_currency || purchase.currency || 'SEK',
-      grossAmount: String(Number(purchase.original_gross_amount ?? purchase.gross_amount) || 0),
-      vatAmount: String(Number(purchase.original_vat_amount ?? purchase.vat_amount) || 0),
-      netAmount: String(Number(purchase.original_net_amount ?? purchase.net_amount) || 0),
+      grossAmount: String(normalizedStoredAmounts.gross),
+      vatAmount: String(normalizedStoredAmounts.vat),
+      netAmount: String(normalizedStoredAmounts.net),
       paymentSource: purchase.payment_source || '',
       description: purchase.description || purchaseLine?.description || '',
       manualExchangeRate: purchase.exchange_rate_overridden ? String(Number(purchase.exchange_rate) || '') : '',
@@ -428,15 +458,24 @@ const PurchaseUploadForm: React.FC<Props> = ({
           }
         : await fetchSingleEcbExchangeRate({ currency: normalizedCurrency, documentDate });
 
+      const inferredVatTreatment = inferVatTreatment({
+        parsedInvoice,
+        extractedText,
+        supplierCountry,
+        supplierType,
+      });
+      const normalizedOriginalAmounts = normalizeEuReverseChargeOriginalAmounts({
+        originalAmounts,
+        vatTreatment: inferredVatTreatment,
+      });
       const snapshot = buildExchangeSnapshot({
         documentDate,
         currency: normalizedCurrency,
-        originalAmounts,
+        originalAmounts: normalizedOriginalAmounts,
         lookup: rateLookup,
         overrideRate: effectiveOverrideRate,
         overrideReason: effectiveOverrideReason,
       });
-
       const purchasePayload = {
         supplier_id: supplierId,
         supplier_invoice_number: supplierInvoiceNumber,
@@ -448,13 +487,6 @@ const PurchaseUploadForm: React.FC<Props> = ({
         notes: buildInvoiceNumberNote(form.invoiceNumber),
         ...buildPurchasePersistence(snapshot),
       };
-
-      const inferredVatTreatment = inferVatTreatment({
-        parsedInvoice,
-        extractedText,
-        supplierCountry,
-        supplierType,
-      });
       const linePayload = {
         description: form.description || t('Hela beloppet', 'Full amount'),
         net_amount: snapshot.convertedNetSek,

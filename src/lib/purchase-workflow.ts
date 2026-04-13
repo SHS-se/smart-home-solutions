@@ -28,6 +28,12 @@ export interface PurchaseFormValues {
   description: string;
 }
 
+export interface OriginalAmountsInput {
+  gross: number;
+  net: number;
+  vat: number;
+}
+
 export function createEmptyPurchaseForm(): PurchaseFormValues {
   return {
     supplierId: '',
@@ -205,6 +211,27 @@ function pickReverseChargeTreatment(supplierType: SupplierType, goodsOrServices:
   }
   // Non-EU purchases of goods would be imports (Box 50) — but for services it's Box 22
   return 'reverse_charge_non_eu_services';
+}
+
+function isEuReverseChargeTreatment(vatTreatment: string | null | undefined): boolean {
+  return vatTreatment === 'reverse_charge_eu_goods' || vatTreatment === 'reverse_charge_eu_services';
+}
+
+export function normalizeEuReverseChargeOriginalAmounts(params: {
+  originalAmounts: OriginalAmountsInput;
+  vatTreatment: string | null | undefined;
+}): OriginalAmountsInput {
+  const { gross, net, vat } = params.originalAmounts;
+  if (!isEuReverseChargeTreatment(params.vatTreatment) || vat !== 0 || gross <= 0) {
+    return { gross, net, vat };
+  }
+
+  // EU reverse-charge VAT is due on the full taxable consideration, including shipping and fees.
+  return {
+    gross,
+    net: gross,
+    vat: 0,
+  };
 }
 
 export function inferVatTreatment(params: {

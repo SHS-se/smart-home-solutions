@@ -19,6 +19,7 @@ import {
   findDuplicatePurchaseId,
   inferSupplierMetadata,
   inferVatTreatment,
+  normalizeEuReverseChargeOriginalAmounts,
   normalizeSupplierInvoiceNumber,
   preserveSupplierInvoiceNumber,
   resolveSavedPurchaseId,
@@ -57,11 +58,25 @@ export function buildPurchaseDraftDefaults(params: {
   const form = createEmptyPurchaseForm();
   const parsedInvoice = params.parsedInvoice;
   if (!parsedInvoice) return form;
+  const inferredSupplier = inferSupplierMetadata(parsedInvoice);
+  const inferredVatTreatment = inferVatTreatment({
+    parsedInvoice,
+    extractedText: params.extractedText || null,
+    supplierCountry: inferredSupplier.country,
+    supplierType: inferredSupplier.supplierType,
+  });
+  const normalizedOriginalAmounts = normalizeEuReverseChargeOriginalAmounts({
+    originalAmounts: {
+      gross: parsedInvoice.grossAmount ?? 0,
+      net: parsedInvoice.netAmount ?? 0,
+      vat: parsedInvoice.vatAmount ?? 0,
+    },
+    vatTreatment: inferredVatTreatment,
+  });
   const trustSupplierIdentity = parsedInvoice.fingerprint.recognized;
   const trustDerivedDescription = parsedInvoice.fingerprint.recognized;
 
   if (trustSupplierIdentity && parsedInvoice.supplierName) {
-    const inferredSupplier = inferSupplierMetadata(parsedInvoice);
     const existingSupplier = findExistingSupplier(params.suppliers || [], {
       supplierName: parsedInvoice.supplierName,
       vatNumber: inferredSupplier.vatNumber,
@@ -82,9 +97,14 @@ export function buildPurchaseDraftDefaults(params: {
   if (parsedInvoice.invoiceDate) form.documentDate = parsedInvoice.invoiceDate;
   if (parsedInvoice.dueDate) form.dueDate = parsedInvoice.dueDate;
   if (parsedInvoice.currency) form.currency = parsedInvoice.currency;
-  if (parsedInvoice.grossAmount != null) form.grossAmount = String(parsedInvoice.grossAmount);
-  if (parsedInvoice.vatAmount != null) form.vatAmount = String(parsedInvoice.vatAmount);
-  if (parsedInvoice.netAmount != null) form.netAmount = String(parsedInvoice.netAmount);
+  if (parsedInvoice.grossAmount != null) {
+    form.grossAmount = String(normalizedOriginalAmounts.gross);
+    form.vatAmount = String(normalizedOriginalAmounts.vat);
+    form.netAmount = String(normalizedOriginalAmounts.net);
+  } else {
+    if (parsedInvoice.vatAmount != null) form.vatAmount = String(normalizedOriginalAmounts.vat);
+    if (parsedInvoice.netAmount != null) form.netAmount = String(normalizedOriginalAmounts.net);
+  }
 
   const description = trustDerivedDescription
     ? (parsedInvoice.description || generateDescription(parsedInvoice.supplierName, params.extractedText || ''))
@@ -196,13 +216,22 @@ export async function createPurchaseDraft(params: CreatePurchaseDraftParams): Pr
     }
   }
 
+  const inferredVatTreatment = inferVatTreatment({
+    parsedInvoice: parsedInvoice || null,
+    extractedText: extractedText || null,
+    supplierCountry,
+    supplierType,
+  });
   const normalizedCurrency = normalizeCurrency(values.currency);
   const documentDate = values.documentDate || new Date().toISOString().split('T')[0];
-  const originalAmounts = {
-    gross: parseAmount(values.grossAmount),
-    net: parseAmount(values.netAmount),
-    vat: parseAmount(values.vatAmount),
-  };
+  const originalAmounts = normalizeEuReverseChargeOriginalAmounts({
+    originalAmounts: {
+      gross: parseAmount(values.grossAmount),
+      net: parseAmount(values.netAmount),
+      vat: parseAmount(values.vatAmount),
+    },
+    vatTreatment: inferredVatTreatment,
+  });
   const rateLookup = normalizedCurrency === 'SEK'
     ? {
         currency: 'SEK',
@@ -245,13 +274,6 @@ export async function createPurchaseDraft(params: CreatePurchaseDraftParams): Pr
   const documentQualityStatus: DocumentQualityStatus = parsedInvoice
     ? (parsedInvoice.parserReviewRequired ? 'insufficient' : 'sufficient')
     : 'pending';
-
-  const inferredVatTreatment = inferVatTreatment({
-    parsedInvoice: parsedInvoice || null,
-    extractedText: extractedText || null,
-    supplierCountry,
-    supplierType,
-  });
   const linePayload = {
     description: values.description || fullAmountLabel,
     net_amount: snapshot.convertedNetSek,
