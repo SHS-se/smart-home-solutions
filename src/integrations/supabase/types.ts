@@ -3039,7 +3039,7 @@ export type Database = {
       }
     }
     Functions: {
-      allocate_acc_verification_number: { Args: never; Returns: string }
+      allocate_acc_verification_number: { Args: { p_date?: string }; Returns: string }
       allocate_invoice_number: { Args: never; Returns: string }
       can_access_ticket_storage: {
         Args: { storage_path: string }
