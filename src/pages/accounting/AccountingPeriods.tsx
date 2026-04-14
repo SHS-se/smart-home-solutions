@@ -22,6 +22,8 @@ const AccountingPeriods: React.FC = () => {
   const { data: periods, isLoading } = useQuery({
     queryKey: ['acc-periods'],
     queryFn: async () => {
+      // Ensure the current and next month always have a period row before fetching.
+      await supabase.rpc('acc_ensure_current_periods');
       const { data } = await supabase.from('acc_periods').select('*').order('year').order('month');
       return data || [];
     },
@@ -105,7 +107,16 @@ const AccountingPeriods: React.FC = () => {
       case 'review':
         return <Button variant="outline" size="sm" onClick={() => updateStatus.mutate({ id: period.id, status: 'closed', year: period.year, month: period.month })}>{t('Stäng', 'Close')}</Button>;
       case 'closed':
-        return <Button variant="outline" size="sm" onClick={() => updateStatus.mutate({ id: period.id, status: 'locked', year: period.year, month: period.month })}><Lock className="w-3.5 h-3.5 mr-1" /> {t('Lås', 'Lock')}</Button>;
+        return (
+          <div className="flex gap-2 justify-end">
+            <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => updateStatus.mutate({ id: period.id, status: 'open', year: period.year, month: period.month })}>
+              <Unlock className="w-3.5 h-3.5 mr-1" /> {t('Öppna igen', 'Reopen')}
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => updateStatus.mutate({ id: period.id, status: 'locked', year: period.year, month: period.month })}>
+              <Lock className="w-3.5 h-3.5 mr-1" /> {t('Lås', 'Lock')}
+            </Button>
+          </div>
+        );
       case 'locked':
         return <Button variant="ghost" size="sm" className="text-destructive" onClick={() => updateStatus.mutate({ id: period.id, status: 'open', year: period.year, month: period.month })}><Unlock className="w-3.5 h-3.5 mr-1" /> {t('Öppna igen', 'Reopen')}</Button>;
       default: return null;
