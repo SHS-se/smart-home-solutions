@@ -2,19 +2,19 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/integrations/supabase/types';
 
 /**
- * Verification number format: VYYMM-N
+ * Verification number format: VYYMM-NNN
  *   V      — fixed prefix
  *   YY     — 2-digit year
  *   MM     — 2-digit month (zero-padded)
- *   N      — sequential index within that month (not zero-padded)
+ *   NNN    — 3-digit sequential index (001–999)
  *
  * Examples:
- *   V2602-5   — 5th verification for February 2026
- *   V2601-15  — 15th verification for January 2026
+ *   V2602-005 — 5th verification for February 2026
+ *   V2601-015 — 15th verification for January 2026
  *   V2603-123 — 123rd verification for March 2026
  */
 
-const VERIFICATION_NUMBER_PATTERN = /^V(\d{2})(\d{2})-(\d+)$/;
+const VERIFICATION_NUMBER_PATTERN = /^V(\d{2})(\d{2})-(\d{3})$/;
 
 export async function allocateNextVerificationNumber(
   supabase: SupabaseClient<Database>,
@@ -46,5 +46,9 @@ export async function allocateNextVerificationNumber(
     return Math.max(currentMax, Number(sequence));
   }, 0);
 
-  return `${prefix}${maxSequence + 1}`;
+  const next = maxSequence + 1;
+  if (next > 999) {
+    throw new Error(`Verification number overflow: month ${yy}${mm} already has 999 verifications`);
+  }
+  return `${prefix}${String(next).padStart(3, '0')}`;
 }

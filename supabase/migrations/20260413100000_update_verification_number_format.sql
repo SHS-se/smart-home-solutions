@@ -29,6 +29,10 @@ BEGIN
   FROM acc_verifications
   WHERE verification_number LIKE v_prefix || '%';
 
-  RETURN v_prefix || (v_max + 1)::text;
+  IF v_max >= 999 THEN
+    RAISE EXCEPTION 'Verification number overflow: month % already has 999 verifications', v_prefix;
+  END IF;
+
+  RETURN v_prefix || LPAD((v_max + 1)::text, 3, '0');
 END;
 $$;
