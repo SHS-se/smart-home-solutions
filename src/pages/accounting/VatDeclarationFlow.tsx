@@ -23,6 +23,7 @@ import {
   validateSkatteverketXml,
   type DeclarationBoxFilter,
 } from '@/lib/vat-declaration';
+import { getQuarterMonths, hasVatFilingConfirmation } from '@/lib/vat-periods';
 import { toast } from 'sonner';
 import { ArrowLeft, CheckCircle, AlertTriangle, Lock, Download, Upload, Info, FileText, ChevronDown, ChevronUp } from 'lucide-react';
 
@@ -32,6 +33,8 @@ interface VatWorkflowState {
   dataChecksApprovedAt?: string;
   reconciliationApprovedAt?: string;
 }
+
+const VAT_FILING_CONFIRMATION_BUCKET = 'vat-filing-confirmations';
 
 const StepIndicator: React.FC<{
   steps: StepProps[];
@@ -103,7 +106,7 @@ const VatDeclarationFlow: React.FC = () => {
     queryFn: async () => { const { data } = await supabase.from('acc_vat_periods').select('*').eq('year', year).eq('quarter', quarter).single(); return data; },
   });
 
-  const quarterMonths = [(quarter - 1) * 3 + 1, (quarter - 1) * 3 + 2, quarter * 3];
+  const quarterMonths = getQuarterMonths(quarter);
   const { data: monthlyPeriods } = useQuery({
     queryKey: ['acc-periods-for-quarter', year, quarter],
     queryFn: async () => {
@@ -265,6 +268,7 @@ const VatDeclarationFlow: React.FC = () => {
   ];
   const reconciliationHasErrors = validationChecks.some((c) => !c.ok);
   const workflowState = useMemo(() => parseVatWorkflowState(vatPeriod?.workflow_state), [vatPeriod?.workflow_state]);
+  const filingConfirmed = hasVatFilingConfirmation(vatPeriod);
   const dataChecksApproved = Boolean(workflowState.dataChecksApprovedAt) || Boolean(workflowState.reconciliationApprovedAt) || Boolean(vatPeriod?.snapshot_data);
   const reconciliationApproved = Boolean(workflowState.reconciliationApprovedAt) || Boolean(vatPeriod?.snapshot_data);
   const maxAccessibleStep = vatPeriod?.snapshot_data
@@ -429,7 +433,7 @@ const VatDeclarationFlow: React.FC = () => {
       number: 4,
       label: t('Export & inlämning', 'Export & filing'),
       description: t('Exportera och lämna in', 'Export and submit'),
-      status: currentStep === 4 ? 'active' : 'pending',
+      status: filingConfirmed ? 'done' : currentStep === 4 ? 'active' : 'pending',
     },
   ];
 
@@ -477,6 +481,65 @@ const VatDeclarationFlow: React.FC = () => {
       toast.success(t('XML skapad och validerad', 'XML generated and validated'));
     }
   };
+
+  const { data: filingConfirmationUrl } = useQuery({
+    queryKey: ['acc-vat-filing-confirmation', vatPeriod?.filing_confirmation_path],
+    queryFn: async () => {
+      if (!vatPeriod?.filing_confirmation_path) return null;
+      const { data, error } = await supabase.storage
+        .from(VAT_FILING_CONFIRMATION_BUCKET)
+        .createSignedUrl(vatPeriod.filing_confirmation_path, 3600);
+      if (error) throw error;
+      return data?.signedUrl || null;
+    },
+    enabled: !!vatPeriod?.filing_confirmation_path,
+  });
+
+  const uploadFilingConfirmation = useMutation({
+    mutationFn: async (file: File) => {
+      if (!vatPeriod?.snapshot_data) {
+        throw new Error(t('Skapa en ögonblicksbild innan du laddar upp bekräftelsen', 'Create a snapshot before uploading the confirmation'));
+      }
+      if (filingConfirmed) {
+        throw new Error(t('Bekräftelsen är redan uppladdad för den här momsperioden', 'A confirmation has already been uploaded for this VAT period'));
+      }
+
+      const confirmedAt = new Date().toISOString();
+      const sanitizedName = (file.name || 'filing-confirmation')
+        .toLowerCase()
+        .replace(/[^a-z0-9._-]+/g, '-')
+        .replace(/^-+|-+$/g, '') || 'filing-confirmation';
+      const storagePath = `${year}/q${quarter}/${Date.now()}-${sanitizedName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from(VAT_FILING_CONFIRMATION_BUCKET)
+        .upload(storagePath, file);
+      if (uploadError) throw uploadError;
+
+      const { error: updateError } = await supabase
+        .from('acc_vat_periods')
+        .update({
+          filing_confirmation_path: storagePath,
+          filing_confirmed_at: confirmedAt,
+          status: 'filed',
+        })
+        .eq('year', year)
+        .eq('quarter', quarter);
+      if (updateError) throw updateError;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['acc-vat-period'] });
+      queryClient.invalidateQueries({ queryKey: ['acc-vat-periods'] });
+      queryClient.invalidateQueries({ queryKey: ['acc-filed-vat-periods'] });
+      queryClient.invalidateQueries({ queryKey: ['acc-periods'] });
+      queryClient.invalidateQueries({ queryKey: ['acc-periods-for-quarter', year, quarter] });
+      toast.success(t(
+        'Bekräftelsen laddades upp och kvartalets perioder låstes',
+        'Confirmation uploaded and the quarter periods were locked',
+      ));
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
 
   const downloadXmlExport = () => {
     if (!generatedXml) {
@@ -847,7 +910,20 @@ const VatDeclarationFlow: React.FC = () => {
 
         {currentStep === 4 && (
           <div className="space-y-4">
-            {vatPeriod?.snapshot_data && (
+            {filingConfirmed ? (
+              <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-center gap-3">
+                <CheckCircle className="w-5 h-5 text-green-600" />
+                <div>
+                  <p className="font-medium text-green-800">{t('Momsperiod arkiverad', 'VAT period archived')}</p>
+                  <p className="text-sm text-green-700">
+                    {t(
+                      'Bekräftelsen är uppladdad. Kvartalets bokföringsperioder är låsta och kan inte öppnas igen.',
+                      'The confirmation has been uploaded. The quarter accounting periods are locked and cannot be reopened.',
+                    )}
+                  </p>
+                </div>
+              </div>
+            ) : vatPeriod?.snapshot_data && (
               <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-center gap-3">
                 <CheckCircle className="w-5 h-5 text-green-600" />
                 <div>
@@ -908,12 +984,64 @@ const VatDeclarationFlow: React.FC = () => {
                 </div>
                 <div>
                   <h4 className="font-medium mb-3">{t('Ladda upp bekräftelse från Skatteverket', 'Upload confirmation from the Tax Agency')}</h4>
-                  <label className="flex flex-col items-center justify-center border-2 border-dashed border-border rounded-xl p-8 cursor-pointer hover:border-primary/40 hover:bg-muted/30 transition-colors">
-                    <Upload className="w-8 h-8 text-muted-foreground mb-2" />
-                    <p className="text-sm text-muted-foreground">{t('Klicka för att ladda upp eller dra och släpp', 'Click to upload or drag and drop')}</p>
-                    <p className="text-xs text-muted-foreground mt-1">{t('PDF eller skärmdump', 'PDF or screenshot')}</p>
-                    <input type="file" className="hidden" accept=".pdf,.png,.jpg,.jpeg" />
-                  </label>
+                  {filingConfirmed ? (
+                    <div className="rounded-xl border border-green-200 bg-green-50 p-4 space-y-2">
+                      <p className="text-sm font-medium text-green-800">
+                        {t('Bekräftelse uppladdad', 'Confirmation uploaded')}
+                      </p>
+                      {vatPeriod?.filing_confirmed_at && (
+                        <p className="text-sm text-green-700">
+                          {t('Uppladdad', 'Uploaded')}: {new Date(vatPeriod.filing_confirmed_at).toLocaleString(language === 'sv' ? 'sv-SE' : 'en-GB')}
+                        </p>
+                      )}
+                      <p className="text-xs text-green-700">
+                        {vatPeriod?.filing_confirmation_path || '—'}
+                      </p>
+                      {filingConfirmationUrl && (
+                        <Button variant="outline" size="sm" asChild>
+                          <a href={filingConfirmationUrl} target="_blank" rel="noreferrer">
+                            {t('Öppna bekräftelse', 'Open confirmation')}
+                          </a>
+                        </Button>
+                      )}
+                    </div>
+                  ) : (
+                    <label
+                      className={`flex flex-col items-center justify-center border-2 border-dashed rounded-xl p-8 transition-colors ${uploadFilingConfirmation.isPending ? 'border-muted cursor-wait bg-muted/20' : 'border-border cursor-pointer hover:border-primary/40 hover:bg-muted/30'}`}
+                      onDragOver={(event) => {
+                        event.preventDefault();
+                        if (!uploadFilingConfirmation.isPending) {
+                          event.dataTransfer.dropEffect = 'copy';
+                        }
+                      }}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        if (uploadFilingConfirmation.isPending) return;
+                        const file = event.dataTransfer.files?.[0];
+                        if (file) uploadFilingConfirmation.mutate(file);
+                      }}
+                    >
+                      <Upload className="w-8 h-8 text-muted-foreground mb-2" />
+                      <p className="text-sm text-muted-foreground">
+                        {uploadFilingConfirmation.isPending
+                          ? t('Laddar upp bekräftelse...', 'Uploading confirmation...')
+                          : t('Klicka för att ladda upp eller dra och släpp', 'Click to upload or drag and drop')}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">{t('PDF eller skärmdump', 'PDF or screenshot')}</p>
+                      <input
+                        type="file"
+                        className="hidden"
+                        accept=".pdf,.png,.jpg,.jpeg,.heic,.heif"
+                        disabled={uploadFilingConfirmation.isPending}
+                        onChange={(event: React.ChangeEvent<HTMLInputElement>) => {
+                          const input = event.currentTarget;
+                          const file = input.files?.[0];
+                          if (file) uploadFilingConfirmation.mutate(file);
+                          input.value = '';
+                        }}
+                      />
+                    </label>
+                  )}
                 </div>
               </CardContent>
             </Card>

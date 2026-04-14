@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { MONTH_NAMES_SV, MONTH_NAMES_EN, PERIOD_STATUS_LABELS, PERIOD_STATUS_LABELS_EN, PERIOD_STATUS_COLORS } from '@/lib/accounting-utils';
+import { isAccountingPeriodLockedByVatFiling } from '@/lib/vat-periods';
 import { toast } from 'sonner';
 import { Lock, Unlock, Info, AlertTriangle } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -50,8 +51,28 @@ const AccountingPeriods: React.FC = () => {
     },
   });
 
+  const { data: filedVatPeriods } = useQuery({
+    queryKey: ['acc-filed-vat-periods'],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('acc_vat_periods')
+        .select('year, quarter, filing_confirmation_path, filing_confirmed_at')
+        .not('filing_confirmed_at', 'is', null);
+      return data || [];
+    },
+  });
+
   const updateStatus = useMutation({
-    mutationFn: async ({ id, status }: { id: string; status: string }) => {
+    mutationFn: async ({ id, status, year, month }: { id: string; status: string; year: number; month: number }) => {
+      if (
+        status === 'open' &&
+        isAccountingPeriodLockedByVatFiling({ year, month }, filedVatPeriods || [])
+      ) {
+        throw new Error(t(
+          'Perioden kan inte öppnas igen efter att momsbekräftelsen har laddats upp för kvartalet.',
+          'This period cannot be reopened after the VAT filing confirmation has been uploaded for the quarter.',
+        ));
+      }
       const updates: Record<string, unknown> = { status };
       if (status === 'locked') updates.locked_at = new Date().toISOString();
       const { error } = await supabase.from('acc_periods').update(updates).eq('id', id);
@@ -64,16 +85,29 @@ const AccountingPeriods: React.FC = () => {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const getActionButton = (period: { id: string; status: string }) => {
+  const getActionButton = (period: { id: string; status: string; year: number; month: number }) => {
+    const lockedByVatFiling = isAccountingPeriodLockedByVatFiling({
+      year: period.year,
+      month: period.month,
+    }, filedVatPeriods || []);
+
+    if (lockedByVatFiling) {
+      return (
+        <Button variant="secondary" size="sm" disabled>
+          <Lock className="w-3.5 h-3.5 mr-1" /> {t('Låst via momsinlämning', 'Locked by VAT filing')}
+        </Button>
+      );
+    }
+
     switch (period.status) {
       case 'open':
-        return <Button variant="outline" size="sm" onClick={() => updateStatus.mutate({ id: period.id, status: 'closed' })}>{t('Stäng period', 'Close period')}</Button>;
+        return <Button variant="outline" size="sm" onClick={() => updateStatus.mutate({ id: period.id, status: 'closed', year: period.year, month: period.month })}>{t('Stäng period', 'Close period')}</Button>;
       case 'review':
-        return <Button variant="outline" size="sm" onClick={() => updateStatus.mutate({ id: period.id, status: 'closed' })}>{t('Stäng', 'Close')}</Button>;
+        return <Button variant="outline" size="sm" onClick={() => updateStatus.mutate({ id: period.id, status: 'closed', year: period.year, month: period.month })}>{t('Stäng', 'Close')}</Button>;
       case 'closed':
-        return <Button variant="outline" size="sm" onClick={() => updateStatus.mutate({ id: period.id, status: 'locked' })}><Lock className="w-3.5 h-3.5 mr-1" /> {t('Lås', 'Lock')}</Button>;
+        return <Button variant="outline" size="sm" onClick={() => updateStatus.mutate({ id: period.id, status: 'locked', year: period.year, month: period.month })}><Lock className="w-3.5 h-3.5 mr-1" /> {t('Lås', 'Lock')}</Button>;
       case 'locked':
-        return <Button variant="ghost" size="sm" className="text-destructive" onClick={() => updateStatus.mutate({ id: period.id, status: 'open' })}><Unlock className="w-3.5 h-3.5 mr-1" /> {t('Öppna igen', 'Reopen')}</Button>;
+        return <Button variant="ghost" size="sm" className="text-destructive" onClick={() => updateStatus.mutate({ id: period.id, status: 'open', year: period.year, month: period.month })}><Unlock className="w-3.5 h-3.5 mr-1" /> {t('Öppna igen', 'Reopen')}</Button>;
       default: return null;
     }
   };
