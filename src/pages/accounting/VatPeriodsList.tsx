@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
@@ -8,7 +8,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
-import { QUARTER_LABELS, QUARTER_MONTHS, formatSEK } from '@/lib/accounting-utils';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { QUARTER_LABELS, QUARTER_MONTHS } from '@/lib/accounting-utils';
 import { Calendar, AlertCircle, CheckCircle, Info } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
@@ -25,6 +26,8 @@ const VAT_STATUS_COLORS: Record<string, string> = {
   locked: 'bg-primary/10 text-primary',
 };
 
+const ARCHIVED_STATUSES = new Set(['filed', 'locked']);
+
 const VatPeriodsList: React.FC = () => {
   const { t, language } = useLanguage();
   const statusLabels = VAT_STATUS_LABELS[language] || VAT_STATUS_LABELS.sv;
@@ -32,78 +35,170 @@ const VatPeriodsList: React.FC = () => {
   const { data: vatPeriods } = useQuery({
     queryKey: ['acc-vat-periods'],
     queryFn: async () => {
-      const { data } = await supabase.from('acc_vat_periods').select('*').order('year', { ascending: false }).order('quarter', { ascending: false });
+      // Ensure quarters Q1..current exist for the current year before fetching.
+      await supabase.rpc('acc_ensure_current_vat_periods');
+      const { data } = await supabase
+        .from('acc_vat_periods')
+        .select('*')
+        .order('year', { ascending: false })
+        .order('quarter', { ascending: false });
       return data || [];
     },
   });
 
-  const { data: q1Issues } = useQuery({
-    queryKey: ['acc-q1-issues'],
+  // Per-quarter purchase stats (posted vs unposted), keyed "YYYY-Q".
+  const { data: purchaseStatsByQuarter } = useQuery({
+    queryKey: ['acc-purchase-stats-by-quarter'],
     queryFn: async () => {
-      const { data } = await supabase.from('acc_purchases').select('id, status').gte('document_date', '2026-01-01').lte('document_date', '2026-03-31').neq('status', 'posted');
-      return data?.length || 0;
+      const { data } = await supabase.from('acc_purchases').select('document_date, status');
+      const stats: Record<string, { posted: number; unposted: number }> = {};
+      (data || []).forEach((p) => {
+        const d = new Date(p.document_date as string);
+        const key = `${d.getFullYear()}-${Math.floor(d.getMonth() / 3) + 1}`;
+        if (!stats[key]) stats[key] = { posted: 0, unposted: 0 };
+        if (p.status === 'posted') stats[key].posted++;
+        else stats[key].unposted++;
+      });
+      return stats;
     },
   });
 
-  const { data: q1PostedCount } = useQuery({
-    queryKey: ['acc-q1-posted'],
+  // Number of still-open monthly accounting periods per quarter, keyed "YYYY-Q".
+  const { data: openPeriodsByQuarter } = useQuery({
+    queryKey: ['acc-open-periods-by-quarter'],
     queryFn: async () => {
-      const { data } = await supabase.from('acc_purchases').select('id').gte('document_date', '2026-01-01').lte('document_date', '2026-03-31').eq('status', 'posted');
-      return data?.length || 0;
+      const { data } = await supabase.from('acc_periods').select('year, month, status').eq('status', 'open');
+      const stats: Record<string, number> = {};
+      (data || []).forEach((p) => {
+        const key = `${p.year}-${Math.floor(((p.month as number) - 1) / 3) + 1}`;
+        stats[key] = (stats[key] || 0) + 1;
+      });
+      return stats;
     },
   });
 
-  const { data: q1OpenPeriods } = useQuery({
-    queryKey: ['acc-q1-open-periods'],
-    queryFn: async () => {
-      const { data } = await supabase.from('acc_periods').select('id, month, status').eq('year', 2026).in('month', [1, 2, 3]).eq('status', 'open');
-      return data?.length || 0;
-    },
-  });
+  // Year selector: default to current year once data has loaded.
+  const availableYears = useMemo(() => {
+    const ys = new Set((vatPeriods || []).map((vp) => vp.year as number));
+    return Array.from(ys).sort((a, b) => b - a);
+  }, [vatPeriods]);
 
-  const q1Total = (q1PostedCount || 0) + (q1Issues || 0);
-  const q1Readiness = q1Total > 0 ? Math.round((q1PostedCount || 0) / q1Total * 100) : 0;
-  const q1HasOpenPeriods = (q1OpenPeriods || 0) > 0;
+  const [selectedYear, setSelectedYear] = useState<number | null>(null);
+  useEffect(() => {
+    if (selectedYear !== null || availableYears.length === 0) return;
+    const currentYear = new Date().getFullYear();
+    setSelectedYear(availableYears.includes(currentYear) ? currentYear : availableYears[0]);
+  }, [availableYears, selectedYear]);
+
+  const filteredPeriods = useMemo(
+    () => (vatPeriods || []).filter((vp) => vp.year === selectedYear),
+    [vatPeriods, selectedYear],
+  );
+
+  // Compute readiness + issues for a given VAT period.
+  const getPeriodStats = (vp: { year: number; quarter: number; status: string }) => {
+    const key = `${vp.year}-${vp.quarter}`;
+    const purchases = purchaseStatsByQuarter?.[key] || { posted: 0, unposted: 0 };
+    const total = purchases.posted + purchases.unposted;
+    const openPeriods = openPeriodsByQuarter?.[key] || 0;
+
+    // Filed/locked quarters are considered fully ready by definition.
+    const isArchived = ARCHIVED_STATUSES.has(vp.status);
+    const readiness = isArchived
+      ? 100
+      : total > 0
+        ? Math.round((purchases.posted / total) * 100)
+        : 0;
+
+    const issues = isArchived ? 0 : purchases.unposted + (openPeriods > 0 ? 1 : 0);
+    return { readiness, issues, unpostedCount: purchases.unposted, openPeriods };
+  };
+
+  // The "active" quarter drives the warning banner — earliest chronological
+  // quarter that is not yet filed or locked.
+  const activePeriod = useMemo(() => {
+    return (vatPeriods || [])
+      .filter((vp) => !ARCHIVED_STATUSES.has(vp.status))
+      .sort((a, b) => (a.year as number) - (b.year as number) || (a.quarter as number) - (b.quarter as number))[0];
+  }, [vatPeriods]);
+
+  const activeStats = activePeriod ? getPeriodStats(activePeriod) : null;
+  const showActiveBanner = activePeriod && activeStats && activeStats.issues > 0;
 
   return (
     <AccountingLayout>
       <div className="space-y-8">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            {t('Momsperioder', 'VAT periods')}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Info className="w-5 h-5 text-primary cursor-help" />
-              </TooltipTrigger>
-              <TooltipContent side="right" className="max-w-xs text-xs">
-                {t(
-                  'Moms (mervärdesskatt) är en konsumtionsskatt som företag samlar in åt staten. Varje kvartal rapporterar du hur mycket moms du fått in (utgående moms) och hur mycket du betalat på inköp (ingående moms). Skillnaden redovisas till Skatteverket.',
-                  'VAT (Value Added Tax) is a consumption tax that businesses collect on behalf of the government. Each quarter you report how much VAT you charged customers (output VAT) and how much you paid on purchases (input VAT). The difference is reported to the Tax Agency.'
-                )}
-              </TooltipContent>
-            </Tooltip>
-          </h1>
-          <p className="text-muted-foreground mt-1">{t('Kvartalsvis momsrapportering och inlämning', 'Quarterly VAT reporting and submission')}</p>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
+              {t('Momsperioder', 'VAT periods')}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Info className="w-5 h-5 text-primary cursor-help" />
+                </TooltipTrigger>
+                <TooltipContent side="right" className="max-w-xs text-xs">
+                  {t(
+                    'Moms (mervärdesskatt) är en konsumtionsskatt som företag samlar in åt staten. Varje kvartal rapporterar du hur mycket moms du fått in (utgående moms) och hur mycket du betalat på inköp (ingående moms). Skillnaden redovisas till Skatteverket.',
+                    'VAT (Value Added Tax) is a consumption tax that businesses collect on behalf of the government. Each quarter you report how much VAT you charged customers (output VAT) and how much you paid on purchases (input VAT). The difference is reported to the Tax Agency.'
+                  )}
+                </TooltipContent>
+              </Tooltip>
+            </h1>
+            <p className="text-muted-foreground mt-1">{t('Kvartalsvis momsrapportering och inlämning', 'Quarterly VAT reporting and submission')}</p>
+          </div>
+
+          {availableYears.length > 0 && selectedYear !== null && (
+            <Select value={String(selectedYear)} onValueChange={(v) => setSelectedYear(Number(v))}>
+              <SelectTrigger className="w-32">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {availableYears.map((y) => (
+                  <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
         </div>
 
-        {((q1Issues !== undefined && q1Issues > 0) || q1HasOpenPeriods) && (
+        {showActiveBanner && activePeriod && activeStats && (
           <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-start gap-3">
             <AlertCircle className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
             <div>
-              <p className="font-medium text-amber-800">{t('Q1 2026 kräver granskning', 'Q1 2026 needs review')}</p>
+              <p className="font-medium text-amber-800">
+                {t(
+                  `${QUARTER_LABELS[activePeriod.quarter]} ${activePeriod.year} kräver granskning`,
+                  `${QUARTER_LABELS[activePeriod.quarter]} ${activePeriod.year} needs review`,
+                )}
+              </p>
               <p className="text-sm text-amber-700 mt-0.5">
                 {[
-                  q1HasOpenPeriods ? t(`${q1OpenPeriods} bokföringsperiod${(q1OpenPeriods || 0) > 1 ? 'er' : ''} ej stängd${(q1OpenPeriods || 0) > 1 ? 'a' : ''}`, `${q1OpenPeriods} accounting period${(q1OpenPeriods || 0) > 1 ? 's' : ''} not closed`) : null,
-                  (q1Issues || 0) > 0 ? t(`${q1Issues} inköp ej bokförda`, `${q1Issues} purchases not posted`) : null,
-                ].filter(Boolean).join('. ')}.{' '}
-                {t('Deadline 12 maj 2026.', 'Deadline 12 May 2026.')}
+                  activeStats.openPeriods > 0
+                    ? t(
+                        `${activeStats.openPeriods} bokföringsperiod${activeStats.openPeriods > 1 ? 'er' : ''} ej stängd${activeStats.openPeriods > 1 ? 'a' : ''}`,
+                        `${activeStats.openPeriods} accounting period${activeStats.openPeriods > 1 ? 's' : ''} not closed`,
+                      )
+                    : null,
+                  activeStats.unpostedCount > 0
+                    ? t(`${activeStats.unpostedCount} inköp ej bokförda`, `${activeStats.unpostedCount} purchases not posted`)
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join('. ')}
+                .{' '}
+                {activePeriod.deadline && (
+                  <>
+                    {t('Deadline', 'Deadline')}{' '}
+                    {new Date(activePeriod.deadline).toLocaleDateString(language === 'sv' ? 'sv-SE' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}.
+                  </>
+                )}
               </p>
-              {q1HasOpenPeriods ? (
+              {activeStats.openPeriods > 0 ? (
                 <Link to="/accounting/periods">
                   <Button size="sm" variant="destructive" className="mt-2">{t('Stäng perioder', 'Close periods')}</Button>
                 </Link>
               ) : (
-                <Link to="/accounting/vat-periods/q1-2026">
+                <Link to={`/accounting/vat-periods/q${activePeriod.quarter}-${activePeriod.year}`}>
                   <Button size="sm" variant="destructive" className="mt-2">{t('Granska nu', 'Review now')}</Button>
                 </Link>
               )}
@@ -112,13 +207,10 @@ const VatPeriodsList: React.FC = () => {
         )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {(vatPeriods || []).map((vp) => {
-            const isQ1 = vp.year === 2026 && vp.quarter === 1;
-            const readiness = isQ1 ? q1Readiness : 0;
-            const purchaseIssues = isQ1 ? q1Issues || 0 : 0;
-            const openPeriods = isQ1 ? q1OpenPeriods || 0 : 0;
-            const issues = purchaseIssues + (openPeriods > 0 ? 1 : 0);
+          {filteredPeriods.map((vp) => {
+            const { readiness, issues } = getPeriodStats(vp);
             const periodSlug = `q${vp.quarter}-${vp.year}`;
+            const isArchived = ARCHIVED_STATUSES.has(vp.status);
 
             return (
               <Card key={vp.id} className="border border-border">
@@ -134,20 +226,24 @@ const VatPeriodsList: React.FC = () => {
                   </div>
 
                   <div className="space-y-3">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">{t('Beredskap', 'Readiness')}</span>
-                      <span className="font-medium">{readiness}%</span>
-                    </div>
-                    <Progress value={readiness} className="h-2" />
+                    {!isArchived && (
+                      <>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">{t('Beredskap', 'Readiness')}</span>
+                          <span className="font-medium">{readiness}%</span>
+                        </div>
+                        <Progress value={readiness} className="h-2" />
 
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">{t('Problem', 'Issues')}</span>
-                      {issues > 0 ? (
-                        <span className="text-destructive font-medium">{issues} {t('problem', 'issues')}</span>
-                      ) : (
-                        <span className="text-green-600 flex items-center gap-1"><CheckCircle className="w-3.5 h-3.5" /> {t('Inga problem', 'No issues')}</span>
-                      )}
-                    </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">{t('Problem', 'Issues')}</span>
+                          {issues > 0 ? (
+                            <span className="text-destructive font-medium">{issues} {t('problem', 'issues')}</span>
+                          ) : (
+                            <span className="text-green-600 flex items-center gap-1"><CheckCircle className="w-3.5 h-3.5" /> {t('Inga problem', 'No issues')}</span>
+                          )}
+                        </div>
+                      </>
+                    )}
 
                     {vp.deadline && (
                       <div className="flex justify-between text-sm">
@@ -161,13 +257,13 @@ const VatPeriodsList: React.FC = () => {
                   </div>
 
                   <div className="mt-5">
-                    {isQ1 ? (
-                      <Link to={`/accounting/vat-periods/${periodSlug}`}>
-                        <Button className="w-full">{t('Granska och godkänn', 'Review and approve')}</Button>
-                      </Link>
-                    ) : (
-                      <Button variant="outline" className="w-full" disabled>{t('Ej tillgänglig', 'Not available')}</Button>
-                    )}
+                    <Link to={`/accounting/vat-periods/${periodSlug}`}>
+                      <Button className="w-full" variant={isArchived ? 'outline' : 'default'}>
+                        {isArchived
+                          ? t('Visa arkiverad deklaration', 'View archived return')
+                          : t('Granska och godkänn', 'Review and approve')}
+                      </Button>
+                    </Link>
                   </div>
                 </CardContent>
               </Card>
