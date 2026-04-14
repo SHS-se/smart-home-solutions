@@ -3,6 +3,7 @@
 # Usage:
 #   ./scripts/dev.sh [test|live]
 #   ./scripts/dev.sh migrate [test|live]
+#   ./scripts/dev.sh pull [test|live]
 #   ./scripts/dev.sh deploy [test|live] [--force]
 #
 # Fetches the anon key from the Supabase CLI, writes a .env.local file, and
@@ -28,7 +29,7 @@ FORCE_DEPLOY=0
 
 if [ $# -gt 0 ]; then
   case "${1:-}" in
-    migrate|deploy)
+    migrate|pull|deploy)
       COMMAND="$1"
       shift
       ;;
@@ -53,6 +54,7 @@ while [ $# -gt 0 ]; do
       echo "Usage:"
       echo "  $0 [test|live]"
       echo "  $0 migrate [test|live]"
+      echo "  $0 pull [test|live]"
       echo "  $0 deploy [test|live] [--force]"
       exit 1
       ;;
@@ -166,6 +168,7 @@ case "$ENV" in
     echo "Usage:"
     echo "  $0 [test|live]"
     echo "  $0 migrate [test|live]"
+    echo "  $0 pull [test|live]"
     echo "  $0 deploy [test|live] [--force]"
     exit 1
     ;;
@@ -198,6 +201,16 @@ run_migrations() {
     cd "$PROJECT_DIR"
     supabase db push --linked --yes
   )
+}
+
+run_pull() {
+  link_project
+  echo "→ Pulling database migrations from $ENV ($PROJECT_REF)..."
+  (
+    cd "$PROJECT_DIR"
+    supabase db pull --linked
+  )
+  echo "→ Don't forget to commit any new migration files."
 }
 
 run_edge_function_deploy() {
@@ -265,6 +278,11 @@ trap restore_test_link EXIT
 
 if [ "$COMMAND" = "migrate" ]; then
   run_migrations
+  exit 0
+fi
+
+if [ "$COMMAND" = "pull" ]; then
+  run_pull
   exit 0
 fi
 
