@@ -271,6 +271,21 @@ const PurchaseDetail: React.FC = () => {
       if (!period) throw new Error(t('Ingen bokföringsperiod hittades för dokumentdatum', 'No accounting period found for document date'));
 
       const verificationDate = purchase.posting_date || purchase.document_date;
+
+      // Guard: prevent duplicate verification for the same purchase
+      const { data: existingVerification } = await supabase
+        .from('acc_verifications')
+        .select('id')
+        .eq('source_type', 'purchase')
+        .eq('source_id', purchase.id)
+        .maybeSingle();
+      if (existingVerification) {
+        throw new Error(t(
+          'Det finns redan en verifikation för detta inköp.',
+          'A verification already exists for this purchase.',
+        ));
+      }
+
       const verificationNumber = await allocateNextVerificationNumber(supabase, verificationDate);
 
       const { data: verification, error: vErr } = await supabase.from('acc_verifications').insert({
