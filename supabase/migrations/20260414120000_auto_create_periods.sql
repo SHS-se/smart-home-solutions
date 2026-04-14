@@ -1,4 +1,5 @@
--- Function that ensures the current calendar month has an acc_period row.
+-- Function that ensures every month from January of the current year up to and
+-- including the current month has an acc_period row.
 -- Idempotent: uses ON CONFLICT DO NOTHING so calling it multiple times is safe.
 -- Called from the frontend each time the Fiscal Years & Periods page loads.
 CREATE OR REPLACE FUNCTION public.acc_ensure_current_periods()
@@ -8,12 +9,12 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-  today     date    := current_date;
-  cur_year  integer := extract(year  FROM today)::integer;
-  cur_month integer := extract(month FROM today)::integer;
+  cur_year  integer := extract(year  FROM current_date)::integer;
+  cur_month integer := extract(month FROM current_date)::integer;
 BEGIN
   INSERT INTO public.acc_periods (year, month, status)
-  VALUES (cur_year, cur_month, 'open')
+  SELECT cur_year, m, 'open'
+  FROM generate_series(1, cur_month) AS m
   ON CONFLICT (year, month) DO NOTHING;
 END;
 $$;
