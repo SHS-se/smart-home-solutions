@@ -3039,7 +3039,15 @@ export type Database = {
       }
     }
     Functions: {
-      allocate_acc_verification_number: { Args: { p_date?: string }; Returns: string }
+      acc_ensure_current_periods: { Args: never; Returns: undefined }
+      acc_ensure_current_vat_periods: { Args: never; Returns: undefined }
+      acc_vat_filing_deadline: {
+        Args: { p_quarter: number; p_year: number }
+        Returns: string
+      }
+      allocate_acc_verification_number:
+        | { Args: never; Returns: string }
+        | { Args: { p_date?: string }; Returns: string }
       allocate_invoice_number: { Args: never; Returns: string }
       can_access_ticket_storage: {
         Args: { storage_path: string }
