@@ -1,10 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Home, Info, ArrowLeft, Loader2 } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Home, Info, Loader2 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import PortalLayout from '@/components/portal/PortalLayout';
-import CustomerViewLayout from '@/components/portal/CustomerViewLayout';
 import HomeProfileForm from '@/components/portal/home-profile/HomeProfileForm';
 import HomeSelector from '@/components/portal/energy/HomeSelector';
 import { useAuth } from '@/contexts/AuthContext';
@@ -30,7 +28,6 @@ const HomeProfile: React.FC<HomeProfileProps> = ({ customerId: propCustomerId, i
 
   const resolvedCustomerId = propCustomerId || customerData?.id;
   const userId = user?.id;
-  const Layout = isStaffView ? CustomerViewLayout : PortalLayout;
 
   useEffect(() => {
     if (!authLoading && !user) navigate('/login');
@@ -94,11 +91,11 @@ const HomeProfile: React.FC<HomeProfileProps> = ({ customerId: propCustomerId, i
 
   if (authLoading || (!isStaffView && user && !resolvedCustomerId) || !userId || loadingHome) {
     return (
-      <Layout>
+      <>
         <div className="flex items-center justify-center min-h-[400px]">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-      </Layout>
+      </>
     );
   }
 
@@ -108,23 +105,13 @@ const HomeProfile: React.FC<HomeProfileProps> = ({ customerId: propCustomerId, i
   };
 
   return (
-    <Layout>
+    <>
       <div className="space-y-8 max-w-4xl mx-auto">
-        {isStaffView && (
-          <Link to={`/portal/customers/${resolvedCustomerId}/overview`} className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground transition-colors">
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            {t('Tillbaka till kundvy', 'Back to customer view')}
-          </Link>
-        )}
-
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <Home className="w-7 h-7 text-primary" />
             <div>
               <h1 className="text-3xl font-medium">{t('Hemprofil', 'Home Profile')}</h1>
-              {isStaffView && customerName && (
-                <p className="text-muted-foreground">{customerName}</p>
-              )}
             </div>
           </div>
           <HomeSelector
@@ -163,7 +150,7 @@ const HomeProfile: React.FC<HomeProfileProps> = ({ customerId: propCustomerId, i
 
         <HomeProfileForm customerId={resolvedCustomerId} userId={userId} isStaffView={isStaffView} homeId={homeId} />
       </div>
-    </Layout>
+    </>
   );
 };
 

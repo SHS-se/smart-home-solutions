@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import mermaid from 'mermaid';
-import PortalLayout from '@/components/portal/PortalLayout';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -136,7 +135,7 @@ const ERDiagram = () => {
   };
 
   return (
-    <PortalLayout>
+    <>
       <div className="space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
           <div>
@@ -247,7 +246,7 @@ const ERDiagram = () => {
           </CardContent>
         </Card>
       </div>
-    </PortalLayout>
+    </>
   );
 };
 

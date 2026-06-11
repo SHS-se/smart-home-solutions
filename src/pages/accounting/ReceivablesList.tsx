@@ -1,7 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { useLanguage } from '@/contexts/LanguageContext';
-import AccountingLayout from '@/components/accounting/AccountingLayout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -64,7 +63,7 @@ const ReceivablesList: React.FC = () => {
     value ? new Date(value).toLocaleDateString(language === 'sv' ? 'sv-SE' : 'en-GB') : '–';
 
   return (
-    <AccountingLayout>
+    <>
       <div className="space-y-8">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
@@ -170,7 +169,7 @@ const ReceivablesList: React.FC = () => {
           </CardContent>
         </Card>
       </div>
-    </AccountingLayout>
+    </>
   );
 };
 

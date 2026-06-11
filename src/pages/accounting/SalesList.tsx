@@ -4,7 +4,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
-import AccountingLayout from '@/components/accounting/AccountingLayout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -91,7 +90,7 @@ const SalesList: React.FC = () => {
     value ? new Date(value).toLocaleDateString(language === 'sv' ? 'sv-SE' : 'en-GB') : '–';
 
   return (
-    <AccountingLayout>
+    <>
       <div className="space-y-8">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
@@ -296,7 +295,7 @@ const SalesList: React.FC = () => {
           )}
         </DialogContent>
       </Dialog>
-    </AccountingLayout>
+    </>
   );
 };
 

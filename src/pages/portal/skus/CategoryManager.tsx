@@ -4,7 +4,6 @@ import { Link } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
-import PortalLayout from '@/components/portal/PortalLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -180,7 +179,7 @@ const CategoryManager: React.FC = () => {
   }
 
   return (
-    <PortalLayout>
+    <>
       <div className="space-y-6">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -316,7 +315,7 @@ const CategoryManager: React.FC = () => {
           </form>
         </DialogContent>
       </Dialog>
-    </PortalLayout>
+    </>
   );
 };
 

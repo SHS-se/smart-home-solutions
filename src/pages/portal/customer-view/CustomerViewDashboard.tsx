@@ -1,9 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { Loader2, ArrowLeft, Trash2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Loader2, Trash2 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import CustomerViewLayout from '@/components/portal/CustomerViewLayout';
 import CustomerDashboardCards from '@/components/portal/CustomerDashboardCards';
 import { DeleteCustomerDialog } from '@/components/portal/customers/DeleteCustomerDialog';
 import { useAuth } from '@/contexts/AuthContext';
@@ -71,48 +70,35 @@ const CustomerViewDashboard: React.FC = () => {
 
   if (authLoading || customerLoading) {
     return (
-      <CustomerViewLayout>
+      <>
         <div className="flex items-center justify-center min-h-[400px]">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-      </CustomerViewLayout>
+      </>
     );
   }
 
   if (error || !customerData) {
     return (
-      <CustomerViewLayout>
+      <>
         <Alert variant="destructive">
           <AlertDescription>
             {error || t('Kunde inte hitta kunden.', 'Customer not found.')}
           </AlertDescription>
         </Alert>
-      </CustomerViewLayout>
+      </>
     );
   }
 
   const basePath = `/portal/customers/${customerId}`;
 
   return (
-    <CustomerViewLayout>
+    <>
       <div className="space-y-6">
-        <Link
-          to="/portal/customers"
-          className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <ArrowLeft className="w-4 h-4 mr-2" />
-          {t('Tillbaka till kunder', 'Back to customers')}
-        </Link>
-
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-          <div>
-            <h1 className="text-3xl font-medium">
-              {customerData.name || t('Namnlös kund', 'Unnamed customer')}
-            </h1>
-            <p className="text-muted-foreground mt-1">
-              {t('Visar kundvy', 'Viewing customer portal')}
-            </p>
-          </div>
+          <h1 className="text-3xl font-medium">
+            {customerData.name || t('Namnlös kund', 'Unnamed customer')}
+          </h1>
           <Button variant="destructive" size="sm" onClick={() => setShowDeleteDialog(true)}>
             <Trash2 className="w-4 h-4 mr-2" />
             {t('Radera', 'Delete')}
@@ -139,7 +125,7 @@ const CustomerViewDashboard: React.FC = () => {
           quoteStats={{ total: quoteStats.total, actionRequired: quoteStats.actionRequired }}
         />
       </div>
-    </CustomerViewLayout>
+    </>
   );
 };
 

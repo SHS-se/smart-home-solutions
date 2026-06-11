@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useLanguage } from '@/contexts/LanguageContext';
-import AccountingLayout from '@/components/accounting/AccountingLayout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -123,7 +122,7 @@ const VatPeriodsList: React.FC = () => {
   const showActiveBanner = activePeriod && activeStats && activeStats.issues > 0;
 
   return (
-    <AccountingLayout>
+    <>
       <div className="space-y-8">
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -283,7 +282,7 @@ const VatPeriodsList: React.FC = () => {
           </div>
         </div>
       </div>
-    </AccountingLayout>
+    </>
   );
 };
 

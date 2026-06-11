@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Loader2, Plus, ArrowLeft } from 'lucide-react';
+import { Loader2, Plus } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -14,8 +14,6 @@ import {
 } from '@/components/ui/table';
 import { SortableTableHead } from '@/components/ui/sortable-table-head';
 import TableFilterBar from '@/components/portal/TableFilterBar';
-import PortalLayout from '@/components/portal/PortalLayout';
-import CustomerViewLayout from '@/components/portal/CustomerViewLayout';
 import SubscriptionRequiredAlert from '@/components/portal/SubscriptionRequiredAlert';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -157,39 +155,25 @@ const TicketsList: React.FC<TicketsListProps> = ({ customerId: propCustomerId, i
     }
   };
 
-  const Layout = isStaffView ? CustomerViewLayout : PortalLayout;
 
   if (loading) {
     return (
-      <Layout>
+      <>
         <div className="flex items-center justify-center min-h-[400px]">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-      </Layout>
+      </>
     );
   }
 
   return (
-    <Layout>
+    <>
       <div className="space-y-6">
-        {isStaffView && (
-          <Link
-            to="/portal/customers"
-            className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            {t('Tillbaka till kunder', 'Back to customers')}
-          </Link>
-        )}
-
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
             <h1 className="text-3xl font-medium">
               {isStaffView ? t('Ärenden', 'Tickets') : t('Supportärenden', 'Support tickets')}
             </h1>
-            {isStaffView && customerName && (
-              <p className="text-muted-foreground">{customerName}</p>
-            )}
           </div>
           {!isStaff && !isStaffView && customerData && (
             !isSubscribed || subscriptionLoading ? (
@@ -290,7 +274,7 @@ const TicketsList: React.FC<TicketsListProps> = ({ customerId: propCustomerId, i
           </CardContent>
         </Card>
       </div>
-    </Layout>
+    </>
   );
 };
 

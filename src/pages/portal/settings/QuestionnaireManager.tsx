@@ -27,7 +27,6 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useToast } from '@/hooks/use-toast';
-import PortalLayout from '@/components/portal/PortalLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -553,16 +552,16 @@ const QuestionnaireManager: React.FC = () => {
 
   if (authLoading || loadingData) {
     return (
-      <PortalLayout>
+      <>
         <div className="flex items-center justify-center min-h-[400px]">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-      </PortalLayout>
+      </>
     );
   }
 
   return (
-    <PortalLayout>
+    <>
       <div className="space-y-6 max-w-4xl mx-auto">
         <div className="flex items-center justify-between">
           <div>
@@ -674,7 +673,7 @@ const QuestionnaireManager: React.FC = () => {
         rules={rules}
         options={options}
       />
-    </PortalLayout>
+    </>
   );
 };
 

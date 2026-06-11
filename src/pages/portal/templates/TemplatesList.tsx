@@ -5,7 +5,6 @@ import { supabase } from '@/integrations/supabase/client';
 import { naturalSort } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
-import PortalLayout from '@/components/portal/PortalLayout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import {
@@ -134,7 +133,7 @@ const TemplatesList: React.FC = () => {
   }
 
   return (
-    <PortalLayout>
+    <>
       <div className="space-y-6">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -250,7 +249,7 @@ const TemplatesList: React.FC = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </PortalLayout>
+    </>
   );
 };
 

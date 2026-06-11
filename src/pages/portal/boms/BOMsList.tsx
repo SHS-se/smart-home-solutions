@@ -6,7 +6,6 @@ import { naturalSort } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useTableSort, sortItems } from '@/hooks/use-table-sort';
-import PortalLayout from '@/components/portal/PortalLayout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -197,7 +196,7 @@ const BOMsList: React.FC = () => {
   }
 
   return (
-    <PortalLayout>
+    <>
       <div className="space-y-6">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -378,7 +377,7 @@ const BOMsList: React.FC = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </PortalLayout>
+    </>
   );
 };
 

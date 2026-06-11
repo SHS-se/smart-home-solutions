@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Menu, X } from "lucide-react";
+import { LayoutDashboard, Menu, X } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useIsPortrait } from "@/hooks/use-orientation";
+import { publicNavItems } from "@/lib/navigation";
 import LanguageToggle from "./LanguageToggle";
 import UserMenu from "./UserMenu";
 
@@ -46,17 +47,20 @@ const Header = () => {
       navigate('/login');
     }
   };
-  const navLinks = [{
-    href: "/services",
-    label: t("Tjänster", "Services")
-  }, {
-    href: "/knowledge",
-    label: t("Kunskapscenter", "Knowledge")
-  }, {
-    href: "/about",
-    label: t("Om oss", "About")
-  }];
+  const navLinks = publicNavItems.map(item => ({
+    href: item.path,
+    label: t(item.labelSv, item.labelEn)
+  }));
   const isActive = (path: string) => location.pathname === path;
+
+  const portalButton = (size: "sm" | "default" = "default") => (
+    <Button asChild variant="outline" size={size}>
+      <Link to="/portal">
+        <LayoutDashboard className="w-4 h-4 mr-1" />
+        {t("Portalen", "Portal")}
+      </Link>
+    </Button>
+  );
 
   // Mobile Portrait Layout: Top bar + Bottom nav bar
   if (isMobilePortrait) {
@@ -77,7 +81,10 @@ const Header = () => {
               <div className="flex items-center gap-2">
                 <LanguageToggle />
                 {user ? (
-                  <UserMenu size="sm" />
+                  <>
+                    {portalButton("sm")}
+                    <UserMenu size="sm" />
+                  </>
                 ) : (
                   <Button size="sm" onClick={handleAuthAction}>
                     {t("Logga in", "Login")}
@@ -124,7 +131,10 @@ const Header = () => {
           <div className="hidden md:flex items-center gap-4">
             <LanguageToggle />
             {user ? (
-              <UserMenu />
+              <>
+                {portalButton()}
+                <UserMenu />
+              </>
             ) : (
               <Button onClick={handleAuthAction}>
                 {t("Logga in", "Login")}
@@ -147,7 +157,10 @@ const Header = () => {
               <div className="flex items-center justify-between px-4 pt-4 border-t border-border mt-2">
                 <LanguageToggle />
                 {user ? (
-                  <UserMenu size="sm" />
+                  <div className="flex items-center gap-2">
+                    {portalButton("sm")}
+                    <UserMenu size="sm" />
+                  </div>
                 ) : (
                   <Button size="sm" onClick={() => {
                     handleAuthAction();

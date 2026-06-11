@@ -5,7 +5,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
-import PortalLayout from '@/components/portal/PortalLayout';
 import CustomerDashboardCards from '@/components/portal/CustomerDashboardCards';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -176,18 +175,18 @@ const Dashboard: React.FC = () => {
 
   if (loading) {
     return (
-      <PortalLayout>
+      <>
         <div className="flex items-center justify-center min-h-[400px]">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-      </PortalLayout>
+      </>
     );
   }
 
   // Show bootstrap UI if applicable
   if (canBootstrap) {
     return (
-      <PortalLayout>
+      <>
         <div className="max-w-lg mx-auto mt-12">
           <Card>
             <CardHeader className="text-center">
@@ -208,14 +207,14 @@ const Dashboard: React.FC = () => {
             </CardContent>
           </Card>
         </div>
-      </PortalLayout>
+      </>
     );
   }
 
   // Show message if user has no customer or staff association
   if (!isStaff && !customerData) {
     return (
-      <PortalLayout>
+      <>
         <Alert>
           <AlertDescription>
             {t(
@@ -224,12 +223,12 @@ const Dashboard: React.FC = () => {
             )}
           </AlertDescription>
         </Alert>
-      </PortalLayout>
+      </>
     );
   }
 
   return (
-    <PortalLayout>
+    <>
       <div className="space-y-8">
         <h1 className="text-3xl font-medium">
           {isStaff ? t('Personalöversikt', 'Staff Dashboard') : t('Kundportal', 'Customer Portal')}
@@ -301,71 +300,11 @@ const Dashboard: React.FC = () => {
               </div>
             </div>
 
-            {/* Offerter & Material Section */}
+            {/* Sales Section — mirrors the "Försäljning" nav group */}
             <div>
-              <h2 className="text-lg font-medium mb-4 text-muted-foreground">{t('Offerter & Material', 'Quotes & Materials')}</h2>
-              <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-5">
-                <Card 
-                  className="cursor-pointer transition-colors hover:bg-muted/50"
-                  onClick={() => navigate('/portal/skus')}
-                >
-                  <CardHeader className="flex flex-row items-center gap-4">
-                    <div className="p-2 rounded-lg bg-primary/10">
-                      <Package className="w-6 h-6 text-primary" />
-                    </div>
-                    <CardTitle className="text-lg">{t('SKU-katalog', 'SKU Catalog')}</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-muted-foreground mb-1">
-                      {t('Hantera produkter och priser', 'Manage products and prices')}
-                    </p>
-                    <p className="text-muted-foreground">
-                      {t('Produkter:', 'Products:')} <strong>{skuStats.total}</strong>
-                    </p>
-                  </CardContent>
-                </Card>
-
-                <Card 
-                  className="cursor-pointer transition-colors hover:bg-muted/50"
-                  onClick={() => navigate('/portal/templates')}
-                >
-                  <CardHeader className="flex flex-row items-center gap-4">
-                    <div className="p-2 rounded-lg bg-primary/10">
-                      <Box className="w-6 h-6 text-primary" />
-                    </div>
-                    <CardTitle className="text-lg">{t('Mallpaket', 'Templates')}</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-muted-foreground mb-1">
-                      {t('Återanvändbara produktpaket', 'Reusable product bundles')}
-                    </p>
-                    <p className="text-muted-foreground">
-                      {t('Mallar:', 'Templates:')} <strong>{templateStats.total}</strong>
-                    </p>
-                  </CardContent>
-                </Card>
-
-                <Card 
-                  className="cursor-pointer transition-colors hover:bg-muted/50"
-                  onClick={() => navigate('/portal/boms')}
-                >
-                  <CardHeader className="flex flex-row items-center gap-4">
-                    <div className="p-2 rounded-lg bg-primary/10">
-                      <FileText className="w-6 h-6 text-primary" />
-                    </div>
-                    <CardTitle className="text-lg">{t('Materiallistor', 'BOMs')}</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-muted-foreground mb-1">
-                      {t('Projektberäkningar', 'Project calculations')}
-                    </p>
-                    <p className="text-muted-foreground">
-                      {t('Materiallistor:', 'BOMs:')} <strong>{bomStats.total}</strong>
-                    </p>
-                  </CardContent>
-                </Card>
-
-                <Card 
+              <h2 className="text-lg font-medium mb-4 text-muted-foreground">{t('Försäljning', 'Sales')}</h2>
+              <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+                <Card
                   className="cursor-pointer transition-colors hover:bg-muted/50"
                   onClick={() => navigate('/portal/quotes')}
                 >
@@ -388,7 +327,7 @@ const Dashboard: React.FC = () => {
                   </CardContent>
                 </Card>
 
-                <Card 
+                <Card
                   className="cursor-pointer transition-colors hover:bg-muted/50"
                   onClick={() => navigate('/portal/invoices')}
                 >
@@ -410,14 +349,97 @@ const Dashboard: React.FC = () => {
                     </p>
                   </CardContent>
                 </Card>
+
+                <Card
+                  className="cursor-pointer transition-colors hover:bg-muted/50"
+                  onClick={() => navigate('/portal/boms')}
+                >
+                  <CardHeader className="flex flex-row items-center gap-4">
+                    <div className="p-2 rounded-lg bg-primary/10">
+                      <FileText className="w-6 h-6 text-primary" />
+                    </div>
+                    <CardTitle className="text-lg">{t('Materiallistor', 'BOMs')}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-muted-foreground mb-1">
+                      {t('Projektberäkningar', 'Project calculations')}
+                    </p>
+                    <p className="text-muted-foreground">
+                      {t('Materiallistor:', 'BOMs:')} <strong>{bomStats.total}</strong>
+                    </p>
+                  </CardContent>
+                </Card>
               </div>
             </div>
 
-            {/* Settings (includes Questionnaire Manager) */}
+            {/* Catalog Section — mirrors the "Katalog" nav group */}
             <div>
-              <h2 className="text-lg font-medium mb-4 text-muted-foreground">{t('Inställningar', 'Settings')}</h2>
+              <h2 className="text-lg font-medium mb-4 text-muted-foreground">{t('Katalog', 'Catalog')}</h2>
+              <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+                <Card
+                  className="cursor-pointer transition-colors hover:bg-muted/50"
+                  onClick={() => navigate('/portal/skus')}
+                >
+                  <CardHeader className="flex flex-row items-center gap-4">
+                    <div className="p-2 rounded-lg bg-primary/10">
+                      <Package className="w-6 h-6 text-primary" />
+                    </div>
+                    <CardTitle className="text-lg">{t('SKU-katalog', 'SKU Catalog')}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-muted-foreground mb-1">
+                      {t('Hantera produkter och priser', 'Manage products and prices')}
+                    </p>
+                    <p className="text-muted-foreground">
+                      {t('Produkter:', 'Products:')} <strong>{skuStats.total}</strong>
+                    </p>
+                  </CardContent>
+                </Card>
+
+                <Card
+                  className="cursor-pointer transition-colors hover:bg-muted/50"
+                  onClick={() => navigate('/portal/templates')}
+                >
+                  <CardHeader className="flex flex-row items-center gap-4">
+                    <div className="p-2 rounded-lg bg-primary/10">
+                      <Box className="w-6 h-6 text-primary" />
+                    </div>
+                    <CardTitle className="text-lg">{t('Mallpaket', 'Templates')}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-muted-foreground mb-1">
+                      {t('Återanvändbara produktpaket', 'Reusable product bundles')}
+                    </p>
+                    <p className="text-muted-foreground">
+                      {t('Mallar:', 'Templates:')} <strong>{templateStats.total}</strong>
+                    </p>
+                  </CardContent>
+                </Card>
+
+                <Card
+                  className="cursor-pointer transition-colors hover:bg-muted/50"
+                  onClick={() => navigate('/portal/device-catalog')}
+                >
+                  <CardHeader className="flex flex-row items-center gap-4">
+                    <div className="p-2 rounded-lg bg-primary/10">
+                      <Box className="w-6 h-6 text-primary" />
+                    </div>
+                    <CardTitle className="text-lg">{t('Enhetskatalog', 'Device Catalog')}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-muted-foreground">
+                      {t('Enhetsmallar, kalibrering och simuleringsverktyg', 'Device templates, calibration and simulation tools')}
+                    </p>
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+
+            {/* Administration Section — mirrors the "Administration" nav group */}
+            <div>
+              <h2 className="text-lg font-medium mb-4 text-muted-foreground">{t('Administration', 'Administration')}</h2>
               <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-                <Card 
+                <Card
                   className="cursor-pointer transition-colors hover:bg-muted/50"
                   onClick={() => navigate('/portal/settings/margins')}
                 >
@@ -434,7 +456,24 @@ const Dashboard: React.FC = () => {
                   </CardContent>
                 </Card>
 
-                <Card 
+                <Card
+                  className="cursor-pointer transition-colors hover:bg-muted/50"
+                  onClick={() => navigate('/portal/customers/questionnaire')}
+                >
+                  <CardHeader className="flex flex-row items-center gap-4">
+                    <div className="p-2 rounded-lg bg-primary/10">
+                      <Home className="w-6 h-6 text-primary" />
+                    </div>
+                    <CardTitle className="text-lg">{t('Hemprofilfrågor', 'Home Profile Questions')}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-muted-foreground">
+                      {t('Hantera frågor som visas på kundens hemprofil', 'Manage questions shown on the customer home profile')}
+                    </p>
+                  </CardContent>
+                </Card>
+
+                <Card
                   className="cursor-pointer transition-colors hover:bg-muted/50"
                   onClick={() => navigate('/portal/erd')}
                 >
@@ -451,7 +490,7 @@ const Dashboard: React.FC = () => {
                   </CardContent>
                 </Card>
 
-                <Card 
+                <Card
                   className="cursor-pointer transition-colors hover:bg-muted/50"
                   onClick={async () => {
                     toast({ title: t('Laddar ner backup...', 'Downloading backup...') });
@@ -489,40 +528,6 @@ const Dashboard: React.FC = () => {
                     </p>
                   </CardContent>
                 </Card>
-
-                <Card 
-                  className="cursor-pointer transition-colors hover:bg-muted/50"
-                  onClick={() => navigate('/portal/customers/questionnaire')}
-                >
-                  <CardHeader className="flex flex-row items-center gap-4">
-                    <div className="p-2 rounded-lg bg-primary/10">
-                      <Home className="w-6 h-6 text-primary" />
-                    </div>
-                    <CardTitle className="text-lg">{t('Hemprofilfrågor', 'Home Profile Questions')}</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-muted-foreground">
-                      {t('Hantera frågor som visas på kundens hemprofil', 'Manage questions shown on the customer home profile')}
-                    </p>
-                  </CardContent>
-                </Card>
-
-                <Card 
-                  className="cursor-pointer transition-colors hover:bg-muted/50"
-                  onClick={() => navigate('/portal/device-catalog')}
-                >
-                  <CardHeader className="flex flex-row items-center gap-4">
-                    <div className="p-2 rounded-lg bg-primary/10">
-                      <Box className="w-6 h-6 text-primary" />
-                    </div>
-                    <CardTitle className="text-lg">{t('Enhetskatalog', 'Device Catalog')}</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-muted-foreground">
-                      {t('Enhetsmallar, kalibrering och simuleringsverktyg', 'Device templates, calibration and simulation tools')}
-                    </p>
-                  </CardContent>
-                </Card>
               </div>
             </div>
           </div>
@@ -540,7 +545,7 @@ const Dashboard: React.FC = () => {
             />
         )}
       </div>
-    </PortalLayout>
+    </>
   );
 };
 

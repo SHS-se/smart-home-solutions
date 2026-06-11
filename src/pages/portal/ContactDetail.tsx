@@ -2,7 +2,6 @@ import React, { useEffect, useState } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import { Loader2, ArrowLeft, UserPlus, Trash2, Send, Mail, MessageSquare, Globe } from "lucide-react";
 import { format } from "date-fns";
-import PortalLayout from "@/components/portal/PortalLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -309,25 +308,25 @@ const ContactDetail: React.FC = () => {
 
   if (!isStaff) {
     return (
-      <PortalLayout>
+      <>
         <Alert variant="destructive">
           <AlertDescription>
             {t("Du har inte behörighet att visa denna sida.", "You do not have permission to view this page.")}
           </AlertDescription>
         </Alert>
-      </PortalLayout>
+      </>
     );
   }
 
   if (!contact) {
     return (
-      <PortalLayout>
+      <>
         <Alert variant="destructive">
           <AlertDescription>
             {t("Kontakten hittades inte eller har redan konverterats.", "Contact not found or already converted.")}
           </AlertDescription>
         </Alert>
-      </PortalLayout>
+      </>
     );
   }
 
@@ -339,7 +338,7 @@ const ContactDetail: React.FC = () => {
   ];
 
   return (
-    <PortalLayout>
+    <>
       <div className="space-y-6">
         <Link
           to="/portal/contacts"
@@ -464,7 +463,7 @@ const ContactDetail: React.FC = () => {
           </CardContent>
         </Card>
       </div>
-    </PortalLayout>
+    </>
   );
 };
 

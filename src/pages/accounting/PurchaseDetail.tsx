@@ -5,7 +5,6 @@ import { supabase } from '@/integrations/supabase/client';
 import type { Tables } from '@/integrations/supabase/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
-import AccountingLayout from '@/components/accounting/AccountingLayout';
 import DocumentPreview from '@/components/accounting/DocumentPreview';
 import PurchaseUploadForm from '@/components/accounting/PurchaseUploadForm';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -353,7 +352,7 @@ const PurchaseDetail: React.FC = () => {
   });
 
   if (isLoading || !purchase) {
-    return <AccountingLayout><div className="py-12 text-center text-muted-foreground">{t('Laddar...', 'Loading...')}</div></AccountingLayout>;
+    return <><div className="py-12 text-center text-muted-foreground">{t('Laddar...', 'Loading...')}</div></>;
   }
 
   const blockers = getPurchaseBlockers({
@@ -498,7 +497,7 @@ const PurchaseDetail: React.FC = () => {
   const verificationLabel = verification?.verification_number || purchase.verification_id || null;
 
   return (
-    <AccountingLayout>
+    <>
       <div className="space-y-6">
         <Link to="/accounting/purchases" className="inline-flex w-fit items-center gap-1 text-primary text-sm hover:underline">
           <ArrowLeft className="w-4 h-4" /> {t('Tillbaka till lista', 'Back to list')}
@@ -852,7 +851,7 @@ const PurchaseDetail: React.FC = () => {
           </div>
         </div>
       </div>
-    </AccountingLayout>
+    </>
   );
 };
 

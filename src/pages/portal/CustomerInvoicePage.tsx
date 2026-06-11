@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Loader2 } from 'lucide-react';
-import PortalLayout from '@/components/portal/PortalLayout';
 import { Card, CardContent } from '@/components/ui/card';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -44,7 +43,7 @@ const CustomerInvoicePage: React.FC = () => {
   });
 
   return (
-    <PortalLayout>
+    <>
       {authLoading || isLoading ? (
         <div className="flex items-center justify-center min-h-[400px]">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -75,7 +74,7 @@ const CustomerInvoicePage: React.FC = () => {
           />
         </>
       )}
-    </PortalLayout>
+    </>
   );
 };
 

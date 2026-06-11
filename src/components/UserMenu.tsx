@@ -1,7 +1,7 @@
-import { Link, useNavigate } from "react-router-dom";
-import { ChevronDown, Loader2 } from "lucide-react";
-import { useAuth } from "@/contexts/AuthContext";
-import { useLanguage } from "@/contexts/LanguageContext";
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { ChevronDown, CircleUser, Globe, LayoutDashboard, Loader2, LogOut } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+import { useLanguage } from '@/contexts/LanguageContext';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -9,30 +9,34 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Button } from "@/components/ui/button";
+} from '@/components/ui/dropdown-menu';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 
 interface UserMenuProps {
-  size?: "sm" | "default";
+  size?: 'sm' | 'default';
 }
 
-const UserMenu = ({ size = "default" }: UserMenuProps) => {
-  const { user, isStaff, isCustomer, customerData, signOut, loading } = useAuth();
+/**
+ * Account-level actions only (identity, account page, site/portal switch,
+ * logout). App navigation lives in the AppShell sidebar — not here.
+ */
+const UserMenu = ({ size = 'default' }: UserMenuProps) => {
+  const { user, isStaff, customerData, signOut, loading } = useAuth();
   const { t } = useLanguage();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const handleSignOut = async () => {
     await signOut();
     navigate('/');
   };
 
-  // Get display name and email
-  const displayName = isStaff 
-    ? user?.email?.split('@')[0] || t("Personal", "Staff")
-    : customerData?.name || user?.email?.split('@')[0] || t("Kund", "Customer");
-  const displayEmail = user?.email || "";
+  const displayName = isStaff
+    ? user?.email?.split('@')[0] || t('Personal', 'Staff')
+    : customerData?.name || user?.email?.split('@')[0] || t('Kund', 'Customer');
+  const displayEmail = user?.email || '';
 
-  // Get initials for avatar
   const getInitials = (name: string) => {
     const parts = name.split(' ');
     if (parts.length >= 2) {
@@ -41,45 +45,16 @@ const UserMenu = ({ size = "default" }: UserMenuProps) => {
     return name.slice(0, 2).toUpperCase();
   };
 
-  // Staff CRM navigation items
-  const staffCRMItems = [
-    { href: "/portal", label: t("Översikt", "Overview") },
-    { href: "/portal/customers", label: t("Kunder", "Customers") },
-    { href: "/portal/contacts", label: t("Kontakter", "Contacts") },
-    { href: "/portal/tickets", label: t("Alla ärenden", "All Tickets") },
-  ];
-
-  // Staff Operations navigation items
-  const staffOperationsItems = [
-    { href: "/portal/skus", label: t("SKU-katalog", "SKU Catalog") },
-    { href: "/portal/templates", label: t("Mallar", "Templates") },
-    { href: "/portal/boms", label: t("Materiallistor", "BOMs") },
-    { href: "/portal/quotes", label: t("Offerter", "Quotes") },
-    { href: "/portal/invoices", label: t("Fakturor", "Invoices") },
-    { href: "/portal/settings/margins", label: t("Marginalregler", "Margin Rules") },
-    { href: "/portal/settings/questionnaire", label: t("Hemprofilfrågor", "Home Profile Questions") },
-    { href: "/portal/device-catalog", label: t("Enhetskatalog", "Device Catalog") },
-    { href: "/portal/erd", label: t("Databas ERD", "Database ERD") },
-  ];
-
-  const customerNavItems = [
-    { href: "/portal", label: t("Översikt", "Overview") },
-    { href: "/portal/account", label: t("Konto", "Account") },
-    { href: "/portal/home-profile", label: t("Hemprofil", "Home Profile") },
-    { href: "/portal/energy-modeling", label: t("Energimodellering", "Energy Modeling") },
-    { href: "/portal/offers", label: t("Offerter", "Offers") },
-    { href: "/portal/billing", label: t("Fakturor", "Billing") },
-    { href: "/portal/tickets", label: t("Mina ärenden", "My Tickets") },
-  ];
+  const inApp = location.pathname.startsWith('/portal') || location.pathname.startsWith('/accounting');
 
   if (user && loading) {
     return (
       <Button variant="ghost" size={size} className="flex items-center gap-2 px-2" disabled>
-        <div className="flex items-center justify-center w-8 h-8 rounded-full bg-muted text-muted-foreground">
+        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
         </div>
-        <div className="hidden sm:flex flex-col items-start">
-          <span className="text-sm font-medium">{t("Laddar...", "Loading...")}</span>
+        <div className="hidden flex-col items-start sm:flex">
+          <span className="text-sm font-medium">{t('Laddar...', 'Loading...')}</span>
         </div>
       </Button>
     );
@@ -88,64 +63,60 @@ const UserMenu = ({ size = "default" }: UserMenuProps) => {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button 
-          variant="ghost" 
-          size={size}
-          className="flex items-center gap-2 px-2"
-        >
-          <div className="flex items-center justify-center w-8 h-8 rounded-full bg-primary text-primary-foreground text-sm font-medium">
+        <Button variant="ghost" size={size} className="flex items-center gap-2 px-2">
+          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-medium text-primary-foreground">
             {getInitials(displayName)}
           </div>
-          <div className="hidden sm:flex flex-col items-start">
+          <div className="hidden flex-col items-start sm:flex">
             <span className="text-sm font-medium">{displayName}</span>
           </div>
           <ChevronDown className="h-4 w-4 text-muted-foreground" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56 bg-card border border-border shadow-lg z-50">
+      <DropdownMenuContent align="end" className="w-60 border border-border bg-card shadow-lg z-50">
         <DropdownMenuLabel className="font-normal">
-          <div className="flex flex-col space-y-1">
-            <p className="text-sm font-medium leading-none">{displayName}</p>
-            <p className="text-xs leading-none text-muted-foreground">{displayEmail}</p>
+          <div className="flex flex-col space-y-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <p className="truncate text-sm font-medium leading-none">{displayName}</p>
+              <Badge variant={isStaff ? 'default' : 'secondary'} className="shrink-0 text-[10px]">
+                {isStaff ? t('Personal', 'Staff') : t('Kund', 'Customer')}
+              </Badge>
+            </div>
+            <p className="truncate text-xs leading-none text-muted-foreground">{displayEmail}</p>
           </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        {isStaff ? (
-          <>
-            {staffCRMItems.map((item) => (
-              <DropdownMenuItem key={item.href} asChild>
-                <Link to={item.href} className="cursor-pointer">
-                  {item.label}
-                </Link>
-              </DropdownMenuItem>
-            ))}
-            <DropdownMenuSeparator />
-            <DropdownMenuLabel className="text-xs text-muted-foreground font-normal px-2 py-1">
-              {t("Offerter & Material", "Quotes & Materials")}
-            </DropdownMenuLabel>
-            {staffOperationsItems.map((item) => (
-              <DropdownMenuItem key={item.href} asChild>
-                <Link to={item.href} className="cursor-pointer">
-                  {item.label}
-                </Link>
-              </DropdownMenuItem>
-            ))}
-          </>
-        ) : (
-          customerNavItems.map((item) => (
-            <DropdownMenuItem key={item.href} asChild>
-              <Link to={item.href} className="cursor-pointer">
-                {item.label}
-              </Link>
-            </DropdownMenuItem>
-          ))
+        {!inApp && (
+          <DropdownMenuItem asChild>
+            <Link to="/portal" className="cursor-pointer">
+              <LayoutDashboard className="mr-2 h-4 w-4" />
+              {t('Till portalen', 'Go to portal')}
+            </Link>
+          </DropdownMenuItem>
+        )}
+        {!isStaff && (
+          <DropdownMenuItem asChild>
+            <Link to="/portal/account" className="cursor-pointer">
+              <CircleUser className="mr-2 h-4 w-4" />
+              {t('Konto', 'Account')}
+            </Link>
+          </DropdownMenuItem>
+        )}
+        {inApp && (
+          <DropdownMenuItem asChild>
+            <Link to="/" className="cursor-pointer">
+              <Globe className="mr-2 h-4 w-4" />
+              {t('Till webbplatsen', 'Go to website')}
+            </Link>
+          </DropdownMenuItem>
         )}
         <DropdownMenuSeparator />
         <DropdownMenuItem
           onClick={handleSignOut}
-          className="text-destructive focus:text-destructive cursor-pointer"
+          className="cursor-pointer text-destructive focus:text-destructive"
         >
-          {t("Logga ut", "Logout")}
+          <LogOut className="mr-2 h-4 w-4" />
+          {t('Logga ut', 'Logout')}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

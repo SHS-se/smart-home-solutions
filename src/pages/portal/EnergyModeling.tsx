@@ -1,8 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Zap } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import PortalLayout from '@/components/portal/PortalLayout';
-import CustomerViewLayout from '@/components/portal/CustomerViewLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -42,11 +40,10 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
     fetchPrimary();
   }, [resolvedCustomerId, showStaffGlobal]);
 
-  const Layout = isStaffView ? CustomerViewLayout : PortalLayout;
 
   if (showStaffGlobal) {
     return (
-      <Layout>
+      <>
         <div className="space-y-6">
           <div className="flex items-center gap-3">
             <div className="p-2 rounded-lg bg-primary/10">
@@ -60,12 +57,12 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
             <p>{t('Välj en kund för att se energimodellering. Enhetskatalogen finns nu under "Enhetskatalog".', 'Select a customer to view energy modeling. The device catalog is now under "Device Catalog".')}</p>
           </div>
         </div>
-      </Layout>
+      </>
     );
   }
 
   return (
-    <Layout>
+    <>
       <div className="space-y-6">
         <div className="flex items-center gap-3">
           <div className="p-2 rounded-lg bg-primary/10">
@@ -99,7 +96,7 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
           <TabsContent value="tariff">{resolvedCustomerId ? <TariffPricingTab customerId={resolvedCustomerId} /> : null}</TabsContent>
         </Tabs>
       </div>
-    </Layout>
+    </>
   );
 };
 

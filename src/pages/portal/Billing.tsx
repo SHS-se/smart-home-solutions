@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { Loader2, CreditCard, CheckCircle, AlertCircle, Eye, ArrowLeft, FileText } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Loader2, CreditCard, CheckCircle, AlertCircle, Eye, FileText } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -15,8 +15,6 @@ import {
 } from '@/components/ui/table';
 import { SortableTableHead } from '@/components/ui/sortable-table-head';
 import TableFilterBar from '@/components/portal/TableFilterBar';
-import PortalLayout from '@/components/portal/PortalLayout';
-import CustomerViewLayout from '@/components/portal/CustomerViewLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -221,22 +219,21 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
     }
   }, [resolvedCustomerId, loading, isStaffView]);
 
-  const Layout = isStaffView ? CustomerViewLayout : PortalLayout;
 
   if (loading) {
     return (
-      <Layout>
+      <>
         <div className="flex items-center justify-center min-h-[400px]">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-      </Layout>
+      </>
     );
   }
 
   // Staff viewing their own billing page (not customer view) - show info message
   if (!isStaffView && isStaff) {
     return (
-      <PortalLayout>
+      <>
         <Alert>
           <AlertDescription>
             {t(
@@ -245,19 +242,19 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
             )}
           </AlertDescription>
         </Alert>
-      </PortalLayout>
+      </>
     );
   }
 
   if (!resolvedCustomerId) {
     return (
-      <Layout>
+      <>
         <Alert>
           <AlertDescription>
             {t('Ingen kunddata hittades. Kontakta support.', 'No customer data found. Please contact support.')}
           </AlertDescription>
         </Alert>
-      </Layout>
+      </>
     );
   }
 
@@ -307,24 +304,11 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
   };
 
   return (
-    <Layout>
+    <>
       <div className="space-y-6">
-        {isStaffView && (
-          <Link
-            to="/portal/customers"
-            className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            {t('Tillbaka till kunder', 'Back to customers')}
-          </Link>
-        )}
-
         <h1 className="text-3xl font-medium">
           {isStaffView ? t('Fakturering', 'Billing') : t('Fakturering', 'Billing & invoices')}
         </h1>
-        {isStaffView && customerName && (
-          <p className="text-muted-foreground">{customerName}</p>
-        )}
 
         {/* Subscription Card */}
         <Card>
@@ -547,7 +531,7 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
           invoiceNumber={selectedInvoice?.invoice_number || selectedInvoice?.id.slice(0, 8) || ''}
         />
       </div>
-    </Layout>
+    </>
   );
 };
 

@@ -3,7 +3,6 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useLanguage } from '@/contexts/LanguageContext';
-import AccountingLayout from '@/components/accounting/AccountingLayout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -128,7 +127,7 @@ const AccountingJournal: React.FC = () => {
   };
 
   return (
-    <AccountingLayout>
+    <>
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
@@ -305,7 +304,7 @@ const AccountingJournal: React.FC = () => {
           </CardContent>
         </Card>
       </div>
-    </AccountingLayout>
+    </>
   );
 };
 

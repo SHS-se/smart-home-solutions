@@ -5,7 +5,6 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useTableSort, sortItems } from '@/hooks/use-table-sort';
-import PortalLayout from '@/components/portal/PortalLayout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -197,7 +196,7 @@ const QuotesList: React.FC = () => {
   }
 
   return (
-    <PortalLayout>
+    <>
       <div className="space-y-6">
         {/* Header */}
         <div>
@@ -344,7 +343,7 @@ const QuotesList: React.FC = () => {
 
 
 
-    </PortalLayout>
+    </>
   );
 };
 

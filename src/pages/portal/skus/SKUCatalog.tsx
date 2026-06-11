@@ -6,7 +6,6 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { naturalSort } from '@/lib/utils';
 import { useTableSort } from '@/hooks/use-table-sort';
-import PortalLayout from '@/components/portal/PortalLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -212,7 +211,7 @@ const SKUCatalog: React.FC = () => {
   }
 
   return (
-    <PortalLayout>
+    <>
       <div className="space-y-6">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -382,7 +381,7 @@ const SKUCatalog: React.FC = () => {
           />
         </DialogContent>
       </Dialog>
-    </PortalLayout>
+    </>
   );
 };
 

@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useLanguage } from '@/contexts/LanguageContext';
-import AccountingLayout from '@/components/accounting/AccountingLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Calendar, Receipt, ShoppingCart, AlertCircle, ArrowRight, BookOpen, Info } from 'lucide-react';
@@ -105,7 +104,7 @@ const AccountingOverview: React.FC = () => {
   }
 
   return (
-    <AccountingLayout>
+    <>
       <div className="space-y-8">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
@@ -238,7 +237,7 @@ const AccountingOverview: React.FC = () => {
           </Link>
         </div>
       </div>
-    </AccountingLayout>
+    </>
   );
 };
 

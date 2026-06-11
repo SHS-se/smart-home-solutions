@@ -7,7 +7,6 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
-import PortalLayout from '@/components/portal/PortalLayout';
 import SubscriptionRequiredAlert from '@/components/portal/SubscriptionRequiredAlert';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -154,23 +153,23 @@ const NewTicket: React.FC = () => {
 
   if (loading || subscriptionLoading) {
     return (
-      <PortalLayout>
+      <>
         <div className="flex items-center justify-center min-h-[400px]">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-      </PortalLayout>
+      </>
     );
   }
 
   // Redirect if no subscription
   if (!isSubscribed) {
     return (
-      <PortalLayout>
+      <>
         <div className="space-y-6 max-w-2xl">
           <h1 className="text-3xl font-medium">{t('Skapa supportärende', 'Create support ticket')}</h1>
           <SubscriptionRequiredAlert />
         </div>
-      </PortalLayout>
+      </>
     );
   }
 
@@ -180,7 +179,7 @@ const NewTicket: React.FC = () => {
   }
 
   return (
-    <PortalLayout>
+    <>
       <div className="space-y-6 max-w-2xl">
         <h1 className="text-3xl font-medium">{t('Skapa supportärende', 'Create support ticket')}</h1>
 
@@ -283,7 +282,7 @@ const NewTicket: React.FC = () => {
           </CardContent>
         </Card>
       </div>
-    </PortalLayout>
+    </>
   );
 };
 

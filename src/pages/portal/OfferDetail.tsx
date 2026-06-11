@@ -17,7 +17,6 @@ import {
   Dialog, DialogContent, DialogDescription,
   DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
-import PortalLayout from '@/components/portal/PortalLayout';
 import OfferLineBreakdown from '@/components/portal/offers/OfferLineBreakdown';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -211,26 +210,26 @@ const OfferDetail: React.FC = () => {
   // ─── Render ───
   if (authLoading || quoteLoading) {
     return (
-      <PortalLayout>
+      <>
         <div className="flex items-center justify-center min-h-[400px]">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-      </PortalLayout>
+      </>
     );
   }
 
   if (!quote) {
     return (
-      <PortalLayout>
+      <>
         <Alert variant="destructive">
           <AlertDescription>{t('Offerten kunde inte hittas.', 'Quote not found.')}</AlertDescription>
         </Alert>
-      </PortalLayout>
+      </>
     );
   }
 
   return (
-    <PortalLayout>
+    <>
       <div className="max-w-3xl mx-auto space-y-6">
         {/* Back link */}
         <Link
@@ -457,7 +456,7 @@ const OfferDetail: React.FC = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </PortalLayout>
+    </>
   );
 };
 

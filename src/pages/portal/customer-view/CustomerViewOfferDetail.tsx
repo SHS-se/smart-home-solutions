@@ -12,7 +12,6 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Separator } from '@/components/ui/separator';
-import CustomerViewLayout from '@/components/portal/CustomerViewLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useViewedCustomer } from '@/contexts/ViewedCustomerContext';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -392,30 +391,30 @@ const CustomerViewOfferDetail: React.FC = () => {
   // ─── Render ───
   if (authLoading || customerLoading || quoteLoading) {
     return (
-      <CustomerViewLayout>
+      <>
         <div className="flex items-center justify-center min-h-[400px]">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-      </CustomerViewLayout>
+      </>
     );
   }
 
   if (customerError || !customerData || !quote) {
     return (
-      <CustomerViewLayout>
+      <>
         <Alert variant="destructive">
           <AlertDescription>
             {customerError || t('Offerten kunde inte hittas.', 'Quote not found.')}
           </AlertDescription>
         </Alert>
-      </CustomerViewLayout>
+      </>
     );
   }
 
   
 
   return (
-    <CustomerViewLayout>
+    <>
       <div className="space-y-6">
         {/* Back link */}
         <Link
@@ -597,7 +596,7 @@ const CustomerViewOfferDetail: React.FC = () => {
           </Card>
         </div>
       </div>
-    </CustomerViewLayout>
+    </>
   );
 };
 

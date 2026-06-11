@@ -1,7 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Loader2, Search } from 'lucide-react';
-import PortalLayout from '@/components/portal/PortalLayout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import {
@@ -116,18 +115,18 @@ const Contacts: React.FC = () => {
 
   if (!isStaff) {
     return (
-      <PortalLayout>
+      <>
         <Alert variant="destructive">
           <AlertDescription>
             {t('Du har inte behörighet att visa denna sida.', 'You do not have permission to view this page.')}
           </AlertDescription>
         </Alert>
-      </PortalLayout>
+      </>
     );
   }
 
   return (
-    <PortalLayout>
+    <>
       <div className="space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <h1 className="text-3xl font-medium">{t('Kontakter', 'Contacts')}</h1>
@@ -207,7 +206,7 @@ const Contacts: React.FC = () => {
           </CardContent>
         </Card>
       </div>
-    </PortalLayout>
+    </>
   );
 };
 

@@ -3,12 +3,14 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, useNavigate, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
 import { LanguageProvider } from "@/contexts/LanguageContext";
 import { AuthProvider } from "@/contexts/AuthContext";
-import { ViewedCustomerProvider } from "@/contexts/ViewedCustomerContext";
 import { supabase } from "@/integrations/supabase/client";
 import ScrollManager from "./components/ScrollManager";
+import AppShell from "@/components/layout/AppShell";
+import CustomerViewShell from "@/components/layout/CustomerViewShell";
+import { RequireAuth, RequireStaff } from "@/components/layout/RouteGuards";
 
 const Index = lazy(() => import("./pages/Index"));
 const Services = lazy(() => import("./pages/Services"));
@@ -86,10 +88,6 @@ const RouteFallback = () => (
   </div>
 );
 
-const CustomerViewWrapper = ({ children }: { children: React.ReactNode }) => (
-  <ViewedCustomerProvider>{children}</ViewedCustomerProvider>
-);
-
 const AuthCallbackHandler = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -133,6 +131,7 @@ const App = () => (
               <AuthCallbackHandler />
               <Suspense fallback={<RouteFallback />}>
                 <Routes>
+                  {/* Public marketing pages (public top nav via page-level Layout) */}
                   <Route path="/" element={<Index />} />
                   <Route path="/services" element={<Services />} />
                   <Route path="/knowledge" element={<Knowledge />} />
@@ -140,69 +139,88 @@ const App = () => (
                   <Route path="/about" element={<About />} />
                   <Route path="/contact" element={<Contact />} />
 
+                  {/* Auth flows (standalone, no shell) */}
                   <Route path="/login" element={<Login />} />
                   <Route path="/reset-password" element={<ResetPassword />} />
                   <Route path="/verify" element={<Verify />} />
                   <Route path="/onboarding/set-password" element={<SetPassword />} />
-                  <Route path="/portal" element={<Dashboard />} />
-                  <Route path="/portal/account" element={<Account />} />
-                  <Route path="/portal/offers" element={<Offers />} />
-                  <Route path="/portal/offers/:quoteId" element={<OfferDetail />} />
-                  <Route path="/portal/billing" element={<Billing />} />
-                  <Route path="/portal/tickets" element={<TicketsList />} />
-                  <Route path="/portal/home-profile" element={<HomeProfile />} />
-                  <Route path="/portal/energy-modeling" element={<EnergyModeling />} />
-                  <Route path="/portal/device-catalog" element={<DeviceCatalog />} />
-                  <Route path="/portal/tickets/new" element={<NewTicket />} />
-                  <Route path="/portal/tickets/:ticketNumber" element={<TicketDetail />} />
-                  <Route path="/portal/customers" element={<Customers />} />
-                  <Route path="/portal/contacts" element={<Contacts />} />
-                  <Route path="/portal/contacts/:id" element={<ContactDetail />} />
 
-                  <Route path="/portal/skus" element={<SKUCatalog />} />
-                  <Route path="/portal/skus/import" element={<SKUImport />} />
-                  <Route path="/portal/skus/categories" element={<CategoryManager />} />
-                  <Route path="/portal/customers/questionnaire" element={<QuestionnaireManager />} />
-                  <Route path="/portal/templates" element={<TemplatesList />} />
-                  <Route path="/portal/templates/:id" element={<TemplateDetail />} />
-                  <Route path="/portal/boms" element={<BOMsList />} />
-                  <Route path="/portal/boms/:id" element={<BOMBuilder />} />
-                  <Route path="/portal/quotes" element={<QuotesList />} />
-                  <Route path="/portal/quotes/:id" element={<QuotePreparation />} />
+                  {/* Public share links (token access, no shell) */}
                   <Route path="/portal/quote/:id" element={<PublicQuotePage />} />
                   <Route path="/portal/invoice/:id" element={<PublicInvoicePage />} />
-                  <Route path="/portal/invoices" element={<InvoicesList />} />
-                  <Route path="/portal/billing/invoices/:id" element={<CustomerInvoicePage />} />
-                  <Route path="/portal/invoices/new" element={<InvoiceDraftEditor />} />
-                  <Route path="/portal/invoices/:id" element={<InvoiceDetail />} />
-                  <Route path="/portal/settings/margins" element={<MarginSettings />} />
-                  <Route path="/portal/erd" element={<ERDiagram />} />
 
-                  <Route path="/portal/customers/:customerId/overview" element={<CustomerViewWrapper><CustomerViewDashboard /></CustomerViewWrapper>} />
-                  <Route path="/portal/customers/:customerId/account" element={<CustomerViewWrapper><CustomerViewAccount /></CustomerViewWrapper>} />
-                  <Route path="/portal/customers/:customerId/billing" element={<CustomerViewWrapper><CustomerViewBilling /></CustomerViewWrapper>} />
-                  <Route path="/portal/customers/:customerId/tickets" element={<CustomerViewWrapper><CustomerViewTickets /></CustomerViewWrapper>} />
-                  <Route path="/portal/customers/:customerId/tickets/:ticketNumber" element={<CustomerViewWrapper><CustomerViewTicketDetail /></CustomerViewWrapper>} />
-                  <Route path="/portal/customers/:customerId/offers" element={<CustomerViewWrapper><CustomerViewOffers /></CustomerViewWrapper>} />
-                  <Route path="/portal/customers/:customerId/offers/:quoteId" element={<CustomerViewWrapper><CustomerViewOfferDetail /></CustomerViewWrapper>} />
-                  <Route path="/portal/customers/:customerId/home-profile" element={<CustomerViewWrapper><CustomerViewHomeProfile /></CustomerViewWrapper>} />
-                  <Route path="/portal/customers/:customerId/energy-modeling" element={<CustomerViewWrapper><CustomerViewEnergyModeling /></CustomerViewWrapper>} />
+                  {/* Authenticated app — one shell, role-based navigation */}
+                  <Route element={<RequireAuth />}>
+                    <Route element={<AppShell />}>
+                      {/* Shared portal routes (customer pages; staff see info alerts where relevant) */}
+                      <Route path="/portal" element={<Dashboard />} />
+                      <Route path="/portal/account" element={<Account />} />
+                      <Route path="/portal/offers" element={<Offers />} />
+                      <Route path="/portal/offers/:quoteId" element={<OfferDetail />} />
+                      <Route path="/portal/billing" element={<Billing />} />
+                      <Route path="/portal/billing/invoices/:id" element={<CustomerInvoicePage />} />
+                      <Route path="/portal/tickets" element={<TicketsList />} />
+                      <Route path="/portal/tickets/new" element={<NewTicket />} />
+                      <Route path="/portal/tickets/:ticketNumber" element={<TicketDetail />} />
+                      <Route path="/portal/home-profile" element={<HomeProfile />} />
+                      <Route path="/portal/energy-modeling" element={<EnergyModeling />} />
 
-                  {/* Accounting routes */}
-                  <Route path="/accounting" element={<AccountingOverview />} />
-                  <Route path="/accounting/overview" element={<AccountingOverview />} />
-                  <Route path="/accounting/periods" element={<AccountingPeriods />} />
-                  <Route path="/accounting/purchases" element={<PurchasesList />} />
-                  <Route path="/accounting/purchases/upload" element={<PurchaseUpload />} />
-                  <Route path="/accounting/purchases/:purchaseId" element={<PurchaseDetail />} />
-                  <Route path="/accounting/journal" element={<AccountingJournal />} />
-                  <Route path="/accounting/vat-periods" element={<VatPeriodsList />} />
-                  <Route path="/accounting/vat-periods/:periodId" element={<VatDeclarationFlow />} />
-                  <Route path="/accounting/suppliers" element={<SuppliersList />} />
-                  <Route path="/accounting/sales" element={<SalesList />} />
-                  <Route path="/accounting/receivables" element={<ReceivablesList />} />
-                  <Route path="/accounting/payments" element={<PaymentsList />} />
-                  <Route path="/accounting/integrity" element={<IntegrityChecks />} />
+                      {/* Global staff routes */}
+                      <Route element={<RequireStaff />}>
+                        <Route path="/portal/customers" element={<Customers />} />
+                        <Route path="/portal/customers/questionnaire" element={<QuestionnaireManager />} />
+                        <Route path="/portal/contacts" element={<Contacts />} />
+                        <Route path="/portal/contacts/:id" element={<ContactDetail />} />
+                        <Route path="/portal/device-catalog" element={<DeviceCatalog />} />
+                        <Route path="/portal/skus" element={<SKUCatalog />} />
+                        <Route path="/portal/skus/import" element={<SKUImport />} />
+                        <Route path="/portal/skus/categories" element={<CategoryManager />} />
+                        <Route path="/portal/templates" element={<TemplatesList />} />
+                        <Route path="/portal/templates/:id" element={<TemplateDetail />} />
+                        <Route path="/portal/boms" element={<BOMsList />} />
+                        <Route path="/portal/boms/:id" element={<BOMBuilder />} />
+                        <Route path="/portal/quotes" element={<QuotesList />} />
+                        <Route path="/portal/quotes/:id" element={<QuotePreparation />} />
+                        <Route path="/portal/invoices" element={<InvoicesList />} />
+                        <Route path="/portal/invoices/new" element={<InvoiceDraftEditor />} />
+                        <Route path="/portal/invoices/:id" element={<InvoiceDetail />} />
+                        <Route path="/portal/settings/margins" element={<MarginSettings />} />
+                        <Route path="/portal/erd" element={<ERDiagram />} />
+
+                        {/* Accounting (part of the staff app) */}
+                        <Route path="/accounting" element={<AccountingOverview />} />
+                        <Route path="/accounting/overview" element={<AccountingOverview />} />
+                        <Route path="/accounting/periods" element={<AccountingPeriods />} />
+                        <Route path="/accounting/purchases" element={<PurchasesList />} />
+                        <Route path="/accounting/purchases/upload" element={<PurchaseUpload />} />
+                        <Route path="/accounting/purchases/:purchaseId" element={<PurchaseDetail />} />
+                        <Route path="/accounting/journal" element={<AccountingJournal />} />
+                        <Route path="/accounting/vat-periods" element={<VatPeriodsList />} />
+                        <Route path="/accounting/vat-periods/:periodId" element={<VatDeclarationFlow />} />
+                        <Route path="/accounting/suppliers" element={<SuppliersList />} />
+                        <Route path="/accounting/sales" element={<SalesList />} />
+                        <Route path="/accounting/receivables" element={<ReceivablesList />} />
+                        <Route path="/accounting/payments" element={<PaymentsList />} />
+                        <Route path="/accounting/integrity" element={<IntegrityChecks />} />
+                      </Route>
+                    </Route>
+
+                    {/* Staff customer-view: customer-style nav + persistent context banner */}
+                    <Route element={<RequireStaff />}>
+                      <Route path="/portal/customers/:customerId" element={<CustomerViewShell />}>
+                        <Route index element={<Navigate to="overview" replace />} />
+                        <Route path="overview" element={<CustomerViewDashboard />} />
+                        <Route path="account" element={<CustomerViewAccount />} />
+                        <Route path="billing" element={<CustomerViewBilling />} />
+                        <Route path="tickets" element={<CustomerViewTickets />} />
+                        <Route path="tickets/:ticketNumber" element={<CustomerViewTicketDetail />} />
+                        <Route path="offers" element={<CustomerViewOffers />} />
+                        <Route path="offers/:quoteId" element={<CustomerViewOfferDetail />} />
+                        <Route path="home-profile" element={<CustomerViewHomeProfile />} />
+                        <Route path="energy-modeling" element={<CustomerViewEnergyModeling />} />
+                      </Route>
+                    </Route>
+                  </Route>
 
                   <Route path="*" element={<NotFound />} />
                 </Routes>

@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useLanguage } from '@/contexts/LanguageContext';
-import AccountingLayout from '@/components/accounting/AccountingLayout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
@@ -22,7 +21,7 @@ const SuppliersList: React.FC = () => {
   };
 
   return (
-    <AccountingLayout>
+    <>
       <div className="space-y-6">
         <div>
           <h1 className="text-2xl font-bold text-foreground">{t('Leverantörer', 'Suppliers')}</h1>
@@ -66,7 +65,7 @@ const SuppliersList: React.FC = () => {
           </CardContent>
         </Card>
       </div>
-    </AccountingLayout>
+    </>
   );
 };
 

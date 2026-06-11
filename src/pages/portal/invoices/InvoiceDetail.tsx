@@ -4,7 +4,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
-import PortalLayout from '@/components/portal/PortalLayout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -271,17 +270,17 @@ const InvoiceDetail: React.FC = () => {
 
   if (isLoading) {
     return (
-      <PortalLayout>
+      <>
         <div className="flex items-center justify-center min-h-[400px]">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
         </div>
-      </PortalLayout>
+      </>
     );
   }
 
   if (!invoice) {
     return (
-      <PortalLayout>
+      <>
         <div className="text-center py-12">
           <AlertCircle className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
           <h2 className="text-xl font-semibold">{t('Faktura hittades inte', 'Invoice not found')}</h2>
@@ -289,7 +288,7 @@ const InvoiceDetail: React.FC = () => {
             {t('Tillbaka till fakturor', 'Back to invoices')}
           </Button>
         </div>
-      </PortalLayout>
+      </>
     );
   }
 
@@ -302,7 +301,7 @@ const InvoiceDetail: React.FC = () => {
   const canVoid = !isPaid && !isVoid;
 
   return (
-    <PortalLayout>
+    <>
       <div className="space-y-6">
         {/* Header */}
         <div>
@@ -680,7 +679,7 @@ const InvoiceDetail: React.FC = () => {
           }}
         />
       )}
-    </PortalLayout>
+    </>
   );
 };
 

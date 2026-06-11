@@ -4,7 +4,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
-import PortalLayout from '@/components/portal/PortalLayout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -633,7 +632,7 @@ const QuotePreparation: React.FC = () => {
   };
 
   return (
-    <PortalLayout>
+    <>
       <div className="space-y-6">
         {/* Header */}
         <div className="flex items-start gap-4">
@@ -1315,7 +1314,7 @@ const QuotePreparation: React.FC = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </PortalLayout>
+    </>
   );
 };
 

@@ -4,7 +4,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
-import PortalLayout from '@/components/portal/PortalLayout';
 import { getDefaultInvoiceDueDate } from '@/lib/swedish-banking-days';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -695,11 +694,11 @@ const InvoiceDraftEditor: React.FC = () => {
 
   if (invoiceLoading) {
     return (
-      <PortalLayout>
+      <>
         <div className="flex items-center justify-center min-h-[400px]">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
         </div>
-      </PortalLayout>
+      </>
     );
   }
 
@@ -712,7 +711,7 @@ const InvoiceDraftEditor: React.FC = () => {
     .map(i => i.sku_id!);
 
   return (
-    <PortalLayout>
+    <>
       <div className="space-y-6">
         {/* Header */}
         <div>
@@ -1171,7 +1170,7 @@ const InvoiceDraftEditor: React.FC = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </PortalLayout>
+    </>
   );
 };
 

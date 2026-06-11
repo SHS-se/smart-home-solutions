@@ -16,7 +16,6 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { SortableTableHead } from '@/components/ui/sortable-table-head';
-import PortalLayout from '@/components/portal/PortalLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -90,28 +89,28 @@ const Customers: React.FC = () => {
 
   if (loading) {
     return (
-      <PortalLayout>
+      <>
         <div className="flex items-center justify-center min-h-[400px]">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-      </PortalLayout>
+      </>
     );
   }
 
   if (!isStaff) {
     return (
-      <PortalLayout>
+      <>
         <Alert>
           <AlertDescription>
             {t('Du har inte behörighet att visa denna sida.', "You don't have permission to view this page.")}
           </AlertDescription>
         </Alert>
-      </PortalLayout>
+      </>
     );
   }
 
   return (
-    <PortalLayout>
+    <>
       <div className="space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <h1 className="text-3xl font-medium">{t('Kunder', 'Customers')}</h1>
@@ -189,7 +188,7 @@ const Customers: React.FC = () => {
           </CardContent>
         </Card>
       </div>
-    </PortalLayout>
+    </>
   );
 };
 

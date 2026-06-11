@@ -3,7 +3,6 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useAuth } from '@/contexts/AuthContext';
-import AccountingLayout from '@/components/accounting/AccountingLayout';
 import DocumentPreview from '@/components/accounting/DocumentPreview';
 import type { ExchangeRateLookupResult } from '@/lib/accounting-fx';
 import { extractDocumentContent } from '@/lib/document-extraction';
@@ -280,7 +279,7 @@ const PurchaseUpload: React.FC = () => {
   const showingResults = isUploading || uploadResults.length > 0;
 
   return (
-    <AccountingLayout>
+    <>
       <div className="space-y-6 h-full">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate('/accounting/purchases')}>
@@ -477,7 +476,7 @@ const PurchaseUpload: React.FC = () => {
           </div>
         </div>
       </div>
-    </AccountingLayout>
+    </>
   );
 };
 

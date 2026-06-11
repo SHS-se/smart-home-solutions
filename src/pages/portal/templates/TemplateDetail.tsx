@@ -4,7 +4,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
-import PortalLayout from '@/components/portal/PortalLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -235,16 +234,16 @@ const TemplateDetail: React.FC = () => {
 
   if (templateLoading) {
     return (
-      <PortalLayout>
+      <>
         <div className="text-center py-12 text-muted-foreground">
           {t('Laddar...', 'Loading...')}
         </div>
-      </PortalLayout>
+      </>
     );
   }
 
   return (
-    <PortalLayout>
+    <>
       <div className="space-y-6">
         {/* Back Link */}
         <Link 
@@ -414,7 +413,7 @@ const TemplateDetail: React.FC = () => {
         onSelect={handleAddSKU}
         existingSkuIds={items.map(i => i.sku_id)}
       />
-    </PortalLayout>
+    </>
   );
 };
 

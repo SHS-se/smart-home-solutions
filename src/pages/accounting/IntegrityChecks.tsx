@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useLanguage } from '@/contexts/LanguageContext';
-import AccountingLayout from '@/components/accounting/AccountingLayout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -160,7 +159,7 @@ const IntegrityChecks: React.FC = () => {
   const warnings = (checks || []).filter(c => c.issueCount > 0 && c.warningOnly);
 
   return (
-    <AccountingLayout>
+    <>
       <div className="space-y-8">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
@@ -245,7 +244,7 @@ const IntegrityChecks: React.FC = () => {
           </CardContent>
         </Card>
       </div>
-    </AccountingLayout>
+    </>
   );
 };
 

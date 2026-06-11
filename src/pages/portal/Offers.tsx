@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { Loader2, FileText, AlertCircle, ArrowLeft } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Loader2, FileText, AlertCircle } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -12,9 +12,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import PortalLayout from '@/components/portal/PortalLayout';
 import TableFilterBar from '@/components/portal/TableFilterBar';
-import CustomerViewLayout from '@/components/portal/CustomerViewLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -148,25 +146,24 @@ const Offers: React.FC<OffersProps> = ({ customerId: propCustomerId, isStaffView
     }
   };
 
-  const Layout = isStaffView ? CustomerViewLayout : PortalLayout;
 
   if (authLoading || quotesLoading) {
     return (
-      <Layout>
+      <>
         <div className="flex items-center justify-center min-h-[400px]">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-      </Layout>
+      </>
     );
   }
 
   if (error) {
     return (
-      <Layout>
+      <>
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
-      </Layout>
+      </>
     );
   }
 
@@ -174,25 +171,12 @@ const Offers: React.FC<OffersProps> = ({ customerId: propCustomerId, isStaffView
   const showAllStatuses = isStaffView || isStaff;
 
   return (
-    <Layout>
+    <>
       <div className="space-y-6">
-        {isStaffView && (
-          <Link
-            to={`/portal/customers/${propCustomerId}/overview`}
-            className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            {t('Tillbaka till kundöversikt', 'Back to customer overview')}
-          </Link>
-        )}
-
         <div>
           <h1 className="text-3xl font-medium">
             {isStaffView ? t('Offerter', 'Quotes') : t('Mina offerter', 'My Offers')}
           </h1>
-          {isStaffView && customerName && (
-            <p className="text-muted-foreground">{customerName}</p>
-          )}
         </div>
 
         {/* Filters */}
@@ -288,7 +272,7 @@ const Offers: React.FC<OffersProps> = ({ customerId: propCustomerId, isStaffView
           </CardContent>
         </Card>
       </div>
-    </Layout>
+    </>
   );
 };
 

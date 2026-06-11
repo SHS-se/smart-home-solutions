@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
-import PortalLayout from '@/components/portal/PortalLayout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -673,7 +672,7 @@ HUB-ZB-PRO,Zigbee Hub Professional,Controllers,Aqara,https://aqara.com,1562.50,f
   };
 
   return (
-    <PortalLayout>
+    <>
       <div className="space-y-6 max-w-6xl mx-auto">
         {/* Header */}
         <div className="flex items-center gap-4">
@@ -1063,7 +1062,7 @@ ZBT-2,Zigbee Temperature Sensor,Sensorer,Aqara,https://aqara.com,181.25,false,0.
           </Card>
         )}
       </div>
-    </PortalLayout>
+    </>
   );
 };
 

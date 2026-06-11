@@ -4,7 +4,6 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
-import PortalLayout from '@/components/portal/PortalLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -147,7 +146,7 @@ const MarginSettings: React.FC = () => {
   }
 
   return (
-    <PortalLayout>
+    <>
       <div className="space-y-6 max-w-4xl mx-auto">
         {/* Header */}
         <div className="flex items-center gap-3">
@@ -321,7 +320,7 @@ const MarginSettings: React.FC = () => {
           </Button>
         </div>
       </div>
-    </PortalLayout>
+    </>
   );
 };
 

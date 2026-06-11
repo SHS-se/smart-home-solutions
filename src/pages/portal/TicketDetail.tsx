@@ -28,8 +28,6 @@ import {
 } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
 import { useToast } from '@/hooks/use-toast';
-import PortalLayout from '@/components/portal/PortalLayout';
-import CustomerViewLayout from '@/components/portal/CustomerViewLayout';
 import SubscriptionRequiredAlert from '@/components/portal/SubscriptionRequiredAlert';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -386,15 +384,14 @@ const TicketDetail: React.FC<TicketDetailProps> = ({ customerId: propCustomerId,
     return attachments.filter((a) => a.comment_id === commentId);
   };
 
-  const Layout = isStaffView ? CustomerViewLayout : PortalLayout;
 
   if (loading || ticketLoading) {
     return (
-      <Layout>
+      <>
         <div className="flex items-center justify-center min-h-[400px]">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-      </Layout>
+      </>
     );
   }
 
@@ -404,7 +401,7 @@ const TicketDetail: React.FC<TicketDetailProps> = ({ customerId: propCustomerId,
   const showSubscriptionGate = !effectiveIsStaff && !subscriptionLoading && !isSubscribed;
 
   return (
-    <Layout>
+    <>
       <div className="space-y-6">
         <div className="flex items-start gap-4">
           <Button variant="ghost" size="sm" asChild>
@@ -564,7 +561,7 @@ const TicketDetail: React.FC<TicketDetailProps> = ({ customerId: propCustomerId,
           </Card>
         )}
       </div>
-    </Layout>
+    </>
   );
 };
 

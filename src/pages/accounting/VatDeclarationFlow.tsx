@@ -4,7 +4,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
-import AccountingLayout from '@/components/accounting/AccountingLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -639,7 +638,7 @@ const VatDeclarationFlow: React.FC = () => {
   const endMonthName = language === 'sv' ? qEndSv[quarter] : qEndEn[quarter];
 
   return (
-    <AccountingLayout>
+    <>
       <div className="space-y-6">
         <Link to="/accounting/vat-periods" className="text-primary text-sm hover:underline flex items-center gap-1">
           <ArrowLeft className="w-4 h-4" /> {t('Tillbaka till momsperioder', 'Back to VAT periods')}
@@ -1146,7 +1145,7 @@ const VatDeclarationFlow: React.FC = () => {
           </div>
         )}
       </div>
-    </AccountingLayout>
+    </>
   );
 };
 

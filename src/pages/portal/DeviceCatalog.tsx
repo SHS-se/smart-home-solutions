@@ -1,7 +1,6 @@
 import React from 'react';
 import { Box } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import PortalLayout from '@/components/portal/PortalLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import DeviceCatalogTab from '@/components/portal/energy/DeviceCatalogTab';
@@ -14,7 +13,7 @@ const DeviceCatalog: React.FC = () => {
   const { t } = useLanguage();
 
   return (
-    <PortalLayout>
+    <>
       <div className="space-y-6">
         <div className="flex items-center gap-3">
           <div className="p-2 rounded-lg bg-primary/10">
@@ -46,7 +45,7 @@ const DeviceCatalog: React.FC = () => {
           )}
         </Tabs>
       </div>
-    </PortalLayout>
+    </>
   );
 };
 

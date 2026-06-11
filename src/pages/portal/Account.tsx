@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { Loader2, Save, ArrowLeft } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Loader2, Save } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -8,8 +8,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
-import PortalLayout from '@/components/portal/PortalLayout';
-import CustomerViewLayout from '@/components/portal/CustomerViewLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -151,21 +149,20 @@ const Account: React.FC<AccountProps> = ({ customerId: propCustomerId, isStaffVi
     }
   };
 
-  const Layout = isStaffView ? CustomerViewLayout : PortalLayout;
 
   if (loading) {
     return (
-      <Layout>
+      <>
         <div className="flex items-center justify-center min-h-[400px]">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-      </Layout>
+      </>
     );
   }
 
   if (!isStaffView && isStaff) {
     return (
-      <PortalLayout>
+      <>
         <Alert>
           <AlertDescription>
             {t(
@@ -174,43 +171,28 @@ const Account: React.FC<AccountProps> = ({ customerId: propCustomerId, isStaffVi
             )}
           </AlertDescription>
         </Alert>
-      </PortalLayout>
+      </>
     );
   }
 
   if (!resolvedCustomerData) {
     return (
-      <Layout>
+      <>
         <Alert>
           <AlertDescription>
             {t('Ingen kunddata hittades. Kontakta support.', 'No customer data found. Please contact support.')}
           </AlertDescription>
         </Alert>
-      </Layout>
+      </>
     );
   }
 
   const emailLabel = isStaffView ? t('E-post', 'Email') : t('Faktureringse-post', 'Billing email');
 
   return (
-    <Layout>
+    <>
       <div className="space-y-6">
-        {isStaffView && (
-          <Link
-            to="/portal/customers"
-            className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            {t('Tillbaka till kunder', 'Back to customers')}
-          </Link>
-        )}
-
         <h1 className="text-3xl font-medium">{t('Kontouppgifter', 'Account details')}</h1>
-        {isStaffView && (
-          <p className="text-muted-foreground">
-            {resolvedCustomerData.name || t('Namnlös kund', 'Unnamed customer')}
-          </p>
-        )}
 
         <Card className={isStaffView ? undefined : 'max-w-2xl'}>
           {isStaffView && (
@@ -347,7 +329,7 @@ const Account: React.FC<AccountProps> = ({ customerId: propCustomerId, isStaffVi
           </CardContent>
         </Card>
       </div>
-    </Layout>
+    </>
   );
 };
 
