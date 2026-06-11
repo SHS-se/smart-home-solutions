@@ -10,6 +10,7 @@ import CustomerDashboardCards from '@/components/portal/CustomerDashboardCards';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
+import { getAuthenticatedFunctionHeaders } from '@/lib/supabase-function-auth';
 
 const Dashboard: React.FC = () => {
   const { user, isStaff, isAdmin, customerData, loading, refreshUserData } = useAuth();
@@ -455,11 +456,9 @@ const Dashboard: React.FC = () => {
                   onClick={async () => {
                     toast({ title: t('Laddar ner backup...', 'Downloading backup...') });
                     try {
-                      const { data: { session } } = await supabase.auth.getSession();
-                      if (!session) throw new Error('Not authenticated');
                       const res = await fetch(
                         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/dump-database`,
-                        { headers: { Authorization: `Bearer ${session.access_token}` } }
+                        { headers: await getAuthenticatedFunctionHeaders() }
                       );
                       if (!res.ok) {
                         const err = await res.json();
