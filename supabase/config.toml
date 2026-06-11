@@ -84,5 +84,11 @@ verify_jwt = false
 [functions.delete-customer]
 verify_jwt = false
 
+[functions.get-schema-erd]
+verify_jwt = false
+
+[functions.dump-database]
+verify_jwt = false
+
 [functions.fetch-ecb-exchange-rate]
 verify_jwt = false
