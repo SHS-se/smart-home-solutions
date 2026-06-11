@@ -8,6 +8,10 @@ import {
   ShoppingCart,
   Users,
   Receipt,
+  TrendingUp,
+  Wallet,
+  CreditCard,
+  ShieldCheck,
 } from 'lucide-react';
 import UserMenu from '@/components/UserMenu';
 import LanguageToggle from '@/components/LanguageToggle';
@@ -55,10 +59,26 @@ const navGroups: NavGroup[] = [
     ],
   },
   {
+    titleSv: 'FÖRSÄLJNING',
+    titleEn: 'SALES',
+    items: [
+      { href: '/accounting/sales', labelSv: 'Försäljning', labelEn: 'Sales', icon: <TrendingUp className="w-4 h-4" /> },
+      { href: '/accounting/receivables', labelSv: 'Kundfordringar', labelEn: 'Receivables', icon: <Wallet className="w-4 h-4" /> },
+      { href: '/accounting/payments', labelSv: 'Betalningar & Matchning', labelEn: 'Payments & Matching', icon: <CreditCard className="w-4 h-4" /> },
+    ],
+  },
+  {
     titleSv: 'MOMS',
     titleEn: 'VAT',
     items: [
       { href: '/accounting/vat-periods', labelSv: 'Momsperioder', labelEn: 'VAT periods', icon: <Receipt className="w-4 h-4" /> },
+    ],
+  },
+  {
+    titleSv: 'DRIFT & AVSLUT',
+    titleEn: 'OPERATIONS',
+    items: [
+      { href: '/accounting/integrity', labelSv: 'Integritet', labelEn: 'Integrity', icon: <ShieldCheck className="w-4 h-4" /> },
     ],
   },
 ];

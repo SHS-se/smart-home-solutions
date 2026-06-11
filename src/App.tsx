@@ -73,6 +73,10 @@ const AccountingJournal = lazy(() => import("./pages/accounting/AccountingJourna
 const VatPeriodsList = lazy(() => import("./pages/accounting/VatPeriodsList"));
 const VatDeclarationFlow = lazy(() => import("./pages/accounting/VatDeclarationFlow"));
 const SuppliersList = lazy(() => import("./pages/accounting/SuppliersList"));
+const SalesList = lazy(() => import("./pages/accounting/SalesList"));
+const ReceivablesList = lazy(() => import("./pages/accounting/ReceivablesList"));
+const PaymentsList = lazy(() => import("./pages/accounting/PaymentsList"));
+const IntegrityChecks = lazy(() => import("./pages/accounting/IntegrityChecks"));
 
 const queryClient = new QueryClient();
 
@@ -195,6 +199,10 @@ const App = () => (
                   <Route path="/accounting/vat-periods" element={<VatPeriodsList />} />
                   <Route path="/accounting/vat-periods/:periodId" element={<VatDeclarationFlow />} />
                   <Route path="/accounting/suppliers" element={<SuppliersList />} />
+                  <Route path="/accounting/sales" element={<SalesList />} />
+                  <Route path="/accounting/receivables" element={<ReceivablesList />} />
+                  <Route path="/accounting/payments" element={<PaymentsList />} />
+                  <Route path="/accounting/integrity" element={<IntegrityChecks />} />
 
                   <Route path="*" element={<NotFound />} />
                 </Routes>

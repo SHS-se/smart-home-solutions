@@ -161,8 +161,14 @@ export function getCreditAccount(paymentSource: PaymentSource): { account: strin
 
 /** Common Swedish BAS account names */
 export const ACCOUNT_NAMES: Record<string, string> = {
+  '1510': 'Kundfordringar',
+  '1580': 'Stripe clearing',
   '1930': 'Företagskonto',
   '2018': 'Egna insättningar',
+  '2611': 'Utgående moms 25%',
+  '2621': 'Utgående moms 12%',
+  '2631': 'Utgående moms 6%',
+  '3010': 'Försäljning',
   '2641': 'Ingående moms',
   '2614': 'Utgående moms, omvänd skattskyldighet',
   '2645': 'Ingående moms, omvänd skattskyldighet',

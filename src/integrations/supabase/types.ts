@@ -297,6 +297,54 @@ export type Database = {
           },
         ]
       }
+      acc_sales_invoice_links: {
+        Row: {
+          created_at: string
+          id: string
+          invoice_id: string
+          posted_at: string
+          posted_by: string | null
+          posting_reason: string
+          source_snapshot_json: Json
+          verification_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          invoice_id: string
+          posted_at?: string
+          posted_by?: string | null
+          posting_reason?: string
+          source_snapshot_json: Json
+          verification_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          invoice_id?: string
+          posted_at?: string
+          posted_by?: string | null
+          posting_reason?: string
+          source_snapshot_json?: Json
+          verification_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "acc_sales_invoice_links_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: true
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "acc_sales_invoice_links_verification_id_fkey"
+            columns: ["verification_id"]
+            isOneToOne: true
+            referencedRelation: "acc_verifications"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       acc_suppliers: {
         Row: {
           country: string

@@ -24,6 +24,7 @@ import {
   type DeclarationBoxFilter,
 } from '@/lib/vat-declaration';
 import { getQuarterMonths, hasVatFilingConfirmation } from '@/lib/vat-periods';
+import { OUTPUT_VAT_BY_RATE, SALES_VERIFICATION_SOURCE_TYPES, salesVatBoxesFromJournalLines } from '@/lib/sales-accounting';
 import { toast } from 'sonner';
 import { ArrowLeft, CheckCircle, AlertTriangle, Lock, Download, Upload, Info, FileText, ChevronDown, ChevronUp } from 'lucide-react';
 
@@ -133,6 +134,52 @@ const VatDeclarationFlow: React.FC = () => {
     },
   });
 
+  // Posted sales/correction verifications dated within the quarter, with
+  // their journal lines. Corrections for omitted sales from filed quarters
+  // are posted in the first open period, so they land here by date.
+  const { data: salesData } = useQuery({
+    queryKey: ['acc-q-sales-journal', year, quarter],
+    queryFn: async () => {
+      const { data: verifications } = await supabase
+        .from('acc_verifications')
+        .select('id, verification_number, verification_date, source_type, description')
+        .in('source_type', [...SALES_VERIFICATION_SOURCE_TYPES])
+        .eq('is_posted', true)
+        .gte('verification_date', startDate)
+        .lte('verification_date', endDate);
+      const verificationIds = (verifications || []).map(v => v.id);
+      if (verificationIds.length === 0) return { verifications: [], lines: [] };
+      const { data: lines } = await supabase
+        .from('acc_journal_lines')
+        .select('verification_id, account, debit, credit')
+        .in('verification_id', verificationIds);
+      return { verifications: verifications || [], lines: lines || [] };
+    },
+  });
+  const salesVerifications = salesData?.verifications || [];
+  const salesJournalLines = salesData?.lines || [];
+  const salesBoxes = salesVatBoxesFromJournalLines(salesJournalLines);
+  const salesCorrections = salesVerifications.filter(v => v.source_type === 'sales_invoice_correction');
+
+  // Finalized non-void invoices up to the quarter end that are not posted to
+  // accounting at all — these block the declaration just like unposted purchases.
+  const { data: unpostedInvoices } = useQuery({
+    queryKey: ['acc-q-unposted-invoices', year, quarter],
+    queryFn: async () => {
+      const [{ data: invoices }, { data: links }] = await Promise.all([
+        supabase
+          .from('invoices')
+          .select('id, invoice_number, finalized_at, issued_at, status, voided_at')
+          .not('finalized_at', 'is', null)
+          .lte('finalized_at', `${endDate}T23:59:59Z`),
+        supabase.from('acc_sales_invoice_links').select('invoice_id'),
+      ]);
+      const linkedIds = new Set((links || []).map(l => l.invoice_id));
+      return (invoices || []).filter(i => i.status !== 'void' && i.status !== 'draft' && !i.voided_at && !linkedIds.has(i.id));
+    },
+  });
+  const unpostedInvoiceRows = unpostedInvoices || [];
+
   const foreignPurchases = (purchases || []).filter((purchase) => isForeignCurrency((purchase as any).original_currency || purchase.currency));
   const purchaseRows = (purchases || []).map((purchase) => ({
     ...purchase,
@@ -149,8 +196,8 @@ const VatDeclarationFlow: React.FC = () => {
   const backfillBlockedPurchases = detectedCurrencyIssues.map((issue) => issue.purchase);
   const uniqueBlockedPurchaseIds = new Set([...unpostedPurchases, ...backfillBlockedPurchases].map((purchase) => purchase.id));
   const hasOpenPeriods = openMonthlyPeriods.length > 0;
-  const hasBlockers = uniqueBlockedPurchaseIds.size > 0 || hasOpenPeriods;
-  const blockerCount = uniqueBlockedPurchaseIds.size + (hasOpenPeriods ? 1 : 0);
+  const hasBlockers = uniqueBlockedPurchaseIds.size > 0 || hasOpenPeriods || unpostedInvoiceRows.length > 0;
+  const blockerCount = uniqueBlockedPurchaseIds.size + (hasOpenPeriods ? 1 : 0) + unpostedInvoiceRows.length;
 
   const postedPurchases = purchaseRows.filter((purchase) => purchase.status === 'posted');
 
@@ -164,12 +211,12 @@ const VatDeclarationFlow: React.FC = () => {
   };
 
   // ── Skatteverket box calculations ──────────────────────────────────────────
-  // Section A: Taxable sales bases (not yet tracked — no sales invoices)
-  const box05 = 0; // ForsMomsEjAnnan — Taxable sales
-  // Section B: Output VAT on sales
-  const box10 = 0; // MomsUtgHog — Output VAT 25% on sales
-  const box11 = 0; // MomsUtgMedel — Output VAT 12%
-  const box12 = 0; // MomsUtgLag — Output VAT 6%
+  // Section A/B: Taxable sales and output VAT, from posted sales/correction
+  // journal lines (accounting truth, not mutable invoice rows).
+  const box05Raw = salesBoxes.box05; // ForsMomsEjAnnan — Taxable sales
+  const box10Raw = salesBoxes.box10; // MomsUtgHog — Output VAT 25% on sales
+  const box11Raw = salesBoxes.box11; // MomsUtgMedel — Output VAT 12%
+  const box12Raw = salesBoxes.box12; // MomsUtgLag — Output VAT 6%
   // Section C: Taxable purchases (reverse-charge bases)
   const sumNetByTreatment = (treatment: string) => roundMoney(postedPurchases.reduce(
     (sum, p) => sum + p.lines.filter((l) => l.vat_treatment === treatment)
@@ -189,10 +236,10 @@ const VatDeclarationFlow: React.FC = () => {
     .reduce((lineSum, l) => lineSum + Number(l.vat_amount), 0), 0));
   const rcInputVat = box30Raw; // Reverse-charge input VAT = output VAT (net zero)
   const roundedDeclarationAmounts = finalizeVatDeclarationAmounts({
-    box05,
-    box10,
-    box11,
-    box12,
+    box05: box05Raw,
+    box10: box10Raw,
+    box11: box11Raw,
+    box12: box12Raw,
     box20: box20Raw,
     box21: box21Raw,
     box22: box22Raw,
@@ -201,6 +248,10 @@ const VatDeclarationFlow: React.FC = () => {
     box32: box32Raw,
     box48: roundMoney(domesticInputVat + rcInputVat),
   });
+  const box05 = roundedDeclarationAmounts.box05;
+  const box10 = roundedDeclarationAmounts.box10;
+  const box11 = roundedDeclarationAmounts.box11;
+  const box12 = roundedDeclarationAmounts.box12;
   const box20 = roundedDeclarationAmounts.box20;
   const box21 = roundedDeclarationAmounts.box21;
   const box22 = roundedDeclarationAmounts.box22;
@@ -210,6 +261,16 @@ const VatDeclarationFlow: React.FC = () => {
   const box48 = roundedDeclarationAmounts.box48;
   const momsBetala = roundedDeclarationAmounts.momsBetala;
   const rcLineCount = postedPurchases.flatMap((p) => p.lines).filter((l) => isReverseChargeTreatment(l.vat_treatment)).length;
+
+  const salesVerificationCount = (accountPredicate: (account: string) => boolean) =>
+    new Set(salesJournalLines.filter((l) => accountPredicate(l.account)).map((l) => l.verification_id)).size;
+  const salesBoxCounts: Record<'05' | '10' | '11' | '12', number> = {
+    '05': salesVerificationCount((account) => account.startsWith('3')),
+    '10': salesVerificationCount((account) => account === OUTPUT_VAT_BY_RATE[25].account),
+    '11': salesVerificationCount((account) => account === OUTPUT_VAT_BY_RATE[12].account),
+    '12': salesVerificationCount((account) => account === OUTPUT_VAT_BY_RATE[6].account),
+  };
+  const buildSalesBoxLink = (box: '05' | '10' | '11' | '12'): string => `/accounting/sales?box=${box}`;
 
   const allLines = postedPurchases.flatMap((p) => p.lines);
   const needsReviewLines = allLines.filter((l: any) => l.vat_treatment === 'needs_review');
@@ -230,6 +291,22 @@ const VatDeclarationFlow: React.FC = () => {
         : t(`${unpostedPurchases.length} transaktioner ej bokförda`, `${unpostedPurchases.length} transactions not posted`),
       ok: unpostedPurchases.length === 0,
       issueLink: unpostedPurchases.length > 0 ? `/accounting/purchases/${unpostedPurchases[0].id}` : undefined,
+    },
+    {
+      label: unpostedInvoiceRows.length === 0
+        ? t('Alla försäljningsfakturor bokförda', 'All sales invoices posted')
+        : t(`${unpostedInvoiceRows.length} försäljningsfakturor ej bokförda`, `${unpostedInvoiceRows.length} sales invoices not posted`),
+      ok: unpostedInvoiceRows.length === 0,
+      issueLink: unpostedInvoiceRows.length > 0 ? '/accounting/sales' : undefined,
+    },
+    {
+      label: salesCorrections.length > 0
+        ? t(
+            `${salesCorrections.length} korrigering${salesCorrections.length > 1 ? 'ar' : ''} från låst period ingår i denna deklaration`,
+            `${salesCorrections.length} correction${salesCorrections.length > 1 ? 's' : ''} from locked periods included in this declaration`,
+          )
+        : t('Inga korrigeringar från låsta perioder', 'No corrections from locked periods'),
+      ok: true,
     },
     {
       label: t('Alla verifikationer balanserar', 'All journal entries balance'),
@@ -295,11 +372,11 @@ const VatDeclarationFlow: React.FC = () => {
   /** Skatteverket XML element names mapped to box numbers */
   const declarationBoxes = [
     // Section A: Taxable sales
-    { box: '05', xmlTag: 'ForsMomsEjAnnan', label: t('Momspliktig försäljning (ej i 06, 07, 08)', 'Taxable sales (not in 06, 07, 08)'), amount: box05, count: 0, section: 'A', filterBox: null },
+    { box: '05', xmlTag: 'ForsMomsEjAnnan', label: t('Momspliktig försäljning (ej i 06, 07, 08)', 'Taxable sales (not in 06, 07, 08)'), amount: box05, count: salesBoxCounts['05'], highlight: box05 > 0, section: 'A', filterBox: null, salesBox: '05' as const },
     // Section B: Output VAT on sales
-    { box: '10', xmlTag: 'MomsUtgHog', label: t('Utgående moms 25 %', 'Output VAT 25%'), amount: box10, count: 0, section: 'B', filterBox: null },
-    { box: '11', xmlTag: 'MomsUtgMedel', label: t('Utgående moms 12 %', 'Output VAT 12%'), amount: box11, count: 0, section: 'B', filterBox: null },
-    { box: '12', xmlTag: 'MomsUtgLag', label: t('Utgående moms 6 %', 'Output VAT 6%'), amount: box12, count: 0, section: 'B', filterBox: null },
+    { box: '10', xmlTag: 'MomsUtgHog', label: t('Utgående moms 25 %', 'Output VAT 25%'), amount: box10, count: salesBoxCounts['10'], highlight: box10 > 0, section: 'B', filterBox: null, salesBox: '10' as const },
+    { box: '11', xmlTag: 'MomsUtgMedel', label: t('Utgående moms 12 %', 'Output VAT 12%'), amount: box11, count: salesBoxCounts['11'], section: 'B', filterBox: null, salesBox: '11' as const },
+    { box: '12', xmlTag: 'MomsUtgLag', label: t('Utgående moms 6 %', 'Output VAT 6%'), amount: box12, count: salesBoxCounts['12'], section: 'B', filterBox: null, salesBox: '12' as const },
     // Section C: Taxable purchases (reverse-charge bases)
     { box: '20', xmlTag: 'InkopVaruAnnatEg', label: t('Inköp av varor från annat EU-land', 'Purchases of goods from other EU country'), amount: box20, highlight: box20 > 0, section: 'C', filterBox: '20' as const },
     { box: '21', xmlTag: 'InkopTjanstAnnatEg', label: t('Inköp av tjänster från annat EU-land', 'Purchases of services from other EU country'), amount: box21, highlight: box21 > 0, section: 'C', filterBox: '21' as const },
@@ -337,7 +414,7 @@ const VatDeclarationFlow: React.FC = () => {
       if (hasBlockers) throw new Error(t('Alla inköp måste vara bokförda', 'All purchases must be posted'));
       const snapshotData = {
         quarter: `Q${quarter} ${year}`, period: `${startDate} – ${endDate}`, created_at: new Date().toISOString(),
-        created_by: user?.email || 'unknown', total_verifications: postedPurchases.length,
+        created_by: user?.email || 'unknown', total_verifications: postedPurchases.length + salesVerifications.length,
         declaration_boxes: declarationBoxes.map(b => ({ box: b.box, xmlTag: b.xmlTag, label: b.label, amount: Math.round(b.amount) })),
         moms_betala: Math.round(momsBetala), rules_version: __GIT_COMMIT__,
       };
@@ -652,6 +729,15 @@ const VatDeclarationFlow: React.FC = () => {
                         <Link to={`/accounting/purchases/${p.id}`}><Button size="sm">{t('Åtgärda', 'Resolve')}</Button></Link>
                       </div>
                     ))}
+                    {unpostedInvoiceRows.map(invoice => (
+                      <div key={invoice.id} className="flex items-center justify-between py-3">
+                        <div>
+                          <p className="text-sm font-medium">{t('Försäljningsfaktura', 'Sales invoice')} {invoice.invoice_number}</p>
+                          <p className="text-xs text-muted-foreground">{t('Ej bokförd i redovisningen', 'Not posted to accounting')}</p>
+                        </div>
+                        <Link to="/accounting/sales"><Button size="sm">{t('Åtgärda', 'Resolve')}</Button></Link>
+                      </div>
+                    ))}
                   </CardContent>
                 </Card>
               </>
@@ -733,6 +819,14 @@ const VatDeclarationFlow: React.FC = () => {
                       {box10 > 0 && <div className="flex justify-between">
                         <span className="text-muted-foreground">{t('Ruta 10 – Utgående moms 25 % (försäljning)', 'Box 10 – Output VAT 25% (sales)')}</span>
                         <span>{formatSEK(box10)}</span>
+                      </div>}
+                      {box11 > 0 && <div className="flex justify-between">
+                        <span className="text-muted-foreground">{t('Ruta 11 – Utgående moms 12 % (försäljning)', 'Box 11 – Output VAT 12% (sales)')}</span>
+                        <span>{formatSEK(box11)}</span>
+                      </div>}
+                      {box12 > 0 && <div className="flex justify-between">
+                        <span className="text-muted-foreground">{t('Ruta 12 – Utgående moms 6 % (försäljning)', 'Box 12 – Output VAT 6% (sales)')}</span>
+                        <span>{formatSEK(box12)}</span>
                       </div>}
                       {box30 > 0 && <div className="flex justify-between">
                         <span className="text-muted-foreground">{t('Ruta 30 – Utgående moms 25 % (inköp)', 'Box 30 – Output VAT 25% (purchases)')}</span>
@@ -828,6 +922,10 @@ const VatDeclarationFlow: React.FC = () => {
                             <Link to={buildDeclarationBoxLink(box.filterBox)} className="text-primary hover:underline">
                               {box.count}
                             </Link>
+                          ) : 'salesBox' in box && box.salesBox && box.count > 0 ? (
+                            <Link to={buildSalesBoxLink(box.salesBox)} className="text-primary hover:underline">
+                              {box.count}
+                            </Link>
                           ) : (
                             <span className={box.count ? 'text-foreground' : 'text-muted-foreground'}>{box.count || ''}</span>
                           )}
@@ -891,7 +989,7 @@ const VatDeclarationFlow: React.FC = () => {
                       <span className="text-muted-foreground">{momsBetala < 0 ? t('Moms att återfå', 'VAT to receive') : t('Moms att betala', 'VAT to pay')}</span>
                       <span className={momsBetala < 0 ? 'text-green-700 font-medium' : 'text-red-700 font-medium'}>{formatSEK(Math.abs(momsBetala))}</span>
                     </div>
-                    <div className="flex justify-between"><span className="text-muted-foreground">{t('Transaktioner inkluderade', 'Transactions included')}</span><span>{postedPurchases.length} {t('st', 'pcs')}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">{t('Transaktioner inkluderade', 'Transactions included')}</span><span>{postedPurchases.length + salesVerifications.length} {t('st', 'pcs')}</span></div>
                     <div className="flex justify-between"><span className="text-muted-foreground">{t('Granskare', 'Reviewer')}</span><span>{user?.email || '—'}</span></div>
                     <div className="flex justify-between"><span className="text-muted-foreground">{t('Regelversion (git)', 'Rules commit (git)')}</span><span className="font-mono text-xs">{__GIT_COMMIT__.slice(0, 10)}</span></div>
                   </div>

@@ -8,7 +8,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Calendar, Receipt, ShoppingCart, AlertCircle, ArrowRight, BookOpen, Info } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { MONTH_NAMES_SV, MONTH_NAMES_EN, PURCHASE_STATUS_LABELS, PURCHASE_STATUS_LABELS_EN, PURCHASE_STATUS_COLORS, formatSEK } from '@/lib/accounting-utils';
+import { MONTH_NAMES_SV, MONTH_NAMES_EN, PURCHASE_STATUS_LABELS, PURCHASE_STATUS_LABELS_EN, PURCHASE_STATUS_COLORS, QUARTER_LABELS, formatSEK } from '@/lib/accounting-utils';
+import { getActiveVatPeriod } from '@/lib/vat-periods';
 
 const AccountingOverview: React.FC = () => {
   const { t, language } = useLanguage();
@@ -49,7 +50,23 @@ const AccountingOverview: React.FC = () => {
   });
 
   const currentPeriod = periods?.[0];
-  const q1Vat = vatPeriods?.find(v => v.year === 2026 && v.quarter === 1);
+  // Next active VAT declaration: earliest quarter not yet filed/locked —
+  // the same derivation as VatPeriodsList and VatDeclarationFlow.
+  const activeVatPeriod = getActiveVatPeriod(vatPeriods || []);
+  // Finalized non-void sales invoices that are not yet posted to accounting —
+  // the same blocker VatDeclarationFlow reports before a declaration can proceed.
+  const { data: unpostedInvoiceCount } = useQuery({
+    queryKey: ['acc-unposted-sales-invoices-count'],
+    queryFn: async () => {
+      const [{ data: invoices }, { data: links }] = await Promise.all([
+        supabase.from('invoices').select('id, status, voided_at').not('finalized_at', 'is', null),
+        supabase.from('acc_sales_invoice_links').select('invoice_id'),
+      ]);
+      const linkedIds = new Set((links || []).map(l => l.invoice_id));
+      return (invoices || []).filter(i => i.status !== 'void' && i.status !== 'draft' && !i.voided_at && !linkedIds.has(i.id)).length;
+    },
+  });
+
   const draftPurchases = purchases?.filter(p => p.status === 'draft') || [];
   const blockedPurchases = purchases?.filter(p => p.status === 'blocked') || [];
   const reviewPurchases = purchases?.filter(p => p.status === 'in_review') || [];
@@ -74,6 +91,16 @@ const AccountingOverview: React.FC = () => {
       title: t(`${reviewPurchases.length} inköp under granskning`, `${reviewPurchases.length} purchases under review`),
       detail: t('Inköp', 'Purchases'),
       href: '/accounting/purchases',
+    });
+  }
+  if ((unpostedInvoiceCount ?? 0) > 0) {
+    actionItems.push({
+      title: t(
+        `${unpostedInvoiceCount} försäljningsfaktur${unpostedInvoiceCount === 1 ? 'a' : 'or'} ej bokförd${unpostedInvoiceCount === 1 ? '' : 'a'}`,
+        `${unpostedInvoiceCount} sales invoice${unpostedInvoiceCount === 1 ? '' : 's'} not posted`,
+      ),
+      detail: t('Försäljning', 'Sales'),
+      href: '/accounting/sales',
     });
   }
 
@@ -119,9 +146,11 @@ const AccountingOverview: React.FC = () => {
               <div>
                 <p className="text-xs text-muted-foreground">{t('Nästa momsdeklaration', 'Next VAT declaration')}</p>
                 <p className="text-xl font-bold mt-1">
-                  {q1Vat?.deadline ? new Date(q1Vat.deadline).toLocaleDateString(language === 'sv' ? 'sv-SE' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '–'}
+                  {activeVatPeriod?.deadline ? new Date(activeVatPeriod.deadline).toLocaleDateString(language === 'sv' ? 'sv-SE' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '–'}
                 </p>
-                <p className="text-xs text-muted-foreground mt-0.5">Q1 2026</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {activeVatPeriod ? `${QUARTER_LABELS[activeVatPeriod.quarter]} ${activeVatPeriod.year}` : t('Inga öppna momsperioder', 'No open VAT periods')}
+                </p>
               </div>
               <Receipt className="w-5 h-5 text-primary-light" />
             </CardContent>

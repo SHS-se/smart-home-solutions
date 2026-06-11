@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { QUARTER_LABELS, QUARTER_MONTHS } from '@/lib/accounting-utils';
+import { ARCHIVED_VAT_STATUSES, getActiveVatPeriod } from '@/lib/vat-periods';
 import { Calendar, AlertCircle, CheckCircle, Info } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
@@ -26,7 +27,7 @@ const VAT_STATUS_COLORS: Record<string, string> = {
   locked: 'bg-primary/10 text-primary',
 };
 
-const ARCHIVED_STATUSES = new Set(['filed', 'locked']);
+const ARCHIVED_STATUSES = ARCHIVED_VAT_STATUSES;
 
 const VatPeriodsList: React.FC = () => {
   const { t, language } = useLanguage();
@@ -116,11 +117,7 @@ const VatPeriodsList: React.FC = () => {
 
   // The "active" quarter drives the warning banner — earliest chronological
   // quarter that is not yet filed or locked.
-  const activePeriod = useMemo(() => {
-    return (vatPeriods || [])
-      .filter((vp) => !ARCHIVED_STATUSES.has(vp.status))
-      .sort((a, b) => (a.year as number) - (b.year as number) || (a.quarter as number) - (b.quarter as number))[0];
-  }, [vatPeriods]);
+  const activePeriod = useMemo(() => getActiveVatPeriod(vatPeriods || []), [vatPeriods]);
 
   const activeStats = activePeriod ? getPeriodStats(activePeriod) : null;
   const showActiveBanner = activePeriod && activeStats && activeStats.issues > 0;
