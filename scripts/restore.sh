@@ -187,21 +187,17 @@ while True:
     page += 1
 PYEOF
 
-# Drop all public tables, sequences, and storage policies
+# Recreate public schema from scratch so partial restores cannot leave behind
+# indexes, views, functions, types, or constraints that break the next restore.
 echo "
 SET client_min_messages = warning;
-DO \$\$ DECLARE r RECORD;
-BEGIN
-  FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public') LOOP
-    EXECUTE 'DROP TABLE IF EXISTS public.' || quote_ident(r.tablename) || ' CASCADE';
-  END LOOP;
-END \$\$;
-DO \$\$ DECLARE r RECORD;
-BEGIN
-  FOR r IN (SELECT sequencename FROM pg_sequences WHERE schemaname = 'public') LOOP
-    EXECUTE 'DROP SEQUENCE IF EXISTS public.' || quote_ident(r.sequencename) || ' CASCADE';
-  END LOOP;
-END \$\$;
+DROP SCHEMA IF EXISTS public CASCADE;
+CREATE SCHEMA public;
+GRANT USAGE ON SCHEMA public TO postgres, anon, authenticated, service_role;
+GRANT ALL ON SCHEMA public TO postgres, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO postgres, anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO postgres, anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO postgres, anon, authenticated, service_role;
 DO \$\$ DECLARE r RECORD;
 BEGIN
   FOR r IN (SELECT policyname, tablename FROM pg_policies WHERE schemaname = 'storage') LOOP
@@ -219,12 +215,14 @@ echo "  ✓ Database cleared"
 # Loading it first means migrations can run on top of real data, avoiding data-migration failures.
 echo ""
 echo "▶ Phase 3: Restoring schema and data from SQL backup..."
+RESTORE_SQL="$WORK_DIR/restore.sql"
 {
   echo "SET session_replication_role = replica;"
   # Replace narrow search_path in backup with one that includes extensions (needed for gen_random_bytes)
   sed 's/SET search_path = public, pg_catalog;/SET search_path = public, extensions, pg_catalog;/' "$SQL_FILE"
   echo "SET session_replication_role = DEFAULT;"
-} | PGPASSWORD="$DB_PASS" $PSQL -q 2>&1 | grep -v "^$" || true
+} > "$RESTORE_SQL"
+PGPASSWORD="$DB_PASS" $PSQL -v ON_ERROR_STOP=1 -q -f "$RESTORE_SQL"
 echo "  ✓ Schema and data restored"
 
 # --- Phase 3b: Restore auth users ---
