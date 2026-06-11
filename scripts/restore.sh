@@ -216,10 +216,39 @@ echo "  ✓ Database cleared"
 echo ""
 echo "▶ Phase 3: Restoring schema and data from SQL backup..."
 RESTORE_SQL="$WORK_DIR/restore.sql"
+PATCHED_SQL="$WORK_DIR/backup-patched.sql"
+python3 - "$SQL_FILE" "$PATCHED_SQL" <<'PYEOF'
+import re
+import sys
+
+source, target = sys.argv[1], sys.argv[2]
+constraint_names = set()
+lines = []
+
+with open(source, encoding="utf-8") as f:
+    for line in f:
+        lines.append(line)
+        match = re.search(r"\bADD CONSTRAINT\s+([^\s]+)\s+", line, re.IGNORECASE)
+        if match:
+            constraint_names.add(match.group(1).strip('"'))
+
+skipped = 0
+with open(target, "w", encoding="utf-8") as out:
+    for line in lines:
+        match = re.match(r"\s*CREATE UNIQUE INDEX\s+([^\s]+)\s+", line, re.IGNORECASE)
+        if match:
+            index_name = match.group(1).strip('"')
+            if index_name.endswith("_pkey") or index_name in constraint_names:
+                skipped += 1
+                continue
+        out.write(line)
+
+print(f"  Patched SQL: skipped {skipped} constraint-owned unique indexes")
+PYEOF
 {
   echo "SET session_replication_role = replica;"
   # Replace narrow search_path in backup with one that includes extensions (needed for gen_random_bytes)
-  sed 's/SET search_path = public, pg_catalog;/SET search_path = public, extensions, pg_catalog;/' "$SQL_FILE"
+  sed 's/SET search_path = public, pg_catalog;/SET search_path = public, extensions, pg_catalog;/' "$PATCHED_SQL"
   echo "SET session_replication_role = DEFAULT;"
 } > "$RESTORE_SQL"
 PGPASSWORD="$DB_PASS" $PSQL -v ON_ERROR_STOP=1 -q -f "$RESTORE_SQL"

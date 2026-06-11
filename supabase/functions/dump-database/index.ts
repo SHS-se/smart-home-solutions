@@ -223,13 +223,22 @@ async function generateSqlDump(sql: any): Promise<string> {
     ORDER BY tc.table_name, tc.constraint_name, kcu.ordinal_position
   `;
 
-  // 7c. Get UNIQUE indexes created directly (CREATE UNIQUE INDEX style)
+  // 7c. Get UNIQUE indexes created directly (CREATE UNIQUE INDEX style).
+  // Exclude indexes owned by PRIMARY KEY/UNIQUE constraints; those are recreated
+  // by table constraints and fail if emitted again as standalone indexes.
   const uniqueIndexes = await sql`
-    SELECT indexname, tablename, indexdef
-    FROM pg_indexes
-    WHERE schemaname = 'public'
-      AND indexdef LIKE 'CREATE UNIQUE INDEX%'
-    ORDER BY tablename, indexname
+    SELECT index_class.relname AS indexname,
+           table_class.relname AS tablename,
+           pg_get_indexdef(index_data.indexrelid) AS indexdef
+    FROM pg_index index_data
+    JOIN pg_class index_class ON index_class.oid = index_data.indexrelid
+    JOIN pg_class table_class ON table_class.oid = index_data.indrelid
+    JOIN pg_namespace table_namespace ON table_namespace.oid = table_class.relnamespace
+    LEFT JOIN pg_constraint constraint_data ON constraint_data.conindid = index_data.indexrelid
+    WHERE table_namespace.nspname = 'public'
+      AND index_data.indisunique
+      AND constraint_data.oid IS NULL
+    ORDER BY table_class.relname, index_class.relname
   `;
 
   // 8. Dump data
