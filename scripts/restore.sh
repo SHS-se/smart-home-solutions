@@ -1,11 +1,11 @@
 #!/bin/bash
 # =============================================================================
 # SHS Database Restore Script
-# Usage: ./scripts/restore.sh [test|live]
+# Usage: ./scripts/restore.sh [test|live] [backup.zip]
 #
 # Requires:
 #   - supabase CLI installed and logged in (supabase login)
-#   - Backup ZIPs in ~/Downloads/backup-2026-03-28-test.zip and ...-live.zip
+#   - Backup ZIP path as second argument, or default ZIPs in ~/Downloads
 #   - python3 with 'storage3' package: pip3 install storage3 httpx
 # =============================================================================
 
@@ -15,12 +15,14 @@ export NVM_DIR="$HOME/.nvm"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 ENV="${1:-}"
+BACKUP_ZIP_OVERRIDE="${2:-}"
 
 if [ -z "$ENV" ] || { [ "$ENV" != "test" ] && [ "$ENV" != "live" ]; }; then
-  echo "Usage: $0 [test|live]"
+  echo "Usage: $0 [test|live] [backup.zip]"
   echo ""
   echo "  test  → restores to project vxqpgbzseckgceopitpm"
   echo "  live  → restores to project oosxndduqzhvrorgogaw"
+  echo "  backup.zip → optional path to backup ZIP"
   echo ""
   echo "⚠️  Always run 'test' first to verify before touching live!"
   exit 1
@@ -36,9 +38,14 @@ else
   BACKUP_ZIP="$HOME/Downloads/backup-2026-03-28-live.zip"
 fi
 
+if [ -n "$BACKUP_ZIP_OVERRIDE" ]; then
+  BACKUP_ZIP="$BACKUP_ZIP_OVERRIDE"
+fi
+
 echo "============================================================"
 echo "  SHS Restore: $ENV → $PROJECT_REF"
 echo "============================================================"
+echo "  Backup: $BACKUP_ZIP"
 echo ""
 
 # --- Pre-flight checks ---
