@@ -15,19 +15,20 @@ CREATE INDEX IF NOT EXISTS idx_invoice_line_items_source_bom_id
   ON public.invoice_line_items (source_bom_id);
 
 -- Backfill existing invoice lines: attribute each line to its invoice's BOM, matching on sku_id.
+-- source_bom_item_id is resolved via a correlated subquery (Postgres forbids referencing the UPDATE
+-- target table inside a FROM-clause join condition); lines with no matching BOM item keep it NULL.
 UPDATE public.invoice_line_items ili
 SET
   source_bom_id = i.bom_id,
   source_bom_version = i.bom_version,
-  source_bom_item_id = bi.id
-FROM public.invoices i
-LEFT JOIN public.bom_items bi
-  ON bi.bom_id = i.bom_id
-  AND bi.sku_id = (
-    SELECT inner_ili.sku_id
-    FROM public.invoice_line_items inner_ili
-    WHERE inner_ili.id = ili.id
+  source_bom_item_id = (
+    SELECT bi.id
+    FROM public.bom_items bi
+    WHERE bi.bom_id = i.bom_id
+      AND bi.sku_id = ili.sku_id
+    LIMIT 1
   )
+FROM public.invoices i
 WHERE ili.invoice_id = i.id
   AND i.bom_id IS NOT NULL
   AND ili.source_bom_id IS NULL;
