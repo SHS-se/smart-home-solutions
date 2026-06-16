@@ -154,11 +154,14 @@ serve(async (req) => {
       tax_rate: number;
       category?: string;
       sort_order: number;
+      source_bom_id?: string | null;
+      source_bom_item_id?: string | null;
+      source_bom_version?: number | null;
     }> = [];
 
     // If line_items are passed directly, use them
     if (line_items.length > 0) {
-      line_items.forEach((item: { line_type: string; description: string; sku?: string; sku_id?: string; quantity: number; unit_price: number; unit?: string; tax_rate?: number; category?: string }, idx: number) => {
+      line_items.forEach((item: { line_type: string; description: string; sku?: string; sku_id?: string; quantity: number; unit_price: number; unit?: string; tax_rate?: number; category?: string; source_bom_id?: string; source_bom_item_id?: string; source_bom_version?: number }, idx: number) => {
         lineItemsToInsert.push({
           invoice_id: invoice.id,
           line_type: normalizeInvoiceLineType(item.line_type),
@@ -170,13 +173,16 @@ serve(async (req) => {
           unit: item.unit,
           tax_rate: typeof item.tax_rate === "number" ? item.tax_rate : 25,
           category: item.category,
-          sort_order: idx
+          sort_order: idx,
+          source_bom_id: item.source_bom_id ?? null,
+          source_bom_item_id: item.source_bom_item_id ?? null,
+          source_bom_version: item.source_bom_version ?? null
         });
       });
     }
-    // Otherwise, populate from quote lines
+    // Otherwise, populate from quote lines (preserving the BOM-item linkage)
     else if (quote && quote.quote_lines) {
-      quote.quote_lines.forEach((line: { section: string; description: string; original_sku_code?: string; sku_id?: string; quantity: number; unit_price_ex_vat?: number; unit_price?: number }, idx: number) => {
+      quote.quote_lines.forEach((line: { section: string; description: string; original_sku_code?: string; sku_id?: string; quantity: number; unit_price_ex_vat?: number; unit_price?: number; source_bom_id?: string; source_bom_item_id?: string; source_bom_version?: number }, idx: number) => {
         lineItemsToInsert.push({
           invoice_id: invoice.id,
           line_type: normalizeInvoiceLineType(line.section),
@@ -186,13 +192,16 @@ serve(async (req) => {
           quantity: line.quantity,
           unit_price: line.unit_price_ex_vat ?? line.unit_price ?? 0,
           tax_rate: 25,
-          sort_order: idx
+          sort_order: idx,
+          source_bom_id: line.source_bom_id ?? null,
+          source_bom_item_id: line.source_bom_item_id ?? null,
+          source_bom_version: line.source_bom_version ?? null
         });
       });
     }
-    // Or from BOM items (hardware only)
+    // Or from BOM items (hardware only) — link each line to the BOM item it fulfills
     else if (bom && bom.bom_items) {
-      bom.bom_items.forEach((item: { sku: { sku: string; name: string; category: string; sell_price_ex_vat: number }; sku_id: string; quantity: number }, idx: number) => {
+      bom.bom_items.forEach((item: { id: string; sku: { sku: string; name: string; category: string; sell_price_ex_vat: number }; sku_id: string; quantity: number }, idx: number) => {
         lineItemsToInsert.push({
           invoice_id: invoice.id,
           line_type: 'hardware',
@@ -203,7 +212,10 @@ serve(async (req) => {
           unit_price: item.sku?.sell_price_ex_vat || 0,
           tax_rate: 25,
           category: item.sku?.category,
-          sort_order: idx
+          sort_order: idx,
+          source_bom_id: bom_id,
+          source_bom_item_id: item.id,
+          source_bom_version: bomVersion
         });
       });
     }

@@ -103,7 +103,7 @@ serve(async (req) => {
     logStep("Invoice record created", { invoiceId: invoiceRecord.id });
     createdInvoiceId = invoiceRecord.id;
 
-    // Copy quote_lines to invoice_line_items
+    // Copy quote_lines to invoice_line_items, preserving the BOM-item linkage for fulfillment tracking
     const invoiceLineItems = lineItems.map((item, idx) => ({
       invoice_id: invoiceRecord.id,
       description: item.description,
@@ -115,6 +115,9 @@ serve(async (req) => {
       sku: item.original_sku_code || null,
       sku_id: item.sku_id || null,
       category: item.section,
+      source_bom_id: item.source_bom_id || null,
+      source_bom_item_id: item.source_bom_item_id || null,
+      source_bom_version: item.source_bom_version ?? null,
     }));
 
     const { error: lineItemsError } = await serviceClient

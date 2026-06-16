@@ -43,6 +43,7 @@ import {
 import { ArrowLeft, Plus, Trash2, FileText, Package, Pencil, Check, X, Copy, Save, Lock, Info } from 'lucide-react';
 import { getQuoteStatusBadge } from '@/lib/quote-status-badge';
 import { supersedeActiveQuotesInChain } from '@/lib/supersede-quotes';
+import { getFulfillmentStatus, remainingToInvoice, type FulfillmentStatus } from '@/lib/bom-fulfillment';
 import { toast } from '@/hooks/use-toast';
 import SKUSelector from '@/components/portal/boms/SKUSelector';
 import TemplateSelector from '@/components/portal/boms/TemplateSelector';
@@ -75,6 +76,14 @@ const REVISION_REASON_OPTIONS = [
   { value: 'technical_change', label: { sv: 'Projektering / teknisk ändring', en: 'Design / technical change' } },
   { value: 'other', label: { sv: 'Annat', en: 'Other' } },
 ];
+
+// Maps a fulfillment status into a localized label + badge styling for the BOM fulfillment column.
+const FULFILLMENT_BADGE: Record<FulfillmentStatus, { label: { sv: string; en: string }; className: string }> = {
+  not_invoiced: { label: { sv: 'Ej fakturerad', en: 'Not invoiced' }, className: 'bg-muted text-muted-foreground border-transparent' },
+  partial: { label: { sv: 'Delvis fakturerad', en: 'Partially invoiced' }, className: 'bg-amber-100 text-amber-800 border-amber-200' },
+  full: { label: { sv: 'Fullt fakturerad', en: 'Fully invoiced' }, className: 'bg-green-100 text-green-800 border-green-200' },
+  over: { label: { sv: 'Överfakturerad', en: 'Over-invoiced' }, className: 'bg-destructive/10 text-destructive border-destructive/20' },
+};
 
 const BOMBuilder: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -159,6 +168,33 @@ const BOMBuilder: React.FC = () => {
       }) as BOMItem[];
     },
     enabled: isStaff && !!id,
+  });
+
+  // Fetch premises-level fulfillment (quoted/invoiced/remaining per sku) for this BOM's group
+  const { data: fulfillment } = useQuery({
+    queryKey: ['bom_fulfillment', bom?.bom_group_id],
+    queryFn: async () => {
+      const map = new Map<string, { bom_quantity: number; quoted_quantity: number; invoiced_quantity: number; remaining_quantity: number }>();
+      const groupId = bom?.bom_group_id;
+      if (!groupId) return map;
+      const { data, error } = await supabase
+        .from('bom_fulfillment')
+        .select('sku_id, bom_quantity, quoted_quantity, invoiced_quantity, remaining_quantity')
+        .eq('bom_group_id', groupId);
+      if (error) throw error;
+      for (const row of data ?? []) {
+        if (row.sku_id) {
+          map.set(row.sku_id, {
+            bom_quantity: row.bom_quantity ?? 0,
+            quoted_quantity: row.quoted_quantity ?? 0,
+            invoiced_quantity: row.invoiced_quantity ?? 0,
+            remaining_quantity: row.remaining_quantity ?? 0,
+          });
+        }
+      }
+      return map;
+    },
+    enabled: isStaff && !!bom?.bom_group_id,
   });
 
   // Fetch existing quote linked to this BOM
@@ -408,6 +444,18 @@ const BOMBuilder: React.FC = () => {
     },
     { costEx: 0, items: 0 }
   );
+
+  // Premises-level fulfillment rollup across the BOM items
+  const fulfillmentSummary = useMemo(() => {
+    let fullyInvoiced = 0;
+    let unitsRemaining = 0;
+    for (const item of items) {
+      const invoiced = fulfillment?.get(item.sku_id)?.invoiced_quantity ?? 0;
+      if (invoiced >= item.quantity && item.quantity > 0) fullyInvoiced += 1;
+      unitsRemaining += remainingToInvoice(item.quantity, invoiced);
+    }
+    return { fullyInvoiced, unitsRemaining };
+  }, [items, fulfillment]);
 
   // Create a FRESH quote from BOM (no previous quote to clone)
   const createFreshQuote = async () => {
@@ -870,6 +918,10 @@ const BOMBuilder: React.FC = () => {
                     <TableHead className="text-xs uppercase">SKU</TableHead>
                     <TableHead className="text-xs uppercase">{t('Produktnamn', 'Product Name')}</TableHead>
                     <TableHead className="text-xs uppercase text-center">{t('Antal', 'Qty')}</TableHead>
+                    <TableHead className="text-xs uppercase text-center">{t('Offererat', 'Quoted')}</TableHead>
+                    <TableHead className="text-xs uppercase text-center">{t('Fakturerat', 'Invoiced')}</TableHead>
+                    <TableHead className="text-xs uppercase text-center">{t('Återstår', 'Remaining')}</TableHead>
+                    <TableHead className="text-xs uppercase text-center">{t('Status', 'Status')}</TableHead>
                     <TableHead className="text-xs uppercase text-right">{t('Kostnad ex', 'Cost ex')}</TableHead>
                     {!isLocked && <TableHead></TableHead>}
                   </TableRow>
@@ -877,7 +929,7 @@ const BOMBuilder: React.FC = () => {
                 <TableBody>
                   {items.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={isLocked ? 4 : 5} className="text-center py-8 text-muted-foreground">
+                      <TableCell colSpan={isLocked ? 8 : 9} className="text-center py-8 text-muted-foreground">
                         {t('Lägg till SKUs för att börja bygga din BOM', 'Add SKUs to start building your BOM')}
                       </TableCell>
                     </TableRow>
@@ -886,7 +938,12 @@ const BOMBuilder: React.FC = () => {
                       const qty = localQuantities[item.id] ?? item.quantity;
                       const unitCostEx = item.cost_ex_vat_at_time ?? 0;
                       const costEx = unitCostEx * qty;
-                      
+                      const f = fulfillment?.get(item.sku_id);
+                      const invoiced = f?.invoiced_quantity ?? 0;
+                      const quoted = f?.quoted_quantity ?? 0;
+                      const remaining = remainingToInvoice(item.quantity, invoiced);
+                      const status = FULFILLMENT_BADGE[getFulfillmentStatus(invoiced, item.quantity)];
+
                       return (
                         <TableRow key={item.id}>
                           <TableCell className="font-mono">{item.sku.sku}</TableCell>
@@ -901,6 +958,12 @@ const BOMBuilder: React.FC = () => {
                                 className="w-16 text-center mx-auto"
                               />
                             )}
+                          </TableCell>
+                          <TableCell className="text-center text-muted-foreground">{quoted}</TableCell>
+                          <TableCell className="text-center">{invoiced}</TableCell>
+                          <TableCell className="text-center font-medium">{remaining}</TableCell>
+                          <TableCell className="text-center">
+                            <Badge variant="outline" className={status.className}>{t(status.label.sv, status.label.en)}</Badge>
                           </TableCell>
                           <TableCell className="text-right text-muted-foreground">
                             {costEx ? `${formatPrice(costEx)} kr` : '—'}
@@ -940,6 +1003,17 @@ const BOMBuilder: React.FC = () => {
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">{t('Totalt antal enheter', 'Total units')}:</span>
                     <span>{totals.items}</span>
+                  </div>
+                </div>
+
+                <div className="border-t border-border pt-4 space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">{t('Fullt fakturerade artiklar', 'Items fully invoiced')}:</span>
+                    <span>{fulfillmentSummary.fullyInvoiced} / {items.length}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">{t('Enheter kvar att fakturera', 'Units left to invoice')}:</span>
+                    <span className="font-medium">{fulfillmentSummary.unitsRemaining}</span>
                   </div>
                 </div>
 

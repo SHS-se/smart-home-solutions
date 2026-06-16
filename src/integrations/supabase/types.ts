@@ -1666,6 +1666,9 @@ export type Database = {
           sku: string | null
           sku_id: string | null
           sort_order: number
+          source_bom_id: string | null
+          source_bom_item_id: string | null
+          source_bom_version: number | null
           tax_rate: number
           unit: string | null
           unit_price: number
@@ -1681,6 +1684,9 @@ export type Database = {
           sku?: string | null
           sku_id?: string | null
           sort_order?: number
+          source_bom_id?: string | null
+          source_bom_item_id?: string | null
+          source_bom_version?: number | null
           tax_rate?: number
           unit?: string | null
           unit_price?: number
@@ -1696,6 +1702,9 @@ export type Database = {
           sku?: string | null
           sku_id?: string | null
           sort_order?: number
+          source_bom_id?: string | null
+          source_bom_item_id?: string | null
+          source_bom_version?: number | null
           tax_rate?: number
           unit?: string | null
           unit_price?: number
@@ -1720,6 +1729,13 @@ export type Database = {
             columns: ["sku_id"]
             isOneToOne: false
             referencedRelation: "skus"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invoice_line_items_source_bom_id_fkey"
+            columns: ["source_bom_id"]
+            isOneToOne: false
+            referencedRelation: "boms"
             referencedColumns: ["id"]
           },
         ]
@@ -3063,6 +3079,17 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      bom_fulfillment: {
+        Row: {
+          bom_group_id: string | null
+          bom_quantity: number | null
+          invoiced_quantity: number | null
+          quoted_quantity: number | null
+          remaining_quantity: number | null
+          sku_id: string | null
+        }
+        Relationships: []
       }
       invoice_computed_totals: {
         Row: {

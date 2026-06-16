@@ -8,6 +8,7 @@ import { getDefaultInvoiceDueDate } from '@/lib/swedish-banking-days';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
@@ -35,12 +36,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Send, Eye, Plus, Trash2, Loader2, Info, Link as LinkIcon, Package, Lock } from 'lucide-react';
+import { Send, Eye, Plus, Trash2, Loader2, Info, Link as LinkIcon, Package, Lock, AlertTriangle } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import SKUSelector from '@/components/portal/boms/SKUSelector';
 import { useInvoiceBomRevision } from '@/hooks/use-invoice-bom-revision';
 import { getEdgeFunctionErrorMessage } from '@/lib/edge-function-error';
 import { getAuthenticatedFunctionHeaders } from '@/lib/supabase-function-auth';
+import { findOverInvoicedSkus } from '@/lib/bom-fulfillment';
 
 interface LineItem {
   id?: string;
@@ -54,6 +56,9 @@ interface LineItem {
   tax_rate: number;
   category?: string;
   sort_order: number;
+  source_bom_id?: string | null;
+  source_bom_item_id?: string | null;
+  source_bom_version?: number | null;
 }
 
 interface Invoice {
@@ -204,9 +209,59 @@ const InvoiceDraftEditor: React.FC = () => {
     enabled: !!activeBomId && isStaff,
   });
 
+  // Fetch premises-level fulfillment (invoiced/quoted/remaining per sku) for the active BOM group.
+  // invoiced_quantity counts only finalized invoices, so remaining_quantity is what this draft may still bill.
+  const { data: bomFulfillment } = useQuery({
+    queryKey: ['bom_fulfillment', activeBomId],
+    queryFn: async () => {
+      const map = new Map<string, { bom_quantity: number; quoted_quantity: number; invoiced_quantity: number; remaining_quantity: number }>();
+      if (!activeBomId) return map;
+      const { data: bomRow } = await supabase
+        .from('boms')
+        .select('bom_group_id')
+        .eq('id', activeBomId)
+        .single();
+      if (!bomRow?.bom_group_id) return map;
+      const { data, error } = await supabase
+        .from('bom_fulfillment')
+        .select('sku_id, bom_quantity, quoted_quantity, invoiced_quantity, remaining_quantity')
+        .eq('bom_group_id', bomRow.bom_group_id);
+      if (error) throw error;
+      for (const row of data ?? []) {
+        if (row.sku_id) {
+          map.set(row.sku_id, {
+            bom_quantity: row.bom_quantity ?? 0,
+            quoted_quantity: row.quoted_quantity ?? 0,
+            invoiced_quantity: row.invoiced_quantity ?? 0,
+            remaining_quantity: row.remaining_quantity ?? 0,
+          });
+        }
+      }
+      return map;
+    },
+    enabled: !!activeBomId && isStaff,
+  });
+
+  // Detect lines that would bill more of a SKU than the premises has left to invoice (hard-blocked at finalize).
+  const bomOverageBySku = useMemo(() => {
+    if (!bomFulfillment || bomFulfillment.size === 0) {
+      return new Map<string, { requested: number; remaining: number }>();
+    }
+    const requestedBySku = new Map<string, number>();
+    for (const it of lineItems) {
+      if (it.line_type === 'hardware' && it.sku_id) {
+        requestedBySku.set(it.sku_id, (requestedBySku.get(it.sku_id) ?? 0) + (it.quantity || 0));
+      }
+    }
+    return findOverInvoicedSkus(requestedBySku, bomFulfillment);
+  }, [bomFulfillment, lineItems]);
+
+  const hasBomOverage = bomOverageBySku.size > 0;
+
   // Populate line items when BOM items are loaded (for new invoices only)
   useEffect(() => {
     if (bomItems && bomItems.length > 0 && !invoiceId) {
+      const bomVersion = boms.find(b => b.id === activeBomId)?.version ?? null;
       const hardwareItems: LineItem[] = bomItems.map((item, idx) => {
         const sku = item.skus as { sku: string; name: string; sell_price_ex_vat: number | null; vat_rate: number } | null;
         const unitPrice = sku?.sell_price_ex_vat ?? 0;
@@ -222,6 +277,9 @@ const InvoiceDraftEditor: React.FC = () => {
           unit_price: unitPrice,
           tax_rate: vatRatePct,
           sort_order: idx,
+          source_bom_id: activeBomId,
+          source_bom_item_id: item.id,
+          source_bom_version: bomVersion,
         };
       });
       // Keep existing labor/travel items, replace hardware
@@ -230,7 +288,7 @@ const InvoiceDraftEditor: React.FC = () => {
         ...prev.filter(i => i.line_type !== 'hardware'),
       ]);
     }
-  }, [bomItems, invoiceId]);
+  }, [bomItems, invoiceId, activeBomId, boms]);
 
   // Initialize state from existing invoice
   useEffect(() => {
@@ -364,6 +422,9 @@ const InvoiceDraftEditor: React.FC = () => {
               tax_rate: item.tax_rate,
               category: item.category ?? null,
               sort_order: idx,
+              source_bom_id: item.source_bom_id ?? null,
+              source_bom_item_id: item.source_bom_item_id ?? null,
+              source_bom_version: item.source_bom_version ?? null,
               created_at: existingCreatedAt ?? new Date().toISOString(),
             };
           })
@@ -457,6 +518,9 @@ const InvoiceDraftEditor: React.FC = () => {
           tax_rate: item.tax_rate,
           category: item.category ?? null,
           sort_order: idx,
+          source_bom_id: item.source_bom_id ?? null,
+          source_bom_item_id: item.source_bom_item_id ?? null,
+          source_bom_version: item.source_bom_version ?? null,
           created_at: new Date().toISOString(),
         };
       });
@@ -620,7 +684,8 @@ const InvoiceDraftEditor: React.FC = () => {
     const vatRateRaw = skuData.vat_rate;
     const vatRatePct = vatRateRaw == null ? 25 : vatRateRaw <= 1 ? vatRateRaw * 100 : vatRateRaw;
 
-    // Add to invoice line items immediately
+    // Add to invoice line items immediately. Attributing the line to the active BOM (by sku_id) keeps
+    // fulfillment tracking accurate even before the BOM-revision insert resolves the exact item id.
     setLineItems(prev => [...prev, {
       id: crypto.randomUUID(),
       line_type: 'hardware' as const,
@@ -631,37 +696,25 @@ const InvoiceDraftEditor: React.FC = () => {
       unit_price: unitPrice,
       tax_rate: vatRatePct,
       sort_order: prev.length,
+      source_bom_id: activeBomId,
+      source_bom_version: boms.find(b => b.id === activeBomId)?.version ?? null,
     }]);
 
-    // Trigger BOM revision logic
+    // Trigger BOM revision logic — a genuinely new SKU is added to BOM scope (the full installed list).
     await bomRevision.handleSkuAddedFromInvoice(skuId, quantity, skuData);
 
     setIsSKUSelectorOpen(false);
   };
 
-  // Update line item — sync quantity changes to BOM for hardware items
+  // Update line item. The invoice is a draw-down against the BOM, not a redefinition of its scope, so
+  // quantity edits are NOT synced back into the BOM (that would shrink the target and break partial
+  // fulfillment). The BOM is authored in the BOM Builder; over-invoicing is hard-blocked at finalize.
   const updateLineItem = (index: number, updates: Partial<LineItem>) => {
-    setLineItems(prev => {
-      const updated = prev.map((item, i) => i === index ? { ...item, ...updates } : item);
-
-      // If quantity changed on a hardware line with a sku_id, sync to BOM
-      if ('quantity' in updates) {
-        const item = updated[index];
-        if (item.line_type === 'hardware' && item.sku_id && activeBomId) {
-          const allHw = updated
-            .filter(i => i.line_type === 'hardware' && i.sku_id)
-            .map(i => ({ sku_id: i.sku_id!, quantity: i.quantity }));
-          bomRevision.syncQuantityToBom(item.sku_id, updates.quantity!, allHw);
-        }
-      }
-
-      return updated;
-    });
+    setLineItems(prev => prev.map((item, i) => i === index ? { ...item, ...updates } : item));
   };
 
   // Remove line item
   const removeLineItem = (index: number) => {
-    const removedItem = lineItems[index];
     const next = lineItems.filter((_, i) => i !== index);
     skipNextAutosaveRef.current = true;
 
@@ -672,10 +725,7 @@ const InvoiceDraftEditor: React.FC = () => {
 
     setLineItems(next);
 
-    // If removing a hardware line with a sku_id, sync removal to BOM
-    if (removedItem.line_type === 'hardware' && removedItem.sku_id && activeBomId) {
-      bomRevision.handleSkuRemovedFromInvoice(removedItem.sku_id);
-    }
+    // Removing an invoice line does not remove the item from BOM scope (invoice = draw-down, not scope).
 
     if (invoiceId && initialLoadComplete.current) {
       saveLineItemsMutation.mutate(next);
@@ -834,6 +884,7 @@ const InvoiceDraftEditor: React.FC = () => {
                     <TableRow>
                       <TableHead className="text-xs uppercase">{t('PRODUKT', 'PRODUCT')}</TableHead>
                       <TableHead className="text-xs uppercase">{t('SKU', 'SKU')}</TableHead>
+                      <TableHead className="text-xs uppercase">{t('BOM', 'BOM')}</TableHead>
                       <TableHead className="text-xs uppercase w-24">{t('ANTAL', 'QTY')}</TableHead>
                       <TableHead className="text-xs uppercase w-28">{t('Å-PRIS', 'UNIT')}</TableHead>
                       <TableHead className="text-xs uppercase text-right">{t('SUMMA', 'TOTAL')}</TableHead>
@@ -843,7 +894,7 @@ const InvoiceDraftEditor: React.FC = () => {
                   <TableBody>
                     {lineItems.filter(i => i.line_type === 'hardware').length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center text-muted-foreground py-4">
+                        <TableCell colSpan={7} className="text-center text-muted-foreground py-4">
                           {t('Inga hårdvaruartiklar', 'No hardware items')}
                         </TableCell>
                       </TableRow>
@@ -851,7 +902,7 @@ const InvoiceDraftEditor: React.FC = () => {
                       lineItems.map((item, idx) => item.line_type === 'hardware' && (
                         <TableRow key={item.id || idx}>
                           <TableCell>
-                            <BlurCommitInput 
+                            <BlurCommitInput
                               value={item.description}
                               onCommit={(val) => updateLineItem(idx, { description: val })}
                               placeholder={t('Produktnamn', 'Product name')}
@@ -861,7 +912,22 @@ const InvoiceDraftEditor: React.FC = () => {
                             <span className="text-xs text-muted-foreground font-mono">{item.sku || '—'}</span>
                           </TableCell>
                           <TableCell>
-                            <BlurCommitInput 
+                            {(() => {
+                              const f = item.sku_id ? bomFulfillment?.get(item.sku_id) : undefined;
+                              if (!f) return <span className="text-xs text-muted-foreground">—</span>;
+                              const over = !!item.sku_id && bomOverageBySku.has(item.sku_id);
+                              return (
+                                <span className={`text-xs whitespace-nowrap ${over ? 'text-destructive font-medium' : 'text-muted-foreground'}`}>
+                                  {t(
+                                    `${f.invoiced_quantity}/${f.bom_quantity} fakt · ${f.remaining_quantity} kvar`,
+                                    `${f.invoiced_quantity}/${f.bom_quantity} inv · ${f.remaining_quantity} left`
+                                  )}
+                                </span>
+                              );
+                            })()}
+                          </TableCell>
+                          <TableCell>
+                            <BlurCommitInput
                               type="number"
                               value={item.quantity}
                               onCommit={(val) => updateLineItem(idx, { quantity: parseFloat(val) || 1 })}
@@ -1062,11 +1128,22 @@ const InvoiceDraftEditor: React.FC = () => {
                     </Button>
                   ) : (
                     <>
-                      <Button 
+                      {hasBomOverage && (
+                        <Alert variant="destructive" data-testid="invoice-bom-overage-alert">
+                          <AlertTriangle className="h-4 w-4" />
+                          <AlertDescription>
+                            {t(
+                              'En eller flera rader överstiger det som återstår att fakturera mot BOM:en. Justera antalet innan du fastställer.',
+                              'One or more lines exceed what remains to be invoiced against the BOM. Adjust the quantity before finalizing.'
+                            )}
+                          </AlertDescription>
+                        </Alert>
+                      )}
+                      <Button
                         data-testid="invoice-finalize-button"
                         className="w-full"
                         onClick={() => finalizeMutation.mutate()}
-                        disabled={finalizeMutation.isPending || lineItems.length === 0}
+                        disabled={finalizeMutation.isPending || lineItems.length === 0 || hasBomOverage}
                       >
                         {finalizeMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                         <Send className="h-4 w-4 mr-2" />
