@@ -40,10 +40,13 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { ArrowLeft, Plus, Trash2, FileText, Package, Pencil, Check, X, Copy, Save, Lock, Info } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, FileText, Package, Pencil, Check, X, Copy, Save, Lock, Info, Receipt } from 'lucide-react';
 import { getQuoteStatusBadge } from '@/lib/quote-status-badge';
 import { supersedeActiveQuotesInChain } from '@/lib/supersede-quotes';
 import { getFulfillmentStatus, remainingToInvoice, type FulfillmentStatus } from '@/lib/bom-fulfillment';
+import { getAuthenticatedFunctionHeaders } from '@/lib/supabase-function-auth';
+import { getEdgeFunctionErrorMessage } from '@/lib/edge-function-error';
+import { getDefaultInvoiceDueDate } from '@/lib/swedish-banking-days';
 import { toast } from '@/hooks/use-toast';
 import SKUSelector from '@/components/portal/boms/SKUSelector';
 import TemplateSelector from '@/components/portal/boms/TemplateSelector';
@@ -105,6 +108,7 @@ const BOMBuilder: React.FC = () => {
   // Local state for unsaved quantity changes
   const [localQuantities, setLocalQuantities] = useState<Record<string, number>>({});
   const [isSaving, setIsSaving] = useState(false);
+  const [isCreatingInvoice, setIsCreatingInvoice] = useState(false);
 
   // Fetch BOM
   const { data: bom } = useQuery({
@@ -720,6 +724,66 @@ const BOMBuilder: React.FC = () => {
     }
   };
 
+  // Create a draft invoice directly from the current BOM revision, billing only the remaining
+  // (un-invoiced) quantities so already-fulfilled items are never double billed. The invoice stores
+  // the source BOM revision (bom_id + version) and has no quote (created directly from BOM).
+  const createInvoiceFromBOM = async () => {
+    if (!bom?.customer_id) {
+      toast({ title: t('Välj en kund först', 'Select a customer first'), variant: 'destructive' });
+      return;
+    }
+
+    const lineItems = items
+      .map(item => {
+        const invoiced = fulfillment?.get(item.sku_id)?.invoiced_quantity ?? 0;
+        return { item, remaining: remainingToInvoice(item.quantity, invoiced) };
+      })
+      .filter(({ remaining }) => remaining > 0)
+      .map(({ item, remaining }) => {
+        const vatRateRaw = item.sku.vat_rate;
+        const vatRatePct = vatRateRaw == null ? 25 : vatRateRaw <= 1 ? vatRateRaw * 100 : vatRateRaw;
+        return {
+          line_type: 'hardware',
+          description: item.sku.name,
+          sku: item.sku.sku,
+          sku_id: item.sku_id,
+          quantity: remaining,
+          unit_price: item.sku.sell_price_ex_vat ?? 0,
+          tax_rate: vatRatePct,
+          category: item.sku.category_name,
+          source_bom_id: id,
+          source_bom_item_id: item.id,
+          source_bom_version: bom?.version ?? 1,
+        };
+      });
+
+    if (lineItems.length === 0) {
+      toast({ title: t('Alla BOM-artiklar är redan fakturerade', 'All BOM items have already been invoiced.') });
+      return;
+    }
+
+    setIsCreatingInvoice(true);
+    try {
+      const { data, error, response } = await supabase.functions.invoke('create-draft-invoice', {
+        headers: await getAuthenticatedFunctionHeaders(),
+        body: {
+          customer_id: bom.customer_id,
+          bom_id: id,
+          due_date: getDefaultInvoiceDueDate(),
+          line_items: lineItems,
+        },
+      });
+      if (error) throw new Error(await getEdgeFunctionErrorMessage(error, response));
+      if (data?.error) throw new Error(data.error);
+      toast({ title: t('Fakturautkast skapat från BOM', 'Invoice draft created from BOM') });
+      navigate(`/portal/invoices/new?id=${data.invoice_id}`);
+    } catch (error: any) {
+      toast({ title: t('Kunde inte skapa faktura', 'Failed to create invoice'), description: error.message, variant: 'destructive' });
+    } finally {
+      setIsCreatingInvoice(false);
+    }
+  };
+
   // Handle add from template
   const handleAddFromTemplate = async (templateId: string) => {
     try {
@@ -1034,10 +1098,10 @@ const BOMBuilder: React.FC = () => {
                 {t('Gå till offert', 'Go to offer')}
               </Button>
             ) : (
-              <Button 
+              <Button
                 data-testid="bom-create-quote-button"
-                className="w-full" 
-                size="lg" 
+                className="w-full"
+                size="lg"
                 onClick={createQuote}
                 disabled={items.length === 0 || hasUnsavedChanges || isLocked}
               >
@@ -1046,7 +1110,28 @@ const BOMBuilder: React.FC = () => {
               </Button>
             )}
 
-            <Button 
+            <div className="space-y-1">
+              <Button
+                data-testid="bom-create-invoice-button"
+                variant="outline"
+                className="w-full"
+                size="lg"
+                onClick={createInvoiceFromBOM}
+                disabled={items.length === 0 || hasUnsavedChanges || isCreatingInvoice || fulfillmentSummary.unitsRemaining === 0}
+              >
+                <Receipt className="h-4 w-4 mr-2" />
+                {isCreatingInvoice
+                  ? t('Skapar...', 'Creating...')
+                  : t('Skapa faktura från BOM', 'Create invoice from BOM')}
+              </Button>
+              {items.length > 0 && fulfillmentSummary.unitsRemaining === 0 && (
+                <p className="text-xs text-muted-foreground text-center">
+                  {t('Alla BOM-artiklar har redan fakturerats.', 'All BOM items have already been invoiced.')}
+                </p>
+              )}
+            </div>
+
+            <Button
               data-testid="bom-save-button"
               className="w-full bg-[#F6C573] text-foreground hover:bg-[#E5B463] disabled:bg-[#E8DCC4] disabled:text-muted-foreground"
               size="lg"
