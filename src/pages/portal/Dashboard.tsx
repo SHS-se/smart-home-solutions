@@ -162,7 +162,7 @@ const Dashboard: React.FC = () => {
       
       setCanBootstrap(false);
       await refreshUserData();
-    } catch (error: any) {
+    } catch (error) {
       toast({
         title: t('Fel', 'Error'),
         description: error.message || t('Det gick inte att skapa adminkontot.', 'Failed to create admin account.'),
@@ -511,7 +511,7 @@ const Dashboard: React.FC = () => {
                       a.click();
                       URL.revokeObjectURL(url);
                       toast({ title: t('Backup nedladdad!', 'Backup downloaded!') });
-                    } catch (e: any) {
+                    } catch (e) {
                       toast({ title: t('Fel', 'Error'), description: e.message, variant: 'destructive' });
                     }
                   }}

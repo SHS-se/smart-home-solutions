@@ -116,7 +116,7 @@ const InvoiceCard: React.FC<InvoiceCardProps> = ({ quote, invoiceId }) => {
       });
       queryClient.invalidateQueries({ queryKey: ['quote', quote.id] });
       queryClient.invalidateQueries({ queryKey: ['quote_events', quote.id] });
-    } catch (error: any) {
+    } catch (error) {
       toast({
         title: t('Kunde inte skapa faktura', 'Failed to create invoice'),
         description: error.message,
@@ -146,7 +146,7 @@ const InvoiceCard: React.FC<InvoiceCardProps> = ({ quote, invoiceId }) => {
       });
       queryClient.invalidateQueries({ queryKey: ['quote', quote.id] });
       queryClient.invalidateQueries({ queryKey: ['billing_events', quote.id] });
-    } catch (error: any) {
+    } catch (error) {
       toast({
         title: t('Kunde inte fastst\u00e4lla faktura', 'Failed to finalize invoice'),
         description: error.message,
@@ -174,7 +174,7 @@ const InvoiceCard: React.FC<InvoiceCardProps> = ({ quote, invoiceId }) => {
       });
       queryClient.invalidateQueries({ queryKey: ['quote', quote.id] });
       queryClient.invalidateQueries({ queryKey: ['billing_events', quote.id] });
-    } catch (error: any) {
+    } catch (error) {
       toast({
         title: t('Kunde inte makulera faktura', 'Failed to void invoice'),
         description: error.message,

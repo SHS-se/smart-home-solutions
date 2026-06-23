@@ -628,7 +628,7 @@ export const eventApplianceModel: DeviceModel<EventApplianceParams, EventApplian
   }),
   step: (params, state, ctx) => {
     const dt = ctx.clock.dtSeconds;
-    let nextState: EventApplianceState = { ...state };
+    const nextState: EventApplianceState = { ...state };
 
     if (sameDayReset(nextState.lastDayIndex, ctx.clock.dayIndex)) {
       nextState.startsToday = 0;

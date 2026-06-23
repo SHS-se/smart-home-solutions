@@ -122,7 +122,7 @@ export const DeleteCustomerDialog: React.FC<DeleteCustomerDialogProps> = ({
         description: t('Kunden och all kopplad data har tagits bort.', 'Customer and all linked data have been removed.'),
       });
       onDeleted();
-    } catch (err: any) {
+    } catch (err) {
       console.error('Error deleting customer:', err);
       toast({
         title: t('Fel', 'Error'),

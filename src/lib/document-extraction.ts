@@ -58,7 +58,7 @@ async function runOcr(input: File | Blob): Promise<ExtractionResult> {
   const result = await worker.recognize(input);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const data = result.data as any;
-  const words: WordPosition[] = (data.words || []).map((w: any) => ({
+  const words: WordPosition[] = (data.words || []).map((w) => ({
     text: w.text,
     x: w.bbox.x0,
     y: w.bbox.y0,

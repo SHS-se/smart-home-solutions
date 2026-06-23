@@ -267,7 +267,7 @@ const Contact = () => {
 
       setOnboarding(data?.onboarding === true);
       setSubmitted(true);
-    } catch (error: any) {
+    } catch (error) {
       console.error('Contact form submission error (treated as success):', error);
       setSubmitted(true);
     } finally {

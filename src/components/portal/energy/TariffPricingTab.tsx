@@ -120,7 +120,7 @@ const TariffPricingTab: React.FC<TariffPricingTabProps> = ({ customerId }) => {
       }
 
       toast({ title: t('Sparat!', 'Saved!') });
-    } catch (err: any) {
+    } catch (err) {
       toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
     } finally {
       setSaving(false);

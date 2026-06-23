@@ -31,7 +31,7 @@ const ERDiagram = () => {
       const response = await supabase.functions.invoke('check-env');
       if (response.error) throw new Error(response.error.message);
       setEnvResults(response.data);
-    } catch (err: any) {
+    } catch (err) {
       toast.error('Failed to check env: ' + err.message);
     } finally {
       setEnvCheckLoading(false);
@@ -51,7 +51,7 @@ const ERDiagram = () => {
       if (response.data?.error) throw new Error(response.data.error);
       
       setErdSource(response.data.erd);
-    } catch (err: any) {
+    } catch (err) {
       console.error('Failed to fetch ERD:', err);
       setError(err.message || 'Failed to load schema');
       toast.error(t('Kunde inte hämta schema', 'Failed to fetch schema'));

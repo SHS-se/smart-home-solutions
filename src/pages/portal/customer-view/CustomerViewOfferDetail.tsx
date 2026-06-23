@@ -195,7 +195,7 @@ const CustomerViewOfferDetail: React.FC = () => {
       toast({ title: t('Offert skickad', 'Quote sent') });
       queryClient.invalidateQueries({ queryKey: ['quote-events', quoteId] });
       queryClient.invalidateQueries({ queryKey: ['customer-quote-detail', quoteId] });
-    } catch (err: any) {
+    } catch (err) {
       toast({ title: t('Fel vid skickande', 'Error sending'), description: err.message, variant: 'destructive' });
     } finally {
       setIsResending(false);
@@ -231,7 +231,7 @@ const CustomerViewOfferDetail: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['quote-messages', quoteId] });
       queryClient.invalidateQueries({ queryKey: ['quote-events', quoteId] });
       toast({ title: t('Meddelande skickat', 'Message sent') });
-    } catch (err: any) {
+    } catch (err) {
       toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
     } finally {
       setIsSendingMessage(false);
@@ -298,7 +298,7 @@ const CustomerViewOfferDetail: React.FC = () => {
 
       toast({ title: t('Ny revision skapad', 'New revision created') });
       navigate(`/portal/quotes/${newQuote.id}`);
-    } catch (err: any) {
+    } catch (err) {
       toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
     } finally {
       setIsCreatingRevision(false);
@@ -345,7 +345,7 @@ const CustomerViewOfferDetail: React.FC = () => {
 
       toast({ title: t('Kopia skapad', 'Copy created') });
       navigate(`/portal/quotes/${newQuote.id}`);
-    } catch (err: any) {
+    } catch (err) {
       toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
     } finally {
       setIsCreatingRevision(false);

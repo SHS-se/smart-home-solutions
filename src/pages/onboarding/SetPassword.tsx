@@ -80,7 +80,7 @@ const SetPassword: React.FC = () => {
       });
 
       navigate('/portal/home-profile', { replace: true });
-    } catch (error: any) {
+    } catch (error) {
       toast({
         title: t('Fel', 'Error'),
         description: error.message || t('Det gick inte att spara lösenordet.', 'Failed to save password.'),

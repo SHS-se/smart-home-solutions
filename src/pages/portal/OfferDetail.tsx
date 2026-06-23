@@ -200,7 +200,7 @@ const OfferDetail: React.FC = () => {
             ? t('Offerten har avvisats.', 'Quote declined.')
             : t('Ändringsförfrågan skickad.', 'Revision request sent.'),
       });
-    } catch (err: any) {
+    } catch (err) {
       toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
     } finally {
       setIsActioning(false);

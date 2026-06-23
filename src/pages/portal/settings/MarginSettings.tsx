@@ -115,7 +115,7 @@ const MarginSettings: React.FC = () => {
       setHasChanges(false);
       toast({ title: t('Ändringar sparade', 'Changes saved') });
     },
-    onError: (error: any) => {
+    onError: (error) => {
       toast({ title: t('Kunde inte spara', 'Failed to save'), description: error.message, variant: 'destructive' });
     },
   });

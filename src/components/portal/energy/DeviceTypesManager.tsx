@@ -262,7 +262,7 @@ const DeviceTypesManager: React.FC = () => {
       }
       toast({ title: t('Sparat!', 'Saved!') });
       fetchTypes();
-    } catch (err: any) {
+    } catch (err) {
       toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
     } finally {
       setSaving(false);

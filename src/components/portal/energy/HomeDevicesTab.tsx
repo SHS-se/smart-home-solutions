@@ -80,7 +80,7 @@ const HomeDevicesTab: React.FC<HomeDevicesTabProps> = ({ customerId, homeId }) =
     ]);
 
     if (typesResult.data) {
-      setDeviceTypes(typesResult.data.map((t: any) => ({ ...t, field_schema: t.field_schema as any, supported_profile_kinds: (t.supported_profile_kinds || []) as string[] })) as DeviceType[]);
+      setDeviceTypes(typesResult.data.map((t) => ({ ...t, field_schema: t.field_schema as any, supported_profile_kinds: (t.supported_profile_kinds || []) as string[] })) as DeviceType[]);
     }
 
     if (assignResult?.data) setAssignments(assignResult.data as unknown as AssignmentEntry[]);

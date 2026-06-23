@@ -105,7 +105,7 @@ const ROITab: React.FC<ROITabProps> = ({ customerId, homeId, homeCount = 1 }) =>
       setAddPropertyOpen(false);
       setNewPropertyName('');
       navigate(`/portal/home-profile?home=${data.id}`);
-    } catch (err: any) {
+    } catch (err) {
       toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
     } finally {
       setCreating(false);

@@ -197,7 +197,7 @@ const PerformanceDataEditor: React.FC<Props> = ({
       toast({ title: t('Sparad!', 'Saved!') });
       onSaved();
       onOpenChange(false);
-    } catch (err: any) {
+    } catch (err) {
       toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
     } finally {
       setSaving(false);
@@ -210,14 +210,14 @@ const PerformanceDataEditor: React.FC<Props> = ({
     : null;
 
   const surfaceIndoorTemps = !isCurve(profileKind) && points
-    ? [...new Set(points.map((p: any) => p.indoor_temp_c))].filter(v => typeof v === 'number').sort((a, b) => a - b)
+    ? [...new Set(points.map((p) => p.indoor_temp_c))].filter(v => typeof v === 'number').sort((a, b) => a - b)
     : [];
 
   const surfaceChartData = !isCurve(profileKind) && points
     ? points
-        .filter((p: any) => p.indoor_temp_c === surfaceIndoorTemp)
-        .sort((a: any, b: any) => a.temp_c - b.temp_c)
-        .map((p: any) => ({
+        .filter((p) => p.indoor_temp_c === surfaceIndoorTemp)
+        .sort((a, b) => a.temp_c - b.temp_c)
+        .map((p) => ({
           temp_c: p.temp_c,
           capacity_kw: (p.capacity_w || 0) / 1000,
           input_power_kw: (p.input_power_w || 0) / 1000,
@@ -295,7 +295,7 @@ const PerformanceDataEditor: React.FC<Props> = ({
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {(points || []).map((p: any, i: number) => (
+                    {(points || []).map((p, i: number) => (
                       <TableRow key={i}>
                         {!isCurve(profileKind) && (
                           <TableCell>

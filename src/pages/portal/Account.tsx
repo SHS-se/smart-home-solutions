@@ -138,7 +138,7 @@ const Account: React.FC<AccountProps> = ({ customerId: propCustomerId, isStaffVi
       if (!isStaffView) {
         refreshUserData();
       }
-    } catch (err: any) {
+    } catch (err) {
       toast({
         title: t('Fel', 'Error'),
         description: err.message || t('Kunde inte spara ändringar.', 'Could not save changes.'),

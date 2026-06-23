@@ -59,7 +59,7 @@ export const ViewedCustomerProvider: React.FC<ViewedCustomerProviderProps> = ({ 
 
       if (fetchError) throw fetchError;
       setCustomerData(data as CustomerData);
-    } catch (err: any) {
+    } catch (err) {
       console.error('Error fetching customer:', err);
       setError(err.message || 'Failed to fetch customer');
       setCustomerData(null);

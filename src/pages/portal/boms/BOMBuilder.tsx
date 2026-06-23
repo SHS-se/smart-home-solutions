@@ -255,10 +255,10 @@ const BOMBuilder: React.FC = () => {
     onMutate: async (updates) => {
       await queryClient.cancelQueries({ queryKey: ['bom', id] });
       const previous = queryClient.getQueryData(['bom', id]);
-      queryClient.setQueryData(['bom', id], (old: any) => old ? { ...old, ...updates } : old);
+      queryClient.setQueryData(['bom', id], (old) => old ? { ...(old as Record<string, unknown>), ...updates } : old);
       return { previous };
     },
-    onError: (error: any, _updates, context) => {
+    onError: (error, _updates, context) => {
       if (context?.previous) {
         queryClient.setQueryData(['bom', id], context.previous);
       }
@@ -336,7 +336,7 @@ const BOMBuilder: React.FC = () => {
       });
       navigate(`/portal/boms/${newBom.id}`);
     },
-    onError: (error: any) => {
+    onError: (error) => {
       toast({ title: t('Kunde inte skapa ny revision', 'Failed to create new revision'), description: error.message, variant: 'destructive' });
     },
   });
@@ -416,7 +416,7 @@ const BOMBuilder: React.FC = () => {
       await queryClient.invalidateQueries({ queryKey: ['bom_items', id] });
       setLocalQuantities({});
       toast({ title: t('Ändringar sparade', 'Changes saved') });
-    } catch (error: any) {
+    } catch (error) {
       toast({ title: t('Kunde inte spara', 'Failed to save'), description: error.message, variant: 'destructive' });
     } finally {
       setIsSaving(false);
@@ -520,7 +520,7 @@ const BOMBuilder: React.FC = () => {
   };
 
   // Clone a previous quote and sync hardware lines with new BOM
-  const createQuoteFromPreviousVersion = async (previousQuote: any) => {
+  const createQuoteFromPreviousVersion = async (previousQuote) => {
     // Step 1: Create new quote record
     const { data: newQuote, error: createError } = await supabase
       .from('quotes')
@@ -545,10 +545,10 @@ const BOMBuilder: React.FC = () => {
 
     // Step 3: Separate hardware vs non-hardware lines by section only
     const previousHardwareLines = (previousLines || []).filter(
-      (l: any) => l.section === 'hardware'
+      (l) => l.section === 'hardware'
     );
     const nonHardwareLines = (previousLines || []).filter(
-      (l: any) => l.section !== 'hardware'
+      (l) => l.section !== 'hardware'
     );
 
     // Step 4: Map previous hardware lines by sku_id for lookup
@@ -629,7 +629,7 @@ const BOMBuilder: React.FC = () => {
     });
 
     // Step 8: Clone non-hardware lines (labor, travel, manual) — preserve all pricing
-    const clonedNonHardwareLines = nonHardwareLines.map((line: any) => ({
+    const clonedNonHardwareLines = nonHardwareLines.map((line) => ({
       quote_id: newQuote.id,
       section: line.section,
       description: line.description,
@@ -719,7 +719,7 @@ const BOMBuilder: React.FC = () => {
       }
 
       navigate(`/portal/quotes/${quote.id}`);
-    } catch (error: any) {
+    } catch (error) {
       toast({ title: t('Kunde inte skapa offert', 'Failed to create quote'), description: error.message, variant: 'destructive' });
     }
   };
@@ -777,7 +777,7 @@ const BOMBuilder: React.FC = () => {
       if (data?.error) throw new Error(data.error);
       toast({ title: t('Fakturautkast skapat från BOM', 'Invoice draft created from BOM') });
       navigate(`/portal/invoices/new?id=${data.invoice_id}`);
-    } catch (error: any) {
+    } catch (error) {
       toast({ title: t('Kunde inte skapa faktura', 'Failed to create invoice'), description: error.message, variant: 'destructive' });
     } finally {
       setIsCreatingInvoice(false);
@@ -801,7 +801,7 @@ const BOMBuilder: React.FC = () => {
       }
 
       toast({ title: t('Mall tillagd', 'Template added') });
-    } catch (error: any) {
+    } catch (error) {
       toast({ title: t('Kunde inte lägga till mall', 'Failed to add template'), description: error.message, variant: 'destructive' });
     }
   };

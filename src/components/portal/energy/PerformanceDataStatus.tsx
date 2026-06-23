@@ -11,7 +11,7 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { type ProfileKind, resolveProfile, type ProfileResolution } from '@/lib/performance-data';
+import { type ProfileKind, resolveProfile, type ProfileResolution, type CurvePoint } from '@/lib/performance-data';
 import PerformanceCurveChart from './PerformanceCurveChart';
 import PerformanceDataEditor from './PerformanceDataEditor';
 
@@ -98,9 +98,9 @@ const PerformanceDataStatus: React.FC<Props> = ({
   // Build chart data for curve preview
   const curveStatus = statuses.find(s => s.kind === 'cop_capacity_curve');
   const curveProfile = curveStatus?.resolution?.profile;
-  const curveChartData = curveProfile?.data?.points
-    ?.filter((p: any) => typeof p.temp_c === 'number')
-    .map((p: any) => ({ temp_c: p.temp_c, cop: p.cop, capacity_kw: (p.capacity_w || 0) / 1000 }));
+  const curveChartData = (curveProfile?.data?.points as CurvePoint[] | undefined)
+    ?.filter((p) => typeof p.temp_c === 'number')
+    .map((p) => ({ temp_c: p.temp_c, cop: p.cop, capacity_kw: (p.capacity_w || 0) / 1000 }));
 
   // Build surface chart data – one series per indoor_temp_c
   const surfaceStatus = statuses.find(s => s.kind === 'heating_performance_surface');
@@ -119,19 +119,19 @@ const PerformanceDataStatus: React.FC<Props> = ({
   const surfaceChartInfo = useMemo(() => {
     if (!surfaceProfile?.data?.points?.length) return null;
     const points = surfaceProfile.data.points as any[];
-    const indoorTemps = [...new Set(points.map((p: any) => p.indoor_temp_c as number))]
+    const indoorTemps = [...new Set(points.map((p) => p.indoor_temp_c as number))]
       .filter(v => typeof v === 'number')
       .sort((a, b) => a - b);
 
     // Build merged data: each outdoor temp gets a row, each indoor temp becomes a series
-    const outdoorTemps = [...new Set(points.map((p: any) => p.temp_c as number))]
+    const outdoorTemps = [...new Set(points.map((p) => p.temp_c as number))]
       .filter(v => typeof v === 'number')
       .sort((a, b) => a - b);
 
     const capacityData = outdoorTemps.map(ot => {
       const row: any = { temp_c: ot };
       for (const it of indoorTemps) {
-        const pt = points.find((p: any) => p.indoor_temp_c === it && p.temp_c === ot);
+        const pt = points.find((p) => p.indoor_temp_c === it && p.temp_c === ot);
         row[`cap_${it}`] = pt ? (pt.capacity_w || 0) / 1000 : null;
       }
       return row;
@@ -140,7 +140,7 @@ const PerformanceDataStatus: React.FC<Props> = ({
     const inputPowerData = outdoorTemps.map(ot => {
       const row: any = { temp_c: ot };
       for (const it of indoorTemps) {
-        const pt = points.find((p: any) => p.indoor_temp_c === it && p.temp_c === ot);
+        const pt = points.find((p) => p.indoor_temp_c === it && p.temp_c === ot);
         row[`pw_${it}`] = pt ? (pt.input_power_w || 0) / 1000 : null;
       }
       return row;
@@ -149,7 +149,7 @@ const PerformanceDataStatus: React.FC<Props> = ({
     const copData = outdoorTemps.map(ot => {
       const row: any = { temp_c: ot };
       for (const it of indoorTemps) {
-        const pt = points.find((p: any) => p.indoor_temp_c === it && p.temp_c === ot);
+        const pt = points.find((p) => p.indoor_temp_c === it && p.temp_c === ot);
         row[`cop_${it}`] = pt && pt.input_power_w > 0 ? parseFloat((pt.capacity_w / pt.input_power_w).toFixed(2)) : null;
       }
       return row;
@@ -236,7 +236,7 @@ const PerformanceDataStatus: React.FC<Props> = ({
             <div className="space-y-2">
               <PerformanceCurveChart
                 title="COP"
-                data={curveChartData.map((p: any) => ({ x: p.temp_c, y: p.cop }))}
+                data={curveChartData.map((p) => ({ x: p.temp_c, y: p.cop }))}
                 xLabel="°C"
                 yLabel="COP"
                 height={150}
@@ -244,7 +244,7 @@ const PerformanceDataStatus: React.FC<Props> = ({
               />
               <PerformanceCurveChart
                 title={t('Kapacitet', 'Capacity')}
-                data={curveChartData.map((p: any) => ({ x: p.temp_c, y: p.capacity_kw }))}
+                data={curveChartData.map((p) => ({ x: p.temp_c, y: p.capacity_kw }))}
                 xLabel="°C"
                 yLabel="kW"
                 color="hsl(var(--destructive))"

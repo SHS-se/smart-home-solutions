@@ -133,7 +133,7 @@ const CurveUploadModal: React.FC<Props> = ({ open, onOpenChange, deviceId, exist
       toast({ title: t('Kurva sparad!', 'Curve saved!') });
       onSaved();
       onOpenChange(false);
-    } catch (err: any) {
+    } catch (err) {
       toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
     } finally {
       setSaving(false);

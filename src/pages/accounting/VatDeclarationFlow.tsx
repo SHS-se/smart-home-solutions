@@ -272,7 +272,7 @@ const VatDeclarationFlow: React.FC = () => {
   const buildSalesBoxLink = (box: '05' | '10' | '11' | '12'): string => `/accounting/sales?box=${box}`;
 
   const allLines = postedPurchases.flatMap((p) => p.lines);
-  const needsReviewLines = allLines.filter((l: any) => l.vat_treatment === 'needs_review');
+  const needsReviewLines = allLines.filter((l) => l.vat_treatment === 'needs_review');
   const validationChecks: Array<{ label: string; ok: boolean; issueLink?: string }> = [
     {
       label: hasOpenPeriods

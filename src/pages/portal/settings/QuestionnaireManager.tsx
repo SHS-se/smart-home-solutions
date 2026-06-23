@@ -408,7 +408,7 @@ const QuestionnaireManager: React.FC = () => {
       setNewQuestionEn('');
       setNewQuestionType('text');
       await fetchAll();
-    } catch (err: any) {
+    } catch (err) {
       toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
     } finally {
       setAdding(false);
@@ -426,7 +426,7 @@ const QuestionnaireManager: React.FC = () => {
       if (error) throw error;
       setQuestions(prev => prev.map(q => q.id === id ? { ...q, question_text: editDraft.sv.trim(), question_text_en: editDraft.en.trim(), question_type: editDraft.type as QuestionType } : q));
       setEditingId(null);
-    } catch (err: any) {
+    } catch (err) {
       toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
     }
   };
@@ -473,7 +473,7 @@ const QuestionnaireManager: React.FC = () => {
       if (error) throw error;
       await fetchAll();
       toast({ title: t('Borttagen', 'Deleted'), description: t('Frågan har raderats.', 'Question has been deleted.') });
-    } catch (err: any) {
+    } catch (err) {
       toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
     }
   };
@@ -533,7 +533,7 @@ const QuestionnaireManager: React.FC = () => {
       await Promise.all(
         updates.map(u => supabase.from('home_questions').update({ order_index: u.order_index, sort_order: u.order_index }).eq('id', u.id))
       );
-    } catch (err: any) {
+    } catch (err) {
       toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
       await fetchAll();
     }

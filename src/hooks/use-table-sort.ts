@@ -49,8 +49,8 @@ export function sortItems<T>(
   const getValue = options?.getValue;
 
   return [...items].sort((a, b) => {
-    let aVal = getValue ? getValue(a) : a[column];
-    let bVal = getValue ? getValue(b) : b[column];
+    const aVal = getValue ? getValue(a) : a[column];
+    const bVal = getValue ? getValue(b) : b[column];
 
     // Handle null/undefined
     if (aVal == null && bVal == null) return 0;

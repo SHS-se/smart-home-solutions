@@ -186,7 +186,7 @@ const HouseSetupTab: React.FC<HouseSetupTabProps> = ({ customerId, homeId }) => 
       const { error } = await supabase.from('energy_home_settings').update({ overrides: overrides as any }).eq('id', settings.id);
       if (error) throw error;
       toast({ title: t('Sparat!', 'Saved!') });
-    } catch (err: any) {
+    } catch (err) {
       toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
     } finally {
       setSaving(false);

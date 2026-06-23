@@ -139,7 +139,7 @@ const NewTicket: React.FC = () => {
       });
 
       navigate(`/portal/tickets/${ticket.ticket_number}`);
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error creating ticket:', error);
       toast({
         title: t('Fel', 'Error'),

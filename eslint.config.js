@@ -5,7 +5,18 @@ import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["dist"] },
+  {
+    ignores: [
+      "dist",
+      "dist-ssr",
+      ".claude", // Claude Code git worktrees hold full repo copies — not source to lint
+      "backups",
+      "reports",
+      "playwright-report",
+      "test-results",
+      "supabase/functions", // Deno edge functions: different runtime, lint with `deno lint`
+    ],
+  },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ["**/*.{ts,tsx}"],

@@ -244,7 +244,7 @@ const QuotePreparation: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['quote', id] });
       toast({ title: t('Kund uppdaterad', 'Customer updated') });
     },
-    onError: (error: any) => {
+    onError: (error) => {
       toast({ title: t('Kunde inte uppdatera kund', 'Failed to update customer'), description: error.message, variant: 'destructive' });
     },
   });
@@ -338,7 +338,7 @@ const QuotePreparation: React.FC = () => {
       await queryClient.invalidateQueries({ queryKey: ['quote_lines', id] });
       setPendingChanges({});
       toast({ title: t('Ändringar sparade', 'Changes saved') });
-    } catch (error: any) {
+    } catch (error) {
       toast({ title: t('Kunde inte spara', 'Failed to save'), description: error.message, variant: 'destructive' });
     } finally {
       setIsSaving(false);
@@ -429,7 +429,7 @@ const QuotePreparation: React.FC = () => {
         title: t('Offert skickad!', 'Quote sent!'), 
         description: t(`Offert ${data.quote_number} skickad till ${data.recipient_email}`, `Quote ${data.quote_number} sent to ${data.recipient_email}`)
       });
-    } catch (error: any) {
+    } catch (error) {
       toast({ 
         title: t('Kunde inte skicka offert', 'Failed to send quote'), 
         description: error.message,
@@ -492,7 +492,7 @@ const QuotePreparation: React.FC = () => {
       });
 
       navigate(`/portal/invoices/new?id=${data.invoice_id}`);
-    } catch (error: any) {
+    } catch (error) {
       toast({ 
         title: t('Kunde inte skapa faktura', 'Failed to create invoice'), 
         description: error.message,
@@ -624,7 +624,7 @@ const QuotePreparation: React.FC = () => {
       
       toast({ title: t('Ny offert skapad', 'New quote created'), description: t('Du omdirigeras till den nya offerten', 'Redirecting to the new quote') });
       navigate(`/portal/quotes/${newQuote.id}`);
-    } catch (error: any) {
+    } catch (error) {
       toast({ title: t('Kunde inte skapa ny offert', 'Failed to create new quote'), description: error.message, variant: 'destructive' });
     } finally {
       setIsReissuing(false);

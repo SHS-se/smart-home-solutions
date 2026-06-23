@@ -1175,7 +1175,7 @@ const InvoiceDraftEditor: React.FC = () => {
                               if (error) throw error;
                               toast({ title: t('Utkast raderat', 'Draft deleted') });
                               navigate('/portal/invoices');
-                            } catch (err: any) {
+                            } catch (err) {
                               toast({ title: t('Kunde inte radera', 'Could not delete'), description: err.message, variant: 'destructive' });
                             }
                           }}

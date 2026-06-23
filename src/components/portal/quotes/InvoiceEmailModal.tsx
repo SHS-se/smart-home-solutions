@@ -127,7 +127,7 @@ Smart Home Solutions`
       queryClient.invalidateQueries({ queryKey: ['billing_events', quote.id] });
       queryClient.invalidateQueries({ queryKey: ['quote_emails', quote.id] });
       onOpenChange(false);
-    } catch (error: any) {
+    } catch (error) {
       toast({
         title: t('Kunde inte skicka e-post', 'Failed to send email'),
         description: error.message,

@@ -63,7 +63,7 @@ const PhotoUploadZone: React.FC<PhotoUploadZoneProps> = ({ onFileProcessed, disa
           setUploadingFiles(prev => prev.filter(u => u.id !== entry.id));
           URL.revokeObjectURL(thumbUrl);
         }, 1500);
-      } catch (err: any) {
+      } catch (err) {
         console.error('Image processing error:', err);
         setUploadingFiles(prev =>
           prev.map(u => u.id === entry.id ? { ...u, progress: 'error', error: err.message } : u)

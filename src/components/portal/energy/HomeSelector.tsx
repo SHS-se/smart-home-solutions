@@ -73,7 +73,7 @@ const HomeSelector: React.FC<HomeSelectorProps> = ({ customerId, selectedHomeId,
       setCreateOpen(false);
       setNewName('');
       setNewAddress('');
-    } catch (err: any) {
+    } catch (err) {
       toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
     } finally {
       setCreating(false);

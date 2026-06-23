@@ -109,7 +109,7 @@ const PublicQuotePage: React.FC = () => {
 
         const result = await response.json();
         setQuoteData(result);
-      } catch (err: any) {
+      } catch (err) {
         setError(err.message || 'Kunde inte ladda offerten');
       } finally {
         setLoading(false);
@@ -137,7 +137,7 @@ const PublicQuotePage: React.FC = () => {
       if (!response.ok) throw new Error(result.error);
       setShowAcceptModal(false);
       setActionCompleted('accepted');
-    } catch (err: any) {
+    } catch (err) {
       toast({ title: 'Fel', description: err.message, variant: 'destructive' });
     } finally {
       setIsAccepting(false);
@@ -162,7 +162,7 @@ const PublicQuotePage: React.FC = () => {
       if (!response.ok) throw new Error(result.error);
       setShowDeclineModal(false);
       setActionCompleted('declined');
-    } catch (err: any) {
+    } catch (err) {
       toast({ title: 'Fel', description: err.message, variant: 'destructive' });
     } finally {
       setIsDeclining(false);
@@ -188,7 +188,7 @@ const PublicQuotePage: React.FC = () => {
       if (!response.ok) throw new Error(result.error);
       setShowRevisionModal(false);
       setActionCompleted('revision_requested');
-    } catch (err: any) {
+    } catch (err) {
       toast({ title: 'Fel', description: err.message, variant: 'destructive' });
     } finally {
       setIsRequesting(false);

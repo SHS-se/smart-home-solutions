@@ -258,7 +258,7 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
       let fixedActiveW = 0;
       const deviceCategoryById = new Map<string, 'base' | 'heating' | 'shiftable' | 'fixedActive'>();
 
-      const diagnosticsRows: DeviceModelDiagnosticsRow[] = (typedAssignments || []).flatMap((assignment: any) => {
+      const diagnosticsRows: DeviceModelDiagnosticsRow[] = (typedAssignments || []).flatMap((assignment) => {
         const d = assignment.device_instances;
         if (!d) return [];
         const qty = Math.max(1, Number(assignment.quantity || 1));
@@ -298,7 +298,7 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
         .map(([modelKey, count]) => ({ modelKey, count }))
         .sort((a, b) => b.count - a.count || a.modelKey.localeCompare(b.modelKey));
 
-      const deviceSnapshot = (typedAssignments || []).map((a: any) => {
+      const deviceSnapshot = (typedAssignments || []).map((a) => {
         const d = a.device_instances;
         const runtime = d ? runtimeByDeviceId.get(d.id) : null;
         const runtimeParams = asRecord(runtime?.params);

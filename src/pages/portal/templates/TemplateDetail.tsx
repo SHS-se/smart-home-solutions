@@ -221,7 +221,7 @@ const TemplateDetail: React.FC = () => {
       }
 
       navigate(`/portal/boms/${bom.id}`);
-    } catch (error: any) {
+    } catch (error) {
       toast({ title: t('Kunde inte skapa BOM', 'Failed to create BOM'), description: error.message, variant: 'destructive' });
     }
   };

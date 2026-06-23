@@ -326,7 +326,7 @@ const TicketDetail: React.FC<TicketDetailProps> = ({ customerId: propCustomerId,
         title: t('Svar skickat', 'Reply sent'),
         description: t('Din kommentar har lagts till.', 'Your comment has been added.'),
       });
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error submitting comment:', error);
       toast({
         title: t('Fel', 'Error'),
@@ -355,7 +355,7 @@ const TicketDetail: React.FC<TicketDetailProps> = ({ customerId: propCustomerId,
         title: t('Ärende stängt', 'Ticket closed'),
         description: t('Ärendet har stängts.', 'The ticket has been closed.'),
       });
-    } catch (error: any) {
+    } catch (error) {
       toast({
         title: t('Fel', 'Error'),
         description: error.message || t('Det gick inte att stänga ärendet.', 'Failed to close ticket.'),

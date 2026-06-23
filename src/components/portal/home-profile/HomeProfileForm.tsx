@@ -102,7 +102,7 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
               map[a.question_id] = a.answer_value;
             } else if (a.answer_text) {
               // Lazy migration: parse answer_text
-              const q = qRes.data?.find((q: any) => q.id === a.question_id);
+              const q = qRes.data?.find((q) => q.id === a.question_id);
               if (q) {
                 map[a.question_id] = parseAnswerText(a.answer_text, (q as any).question_type);
               } else {
@@ -175,7 +175,7 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
       const { error } = await supabase.from('home_answers').upsert(upserts as any, { onConflict: 'home_id,question_id' });
       if (error) throw error;
       toast({ title: t('Sparat!', 'Saved!') });
-    } catch (err: any) {
+    } catch (err) {
       toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
     } finally {
       setSaving(false);
@@ -222,7 +222,7 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
       if (error) throw error;
       setPhotos(prev => prev.map(p => p.id === photoId ? { ...p, annotation_text: annotationDraft } : p));
       setEditingAnnotation(null);
-    } catch (err: any) {
+    } catch (err) {
       toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
     }
   };
@@ -236,7 +236,7 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
       if (dbError) throw dbError;
       setPhotos(prev => prev.filter(p => p.id !== photoId));
       toast({ title: t('Borttagen!', 'Deleted!') });
-    } catch (err: any) {
+    } catch (err) {
       toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
     }
   };

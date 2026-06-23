@@ -464,7 +464,7 @@ HUB-ZB-PRO,Zigbee Hub Professional,Controllers,Aqara,https://aqara.com,1562.50,f
       setIsLegacyFormat(isLegacy);
       setUploadedFileName(null);
       setStep(2);
-    } catch (error: any) {
+    } catch (error) {
       toast({
         title: t('Fel vid tolkning', 'Parse error'),
         description: error.message,
@@ -529,7 +529,7 @@ HUB-ZB-PRO,Zigbee Hub Professional,Controllers,Aqara,https://aqara.com,1562.50,f
       setParsedSkus(parsed);
       setIsLegacyFormat(isLegacy);
       setStep(2);
-    } catch (error: any) {
+    } catch (error) {
       toast({
         title: t('Fel vid import', 'Import error'),
         description: error.message,

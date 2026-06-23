@@ -250,7 +250,7 @@ const SKUForm: React.FC<SKUFormProps> = ({ sku, onClose, categories }) => {
       queryClient.invalidateQueries({ queryKey: ['skus'] });
       queryClient.invalidateQueries({ queryKey: ['sku_price_history'] });
       onClose();
-    } catch (error: any) {
+    } catch (error) {
       toast({ 
         title: t('Ett fel uppstod', 'An error occurred'), 
         description: error.message,

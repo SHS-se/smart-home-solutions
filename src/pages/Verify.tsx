@@ -83,7 +83,7 @@ const Verify: React.FC = () => {
       // Step 3: Redirect to the intended path
       console.log('[Verify] Step 3: Redirecting to', redirect_path || '/portal');
       navigate(redirect_path || '/portal', { replace: true });
-    } catch (err: any) {
+    } catch (err) {
       console.error('[Verify] Unexpected error:', err);
       setStatus('error');
       setErrorMessage(

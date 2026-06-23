@@ -58,7 +58,7 @@ const Login: React.FC = () => {
       if (error) throw error;
 
       navigate('/portal');
-    } catch (error: any) {
+    } catch (error) {
       toast({
         title: t('Fel', 'Error'),
         description: error.message || t('Det gick inte att logga in.', 'Failed to log in.'),
@@ -86,7 +86,7 @@ const Login: React.FC = () => {
         title: t('Återställningslänk skickad!', 'Reset link sent!'),
         description: t('Kolla din e-post för att återställa ditt lösenord.', 'Check your email to reset your password.'),
       });
-    } catch (error: any) {
+    } catch (error) {
       toast({
         title: t('Fel', 'Error'),
         description: error.message || t('Det gick inte att skicka återställningslänk.', 'Failed to send reset link.'),
