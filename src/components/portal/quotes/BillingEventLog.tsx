@@ -145,13 +145,13 @@ const BillingEventLog: React.FC<BillingEventLogProps> = ({ quoteId }) => {
                     <span>{formatTimestamp(event.created_at)}</span>
                     {event.metadata && (
                       <>
-                        {(event.metadata as any).invoice_number && (
+                        {(event.metadata as { invoice_number?: string; to?: string }).invoice_number && (
                           <span className="font-mono">
-                            #{(event.metadata as any).invoice_number}
+                            #{(event.metadata as { invoice_number?: string; to?: string }).invoice_number}
                           </span>
                         )}
-                        {(event.metadata as any).to && (
-                          <span>→ {(event.metadata as any).to}</span>
+                        {(event.metadata as { invoice_number?: string; to?: string }).to && (
+                          <span>→ {(event.metadata as { invoice_number?: string; to?: string }).to}</span>
                         )}
                       </>
                     )}

@@ -80,10 +80,10 @@ const TemplateDetail: React.FC = () => {
       return data.map(item => ({
         ...item,
         sku: {
-          ...(item as any).skus,
-          category_name: ((item as any).skus?.sku_categories as { id: string; name: string } | null)?.name || 'Unknown',
+          ...(item as { skus?: Record<string, unknown> }).skus,
+          category_name: ((item as { skus?: { sku_categories?: { id: string; name: string } | null } }).skus?.sku_categories as { id: string; name: string } | null)?.name || 'Unknown',
         },
-      })) as TemplateItem[];
+      })) as unknown as TemplateItem[];
     },
     enabled: isStaff && !!id,
   });

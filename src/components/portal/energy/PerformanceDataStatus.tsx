@@ -20,7 +20,7 @@ interface DeviceProfile {
   device_id: string;
   profile_kind: string;
   mode: string;
-  data: { points: any[] };
+  data: { points: unknown[] };
   source: string | null;
   notes: string | null;
   updated_at: string;
@@ -118,7 +118,7 @@ const PerformanceDataStatus: React.FC<Props> = ({
 
   const surfaceChartInfo = useMemo(() => {
     if (!surfaceProfile?.data?.points?.length) return null;
-    const points = surfaceProfile.data.points as any[];
+    const points = surfaceProfile.data.points as unknown as Record<string, number>[];
     const indoorTemps = [...new Set(points.map((p) => p.indoor_temp_c as number))]
       .filter(v => typeof v === 'number')
       .sort((a, b) => a - b);
@@ -129,7 +129,7 @@ const PerformanceDataStatus: React.FC<Props> = ({
       .sort((a, b) => a - b);
 
     const capacityData = outdoorTemps.map(ot => {
-      const row: any = { temp_c: ot };
+      const row: Record<string, number | null> = { temp_c: ot };
       for (const it of indoorTemps) {
         const pt = points.find((p) => p.indoor_temp_c === it && p.temp_c === ot);
         row[`cap_${it}`] = pt ? (pt.capacity_w || 0) / 1000 : null;
@@ -138,7 +138,7 @@ const PerformanceDataStatus: React.FC<Props> = ({
     });
 
     const inputPowerData = outdoorTemps.map(ot => {
-      const row: any = { temp_c: ot };
+      const row: Record<string, number | null> = { temp_c: ot };
       for (const it of indoorTemps) {
         const pt = points.find((p) => p.indoor_temp_c === it && p.temp_c === ot);
         row[`pw_${it}`] = pt ? (pt.input_power_w || 0) / 1000 : null;
@@ -147,7 +147,7 @@ const PerformanceDataStatus: React.FC<Props> = ({
     });
 
     const copData = outdoorTemps.map(ot => {
-      const row: any = { temp_c: ot };
+      const row: Record<string, number | null> = { temp_c: ot };
       for (const it of indoorTemps) {
         const pt = points.find((p) => p.indoor_temp_c === it && p.temp_c === ot);
         row[`cop_${it}`] = pt && pt.input_power_w > 0 ? parseFloat((pt.capacity_w / pt.input_power_w).toFixed(2)) : null;
@@ -168,7 +168,7 @@ const PerformanceDataStatus: React.FC<Props> = ({
     }
   };
 
-  const renderSurfaceChart = (data: any[], keyPrefix: string, yLabel: string, indoorTemps: number[]) => (
+  const renderSurfaceChart = (data: Record<string, number | null>[], keyPrefix: string, yLabel: string, indoorTemps: number[]) => (
     <ResponsiveContainer width="100%" height={160}>
       <LineChart data={data}>
         <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
@@ -325,7 +325,7 @@ const PerformanceDataStatus: React.FC<Props> = ({
           deviceId={deviceId}
           profileKind={editingKind}
           existingProfileId={editingProfile?.id || null}
-          existingData={editingProfile?.data || null}
+          existingData={(editingProfile?.data || null) as unknown as { points: Record<string, number>[] } | null}
           existingSource={editingProfile?.source || null}
           existingNotes={editingProfile?.notes || null}
           onSaved={loadStatuses}

@@ -1,3 +1,4 @@
+import type { Json } from "@/integrations/supabase/types";
 import React, { useEffect, useState, useCallback } from 'react';
 import { Loader2, Plus, Save, Trash2, GripVertical, Info, X } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -207,9 +208,9 @@ const DeviceTypesManager: React.FC = () => {
     if (data) {
       setTypes(data.map(d => ({
         ...d,
-        field_schema: d.field_schema as any,
-        supported_profile_kinds: d.supported_profile_kinds as any,
-      })));
+        field_schema: d.field_schema as Json,
+        supported_profile_kinds: d.supported_profile_kinds as Json,
+      })) as unknown as DeviceType[]);
     }
     setLoading(false);
   }, []);

@@ -1,3 +1,4 @@
+import type { Json } from "@/integrations/supabase/types";
 import React, { useState, useEffect } from 'react';
 import { Play, Loader2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -46,7 +47,7 @@ type DeviceModelDiagnosticsRow = {
 function asCurvePoints(value: unknown): CurvePoint[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const points = value.filter((p): p is CurvePoint => {
-    const r = p as any;
+    const r = p as Record<string, unknown>;
     return r && typeof r.temp_c === 'number' && typeof r.cop === 'number' && typeof r.capacity_w === 'number';
   });
   return points.length >= 2 ? points : undefined;
@@ -55,7 +56,7 @@ function asCurvePoints(value: unknown): CurvePoint[] | undefined {
 function asSurfacePoints(value: unknown): SurfacePoint[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const points = value.filter((p): p is SurfacePoint => {
-    const r = p as any;
+    const r = p as Record<string, unknown>;
     return r &&
       typeof r.indoor_temp_c === 'number' &&
       typeof r.temp_c === 'number' &&
@@ -115,7 +116,7 @@ function readRuntimeNominalPowerW(modelKey: string | undefined, params: Record<s
   if (modelKey === 'event_appliance') {
     const cycle = Array.isArray(params.cycle) ? params.cycle : [];
     const stagePowers = cycle
-      .map(s => (s && typeof s === 'object' && typeof (s as any).powerW === 'number' ? Number((s as any).powerW) : 0))
+      .map(s => (s && typeof s === 'object' && typeof (s as { powerW?: number }).powerW === 'number' ? Number((s as { powerW?: number }).powerW) : 0))
       .filter(n => Number.isFinite(n) && n >= 0);
     if (stagePowers.length > 0) return Math.max(...stagePowers);
   }
@@ -161,7 +162,7 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
         .eq('home_id', homeId)
         .single();
       if (settings?.overrides && typeof settings.overrides === 'object') {
-        const ov = settings.overrides as Record<string, any>;
+        const ov = settings.overrides as Record<string, unknown>;
         if (typeof ov.indoor_temp_c === 'number') setIndoorTemp(ov.indoor_temp_c);
         if (typeof ov.comfort_band_c === 'number') setComfortBand(ov.comfort_band_c);
       }
@@ -190,7 +191,7 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
           .select('network_price_sek_per_w_month, energy_price_sek_per_kwh, fixed_monthly_fee_sek')
           .eq('id', settings.tariff_instance_id)
           .single();
-        tariff = ti as any;
+        tariff = ti as unknown as typeof tariff;
       }
 
       // 3. Fetch device assignments
@@ -215,8 +216,8 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
             resolveProfile(d.id, 'manufacturer', 'heating_performance_surface'),
           ]);
           return [d.id, {
-            copCapacityCurvePoints: asCurvePoints((curveRes.profile as any)?.data?.points),
-            heatingPerformanceSurfacePoints: asSurfacePoints((surfaceRes.profile as any)?.data?.points),
+            copCapacityCurvePoints: asCurvePoints((curveRes.profile as { data?: { points?: unknown } })?.data?.points),
+            heatingPerformanceSurfacePoints: asSurfacePoints((surfaceRes.profile as { data?: { points?: unknown } })?.data?.points),
           }] as const;
         }),
       );
@@ -265,7 +266,7 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
         const runtime = runtimeByDeviceId.get(d.id);
         const runtimeParams = asRecord(runtime?.params);
         const nominalPowerW = readRuntimeNominalPowerW(runtime?.modelKey, runtimeParams);
-        const fv = (d.field_values && typeof d.field_values === 'object') ? d.field_values as Record<string, any> : {};
+        const fv = (d.field_values && typeof d.field_values === 'object') ? d.field_values as Record<string, unknown> : {};
         const fallbackPower = (Number(fv.rated_power_w) || Number(fv.power_w) || 0) * qty;
         const contributionW = nominalPowerW ?? fallbackPower;
 
@@ -404,17 +405,17 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
         mode,
         scenario,
         step_seconds: 900,
-        inputs_snapshot: inputsSnapshot as any,
-        device_snapshot: deviceSnapshot as any,
+        inputs_snapshot: inputsSnapshot as unknown as Json,
+        device_snapshot: deviceSnapshot as unknown as Json,
         profile_snapshot: {
           device_binding: {
             warnings: binding.warnings,
             model_counts: modelCounts,
           },
-        } as any,
-        results_summary: resultsSummary as any,
-        tariff_snapshot: tariffSnapshot as any,
-        timeseries: dayResult.timeseries as any,
+        } as unknown as Json,
+        results_summary: resultsSummary as unknown as Json,
+        tariff_snapshot: tariffSnapshot as unknown as Json,
+        timeseries: dayResult.timeseries as unknown as Json,
       }]);
 
       setResults({

@@ -39,8 +39,8 @@ const ROITab: React.FC<ROITabProps> = ({ customerId, homeId, homeCount = 1 }) =>
   const [checkingFields, setCheckingFields] = useState(true);
 
   // Model run data
-  const [dumbRun, setDumbRun] = useState<Record<string, any> | null>(null);
-  const [smartRun, setSmartRun] = useState<Record<string, any> | null>(null);
+  const [dumbRun, setDumbRun] = useState<Record<string, number> | null>(null);
+  const [smartRun, setSmartRun] = useState<Record<string, number> | null>(null);
   const [loadingRuns, setLoadingRuns] = useState(true);
 
   // Check missing fields for ROI
@@ -84,8 +84,8 @@ const ROITab: React.FC<ROITabProps> = ({ customerId, homeId, homeCount = 1 }) =>
 
       const dumb = runs?.find(r => r.scenario === 'dumb') || null;
       const smart = runs?.find(r => r.scenario === 'smart') || null;
-      setDumbRun(dumb ? (dumb.results_summary as Record<string, any>) : null);
-      setSmartRun(smart ? (smart.results_summary as Record<string, any>) : null);
+      setDumbRun(dumb ? (dumb.results_summary as Record<string, number>) : null);
+      setSmartRun(smart ? (smart.results_summary as Record<string, number>) : null);
       setLoadingRuns(false);
     };
     fetchRuns();

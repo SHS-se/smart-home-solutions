@@ -240,7 +240,7 @@ const fixedBaseloadParamsSchema = z.object({
 });
 
 export type FixedBaseloadParams = z.infer<typeof fixedBaseloadParamsSchema>;
-export interface FixedBaseloadState {}
+export type FixedBaseloadState = Record<string, never>;
 
 export const fixedBaseloadModel: DeviceModel<FixedBaseloadParams, FixedBaseloadState> = {
   key: 'fixed_baseload',
@@ -705,7 +705,7 @@ export const deviceModelRegistry = {
   air_to_air_heat_pump_inverter: airToAirHeatPumpDumbModel,
   fridge_freezer_compressor: fridgeFreezerCompressorModel,
   event_appliance: eventApplianceModel,
-} as const satisfies Record<DeviceModelKey, DeviceModel<any, any>>;
+} as const satisfies Record<DeviceModelKey, DeviceModel<any, any>>; // eslint-disable-line @typescript-eslint/no-explicit-any -- registry holds models with heterogeneous param/state types
 
 export type AnyDeviceModel = (typeof deviceModelRegistry)[DeviceModelKey];
 
@@ -714,7 +714,7 @@ export function parseDeviceParams<TKey extends DeviceModelKey>(
   raw: unknown,
 ): ReturnType<(typeof deviceModelRegistry)[TKey]['parseParams']> {
   const model = deviceModelRegistry[modelKey];
-  return model.parseParams(raw) as any;
+  return model.parseParams(raw) as ReturnType<(typeof deviceModelRegistry)[TKey]['parseParams']>;
 }
 
 export function createDeviceRuntime(
@@ -724,7 +724,7 @@ export function createDeviceRuntime(
 ): DeviceRuntime {
   const model = deviceModelRegistry[modelKey];
   const params = model.parseParams(rawParams);
-  const state = model.initState(params as any);
+  const state = model.initState(params as never);
   return { id, modelKey, params, state } as DeviceRuntime;
 }
 
@@ -746,7 +746,7 @@ export function stepDeviceFleet(
 
   for (const device of devices) {
     const model = deviceModelRegistry[device.modelKey];
-    const out = model.step(device.params as any, device.state as any, ctx);
+    const out = model.step(device.params as never, device.state as never, ctx);
     const powerW = normalizePowerW(out.powerW);
     const heatToRoomW = normalizeHeatW(out.heatToRoomW);
 

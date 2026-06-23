@@ -94,8 +94,8 @@ const QuotesList: React.FC = () => {
         const computed = totalsMap.get(q.id);
         return {
           ...q,
-          customer: (q as any).customers,
-          bom: (q as any).boms,
+          customer: (q as { customers?: unknown }).customers,
+          bom: (q as { boms?: unknown }).boms,
           version: q.version ?? 1,
           is_latest: q.is_latest ?? true,
           // Use computed totals

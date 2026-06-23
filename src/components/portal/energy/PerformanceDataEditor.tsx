@@ -1,3 +1,4 @@
+import type { Json } from "@/integrations/supabase/types";
 import React, { useState, useCallback, useEffect } from 'react';
 import { Loader2, Plus, Trash2, ArrowUpDown, Clipboard, Sparkles } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
@@ -24,7 +25,7 @@ interface Props {
   deviceId: string;
   profileKind: ProfileKind;
   existingProfileId?: string | null;
-  existingData?: { points: any[] } | null;
+  existingData?: { points: Record<string, number>[] } | null;
   existingSource?: string | null;
   existingNotes?: string | null;
   onSaved: () => void;
@@ -41,7 +42,7 @@ const PerformanceDataEditor: React.FC<Props> = ({
   const [source, setSource] = useState('manufacturer');
   const [notes, setNotes] = useState('');
   const [jsonText, setJsonText] = useState('');
-  const [points, setPoints] = useState<any[] | null>(null);
+  const [points, setPoints] = useState<Record<string, number>[] | null>(null);
   const [validation, setValidation] = useState<ValidationResult>({ valid: false, error: 'No data' });
   const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState('table');
@@ -85,7 +86,7 @@ const PerformanceDataEditor: React.FC<Props> = ({
   }, [profileKind]);
 
   // Sync points → JSON + validate
-  const updatePoints = useCallback((newPoints: any[]) => {
+  const updatePoints = useCallback((newPoints: Record<string, number>[]) => {
     setPoints(newPoints);
     setJsonText(JSON.stringify({ points: newPoints }, null, 2));
     setValidation(validateProfileData(profileKind, { points: newPoints }));
@@ -122,7 +123,7 @@ const PerformanceDataEditor: React.FC<Props> = ({
 
   const pasteExample = () => {
     const example = isCurve(profileKind) ? EXAMPLE_CURVE : EXAMPLE_SURFACE;
-    updatePoints([...example.points]);
+    updatePoints([...example.points] as unknown as Record<string, number>[]);
   };
 
   const normalizeKwToW = () => {
@@ -144,7 +145,7 @@ const PerformanceDataEditor: React.FC<Props> = ({
     const rows = text.trim().split('\n').map(r => r.split('\t').map(c => c.trim()));
     if (rows.length < 1) return;
 
-    const newPoints: any[] = [];
+    const newPoints: Record<string, number>[] = [];
     for (const row of rows) {
       const nums = row.map(v => {
         const n = Number(v);
@@ -177,7 +178,7 @@ const PerformanceDataEditor: React.FC<Props> = ({
 
       if (existingProfileId) {
         const { error } = await supabase.from('device_profiles').update({
-          data: { points } as any,
+          data: { points } as unknown as Json,
           source,
           notes: notes || null,
         }).eq('id', existingProfileId);
@@ -187,7 +188,7 @@ const PerformanceDataEditor: React.FC<Props> = ({
           device_id: deviceId,
           profile_kind: profileKind,
           mode: 'heating',
-          data: { points } as any,
+          data: { points } as unknown as Json,
           source,
           notes: notes || null,
         });
@@ -339,7 +340,7 @@ const PerformanceDataEditor: React.FC<Props> = ({
             {/* JSON TAB */}
             <TabsContent value="json" className="space-y-3">
               <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => { try { setJsonText(JSON.stringify(JSON.parse(jsonText), null, 2)); } catch {} }}>
+                <Button variant="outline" size="sm" onClick={() => { try { setJsonText(JSON.stringify(JSON.parse(jsonText), null, 2)); } catch { /* ignore invalid JSON */ } }}>
                   {t('Formatera', 'Format')}
                 </Button>
                 <Button variant="outline" size="sm" onClick={() => applyJson(jsonText)}>

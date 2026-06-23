@@ -1,3 +1,4 @@
+import type { Json } from "@/integrations/supabase/types";
 import React, { useEffect, useState, useMemo } from 'react';
 import { Loader2, Save, Pencil, X, Check, Trash2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -104,7 +105,7 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
               // Lazy migration: parse answer_text
               const q = qRes.data?.find((q) => q.id === a.question_id);
               if (q) {
-                map[a.question_id] = parseAnswerText(a.answer_text, (q as any).question_type);
+                map[a.question_id] = parseAnswerText(a.answer_text, (q as { question_type: QuestionType }).question_type);
               } else {
                 map[a.question_id] = a.answer_text;
               }
@@ -168,11 +169,11 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
         customer_id: customerId,
         question_id: q.id,
         answer_text: visibleIds.has(q.id) ? stringifyAnswer(answers[q.id]) : '',
-        answer_value: visibleIds.has(q.id) ? (answers[q.id] as any) ?? null : null,
+        answer_value: visibleIds.has(q.id) ? (answers[q.id] as unknown as Json) ?? null : null,
         updated_by: userId,
         home_id: homeId,
       }));
-      const { error } = await supabase.from('home_answers').upsert(upserts as any, { onConflict: 'home_id,question_id' });
+      const { error } = await supabase.from('home_answers').upsert(upserts, { onConflict: 'home_id,question_id' });
       if (error) throw error;
       toast({ title: t('Sparat!', 'Saved!') });
     } catch (err) {
@@ -190,7 +191,7 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
     const { error: uploadError } = await supabase.storage.from('home-photos').upload(storagePath, blob, { contentType: 'image/webp' });
     if (uploadError) throw uploadError;
 
-    const insertPayload: any = {
+    const insertPayload: { customer_id: string; storage_path: string; uploaded_by: string; width: number; height: number; original_filename: string; home_id?: string } = {
       customer_id: customerId,
       storage_path: storagePath,
       uploaded_by: userId,

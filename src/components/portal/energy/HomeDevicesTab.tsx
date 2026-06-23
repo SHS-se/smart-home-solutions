@@ -1,3 +1,4 @@
+import type { Json } from "@/integrations/supabase/types";
 import React, { useEffect, useState, useCallback } from 'react';
 import { Loader2, Plus, Trash2, Globe, User } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -80,7 +81,7 @@ const HomeDevicesTab: React.FC<HomeDevicesTabProps> = ({ customerId, homeId }) =
     ]);
 
     if (typesResult.data) {
-      setDeviceTypes(typesResult.data.map((t) => ({ ...t, field_schema: t.field_schema as any, supported_profile_kinds: (t.supported_profile_kinds || []) as string[] })) as DeviceType[]);
+      setDeviceTypes(typesResult.data.map((t) => ({ ...t, field_schema: t.field_schema as Json, supported_profile_kinds: (t.supported_profile_kinds || []) as string[] })) as unknown as DeviceType[]);
     }
 
     if (assignResult?.data) setAssignments(assignResult.data as unknown as AssignmentEntry[]);
@@ -149,7 +150,7 @@ const HomeDevicesTab: React.FC<HomeDevicesTabProps> = ({ customerId, homeId }) =
 
   const handleSelectRow = (row: DisplayRow) => {
     setSelected(row.device);
-    setPerformanceDataDeviceId((row.device as any).performance_data_device_id || null);
+    setPerformanceDataDeviceId((row.device as { performance_data_device_id?: string }).performance_data_device_id || null);
   };
 
   const handleDeviceSaved = async (deviceId: string) => {

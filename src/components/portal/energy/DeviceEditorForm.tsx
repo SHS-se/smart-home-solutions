@@ -1,3 +1,4 @@
+import type { Json } from "@/integrations/supabase/types";
 import React, { useEffect, useState } from 'react';
 import { Loader2, Save, Trash2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -41,7 +42,7 @@ export interface DeviceRow {
   name: string;
   customer_id: string | null;
   device_type_id: string;
-  field_values: Record<string, any>;
+  field_values: Record<string, unknown>;
   controllable: boolean;
   shiftable: boolean;
   priority: number;
@@ -95,7 +96,7 @@ const DeviceEditorForm: React.FC<DeviceEditorFormProps> = ({
     shiftable: false,
     include_in_standard_home: false,
     priority: 0,
-    field_values: {} as Record<string, any>,
+    field_values: {} as Record<string, unknown>,
   });
 
   // Sync form when selected changes
@@ -130,7 +131,7 @@ const DeviceEditorForm: React.FC<DeviceEditorFormProps> = ({
       const payload = {
         device_type_id: form.device_type_id,
         name: form.name.trim(),
-        field_values: form.field_values,
+        field_values: form.field_values as unknown as Json,
         controllable: form.controllable,
         shiftable: form.shiftable,
         include_in_standard_home: form.include_in_standard_home,
@@ -204,7 +205,7 @@ const DeviceEditorForm: React.FC<DeviceEditorFormProps> = ({
                 <Label className="text-xs">{field.label}{field.required && <span className="text-destructive ml-0.5">*</span>}</Label>
                 <Input
                   type={field.type === 'number' ? 'number' : 'text'}
-                  value={form.field_values[field.key] ?? ''}
+                  value={(form.field_values[field.key] as string | number | undefined) ?? ''}
                   onChange={e => {
                     const val = field.type === 'number' ? (e.target.value === '' ? undefined : Number(e.target.value)) : e.target.value || undefined;
                     setForm(f => ({ ...f, field_values: { ...f.field_values, [field.key]: val } }));
@@ -225,7 +226,7 @@ const DeviceEditorForm: React.FC<DeviceEditorFormProps> = ({
                 <Label className="text-xs">{field.label}{field.required && <span className="text-destructive ml-0.5">*</span>}</Label>
                 <Input
                   type="number"
-                  value={form.field_values[field.key] ?? ''}
+                  value={(form.field_values[field.key] as string | number | undefined) ?? ''}
                   onChange={e => setForm(f => ({ ...f, field_values: { ...f.field_values, [field.key]: e.target.value === '' ? undefined : Number(e.target.value) } }))}
                   placeholder="—"
                   className="h-8 text-sm"
@@ -243,7 +244,7 @@ const DeviceEditorForm: React.FC<DeviceEditorFormProps> = ({
                 <Label className="text-xs">{field.label}{field.required && <span className="text-destructive ml-0.5">*</span>}</Label>
                 <Input
                   type={field.type === 'number' ? 'number' : 'text'}
-                  value={form.field_values[field.key] ?? ''}
+                  value={(form.field_values[field.key] as string | number | undefined) ?? ''}
                   onChange={e => {
                     const val = field.type === 'number' ? (e.target.value === '' ? undefined : Number(e.target.value)) : e.target.value || undefined;
                     setForm(f => ({ ...f, field_values: { ...f.field_values, [field.key]: val } }));

@@ -73,7 +73,7 @@ const TemplatesList: React.FC = () => {
         if (items) {
           for (const item of items) {
             itemCount += item.quantity;
-            const sku = (item as any).skus;
+            const sku = (item as { skus?: { cost_ex_vat?: number; default_margin?: number; sku_categories?: { id: string; name: string } | null } }).skus;
             if (sku?.cost_ex_vat) {
               const skuCategoryName = (sku.sku_categories as { id: string; name: string } | null)?.name || 'Unknown';
               const rule = rulesWithNames.find(r => r.category_name === skuCategoryName);

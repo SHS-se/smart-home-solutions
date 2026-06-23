@@ -140,11 +140,11 @@ const QuoteEventLog: React.FC<QuoteEventLogProps> = ({ quoteId }) => {
                     {event.actor_email && (
                       <span>· {event.actor_email}</span>
                     )}
-                    {event.metadata && (event.metadata as any).invoice_number && (
-                      <span className="font-mono">#{(event.metadata as any).invoice_number}</span>
+                    {event.metadata && (event.metadata as { invoice_number?: string; recipient_email?: string }).invoice_number && (
+                      <span className="font-mono">#{(event.metadata as { invoice_number?: string; recipient_email?: string }).invoice_number}</span>
                     )}
-                    {event.metadata && (event.metadata as any).recipient_email && (
-                      <span>→ {(event.metadata as any).recipient_email}</span>
+                    {event.metadata && (event.metadata as { invoice_number?: string; recipient_email?: string }).recipient_email && (
+                      <span>→ {(event.metadata as { invoice_number?: string; recipient_email?: string }).recipient_email}</span>
                     )}
                   </div>
                 </div>

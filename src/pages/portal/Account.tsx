@@ -15,6 +15,7 @@ import { supabase } from '@/integrations/supabase/client';
 interface AccountProps {
   customerId?: string;
   isStaffView?: boolean;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- flexible staff-view injection mirroring auth customer data
   customerData?: any;
 }
 
@@ -96,7 +97,7 @@ const Account: React.FC<AccountProps> = ({ customerId: propCustomerId, isStaffVi
 
     try {
       // Update the customer's address fields
-      const customerUpdateData: any = {
+      const customerUpdateData = {
         site_street: formData.site_street || null,
         site_postcode: formData.site_postcode || null,
         site_city: formData.site_city || null,

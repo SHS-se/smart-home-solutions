@@ -102,8 +102,8 @@ const BOMsList: React.FC = () => {
       if (error) throw error;
       return data.map(bom => ({
         ...bom,
-        bom_group_id: (bom as any).bom_group_id,
-        customer: (bom as any).customers,
+        bom_group_id: (bom as { bom_group_id?: string }).bom_group_id,
+        customer: (bom as { customers?: unknown }).customers,
       })) as BOM[];
     },
     enabled: isStaff,
@@ -356,7 +356,7 @@ const BOMsList: React.FC = () => {
                   <SelectItem value="none">{t('Ingen kund', 'No customer')}</SelectItem>
                   {customers.map(c => (
                     <SelectItem key={c.id} value={c.id}>
-                      {c.name || (c as any).contact_name || t('Okänd kund', 'Unknown customer')}
+                      {c.name || (c as { contact_name?: string }).contact_name || t('Okänd kund', 'Unknown customer')}
                     </SelectItem>
                   ))}
                 </SelectContent>

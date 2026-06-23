@@ -74,7 +74,7 @@ const NewTicket: React.FC = () => {
           created_by: user.id,
           title: title.trim(),
           status: 'submitted',
-        } as any)
+        })
         .select()
         .single();
 

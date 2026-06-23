@@ -106,8 +106,8 @@ const QuotePreparation: React.FC = () => {
       if (error) throw error;
       return { 
         ...data, 
-        customer: (data as any).customers, 
-        bom: (data as any).boms,
+        customer: (data as { customers?: { name?: string } }).customers, 
+        bom: (data as { boms?: { project_name?: string; version?: number } }).boms,
       };
     },
     enabled: isStaff && !!id,
@@ -525,7 +525,7 @@ const QuotePreparation: React.FC = () => {
     if (!id || !quote) return;
     setIsReissuing(true);
     try {
-      const rootId = (quote as any).parent_quote_id || quote.id;
+      const rootId = (quote as { parent_quote_id?: string }).parent_quote_id || quote.id;
 
       const { data: maxVersionData } = await supabase
         .from('quotes')
@@ -559,7 +559,7 @@ const QuotePreparation: React.FC = () => {
           customer_id: quote.customer_id,
           status: 'draft',
           created_by: quote.created_by,
-          is_test: (quote as any).is_test || false,
+          is_test: (quote as { is_test?: boolean }).is_test || false,
           expires_at: endOfDay(reissueDate).toISOString(),
         })
         .select()
@@ -596,7 +596,7 @@ const QuotePreparation: React.FC = () => {
           superseded_by_quote_id: newQuote.id,
           superseded_at: new Date().toISOString(),
           is_latest: false,
-        } as any)
+        })
         .eq('id', quote.id);
 
       if (quote.bom_id) {
@@ -700,8 +700,8 @@ const QuotePreparation: React.FC = () => {
                 size="sm"
                 variant="outline"
                 onClick={() => {
-                  if ((quote as any)?.superseded_by_quote_id) {
-                    navigate(`/portal/quotes/${(quote as any).superseded_by_quote_id}`);
+                  if ((quote as { superseded_by_quote_id?: string })?.superseded_by_quote_id) {
+                    navigate(`/portal/quotes/${(quote as { superseded_by_quote_id?: string }).superseded_by_quote_id}`);
                   } else {
                     const latest = quoteFamily.find(v => v.is_latest);
                     if (latest) navigate(`/portal/quotes/${latest.id}`);
@@ -715,7 +715,7 @@ const QuotePreparation: React.FC = () => {
         )}
 
         {/* Supersedes banner - shown on quotes that replace another */}
-        {!isSuperseded && (quote as any)?.supersedes_quote_id && (
+        {!isSuperseded && (quote as { supersedes_quote_id?: string })?.supersedes_quote_id && (
           <Alert className="border-primary/30 bg-primary/5">
             <Info className="h-4 w-4 text-primary" />
             <AlertDescription className="flex items-center justify-between">
@@ -725,7 +725,7 @@ const QuotePreparation: React.FC = () => {
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => navigate(`/portal/quotes/${(quote as any).supersedes_quote_id}`)}
+                onClick={() => navigate(`/portal/quotes/${(quote as { supersedes_quote_id?: string }).supersedes_quote_id}`)}
               >
                 {t('Visa föregående', 'View previous')}
               </Button>

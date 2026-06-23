@@ -99,7 +99,7 @@ const Offers: React.FC<OffersProps> = ({ customerId: propCustomerId, isStaffView
           status: q.status,
           created_at: q.created_at,
           updated_at: q.updated_at,
-          bom_project_name: (q as any).boms?.project_name || null,
+          bom_project_name: (q as { boms?: { project_name?: string } }).boms?.project_name || null,
           total_inc_vat: totalsMap.get(q.id) ?? 0,
         })));
       } catch (err) {

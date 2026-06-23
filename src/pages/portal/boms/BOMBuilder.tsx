@@ -161,7 +161,7 @@ const BOMBuilder: React.FC = () => {
         .eq('bom_id', id);
       if (error) throw error;
       return data.map(item => {
-        const skuData = (item as any).skus;
+        const skuData = (item as { skus?: Record<string, unknown> & { sku_categories?: { name?: string } } }).skus;
         return {
           ...item,
           sku: {
@@ -169,7 +169,7 @@ const BOMBuilder: React.FC = () => {
             category_name: skuData?.sku_categories?.name || 'Unknown',
           },
         };
-      }) as BOMItem[];
+      }) as unknown as BOMItem[];
     },
     enabled: isStaff && !!id,
   });
@@ -284,12 +284,12 @@ const BOMBuilder: React.FC = () => {
           project_name: bom?.project_name,
           customer_id: bom?.customer_id,
           version: newVersion,
-          bom_group_id: (bom as any)?.bom_group_id || id,
+          bom_group_id: (bom as { bom_group_id?: string })?.bom_group_id || id,
           revision_reason_type: reasonType,
           revision_reason_note: reasonNote || null,
           revision_created_by: user?.id,
           revision_created_at: new Date().toISOString(),
-        } as any)
+        })
         .select()
         .single();
       if (bomError) throw bomError;
@@ -310,6 +310,7 @@ const BOMBuilder: React.FC = () => {
       }
 
       // Log bom_event for audit
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- bom_events is not present in the generated Supabase types
       await supabase.from('bom_events' as any).insert({
         bom_id: newBom.id,
         event_type: 'revision_created',
@@ -552,7 +553,7 @@ const BOMBuilder: React.FC = () => {
     );
 
     // Step 4: Map previous hardware lines by sku_id for lookup
-    const previousHardwareBySkuId = new Map<string, any>();
+    const previousHardwareBySkuId = new Map<string, unknown>();
     for (const line of previousHardwareLines) {
       if (line.sku_id) {
         previousHardwareBySkuId.set(line.sku_id, line);
@@ -567,7 +568,7 @@ const BOMBuilder: React.FC = () => {
       .map(i => i.sku_id)
       .filter(skuId => !previousHardwareBySkuId.has(skuId));
 
-    let newSkuPricing = new Map<string, any>();
+    let newSkuPricing = new Map<string, unknown>();
     if (newSkuIds.length > 0) {
       const { data: skuData } = await supabase
         .from('skus')
@@ -578,7 +579,7 @@ const BOMBuilder: React.FC = () => {
 
     // Step 7: Build hardware lines — existing SKUs keep previous pricing, new SKUs get current pricing
     const hardwareLines = bomItems.map(bomItem => {
-      const previousLine = previousHardwareBySkuId.get(bomItem.sku_id);
+      const previousLine = previousHardwareBySkuId.get(bomItem.sku_id) as { description: string; unit_price: number; unit_price_ex_vat: number; vat_rate: number; unit_price_inc_vat: number; original_sku_name: string; original_sku_code: string; cost_ex_vat_at_time: number } | undefined;
 
       if (previousLine) {
         // SKU exists in previous quote → keep negotiated pricing, update quantity from BOM
@@ -602,7 +603,7 @@ const BOMBuilder: React.FC = () => {
         };
       } else {
         // New SKU not in previous quote → use current SKU pricing
-        const sku = newSkuPricing.get(bomItem.sku_id);
+        const sku = newSkuPricing.get(bomItem.sku_id) as { sell_price_ex_vat: number | null; vat_rate: number; sell_price_inc_vat: number | null; name: string; sku: string; cost_ex_vat_computed: number | null } | undefined;
         const sellExVat = sku?.sell_price_ex_vat ?? 0;
         const vatRate = sku?.vat_rate ?? 0.25;
         const sellIncVat = sku?.sell_price_inc_vat ?? (sellExVat * (1 + vatRate));
@@ -661,7 +662,7 @@ const BOMBuilder: React.FC = () => {
   // Main quote creation handler — decides between clone+sync or fresh creation
   const createQuote = async () => {
     try {
-      const isRevision = !!(bom as any)?.revision_reason_type;
+      const isRevision = !!(bom as { revision_reason_type?: string })?.revision_reason_type;
 
       if (isRevision) {
         // Look up source BOM from bom_events
@@ -674,7 +675,7 @@ const BOMBuilder: React.FC = () => {
           .limit(1)
           .maybeSingle();
 
-        const sourceBomId = (revisionEvent?.metadata as any)?.source_bom_id;
+        const sourceBomId = (revisionEvent?.metadata as { source_bom_id?: string })?.source_bom_id;
 
         if (sourceBomId) {
           // Find latest non-cancelled quote for the source BOM
@@ -813,7 +814,7 @@ const BOMBuilder: React.FC = () => {
   }
 
   // Detect if this is a newly created revision (has revision_reason_type set)
-  const isNewRevision = !!(bom as any)?.revision_reason_type;
+  const isNewRevision = !!(bom as { revision_reason_type?: string })?.revision_reason_type;
 
   const formatPrice = (value: number) => value.toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 
@@ -835,7 +836,7 @@ const BOMBuilder: React.FC = () => {
             <div className="flex items-center gap-3 flex-wrap">
               <h1 className="text-2xl font-bold">BOM Builder</h1>
               <BOMVersionSelector
-                bomGroupId={(bom as any)?.bom_group_id || id || ''}
+                bomGroupId={(bom as { bom_group_id?: string })?.bom_group_id || id || ''}
                 currentBomId={id || ''}
                 currentVersion={bom?.version || 1}
               />

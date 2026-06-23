@@ -42,14 +42,14 @@ export interface ValidationResult {
 export function validateCurvePoints(points: unknown[]): ValidationResult {
   if (points.length < 2) return { valid: false, error: `At least 2 points required, got ${points.length}` };
   for (let i = 0; i < points.length; i++) {
-    const p = points[i] as any;
+    const p = points[i] as Record<string, number>;
     if (typeof p.temp_c !== 'number' || p.temp_c < -40 || p.temp_c > 40)
       return { valid: false, error: `points[${i}].temp_c must be between -40 and 40` };
     if (typeof p.cop !== 'number' || p.cop <= 0 || p.cop > 15)
       return { valid: false, error: `points[${i}].cop must be > 0 and <= 15` };
     if (typeof p.capacity_w !== 'number' || !Number.isInteger(p.capacity_w) || p.capacity_w <= 0 || p.capacity_w > 30000)
       return { valid: false, error: `points[${i}].capacity_w must be an integer > 0 and <= 30000` };
-    if (i > 0 && p.temp_c <= (points[i - 1] as any).temp_c)
+    if (i > 0 && p.temp_c <= (points[i - 1] as Record<string, number>).temp_c)
       return { valid: false, error: `points[${i}].temp_c not strictly increasing` };
   }
   return { valid: true };
@@ -60,7 +60,7 @@ export function validateSurfacePoints(points: unknown[]): ValidationResult {
   const warnings: string[] = [];
   const seen = new Set<string>();
   for (let i = 0; i < points.length; i++) {
-    const p = points[i] as any;
+    const p = points[i] as Record<string, number>;
     if (typeof p.indoor_temp_c !== 'number' || p.indoor_temp_c < 10 || p.indoor_temp_c > 35)
       return { valid: false, error: `points[${i}].indoor_temp_c must be between 10 and 35` };
     if (typeof p.temp_c !== 'number' || p.temp_c < -40 || p.temp_c > 40)
@@ -80,9 +80,9 @@ export function validateSurfacePoints(points: unknown[]): ValidationResult {
 }
 
 export function validateProfileData(kind: ProfileKind, data: unknown): ValidationResult {
-  if (typeof data !== 'object' || data === null || !Array.isArray((data as any).points))
+  if (typeof data !== 'object' || data === null || !Array.isArray((data as { points?: unknown[] }).points))
     return { valid: false, error: 'Data must contain a "points" array' };
-  const pts = (data as any).points;
+  const pts = (data as { points?: unknown[] }).points;
   return kind === 'cop_capacity_curve' ? validateCurvePoints(pts) : validateSurfacePoints(pts);
 }
 
@@ -103,7 +103,7 @@ export async function resolveProfile(
     .maybeSingle();
 
   if (own) {
-    return { profile: own as any, resolvedSource: 'own' };
+    return { profile: own as unknown as ProfileResolution['profile'], resolvedSource: 'own' };
   }
 
   // 2. Check borrowed
@@ -130,7 +130,7 @@ export async function resolveProfile(
         .single();
 
       return {
-        profile: borrowed as any,
+        profile: borrowed as unknown as ProfileResolution['profile'],
         resolvedSource: 'borrowed',
         borrowedFromName: srcDevice?.name || 'Unknown',
       };

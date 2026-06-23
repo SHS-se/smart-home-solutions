@@ -142,7 +142,7 @@ const ConditionsEditor: React.FC<ConditionsEditorProps> = ({
       dbUpdates.compare_value = dbUpdates.compare_value as Json;
     }
 
-    const { error } = await supabase.from('home_question_display_rules').update(dbUpdates as any).eq('id', ruleId);
+    const { error } = await supabase.from('home_question_display_rules').update(dbUpdates).eq('id', ruleId);
     if (error) {
       toast({ title: t('Fel', 'Error'), description: error.message, variant: 'destructive' });
       return;
@@ -241,7 +241,7 @@ const ConditionsEditor: React.FC<ConditionsEditorProps> = ({
                     <SelectContent>
                       {availableQuestions.map(q => (
                         <SelectItem key={q.id} value={q.id}>
-                          {(q as any).question_text?.substring(0, 40) || q.id.substring(0, 8)}
+                          {(q as { question_text?: string }).question_text?.substring(0, 40) || q.id.substring(0, 8)}
                         </SelectItem>
                       ))}
                     </SelectContent>

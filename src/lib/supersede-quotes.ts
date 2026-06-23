@@ -27,7 +27,7 @@ export async function supersedeActiveQuotesInChain({
     return [];
   }
 
-  const bomGroupId = (bom as any).bom_group_id;
+  const bomGroupId = (bom as { bom_group_id?: string }).bom_group_id;
   if (!bomGroupId) {
     console.warn('[supersede] BOM has no bom_group_id', bomId);
     return [];
@@ -64,7 +64,7 @@ export async function supersedeActiveQuotesInChain({
       superseded_at: new Date().toISOString(),
       superseded_by_quote_id: newQuoteId,
       is_latest: false,
-    } as any)
+    })
     .in('id', quoteIds);
 
   if (updateError) {

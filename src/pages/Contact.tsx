@@ -100,7 +100,7 @@ const HomeQuestionsSection = ({
             const qOptions = options[q.id] || [];
             const val = answers[q.id];
             return (
-              <div key={q.id} className="space-y-1.5" style={{ marginLeft: (q as any).depth ? (q as any).depth * 16 : 0 }}>
+              <div key={q.id} className="space-y-1.5" style={{ marginLeft: (q as { depth?: number }).depth ? (q as { depth?: number }).depth * 16 : 0 }}>
                 <Label className="text-sm">{String(label)}</Label>
                 {q.question_type === 'text' && (
                   <Input
@@ -251,7 +251,7 @@ const Contact = () => {
 
       if (error) {
         const is429 = error.message?.includes('429') ||
-          (error as any)?.status === 429 ||
+          (error as { status?: number })?.status === 429 ||
           error.message?.includes('Too many requests');
         if (is429) {
           toast({

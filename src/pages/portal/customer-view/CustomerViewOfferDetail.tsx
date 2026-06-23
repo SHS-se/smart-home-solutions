@@ -513,11 +513,11 @@ const CustomerViewOfferDetail: React.FC = () => {
                           <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
                             <span>{formatTimestamp(event.created_at)}</span>
                             {event.actor_email && <span>· {event.actor_email}</span>}
-                            {event.metadata && (event.metadata as any).invoice_number && (
-                              <span className="font-mono">#{(event.metadata as any).invoice_number}</span>
+                            {event.metadata && (event.metadata as { invoice_number?: string; recipient_email?: string }).invoice_number && (
+                              <span className="font-mono">#{(event.metadata as { invoice_number?: string; recipient_email?: string }).invoice_number}</span>
                             )}
-                            {event.metadata && (event.metadata as any).recipient_email && (
-                              <span>→ {(event.metadata as any).recipient_email}</span>
+                            {event.metadata && (event.metadata as { invoice_number?: string; recipient_email?: string }).recipient_email && (
+                              <span>→ {(event.metadata as { invoice_number?: string; recipient_email?: string }).recipient_email}</span>
                             )}
                           </div>
                         </div>

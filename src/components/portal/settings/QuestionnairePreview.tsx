@@ -82,7 +82,7 @@ const QuestionnairePreview: React.FC<QuestionnairePreviewProps> = ({
           const currentVal = typeof answers[q.id] === 'string' ? answers[q.id] as string : '';
           const isOtherSelected = currentVal.startsWith('__other:');
           const otherText = isOtherSelected ? currentVal.slice(8) : '';
-          const showOther = (q as any).allow_other === true;
+          const showOther = (q as { allow_other?: boolean }).allow_other === true;
 
           return (
             <div className="space-y-2">
@@ -132,7 +132,7 @@ const QuestionnairePreview: React.FC<QuestionnairePreviewProps> = ({
         const isOtherChecked = !!otherEntry;
         const otherText = otherEntry ? otherEntry.slice(8) : '';
         const regularValues = current.filter(v => !v.startsWith('__other:'));
-        const showOther = (q as any).allow_other === true;
+        const showOther = (q as { allow_other?: boolean }).allow_other === true;
 
         if (qOptions.length > 0) {
           return (
@@ -222,7 +222,7 @@ const QuestionnairePreview: React.FC<QuestionnairePreviewProps> = ({
             return (
               <div key={q.id} className="space-y-2" style={{ paddingLeft: `${q.depth * 24}px` }}>
                 <label className="text-sm font-medium">
-                  {t((q as any).question_text, (q as any).question_text_en || (q as any).question_text)}
+                  {t((q as { question_text?: string }).question_text, (q as { question_text_en?: string }).question_text_en || (q as { question_text?: string }).question_text)}
                 </label>
                 {renderInput(q)}
               </div>

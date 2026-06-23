@@ -1,3 +1,4 @@
+import type { Json } from "@/integrations/supabase/types";
 import React, { useEffect, useState, useCallback } from 'react';
 import { Loader2, Plus, Search, Globe, User } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -35,7 +36,7 @@ const DeviceCatalogTab: React.FC = () => {
       supabase.from('device_types').select('*').order('display_name'),
     ]);
     if (devs) setDevices(devs as unknown as DeviceRow[]);
-    if (types) setDeviceTypes(types.map(t => ({ ...t, field_schema: t.field_schema as any, supported_profile_kinds: (t.supported_profile_kinds || []) as string[] })) as DeviceType[]);
+    if (types) setDeviceTypes(types.map(t => ({ ...t, field_schema: t.field_schema as Json, supported_profile_kinds: (t.supported_profile_kinds || []) as string[] })) as unknown as DeviceType[]);
     setLoading(false);
   }, []);
 
@@ -43,7 +44,7 @@ const DeviceCatalogTab: React.FC = () => {
 
   const handleSelect = (dev: DeviceRow) => {
     setSelected(dev);
-    setPerformanceDataDeviceId((dev as any).performance_data_device_id || null);
+    setPerformanceDataDeviceId((dev as { performance_data_device_id?: string }).performance_data_device_id || null);
   };
 
   const handleNew = () => {
@@ -123,7 +124,7 @@ const DeviceCatalogTab: React.FC = () => {
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium truncate">{d.name}</p>
                   {(d.field_values?.make || d.field_values?.model) && (
-                    <p className="text-xs text-muted-foreground truncate">{d.field_values?.make} {d.field_values?.model}</p>
+                    <p className="text-xs text-muted-foreground truncate">{d.field_values?.make as string} {d.field_values?.model as string}</p>
                   )}
                 </div>
                 <Badge variant="outline" className="text-xs shrink-0">{d.device_types?.display_name}</Badge>

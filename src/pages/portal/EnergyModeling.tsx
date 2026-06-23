@@ -34,7 +34,7 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
         .select('primary_home_id')
         .eq('id', resolvedCustomerId)
         .single();
-      const primaryId = (customer as any)?.primary_home_id;
+      const primaryId = (customer as { primary_home_id?: string })?.primary_home_id;
       if (primaryId) setSelectedHomeId(primaryId);
     };
     fetchPrimary();

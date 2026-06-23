@@ -1,3 +1,4 @@
+import type { Json } from "@/integrations/supabase/types";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, Search, Globe, User, Upload, X, RotateCcw, Check } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -100,7 +101,7 @@ interface DevicePreviewState {
 function asCurvePoints(value: unknown): CurvePoint[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const points = value.filter((p): p is CurvePoint => {
-    const r = p as any;
+    const r = p as Record<string, unknown>;
     return r && typeof r.temp_c === 'number' && typeof r.cop === 'number' && typeof r.capacity_w === 'number';
   });
   return points.length >= 2 ? points : undefined;
@@ -109,7 +110,7 @@ function asCurvePoints(value: unknown): CurvePoint[] | undefined {
 function asSurfacePoints(value: unknown): SurfacePoint[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const points = value.filter((p): p is SurfacePoint => {
-    const r = p as any;
+    const r = p as Record<string, unknown>;
     return r &&
       typeof r.indoor_temp_c === 'number' &&
       typeof r.temp_c === 'number' &&
@@ -227,7 +228,7 @@ const DeviceModelsTab: React.FC = () => {
       if (!selected && rows.length > 0) setSelected(rows[0]);
     }
     if (types) {
-      setDeviceTypes(types.map(t => ({ ...t, field_schema: t.field_schema as any, supported_profile_kinds: (t.supported_profile_kinds || []) as string[] })) as DeviceType[]);
+      setDeviceTypes(types.map(t => ({ ...t, field_schema: t.field_schema as Json, supported_profile_kinds: (t.supported_profile_kinds || []) as string[] })) as unknown as DeviceType[]);
     }
     setLoading(false);
   }, [selected]);
@@ -258,7 +259,7 @@ const DeviceModelsTab: React.FC = () => {
     let cancelled = false;
     if (!selected) return;
 
-    const modelKey = (selected.device_types as any)?.simulation_model_key ?? '';
+    const modelKey = (selected.device_types as { simulation_model_key?: string })?.simulation_model_key ?? '';
     const isHpLike = typeof modelKey === 'string' && /heat_pump|air_to_air/i.test(modelKey);
     if (!isHpLike) return;
 
@@ -268,8 +269,8 @@ const DeviceModelsTab: React.FC = () => {
         resolveProfile(selected.id, 'manufacturer', 'heating_performance_surface'),
       ]);
       if (cancelled) return;
-      const curvePoints = asCurvePoints((curveRes.profile as any)?.data?.points);
-      const surfacePoints = asSurfacePoints((surfaceRes.profile as any)?.data?.points);
+      const curvePoints = asCurvePoints((curveRes.profile as { data?: { points?: unknown } })?.data?.points);
+      const surfacePoints = asSurfacePoints((surfaceRes.profile as { data?: { points?: unknown } })?.data?.points);
       setHeatPumpProfileByDeviceId(prev => ({
         ...prev,
         [selected.id]: {
@@ -302,7 +303,7 @@ const DeviceModelsTab: React.FC = () => {
         priority: selected.priority,
         device_types: {
           key: selected.device_types?.key,
-          simulation_model_key: (selected.device_types as any)?.simulation_model_key ?? null,
+          simulation_model_key: (selected.device_types as { simulation_model_key?: string })?.simulation_model_key ?? null,
         },
       },
     };
@@ -313,7 +314,7 @@ const DeviceModelsTab: React.FC = () => {
     });
     const runtime = binding.devices[0] ?? null;
     const mappedModelKey = runtime?.modelKey ?? null;
-    const originalModelKey = (selected.device_types as any)?.simulation_model_key ?? null;
+    const originalModelKey = (selected.device_types as { simulation_model_key?: string })?.simulation_model_key ?? null;
     const category = classifyDevice(mappedModelKey, selected.shiftable);
 
     if (!runtime) {
@@ -530,14 +531,14 @@ const DeviceModelsTab: React.FC = () => {
 
       const { error } = await supabase
         .from('device_instances')
-        .update({ field_values: newFv as any })
+        .update({ field_values: newFv as unknown as Json })
         .eq('id', selected.id);
 
       if (error) throw error;
 
       // Update local state
-      setDevices(prev => prev.map(d => d.id === selected.id ? { ...d, field_values: newFv as any } : d));
-      setSelected(prev => prev && prev.id === selected.id ? { ...prev, field_values: newFv as any } : prev);
+      setDevices(prev => prev.map(d => d.id === selected.id ? { ...d, field_values: newFv as Record<string, unknown> } : d));
+      setSelected(prev => prev && prev.id === selected.id ? { ...prev, field_values: newFv as Record<string, unknown> } : prev);
 
       toast({
         title: t('Kalibrering tillämpad', 'Calibration applied'),
@@ -566,13 +567,13 @@ const DeviceModelsTab: React.FC = () => {
 
       const { error } = await supabase
         .from('device_instances')
-        .update({ field_values: newFv as any })
+        .update({ field_values: newFv as unknown as Json })
         .eq('id', selected.id);
 
       if (error) throw error;
 
-      setDevices(prev => prev.map(d => d.id === selected.id ? { ...d, field_values: newFv as any } : d));
-      setSelected(prev => prev && prev.id === selected.id ? { ...prev, field_values: newFv as any } : prev);
+      setDevices(prev => prev.map(d => d.id === selected.id ? { ...d, field_values: newFv as Record<string, unknown> } : d));
+      setSelected(prev => prev && prev.id === selected.id ? { ...prev, field_values: newFv as Record<string, unknown> } : prev);
 
       toast({
         title: t('Kalibrering återställd', 'Calibration reset'),
@@ -635,7 +636,7 @@ const DeviceModelsTab: React.FC = () => {
                   {d.customer_id === null ? <Globe className="w-3.5 h-3.5 text-primary shrink-0" /> : <User className="w-3.5 h-3.5 text-muted-foreground shrink-0" />}
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium truncate">{d.name}</p>
-                    <p className="text-xs text-muted-foreground truncate">{d.device_types?.display_name} • {(d.device_types as any)?.simulation_model_key || '—'}</p>
+                    <p className="text-xs text-muted-foreground truncate">{d.device_types?.display_name} • {(d.device_types as { simulation_model_key?: string })?.simulation_model_key || '—'}</p>
                   </div>
                 </div>
               ))}

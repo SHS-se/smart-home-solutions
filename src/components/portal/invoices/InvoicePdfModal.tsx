@@ -54,7 +54,7 @@ const InvoicePdfModal: React.FC<InvoicePdfModalProps> = ({
     (async () => {
       try {
         // Build the URL for get-invoice-pdf — supports both authenticated and public token
-        const supabaseUrl = (supabase as any).supabaseUrl || import.meta.env.VITE_SUPABASE_URL;
+        const supabaseUrl = (supabase as unknown as { supabaseUrl?: string }).supabaseUrl || import.meta.env.VITE_SUPABASE_URL;
         let url = `${supabaseUrl}/functions/v1/get-invoice-pdf?invoice_id=${encodeURIComponent(invoiceId)}`;
         if (publicToken) {
           url += `&token=${encodeURIComponent(publicToken)}`;

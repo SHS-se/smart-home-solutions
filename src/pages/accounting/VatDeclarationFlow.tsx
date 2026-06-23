@@ -1,3 +1,4 @@
+import type { Json } from "@/integrations/supabase/types";
 import React, { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -179,11 +180,11 @@ const VatDeclarationFlow: React.FC = () => {
   });
   const unpostedInvoiceRows = unpostedInvoices || [];
 
-  const foreignPurchases = (purchases || []).filter((purchase) => isForeignCurrency((purchase as any).original_currency || purchase.currency));
+  const foreignPurchases = (purchases || []).filter((purchase) => isForeignCurrency((purchase as { original_currency?: string }).original_currency || purchase.currency));
   const purchaseRows = (purchases || []).map((purchase) => ({
     ...purchase,
-    supplier: (purchase as any).supplier || null,
-    lines: ((purchase as any).lines || []) as Array<any>,
+    supplier: (purchase as { supplier?: { name?: string } | null }).supplier || null,
+    lines: ((purchase as { lines?: unknown[] }).lines || []) as Array<{ vat_treatment: string; gross_amount?: number; net_amount?: number; vat_amount?: number }>,
   }));
   const unpostedPurchases = purchaseRows.filter(p => p.status !== 'posted');
   const detectedCurrencyIssues = foreignPurchases.flatMap((purchase) => {
@@ -327,7 +328,7 @@ const VatDeclarationFlow: React.FC = () => {
           ? t(`${foreignPurchases.length} valutaköp omräknade till SEK (ECB-kurs)`, `${foreignPurchases.length} foreign-currency purchases converted to SEK (ECB rate)`)
           : t(`${detectedCurrencyIssues.length} valutaköp saknar korrekt SEK-omräkning`, `${detectedCurrencyIssues.length} foreign-currency purchases missing SEK conversion`),
       ok: detectedCurrencyIssues.length === 0,
-      issueLink: detectedCurrencyIssues.length > 0 ? `/accounting/purchases/${(detectedCurrencyIssues[0].purchase as any).id}` : undefined,
+      issueLink: detectedCurrencyIssues.length > 0 ? `/accounting/purchases/${(detectedCurrencyIssues[0].purchase as { id?: string }).id}` : undefined,
     },
     {
       label: rcLineCount > 0
@@ -446,7 +447,7 @@ const VatDeclarationFlow: React.FC = () => {
       const nextStatus = vatPeriod.status === 'open' ? 'in_review' : vatPeriod.status;
       const { error } = await supabase
         .from('acc_vat_periods')
-        .update({ workflow_state: nextWorkflowState as any, status: nextStatus })
+        .update({ workflow_state: nextWorkflowState as unknown as Json, status: nextStatus })
         .eq('year', year)
         .eq('quarter', quarter);
 
@@ -473,7 +474,7 @@ const VatDeclarationFlow: React.FC = () => {
       const nextStatus = vatPeriod.status === 'open' ? 'in_review' : vatPeriod.status;
       const { error } = await supabase
         .from('acc_vat_periods')
-        .update({ workflow_state: nextWorkflowState as any, status: nextStatus })
+        .update({ workflow_state: nextWorkflowState as unknown as Json, status: nextStatus })
         .eq('year', year)
         .eq('quarter', quarter);
 
@@ -722,7 +723,7 @@ const VatDeclarationFlow: React.FC = () => {
                     {unpostedPurchases.map(p => (
                       <div key={p.id} className="flex items-center justify-between py-3">
                         <div>
-                          <p className="text-sm font-medium">{p.description || (p.supplier as any)?.name || t('Ej klassificerat inköp', 'Unclassified purchase')}</p>
+                          <p className="text-sm font-medium">{p.description || (p.supplier as { name?: string } | null)?.name || t('Ej klassificerat inköp', 'Unclassified purchase')}</p>
                           <p className="text-xs text-muted-foreground">{statusLabels[p.status as keyof typeof statusLabels]} · {formatSEK(Number(p.gross_amount))}</p>
                         </div>
                         <Link to={`/accounting/purchases/${p.id}`}><Button size="sm">{t('Åtgärda', 'Resolve')}</Button></Link>

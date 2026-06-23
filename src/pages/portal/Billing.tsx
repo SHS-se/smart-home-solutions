@@ -169,7 +169,7 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
 
       if (error) throw error;
 
-      const invoicesData = (data || []) as any[];
+      const invoicesData = (data || []) as Array<{ id: string; invoice_number: string; issued_at: string; due_date: string; currency: string; status: string; is_test: boolean }>;
       const invoiceIds = invoicesData.map((inv) => inv.id).filter(Boolean);
 
       const totalsByInvoiceId = new Map<string, number>();

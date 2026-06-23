@@ -1,3 +1,4 @@
+import type { Json } from "@/integrations/supabase/types";
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { Loader2, Home, ChevronDown, ChevronUp } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -162,9 +163,9 @@ const HouseSetupTab: React.FC<HouseSetupTabProps> = ({ customerId, homeId }) => 
         .maybeSingle();
 
       if (existing) {
-        await supabase.from('home_answers').update({ answer_value: answerValue as any, answer_text: answerText }).eq('id', existing.id);
+        await supabase.from('home_answers').update({ answer_value: answerValue as unknown as Json, answer_text: answerText }).eq('id', existing.id);
       } else {
-        await supabase.from('home_answers').insert({ customer_id: customerId, home_id: homeId, question_id: questionId, answer_value: answerValue as any, answer_text: answerText });
+        await supabase.from('home_answers').insert({ customer_id: customerId, home_id: homeId, question_id: questionId, answer_value: answerValue as unknown as Json, answer_text: answerText });
       }
     } catch (err) {
       console.error('Failed to sync profile value:', err);
@@ -183,7 +184,7 @@ const HouseSetupTab: React.FC<HouseSetupTabProps> = ({ customerId, homeId }) => 
     if (!settings?.id) return;
     setSaving(true);
     try {
-      const { error } = await supabase.from('energy_home_settings').update({ overrides: overrides as any }).eq('id', settings.id);
+      const { error } = await supabase.from('energy_home_settings').update({ overrides: overrides as unknown as Json }).eq('id', settings.id);
       if (error) throw error;
       toast({ title: t('Sparat!', 'Saved!') });
     } catch (err) {

@@ -139,7 +139,7 @@ export function useInvoiceBomRevision({ invoiceId, bomId }: UseInvoiceBomRevisio
           revision_reason_note: 'Invoice draft change requiring a new BOM revision',
           revision_created_by: user?.id,
           revision_created_at: new Date().toISOString(),
-        } as any)
+        })
         .select()
         .single();
       if (bomError) throw bomError;

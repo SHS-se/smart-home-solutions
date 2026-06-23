@@ -277,6 +277,7 @@ const KNOWN_INVOICE_FINGERPRINTS: Array<{
 
 function normalizeWhitespace(text: string): string {
   return text
+    // eslint-disable-next-line no-control-regex -- strip NUL bytes from extracted PDF text
     .replace(/\u0000/g, ' ')
     .replace(/\u00a0/g, ' ')
     .replace(/\s+/g, ' ')
@@ -718,6 +719,7 @@ function extractSupplierVatNumber(text: string, supplierName: string | null): st
 function extractInvoiceNumber(text: string): string | null {
   const direct = extractLabelValue(text, ['Invoice Number', 'Invoice No', 'Invoice #', 'Fakturanr/Order-id', 'Fakturanr', 'Fakturanummer']);
   if (direct) {
+    // eslint-disable-next-line no-control-regex -- strip NUL bytes from extracted PDF text
     const compact = direct.replace(/\u0000/g, ' ').replace(/\s+/g, ' ').trim();
     const multiPartToken = compact.match(/[A-Z0-9][A-Z0-9._/-]*(?:\s+[A-Z0-9][A-Z0-9._/-]*){0,3}/i);
     if (multiPartToken) return multiPartToken[0].replace(/\s+/g, '-');
@@ -828,6 +830,7 @@ function extractInclusiveVatSummary(text: string): { vatRate: number | null; net
 
 export function parseInvoiceText(rawText: string): ParsedInvoice {
   const conf: Record<string, number> = {};
+  // eslint-disable-next-line no-control-regex -- strip NUL bytes from extracted PDF text
   const sanitizedRawText = rawText.replace(/\u0000/g, ' ');
   const normalizedText = normalizeWhitespace(sanitizedRawText);
   const lines = sanitizedRawText.split('\n').map((line) => line.trim()).filter(Boolean);

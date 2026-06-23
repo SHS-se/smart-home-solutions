@@ -1,3 +1,4 @@
+import type { Json } from "@/integrations/supabase/types";
 import React, { useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
@@ -30,10 +31,10 @@ interface Props {
 }
 
 function localValidate(data: unknown): { valid: true; points: CurvePoint[] } | { valid: false; error: string } {
-  if (typeof data !== 'object' || data === null || !Array.isArray((data as any).points)) {
+  if (typeof data !== 'object' || data === null || !Array.isArray((data as { points: CurvePoint[] }).points)) {
     return { valid: false, error: 'JSON must contain a "points" array' };
   }
-  const points = (data as any).points as CurvePoint[];
+  const points = (data as { points: CurvePoint[] }).points as CurvePoint[];
   if (points.length < 4) return { valid: false, error: `At least 4 points required, got ${points.length}` };
   for (let i = 0; i < points.length; i++) {
     const p = points[i];
@@ -114,7 +115,7 @@ const CurveUploadModal: React.FC<Props> = ({ open, onOpenChange, deviceId, exist
 
       if (existingProfileId) {
         const { error: upErr } = await supabase.from('device_profiles').update({
-          data: { points } as any,
+          data: { points } as unknown as Json,
           source,
           notes: notes || null,
         }).eq('id', existingProfileId);
@@ -123,7 +124,7 @@ const CurveUploadModal: React.FC<Props> = ({ open, onOpenChange, deviceId, exist
         const { error: insErr } = await supabase.from('device_profiles').insert({
           device_id: deviceId,
           profile_kind: 'cop_capacity_curve',
-          data: { points } as any,
+          data: { points } as unknown as Json,
           source,
           notes: notes || null,
         });

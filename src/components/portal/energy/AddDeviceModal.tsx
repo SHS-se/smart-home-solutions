@@ -11,7 +11,7 @@ interface DevicePickerRow {
   id: string;
   name: string;
   customer_id: string | null;
-  field_values: Record<string, any>;
+  field_values: Record<string, unknown>;
   device_types: { display_name: string } | null;
 }
 

@@ -444,7 +444,7 @@ const QuestionnaireManager: React.FC = () => {
   };
 
   const handleToggleAllowOther = async (id: string, allow: boolean) => {
-    const { error } = await supabase.from('home_questions').update({ allow_other: allow } as any).eq('id', id);
+    const { error } = await supabase.from('home_questions').update({ allow_other: allow }).eq('id', id);
     if (error) { toast({ title: t('Fel', 'Error'), description: error.message, variant: 'destructive' }); return; }
     setQuestions(prev => prev.map(q => q.id === id ? { ...q, allow_other: allow } : q));
   };
