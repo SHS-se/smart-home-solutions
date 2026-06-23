@@ -86,6 +86,14 @@ local `.env` / `.env.local`, so make sure those point at the intended Supabase p
 before deploying. The Supabase publishable/anon key is public by design, so nothing
 secret ships in the bundle.
 
+**Automated CI/CD:** [`.github/workflows/ci-deploy.yml`](.github/workflows/ci-deploy.yml)
+runs lint + unit tests + build on every push and pull request, and on push to `main`
+(after the gate passes) deploys `dist/` to Cloudflare Pages. Add two repository secrets
+under *Settings → Secrets and variables → Actions* to enable the deploy step:
+
+- `CLOUDFLARE_API_TOKEN` — a token with the *Cloudflare Pages: Edit* permission
+- `CLOUDFLARE_ACCOUNT_ID` — your Cloudflare account ID
+
 ## Can I connect a custom domain to my Lovable project?
 
 Yes, you can!
