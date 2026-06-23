@@ -42,7 +42,7 @@ import SKUSelector from '@/components/portal/boms/SKUSelector';
 import { useInvoiceBomRevision } from '@/hooks/use-invoice-bom-revision';
 import { getEdgeFunctionErrorMessage } from '@/lib/edge-function-error';
 import { getAuthenticatedFunctionHeaders } from '@/lib/supabase-function-auth';
-import { findOverInvoicedSkus } from '@/lib/bom-fulfillment';
+import { findOverInvoicedSkus, remainingToInvoice } from '@/lib/bom-fulfillment';
 
 interface LineItem {
   id?: string;
@@ -262,33 +262,40 @@ const InvoiceDraftEditor: React.FC = () => {
   useEffect(() => {
     if (bomItems && bomItems.length > 0 && !invoiceId) {
       const bomVersion = boms.find(b => b.id === activeBomId)?.version ?? null;
-      const hardwareItems: LineItem[] = bomItems.map((item, idx) => {
-        const sku = item.skus as { sku: string; name: string; sell_price_ex_vat: number | null; vat_rate: number } | null;
-        const unitPrice = sku?.sell_price_ex_vat ?? 0;
-        const vatRateRaw = sku?.vat_rate;
-        const vatRatePct = vatRateRaw == null ? 25 : vatRateRaw <= 1 ? vatRateRaw * 100 : vatRateRaw;
-        return {
-          id: crypto.randomUUID(),
-          line_type: 'hardware' as const,
-          description: sku?.name || 'Unknown product',
-          sku: sku?.sku || '',
-          sku_id: item.sku_id,
-          quantity: item.quantity,
-          unit_price: unitPrice,
-          tax_rate: vatRatePct,
-          sort_order: idx,
-          source_bom_id: activeBomId,
-          source_bom_item_id: item.id,
-          source_bom_version: bomVersion,
-        };
-      });
+      // Only the outstanding (remaining-to-invoice) quantities; never pre-fill already-invoiced items.
+      const hardwareItems: LineItem[] = bomItems
+        .map((item) => {
+          const invoiced = bomFulfillment?.get(item.sku_id)?.invoiced_quantity ?? 0;
+          return { item, remaining: remainingToInvoice(item.quantity, invoiced) };
+        })
+        .filter(({ remaining }) => remaining > 0)
+        .map(({ item, remaining }, idx) => {
+          const sku = item.skus as { sku: string; name: string; sell_price_ex_vat: number | null; vat_rate: number } | null;
+          const unitPrice = sku?.sell_price_ex_vat ?? 0;
+          const vatRateRaw = sku?.vat_rate;
+          const vatRatePct = vatRateRaw == null ? 25 : vatRateRaw <= 1 ? vatRateRaw * 100 : vatRateRaw;
+          return {
+            id: crypto.randomUUID(),
+            line_type: 'hardware' as const,
+            description: sku?.name || 'Unknown product',
+            sku: sku?.sku || '',
+            sku_id: item.sku_id,
+            quantity: remaining,
+            unit_price: unitPrice,
+            tax_rate: vatRatePct,
+            sort_order: idx,
+            source_bom_id: activeBomId,
+            source_bom_item_id: item.id,
+            source_bom_version: bomVersion,
+          };
+        });
       // Keep existing labor/travel items, replace hardware
       setLineItems(prev => [
         ...hardwareItems,
         ...prev.filter(i => i.line_type !== 'hardware'),
       ]);
     }
-  }, [bomItems, invoiceId, activeBomId, boms]);
+  }, [bomItems, invoiceId, activeBomId, boms, bomFulfillment]);
 
   // Initialize state from existing invoice
   useEffect(() => {
@@ -555,41 +562,57 @@ const InvoiceDraftEditor: React.FC = () => {
     },
   });
 
-  // If this invoice is linked to a BOM but hardware rows are missing, restore them from the BOM.
+  // If this BOM-linked draft genuinely has no hardware rows, restore the outstanding (remaining-to-
+  // invoice) BOM items. The "has hardware" decision reads the *fetched DB rows* — not transient local
+  // state, which is briefly empty during hydration and previously caused spurious re-injection — and
+  // restoration is filtered to remaining quantities so already-invoiced items are never re-added.
   useEffect(() => {
     if (!invoiceId) return;
     if (!existingInvoice?.bom_id) return;
     if (existingInvoice.status !== 'draft') return;
     if (!initialLoadComplete.current) return;
     if (restoredHardwareFromBomRef.current) return;
+    if (!lineItemsFetched) return;
     if (!bomItems || bomItems.length === 0) return;
 
-    const hasHardware = lineItems.some((i) => i.line_type === 'hardware');
-    if (hasHardware) return;
+    const dbHasHardware = (existingLineItems ?? []).some((i) => i.line_type === 'hardware');
+    if (dbHasHardware) return;
 
     restoredHardwareFromBomRef.current = true;
 
-    const hardwareItems: LineItem[] = bomItems.map((item, idx) => {
-      const sku = item.skus as { sku: string; name: string; sell_price_ex_vat: number | null; vat_rate: number } | null;
-      const unitPrice = sku?.sell_price_ex_vat ?? 0;
-      const vatRateRaw = sku?.vat_rate;
-      const vatRatePct = vatRateRaw == null ? 25 : vatRateRaw <= 1 ? vatRateRaw * 100 : vatRateRaw;
-      return {
-        id: crypto.randomUUID(),
-        line_type: 'hardware' as const,
-        description: sku?.name || 'Unknown product',
-        sku: sku?.sku || '',
-        sku_id: item.sku_id,
-        quantity: item.quantity,
-        unit_price: unitPrice,
-        tax_rate: vatRatePct,
-        sort_order: idx,
-      };
-    });
+    const bomVersion = boms.find((b) => b.id === activeBomId)?.version ?? null;
+    const hardwareItems: LineItem[] = bomItems
+      .map((item) => {
+        const invoiced = bomFulfillment?.get(item.sku_id)?.invoiced_quantity ?? 0;
+        return { item, remaining: remainingToInvoice(item.quantity, invoiced) };
+      })
+      .filter(({ remaining }) => remaining > 0)
+      .map(({ item, remaining }, idx) => {
+        const sku = item.skus as { sku: string; name: string; sell_price_ex_vat: number | null; vat_rate: number } | null;
+        const unitPrice = sku?.sell_price_ex_vat ?? 0;
+        const vatRateRaw = sku?.vat_rate;
+        const vatRatePct = vatRateRaw == null ? 25 : vatRateRaw <= 1 ? vatRateRaw * 100 : vatRateRaw;
+        return {
+          id: crypto.randomUUID(),
+          line_type: 'hardware' as const,
+          description: sku?.name || 'Unknown product',
+          sku: sku?.sku || '',
+          sku_id: item.sku_id,
+          quantity: remaining,
+          unit_price: unitPrice,
+          tax_rate: vatRatePct,
+          sort_order: idx,
+          source_bom_id: activeBomId,
+          source_bom_item_id: item.id,
+          source_bom_version: bomVersion,
+        };
+      });
+
+    if (hardwareItems.length === 0) return;
 
     const updated: LineItem[] = [
       ...hardwareItems,
-      ...lineItems.filter((i) => i.line_type !== 'hardware'),
+      ...lineItemsRef.current.filter((i) => i.line_type !== 'hardware'),
     ];
 
     setLineItems(updated);
@@ -598,8 +621,12 @@ const InvoiceDraftEditor: React.FC = () => {
     invoiceId,
     existingInvoice?.bom_id,
     existingInvoice?.status,
+    lineItemsFetched,
+    existingLineItems,
     bomItems,
-    lineItems,
+    bomFulfillment,
+    boms,
+    activeBomId,
     saveLineItemsMutation,
   ]);
 
