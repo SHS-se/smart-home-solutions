@@ -1,0 +1,11 @@
+# Cloudflare Pages configuration (Direct Upload via Wrangler)
+# Docs: https://developers.cloudflare.com/pages/functions/wrangler-configuration/
+#
+# Deploy with:  npm run deploy        (builds, then uploads ./dist)
+# Preview with: npm run cf:dev        (serves the built ./dist locally on Pages runtime)
+
+name = "shs-smart-home-solutions"
+compatibility_date = "2026-06-23"
+
+# Vite builds the static SPA into ./dist — that is what gets uploaded to Pages.
+pages_build_output_dir = "dist"

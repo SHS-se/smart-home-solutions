@@ -62,7 +62,29 @@ This project is built with:
 
 ## How can I deploy this project?
 
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
+**Via Lovable:** open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
+
+**Via Cloudflare Pages (Wrangler):** this repo is configured for Direct Upload deployments
+([`wrangler.toml`](wrangler.toml)). The Vite SPA builds to `dist/`, with
+[`public/_redirects`](public/_redirects) providing the React Router SPA fallback and
+[`public/_headers`](public/_headers) setting asset caching.
+
+```sh
+# One-time: authenticate Wrangler with your Cloudflare account
+npx wrangler login
+
+# Build and deploy to Cloudflare Pages
+npm run deploy
+
+# Optional: build and preview the production output locally on the Pages runtime
+npm run cf:dev
+```
+
+The first `npm run deploy` creates a Pages project named `shs-smart-home-solutions`
+(rename in `wrangler.toml`). The build bakes in the `VITE_SUPABASE_*` values from your
+local `.env` / `.env.local`, so make sure those point at the intended Supabase project
+before deploying. The Supabase publishable/anon key is public by design, so nothing
+secret ships in the bundle.
 
 ## Can I connect a custom domain to my Lovable project?
 

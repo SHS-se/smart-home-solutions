@@ -1,0 +1,4 @@
+# SPA fallback: serve index.html for any path that isn't a real static file,
+# so client-side React Router routes (e.g. deep links / refreshes) resolve.
+# Cloudflare Pages matches static assets first; this only catches unmatched paths.
+/*    /index.html   200
