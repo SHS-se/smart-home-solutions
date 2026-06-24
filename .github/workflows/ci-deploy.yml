@@ -1,17 +1,18 @@
 name: CI & Deploy
 
 # Runs lint + unit tests + build on every push/PR.
-# On push to main (after the gate passes) deploys the built ./dist to Cloudflare Pages.
+# After the gate passes, deploys to Cloudflare Pages on push to:
+#   main -> production  (prod Supabase, from .env)        https://shs-smart-home-solutions.pages.dev
+#   dev  -> preview     (test Supabase, from .env.test)   https://dev.shs-smart-home-solutions.pages.dev
 #
 # Required repository secrets (Settings → Secrets and variables → Actions):
 #   CLOUDFLARE_API_TOKEN   - token with the "Cloudflare Pages: Edit" permission
 #   CLOUDFLARE_ACCOUNT_ID  - your Cloudflare account ID
-# The VITE_SUPABASE_* values are baked in from the committed .env (public anon key),
-# so no Supabase secrets are needed here.
+# VITE_SUPABASE_* values are baked in at build time (public anon keys), so no Supabase secrets here.
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
 
 # Cancel superseded runs for the same branch/PR.
@@ -50,7 +51,13 @@ jobs:
         run: deno task test
 
       - name: Build
-        run: npm run build
+        # dev branch builds against the TEST Supabase (mode=test); all others use prod (.env).
+        run: |
+          if [ "${{ github.ref_name }}" = "dev" ]; then
+            npm run build:test
+          else
+            npm run build
+          fi
 
       - name: Upload build output
         uses: actions/upload-artifact@v4
@@ -62,7 +69,7 @@ jobs:
   deploy:
     name: Deploy to Cloudflare Pages
     needs: ci
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -89,4 +96,5 @@ jobs:
           npx -y wrangler@4.103.0 pages project list | grep -q shs-smart-home-solutions \
             || npx -y wrangler@4.103.0 pages project create shs-smart-home-solutions --production-branch=main
           # Output directory comes from wrangler.toml (pages_build_output_dir = "dist").
-          npx -y wrangler@4.103.0 pages deploy --branch=main
+          # main -> production deployment; dev -> preview deployment (dev.<project>.pages.dev).
+          npx -y wrangler@4.103.0 pages deploy --branch=${{ github.ref_name }}
