@@ -1,14 +1,19 @@
 name: CI & Deploy
 
 # Runs lint + unit tests + build on every push/PR.
-# After the gate passes, deploys to Cloudflare Pages on push to:
-#   main -> production  (prod Supabase, from .env)        https://shs-smart-home-solutions.pages.dev
-#   dev  -> preview     (test Supabase, from .env.test)   https://dev.shs-smart-home-solutions.pages.dev
+# After the gate passes, on push to main/dev it (1) applies Supabase migrations to the matching
+# project, then (2) deploys the frontend to Cloudflare Pages:
+#   main -> production  (prod Supabase oosxndduqzhvrorgogaw)  https://shs-smart-home-solutions.pages.dev
+#   dev  -> preview     (test Supabase vxqpgbzseckgceopitpm)  https://dev.shs-smart-home-solutions.pages.dev
 #
 # Required repository secrets (Settings → Secrets and variables → Actions):
-#   CLOUDFLARE_API_TOKEN   - token with the "Cloudflare Pages: Edit" permission
-#   CLOUDFLARE_ACCOUNT_ID  - your Cloudflare account ID
-# VITE_SUPABASE_* values are baked in at build time (public anon keys), so no Supabase secrets here.
+#   CLOUDFLARE_API_TOKEN       - token with the "Cloudflare Pages: Edit" permission
+#   CLOUDFLARE_ACCOUNT_ID      - your Cloudflare account ID
+#   SUPABASE_ACCESS_TOKEN      - account access token (supabase.com/dashboard/account/tokens)
+#   SUPABASE_DB_PASSWORD_PROD  - database password for the prod project (oosxndduqzhvrorgogaw)
+#   SUPABASE_DB_PASSWORD_TEST  - database password for the test project (vxqpgbzseckgceopitpm)
+# VITE_SUPABASE_* anon keys are baked in at build time (public), so no anon secrets here.
+# NOTE: edge functions are NOT deployed here yet — still deployed manually via scripts/dev.sh.
 
 on:
   push:
@@ -66,9 +71,39 @@ jobs:
           path: dist
           retention-days: 7
 
+  migrate:
+    name: Apply Supabase migrations
+    needs: ci
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Attaching an environment lets you require manual approval before prod migrations run:
+    # add "Required reviewers" to the `production` environment in repo settings.
+    environment: ${{ github.ref_name == 'main' && 'production' || 'preview' }}
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      # main -> prod project, dev -> test project (refs are not secret; they're in .env / .env.test).
+      SUPABASE_PROJECT_REF: ${{ github.ref_name == 'main' && 'oosxndduqzhvrorgogaw' || 'vxqpgbzseckgceopitpm' }}
+      SUPABASE_DB_PASSWORD: ${{ github.ref_name == 'main' && secrets.SUPABASE_DB_PASSWORD_PROD || secrets.SUPABASE_DB_PASSWORD_TEST }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Link project
+        run: supabase link --project-ref "$SUPABASE_PROJECT_REF"
+
+      - name: Push migrations
+        # Applies only pending migrations from supabase/migrations (forward-only, no auto-rollback).
+        # When prod is already up to date this is a no-op.
+        run: supabase db push
+
   deploy:
     name: Deploy to Cloudflare Pages
-    needs: ci
+    needs: migrate
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
     runs-on: ubuntu-latest
     permissions:
