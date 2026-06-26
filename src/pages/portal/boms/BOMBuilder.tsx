@@ -155,48 +155,19 @@ const BOMBuilder: React.FC = () => {
   const bomGroupId = (bom as { bom_group_id?: string })?.bom_group_id || id || '';
 
   // Fetch BOM items with SKU data (scope only - no pricing).
-  // For a LOCKED (read-only) revision we show the complete premises scope: the latest quantity per
-  // SKU across every revision in the group. A revision row may only store a subset (e.g. one created
-  // just to add a single item), but the BOM view should always present the full list with each
-  // item's fulfillment status. For an editable revision we show only its own items so that edits,
-  // deletes and quantity changes target this revision.
+  // A revision's own bom_items is its complete scope: each revision carries forward its direct
+  // predecessor's items (minus any intentionally removed) plus its own additions. We deliberately do
+  // NOT union across the whole group here — that would resurrect SKUs that were quoted in an earlier
+  // revision and then removed, which must stay only in their historical revisions.
   const { data: items = [] } = useQuery({
-    queryKey: ['bom_items', id, isLocked, bomGroupId],
+    queryKey: ['bom_items', id],
     queryFn: async () => {
-      const groupId = (bom as { bom_group_id?: string })?.bom_group_id;
-      let bomIds: string[] = [id!];
-      const versionByBomId = new Map<string, number>([[id!, bom?.version ?? 1]]);
-
-      if (isLocked && groupId) {
-        const { data: revs, error: revErr } = await supabase
-          .from('boms')
-          .select('id, version')
-          .eq('bom_group_id', groupId);
-        if (revErr) throw revErr;
-        if (revs && revs.length > 0) {
-          bomIds = revs.map(r => r.id);
-          versionByBomId.clear();
-          for (const r of revs) versionByBomId.set(r.id, r.version);
-        }
-      }
-
       const { data, error } = await supabase
         .from('bom_items')
         .select('*, skus(sku, name, category_id, cost_ex_vat_computed, vat_rate, sell_price_ex_vat, sell_price_inc_vat, effective_margin_percent, sku_categories!skus_category_id_fkey(id, name))')
-        .in('bom_id', bomIds);
+        .eq('bom_id', id);
       if (error) throw error;
-
-      // Keep one row per SKU, preferring the row from the highest BOM version (current scope).
-      const seen = new Set<string>();
-      const deduped = [...data]
-        .sort((a, b) => (versionByBomId.get(b.bom_id) ?? 0) - (versionByBomId.get(a.bom_id) ?? 0))
-        .filter(item => {
-          if (seen.has(item.sku_id)) return false;
-          seen.add(item.sku_id);
-          return true;
-        });
-
-      return deduped.map(item => {
+      return data.map(item => {
         const skuData = (item as { skus?: Record<string, unknown> & { sku_categories?: { name?: string } } }).skus;
         return {
           ...item,
@@ -207,7 +178,7 @@ const BOMBuilder: React.FC = () => {
         };
       }) as unknown as BOMItem[];
     },
-    enabled: isStaff && !!id && !!bom,
+    enabled: isStaff && !!id,
   });
 
   // Fetch premises-level fulfillment (quoted/invoiced/remaining per sku) for this BOM's group
