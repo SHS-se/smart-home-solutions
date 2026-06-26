@@ -33,7 +33,8 @@ export type NavIcon =
   | 'acc-integrity'
   | 'margins'
   | 'questionnaire'
-  | 'erd';
+  | 'erd'
+  | 'staff';
 
 export interface AppNavItem {
   path: string;
@@ -173,6 +174,7 @@ export const staffNavGroups: AppNavGroup[] = [
     labelSv: 'Administration',
     labelEn: 'Administration',
     items: [
+      { path: '/portal/staff', labelSv: 'Personalkonton', labelEn: 'Staff users', icon: 'staff' },
       { path: '/portal/settings/margins', labelSv: 'Marginalregler', labelEn: 'Margin rules', icon: 'margins' },
       { path: '/portal/customers/questionnaire', labelSv: 'Hemprofilfrågor', labelEn: 'Home profile questions', icon: 'questionnaire' },
       { path: '/portal/erd', labelSv: 'Databasdiagram', labelEn: 'Database ERD', icon: 'erd' },

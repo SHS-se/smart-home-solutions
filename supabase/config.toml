@@ -92,3 +92,6 @@ verify_jwt = false
 
 [functions.fetch-ecb-exchange-rate]
 verify_jwt = false
+
+[functions.manage-staff]
+verify_jwt = false

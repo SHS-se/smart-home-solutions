@@ -25,6 +25,7 @@ import {
   Settings,
   ClipboardList,
   Database,
+  UserCog,
   ChevronDown,
   Eye,
   X,
@@ -96,6 +97,7 @@ const navIcons: Record<NavIcon, LucideIcon> = {
   margins: Settings,
   questionnaire: ClipboardList,
   erd: Database,
+  staff: UserCog,
 };
 
 export interface CustomerViewInfo {
