@@ -80,15 +80,18 @@ npm run deploy
 npm run cf:dev
 ```
 
-The first `npm run deploy` creates a Pages project named `shs-smart-home-solutions`
+The first `npm run deploy` creates a Pages project named `prod-smart-home-solutions`
 (rename in `wrangler.toml`). The build bakes in the `VITE_SUPABASE_*` values from your
 local `.env` / `.env.local`, so make sure those point at the intended Supabase project
 before deploying. The Supabase publishable/anon key is public by design, so nothing
 secret ships in the bundle.
 
 **Automated CI/CD:** [`.github/workflows/ci-deploy.yml`](.github/workflows/ci-deploy.yml)
-runs lint + unit tests + build on every push and pull request, and on push to `main`
-(after the gate passes) deploys `dist/` to Cloudflare Pages. Add two repository secrets
+runs lint + unit tests + build on every push and pull request. After the gate passes, a
+push to `dev` deploys to the `test-smart-home-solutions` project
+(https://test-smart-home-solutions.pages.dev) and a push to `main` deploys to
+`prod-smart-home-solutions` (https://prod-smart-home-solutions.pages.dev); each deploy then
+prunes that project's older deployments, keeping only the latest. Add two repository secrets
 under *Settings → Secrets and variables → Actions* to enable the deploy step:
 
 - `CLOUDFLARE_API_TOKEN` — a token with the *Cloudflare Pages: Edit* permission

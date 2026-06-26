@@ -2,9 +2,12 @@ name: CI & Deploy
 
 # Runs lint + unit tests + build on every push/PR.
 # After the gate passes, on push to main/dev it (1) applies Supabase migrations to the matching
-# project, then (2) deploys the frontend to Cloudflare Pages:
-#   main -> production  (prod Supabase oosxndduqzhvrorgogaw)  https://shs-smart-home-solutions.pages.dev
-#   dev  -> preview     (test Supabase vxqpgbzseckgceopitpm)  https://dev.shs-smart-home-solutions.pages.dev
+# project, then (2) deploys the frontend to a per-environment Cloudflare Pages project and
+# (3) prunes that project's old deployments, keeping only the latest live one:
+#   main -> prod-smart-home-solutions  (prod Supabase oosxndduqzhvrorgogaw)  https://prod-smart-home-solutions.pages.dev
+#   dev  -> test-smart-home-solutions  (test Supabase vxqpgbzseckgceopitpm)  https://test-smart-home-solutions.pages.dev
+# Each project's production branch is the deploying branch, so the canonical <project>.pages.dev
+# URL always points at that environment's latest build (no hash, no per-deploy URL to hunt for).
 #
 # Required repository secrets (Settings → Secrets and variables → Actions):
 #   CLOUDFLARE_API_TOKEN       - token with the "Cloudflare Pages: Edit" permission
@@ -126,10 +129,38 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          BRANCH: ${{ github.ref_name }}
         run: |
+          set -euo pipefail
+          WRANGLER="npx -y wrangler@4.103.0"
+          # main -> prod project, dev -> test project. Each project's production branch is the
+          # deploying branch, so deploying that branch is a PRODUCTION deploy served at the clean
+          # <project>.pages.dev URL (no hash).
+          if [ "$BRANCH" = "main" ]; then PROJECT=prod-smart-home-solutions; else PROJECT=test-smart-home-solutions; fi
+          echo "PROJECT=$PROJECT" >> "$GITHUB_ENV"
           # wrangler does not auto-create a Pages project in CI, so create it on first run.
-          npx -y wrangler@4.103.0 pages project list | grep -q shs-smart-home-solutions \
-            || npx -y wrangler@4.103.0 pages project create shs-smart-home-solutions --production-branch=main
+          $WRANGLER pages project list | grep -q "$PROJECT" \
+            || $WRANGLER pages project create "$PROJECT" --production-branch="$BRANCH"
           # Output directory comes from wrangler.toml (pages_build_output_dir = "dist").
-          # main -> production deployment; dev -> preview deployment (dev.<project>.pages.dev).
-          npx -y wrangler@4.103.0 pages deploy --branch=${{ github.ref_name }}
+          $WRANGLER pages deploy --project-name="$PROJECT" --branch="$BRANCH"
+
+      - name: Prune old Cloudflare deployments
+        # Keep only the latest (live) deployment per project; delete the rest so they stop piling
+        # up. The API refuses to delete the live production deployment, so the current build is safe.
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          KEEP=1   # how many most-recent deployments to retain
+          API="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments"
+          ids=$(curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$API?per_page=100" \
+            | jq -r '.result | sort_by(.created_on) | reverse | .[].id')
+          echo "Keeping newest $KEEP deployment(s) for $PROJECT:"
+          echo "$ids" | head -n "$KEEP"
+          echo "$ids" | tail -n "+$((KEEP + 1))" | while read -r id; do
+            [ -n "$id" ] || continue
+            echo "Deleting old deployment: $id"
+            curl -fsS -X DELETE -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$API/$id" >/dev/null \
+              || echo "  (skipped: $id is protected or already gone)"
+          done

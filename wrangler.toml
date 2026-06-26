@@ -4,7 +4,8 @@
 # Deploy with:  npm run deploy        (builds, then uploads ./dist)
 # Preview with: npm run cf:dev        (serves the built ./dist locally on Pages runtime)
 
-name = "shs-smart-home-solutions"
+# Local `npm run deploy` targets prod; CI overrides via --project-name (test for the dev branch).
+name = "prod-smart-home-solutions"
 compatibility_date = "2026-06-23"
 
 # Vite builds the static SPA into ./dist — that is what gets uploaded to Pages.
