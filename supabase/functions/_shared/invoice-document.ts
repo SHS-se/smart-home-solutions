@@ -120,7 +120,7 @@ interface FrozenCustomer {
 
 /** Resolves the frozen buyer details from a document's customer_snapshot, or
  *  null when there is no usable snapshot (draft/legacy — caller uses live data). */
-function parseCustomerSnapshot(snapshot: unknown): FrozenCustomer | null {
+export function parseCustomerSnapshot(snapshot: unknown): FrozenCustomer | null {
   if (!snapshot || typeof snapshot !== "object") return null;
   const row = snapshot as Record<string, unknown>;
   const str = (v: unknown): string | null => (typeof v === "string" && v.length > 0 ? v : null);

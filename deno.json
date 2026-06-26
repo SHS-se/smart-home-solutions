@@ -1,6 +1,6 @@
 {
   "tasks": {
-    "test": "deno test --no-check --allow-read tests/"
+    "test": "deno test --no-check --allow-read --allow-env tests/"
   },
   "imports": {
     "@/": "./src/"
