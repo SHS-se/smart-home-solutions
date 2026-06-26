@@ -66,6 +66,45 @@ function defaultBusinessSettings(): BusinessSettings {
 }
 
 /**
+ * Maps a business_settings-shaped record (a live DB row or a frozen
+ * invoice.business_snapshot — both use the same column names) onto the resolved
+ * BusinessSettings, filling blanks from the hard-coded defaults.
+ */
+export function mapBusinessSettingsRow(row: Record<string, unknown>): BusinessSettings {
+  const defaults = defaultBusinessSettings();
+  return {
+    name: nonEmpty(row.legal_name) ?? defaults.name,
+    orgNumber: nonEmpty(row.org_number) ?? defaults.orgNumber,
+    vatNumber: nonEmpty(row.vat_number) ?? defaults.vatNumber,
+    fSkattApproved: row.f_skatt_approved !== false,
+    street: nonEmpty(row.address_street) ?? defaults.street,
+    postcode: nonEmpty(row.address_postcode) ?? defaults.postcode,
+    city: nonEmpty(row.address_city) ?? defaults.city,
+    country: nonEmpty(row.address_country) ?? defaults.country,
+    email: nonEmpty(row.contact_email) ?? defaults.email,
+    supportEmail: nonEmpty(row.support_email) ?? nonEmpty(row.contact_email) ?? defaults.supportEmail,
+    phone: nonEmpty(row.contact_phone) ?? defaults.phone,
+    website: nonEmpty(row.website) ?? defaults.website,
+    bankgiroNumber: nonEmpty(row.bankgiro_number) ?? defaults.bankgiroNumber,
+    payeeName: nonEmpty(row.payee_name) ?? nonEmpty(row.legal_name) ?? defaults.payeeName,
+    iban: nonEmpty(row.iban),
+    bic: nonEmpty(row.bic),
+    bankName: nonEmpty(row.bank_name),
+    paymentTermsDays:
+      typeof row.payment_terms_days === "number" && Number.isFinite(row.payment_terms_days)
+        ? row.payment_terms_days
+        : defaults.paymentTermsDays,
+  };
+}
+
+/** Resolves settings from a frozen invoice.business_snapshot, or null if there
+ *  is no usable snapshot (draft/legacy invoice — caller should read live). */
+export function businessSettingsFromSnapshot(snapshot: unknown): BusinessSettings | null {
+  if (!snapshot || typeof snapshot !== "object") return null;
+  return mapBusinessSettingsRow(snapshot as Record<string, unknown>);
+}
+
+/**
  * Loads the singleton business_settings row and merges it over the hard-coded
  * defaults so a missing row or blank field never breaks invoice rendering.
  * Reads with the provided client (service role in edge functions, bypassing RLS).
@@ -81,32 +120,34 @@ export async function loadBusinessSettings(
       .eq("id", 1)
       .maybeSingle();
     if (error || !data) return defaults;
-
-    const row = data as Record<string, unknown>;
-    return {
-      name: nonEmpty(row.legal_name) ?? defaults.name,
-      orgNumber: nonEmpty(row.org_number) ?? defaults.orgNumber,
-      vatNumber: nonEmpty(row.vat_number) ?? defaults.vatNumber,
-      fSkattApproved: row.f_skatt_approved !== false,
-      street: nonEmpty(row.address_street) ?? defaults.street,
-      postcode: nonEmpty(row.address_postcode) ?? defaults.postcode,
-      city: nonEmpty(row.address_city) ?? defaults.city,
-      country: nonEmpty(row.address_country) ?? defaults.country,
-      email: nonEmpty(row.contact_email) ?? defaults.email,
-      supportEmail: nonEmpty(row.support_email) ?? nonEmpty(row.contact_email) ?? defaults.supportEmail,
-      phone: nonEmpty(row.contact_phone) ?? defaults.phone,
-      website: nonEmpty(row.website) ?? defaults.website,
-      bankgiroNumber: nonEmpty(row.bankgiro_number) ?? defaults.bankgiroNumber,
-      payeeName: nonEmpty(row.payee_name) ?? nonEmpty(row.legal_name) ?? defaults.payeeName,
-      iban: nonEmpty(row.iban),
-      bic: nonEmpty(row.bic),
-      bankName: nonEmpty(row.bank_name),
-      paymentTermsDays:
-        typeof row.payment_terms_days === "number" && Number.isFinite(row.payment_terms_days)
-          ? row.payment_terms_days
-          : defaults.paymentTermsDays,
-    };
+    return mapBusinessSettingsRow(data as Record<string, unknown>);
   } catch {
     return defaults;
   }
+}
+
+/**
+ * Resolves the seller details for a specific invoice: the frozen
+ * business_snapshot when the invoice has one (finalized), otherwise the live
+ * settings (drafts/legacy). Use this anywhere an invoice's seller details are
+ * rendered outside loadInvoiceDocumentData (e.g. invoice emails).
+ */
+export async function loadInvoiceBusinessSettings(
+  client: SupabaseClient,
+  invoiceId: string,
+): Promise<BusinessSettings> {
+  try {
+    const { data } = await client
+      .from("invoices")
+      .select("business_snapshot")
+      .eq("id", invoiceId)
+      .maybeSingle();
+    const fromSnapshot = businessSettingsFromSnapshot(
+      (data as { business_snapshot?: unknown } | null)?.business_snapshot,
+    );
+    if (fromSnapshot) return fromSnapshot;
+  } catch {
+    // fall through to live settings
+  }
+  return loadBusinessSettings(client);
 }

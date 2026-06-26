@@ -1,6 +1,11 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import QRCode from "https://esm.sh/qrcode@1.5.4";
-import { INVOICE_COMPANY, loadBusinessSettings, type BusinessSettings } from "./invoice-company.ts";
+import {
+  INVOICE_COMPANY,
+  loadBusinessSettings,
+  businessSettingsFromSnapshot,
+  type BusinessSettings,
+} from "./invoice-company.ts";
 
 export interface InvoiceDocumentLineItem {
   id: string;
@@ -60,6 +65,9 @@ export interface InvoiceDocumentData {
   line_items: InvoiceDocumentLineItem[];
   payments: InvoiceDocumentPayment[];
   payment_details: InvoicePaymentDetails;
+  /** Seller business details this invoice was rendered with — the frozen
+   *  snapshot for finalized invoices, live settings for drafts. */
+  seller: BusinessSettings;
 }
 
 interface LoadedInvoiceRow {
@@ -74,6 +82,7 @@ interface LoadedInvoiceRow {
   paid_at: string | null;
   voided_at: string | null;
   quote_number: string | null;
+  business_snapshot: unknown;
   customer_id: string;
   customer: {
     name: string | null;
@@ -190,7 +199,7 @@ export async function loadInvoiceDocumentData(
   const { data: invoice, error: invoiceError } = await serviceClient
     .from("invoices")
     .select(
-      "id, invoice_number, status, due_date, currency, customer_id, created_at, finalized_at, issued_at, paid_at, voided_at, quote_number, customer:customers_with_identity!invoices_customer_id_fkey(name, billing_same_as_site, site_street, site_postcode, site_city, billing_street, billing_postcode, billing_city)",
+      "id, invoice_number, status, due_date, currency, customer_id, created_at, finalized_at, issued_at, paid_at, voided_at, quote_number, business_snapshot, customer:customers_with_identity!invoices_customer_id_fkey(name, billing_same_as_site, site_street, site_postcode, site_city, billing_street, billing_postcode, billing_city)",
     )
     .eq("id", invoiceId)
     .single();
@@ -223,7 +232,11 @@ export async function loadInvoiceDocumentData(
   const tax = toNumber(totals?.tax ?? 0);
   const total = toNumber(totals?.total ?? 0);
   const useSiteAddress = typedInvoice.customer?.billing_same_as_site === true;
-  const settings = await loadBusinessSettings(serviceClient);
+  // Finalized invoices render from their frozen snapshot; drafts (no snapshot
+  // yet) fall back to the live settings so the preview stays current.
+  const settings =
+    businessSettingsFromSnapshot(typedInvoice.business_snapshot) ??
+    (await loadBusinessSettings(serviceClient));
   const paymentDetails = await buildInvoicePaymentDetails({
     invoiceNumber: typedInvoice.invoice_number,
     amount: total,
@@ -266,5 +279,6 @@ export async function loadInvoiceDocumentData(
       amount: toNumber((payment as InvoiceDocumentPayment).amount),
     })) as InvoiceDocumentPayment[],
     payment_details: paymentDetails,
+    seller: settings,
   };
 }

@@ -2,7 +2,6 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { PDFDocument, StandardFonts, degrees, rgb, type PDFPage, type PDFFont } from "https://esm.sh/pdf-lib@1.17.1";
 import { getAppEnvironment } from "../_shared/app-env.ts";
-import { loadBusinessSettings } from "../_shared/invoice-company.ts";
 import { loadInvoiceDocumentData } from "../_shared/invoice-document.ts";
 
 const corsHeaders = {
@@ -222,7 +221,8 @@ serve(async (req) => {
     }
 
     const invoice = await loadInvoiceDocumentData(serviceClient, invoiceId);
-    const company = await loadBusinessSettings(serviceClient);
+    // Seller details the invoice was frozen with (snapshot for finalized, live for drafts).
+    const company = invoice.seller;
     logStep("Invoice loaded", { invoiceNumber: invoice.invoice_number });
 
     const pdfDoc = await PDFDocument.create();

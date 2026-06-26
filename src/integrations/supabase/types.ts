@@ -1865,6 +1865,7 @@ export type Database = {
           amount: number | null
           bom_id: string | null
           bom_version: number | null
+          business_snapshot: Json | null
           created_at: string
           created_by: string | null
           currency: string | null
@@ -1897,6 +1898,7 @@ export type Database = {
           amount?: number | null
           bom_id?: string | null
           bom_version?: number | null
+          business_snapshot?: Json | null
           created_at?: string
           created_by?: string | null
           currency?: string | null
@@ -1929,6 +1931,7 @@ export type Database = {
           amount?: number | null
           bom_id?: string | null
           bom_version?: number | null
+          business_snapshot?: Json | null
           created_at?: string
           created_by?: string | null
           currency?: string | null
