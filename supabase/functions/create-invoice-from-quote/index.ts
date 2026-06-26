@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { getAppEnvironment } from "../_shared/app-env.ts";
 import { normalizeInvoiceLineType } from "../_shared/invoice-line-types.ts";
+import { loadBusinessSettings } from "../_shared/invoice-company.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -79,13 +80,17 @@ serve(async (req) => {
 
     if (!lineItems || lineItems.length === 0) throw new Error("No line items found");
 
+    // Payment terms (days until due) come from the configurable business settings.
+    const { paymentTermsDays } = await loadBusinessSettings(serviceClient);
+    const dueDays = paymentTermsDays > 0 ? paymentTermsDays : 30;
+
     // Create local invoice record (draft — no invoice number yet)
     const invoiceData = {
       customer_id: quote.customer_id,
       quote_id,
       status: "draft",
       currency: "SEK",
-      due_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+      due_date: new Date(Date.now() + dueDays * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
       bom_id: quote.bom_id,
       bom_version: quote.bom_version,
       quote_number: quote.quote_number,

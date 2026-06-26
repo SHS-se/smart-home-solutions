@@ -2,10 +2,13 @@ import { Link } from 'react-router-dom';
 import { Home, Mail, MapPin, Phone } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import ObfuscatedEmail from '@/components/ObfuscatedEmail';
+import { useBusinessSettings } from '@/hooks/use-business-settings';
 const Footer = () => {
   const {
     t
   } = useLanguage();
+  const { settings } = useBusinessSettings();
+  const [emailAddress, emailDomain] = (settings.contact_email ?? 'sales@smarthomesolutions.se').split('@');
   const serviceLinks = [{
     href: '/services#installation',
     label: t('Smart installation', 'Smart Installation')
@@ -108,22 +111,28 @@ const Footer = () => {
               <ul className="space-y-3">
                 <li className="flex items-center gap-3 text-sm text-primary-foreground/70">
                   <MapPin className="w-4 h-4" />
-                  <span>{t('Täby, Sverige', 'Täby, Sweden')}</span>
+                  <span>{[settings.address_city, settings.address_country].filter(Boolean).join(', ')}</span>
                 </li>
                 <li className="flex items-center gap-3 text-sm text-primary-foreground/70">
                   <Mail className="w-4 h-4" />
-                  <ObfuscatedEmail address="sales" domain="smarthomesolutions.se" className="hover:text-primary-foreground transition-colors" />
+                  <ObfuscatedEmail address={emailAddress} domain={emailDomain} className="hover:text-primary-foreground transition-colors" />
                 </li>
-                <li className="flex items-center gap-3 text-sm text-primary-foreground/70">
-                  <Phone className="w-4 h-4" />
-                  <a className="hover:text-primary-foreground transition-colors" href="tel:+46702870814">
-                    +46 70 287 08 14
-                  </a>
-                </li>
+                {settings.contact_phone && (
+                  <li className="flex items-center gap-3 text-sm text-primary-foreground/70">
+                    <Phone className="w-4 h-4" />
+                    <a className="hover:text-primary-foreground transition-colors" href={`tel:${settings.contact_phone.replace(/\s+/g, '')}`}>
+                      {settings.contact_phone}
+                    </a>
+                  </li>
+                )}
               </ul>
               <div className="mt-4 pt-3 border-t border-primary-foreground/10 space-y-1">
-                <p className="text-xs text-primary-foreground/50">{t('Godkänd för F-skatt', 'Approved for F-tax')}</p>
-                <p className="text-xs text-primary-foreground/50">{t('Momsreg.nr', 'VAT reg. no')}: SE790519759101</p>
+                {settings.f_skatt_approved && (
+                  <p className="text-xs text-primary-foreground/50">{t('Godkänd för F-skatt', 'Approved for F-tax')}</p>
+                )}
+                {settings.vat_number && (
+                  <p className="text-xs text-primary-foreground/50">{t('Momsreg.nr', 'VAT reg. no')}: {settings.vat_number}</p>
+                )}
               </div>
             </div>
           </div>

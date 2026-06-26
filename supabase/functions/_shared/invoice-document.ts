@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import QRCode from "https://esm.sh/qrcode@1.5.4";
-import { INVOICE_COMPANY } from "./invoice-company.ts";
+import { INVOICE_COMPANY, loadBusinessSettings, type BusinessSettings } from "./invoice-company.ts";
 
 export interface InvoiceDocumentLineItem {
   id: string;
@@ -146,10 +146,15 @@ export async function buildInvoicePaymentDetails(args: {
   amount: number;
   dueDate: string | null;
   currency: string | null;
+  /** Resolved business settings. When omitted, falls back to the legacy
+   *  BANKGIRO_NUMBER secret and the hard-coded company name. */
+  settings?: BusinessSettings;
 }): Promise<InvoicePaymentDetails> {
   const amount = toNumber(args.amount);
-  const bankgiroNumber = getConfiguredBankgiroNumber();
-  const payeeName = INVOICE_COMPANY.name;
+  const bankgiroNumber = args.settings
+    ? args.settings.bankgiroNumber
+    : getConfiguredBankgiroNumber();
+  const payeeName = args.settings?.payeeName || INVOICE_COMPANY.name;
   const currency = args.currency || "SEK";
   const qrPayload = buildInvoiceQrPayload({
     bankgiroNumber,
@@ -218,11 +223,13 @@ export async function loadInvoiceDocumentData(
   const tax = toNumber(totals?.tax ?? 0);
   const total = toNumber(totals?.total ?? 0);
   const useSiteAddress = typedInvoice.customer?.billing_same_as_site === true;
+  const settings = await loadBusinessSettings(serviceClient);
   const paymentDetails = await buildInvoicePaymentDetails({
     invoiceNumber: typedInvoice.invoice_number,
     amount: total,
     dueDate: typedInvoice.due_date,
     currency: typedInvoice.currency,
+    settings,
   });
 
   return {

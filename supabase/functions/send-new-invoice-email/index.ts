@@ -8,6 +8,7 @@ import { Resend } from "https://esm.sh/resend@2.0.0";
 import { getRequestAppOrigin } from "../_shared/app-origin.ts";
 import { getAppEnvironment } from "../_shared/app-env.ts";
 import { buildInvoicePaymentDetails } from "../_shared/invoice-document.ts";
+import { loadBusinessSettings } from "../_shared/invoice-company.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -112,14 +113,16 @@ serve(async (req) => {
       : "—";
     const invoiceNumber = invoice.invoice_number || invoice.id;
     const emailSubject = customSubject || `Faktura ${invoiceNumber} från Smart Home Solutions`;
+    const company = await loadBusinessSettings(serviceClient);
     const paymentDetails = await buildInvoicePaymentDetails({
       invoiceNumber,
       amount: total,
       dueDate: invoice.due_date,
       currency: invoice.currency,
+      settings: company,
     });
 
-    const textBody = `Faktura ${invoiceNumber} från Smart Home Solutions\n\nHej ${customerName},\n\n${customMessage || 'Här kommer din faktura.'}\n\nFakturanummer: ${invoiceNumber}\nFörfallodatum: ${dueDate}\nAtt betala: ${formatSEK(total)}\nBankgiro: ${paymentDetails.bankgiro_number || 'Ej konfigurerat'}\nBetalningsreferens: ${paymentDetails.payment_reference || invoiceNumber}\n\nVisa faktura: ${viewUrl}\n\nFrågor? Kontakta oss: support@smarthomesolutions.se\n`;
+    const textBody = `Faktura ${invoiceNumber} från Smart Home Solutions\n\nHej ${customerName},\n\n${customMessage || 'Här kommer din faktura.'}\n\nFakturanummer: ${invoiceNumber}\nFörfallodatum: ${dueDate}\nAtt betala: ${formatSEK(total)}\nBankgiro: ${paymentDetails.bankgiro_number || 'Ej konfigurerat'}\nBetalningsreferens: ${paymentDetails.payment_reference || invoiceNumber}\n\nVisa faktura: ${viewUrl}\n\nFrågor? Kontakta oss: ${company.supportEmail}\n`;
 
     let emailResult;
     try {

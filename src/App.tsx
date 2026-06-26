@@ -42,6 +42,7 @@ const BOMBuilder = lazy(() => import("./pages/portal/boms/BOMBuilder"));
 const QuotesList = lazy(() => import("./pages/portal/quotes/QuotesList"));
 const QuotePreparation = lazy(() => import("./pages/portal/quotes/QuotePreparation"));
 const MarginSettings = lazy(() => import("./pages/portal/settings/MarginSettings"));
+const BusinessSettings = lazy(() => import("./pages/portal/settings/BusinessSettings"));
 const StaffUsers = lazy(() => import("./pages/portal/StaffUsers"));
 const QuestionnaireManager = lazy(() => import("./pages/portal/settings/QuestionnaireManager"));
 const ERDiagram = lazy(() => import("./pages/portal/ERDiagram"));
@@ -186,6 +187,7 @@ const App = () => (
                         <Route path="/portal/invoices/new" element={<InvoiceDraftEditor />} />
                         <Route path="/portal/invoices/:id" element={<InvoiceDetail />} />
                         <Route path="/portal/settings/margins" element={<MarginSettings />} />
+                        <Route path="/portal/settings/business" element={<BusinessSettings />} />
                         <Route path="/portal/staff" element={<StaffUsers />} />
                         <Route path="/portal/erd" element={<ERDiagram />} />
 

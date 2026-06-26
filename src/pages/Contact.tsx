@@ -13,6 +13,7 @@ import { z } from 'zod';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import ObfuscatedEmail from '@/components/ObfuscatedEmail';
+import { useBusinessSettings } from '@/hooks/use-business-settings';
 import {
   flattenTree,
   evaluateVisibility,
@@ -165,6 +166,8 @@ const HomeQuestionsSection = ({
 const Contact = () => {
   const { t } = useLanguage();
   const { toast } = useToast();
+  const { settings } = useBusinessSettings();
+  const [emailAddress, emailDomain] = (settings.contact_email ?? 'sales@smarthomesolutions.se').split('@');
   const [submitted, setSubmitted] = useState(false);
   const [onboarding, setOnboarding] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -452,7 +455,7 @@ const Contact = () => {
                     </div>
                     <div>
                       <p className="font-medium text-foreground">{t('Adress', 'Address')}</p>
-                      <p className="text-muted-foreground">{t('Täby, Sverige', 'Täby, Sweden')}</p>
+                      <p className="text-muted-foreground">{[settings.address_city, settings.address_country].filter(Boolean).join(', ')}</p>
                     </div>
                   </div>
                   <div className="flex items-start gap-4">
@@ -461,28 +464,34 @@ const Contact = () => {
                     </div>
                     <div>
                       <p className="font-medium text-foreground">{t('E-post', 'Email')}</p>
-                      <ObfuscatedEmail 
-                        address="sales"
-                        domain="smarthomesolutions.se" 
+                      <ObfuscatedEmail
+                        address={emailAddress}
+                        domain={emailDomain}
                         className="text-primary"
                       />
                     </div>
                   </div>
-                  <div className="flex items-start gap-4">
-                    <div className="icon-container bg-primary-lighter/30 text-primary">
-                      <Phone className="w-5 h-5" />
+                  {settings.contact_phone && (
+                    <div className="flex items-start gap-4">
+                      <div className="icon-container bg-primary-lighter/30 text-primary">
+                        <Phone className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <p className="font-medium text-foreground">{t('Telefon', 'Phone')}</p>
+                        <a href={`tel:${settings.contact_phone.replace(/\s+/g, '')}`} className="text-primary hover:underline">
+                          {settings.contact_phone}
+                        </a>
+                      </div>
                     </div>
-                    <div>
-                      <p className="font-medium text-foreground">{t('Telefon', 'Phone')}</p>
-                      <a href="tel:+46702870814" className="text-primary hover:underline">
-                        +46 70 287 08 14
-                      </a>
-                    </div>
-                  </div>
+                  )}
                 </div>
                 <div className="mt-4 pt-4 border-t border-border space-y-1">
-                  <p className="text-sm text-muted-foreground">{t('Godkänd för F-skatt', 'Approved for F-tax')}</p>
-                  <p className="text-sm text-muted-foreground">{t('Momsreg.nr', 'VAT reg. no')}: SE790519759101</p>
+                  {settings.f_skatt_approved && (
+                    <p className="text-sm text-muted-foreground">{t('Godkänd för F-skatt', 'Approved for F-tax')}</p>
+                  )}
+                  {settings.vat_number && (
+                    <p className="text-sm text-muted-foreground">{t('Momsreg.nr', 'VAT reg. no')}: {settings.vat_number}</p>
+                  )}
                 </div>
               </div>
 

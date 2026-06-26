@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { PDFDocument, StandardFonts, degrees, rgb, type PDFPage, type PDFFont } from "https://esm.sh/pdf-lib@1.17.1";
 import { getAppEnvironment } from "../_shared/app-env.ts";
-import { INVOICE_COMPANY } from "../_shared/invoice-company.ts";
+import { loadBusinessSettings } from "../_shared/invoice-company.ts";
 import { loadInvoiceDocumentData } from "../_shared/invoice-document.ts";
 
 const corsHeaders = {
@@ -222,6 +222,7 @@ serve(async (req) => {
     }
 
     const invoice = await loadInvoiceDocumentData(serviceClient, invoiceId);
+    const company = await loadBusinessSettings(serviceClient);
     logStep("Invoice loaded", { invoiceNumber: invoice.invoice_number });
 
     const pdfDoc = await PDFDocument.create();
@@ -259,7 +260,7 @@ serve(async (req) => {
     drawShsLogo(page, leftMargin, companyNameTopY - logoTopOffset, logoWidth, logoHeight, brandBlue, white);
 
     const companyX = leftMargin + logoWidth + 16;
-    page.drawText(INVOICE_COMPANY.name, {
+    page.drawText(company.name, {
       x: companyX,
       y: companyNameBaselineY,
       font: fontBold,
@@ -348,7 +349,7 @@ serve(async (req) => {
     });
 
     let sellerY = boxTopY - 32;
-    page.drawText(INVOICE_COMPANY.name, {
+    page.drawText(company.name, {
       x: leftMargin + 12,
       y: sellerY,
       font: fontBold,
@@ -356,13 +357,13 @@ serve(async (req) => {
       color: black,
     });
     sellerY -= 14;
-    page.drawText(`Org.nr: ${INVOICE_COMPANY.orgNumber}`, { x: leftMargin + 12, y: sellerY, font, size: 8.5, color: black });
+    page.drawText(`Org.nr: ${company.orgNumber}`, { x: leftMargin + 12, y: sellerY, font, size: 8.5, color: black });
     sellerY -= 11;
-    page.drawText(`VAT nr: ${INVOICE_COMPANY.vatNumber}`, { x: leftMargin + 12, y: sellerY, font, size: 8.5, color: black });
+    page.drawText(`VAT nr: ${company.vatNumber}`, { x: leftMargin + 12, y: sellerY, font, size: 8.5, color: black });
     sellerY -= 11;
-    page.drawText(`Adress: ${INVOICE_COMPANY.street}`, { x: leftMargin + 12, y: sellerY, font, size: 8.5, color: black });
+    page.drawText(`Adress: ${company.street}`, { x: leftMargin + 12, y: sellerY, font, size: 8.5, color: black });
     sellerY -= 11;
-    page.drawText(`Postnr/Ort: ${INVOICE_COMPANY.postcode} ${INVOICE_COMPANY.city}`, {
+    page.drawText(`Postnr/Ort: ${company.postcode} ${company.city}`, {
       x: leftMargin + 12,
       y: sellerY,
       font,
@@ -370,7 +371,7 @@ serve(async (req) => {
       color: black,
     });
     sellerY -= 11;
-    page.drawText(INVOICE_COMPANY.email, { x: leftMargin + 12, y: sellerY, font, size: 8.5, color: gray });
+    page.drawText(company.email, { x: leftMargin + 12, y: sellerY, font, size: 8.5, color: gray });
 
     let customerY = boxTopY - 32;
     page.drawText(invoice.customer_name || "—", {

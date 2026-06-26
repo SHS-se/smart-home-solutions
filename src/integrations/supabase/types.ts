@@ -676,6 +676,75 @@ export type Database = {
           },
         ]
       }
+      business_settings: {
+        Row: {
+          address_city: string | null
+          address_country: string
+          address_postcode: string | null
+          address_street: string | null
+          bank_name: string | null
+          bankgiro_number: string | null
+          bic: string | null
+          contact_email: string | null
+          contact_phone: string | null
+          f_skatt_approved: boolean
+          iban: string | null
+          id: number
+          legal_name: string
+          org_number: string | null
+          payee_name: string | null
+          payment_terms_days: number
+          support_email: string | null
+          updated_at: string
+          vat_number: string | null
+          website: string | null
+        }
+        Insert: {
+          address_city?: string | null
+          address_country?: string
+          address_postcode?: string | null
+          address_street?: string | null
+          bank_name?: string | null
+          bankgiro_number?: string | null
+          bic?: string | null
+          contact_email?: string | null
+          contact_phone?: string | null
+          f_skatt_approved?: boolean
+          iban?: string | null
+          id?: number
+          legal_name?: string
+          org_number?: string | null
+          payee_name?: string | null
+          payment_terms_days?: number
+          support_email?: string | null
+          updated_at?: string
+          vat_number?: string | null
+          website?: string | null
+        }
+        Update: {
+          address_city?: string | null
+          address_country?: string
+          address_postcode?: string | null
+          address_street?: string | null
+          bank_name?: string | null
+          bankgiro_number?: string | null
+          bic?: string | null
+          contact_email?: string | null
+          contact_phone?: string | null
+          f_skatt_approved?: boolean
+          iban?: string | null
+          id?: number
+          legal_name?: string
+          org_number?: string | null
+          payee_name?: string | null
+          payment_terms_days?: number
+          support_email?: string | null
+          updated_at?: string
+          vat_number?: string | null
+          website?: string | null
+        }
+        Relationships: []
+      }
       contact_intake_events: {
         Row: {
           created_at: string
