@@ -151,16 +151,52 @@ const BOMBuilder: React.FC = () => {
     enabled: isStaff && !!id && !!bom,
   });
 
-  // Fetch BOM items with SKU data (scope only - no pricing)
+  // Group id is always set (NOT NULL, defaults to a fresh uuid for a v1 BOM).
+  const bomGroupId = (bom as { bom_group_id?: string })?.bom_group_id || id || '';
+
+  // Fetch BOM items with SKU data (scope only - no pricing).
+  // For a LOCKED (read-only) revision we show the complete premises scope: the latest quantity per
+  // SKU across every revision in the group. A revision row may only store a subset (e.g. one created
+  // just to add a single item), but the BOM view should always present the full list with each
+  // item's fulfillment status. For an editable revision we show only its own items so that edits,
+  // deletes and quantity changes target this revision.
   const { data: items = [] } = useQuery({
-    queryKey: ['bom_items', id],
+    queryKey: ['bom_items', id, isLocked, bomGroupId],
     queryFn: async () => {
+      const groupId = (bom as { bom_group_id?: string })?.bom_group_id;
+      let bomIds: string[] = [id!];
+      const versionByBomId = new Map<string, number>([[id!, bom?.version ?? 1]]);
+
+      if (isLocked && groupId) {
+        const { data: revs, error: revErr } = await supabase
+          .from('boms')
+          .select('id, version')
+          .eq('bom_group_id', groupId);
+        if (revErr) throw revErr;
+        if (revs && revs.length > 0) {
+          bomIds = revs.map(r => r.id);
+          versionByBomId.clear();
+          for (const r of revs) versionByBomId.set(r.id, r.version);
+        }
+      }
+
       const { data, error } = await supabase
         .from('bom_items')
         .select('*, skus(sku, name, category_id, cost_ex_vat_computed, vat_rate, sell_price_ex_vat, sell_price_inc_vat, effective_margin_percent, sku_categories!skus_category_id_fkey(id, name))')
-        .eq('bom_id', id);
+        .in('bom_id', bomIds);
       if (error) throw error;
-      return data.map(item => {
+
+      // Keep one row per SKU, preferring the row from the highest BOM version (current scope).
+      const seen = new Set<string>();
+      const deduped = [...data]
+        .sort((a, b) => (versionByBomId.get(b.bom_id) ?? 0) - (versionByBomId.get(a.bom_id) ?? 0))
+        .filter(item => {
+          if (seen.has(item.sku_id)) return false;
+          seen.add(item.sku_id);
+          return true;
+        });
+
+      return deduped.map(item => {
         const skuData = (item as { skus?: Record<string, unknown> & { sku_categories?: { name?: string } } }).skus;
         return {
           ...item,
@@ -171,7 +207,7 @@ const BOMBuilder: React.FC = () => {
         };
       }) as unknown as BOMItem[];
     },
-    enabled: isStaff && !!id,
+    enabled: isStaff && !!id && !!bom,
   });
 
   // Fetch premises-level fulfillment (quoted/invoiced/remaining per sku) for this BOM's group
@@ -200,6 +236,23 @@ const BOMBuilder: React.FC = () => {
     },
     enabled: isStaff && !!bom?.bom_group_id,
   });
+
+  // All revisions in this BOM's group (shared cache key with the version selector). Used to gate
+  // "create new revision" so it is only available while viewing the latest revision.
+  const { data: groupRevisions = [] } = useQuery({
+    queryKey: ['bom-revisions', bomGroupId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('boms')
+        .select('id, version, created_at')
+        .eq('bom_group_id', bomGroupId)
+        .order('version', { ascending: false });
+      if (error) throw error;
+      return data;
+    },
+    enabled: isStaff && !!bomGroupId,
+  });
+  const isLatestRevision = (bom?.version ?? 1) >= (groupRevisions[0]?.version ?? bom?.version ?? 1);
 
   // Fetch existing quote linked to this BOM
   const { data: existingQuote } = useQuery({
@@ -954,21 +1007,28 @@ const BOMBuilder: React.FC = () => {
                     data-testid="bom-create-revision-button"
                     variant="outline"
                     onClick={() => setIsRevisionDialogOpen(true)}
-                    disabled={(!isLocked && existingQuote?.status !== 'revision_requested') || createRevisionMutation.isPending}
+                    disabled={(!isLocked && existingQuote?.status !== 'revision_requested') || !isLatestRevision || createRevisionMutation.isPending}
                   >
                     <Copy className="h-4 w-4 mr-2" />
                     {t('Skapa ny BOM-revision', 'Create new BOM revision')}
                   </Button>
                 </span>
               </TooltipTrigger>
-              {!isLocked && existingQuote?.status !== 'revision_requested' && (
+              {!isLatestRevision ? (
+                <TooltipContent>
+                  <p>{t(
+                    'Du visar en äldre revision. Öppna den senaste revisionen för att skapa en ny.',
+                    'You are viewing an older revision. Open the latest revision to create a new one.'
+                  )}</p>
+                </TooltipContent>
+              ) : (!isLocked && existingQuote?.status !== 'revision_requested') ? (
                 <TooltipContent>
                   <p>{t(
                     'Skapa BOM-revision först efter att en offert har skickats till kunden.',
                     'Create BOM revision only after a quote has been sent to the customer.'
                   )}</p>
                 </TooltipContent>
-              )}
+              ) : null}
             </Tooltip>
           </TooltipProvider>
         </div>
