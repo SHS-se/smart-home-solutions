@@ -180,23 +180,53 @@ Deno.test("parseCustomerSnapshot coerces blank fields to null", () => {
 
 // ─── buildInvoiceQrPayload ───────────────────────────────────────────────────
 
-Deno.test("buildInvoiceQrPayload encodes the payment instruction", () => {
+Deno.test("buildInvoiceQrPayload emits the UsingQR invoice format", () => {
   const payload = buildInvoiceQrPayload({
     bankgiroNumber: "5307-7913",
+    orgNumber: "556000-0000",
     payeeName: "Philip Cheong",
     invoiceNumber: "TIN-000005",
+    invoiceDate: "2026-06-07T09:30:00Z",
     amount: 1893.75,
-    currency: "SEK",
     dueDate: "2026-07-07",
   });
   assertExists(payload);
-  assert(payload!.includes("BANKGIRO:5307-7913"));
-  assert(payload!.includes("REFERENCE:TIN-000005"));
-  assert(payload!.includes("AMOUNT:1893.75"));
+  const parsed = JSON.parse(payload!);
+  assertEquals(parsed.uqr, 1);
+  assertEquals(parsed.tp, 1);
+  assertEquals(parsed.nme, "Philip Cheong");
+  assertEquals(parsed.cid, "556000-0000");
+  assertEquals(parsed.iref, "TIN-000005");
+  assertEquals(parsed.idt, "20260607");
+  assertEquals(parsed.ddt, "20260707");
+  assertEquals(parsed.due, 1893.75);
+  assertEquals(parsed.pt, "BG");
+  assertEquals(parsed.acc, "5307-7913");
+});
+
+Deno.test("buildInvoiceQrPayload omits dates it cannot parse", () => {
+  const payload = buildInvoiceQrPayload({
+    bankgiroNumber: "5307-7913",
+    orgNumber: "556000-0000",
+    payeeName: "Co",
+    invoiceNumber: "IN-1",
+    invoiceDate: null,
+    amount: 10,
+    dueDate: null,
+  });
+  const parsed = JSON.parse(payload!);
+  assertEquals("idt" in parsed, false);
+  assertEquals("ddt" in parsed, false);
 });
 
 Deno.test("buildInvoiceQrPayload is null without bankgiro or invoice number", () => {
-  const base = { payeeName: "Co", amount: 10, currency: "SEK", dueDate: null };
+  const base = {
+    orgNumber: "556000-0000",
+    payeeName: "Co",
+    invoiceDate: null,
+    amount: 10,
+    dueDate: null,
+  };
   assertEquals(buildInvoiceQrPayload({ ...base, bankgiroNumber: null, invoiceNumber: "IN-1" }), null);
   assertEquals(buildInvoiceQrPayload({ ...base, bankgiroNumber: "123", invoiceNumber: null }), null);
 });

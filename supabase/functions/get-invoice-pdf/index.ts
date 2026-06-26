@@ -537,9 +537,11 @@ serve(async (req) => {
 
     if (invoice.payment_details.qr_data_url) {
       const qrImage = await pdfDoc.embedPng(dataUrlToBytes(invoice.payment_details.qr_data_url));
+      // Sit the QR fully below the "Betalningsinformation" divider (at
+      // paymentTopY + 18), aligned with the payment detail rows on the left.
       page.drawRectangle({
         x: rightMargin - 92,
-        y: paymentTopY - 56,
+        y: paymentTopY - 80,
         width: 78,
         height: 78,
         color: white,
@@ -548,7 +550,7 @@ serve(async (req) => {
       });
       page.drawImage(qrImage, {
         x: rightMargin - 89,
-        y: paymentTopY - 53,
+        y: paymentTopY - 77,
         width: 72,
         height: 72,
       });

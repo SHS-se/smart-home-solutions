@@ -118,6 +118,7 @@ serve(async (req) => {
       invoiceNumber,
       amount: total,
       dueDate: invoice.due_date,
+      invoiceDate: invoice.issued_at || invoice.finalized_at,
       currency: invoice.currency,
       settings: company,
     });

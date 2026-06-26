@@ -102,8 +102,11 @@ function getConfiguredBankgiroNumber(): string | null {
   return raw.length > 0 ? raw : null;
 }
 
-function formatPaymentAmount(amount: number): string {
-  return amount.toFixed(2);
+/** Formats an ISO date (date-only or full timestamp) as UsingQR's YYYYMMDD. */
+function toUsingQrDate(dateStr: string | null | undefined): string | null {
+  if (!dateStr) return null;
+  const m = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[1]}${m[2]}${m[3]}` : null;
 }
 
 function toNumber(value: unknown): number {
@@ -132,32 +135,44 @@ export function parseCustomerSnapshot(snapshot: unknown): FrozenCustomer | null 
   };
 }
 
+/**
+ * Builds the payment QR payload in Visma's UsingQR format — the de-facto
+ * standard that Swedish bank apps (SEB, Swedbank, Nordea, Handelsbanken, …)
+ * parse when you "skanna faktura". It is a compact JSON object, not free text;
+ * the previous home-grown labelled-text payload was unrecognisable to every
+ * bank app, so scanning it did nothing.
+ * Spec: https://github.com/weep/UsingQR (tp=1 invoice, pt="BG" Bankgiro).
+ */
 export function buildInvoiceQrPayload(args: {
   bankgiroNumber: string | null;
+  orgNumber: string;
   payeeName: string;
   invoiceNumber: string | null;
+  invoiceDate: string | null;
   amount: number;
-  currency: string;
   dueDate: string | null;
 }): string | null {
   if (!args.bankgiroNumber || !args.invoiceNumber) {
     return null;
   }
 
-  const lines = [
-    "SHS-INVOICE-PAYMENT",
-    `BANKGIRO:${args.bankgiroNumber}`,
-    `PAYEE:${args.payeeName}`,
-    `REFERENCE:${args.invoiceNumber}`,
-    `AMOUNT:${formatPaymentAmount(args.amount)}`,
-    `CURRENCY:${args.currency || "SEK"}`,
-  ];
+  const payload: Record<string, unknown> = {
+    uqr: 1, // UsingQR version
+    tp: 1, // document type: invoice
+    nme: args.payeeName, // payee (issuer) name
+    cid: args.orgNumber, // payee organisationsnummer
+  };
 
-  if (args.dueDate) {
-    lines.push(`DUE_DATE:${args.dueDate}`);
-  }
+  const idt = toUsingQrDate(args.invoiceDate);
+  if (idt) payload.idt = idt; // invoice date
+  payload.iref = args.invoiceNumber; // payment reference shown to the payer
+  const ddt = toUsingQrDate(args.dueDate);
+  if (ddt) payload.ddt = ddt; // due date
+  payload.due = Math.round(args.amount * 100) / 100; // amount due (SEK)
+  payload.pt = "BG"; // payment type: Bankgiro
+  payload.acc = args.bankgiroNumber; // Bankgiro number
 
-  return lines.join("\n");
+  return JSON.stringify(payload);
 }
 
 async function buildInvoiceQrDataUrl(qrPayload: string | null): Promise<string | null> {
@@ -176,6 +191,7 @@ export async function buildInvoicePaymentDetails(args: {
   invoiceNumber: string | null;
   amount: number;
   dueDate: string | null;
+  invoiceDate?: string | null;
   currency: string | null;
   /** Resolved business settings. When omitted, falls back to the legacy
    *  BANKGIRO_NUMBER secret and the hard-coded company name. */
@@ -186,13 +202,15 @@ export async function buildInvoicePaymentDetails(args: {
     ? args.settings.bankgiroNumber
     : getConfiguredBankgiroNumber();
   const payeeName = args.settings?.payeeName || INVOICE_COMPANY.name;
+  const orgNumber = args.settings?.orgNumber || INVOICE_COMPANY.orgNumber;
   const currency = args.currency || "SEK";
   const qrPayload = buildInvoiceQrPayload({
     bankgiroNumber,
+    orgNumber,
     payeeName,
     invoiceNumber: args.invoiceNumber,
+    invoiceDate: args.invoiceDate ?? null,
     amount,
-    currency,
     dueDate: args.dueDate,
   });
   const qrDataUrl = await buildInvoiceQrDataUrl(qrPayload);
@@ -264,6 +282,7 @@ export async function loadInvoiceDocumentData(
     invoiceNumber: typedInvoice.invoice_number,
     amount: total,
     dueDate: typedInvoice.due_date,
+    invoiceDate: typedInvoice.issued_at || typedInvoice.finalized_at,
     currency: typedInvoice.currency,
     settings,
   });
