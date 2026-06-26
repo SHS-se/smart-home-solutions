@@ -146,20 +146,29 @@ jobs:
 
       - name: Prune old Cloudflare deployments
         # Keep only the latest (live) deployment per project; delete the rest so they stop piling
-        # up. The API refuses to delete the live production deployment, so the current build is safe.
+        # up. Best-effort: a prune hiccup must never fail an already-successful deploy, so every
+        # call is guarded (the step runs under `bash -e`). The newest KEEP are never deleted, and
+        # the API refuses to delete the live production deployment anyway, so the current build is safe.
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          set -euo pipefail
           KEEP=1   # how many most-recent deployments to retain
           API="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments"
-          ids=$(curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$API?per_page=100" \
-            | jq -r '.result | sort_by(.created_on) | reverse | .[].id')
-          echo "Keeping newest $KEEP deployment(s) for $PROJECT:"
-          echo "$ids" | head -n "$KEEP"
-          echo "$ids" | tail -n "+$((KEEP + 1))" | while read -r id; do
-            [ -n "$id" ] || continue
+          # Default page size is plenty: each run prunes back down to KEEP, so the list stays short.
+          # (Passing per_page=100 here returns HTTP 400 from this endpoint.)
+          resp=$(curl -sS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$API" || true)
+          keep_ids=$(printf '%s' "$resp" | jq -r --argjson keep "$KEEP" \
+            '(.result // []) | sort_by(.created_on) | reverse | .[:$keep] | .[].id' 2>/dev/null || true)
+          del_ids=$(printf '%s' "$resp" | jq -r --argjson keep "$KEEP" \
+            '(.result // []) | sort_by(.created_on) | reverse | .[$keep:] | .[].id' 2>/dev/null || true)
+          if [ -z "$keep_ids$del_ids" ]; then
+            echo "Could not list deployments for $PROJECT; skipping prune. Response (first 800 chars):"
+            echo "${resp:0:800}"
+            exit 0
+          fi
+          echo "Keeping newest $KEEP deployment(s) for $PROJECT: $keep_ids"
+          for id in $del_ids; do
             echo "Deleting old deployment: $id"
             curl -fsS -X DELETE -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$API/$id" >/dev/null \
               || echo "  (skipped: $id is protected or already gone)"
