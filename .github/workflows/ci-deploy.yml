@@ -2,8 +2,9 @@ name: CI & Deploy
 
 # Runs lint + unit tests + build on every push/PR.
 # After the gate passes, on push to main/dev it (1) applies Supabase migrations to the matching
-# project, then (2) deploys the frontend to a per-environment Cloudflare Pages project and
-# (3) prunes that project's old deployments, keeping only the latest live one:
+# project, then (2) deploys the Supabase edge functions to that project, then (3) deploys the
+# frontend to a per-environment Cloudflare Pages project and (4) prunes that project's old
+# deployments, keeping only the latest live one:
 #   main -> prod-smart-home-solutions  (prod Supabase oosxndduqzhvrorgogaw)  https://prod-smart-home-solutions.pages.dev
 #   dev  -> test-smart-home-solutions  (test Supabase vxqpgbzseckgceopitpm)  https://test-smart-home-solutions.pages.dev
 # Each project's production branch is the deploying branch, so the canonical <project>.pages.dev
@@ -16,7 +17,8 @@ name: CI & Deploy
 #   SUPABASE_DB_PASSWORD_PROD  - database password for the prod project (oosxndduqzhvrorgogaw)
 #   SUPABASE_DB_PASSWORD_TEST  - database password for the test project (vxqpgbzseckgceopitpm)
 # VITE_SUPABASE_* anon keys are baked in at build time (public), so no anon secrets here.
-# NOTE: edge functions are NOT deployed here yet — still deployed manually via scripts/dev.sh.
+# Edge functions are deployed by the `functions` job below (Supabase Management API via
+# SUPABASE_ACCESS_TOKEN — no DB password or Docker needed).
 
 on:
   push:
@@ -104,9 +106,35 @@ jobs:
         # When prod is already up to date this is a no-op.
         run: supabase db push
 
+  functions:
+    name: Deploy edge functions
+    needs: migrate
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Same gated environment as migrate, so prod function deploys can require approval too.
+    environment: ${{ github.ref_name == 'main' && 'production' || 'preview' }}
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      # main -> prod project, dev -> test project (refs are not secret).
+      SUPABASE_PROJECT_REF: ${{ github.ref_name == 'main' && 'oosxndduqzhvrorgogaw' || 'vxqpgbzseckgceopitpm' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Deploy edge functions
+        # Deploys every function under supabase/functions (per-function settings come from
+        # config.toml). --use-api bundles without Docker; auth is the access token above, so no DB
+        # password is needed. Runs after migrate so functions can rely on the latest schema/RPCs.
+        run: supabase functions deploy --project-ref "$SUPABASE_PROJECT_REF" --use-api --yes
+
   deploy:
     name: Deploy to Cloudflare Pages
-    needs: migrate
+    needs: functions
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
     runs-on: ubuntu-latest
     permissions:
