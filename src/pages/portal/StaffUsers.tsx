@@ -25,7 +25,7 @@ import { StaffFormDialog, type StaffUser } from '@/components/portal/staff/Staff
 type SortColumn = 'full_name' | 'email' | 'phone';
 
 const StaffUsers: React.FC = () => {
-  const { user, isStaff, loading } = useAuth();
+  const { user, isAdmin, loading } = useAuth();
   const navigate = useNavigate();
   const { t } = useLanguage();
   const [staff, setStaff] = useState<StaffUser[]>([]);
@@ -38,13 +38,14 @@ const StaffUsers: React.FC = () => {
     if (!loading && !user) {
       navigate('/login');
     }
-    if (!loading && !isStaff) {
+    // Staff management is admin-only; bounce other staff back to the portal.
+    if (!loading && !isAdmin) {
       navigate('/portal');
     }
-  }, [user, isStaff, loading, navigate]);
+  }, [user, isAdmin, loading, navigate]);
 
   const fetchStaff = useCallback(async () => {
-    if (!isStaff) return;
+    if (!isAdmin) return;
     setStaffLoading(true);
     try {
       const { data, error } = await supabase
@@ -59,13 +60,13 @@ const StaffUsers: React.FC = () => {
     } finally {
       setStaffLoading(false);
     }
-  }, [isStaff]);
+  }, [isAdmin]);
 
   useEffect(() => {
-    if (!loading && isStaff) {
+    if (!loading && isAdmin) {
       fetchStaff();
     }
-  }, [isStaff, loading, fetchStaff]);
+  }, [isAdmin, loading, fetchStaff]);
 
   const filteredStaff = useMemo(() => {
     const searchLower = searchQuery.toLowerCase();
@@ -85,11 +86,11 @@ const StaffUsers: React.FC = () => {
     );
   }
 
-  if (!isStaff) {
+  if (!isAdmin) {
     return (
       <Alert>
         <AlertDescription>
-          {t('Du har inte behörighet att visa denna sida.', "You don't have permission to view this page.")}
+          {t('Endast administratörer kan hantera personalkonton.', 'Only admins can manage staff accounts.')}
         </AlertDescription>
       </Alert>
     );

@@ -133,13 +133,17 @@ const NavMenuLink: React.FC<{ item: AppNavItem }> = ({ item }) => {
 
 const NavGroup: React.FC<{ group: AppNavGroup }> = ({ group }) => {
   const { t, language } = useLanguage();
+  const { isAdmin } = useAuth();
   const location = useLocation();
-  const groupHasActive = group.items.some((item) => isNavItemActive(item, location.pathname));
+  const items = group.items.filter((item) => !item.adminOnly || isAdmin);
+  const groupHasActive = items.some((item) => isNavItemActive(item, location.pathname));
   const [open, setOpen] = useState(groupHasActive);
 
   useEffect(() => {
     if (groupHasActive) setOpen(true);
   }, [groupHasActive]);
+
+  if (items.length === 0) return null;
 
   const label = group.labelSv !== null ? (language === 'sv' ? group.labelSv : group.labelEn) : null;
 
@@ -158,7 +162,7 @@ const NavGroup: React.FC<{ group: AppNavGroup }> = ({ group }) => {
           <CollapsibleContent>
             <SidebarGroupContent>
               <SidebarMenu>
-                {group.items.map((item) => (
+                {items.map((item) => (
                   <NavMenuLink key={item.path} item={item} />
                 ))}
               </SidebarMenu>
@@ -174,7 +178,7 @@ const NavGroup: React.FC<{ group: AppNavGroup }> = ({ group }) => {
       {label && <SidebarGroupLabel>{label}</SidebarGroupLabel>}
       <SidebarGroupContent>
         <SidebarMenu>
-          {group.items.map((item) => (
+          {items.map((item) => (
             <NavMenuLink key={item.path} item={item} />
           ))}
         </SidebarMenu>

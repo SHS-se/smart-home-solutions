@@ -60,15 +60,15 @@ serve(async (req: Request): Promise<Response> => {
 
   const { data: callerStaff, error: callerError } = await supabaseAdmin
     .from("staff_users")
-    .select("user_id")
+    .select("role")
     .eq("user_id", user.id)
     .maybeSingle();
 
   if (callerError) {
     return json({ error: "Failed to verify staff access" }, 500);
   }
-  if (!callerStaff) {
-    return json({ error: "Only staff can manage staff users" }, 403);
+  if (!callerStaff || callerStaff.role !== "admin") {
+    return json({ error: "Only admins can manage staff users" }, 403);
   }
 
   try {
