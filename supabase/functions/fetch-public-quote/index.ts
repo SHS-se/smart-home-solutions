@@ -42,7 +42,7 @@ serve(async (req) => {
     // Fetch quote
     const { data: quote, error: quoteError } = await serviceClient
       .from("quotes")
-      .select("id, quote_number, status, expires_at, accept_token_hash, accept_token_expires_at, customer_id, created_at, sent_at, accepted_at, declined_at")
+      .select("id, quote_number, status, expires_at, accept_token_hash, accept_token_expires_at, customer_id, created_at, sent_at, accepted_at, declined_at, customer_snapshot")
       .eq("id", quoteId)
       .single();
 
@@ -69,7 +69,12 @@ serve(async (req) => {
       });
     }
 
-    // Fetch customer name
+    // Frozen buyer details captured when the quote left draft; fall back to live
+    // customer data for legacy quotes that have no snapshot.
+    const frozenCustomer = (quote as { customer_snapshot?: { name?: string | null } | null })
+      .customer_snapshot;
+
+    // Fetch customer name (live fallback)
     const { data: customer } = await serviceClient
       .from("customers_with_identity")
       .select("name, contact_email")
@@ -120,7 +125,7 @@ serve(async (req) => {
       sent_at: quote.sent_at,
       accepted_at: quote.accepted_at,
       declined_at: quote.declined_at,
-      customer_name: customer?.name || null,
+      customer_name: frozenCustomer?.name || customer?.name || null,
       line_items: lineItems || [],
       totals: totals || null,
     }), {

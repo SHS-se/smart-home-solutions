@@ -83,6 +83,7 @@ interface LoadedInvoiceRow {
   voided_at: string | null;
   quote_number: string | null;
   business_snapshot: unknown;
+  customer_snapshot: unknown;
   customer_id: string;
   customer: {
     name: string | null;
@@ -108,6 +109,27 @@ function formatPaymentAmount(amount: number): string {
 function toNumber(value: unknown): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+interface FrozenCustomer {
+  name: string | null;
+  street: string | null;
+  postcode: string | null;
+  city: string | null;
+}
+
+/** Resolves the frozen buyer details from a document's customer_snapshot, or
+ *  null when there is no usable snapshot (draft/legacy — caller uses live data). */
+function parseCustomerSnapshot(snapshot: unknown): FrozenCustomer | null {
+  if (!snapshot || typeof snapshot !== "object") return null;
+  const row = snapshot as Record<string, unknown>;
+  const str = (v: unknown): string | null => (typeof v === "string" && v.length > 0 ? v : null);
+  return {
+    name: str(row.name),
+    street: str(row.street),
+    postcode: str(row.postcode),
+    city: str(row.city),
+  };
 }
 
 export function buildInvoiceQrPayload(args: {
@@ -199,7 +221,7 @@ export async function loadInvoiceDocumentData(
   const { data: invoice, error: invoiceError } = await serviceClient
     .from("invoices")
     .select(
-      "id, invoice_number, status, due_date, currency, customer_id, created_at, finalized_at, issued_at, paid_at, voided_at, quote_number, business_snapshot, customer:customers_with_identity!invoices_customer_id_fkey(name, billing_same_as_site, site_street, site_postcode, site_city, billing_street, billing_postcode, billing_city)",
+      "id, invoice_number, status, due_date, currency, customer_id, created_at, finalized_at, issued_at, paid_at, voided_at, quote_number, business_snapshot, customer_snapshot, customer:customers_with_identity!invoices_customer_id_fkey(name, billing_same_as_site, site_street, site_postcode, site_city, billing_street, billing_postcode, billing_city)",
     )
     .eq("id", invoiceId)
     .single();
@@ -232,11 +254,12 @@ export async function loadInvoiceDocumentData(
   const tax = toNumber(totals?.tax ?? 0);
   const total = toNumber(totals?.total ?? 0);
   const useSiteAddress = typedInvoice.customer?.billing_same_as_site === true;
-  // Finalized invoices render from their frozen snapshot; drafts (no snapshot
-  // yet) fall back to the live settings so the preview stays current.
+  // Finalized invoices render from their frozen snapshots (seller + buyer);
+  // drafts (no snapshot yet) fall back to live data so the preview stays current.
   const settings =
     businessSettingsFromSnapshot(typedInvoice.business_snapshot) ??
     (await loadBusinessSettings(serviceClient));
+  const frozenCustomer = parseCustomerSnapshot(typedInvoice.customer_snapshot);
   const paymentDetails = await buildInvoicePaymentDetails({
     invoiceNumber: typedInvoice.invoice_number,
     amount: total,
@@ -260,14 +283,20 @@ export async function loadInvoiceDocumentData(
     paid_at: typedInvoice.paid_at,
     voided_at: typedInvoice.voided_at,
     quote_number: typedInvoice.quote_number,
-    customer_name: typedInvoice.customer?.name || null,
-    customer_address: typedInvoice.customer
+    customer_name: frozenCustomer?.name ?? (typedInvoice.customer?.name || null),
+    customer_address: frozenCustomer
       ? {
-          street: useSiteAddress ? typedInvoice.customer.site_street : typedInvoice.customer.billing_street,
-          postcode: useSiteAddress ? typedInvoice.customer.site_postcode : typedInvoice.customer.billing_postcode,
-          city: useSiteAddress ? typedInvoice.customer.site_city : typedInvoice.customer.billing_city,
+          street: frozenCustomer.street,
+          postcode: frozenCustomer.postcode,
+          city: frozenCustomer.city,
         }
-      : null,
+      : typedInvoice.customer
+        ? {
+            street: useSiteAddress ? typedInvoice.customer.site_street : typedInvoice.customer.billing_street,
+            postcode: useSiteAddress ? typedInvoice.customer.site_postcode : typedInvoice.customer.billing_postcode,
+            city: useSiteAddress ? typedInvoice.customer.site_city : typedInvoice.customer.billing_city,
+          }
+        : null,
     line_items: (lineItems || []).map((item) => ({
       ...(item as InvoiceDocumentLineItem),
       quantity: toNumber((item as InvoiceDocumentLineItem).quantity),

@@ -1870,6 +1870,7 @@ export type Database = {
           created_by: string | null
           currency: string | null
           customer_id: string
+          customer_snapshot: Json | null
           due_date: string | null
           finalized_at: string | null
           hosted_invoice_url: string | null
@@ -1903,6 +1904,7 @@ export type Database = {
           created_by?: string | null
           currency?: string | null
           customer_id: string
+          customer_snapshot?: Json | null
           due_date?: string | null
           finalized_at?: string | null
           hosted_invoice_url?: string | null
@@ -1936,6 +1938,7 @@ export type Database = {
           created_by?: string | null
           currency?: string | null
           customer_id?: string
+          customer_snapshot?: Json | null
           due_date?: string | null
           finalized_at?: string | null
           hosted_invoice_url?: string | null
@@ -2355,6 +2358,7 @@ export type Database = {
           created_at: string
           created_by: string | null
           customer_id: string | null
+          customer_snapshot: Json | null
           declined_at: string | null
           expires_at: string | null
           id: string
@@ -2398,6 +2402,7 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           customer_id?: string | null
+          customer_snapshot?: Json | null
           declined_at?: string | null
           expires_at?: string | null
           id?: string
@@ -2441,6 +2446,7 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           customer_id?: string | null
+          customer_snapshot?: Json | null
           declined_at?: string | null
           expires_at?: string | null
           id?: string
