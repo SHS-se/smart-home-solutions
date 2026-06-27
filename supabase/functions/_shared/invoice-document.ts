@@ -57,6 +57,8 @@ export interface InvoiceDocumentData {
   voided_at: string | null;
   quote_number: string | null;
   customer_name: string | null;
+  customer_email: string | null;
+  customer_phone: string | null;
   customer_address: {
     street: string | null;
     postcode: string | null;
@@ -87,6 +89,8 @@ interface LoadedInvoiceRow {
   customer_id: string;
   customer: {
     name: string | null;
+    contact_email: string | null;
+    contact_phone: string | null;
     billing_same_as_site: boolean | null;
     site_street: string | null;
     site_postcode: string | null;
@@ -116,6 +120,8 @@ function toNumber(value: unknown): number {
 
 interface FrozenCustomer {
   name: string | null;
+  email: string | null;
+  phone: string | null;
   street: string | null;
   postcode: string | null;
   city: string | null;
@@ -129,6 +135,8 @@ export function parseCustomerSnapshot(snapshot: unknown): FrozenCustomer | null 
   const str = (v: unknown): string | null => (typeof v === "string" && v.length > 0 ? v : null);
   return {
     name: str(row.name),
+    email: str(row.email),
+    phone: str(row.phone),
     street: str(row.street),
     postcode: str(row.postcode),
     city: str(row.city),
@@ -239,7 +247,7 @@ export async function loadInvoiceDocumentData(
   const { data: invoice, error: invoiceError } = await serviceClient
     .from("invoices")
     .select(
-      "id, invoice_number, status, due_date, currency, customer_id, created_at, finalized_at, issued_at, paid_at, voided_at, quote_number, business_snapshot, customer_snapshot, customer:customers_with_identity!invoices_customer_id_fkey(name, billing_same_as_site, site_street, site_postcode, site_city, billing_street, billing_postcode, billing_city)",
+      "id, invoice_number, status, due_date, currency, customer_id, created_at, finalized_at, issued_at, paid_at, voided_at, quote_number, business_snapshot, customer_snapshot, customer:customers_with_identity!invoices_customer_id_fkey(name, contact_email, contact_phone, billing_same_as_site, site_street, site_postcode, site_city, billing_street, billing_postcode, billing_city)",
     )
     .eq("id", invoiceId)
     .single();
@@ -303,6 +311,12 @@ export async function loadInvoiceDocumentData(
     voided_at: typedInvoice.voided_at,
     quote_number: typedInvoice.quote_number,
     customer_name: frozenCustomer?.name ?? (typedInvoice.customer?.name || null),
+    customer_email: frozenCustomer
+      ? frozenCustomer.email
+      : (typedInvoice.customer?.contact_email || null),
+    customer_phone: frozenCustomer
+      ? frozenCustomer.phone
+      : (typedInvoice.customer?.contact_phone || null),
     customer_address: frozenCustomer
       ? {
           street: frozenCustomer.street,

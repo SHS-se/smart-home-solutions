@@ -397,6 +397,22 @@ serve(async (req) => {
       size: 8.5,
       color: black,
     });
+    customerY -= 11;
+    page.drawText(`Telefon: ${invoice.customer_phone || "—"}`, {
+      x: customerBoxX + 12,
+      y: customerY,
+      font,
+      size: 8.5,
+      color: black,
+    });
+    customerY -= 11;
+    page.drawText(invoice.customer_email || "—", {
+      x: customerBoxX + 12,
+      y: customerY,
+      font,
+      size: 8.5,
+      color: gray,
+    });
 
     y = boxTopY - boxHeight - 24;
 
