@@ -570,6 +570,16 @@ serve(async (req) => {
         width: 72,
         height: 72,
       });
+      // Caption under the QR, wrapped to the QR box width.
+      page.drawText("Skanna QR-koden med din bankapp så fylls alla betaluppgifter i automatiskt.", {
+        x: rightMargin - 92,
+        y: paymentTopY - 89,
+        font,
+        size: 6,
+        color: gray,
+        maxWidth: 78,
+        lineHeight: 7.5,
+      });
     }
 
     page.drawText(invoice.payment_details.manual_payment_instruction, {
