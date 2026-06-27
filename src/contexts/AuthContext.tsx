@@ -44,6 +44,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [customerData, setCustomerData] = useState<CustomerData | null>(null);
   const isMountedRef = useRef(true);
   const userDataRequestIdRef = useRef(0);
+  // Last signed-in user id we resolved role/customer data for. `undefined` means
+  // "not resolved yet" (so the first auth event always runs); `null` means signed out.
+  const currentUserIdRef = useRef<string | null | undefined>(undefined);
 
   const applyResolvedUserData = (resolved: {
     isStaff: boolean;
@@ -143,25 +146,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     isMountedRef.current = true;
 
-    const hydrateSession = async (currentSession: Session | null) => {
+    // Refetch role/customer data and resolve the loading screen. Only invoked
+    // when the signed-in identity actually changes (see the listener below).
+    const hydrateUserData = async (currentSession: Session) => {
       const requestId = ++userDataRequestIdRef.current;
-      setSession(currentSession);
-      setUser(currentSession?.user ?? null);
-
-      if (!currentSession?.user) {
-        clearResolvedUserData();
-        if (isMountedRef.current && requestId === userDataRequestIdRef.current) {
-          setLoading(false);
-        }
-        return;
-      }
-
-      if (isMountedRef.current) {
-        setLoading(true);
-      }
-
       await fetchUserData(currentSession.user.id, currentSession.user.email, requestId);
-
       if (isMountedRef.current && requestId === userDataRequestIdRef.current) {
         setLoading(false);
       }
@@ -169,9 +158,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (_event, currentSession) => {
-        // Defer out of the callback to avoid nested Supabase calls during auth event handling.
+        // Keep the session/user in context fresh on every event, including the
+        // silent TOKEN_REFRESHED that Supabase fires when the tab regains focus.
+        // (These are plain state setters, not Supabase calls, so they're safe to
+        // run synchronously inside the auth callback.)
+        setSession(currentSession);
+        setUser(currentSession?.user ?? null);
+
+        // Only re-resolve role data — and flip the full-screen loading guard —
+        // when the signed-in user actually changes. Tabbing away and back
+        // re-emits an auth event for the *same* user; re-running the loading
+        // flow there would unmount the app shell and close any open dialog/popup.
+        const newUserId = currentSession?.user?.id ?? null;
+        if (newUserId === currentUserIdRef.current) return;
+        currentUserIdRef.current = newUserId;
+
+        if (!currentSession?.user) {
+          clearResolvedUserData();
+          if (isMountedRef.current) setLoading(false);
+          return;
+        }
+
+        if (isMountedRef.current) setLoading(true);
+
+        // Defer the data fetch out of the callback to avoid nested Supabase
+        // calls during auth event handling.
         setTimeout(() => {
-          void hydrateSession(currentSession);
+          void hydrateUserData(currentSession);
         }, 0);
       }
     );
