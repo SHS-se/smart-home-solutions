@@ -1,0 +1,126 @@
+// Stripe webhook → our entitlement + our invoices. Verifies the Stripe
+// signature (no JWT — verify_jwt=false), then:
+//   invoice.paid                  → generate OUR invoice (own numbering) + activate
+//   customer.subscription.updated → sync entitlement (incl. cancel-at-period-end)
+//   customer.subscription.deleted → revoke entitlement
+//   invoice.payment_failed        → log (access kept until period end)
+// All customer-facing artifacts are ours; Stripe's hosted invoices/receipts are
+// never exposed.
+import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
+import { getAppEnvironment } from "../_shared/app-env.ts";
+import { getStripe } from "../_shared/stripe-client.ts";
+import { buildSubscriptionInvoice } from "../_shared/subscription-invoice.ts";
+import { entitlementFromSubscription } from "../_shared/subscription-entitlement.ts";
+
+const logStep = (step: string, details?: unknown) => {
+  const detailsStr = details ? ` - ${JSON.stringify(details)}` : "";
+  console.log(`[STRIPE-WEBHOOK] ${step}${detailsStr}`);
+};
+
+function todayUtc(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+serve(async (req) => {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+  const serviceClient = createClient(supabaseUrl, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "", {
+    auth: { persistSession: false },
+  });
+
+  // Resolve our customer row from a Stripe customer id.
+  const ourCustomer = async (stripeCustomerId: string | null) => {
+    if (!stripeCustomerId) return null;
+    const { data } = await serviceClient
+      .from("customers")
+      .select("id")
+      .eq("stripe_customer_id", stripeCustomerId)
+      .maybeSingle();
+    return (data as { id: string } | null) ?? null;
+  };
+
+  try {
+    const appEnv = getAppEnvironment();
+    const signature = req.headers.get("stripe-signature");
+    const webhookSecret = Deno.env.get("STRIPE_WEBHOOK_SECRET");
+    if (!signature || !webhookSecret) throw new Error("Missing webhook signature/secret");
+
+    const body = await req.text();
+    const stripe = getStripe();
+    const event = await stripe.webhooks.constructEventAsync(body, signature, webhookSecret);
+    logStep("Event", { type: event.type, id: event.id });
+
+    switch (event.type) {
+      case "invoice.paid": {
+        // deno-lint-ignore no-explicit-any
+        const invoice = event.data.object as any;
+        const customer = await ourCustomer(invoice.customer);
+        if (!customer) {
+          logStep("No matching customer for invoice.paid", { stripeCustomer: invoice.customer });
+          break;
+        }
+        const grossAmount = (invoice.amount_paid ?? 0) / 100; // öre → kr
+        const periodEnd: number | undefined = invoice.lines?.data?.[0]?.period?.end;
+        const monthLabel = periodEnd
+          ? new Date(periodEnd * 1000).toLocaleDateString("sv-SE", { year: "numeric", month: "long" })
+          : "";
+        const result = await buildSubscriptionInvoice(serviceClient, {
+          customerId: customer.id,
+          stripeInvoiceId: invoice.id,
+          grossAmount,
+          description: `Månadsabonnemang Smart Home Solutions${monthLabel ? ` – ${monthLabel}` : ""}`,
+          paymentDate: todayUtc(),
+          appEnv,
+        });
+        await serviceClient
+          .from("customers")
+          .update({
+            subscription_active: true,
+            subscription_expires_at: periodEnd ? new Date(periodEnd * 1000).toISOString() : null,
+            subscription_cancel_at_period_end: false,
+          })
+          .eq("id", customer.id);
+        logStep("invoice.paid handled", { invoiceNumber: result.invoiceNumber, created: result.created });
+        break;
+      }
+      case "customer.subscription.updated":
+      case "customer.subscription.deleted": {
+        // deno-lint-ignore no-explicit-any
+        const sub = event.data.object as any;
+        const customer = await ourCustomer(sub.customer);
+        if (!customer) {
+          logStep("No matching customer for subscription event", { stripeCustomer: sub.customer });
+          break;
+        }
+        const entitlement = entitlementFromSubscription(sub);
+        await serviceClient
+          .from("customers")
+          .update({ ...entitlement, stripe_subscription_id: sub.id })
+          .eq("id", customer.id);
+        logStep("subscription synced", { active: entitlement.subscription_active });
+        break;
+      }
+      case "invoice.payment_failed": {
+        // deno-lint-ignore no-explicit-any
+        const invoice = event.data.object as any;
+        logStep("invoice.payment_failed", { stripeCustomer: invoice.customer });
+        break;
+      }
+      default:
+        logStep("Ignored event", { type: event.type });
+    }
+
+    return new Response(JSON.stringify({ received: true }), {
+      headers: { "Content-Type": "application/json" },
+      status: 200,
+    });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logStep("ERROR", { message: msg });
+    // 400 so Stripe retries (signature/transient failures).
+    return new Response(JSON.stringify({ error: msg }), {
+      headers: { "Content-Type": "application/json" },
+      status: 400,
+    });
+  }
+});

@@ -20,6 +20,7 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useTableSort, sortItems } from '@/hooks/use-table-sort';
 import InvoicePdfModal from '@/components/portal/invoices/InvoicePdfModal';
+import SubscribeCard from '@/components/portal/billing/SubscribeCard';
 
 type InvoiceSortColumn = 'issued_at' | 'due_date' | 'invoice_number' | 'computed_total' | 'status';
 
@@ -57,6 +58,7 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
   const [invoicesLoading, setInvoicesLoading] = useState(true);
   const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus | null>(null);
   const [subscriptionLoading, setSubscriptionLoading] = useState(true);
+  const [canceling, setCanceling] = useState(false);
   const [pdfModalOpen, setPdfModalOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
 
@@ -219,6 +221,35 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
     }
   }, [resolvedCustomerId, loading, isStaffView]);
 
+  // After payment, the webhook activates entitlement + generates the invoice
+  // asynchronously, so poll a few times, then refresh the status + invoice list.
+  const handleSubscribed = async () => {
+    for (let i = 0; i < 10; i++) {
+      const { data } = await supabase.functions.invoke('check-subscription');
+      if (data?.subscribed) {
+        setSubscriptionStatus(data);
+        await fetchInvoices();
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    await checkSubscription();
+    await fetchInvoices();
+  };
+
+  const handleCancel = async () => {
+    setCanceling(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('cancel-subscription');
+      if (error || data?.error) throw new Error(error?.message || data?.error);
+      await checkSubscription();
+    } catch (e) {
+      console.error('Error canceling subscription:', e);
+    } finally {
+      setCanceling(false);
+    }
+  };
+
 
   if (loading) {
     return (
@@ -368,10 +399,11 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
                   </Alert>
                 )}
                 <p className="text-2xl font-semibold">249 kr<span className="text-sm font-normal text-muted-foreground">/{t('månad', 'month')}</span></p>
-                {!isStaffView && (
-                  <p className="text-sm text-muted-foreground">
-                    {t('Kontakta oss för att hantera din prenumeration.', 'Contact us to manage your subscription.')}
-                  </p>
+                {!isStaffView && !subscriptionStatus.cancel_at_period_end && (
+                  <Button variant="outline" size="sm" onClick={handleCancel} disabled={canceling}>
+                    {canceling && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                    {t('Avsluta prenumeration', 'Cancel subscription')}
+                  </Button>
                 )}
               </div>
             ) : (
@@ -384,9 +416,10 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
                 {!isStaffView && (
                   <div className="p-4 border rounded-lg bg-muted/30">
                     <p className="text-2xl font-semibold">249 kr<span className="text-sm font-normal text-muted-foreground">/{t('månad', 'month')}</span></p>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      {t('Kontakta oss för att starta en prenumeration.', 'Contact us to start a subscription.')}
+                    <p className="text-sm text-muted-foreground mt-1 mb-3">
+                      {t('Betala månadsvis med kort. Avsluta när du vill.', 'Pay monthly by card. Cancel anytime.')}
                     </p>
+                    <SubscribeCard onSubscribed={handleSubscribed} />
                   </div>
                 )}
               </div>

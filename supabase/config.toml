@@ -95,3 +95,12 @@ verify_jwt = false
 
 [functions.manage-staff]
 verify_jwt = false
+
+[functions.create-subscription]
+verify_jwt = false
+
+[functions.cancel-subscription]
+verify_jwt = false
+
+[functions.stripe-webhook]
+verify_jwt = false

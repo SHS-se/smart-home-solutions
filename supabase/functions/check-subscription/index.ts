@@ -80,7 +80,7 @@ serve(async (req) => {
     // Read internal entitlement from customers table
     const { data: customer } = await supabaseClient
       .from("customers")
-      .select("subscription_active, subscription_expires_at")
+      .select("subscription_active, subscription_expires_at, subscription_cancel_at_period_end")
       .eq("id", customerId)
       .single();
 
@@ -99,6 +99,7 @@ serve(async (req) => {
     return new Response(JSON.stringify({
       subscribed: isActive,
       subscription_end: customer.subscription_expires_at || null,
+      cancel_at_period_end: customer.subscription_cancel_at_period_end ?? false,
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 200,
