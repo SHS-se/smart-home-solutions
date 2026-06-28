@@ -46,7 +46,9 @@ serve(async (req) => {
 
     const { data: customer } = await serviceClient
       .from("customers")
-      .select("id, stripe_customer_id, subscription_active")
+      .select(
+        "id, stripe_customer_id, subscription_active, billing_same_as_site, site_street, site_postcode, site_city, billing_street, billing_postcode, billing_city",
+      )
       .eq("user_id", user.id)
       .maybeSingle();
     if (!customer) throw new Error("No customer record for this user");
@@ -55,6 +57,26 @@ serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 200,
       });
+    }
+
+    // Buyer details are required for a valid invoice (name + billing address).
+    const { data: identity } = await serviceClient
+      .from("customers_with_identity")
+      .select("contact_name")
+      .eq("id", customer.id)
+      .maybeSingle();
+    const useSite = customer.billing_same_as_site === true;
+    const street = useSite ? customer.site_street : customer.billing_street;
+    const postcode = useSite ? customer.site_postcode : customer.billing_postcode;
+    const city = useSite ? customer.site_city : customer.billing_city;
+    if (!identity?.contact_name || !street || !postcode || !city) {
+      return new Response(
+        JSON.stringify({
+          error: "Komplettera ditt namn och din faktureringsadress innan du startar prenumerationen.",
+          code: "incomplete_customer_details",
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 },
+      );
     }
 
     const stripe = getStripe();

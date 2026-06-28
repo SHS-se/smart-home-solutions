@@ -104,3 +104,9 @@ verify_jwt = false
 
 [functions.stripe-webhook]
 verify_jwt = false
+
+[functions.create-setup-intent]
+verify_jwt = false
+
+[functions.set-default-payment-method]
+verify_jwt = false

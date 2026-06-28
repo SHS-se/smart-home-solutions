@@ -12,6 +12,10 @@ import { getAppEnvironment } from "../_shared/app-env.ts";
 import { getStripe } from "../_shared/stripe-client.ts";
 import { buildSubscriptionInvoice } from "../_shared/subscription-invoice.ts";
 import { entitlementFromSubscription } from "../_shared/subscription-entitlement.ts";
+import {
+  sendPaymentFailedEmail,
+  sendSubscriptionCanceledEmail,
+} from "../_shared/subscription-emails.ts";
 
 const logStep = (step: string, details?: unknown) => {
   const detailsStr = details ? ` - ${JSON.stringify(details)}` : "";
@@ -28,15 +32,27 @@ serve(async (req) => {
     auth: { persistSession: false },
   });
 
-  // Resolve our customer row from a Stripe customer id.
+  // Resolve our customer (id + contact email/name) from a Stripe customer id.
+  // Name/email live on the contacts join, so read them from customers_with_identity.
   const ourCustomer = async (stripeCustomerId: string | null) => {
     if (!stripeCustomerId) return null;
-    const { data } = await serviceClient
+    const { data: row } = await serviceClient
       .from("customers")
       .select("id")
       .eq("stripe_customer_id", stripeCustomerId)
       .maybeSingle();
-    return (data as { id: string } | null) ?? null;
+    if (!row) return null;
+    const id = (row as { id: string }).id;
+    const { data: identity } = await serviceClient
+      .from("customers_with_identity")
+      .select("contact_email, contact_name")
+      .eq("id", id)
+      .maybeSingle();
+    return {
+      id,
+      email: (identity as { contact_email: string | null } | null)?.contact_email ?? null,
+      name: (identity as { contact_name: string | null } | null)?.contact_name ?? null,
+    };
   };
 
   try {
@@ -98,12 +114,25 @@ serve(async (req) => {
           .update({ ...entitlement, stripe_subscription_id: sub.id })
           .eq("id", customer.id);
         logStep("subscription synced", { active: entitlement.subscription_active });
+        // Retries exhausted → subscription cancelled: tell the customer (our email).
+        if (event.type === "customer.subscription.deleted" && customer.email) {
+          await sendSubscriptionCanceledEmail(customer.email, customer.name);
+          logStep("canceled email sent");
+        }
         break;
       }
       case "invoice.payment_failed": {
         // deno-lint-ignore no-explicit-any
         const invoice = event.data.object as any;
-        logStep("invoice.payment_failed", { stripeCustomer: invoice.customer });
+        const customer = await ourCustomer(invoice.customer);
+        // Email only on the FIRST failure; Stripe keeps retrying through the grace
+        // period, and access continues until the subscription is finally cancelled.
+        if (customer?.email && (invoice.attempt_count ?? 1) === 1) {
+          await sendPaymentFailedEmail(customer.email, customer.name);
+          logStep("payment-failed email sent");
+        } else {
+          logStep("invoice.payment_failed (no email)", { attempt: invoice.attempt_count });
+        }
         break;
       }
       default:

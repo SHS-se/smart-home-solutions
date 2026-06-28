@@ -70,6 +70,15 @@ export function getRequestAppOrigin(req: Request): string {
   );
 }
 
+/**
+ * Primary app origin for contexts with no inbound request (Stripe webhooks,
+ * crons): the first entry in APP_ORIGIN_ALLOWLIST, i.e. the canonical app URL
+ * for the current environment. Use only when there is no Request to derive from.
+ */
+export function getPrimaryAppOrigin(): string {
+  return [...getAllowedAppOrigins()][0];
+}
+
 export function tryGetRequestAppOrigin(req: Request): string | null {
   try {
     return getRequestAppOrigin(req);

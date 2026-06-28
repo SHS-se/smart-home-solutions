@@ -21,6 +21,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useTableSort, sortItems } from '@/hooks/use-table-sort';
 import InvoicePdfModal from '@/components/portal/invoices/InvoicePdfModal';
 import SubscribeCard from '@/components/portal/billing/SubscribeCard';
+import CardUpdateCard from '@/components/portal/billing/CardUpdateCard';
 
 type InvoiceSortColumn = 'issued_at' | 'due_date' | 'invoice_number' | 'computed_total' | 'status';
 
@@ -59,6 +60,7 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
   const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus | null>(null);
   const [subscriptionLoading, setSubscriptionLoading] = useState(true);
   const [canceling, setCanceling] = useState(false);
+  const [showCardUpdate, setShowCardUpdate] = useState(false);
   const [pdfModalOpen, setPdfModalOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
 
@@ -399,11 +401,40 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
                   </Alert>
                 )}
                 <p className="text-2xl font-semibold">249 kr<span className="text-sm font-normal text-muted-foreground">/{t('månad', 'month')}</span></p>
-                {!isStaffView && !subscriptionStatus.cancel_at_period_end && (
-                  <Button variant="outline" size="sm" onClick={handleCancel} disabled={canceling}>
-                    {canceling && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                    {t('Avsluta prenumeration', 'Cancel subscription')}
-                  </Button>
+                {!isStaffView && (
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap gap-2">
+                      {!showCardUpdate && (
+                        <Button variant="outline" size="sm" onClick={() => setShowCardUpdate(true)}>
+                          {t('Uppdatera betalkort', 'Update card')}
+                        </Button>
+                      )}
+                      {!subscriptionStatus.cancel_at_period_end && (
+                        <Button variant="outline" size="sm" onClick={handleCancel} disabled={canceling}>
+                          {canceling && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                          {t('Avsluta prenumeration', 'Cancel subscription')}
+                        </Button>
+                      )}
+                    </div>
+                    {showCardUpdate && (
+                      <div className="max-w-md rounded-lg border p-4 bg-muted/30">
+                        <CardUpdateCard
+                          onUpdated={() => {
+                            setShowCardUpdate(false);
+                            handleSubscribed();
+                          }}
+                        />
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="mt-2"
+                          onClick={() => setShowCardUpdate(false)}
+                        >
+                          {t('Avbryt', 'Cancel')}
+                        </Button>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             ) : (
