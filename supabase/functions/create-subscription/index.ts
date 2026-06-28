@@ -84,7 +84,13 @@ serve(async (req) => {
       customer: stripeCustomerId,
       items: [{ price: price.id }],
       payment_behavior: "default_incomplete",
-      payment_settings: { save_default_payment_method: "on_subscription" },
+      payment_settings: {
+        save_default_payment_method: "on_subscription",
+        // Pin to standard cards + Link only. Explicit types override the account's
+        // dynamic payment methods, so Klarna / Amazon Pay / other (pricier) methods
+        // never appear in this flow regardless of dashboard settings.
+        payment_method_types: ["card", "link"],
+      },
       expand: ["latest_invoice.payment_intent"],
     });
 
