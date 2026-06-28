@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+#
+# One-shot, idempotent Stripe setup for the monthly subscription.
+# Creates (or reuses) the Product, the recurring Price, and the webhook
+# endpoint that feeds our own-invoice generation. Run it instead of clicking
+# around the Stripe dashboard.
+#
+# Reads the secret key from a gitignored *.local env file — the key is never
+# printed, never passed on the command line, never committed. The webhook
+# signing secret (sensitive) is written to a *.local file, not to stdout.
+#
+# Usage:
+#   bash scripts/stripe-setup.sh                       # uses .env.stripe.test.local
+#   ENV_FILE=.env.stripe.live.local bash scripts/stripe-setup.sh
+#
+# Safety: refuses to run unless the secret key is a TEST key (sk_test_/rk_test_),
+# unless ALLOW_LIVE=1 is explicitly set.
+
+set -euo pipefail
+
+ENV_FILE="${ENV_FILE:-.env.stripe.test.local}"
+
+# ── config (smallest currency unit: SEK öre, so 24900 = 249.00 kr) ───────────
+PRODUCT_NAME="${PRODUCT_NAME:-Smart Home Solutions Prenumeration}"
+PRODUCT_DESC="${PRODUCT_DESC:-Månatlig prenumeration på Smart Home Solutions-tjänster}"
+PRICE_AMOUNT="${PRICE_AMOUNT:-24900}"
+PRICE_CURRENCY="${PRICE_CURRENCY:-sek}"
+PRICE_INTERVAL="${PRICE_INTERVAL:-month}"
+PRICE_LOOKUP_KEY="${PRICE_LOOKUP_KEY:-shs_subscription_monthly}"
+
+# Test Supabase project ref (vxqpgbzseckgceopitpm); override for prod.
+WEBHOOK_URL="${WEBHOOK_URL:-https://vxqpgbzseckgceopitpm.supabase.co/functions/v1/stripe-webhook}"
+WEBHOOK_SECRET_FILE="${WEBHOOK_SECRET_FILE:-.env.stripe.webhook.test.local}"
+
+# ── load the secret key without echoing it ───────────────────────────────────
+if [ ! -f "$ENV_FILE" ]; then
+  echo "ERROR: $ENV_FILE not found. Put STRIPE_SECRET_KEY=... in it (gitignored *.local)." >&2
+  exit 1
+fi
+set -a; # shellcheck disable=SC1090
+source "$ENV_FILE"; set +a
+: "${STRIPE_SECRET_KEY:?STRIPE_SECRET_KEY is not set in $ENV_FILE}"
+
+case "$STRIPE_SECRET_KEY" in
+  sk_test_*|rk_test_*) MODE="test" ;;
+  sk_live_*|rk_live_*)
+    if [ "${ALLOW_LIVE:-0}" = "1" ]; then MODE="live"; else
+      echo "REFUSING: live key detected. Re-run with ALLOW_LIVE=1 once you're ready for production." >&2
+      exit 1
+    fi ;;
+  *) echo "ERROR: STRIPE_SECRET_KEY is not a recognizable Stripe key." >&2; exit 1 ;;
+esac
+echo "Running in ${MODE} mode against Stripe."
+
+API="https://api.stripe.com/v1"
+# Extracts a dotted path (supports name[idx]) from JSON on stdin; exits on Stripe error.
+PYEXTRACT='import sys,json
+d=json.load(sys.stdin)
+if isinstance(d,dict) and "error" in d:
+    sys.stderr.write("Stripe error: "+str(d["error"].get("message","unknown"))+"\n"); sys.exit(2)
+cur=d
+try:
+    for p in sys.argv[1].split("."):
+        if not p: continue
+        if p.endswith("]"):
+            n,i=p[:-1].split("["); cur=(cur[n] if n else cur)[int(i)]
+        else:
+            cur=cur.get(p) if isinstance(cur,dict) else None
+        if cur is None: break
+except (KeyError,IndexError,TypeError):
+    cur=None
+print(cur if cur is not None else "")'
+extract(){ printf '%s' "$1" | python3 -c "$PYEXTRACT" "$2"; }
+scall(){ curl -sS -u "$STRIPE_SECRET_KEY:" "$@"; }
+
+# ── 1. Price (reuse by lookup_key) + its Product ─────────────────────────────
+echo "Looking up price by lookup_key '$PRICE_LOOKUP_KEY'..."
+existing=$(scall -G "$API/prices" \
+  --data-urlencode "lookup_keys[]=$PRICE_LOOKUP_KEY" \
+  --data-urlencode "expand[]=data.product")
+PRICE_ID=$(extract "$existing" "data[0].id")
+PRODUCT_ID=$(extract "$existing" "data[0].product.id")
+
+if [ -n "$PRICE_ID" ]; then
+  echo "Reusing existing price $PRICE_ID (product $PRODUCT_ID)."
+else
+  echo "Creating product..."
+  prod=$(scall "$API/products" -d "name=$PRODUCT_NAME" -d "description=$PRODUCT_DESC")
+  PRODUCT_ID=$(extract "$prod" "id")
+  echo "  product: $PRODUCT_ID"
+
+  echo "Creating recurring price ($PRICE_AMOUNT $PRICE_CURRENCY / $PRICE_INTERVAL)..."
+  price=$(scall "$API/prices" \
+    -d "product=$PRODUCT_ID" \
+    -d "unit_amount=$PRICE_AMOUNT" \
+    -d "currency=$PRICE_CURRENCY" \
+    -d "recurring[interval]=$PRICE_INTERVAL" \
+    -d "lookup_key=$PRICE_LOOKUP_KEY")
+  PRICE_ID=$(extract "$price" "id")
+  echo "  price: $PRICE_ID"
+fi
+
+# ── 2. Webhook endpoint (reuse by URL) ───────────────────────────────────────
+echo "Checking webhook endpoint for $WEBHOOK_URL..."
+whlist=$(scall -G "$API/webhook_endpoints" -d "limit=100")
+WH_ID=$(printf '%s' "$whlist" | python3 -c \
+  'import sys,json;d=json.load(sys.stdin);u=sys.argv[1];print(next((e["id"] for e in d.get("data",[]) if e.get("url")==u),""))' \
+  "$WEBHOOK_URL")
+
+if [ -n "$WH_ID" ]; then
+  echo "Reusing existing webhook endpoint $WH_ID."
+  echo "  (Stripe only reveals the signing secret at creation — if you need it again, roll it in the dashboard.)"
+else
+  echo "Creating webhook endpoint..."
+  wh=$(scall "$API/webhook_endpoints" \
+    -d "url=$WEBHOOK_URL" \
+    -d "description=SHS subscription -> own invoices ($MODE)" \
+    -d "enabled_events[]=invoice.paid" \
+    -d "enabled_events[]=invoice.payment_failed" \
+    -d "enabled_events[]=customer.subscription.updated" \
+    -d "enabled_events[]=customer.subscription.deleted")
+  WH_ID=$(extract "$wh" "id")
+  WH_SECRET=$(extract "$wh" "secret")
+  umask 077
+  printf 'STRIPE_WEBHOOK_SECRET=%s\n' "$WH_SECRET" > "$WEBHOOK_SECRET_FILE"
+  echo "  endpoint: $WH_ID"
+  echo "  signing secret written to $WEBHOOK_SECRET_FILE (gitignored; do not commit)"
+fi
+
+# ── 3. Summary (all non-sensitive) ───────────────────────────────────────────
+cat <<SUMMARY
+
+──────────────────────────────────────────────
+Stripe ${MODE} setup complete.
+  Product id : $PRODUCT_ID
+  Price id   : $PRICE_ID   (lookup_key: $PRICE_LOOKUP_KEY)
+  Webhook    : $WH_ID -> $WEBHOOK_URL
+
+Next:
+  • Set Supabase secret SHS_STRIPE_SECRET_KEY (test project) to your sk_test key.
+  • Set Supabase secret STRIPE_WEBHOOK_SECRET from $WEBHOOK_SECRET_FILE.
+  • Put the publishable (pk_) key in .env.test as VITE_STRIPE_PUBLISHABLE_KEY.
+  • Reference price id $PRICE_ID when creating subscriptions.
+──────────────────────────────────────────────
+SUMMARY
