@@ -29,18 +29,28 @@ Deno.test("splitVatInclusive: net + vat always reconstructs the gross", () => {
 interface Recorded {
   invoiceInsert: Record<string, unknown> | null;
   lineInsert: Record<string, unknown> | null;
+  lineUpdate: Record<string, unknown> | null;
   paymentInsert: Record<string, unknown> | null;
+  paymentUpdate: Record<string, unknown> | null;
   invoiceUpdate: Record<string, unknown> | null;
   rpc: { name: string; params: Record<string, unknown> } | null;
 }
 
 /** Stub Supabase client: records writes, returns canned reads. `existingInvoice`
  *  drives the idempotency branch. */
-function stubClient(existingInvoice: { id: string; invoice_number: string | null } | null) {
+function stubClient(
+  existingInvoice: { id: string; invoice_number: string | null; status?: string | null; voided_at?: string | null } | null,
+  options: {
+    lineItems?: Array<{ id: string; line_type: string | null }>;
+    payment?: { id: string; amount: number | string; payment_date: string } | null;
+  } = {},
+) {
   const rec: Recorded = {
     invoiceInsert: null,
     lineInsert: null,
+    lineUpdate: null,
     paymentInsert: null,
+    paymentUpdate: null,
     invoiceUpdate: null,
     rpc: null,
   };
@@ -48,17 +58,29 @@ function stubClient(existingInvoice: { id: string; invoice_number: string | null
     from(table: string) {
       return {
         select() {
-          return {
-            eq() {
-              return this;
+          const filters: Record<string, unknown> = {};
+          const rows = () => {
+            if (table === "invoice_line_items") return options.lineItems || [];
+            return [];
+          };
+          const singleRow = () => {
+            if (table === "invoices") return existingInvoice;
+            if (table === "invoice_payments") return options.payment || null;
+            return null;
+          };
+          const builder = {
+            eq(column: string, value: unknown) {
+              filters[column] = value;
+              return builder;
             },
             maybeSingle() {
-              return Promise.resolve({
-                data: table === "invoices" ? existingInvoice : null,
-                error: null,
-              });
+              return Promise.resolve({ data: singleRow(), error: null });
+            },
+            then(onF: (v: unknown) => unknown, onR?: (e: unknown) => unknown) {
+              return Promise.resolve({ data: rows(), error: null }).then(onF, onR);
             },
           };
+          return builder;
         },
         insert(payload: Record<string, unknown>) {
           if (table === "invoices") rec.invoiceInsert = payload;
@@ -75,7 +97,14 @@ function stubClient(existingInvoice: { id: string; invoice_number: string | null
         },
         update(payload: Record<string, unknown>) {
           if (table === "invoices") rec.invoiceUpdate = payload;
-          return { eq: () => Promise.resolve({ error: null }) };
+          else if (table === "invoice_line_items") rec.lineUpdate = payload;
+          else if (table === "invoice_payments") rec.paymentUpdate = payload;
+          const builder = {
+            eq() {
+              return Promise.resolve({ error: null });
+            },
+          };
+          return builder;
         },
       };
     },
@@ -112,6 +141,7 @@ Deno.test("buildSubscriptionInvoice creates, finalizes and pays a fresh invoice"
   assertEquals(rec.invoiceInsert?.status, "draft");
   assertEquals(rec.invoiceInsert?.stripe_invoice_id, "in_test_123");
   assertEquals(rec.invoiceInsert?.is_test, true);
+  assertEquals("stripe_status" in rec.invoiceInsert!, false);
   // Line item is ex-VAT with a separate tax_rate.
   assertEquals(rec.lineInsert?.unit_price, 199.2);
   assertEquals(rec.lineInsert?.tax_rate, 25);
@@ -129,7 +159,13 @@ Deno.test("buildSubscriptionInvoice creates, finalizes and pays a fresh invoice"
 });
 
 Deno.test("buildSubscriptionInvoice is idempotent on stripe_invoice_id", async () => {
-  const client = stubClient({ id: "inv-existing", invoice_number: "TIN-000009" });
+  const client = stubClient(
+    { id: "inv-existing", invoice_number: "TIN-000009", status: "paid", voided_at: null },
+    {
+      lineItems: [{ id: "line-existing", line_type: "travel_other" }],
+      payment: { id: "pay-existing", amount: 249, payment_date: "2026-06-27" },
+    },
+  );
   const res = await buildSubscriptionInvoice(
     client as unknown as Parameters<typeof buildSubscriptionInvoice>[0],
     ARGS,
@@ -137,8 +173,48 @@ Deno.test("buildSubscriptionInvoice is idempotent on stripe_invoice_id", async (
   assertEquals(res.created, false);
   assertEquals(res.invoiceId, "inv-existing");
   assertEquals(res.invoiceNumber, "TIN-000009");
-  // Nothing was written.
+  // Existing complete invoice is not finalized again or double-paid.
   assert(client._rec.invoiceInsert === null);
   assert(client._rec.rpc === null);
   assert(client._rec.paymentInsert === null);
+  assert(client._rec.paymentUpdate === null);
+  assertEquals(client._rec.invoiceUpdate?.status, "paid");
+});
+
+Deno.test("buildSubscriptionInvoice completes an existing draft from a retried webhook", async () => {
+  const client = stubClient({ id: "inv-existing", invoice_number: null, status: "draft", voided_at: null });
+  const res = await buildSubscriptionInvoice(
+    client as unknown as Parameters<typeof buildSubscriptionInvoice>[0],
+    ARGS,
+  );
+
+  assertEquals(res.created, false);
+  assertEquals(res.invoiceNumber, "TIN-000010");
+  assertEquals(client._rec.invoiceInsert, null);
+  assertEquals(client._rec.lineInsert?.unit_price, 199.2);
+  assertEquals(client._rec.rpc?.name, "finalize_local_invoice");
+  assertEquals(client._rec.paymentInsert?.amount, 249);
+  assertEquals(client._rec.invoiceUpdate?.status, "paid");
+});
+
+Deno.test("buildSubscriptionInvoice repairs an existing open invoice instead of no-oping", async () => {
+  const client = stubClient(
+    { id: "inv-existing", invoice_number: "TIN-000009", status: "open", voided_at: null },
+    {
+      lineItems: [{ id: "line-existing", line_type: "travel_other" }],
+      payment: { id: "pay-existing", amount: 0, payment_date: "2026-06-26" },
+    },
+  );
+  const res = await buildSubscriptionInvoice(
+    client as unknown as Parameters<typeof buildSubscriptionInvoice>[0],
+    ARGS,
+  );
+
+  assertEquals(res.created, false);
+  assertEquals(res.invoiceNumber, "TIN-000009");
+  assertEquals(client._rec.rpc, null);
+  assertEquals(client._rec.lineUpdate?.unit_price, 199.2);
+  assertEquals(client._rec.paymentUpdate?.amount, 249);
+  assertEquals(client._rec.paymentUpdate?.payment_date, "2026-06-27");
+  assertEquals(client._rec.invoiceUpdate?.status, "paid");
 });

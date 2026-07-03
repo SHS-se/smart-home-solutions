@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Loader2, CreditCard, CheckCircle, AlertCircle, Eye, FileText } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -36,10 +36,19 @@ interface Invoice {
   computed_total: number | null;
 }
 
+interface SubscriptionProduct {
+  name: string | null;
+  amount: number | null;
+  currency: string | null;
+  interval: string | null;
+  interval_count: number | null;
+}
+
 interface SubscriptionStatus {
   subscribed: boolean;
   subscription_end: string | null;
   cancel_at_period_end?: boolean;
+  product?: SubscriptionProduct | null;
 }
 
 interface BillingProps {
@@ -97,7 +106,7 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
     }
 
     return filtered;
-  }, [invoices, viewFilter, searchQuery]);
+  }, [invoices, viewFilter, searchQuery, isStaffView]);
 
   const sortedInvoices = useMemo(() => {
     return sortItems(filteredInvoices, sortColumn as keyof Invoice, sortDirection, {
@@ -126,14 +135,7 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
     }
   }, [user, loading, navigate]);
 
-  // Check subscription on load
-  useEffect(() => {
-    if (!loading && resolvedCustomerId) {
-      checkSubscription();
-    }
-  }, [resolvedCustomerId, loading]);
-
-  const checkSubscription = async () => {
+  const checkSubscription = useCallback(async () => {
     setSubscriptionLoading(true);
     try {
       const body = isStaffView && resolvedCustomerId
@@ -150,9 +152,16 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
     } finally {
       setSubscriptionLoading(false);
     }
-  };
+  }, [isStaffView, resolvedCustomerId]);
 
-  const fetchInvoices = async () => {
+  // Check subscription on load
+  useEffect(() => {
+    if (!loading && resolvedCustomerId) {
+      checkSubscription();
+    }
+  }, [resolvedCustomerId, loading, checkSubscription]);
+
+  const fetchInvoices = useCallback(async () => {
     if (!resolvedCustomerId) return;
     setInvoicesLoading(true);
 
@@ -215,27 +224,29 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
     } finally {
       setInvoicesLoading(false);
     }
-  };
+  }, [resolvedCustomerId]);
 
   useEffect(() => {
     if (!loading && resolvedCustomerId) {
       fetchInvoices();
     }
-  }, [resolvedCustomerId, loading, isStaffView]);
+  }, [resolvedCustomerId, loading, isStaffView, fetchInvoices]);
 
   // After payment, the webhook activates entitlement + generates the invoice
   // asynchronously, so poll a few times, then refresh the status + invoice list.
   const handleSubscribed = async () => {
+    let activated = false;
     for (let i = 0; i < 10; i++) {
       const { data } = await supabase.functions.invoke('check-subscription');
       if (data?.subscribed) {
         setSubscriptionStatus(data);
+        activated = true;
         await fetchInvoices();
-        return;
+        if (i >= 2) return;
       }
       await new Promise((r) => setTimeout(r, 2000));
     }
-    await checkSubscription();
+    if (!activated) await checkSubscription();
     await fetchInvoices();
   };
 
@@ -295,6 +306,56 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
     if (amount === null || amount === undefined) return '-';
     const formatted = new Intl.NumberFormat('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount);
     return `${formatted} ${currency?.toUpperCase() || 'SEK'}`;
+  };
+
+  const subscriptionProduct = subscriptionStatus?.product ?? null;
+
+  const formatSubscriptionAmount = (product: SubscriptionProduct | null) => {
+    if (product?.amount === null || product?.amount === undefined || !product.currency) return null;
+    const formatted = new Intl.NumberFormat('sv-SE', {
+      minimumFractionDigits: product.amount % 1 === 0 ? 0 : 2,
+      maximumFractionDigits: 2,
+    }).format(product.amount);
+    const currency = product.currency.toUpperCase();
+    return currency === 'SEK' ? `${formatted} kr` : `${formatted} ${currency}`;
+  };
+
+  const formatSubscriptionInterval = (product: SubscriptionProduct | null) => {
+    const count = product?.interval_count && product.interval_count > 0 ? product.interval_count : 1;
+    switch (product?.interval) {
+      case 'day':
+        return count === 1 ? t('dag', 'day') : `${count} ${t('dagar', 'days')}`;
+      case 'week':
+        return count === 1 ? t('vecka', 'week') : `${count} ${t('veckor', 'weeks')}`;
+      case 'month':
+        return count === 1 ? t('månad', 'month') : `${count} ${t('månader', 'months')}`;
+      case 'year':
+        return count === 1 ? t('år', 'year') : `${count} ${t('år', 'years')}`;
+      default:
+        return null;
+    }
+  };
+
+  const renderSubscriptionProduct = () => {
+    const amount = formatSubscriptionAmount(subscriptionProduct);
+    const interval = formatSubscriptionInterval(subscriptionProduct);
+
+    return (
+      <div className="space-y-1">
+        {subscriptionProduct?.name && (
+          <p className="text-sm font-medium text-foreground">{subscriptionProduct.name}</p>
+        )}
+        {amount && interval ? (
+          <p className="text-2xl font-semibold">
+            {amount}<span className="text-sm font-normal text-muted-foreground">/{interval}</span>
+          </p>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            {t('Pris saknas i Stripe.', 'Price is missing in Stripe.')}
+          </p>
+        )}
+      </div>
+    );
   };
 
   const getStatusBadge = (status: string | null) => {
@@ -400,7 +461,7 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
                     </AlertDescription>
                   </Alert>
                 )}
-                <p className="text-2xl font-semibold">249 kr<span className="text-sm font-normal text-muted-foreground">/{t('månad', 'month')}</span></p>
+                {renderSubscriptionProduct()}
                 {!isStaffView && (
                   <div className="space-y-3">
                     <div className="flex flex-wrap gap-2">
@@ -446,7 +507,7 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
                 </p>
                 {!isStaffView && (
                   <div className="p-4 border rounded-lg bg-muted/30">
-                    <p className="text-2xl font-semibold">249 kr<span className="text-sm font-normal text-muted-foreground">/{t('månad', 'month')}</span></p>
+                    {renderSubscriptionProduct()}
                     <p className="text-sm text-muted-foreground mt-1 mb-3">
                       {t('Betala månadsvis med kort. Avsluta när du vill.', 'Pay monthly by card. Cancel anytime.')}
                     </p>

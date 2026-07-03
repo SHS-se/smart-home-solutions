@@ -26,6 +26,26 @@ function todayUtc(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+function dateFromUnixSeconds(value: unknown): string | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return new Date(value * 1000).toISOString().slice(0, 10);
+}
+
+// deno-lint-ignore no-explicit-any
+function subscriptionInvoiceDescription(invoice: any): string {
+  const line = invoice.lines?.data?.[0];
+  const rawDescription = typeof line?.description === "string" ? line.description.trim() : "";
+  const description = rawDescription || "Månadsabonnemang Smart Home Solutions";
+  const periodEnd: number | undefined = line?.period?.end;
+  const monthLabel = periodEnd
+    ? new Date(periodEnd * 1000).toLocaleDateString("sv-SE", { year: "numeric", month: "long" })
+    : "";
+
+  return monthLabel && !description.includes(monthLabel)
+    ? `${description} – ${monthLabel}`
+    : description;
+}
+
 serve(async (req) => {
   const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
   const serviceClient = createClient(supabaseUrl, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "", {
@@ -77,15 +97,12 @@ serve(async (req) => {
         }
         const grossAmount = (invoice.amount_paid ?? 0) / 100; // öre → kr
         const periodEnd: number | undefined = invoice.lines?.data?.[0]?.period?.end;
-        const monthLabel = periodEnd
-          ? new Date(periodEnd * 1000).toLocaleDateString("sv-SE", { year: "numeric", month: "long" })
-          : "";
         const result = await buildSubscriptionInvoice(serviceClient, {
           customerId: customer.id,
           stripeInvoiceId: invoice.id,
           grossAmount,
-          description: `Månadsabonnemang Smart Home Solutions${monthLabel ? ` – ${monthLabel}` : ""}`,
-          paymentDate: todayUtc(),
+          description: subscriptionInvoiceDescription(invoice),
+          paymentDate: dateFromUnixSeconds(invoice.status_transitions?.paid_at ?? invoice.created) ?? todayUtc(),
           appEnv,
         });
         await serviceClient

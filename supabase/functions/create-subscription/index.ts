@@ -8,13 +8,12 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { getAppEnvironment } from "../_shared/app-env.ts";
 import { getStripe } from "../_shared/stripe-client.ts";
+import { SUBSCRIPTION_PRICE_LOOKUP_KEY } from "../_shared/subscription-product.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
-
-const PRICE_LOOKUP_KEY = "shs_subscription_monthly";
 
 const logStep = (step: string, details?: unknown) => {
   const detailsStr = details ? ` - ${JSON.stringify(details)}` : "";
@@ -95,12 +94,14 @@ serve(async (req) => {
 
     // Resolve the recurring price by lookup_key (env-agnostic).
     const prices = await stripe.prices.list({
-      lookup_keys: [PRICE_LOOKUP_KEY],
+      lookup_keys: [SUBSCRIPTION_PRICE_LOOKUP_KEY],
       active: true,
       limit: 1,
     });
     const price = prices.data[0];
-    if (!price) throw new Error(`Subscription price (lookup_key ${PRICE_LOOKUP_KEY}) not found`);
+    if (!price) {
+      throw new Error(`Subscription price (lookup_key ${SUBSCRIPTION_PRICE_LOOKUP_KEY}) not found`);
+    }
 
     const subscription = await stripe.subscriptions.create({
       customer: stripeCustomerId,

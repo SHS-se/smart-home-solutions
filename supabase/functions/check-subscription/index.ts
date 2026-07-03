@@ -1,6 +1,12 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { getAppEnvironment } from "../_shared/app-env.ts";
+import { getStripe } from "../_shared/stripe-client.ts";
+import { entitlementFromSubscription } from "../_shared/subscription-entitlement.ts";
+import {
+  loadActiveSubscriptionProduct,
+  subscriptionProductFromSubscription,
+} from "../_shared/subscription-product.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -77,15 +83,52 @@ serve(async (req) => {
       });
     }
 
-    // Read internal entitlement from customers table
+    // Read internal entitlement from customers table. When a Stripe
+    // subscription is attached, Stripe is the source of truth and this row is
+    // synced below.
     const { data: customer } = await supabaseClient
       .from("customers")
-      .select("subscription_active, subscription_expires_at, subscription_cancel_at_period_end")
+      .select("subscription_active, subscription_expires_at, subscription_cancel_at_period_end, stripe_subscription_id")
       .eq("id", customerId)
       .single();
 
     if (!customer) {
-      return new Response(JSON.stringify({ subscribed: false }), {
+      const product = await loadActiveSubscriptionProduct(getStripe());
+      return new Response(JSON.stringify({ subscribed: false, product }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 200,
+      });
+    }
+
+    const stripe = getStripe();
+    const activeProduct = await loadActiveSubscriptionProduct(stripe);
+
+    if (customer.stripe_subscription_id) {
+      const subscription = await stripe.subscriptions.retrieve(customer.stripe_subscription_id, {
+        expand: ["items.data.price.product"],
+      });
+      const entitlement = entitlementFromSubscription(subscription);
+      await supabaseClient
+        .from("customers")
+        .update({ ...entitlement, stripe_subscription_id: subscription.id })
+        .eq("id", customerId);
+
+      const product = entitlement.subscription_active
+        ? subscriptionProductFromSubscription(subscription) ?? activeProduct
+        : activeProduct;
+
+      logStep("Subscription checked from Stripe", {
+        customerId,
+        active: entitlement.subscription_active,
+        expiresAt: entitlement.subscription_expires_at,
+      });
+
+      return new Response(JSON.stringify({
+        subscribed: entitlement.subscription_active,
+        subscription_end: entitlement.subscription_expires_at,
+        cancel_at_period_end: entitlement.subscription_cancel_at_period_end,
+        product,
+      }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 200,
       });
@@ -100,6 +143,7 @@ serve(async (req) => {
       subscribed: isActive,
       subscription_end: customer.subscription_expires_at || null,
       cancel_at_period_end: customer.subscription_cancel_at_period_end ?? false,
+      product: activeProduct,
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 200,
