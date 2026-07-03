@@ -9,7 +9,9 @@
 ALTER TABLE public.customers
   ADD COLUMN marketing_opt_out boolean NOT NULL DEFAULT false,
   ADD COLUMN marketing_opt_out_at timestamptz,
-  ADD COLUMN unsubscribe_token text NOT NULL UNIQUE DEFAULT encode(gen_random_bytes(16), 'hex');
+  -- pgcrypto lives in the extensions schema on Supabase, which is not on the
+  -- search_path during `supabase db push` — qualify it (same as 20260123220947).
+  ADD COLUMN unsubscribe_token text NOT NULL UNIQUE DEFAULT encode(extensions.gen_random_bytes(16), 'hex');
 
 -- customers_with_identity selects an explicit column list, so it must be
 -- recreated to expose the new columns (previous definition: 20260205084731).
