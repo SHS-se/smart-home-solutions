@@ -336,10 +336,17 @@ export async function loadInvoiceDocumentData(
       unit_price: toNumber((item as InvoiceDocumentLineItem).unit_price),
       tax_rate: toNumber((item as InvoiceDocumentLineItem).tax_rate),
     })) as InvoiceDocumentLineItem[],
-    payments: (payments || []).map((payment) => ({
-      ...(payment as InvoiceDocumentPayment),
-      amount: toNumber((payment as InvoiceDocumentPayment).amount),
-    })) as InvoiceDocumentPayment[],
+    // White-label: this document feeds customer-facing views (portal, public
+    // link, PDF), so Stripe payments must not leak the processor name or the
+    // raw in_... id. Staff read invoice_payments directly via their RLS-gated
+    // pages and keep the full record.
+    payments: (payments || []).map((payment) => {
+      const typed = {
+        ...(payment as InvoiceDocumentPayment),
+        amount: toNumber((payment as InvoiceDocumentPayment).amount),
+      };
+      return typed.method === "stripe" ? { ...typed, method: "Kort", reference: null } : typed;
+    }) as InvoiceDocumentPayment[],
     payment_details: paymentDetails,
     seller: settings,
   };

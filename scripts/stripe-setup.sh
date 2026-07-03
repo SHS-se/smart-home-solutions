@@ -82,7 +82,30 @@ PRICE_ID=$(extract "$existing" "data[0].id")
 PRODUCT_ID=$(extract "$existing" "data[0].product.id")
 
 if [ -n "$PRICE_ID" ]; then
-  echo "Reusing existing price $PRICE_ID (product $PRODUCT_ID)."
+  # Stripe prices are immutable: when the requested amount/currency/interval
+  # differs from the existing price, create a replacement and transfer the
+  # lookup_key to it (the app resolves the price by lookup_key), then archive
+  # the old price. Existing subscriptions keep their old price; new ones pick
+  # up the replacement.
+  CUR_AMOUNT=$(extract "$existing" "data[0].unit_amount")
+  CUR_CURRENCY=$(extract "$existing" "data[0].currency")
+  CUR_INTERVAL=$(extract "$existing" "data[0].recurring.interval")
+  if [ "$CUR_AMOUNT" = "$PRICE_AMOUNT" ] && [ "$CUR_CURRENCY" = "$PRICE_CURRENCY" ] && [ "$CUR_INTERVAL" = "$PRICE_INTERVAL" ]; then
+    echo "Reusing existing price $PRICE_ID (product $PRODUCT_ID)."
+  else
+    echo "Price config changed ($CUR_AMOUNT $CUR_CURRENCY/$CUR_INTERVAL -> $PRICE_AMOUNT $PRICE_CURRENCY/$PRICE_INTERVAL)."
+    OLD_PRICE_ID="$PRICE_ID"
+    price=$(scall "$API/prices" \
+      -d "product=$PRODUCT_ID" \
+      -d "unit_amount=$PRICE_AMOUNT" \
+      -d "currency=$PRICE_CURRENCY" \
+      -d "recurring[interval]=$PRICE_INTERVAL" \
+      -d "lookup_key=$PRICE_LOOKUP_KEY" \
+      -d "transfer_lookup_key=true")
+    PRICE_ID=$(extract "$price" "id")
+    scall "$API/prices/$OLD_PRICE_ID" -d "active=false" >/dev/null
+    echo "  replacement price: $PRICE_ID (lookup_key transferred; $OLD_PRICE_ID archived)"
+  fi
 else
   echo "Creating product..."
   prod=$(scall "$API/products" -d "name=$PRODUCT_NAME" -d "description=$PRODUCT_DESC")
