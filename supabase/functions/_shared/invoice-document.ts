@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
-import QRCode from "https://esm.sh/qrcode@1.5.4";
+import * as QRCode from "https://esm.sh/qrcode@1.5.4";
 import {
   INVOICE_COMPANY,
   loadBusinessSettings,

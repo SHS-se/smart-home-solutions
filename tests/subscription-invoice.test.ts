@@ -139,6 +139,7 @@ Deno.test("buildSubscriptionInvoice creates, finalizes and pays a fresh invoice"
   // Draft invoice carries the Stripe linkage + test flag.
   assertEquals(rec.invoiceInsert?.customer_id, "cust-1");
   assertEquals(rec.invoiceInsert?.status, "draft");
+  assertEquals(rec.invoiceInsert?.due_date, "2026-06-27");
   assertEquals(rec.invoiceInsert?.stripe_invoice_id, "in_test_123");
   assertEquals(rec.invoiceInsert?.is_test, true);
   assertEquals("stripe_status" in rec.invoiceInsert!, false);
@@ -156,6 +157,7 @@ Deno.test("buildSubscriptionInvoice creates, finalizes and pays a fresh invoice"
   assertEquals(rec.paymentInsert?.reference, "in_test_123");
   // Invoice marked paid.
   assertEquals(rec.invoiceUpdate?.status, "paid");
+  assertEquals(rec.invoiceUpdate?.due_date, "2026-06-27");
 });
 
 Deno.test("buildSubscriptionInvoice is idempotent on stripe_invoice_id", async () => {
@@ -179,6 +181,7 @@ Deno.test("buildSubscriptionInvoice is idempotent on stripe_invoice_id", async (
   assert(client._rec.paymentInsert === null);
   assert(client._rec.paymentUpdate === null);
   assertEquals(client._rec.invoiceUpdate?.status, "paid");
+  assertEquals(client._rec.invoiceUpdate?.due_date, "2026-06-27");
 });
 
 Deno.test("buildSubscriptionInvoice completes an existing draft from a retried webhook", async () => {
@@ -195,6 +198,7 @@ Deno.test("buildSubscriptionInvoice completes an existing draft from a retried w
   assertEquals(client._rec.rpc?.name, "finalize_local_invoice");
   assertEquals(client._rec.paymentInsert?.amount, 249);
   assertEquals(client._rec.invoiceUpdate?.status, "paid");
+  assertEquals(client._rec.invoiceUpdate?.due_date, "2026-06-27");
 });
 
 Deno.test("buildSubscriptionInvoice repairs an existing open invoice instead of no-oping", async () => {
@@ -217,4 +221,5 @@ Deno.test("buildSubscriptionInvoice repairs an existing open invoice instead of 
   assertEquals(client._rec.paymentUpdate?.amount, 249);
   assertEquals(client._rec.paymentUpdate?.payment_date, "2026-06-27");
   assertEquals(client._rec.invoiceUpdate?.status, "paid");
+  assertEquals(client._rec.invoiceUpdate?.due_date, "2026-06-27");
 });

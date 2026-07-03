@@ -248,6 +248,11 @@ serve(async (req) => {
       invoice.customer_address?.postcode,
       invoice.customer_address?.city,
     ].filter(Boolean).join(" ") || "—";
+    const isPaid = invoice.status === "paid";
+    const paidDate = invoice.paid_at || invoice.issued_at || invoice.finalized_at;
+    const paidMethod = invoice.payments.some((payment) => payment.method === "Kort" || payment.method === "stripe")
+      ? "Kort"
+      : "Registrerad betalning";
 
     const logoWidth = 74;
     const logoHeight = 68;
@@ -281,7 +286,18 @@ serve(async (req) => {
     metaY -= 13;
     drawMetadataRow(page, "Fakturadatum", formatDate(invoice.issued_at || invoice.finalized_at), metaY, font, fontBold, metaLabelX, metaValueRightX, gray, black);
     metaY -= 13;
-    drawMetadataRow(page, "Förfallodatum", formatDate(invoice.due_date), metaY, font, fontBold, metaLabelX, metaValueRightX, gray, black);
+    drawMetadataRow(
+      page,
+      isPaid ? "Betaldatum" : "Förfallodatum",
+      formatDate(isPaid ? paidDate : invoice.due_date),
+      metaY,
+      font,
+      fontBold,
+      metaLabelX,
+      metaValueRightX,
+      gray,
+      black,
+    );
     if (invoice.quote_number) {
       metaY -= 13;
       drawMetadataRow(page, "Offertnummer", invoice.quote_number, metaY, font, fontBold, metaLabelX, metaValueRightX, gray, black);
@@ -486,7 +502,7 @@ serve(async (req) => {
       thickness: 0.6,
       color: lightGray,
     });
-    page.drawText("Att betala", { x: totalsX, y: totalsY, font: fontBold, size: 11, color: black });
+    page.drawText(isPaid ? "Betalt" : "Att betala", { x: totalsX, y: totalsY, font: fontBold, size: 11, color: black });
     drawRightAlignedText(page, formatSEK(total), amountRightX, totalsY, fontBold, 11, black);
 
     const paymentTopY = totalsY - 40;
@@ -497,7 +513,7 @@ serve(async (req) => {
       color: lightGray,
     });
 
-    page.drawText("Betalningsinformation", {
+    page.drawText(isPaid ? "Betalningsstatus" : "Betalningsinformation", {
       x: leftMargin,
       y: paymentTopY,
       font: fontBold,
@@ -506,93 +522,131 @@ serve(async (req) => {
     });
 
     let paymentY = paymentTopY - 18;
-    page.drawText("Bankgiro", { x: leftMargin, y: paymentY, font, size: 9, color: gray });
-    page.drawText(invoice.payment_details.bankgiro_number || "Ej konfigurerat", {
-      x: leftMargin + 104,
-      y: paymentY,
-      font: fontBold,
-      size: 9,
-      color: black,
-    });
-    paymentY -= 14;
-    page.drawText("Betalningsref.", { x: leftMargin, y: paymentY, font, size: 9, color: gray });
-    page.drawText(invoice.payment_details.payment_reference || "—", {
-      x: leftMargin + 104,
-      y: paymentY,
-      font: fontBold,
-      size: 9,
-      color: black,
-    });
-    paymentY -= 14;
-    page.drawText("Belopp", { x: leftMargin, y: paymentY, font, size: 9, color: gray });
-    page.drawText(formatSEK(invoice.payment_details.amount), {
-      x: leftMargin + 104,
-      y: paymentY,
-      font: fontBold,
-      size: 9,
-      color: black,
-    });
-    paymentY -= 14;
-    page.drawText("Förfallodatum", { x: leftMargin, y: paymentY, font, size: 9, color: gray });
-    page.drawText(formatDate(invoice.payment_details.due_date), {
-      x: leftMargin + 104,
-      y: paymentY,
-      font: fontBold,
-      size: 9,
-      color: black,
-    });
-    paymentY -= 14;
-    page.drawText("Mottagare", { x: leftMargin, y: paymentY, font, size: 9, color: gray });
-    page.drawText(invoice.payment_details.payee_name, {
-      x: leftMargin + 104,
-      y: paymentY,
-      font: fontBold,
-      size: 9,
-      color: black,
-    });
+    if (isPaid) {
+      page.drawText("Status", { x: leftMargin, y: paymentY, font, size: 9, color: gray });
+      page.drawText("Betald", {
+        x: leftMargin + 104,
+        y: paymentY,
+        font: fontBold,
+        size: 9,
+        color: black,
+      });
+      paymentY -= 14;
+      page.drawText("Betaldatum", { x: leftMargin, y: paymentY, font, size: 9, color: gray });
+      page.drawText(formatDate(paidDate), {
+        x: leftMargin + 104,
+        y: paymentY,
+        font: fontBold,
+        size: 9,
+        color: black,
+      });
+      paymentY -= 14;
+      page.drawText("Belopp", { x: leftMargin, y: paymentY, font, size: 9, color: gray });
+      page.drawText(formatSEK(total), {
+        x: leftMargin + 104,
+        y: paymentY,
+        font: fontBold,
+        size: 9,
+        color: black,
+      });
+      paymentY -= 14;
+      page.drawText("Betalsätt", { x: leftMargin, y: paymentY, font, size: 9, color: gray });
+      page.drawText(paidMethod, {
+        x: leftMargin + 104,
+        y: paymentY,
+        font: fontBold,
+        size: 9,
+        color: black,
+      });
+    } else {
+      page.drawText("Bankgiro", { x: leftMargin, y: paymentY, font, size: 9, color: gray });
+      page.drawText(invoice.payment_details.bankgiro_number || "Ej konfigurerat", {
+        x: leftMargin + 104,
+        y: paymentY,
+        font: fontBold,
+        size: 9,
+        color: black,
+      });
+      paymentY -= 14;
+      page.drawText("Betalningsref.", { x: leftMargin, y: paymentY, font, size: 9, color: gray });
+      page.drawText(invoice.payment_details.payment_reference || "—", {
+        x: leftMargin + 104,
+        y: paymentY,
+        font: fontBold,
+        size: 9,
+        color: black,
+      });
+      paymentY -= 14;
+      page.drawText("Belopp", { x: leftMargin, y: paymentY, font, size: 9, color: gray });
+      page.drawText(formatSEK(invoice.payment_details.amount), {
+        x: leftMargin + 104,
+        y: paymentY,
+        font: fontBold,
+        size: 9,
+        color: black,
+      });
+      paymentY -= 14;
+      page.drawText("Förfallodatum", { x: leftMargin, y: paymentY, font, size: 9, color: gray });
+      page.drawText(formatDate(invoice.payment_details.due_date), {
+        x: leftMargin + 104,
+        y: paymentY,
+        font: fontBold,
+        size: 9,
+        color: black,
+      });
+      paymentY -= 14;
+      page.drawText("Mottagare", { x: leftMargin, y: paymentY, font, size: 9, color: gray });
+      page.drawText(invoice.payment_details.payee_name, {
+        x: leftMargin + 104,
+        y: paymentY,
+        font: fontBold,
+        size: 9,
+        color: black,
+      });
 
-    if (invoice.payment_details.qr_data_url) {
-      const qrImage = await pdfDoc.embedPng(dataUrlToBytes(invoice.payment_details.qr_data_url));
-      // Sit the QR fully below the "Betalningsinformation" divider (at
-      // paymentTopY + 18), aligned with the payment detail rows on the left.
-      page.drawRectangle({
-        x: rightMargin - 92,
-        y: paymentTopY - 80,
-        width: 78,
-        height: 78,
-        color: white,
-        borderColor: lightGray,
-        borderWidth: 1,
-      });
-      page.drawImage(qrImage, {
-        x: rightMargin - 89,
-        y: paymentTopY - 77,
-        width: 72,
-        height: 72,
-      });
-      // Caption under the QR, wrapped to the QR box width.
-      page.drawText("Skanna QR-koden med din bankapp så fylls alla betaluppgifter i automatiskt.", {
-        x: rightMargin - 92,
-        y: paymentTopY - 89,
+      if (invoice.payment_details.qr_data_url) {
+        const qrImage = await pdfDoc.embedPng(dataUrlToBytes(invoice.payment_details.qr_data_url));
+        // Sit the QR fully below the "Betalningsinformation" divider (at
+        // paymentTopY + 18), aligned with the payment detail rows on the left.
+        page.drawRectangle({
+          x: rightMargin - 92,
+          y: paymentTopY - 80,
+          width: 78,
+          height: 78,
+          color: white,
+          borderColor: lightGray,
+          borderWidth: 1,
+        });
+        page.drawImage(qrImage, {
+          x: rightMargin - 89,
+          y: paymentTopY - 77,
+          width: 72,
+          height: 72,
+        });
+        // Caption under the QR, wrapped to the QR box width.
+        page.drawText("Skanna QR-koden med din bankapp så fylls alla betaluppgifter i automatiskt.", {
+          x: rightMargin - 92,
+          y: paymentTopY - 89,
+          font,
+          size: 6,
+          color: gray,
+          maxWidth: 78,
+          lineHeight: 7.5,
+        });
+      }
+
+      page.drawText(invoice.payment_details.manual_payment_instruction, {
+        x: leftMargin,
+        y: paymentY - 22,
         font,
-        size: 6,
+        size: 8,
         color: gray,
-        maxWidth: 78,
-        lineHeight: 7.5,
+        maxWidth: 360,
+        lineHeight: 10,
       });
     }
 
-    page.drawText(invoice.payment_details.manual_payment_instruction, {
-      x: leftMargin,
-      y: paymentY - 22,
-      font,
-      size: 8,
-      color: gray,
-      maxWidth: 360,
-      lineHeight: 10,
-    });
-
-    if (invoice.status === "paid") {
+    if (isPaid) {
       page.drawText("BETALD", {
         x: 182,
         y: 396,

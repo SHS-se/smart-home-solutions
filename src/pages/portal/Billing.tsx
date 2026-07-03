@@ -196,8 +196,9 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
           console.warn('Could not fetch invoice_computed_totals:', totalsError);
         } else {
           (totalsData || []).forEach((row) => {
-            if (row?.invoice_id && typeof row.total === 'number') {
-              totalsByInvoiceId.set(row.invoice_id, row.total);
+            const total = Number(row?.total);
+            if (row?.invoice_id && Number.isFinite(total)) {
+              totalsByInvoiceId.set(row.invoice_id, total);
             }
           });
         }

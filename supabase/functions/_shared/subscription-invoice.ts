@@ -173,6 +173,7 @@ async function markInvoicePaid(
     .from("invoices")
     .update({
       status: "paid",
+      due_date: paymentDate,
       paid_at: new Date(`${paymentDate}T12:00:00Z`).toISOString(),
       updated_at: new Date().toISOString(),
     })
@@ -231,6 +232,7 @@ export async function buildSubscriptionInvoice(
       customer_id: args.customerId,
       status: "draft",
       currency: "SEK",
+      due_date: args.paymentDate,
       created_by: null,
       is_test: args.appEnv === "test",
       stripe_invoice_id: args.stripeInvoiceId,
