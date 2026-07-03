@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { PDFDocument, StandardFonts, degrees, rgb, type PDFPage, type PDFFont } from "https://esm.sh/pdf-lib@1.17.1";
 import { getAppEnvironment } from "../_shared/app-env.ts";
 import { loadInvoiceDocumentData } from "../_shared/invoice-document.ts";
+import { wrapTextByWidth } from "../_shared/pdf-text.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -453,26 +454,34 @@ serve(async (req) => {
       const quantity = item.quantity || 1;
       const unitPrice = item.unit_price || 0;
       const lineTotal = quantity * unitPrice;
-      let description = item.description || "";
+      const descriptionX = leftMargin + 6;
+      const descriptionSize = 8;
+      const descriptionLineHeight = 10;
+      const descriptionMaxWidth = 264;
+      const descriptionLines = wrapTextByWidth(
+        item.description || "",
+        descriptionMaxWidth,
+        (value) => font.widthOfTextAtSize(value, descriptionSize),
+      );
+      const rowHeight = Math.max(14, ((descriptionLines.length - 1) * descriptionLineHeight) + 14);
 
-      if (description.length > 58) {
-        description = description.slice(0, 55) + "...";
-      }
+      if (y - rowHeight < 230) break;
 
-      page.drawText(description, {
-        x: leftMargin + 6,
-        y,
-        font,
-        size: 8,
-        color: black,
-        maxWidth: 285,
+      descriptionLines.forEach((line, index) => {
+        page.drawText(line, {
+          x: descriptionX,
+          y: y - (index * descriptionLineHeight),
+          font,
+          size: descriptionSize,
+          color: black,
+        });
       });
       drawRightAlignedText(page, formatQuantity(quantity), 360, y, font, 8, black);
       drawRightAlignedText(page, formatSEK(unitPrice), 434, y, font, 8, black);
       drawRightAlignedText(page, `${item.tax_rate || 25}%`, 476, y, font, 8, black);
       drawRightAlignedText(page, formatSEK(lineTotal), rightMargin - 6, y, font, 8, black);
 
-      y -= 14;
+      y -= rowHeight;
     }
 
     y -= 6;

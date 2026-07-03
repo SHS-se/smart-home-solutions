@@ -11,6 +11,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { getAppEnvironment } from "../_shared/app-env.ts";
 import { getStripe } from "../_shared/stripe-client.ts";
 import { buildSubscriptionInvoice } from "../_shared/subscription-invoice.ts";
+import { subscriptionInvoiceDescription } from "../_shared/subscription-invoice-description.ts";
 import { entitlementFromSubscription } from "../_shared/subscription-entitlement.ts";
 import {
   sendPaymentFailedEmail,
@@ -29,21 +30,6 @@ function todayUtc(): string {
 function dateFromUnixSeconds(value: unknown): string | null {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
   return new Date(value * 1000).toISOString().slice(0, 10);
-}
-
-// deno-lint-ignore no-explicit-any
-function subscriptionInvoiceDescription(invoice: any): string {
-  const line = invoice.lines?.data?.[0];
-  const rawDescription = typeof line?.description === "string" ? line.description.trim() : "";
-  const description = rawDescription || "Månadsabonnemang Smart Home Solutions";
-  const periodEnd: number | undefined = line?.period?.end;
-  const monthLabel = periodEnd
-    ? new Date(periodEnd * 1000).toLocaleDateString("sv-SE", { year: "numeric", month: "long" })
-    : "";
-
-  return monthLabel && !description.includes(monthLabel)
-    ? `${description} – ${monthLabel}`
-    : description;
 }
 
 serve(async (req) => {
