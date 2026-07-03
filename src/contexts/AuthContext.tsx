@@ -93,7 +93,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Check if user is already linked to a customer
         let { data: customer } = await supabase
           .from('customers_with_identity')
-          .select('id, contact_id, contact_name, contact_email, contact_phone, name, billing_email, phone, site_street, site_postcode, site_city, billing_street, billing_postcode, billing_city, billing_same_as_site, is_test')
+          .select('id, contact_id, contact_name, contact_email, contact_phone, name, billing_email, phone, site_street, site_postcode, site_city, billing_street, billing_postcode, billing_city, billing_same_as_site, is_test, marketing_opt_out')
           .eq('user_id', userId)
           .maybeSingle();
 
@@ -101,7 +101,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (!customer && userEmail) {
           const { data: unlinkedCustomer } = await supabase
             .from('customers_with_identity')
-            .select('id, contact_id, contact_name, contact_email, contact_phone, name, billing_email, phone, site_street, site_postcode, site_city, billing_street, billing_postcode, billing_city, billing_same_as_site, is_test')
+            .select('id, contact_id, contact_name, contact_email, contact_phone, name, billing_email, phone, site_street, site_postcode, site_city, billing_street, billing_postcode, billing_city, billing_same_as_site, is_test, marketing_opt_out')
             .eq('contact_email', userEmail)
             .is('user_id', null)
             .maybeSingle();

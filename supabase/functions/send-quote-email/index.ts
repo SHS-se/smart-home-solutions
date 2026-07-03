@@ -3,6 +3,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { Resend } from "https://esm.sh/resend@2.0.0";
 import { getRequestAppOrigin } from "../_shared/app-origin.ts";
 import { getAppEnvironment } from "../_shared/app-env.ts";
+import { loadBusinessSettings } from "../_shared/invoice-company.ts";
+import { buildUnsubscribeInfo, buildEmailFooterHtml, buildEmailFooterText, type UnsubscribeInfo } from "../_shared/email-unsubscribe.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -30,8 +32,9 @@ function buildQuoteEmailHtml(params: {
   totalIncVat: number;
   expiresAt: string;
   viewUrl: string;
+  footerHtml: string;
 }): string {
-  const { customerName, quoteNumber, hardwareTotal, laborTotal, travelTotal, subtotalExVat, vatTotal, totalIncVat, expiresAt, viewUrl } = params;
+  const { customerName, quoteNumber, hardwareTotal, laborTotal, travelTotal, subtotalExVat, vatTotal, totalIncVat, expiresAt, viewUrl, footerHtml } = params;
   const expiryDate = new Date(expiresAt).toLocaleDateString("sv-SE");
 
   return `<!DOCTYPE html>
@@ -79,12 +82,7 @@ function buildQuoteEmailHtml(params: {
 </td></tr>
 
 <!-- Footer -->
-<tr><td style="padding:24px;border-top:1px solid #e8e8ef;">
-  <p style="margin:0;font-size:13px;color:#8a8aa0;text-align:center;line-height:1.5;">
-    Har du frågor? Kontakta oss på<br>
-    <a href="mailto:support@smarthomesolutions.se" style="color:#3b82f6;text-decoration:none;">support@smarthomesolutions.se</a>
-  </p>
-</td></tr>
+${footerHtml}
 
 </table>
 </td></tr>
@@ -104,15 +102,16 @@ function buildPlainText(params: {
   totalIncVat: number;
   expiresAt: string;
   viewUrl: string;
+  footerText: string;
 }): string {
-  const { customerName, quoteNumber, hardwareTotal, laborTotal, travelTotal, subtotalExVat, vatTotal, totalIncVat, expiresAt, viewUrl } = params;
+  const { customerName, quoteNumber, hardwareTotal, laborTotal, travelTotal, subtotalExVat, vatTotal, totalIncVat, expiresAt, viewUrl, footerText } = params;
   const expiryDate = new Date(expiresAt).toLocaleDateString("sv-SE");
   let text = `Offert ${quoteNumber} från Smart Home Solutions\n\nHej ${customerName},\n\nVi har tagit fram en offert åt dig.\n\n`;
   if (hardwareTotal > 0) text += `Hårdvara: ${formatSEK(hardwareTotal)}\n`;
   if (laborTotal > 0) text += `Arbete: ${formatSEK(laborTotal)}\n`;
   if (travelTotal > 0) text += `Resa & övrigt: ${formatSEK(travelTotal)}\n`;
   text += `\nSumma exkl. moms: ${formatSEK(subtotalExVat)}\nMoms: ${formatSEK(vatTotal)}\nTotalt inkl. moms: ${formatSEK(totalIncVat)}\n`;
-  text += `\nVisa offert: ${viewUrl}\n\nOfferten är giltig till ${expiryDate}\n\nFrågor? Kontakta oss: support@smarthomesolutions.se\n`;
+  text += `\nVisa offert: ${viewUrl}\n\nOfferten är giltig till ${expiryDate}\n\n${footerText}`;
   return text;
 }
 
@@ -148,7 +147,7 @@ serve(async (req) => {
     // Load quote with customer info
     const { data: quote, error: quoteError } = await serviceClient
       .from("quotes")
-      .select("*, customers_with_identity!quotes_customer_id_fkey(name, contact_email)")
+      .select("*, customers_with_identity!quotes_customer_id_fkey(name, contact_email, unsubscribe_token)")
       .eq("id", quote_id)
       .single();
 
@@ -196,6 +195,12 @@ serve(async (req) => {
     // Build customer-facing links from the shared frontend URL config.
     const viewUrl = `${appOrigin}/portal/quote/${quote_id}?token=${tokenHex}`;
 
+    // Footer with legal identity + marketing unsubscribe link (deliverability)
+    const company = await loadBusinessSettings(serviceClient);
+    const unsubscribe: UnsubscribeInfo | null = customer.unsubscribe_token
+      ? buildUnsubscribeInfo(appOrigin, customer.unsubscribe_token)
+      : null;
+
     // Build email
     const emailParams = {
       customerName,
@@ -210,8 +215,8 @@ serve(async (req) => {
       viewUrl,
     };
 
-    const htmlBody = buildQuoteEmailHtml(emailParams);
-    const textBody = buildPlainText(emailParams);
+    const htmlBody = buildQuoteEmailHtml({ ...emailParams, footerHtml: buildEmailFooterHtml(company, unsubscribe) });
+    const textBody = buildPlainText({ ...emailParams, footerText: buildEmailFooterText(company, unsubscribe) });
     const subject = `Offert ${quoteNumber} från Smart Home Solutions`;
 
     // Send via Resend
@@ -225,6 +230,7 @@ serve(async (req) => {
       subject,
       html: htmlBody,
       text: textBody,
+      ...(unsubscribe ? { headers: unsubscribe.headers } : {}),
     });
     logStep("Email sent", { emailId: emailResult.data?.id, to: customerEmail });
 

@@ -39,6 +39,7 @@ const Account: React.FC<AccountProps> = ({ customerId: propCustomerId, isStaffVi
     billing_postcode: '',
     billing_city: '',
     billing_same_as_site: true,
+    marketing_opt_out: false,
   });
   const [saving, setSaving] = useState(false);
 
@@ -63,6 +64,7 @@ const Account: React.FC<AccountProps> = ({ customerId: propCustomerId, isStaffVi
           billing_postcode: resolvedCustomerData.billing_postcode || '',
           billing_city: resolvedCustomerData.billing_city || '',
           billing_same_as_site: resolvedCustomerData.billing_same_as_site ?? true,
+          marketing_opt_out: resolvedCustomerData.marketing_opt_out ?? false,
         });
       } else {
         // Customer view: use billing_email
@@ -77,6 +79,7 @@ const Account: React.FC<AccountProps> = ({ customerId: propCustomerId, isStaffVi
           billing_postcode: resolvedCustomerData.billing_postcode || '',
           billing_city: resolvedCustomerData.billing_city || '',
           billing_same_as_site: resolvedCustomerData.billing_same_as_site ?? true,
+          marketing_opt_out: resolvedCustomerData.marketing_opt_out ?? false,
         });
       }
     }
@@ -105,6 +108,11 @@ const Account: React.FC<AccountProps> = ({ customerId: propCustomerId, isStaffVi
         billing_street: formData.billing_same_as_site ? null : (formData.billing_street || null),
         billing_postcode: formData.billing_same_as_site ? null : (formData.billing_postcode || null),
         billing_city: formData.billing_same_as_site ? null : (formData.billing_city || null),
+        marketing_opt_out: formData.marketing_opt_out,
+        // Stamp the opt-out time only when the preference actually changes
+        ...(formData.marketing_opt_out !== (resolvedCustomerData?.marketing_opt_out ?? false)
+          ? { marketing_opt_out_at: formData.marketing_opt_out ? new Date().toISOString() : null }
+          : {}),
       };
 
       const { error: customerError } = await supabase
@@ -316,6 +324,31 @@ const Account: React.FC<AccountProps> = ({ customerId: propCustomerId, isStaffVi
                 </div>
               </div>
             )}
+
+            {/* Marketing email consent (unsubscribe also possible via email links) */}
+            <div className="space-y-2">
+              <h3 className="text-lg font-medium">{t('E-postutskick', 'Email preferences')}</h3>
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="marketing_emails"
+                  checked={!formData.marketing_opt_out}
+                  onCheckedChange={(checked) =>
+                    setFormData((prev) => ({ ...prev, marketing_opt_out: !checked }))
+                  }
+                />
+                <Label htmlFor="marketing_emails" className="cursor-pointer">
+                  {isStaffView
+                    ? t('Kunden tar emot nyheter och erbjudanden via e-post', 'Customer receives news and offers by email')
+                    : t('Jag vill få nyheter och erbjudanden via e-post', 'I want to receive news and offers by email')}
+                </Label>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                {t(
+                  'Offerter, fakturor och viktig kontoinformation skickas alltid.',
+                  'Quotes, invoices and important account information are always sent.'
+                )}
+              </p>
+            </div>
 
             <div className="pt-4 border-t border-border flex justify-end">
               <Button data-testid="account-save-button" onClick={handleSave} disabled={saving}>

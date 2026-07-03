@@ -18,6 +18,7 @@ const Knowledge = lazy(() => import("./pages/Knowledge"));
 const ArticleRouter = lazy(() => import("./pages/knowledge/ArticleRouter"));
 const About = lazy(() => import("./pages/About"));
 const Contact = lazy(() => import("./pages/Contact"));
+const Unsubscribe = lazy(() => import("./pages/Unsubscribe"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const Login = lazy(() => import("./pages/portal/Login"));
 const ResetPassword = lazy(() => import("./pages/portal/ResetPassword"));
@@ -140,6 +141,7 @@ const App = () => (
                   <Route path="/knowledge/:slug" element={<ArticleRouter />} />
                   <Route path="/about" element={<About />} />
                   <Route path="/contact" element={<Contact />} />
+                  <Route path="/unsubscribe" element={<Unsubscribe />} />
 
                   {/* Auth flows (standalone, no shell) */}
                   <Route path="/login" element={<Login />} />

@@ -889,12 +889,15 @@ export type Database = {
           created_at: string
           id: string
           is_test: boolean
+          marketing_opt_out: boolean
+          marketing_opt_out_at: string | null
           primary_home_id: string | null
           site_city: string | null
           site_postcode: string | null
           site_street: string | null
           subscription_active: boolean
           subscription_expires_at: string | null
+          unsubscribe_token: string
           user_id: string | null
         }
         Insert: {
@@ -906,12 +909,15 @@ export type Database = {
           created_at?: string
           id?: string
           is_test?: boolean
+          marketing_opt_out?: boolean
+          marketing_opt_out_at?: string | null
           primary_home_id?: string | null
           site_city?: string | null
           site_postcode?: string | null
           site_street?: string | null
           subscription_active?: boolean
           subscription_expires_at?: string | null
+          unsubscribe_token?: string
           user_id?: string | null
         }
         Update: {
@@ -923,12 +929,15 @@ export type Database = {
           created_at?: string
           id?: string
           is_test?: boolean
+          marketing_opt_out?: boolean
+          marketing_opt_out_at?: string | null
           primary_home_id?: string | null
           site_city?: string | null
           site_postcode?: string | null
           site_street?: string | null
           subscription_active?: boolean
           subscription_expires_at?: string | null
+          unsubscribe_token?: string
           user_id?: string | null
         }
         Relationships: [
@@ -3153,11 +3162,14 @@ export type Database = {
           created_at: string | null
           id: string | null
           is_test: boolean | null
+          marketing_opt_out: boolean | null
+          marketing_opt_out_at: string | null
           name: string | null
           phone: string | null
           site_city: string | null
           site_postcode: string | null
           site_street: string | null
+          unsubscribe_token: string | null
           user_id: string | null
         }
         Relationships: [

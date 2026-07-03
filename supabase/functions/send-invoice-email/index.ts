@@ -5,6 +5,7 @@ import { getRequestAppOrigin } from "../_shared/app-origin.ts";
 import { getAppEnvironment } from "../_shared/app-env.ts";
 import { buildInvoicePaymentDetails } from "../_shared/invoice-document.ts";
 import { loadInvoiceBusinessSettings } from "../_shared/invoice-company.ts";
+import { buildUnsubscribeInfo, buildEmailFooterHtml, buildEmailFooterText, type UnsubscribeInfo } from "../_shared/email-unsubscribe.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -63,7 +64,7 @@ serve(async (req) => {
     if (directInvoiceId) {
       const { data, error } = await serviceClient
         .from('invoices')
-        .select('*, customer:customers_with_identity!invoices_customer_id_fkey(name, contact_email, billing_email)')
+        .select('*, customer:customers_with_identity!invoices_customer_id_fkey(name, contact_email, billing_email, unsubscribe_token)')
         .eq('id', directInvoiceId)
         .single();
       if (error || !data) throw new Error("Invoice not found");
@@ -71,7 +72,7 @@ serve(async (req) => {
     } else if (quote_id) {
       const { data, error } = await serviceClient
         .from('invoices')
-        .select('*, customer:customers_with_identity!invoices_customer_id_fkey(name, contact_email, billing_email)')
+        .select('*, customer:customers_with_identity!invoices_customer_id_fkey(name, contact_email, billing_email, unsubscribe_token)')
         .eq('quote_id', quote_id)
         .single();
       if (error || !data) throw new Error("No invoice found for this quote");
@@ -130,6 +131,11 @@ serve(async (req) => {
     const emailSubject = customSubject || `Faktura ${invoice.invoice_number} från Smart Home Solutions`;
     const invoiceNumber = invoice.invoice_number || invoice.id;
     const company = await loadInvoiceBusinessSettings(serviceClient, invoice.id);
+    const unsubscribe: UnsubscribeInfo | null = customer?.unsubscribe_token
+      ? buildUnsubscribeInfo(appOrigin, customer.unsubscribe_token)
+      : null;
+    const footerHtml = buildEmailFooterHtml(company, unsubscribe);
+    const footerText = buildEmailFooterText(company, unsubscribe);
     const paymentDetails = await buildInvoicePaymentDetails({
       invoiceNumber,
       amount: total,
@@ -166,19 +172,14 @@ serve(async (req) => {
 <tr><td style="padding:0 24px 24px;">
   <a href="${viewUrl}" target="_blank" style="display:block;background-color:#3b82f6;color:#ffffff;text-decoration:none;text-align:center;padding:16px;border-radius:8px;font-size:16px;font-weight:600;line-height:1;">Visa faktura</a>
 </td></tr>
-<tr><td style="padding:24px;border-top:1px solid #e8e8ef;">
-  <p style="margin:0;font-size:13px;color:#8a8aa0;text-align:center;line-height:1.5;">
-    Har du frågor? Kontakta oss på<br>
-    <a href="mailto:${company.supportEmail}" style="color:#3b82f6;text-decoration:none;">${company.supportEmail}</a>
-  </p>
-</td></tr>
+${footerHtml}
 </table>
 </td></tr>
 </table>
 </body>
 </html>`;
 
-    const textBody = `Faktura ${invoiceNumber} från Smart Home Solutions\n\nHej ${customerName},\n\n${customMessage || 'Här kommer din faktura.'}\n\nFakturanummer: ${invoiceNumber}\nFörfallodatum: ${dueDate}\nAtt betala: ${formatSEK(total)}\nBankgiro: ${paymentDetails.bankgiro_number || 'Ej konfigurerat'}\nBetalningsreferens: ${paymentDetails.payment_reference || invoiceNumber}\n\nVisa faktura: ${viewUrl}\n\nFrågor? Kontakta oss: ${company.supportEmail}\n`;
+    const textBody = `Faktura ${invoiceNumber} från Smart Home Solutions\n\nHej ${customerName},\n\n${customMessage || 'Här kommer din faktura.'}\n\nFakturanummer: ${invoiceNumber}\nFörfallodatum: ${dueDate}\nAtt betala: ${formatSEK(total)}\nBankgiro: ${paymentDetails.bankgiro_number || 'Ej konfigurerat'}\nBetalningsreferens: ${paymentDetails.payment_reference || invoiceNumber}\n\nVisa faktura: ${viewUrl}\n\n${footerText}`;
 
     let emailResult;
     try {
@@ -189,6 +190,7 @@ serve(async (req) => {
         subject: emailSubject,
         html: htmlBody,
         text: textBody,
+        ...(unsubscribe ? { headers: unsubscribe.headers } : {}),
       });
     } catch (emailError) {
       await serviceClient.from('invoices').update({

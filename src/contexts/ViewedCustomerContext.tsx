@@ -53,7 +53,7 @@ export const ViewedCustomerProvider: React.FC<ViewedCustomerProviderProps> = ({ 
     try {
       const { data, error: fetchError } = await supabase
         .from('customers_with_identity')
-        .select('id, contact_id, contact_name, contact_email, contact_phone, name, billing_email, phone, site_street, site_postcode, site_city, billing_street, billing_postcode, billing_city, billing_same_as_site, is_test')
+        .select('id, contact_id, contact_name, contact_email, contact_phone, name, billing_email, phone, site_street, site_postcode, site_city, billing_street, billing_postcode, billing_city, billing_same_as_site, is_test, marketing_opt_out')
         .eq('id', customerId)
         .single();
 
