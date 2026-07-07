@@ -885,6 +885,50 @@ Operational rule:
 - Preserve a link from the correction to the originally affected quarter
 - Allow a later amended snapshot if the business chooses to refile or document adjustment reasoning
 
+#### Implementation status (updated 2026-07-07)
+
+Rounding — DONE. VAT declaration boxes now **truncate öre to whole kronor**
+(`Math.trunc`, `roundVatDeclarationAmount` in `src/lib/vat-declaration.ts`),
+matching Skatteverket's "öretalen faller bort" rule rather than rounding to the
+nearest krona. Reverse-charge output VAT is split across boxes 30/31/32 by each
+line's actual rate (25/12/6) via `reverseChargeVatRate`, and box 48 deducts the
+same deemed VAT — so a reduced-rate EU purchase no longer misdeclares at 25%.
+
+Sales corrections into a filed quarter — DONE (automatic). When a finalized
+sales invoice belongs to a month whose period is locked by a filed VAT quarter,
+`postSalesInvoice` (`src/lib/sales-posting.ts`) posts it into the **first open
+period** as `source_type = 'sales_invoice_correction'` with a mandatory reason,
+a snapshot linking back to the original invoice date, and it surfaces in the
+next quarter's declaration automatically (VatDeclarationFlow lists corrections
+"from locked periods included in this declaration"). This is the
+"post correction in the next open period" behaviour, and the atomic posting RPC
+guarantees the correction verification, its journal lines and the link commit
+together.
+
+Remaining for a complete correction workflow (NOT yet built):
+- **Purchase-side corrections.** There is no equivalent path to re-post or
+  adjust an already-posted *purchase* (input VAT) whose period is filed. A
+  supplier credit note or a reclassified `vat_treatment` after filing currently
+  has no guided flow — it must be booked as a fresh purchase in the open period.
+- **Reversal / adjusting entries UI.** Section 7's "full reversal", "reversal
+  plus replacement" and "adjusting entry" options are not exposed. Posted
+  verifications are immutable (correct), but staff cannot yet generate a linked
+  reversing verification from the journal view.
+- **Formal reopen + amended snapshot.** There is no "reopen a filed quarter"
+  action and no way to produce an *amended* `vat_period_snapshot` for a refile;
+  the snapshot is single and terminal once filed. If Skatteverket requires an
+  amended return (rättelse) for a specific quarter rather than absorbing the
+  adjustment into the next period, that is a manual process today.
+- **Correction reason taxonomy + audit surface.** Corrections capture a free-text
+  reason; there is no structured reason code or a report that lists every
+  correction and the quarter it adjusts, which the audit log requirement in
+  section 6 calls for.
+
+Practical guidance for now: absorb corrections into the next open declaration
+(supported for sales; book purchase adjustments as new dated entries). Only if
+Skatteverket asks for a per-quarter rättelse do we need the reopen/amended-
+snapshot work above — treat that as the next accounting milestone.
+
 ### ROT/RUT deductions
 
 ROT (rotavdrag) and RUT (rutavdrag) are Swedish tax deductions for qualifying labor on residential properties. They are highly relevant for any business billing labor for home installation, renovation, or home-service work.
