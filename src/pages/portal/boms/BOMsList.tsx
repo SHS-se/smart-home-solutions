@@ -6,6 +6,7 @@ import { naturalSort } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useTableSort, sortItems } from '@/hooks/use-table-sort';
+import { fetchAllRows } from '@/lib/fetch-all-rows';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -95,11 +96,12 @@ const BOMsList: React.FC = () => {
   const { data: boms = [], isLoading } = useQuery({
     queryKey: ['boms'],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const data = await fetchAllRows((from, to) => supabase
         .from('boms')
         .select('*, customers:customers_with_identity!boms_customer_id_fkey(name, contact_name)')
-        .order('created_at', { ascending: false });
-      if (error) throw error;
+        .order('created_at', { ascending: false })
+        .order('id')
+        .range(from, to));
       return data.map(bom => ({
         ...bom,
         bom_group_id: (bom as { bom_group_id?: string }).bom_group_id,

@@ -1,5 +1,6 @@
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { Loader2, Building2, ClipboardList } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -7,6 +8,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useTableSort, sortItems } from '@/hooks/use-table-sort';
+import { fetchAllRows } from '@/lib/fetch-all-rows';
 import {
   Table,
   TableBody,
@@ -38,8 +40,6 @@ const Customers: React.FC = () => {
   const { user, isStaff, loading } = useAuth();
   const navigate = useNavigate();
   const { t } = useLanguage();
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [customersLoading, setCustomersLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const { sortColumn, sortDirection, handleSort } = useTableSort<SortColumn>({ defaultColumn: 'name' });
 
@@ -52,30 +52,16 @@ const Customers: React.FC = () => {
     }
   }, [user, isStaff, loading, navigate]);
 
-  const fetchCustomers = useCallback(async () => {
-    if (!isStaff) return;
-    setCustomersLoading(true);
-
-    try {
-      const { data, error } = await supabase
-        .from('customers_with_identity')
-        .select('id, name, billing_email, phone, created_at, contact_name, contact_email, contact_phone')
-        .order('name', { ascending: true });
-
-      if (error) throw error;
-      setCustomers((data || []) as Customer[]);
-    } catch (error) {
-      console.error('Error fetching customers:', error);
-    } finally {
-      setCustomersLoading(false);
-    }
-  }, [isStaff]);
-
-  useEffect(() => {
-    if (!loading && isStaff) {
-      fetchCustomers();
-    }
-  }, [isStaff, loading, fetchCustomers]);
+  const { data: customers = [], isLoading: customersLoading, refetch } = useQuery({
+    queryKey: ['customers-list'],
+    enabled: !loading && isStaff,
+    queryFn: () => fetchAllRows<Customer>((from, to) => supabase
+      .from('customers_with_identity')
+      .select('id, name, billing_email, phone, created_at, contact_name, contact_email, contact_phone')
+      .order('name', { ascending: true })
+      .order('id')
+      .range(from, to)),
+  });
 
   const filteredCustomers = useMemo(() => {
     const searchLower = searchQuery.toLowerCase();
@@ -177,7 +163,7 @@ const Customers: React.FC = () => {
                         <CustomerActionsMenu
                           customerId={customer.id}
                           customerName={customer.name || t('Namnlös', 'Unnamed')}
-                          onUpdated={fetchCustomers}
+                          onUpdated={refetch}
                         />
                       </TableCell>
                     </TableRow>

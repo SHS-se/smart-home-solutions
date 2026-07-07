@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { MONTH_NAMES_SV, MONTH_NAMES_EN, formatExchangeRate, formatSEK, getAccountName } from '@/lib/accounting-utils';
 import { formatCurrencyAmount, normalizeCurrency } from '@/lib/accounting-fx';
+import { fetchAllRows } from '@/lib/fetch-all-rows';
 import { Filter, Download, Info, AlertTriangle, CheckCircle } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
@@ -30,30 +31,37 @@ const AccountingJournal: React.FC = () => {
 
   const { data: verificationOptions } = useQuery({
     queryKey: ['acc-verification-options'],
-    queryFn: async () => {
-      const { data } = await supabase
+    queryFn: () => fetchAllRows((from, to) =>
+      supabase
         .from('acc_verifications')
         .select('id, verification_number, verification_date, description, period_id')
         .eq('is_posted', true)
-        .order('verification_date', { ascending: false });
-      return data || [];
-    },
+        .order('verification_date', { ascending: false })
+        .order('id')
+        .range(from, to)),
   });
 
   const { data: journalData, isLoading } = useQuery({
     queryKey: ['acc-journal', periodFilter, accountFilter, verificationFilter],
     queryFn: async () => {
-      let vQuery = supabase.from('acc_verifications').select('id, verification_number, verification_date, description, period_id').eq('is_posted', true).order('verification_date', { ascending: false });
-      if (periodFilter !== 'all') vQuery = vQuery.eq('period_id', periodFilter);
-      if (verificationFilter !== 'all') vQuery = vQuery.eq('id', verificationFilter);
-      const { data: verifications } = await vQuery;
-      if (!verifications || verifications.length === 0) return [];
-      const vIds = verifications.map(v => v.id);
-      let lQuery = supabase.from('acc_journal_lines').select('*').in('verification_id', vIds).order('sort_order');
-      if (accountFilter !== 'all') lQuery = lQuery.eq('account', accountFilter);
-      const { data: lines } = await lQuery;
+      const verifications = await fetchAllRows((from, to) => {
+        let vQuery = supabase.from('acc_verifications').select('id, verification_number, verification_date, description, period_id').eq('is_posted', true).order('verification_date', { ascending: false }).order('id');
+        if (periodFilter !== 'all') vQuery = vQuery.eq('period_id', periodFilter);
+        if (verificationFilter !== 'all') vQuery = vQuery.eq('id', verificationFilter);
+        return vQuery.range(from, to);
+      });
+      if (verifications.length === 0) return [];
+      // Fetch lines without an .in(ids) filter (thousands of UUIDs would blow
+      // the request URL) and join client-side against the verification set.
+      const vIdSet = new Set(verifications.map(v => v.id));
+      const lines = await fetchAllRows((from, to) => {
+        let lQuery = supabase.from('acc_journal_lines').select('*').order('verification_id').order('sort_order').order('id');
+        if (verificationFilter !== 'all') lQuery = lQuery.eq('verification_id', verificationFilter);
+        if (accountFilter !== 'all') lQuery = lQuery.eq('account', accountFilter);
+        return lQuery.range(from, to);
+      });
       return verifications.flatMap(v => {
-        const vLines = (lines || []).filter(l => l.verification_id === v.id);
+        const vLines = lines.filter(l => vIdSet.has(l.verification_id) && l.verification_id === v.id);
         return vLines.map(l => ({ ...l, verification_date: v.verification_date, verification_number: v.verification_number, verification_description: v.description }));
       });
     },

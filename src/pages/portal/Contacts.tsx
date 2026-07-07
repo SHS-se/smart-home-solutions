@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { Loader2, Search } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -22,6 +23,7 @@ import {
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
 import { useTableSort, sortItems } from '@/hooks/use-table-sort';
+import { fetchAllRows } from '@/lib/fetch-all-rows';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -44,9 +46,7 @@ const Contacts: React.FC = () => {
   const { user, isStaff, loading: authLoading } = useAuth();
   const { t } = useLanguage();
   const { toast } = useToast();
-  
-  const [contacts, setContacts] = useState<Contact[]>([]);
-  const [loading, setLoading] = useState(true);
+
   const [searchQuery, setSearchQuery] = useState('');
   const [filter, setFilter] = useState<FilterType>('leads');
   const { sortColumn, sortDirection, handleSort } = useTableSort<SortColumn>({ defaultColumn: 'name' });
@@ -57,19 +57,15 @@ const Contacts: React.FC = () => {
     }
   }, [user, authLoading, navigate]);
 
-  useEffect(() => {
-    if (user && isStaff) {
-      fetchContacts();
-    }
-  }, [user, isStaff, filter]);
-
-  const fetchContacts = async () => {
-    setLoading(true);
-    try {
+  const { data: contacts = [], isLoading: loading, error: contactsError } = useQuery({
+    queryKey: ['contacts-list', filter],
+    enabled: Boolean(user && isStaff),
+    queryFn: () => fetchAllRows<Contact>((from, to) => {
       let query = supabase
         .from('contacts')
         .select('id, name, email, phone, message, created_at, converted_to_customer_id')
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .order('id');
 
       if (filter === 'leads') {
         query = query.is('converted_to_customer_id', null);
@@ -77,21 +73,20 @@ const Contacts: React.FC = () => {
         query = query.not('converted_to_customer_id', 'is', null);
       }
 
-      const { data, error } = await query;
+      return query.range(from, to);
+    }),
+  });
 
-      if (error) throw error;
-      setContacts(data || []);
-    } catch (error) {
-      console.error('Error fetching contacts:', error);
+  useEffect(() => {
+    if (contactsError) {
+      console.error('Error fetching contacts:', contactsError);
       toast({
         title: t('Fel', 'Error'),
         description: t('Kunde inte hämta kontakter', 'Could not fetch contacts'),
         variant: 'destructive',
       });
-    } finally {
-      setLoading(false);
     }
-  };
+  }, [contactsError, toast, t]);
 
   const filteredContacts = useMemo(() => {
     const filtered = contacts.filter((contact) => {

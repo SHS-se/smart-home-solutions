@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { Loader2, Plus } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -19,6 +20,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useTableSort, sortItems } from '@/hooks/use-table-sort';
 import { useSubscription } from '@/hooks/use-subscription';
+import { fetchAllRows } from '@/lib/fetch-all-rows';
 import { supabase } from '@/integrations/supabase/client';
 
 interface Ticket {
@@ -45,8 +47,6 @@ const TicketsList: React.FC<TicketsListProps> = ({ customerId: propCustomerId, i
   const { isSubscribed, loading: subscriptionLoading } = useSubscription();
   const navigate = useNavigate();
   const { t } = useLanguage();
-  const [tickets, setTickets] = useState<Ticket[]>([]);
-  const [ticketsLoading, setTicketsLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const { sortColumn, sortDirection, handleSort } = useTableSort<SortColumn>({ 
@@ -88,37 +88,24 @@ const TicketsList: React.FC<TicketsListProps> = ({ customerId: propCustomerId, i
     }
   }, [user, loading, navigate]);
 
-  useEffect(() => {
-    const fetchTickets = async () => {
-      if (!user) return;
-      setTicketsLoading(true);
+  const { data: tickets = [], isLoading: ticketsLoading } = useQuery({
+    queryKey: ['tickets-list', scopedCustomerId ?? 'all'],
+    enabled: !loading && Boolean(user),
+    queryFn: () => fetchAllRows<Ticket>((from, to) => {
+      let query = supabase
+        .from('tickets')
+        .select('*, customers:customers_with_identity!tickets_customer_id_fkey(name, contact_name)')
+        .order('last_activity_at', { ascending: false })
+        .order('id');
 
-      try {
-        let query = supabase
-          .from('tickets')
-          .select('*, customers:customers_with_identity!tickets_customer_id_fkey(name, contact_name)')
-          .order('last_activity_at', { ascending: false });
-
-        // Scope to specific customer
-        if (scopedCustomerId) {
-          query = query.eq('customer_id', scopedCustomerId);
-        }
-
-        const { data, error } = await query;
-
-        if (error) throw error;
-        setTickets(data || []);
-      } catch (error) {
-        console.error('Error fetching tickets:', error);
-      } finally {
-        setTicketsLoading(false);
+      // Scope to specific customer
+      if (scopedCustomerId) {
+        query = query.eq('customer_id', scopedCustomerId);
       }
-    };
 
-    if (!loading) {
-      fetchTickets();
-    }
-  }, [user, customerData, isStaff, loading, scopedCustomerId]);
+      return query.range(from, to);
+    }),
+  });
 
   const filteredTickets = useMemo(() => {
     const filtered = tickets.filter((ticket) => {

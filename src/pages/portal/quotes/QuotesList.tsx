@@ -5,6 +5,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useTableSort, sortItems } from '@/hooks/use-table-sort';
+import { fetchAllRows } from '@/lib/fetch-all-rows';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -74,18 +75,20 @@ const QuotesList: React.FC = () => {
   const { data: quotes = [], isLoading } = useQuery({
     queryKey: ['quotes'],
     queryFn: async () => {
-      // Fetch quotes
-      const { data: quotesData, error: quotesError } = await supabase
-        .from('quotes')
-        .select('*, customers:customers_with_identity!quotes_customer_id_fkey(name, contact_name), boms(project_name)')
-        .order('created_at', { ascending: false });
-      if (quotesError) throw quotesError;
-
-      // Fetch computed totals
-      const { data: totalsData, error: totalsError } = await supabase
-        .from('quote_computed_totals')
-        .select('*');
-      if (totalsError) throw totalsError;
+      // Paged so the list never silently truncates at PostgREST's row cap.
+      const [quotesData, totalsData] = await Promise.all([
+        fetchAllRows((from, to) => supabase
+          .from('quotes')
+          .select('*, customers:customers_with_identity!quotes_customer_id_fkey(name, contact_name), boms(project_name)')
+          .order('created_at', { ascending: false })
+          .order('id')
+          .range(from, to)),
+        fetchAllRows((from, to) => supabase
+          .from('quote_computed_totals')
+          .select('*')
+          .order('quote_id')
+          .range(from, to)),
+      ]);
 
       // Create a map for quick lookup
       const totalsMap = new Map(totalsData?.map(t => [t.quote_id, t]) || []);

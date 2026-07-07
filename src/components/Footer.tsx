@@ -2,12 +2,12 @@ import { Link } from 'react-router-dom';
 import { Home, Mail, MapPin, Phone } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import ObfuscatedEmail from '@/components/ObfuscatedEmail';
-import { useBusinessSettings } from '@/hooks/use-business-settings';
+import { usePublicBusinessSettings } from '@/hooks/use-business-settings';
 const Footer = () => {
   const {
     t
   } = useLanguage();
-  const { settings } = useBusinessSettings();
+  const { settings } = usePublicBusinessSettings();
   const [emailAddress, emailDomain] = (settings.contact_email ?? 'sales@smarthomesolutions.se').split('@');
   const serviceLinks = [{
     href: '/services#installation',

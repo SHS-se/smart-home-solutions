@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { isInvoicePostable, type PostableInvoice } from '@/lib/sales-posting';
+import { fetchAllRows } from '@/lib/fetch-all-rows';
 
 export interface SalesInvoiceRow extends PostableInvoice {
   customer: { name: string | null } | null;
@@ -15,15 +16,21 @@ export function useSalesInvoices() {
   return useQuery({
     queryKey: ['acc-sales-invoices'],
     queryFn: async (): Promise<SalesInvoiceRow[]> => {
-      const [{ data: invoices }, { data: totals }, { data: links }, { data: payments }] = await Promise.all([
-        supabase
-          .from('invoices')
-          .select('id, invoice_number, customer_id, status, finalized_at, issued_at, due_date, voided_at, customer:customers_with_identity!invoices_customer_id_fkey(name), line_items:invoice_line_items(description, quantity, unit_price, tax_rate, line_type)')
-          .not('finalized_at', 'is', null)
-          .order('invoice_number'),
-        supabase.from('invoice_computed_totals').select('*'),
-        supabase.from('acc_sales_invoice_links').select('invoice_id, verification_id, posting_reason, verification:acc_verifications(verification_number)'),
-        supabase.from('invoice_payments').select('invoice_id, amount'),
+      const [invoices, totals, links, payments] = await Promise.all([
+        fetchAllRows((from, to) =>
+          supabase
+            .from('invoices')
+            .select('id, invoice_number, customer_id, status, finalized_at, issued_at, due_date, voided_at, customer:customers_with_identity!invoices_customer_id_fkey(name), line_items:invoice_line_items(description, quantity, unit_price, tax_rate, line_type)')
+            .not('finalized_at', 'is', null)
+            .order('invoice_number')
+            .order('id')
+            .range(from, to)),
+        fetchAllRows((from, to) =>
+          supabase.from('invoice_computed_totals').select('*').order('invoice_id').range(from, to)),
+        fetchAllRows((from, to) =>
+          supabase.from('acc_sales_invoice_links').select('invoice_id, verification_id, posting_reason, verification:acc_verifications(verification_number)').order('invoice_id').range(from, to)),
+        fetchAllRows((from, to) =>
+          supabase.from('invoice_payments').select('invoice_id, amount').order('invoice_id').range(from, to)),
       ]);
       return (invoices || [])
         .filter((inv) => isInvoicePostable(inv as PostableInvoice))

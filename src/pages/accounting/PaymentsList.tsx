@@ -15,6 +15,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { formatSEK, formatSEKDecimal, getAccountName } from '@/lib/accounting-utils';
 import { buildCustomerPaymentJournalLines, STRIPE_CLEARING_ACCOUNT, type CustomerPaymentMethod } from '@/lib/sales-accounting';
 import { recordAndPostCustomerPayment } from '@/lib/sales-posting';
+import { fetchAllRows } from '@/lib/fetch-all-rows';
 import { useSalesInvoices } from '@/hooks/use-sales-invoices';
 import { toast } from 'sonner';
 import { Info, Plus, AlertTriangle } from 'lucide-react';
@@ -33,20 +34,26 @@ const PaymentsList: React.FC = () => {
   const { data: payments, isLoading } = useQuery({
     queryKey: ['acc-invoice-payments'],
     queryFn: async () => {
-      const [{ data: paymentRows }, { data: verifications }] = await Promise.all([
-        supabase
-          .from('invoice_payments')
-          .select('id, invoice_id, payment_date, amount, method, reference, note, invoice:invoices(invoice_number)')
-          .order('payment_date', { ascending: false }),
-        supabase
-          .from('acc_verifications')
-          .select('id, source_id, verification_number')
-          .eq('source_type', 'customer_payment')
-          .eq('is_posted', true),
+      const [paymentRows, verifications] = await Promise.all([
+        fetchAllRows((from, to) =>
+          supabase
+            .from('invoice_payments')
+            .select('id, invoice_id, payment_date, amount, method, reference, note, invoice:invoices(invoice_number)')
+            .order('payment_date', { ascending: false })
+            .order('id')
+            .range(from, to)),
+        fetchAllRows((from, to) =>
+          supabase
+            .from('acc_verifications')
+            .select('id, source_id, verification_number')
+            .eq('source_type', 'customer_payment')
+            .eq('is_posted', true)
+            .order('id')
+            .range(from, to)),
       ]);
-      return (paymentRows || []).map(p => ({
+      return paymentRows.map(p => ({
         ...p,
-        verification: (verifications || []).find(v => v.source_id === p.id) || null,
+        verification: verifications.find(v => v.source_id === p.id) || null,
       }));
     },
   });
@@ -56,8 +63,9 @@ const PaymentsList: React.FC = () => {
   const { data: stripeClearing } = useQuery({
     queryKey: ['acc-stripe-clearing-balance'],
     queryFn: async () => {
-      const { data } = await supabase.from('acc_journal_lines').select('debit, credit').eq('account', STRIPE_CLEARING_ACCOUNT);
-      return (data || []).reduce((s, l) => s + Number(l.debit) - Number(l.credit), 0);
+      const data = await fetchAllRows((from, to) =>
+        supabase.from('acc_journal_lines').select('debit, credit').eq('account', STRIPE_CLEARING_ACCOUNT).order('id').range(from, to));
+      return data.reduce((s, l) => s + Number(l.debit) - Number(l.credit), 0);
     },
   });
 

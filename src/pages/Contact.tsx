@@ -13,7 +13,7 @@ import { z } from 'zod';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import ObfuscatedEmail from '@/components/ObfuscatedEmail';
-import { useBusinessSettings } from '@/hooks/use-business-settings';
+import { usePublicBusinessSettings } from '@/hooks/use-business-settings';
 import {
   flattenTree,
   evaluateVisibility,
@@ -166,7 +166,7 @@ const HomeQuestionsSection = ({
 const Contact = () => {
   const { t } = useLanguage();
   const { toast } = useToast();
-  const { settings } = useBusinessSettings();
+  const { settings } = usePublicBusinessSettings();
   const [emailAddress, emailDomain] = (settings.contact_email ?? 'sales@smarthomesolutions.se').split('@');
   const [submitted, setSubmitted] = useState(false);
   const [onboarding, setOnboarding] = useState(false);

@@ -31,6 +31,19 @@ export const BUSINESS_SETTINGS_FALLBACK: BusinessSettings = {
 };
 
 export const BUSINESS_SETTINGS_QUERY_KEY = ['business_settings'] as const;
+export const PUBLIC_BUSINESS_SETTINGS_QUERY_KEY = ['business_settings_public'] as const;
+
+/** Fields that never appear in the public view (payment details). */
+const PAYMENT_FIELDS = ['bankgiro_number', 'iban', 'bic', 'bank_name'] as const;
+
+/** Business settings minus the payment details that only staff/paying customers see. */
+export type PublicBusinessSettings = Omit<BusinessSettings, (typeof PAYMENT_FIELDS)[number]>;
+
+export const PUBLIC_BUSINESS_SETTINGS_FALLBACK: PublicBusinessSettings = (() => {
+  const full = { ...BUSINESS_SETTINGS_FALLBACK } as Partial<BusinessSettings>;
+  for (const field of PAYMENT_FIELDS) delete full[field];
+  return full as PublicBusinessSettings;
+})();
 
 async function fetchBusinessSettings(): Promise<BusinessSettings> {
   const { data, error } = await supabase
@@ -42,10 +55,22 @@ async function fetchBusinessSettings(): Promise<BusinessSettings> {
   return data ?? BUSINESS_SETTINGS_FALLBACK;
 }
 
+async function fetchPublicBusinessSettings(): Promise<PublicBusinessSettings> {
+  // Reads the business_settings_public view, which excludes payment details and
+  // is readable by anon + authenticated (the base table is staff-only).
+  const { data, error } = await supabase
+    .from('business_settings_public' as never)
+    .select('*')
+    .eq('id', 1)
+    .maybeSingle();
+  if (error) throw error;
+  return (data as PublicBusinessSettings | null) ?? PUBLIC_BUSINESS_SETTINGS_FALLBACK;
+}
+
 /**
- * Reads the singleton business settings row. Readable by everyone (the row has
- * a public SELECT policy), so it works on the public contact page and footer as
- * well as inside the authenticated portal.
+ * Full business settings including payment details. The base table is
+ * staff-only, so this is for staff surfaces (settings page, accounting).
+ * Customer/anon surfaces must use {@link usePublicBusinessSettings} instead.
  */
 export function useBusinessSettings() {
   const query = useQuery({
@@ -56,5 +81,21 @@ export function useBusinessSettings() {
   return {
     ...query,
     settings: query.data ?? BUSINESS_SETTINGS_FALLBACK,
+  };
+}
+
+/**
+ * Public business settings (no payment details). Safe on the marketing pages,
+ * the footer, and anywhere shown to customers or anonymous visitors.
+ */
+export function usePublicBusinessSettings() {
+  const query = useQuery({
+    queryKey: PUBLIC_BUSINESS_SETTINGS_QUERY_KEY,
+    queryFn: fetchPublicBusinessSettings,
+    staleTime: 5 * 60 * 1000,
+  });
+  return {
+    ...query,
+    settings: query.data ?? PUBLIC_BUSINESS_SETTINGS_FALLBACK,
   };
 }

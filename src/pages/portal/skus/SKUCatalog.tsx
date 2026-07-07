@@ -6,6 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { naturalSort } from '@/lib/utils';
 import { useTableSort } from '@/hooks/use-table-sort';
+import { fetchAllRows } from '@/lib/fetch-all-rows';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -89,11 +90,13 @@ const SKUCatalog: React.FC = () => {
   const { data: skus = [], isLoading } = useQuery({
     queryKey: ['skus'],
     queryFn: async () => {
-      const { data, error } = await supabase
+      // Paged so the catalog never silently truncates at PostgREST's row cap.
+      const data = await fetchAllRows((from, to) => supabase
         .from('skus')
         .select('*, sku_categories!skus_category_id_fkey(id, name)')
-        .order('sku');
-      if (error) throw error;
+        .order('sku')
+        .order('id')
+        .range(from, to));
       // Map the joined category name
       return (data || []).map(sku => ({
         ...sku,
