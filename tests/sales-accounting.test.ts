@@ -73,8 +73,9 @@ Deno.test("box49 equals output VAT minus input VAT", () => {
     box32: 0,
     box48: 3667,
   });
-  // Output VAT (10+11+12+30+31+32) − input VAT (48)
-  assertEquals(amounts.momsBetala, (1688 + 1678) - 3667);
+  // Output VAT (10+11+12+30+31+32) − input VAT (48). Box 10 (1687.5) is
+  // truncated to 1687 per Skatteverket's öre-dropping rule.
+  assertEquals(amounts.momsBetala, (1687 + 1678) - 3667);
 });
 
 const PERIODS_Q1_LOCKED: AccountingPeriodRow[] = [

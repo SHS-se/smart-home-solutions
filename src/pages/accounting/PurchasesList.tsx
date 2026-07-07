@@ -18,6 +18,7 @@ import {
   formatSEKDecimal,
 } from '@/lib/accounting-utils';
 import { formatCurrencyAmount, isForeignCurrency, normalizeCurrency } from '@/lib/accounting-fx';
+import { fetchAllRows } from '@/lib/fetch-all-rows';
 import {
   calculateDeclarationBoxAmount,
   isDeclarationBoxFilter,
@@ -52,6 +53,8 @@ const PurchasesList: React.FC = () => {
     '21': t('Ruta 21', 'Box 21'),
     '22': t('Ruta 22', 'Box 22'),
     '30': t('Ruta 30', 'Box 30'),
+    '31': t('Ruta 31', 'Box 31'),
+    '32': t('Ruta 32', 'Box 32'),
     '48': t('Ruta 48', 'Box 48'),
   };
   const declarationBoxTooltips: Record<DeclarationBoxFilter, string> = {
@@ -68,12 +71,20 @@ const PurchasesList: React.FC = () => {
       'The box amount for box 22 is the sum of net amounts for matching purchases of services from outside the EU. This table shows exact cents, while the declaration box is rounded to whole kronor.',
     ),
     '30': t(
-      'Rutbeloppet för ruta 30 är 25 % av nettobeloppet för varje matchande rad med omvänd skattskyldighet, summerat över urvalet. Tabellen visar exakta ören, medan deklarationsrutan avrundas till hela kronor.',
-      'The box amount for box 30 is 25% of the net amount for each matching reverse-charge line, summed across the filtered result. This table shows exact cents, while the declaration box is rounded to whole kronor.',
+      'Rutbeloppet för ruta 30 är 25 % av nettobeloppet för varje matchande rad med omvänd skattskyldighet (25 %-sats), summerat över urvalet. Tabellen visar exakta ören, medan deklarationsrutan trunkeras till hela kronor.',
+      'The box amount for box 30 is 25% of the net amount for each matching reverse-charge line at the 25% rate, summed across the filtered result. This table shows exact cents, while the declaration box is truncated to whole kronor.',
+    ),
+    '31': t(
+      'Rutbeloppet för ruta 31 är 12 % av nettobeloppet för varje matchande rad med omvänd skattskyldighet (12 %-sats), summerat över urvalet.',
+      'The box amount for box 31 is 12% of the net amount for each matching reverse-charge line at the 12% rate, summed across the filtered result.',
+    ),
+    '32': t(
+      'Rutbeloppet för ruta 32 är 6 % av nettobeloppet för varje matchande rad med omvänd skattskyldighet (6 %-sats), summerat över urvalet.',
+      'The box amount for box 32 is 6% of the net amount for each matching reverse-charge line at the 6% rate, summed across the filtered result.',
     ),
     '48': t(
-      'Rutbeloppet för ruta 48 är summan av ingående moms på avdragsgilla svenska inköp plus 25 % av nettobeloppet för matchande rader med omvänd skattskyldighet. Tabellen visar exakta ören, medan deklarationsrutan avrundas till hela kronor.',
-      'The box amount for box 48 is the sum of input VAT on deductible domestic purchases plus 25% of the net amount for matching reverse-charge lines. This table shows exact cents, while the declaration box is rounded to whole kronor.',
+      'Rutbeloppet för ruta 48 är summan av ingående moms på avdragsgilla svenska inköp plus beräknad moms (radens momssats) för matchande rader med omvänd skattskyldighet. Tabellen visar exakta ören, medan deklarationsrutan trunkeras till hela kronor.',
+      'The box amount for box 48 is the sum of input VAT on deductible domestic purchases plus deemed VAT (at each line\'s rate) for matching reverse-charge lines. This table shows exact cents, while the declaration box is truncated to whole kronor.',
     ),
   };
 
@@ -92,16 +103,19 @@ const PurchasesList: React.FC = () => {
   const { data: purchases, isLoading } = useQuery({
     queryKey: ['acc-purchases', statusFilter, supplierFilter, declarationBoxFilter, dateFrom, dateTo],
     queryFn: async () => {
-      let query = supabase
-        .from('acc_purchases')
-        .select('*, supplier:acc_suppliers(name), lines:acc_purchase_lines(vat_treatment, gross_amount, net_amount, vat_amount)')
-        .order('document_date', { ascending: false })
-        .order('created_at', { ascending: false });
-      if (statusFilter !== 'all') query = query.eq('status', statusFilter);
-      if (supplierFilter !== 'all') query = query.eq('supplier_id', supplierFilter);
-      if (dateFrom) query = query.gte('document_date', dateFrom);
-      if (dateTo) query = query.lte('document_date', dateTo);
-      const { data } = await query;
+      const data = await fetchAllRows((from, to) => {
+        let query = supabase
+          .from('acc_purchases')
+          .select('*, supplier:acc_suppliers(name), lines:acc_purchase_lines(vat_treatment, gross_amount, net_amount, vat_amount, vat_rate)')
+          .order('document_date', { ascending: false })
+          .order('created_at', { ascending: false })
+          .order('id');
+        if (statusFilter !== 'all') query = query.eq('status', statusFilter);
+        if (supplierFilter !== 'all') query = query.eq('supplier_id', supplierFilter);
+        if (dateFrom) query = query.gte('document_date', dateFrom);
+        if (dateTo) query = query.lte('document_date', dateTo);
+        return query.range(from, to);
+      });
       const items = data || [];
       if (declarationBoxFilter === 'all') return items;
       return items.filter((purchase) =>

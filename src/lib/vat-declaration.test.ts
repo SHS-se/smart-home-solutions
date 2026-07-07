@@ -7,6 +7,8 @@ import {
   isDeclarationBoxFilter,
   lineMatchesDeclarationBox,
   purchaseMatchesDeclarationBox,
+  reverseChargeVatRate,
+  roundVatDeclarationAmount,
   summarizeDeclarationBoxLines,
   validateSkatteverketXml,
 } from './vat-declaration.ts';
@@ -17,7 +19,7 @@ function assertEqual<T>(actual: T, expected: T, label: string): void {
   }
 }
 
-Deno.test('finalizeVatDeclarationAmounts derives MomsBetala from rounded declaration boxes', () => {
+Deno.test('finalizeVatDeclarationAmounts truncates öre per Skatteverket and derives MomsBetala', () => {
   const amounts = finalizeVatDeclarationAmounts({
     box05: 0,
     box10: 0,
@@ -32,10 +34,43 @@ Deno.test('finalizeVatDeclarationAmounts derives MomsBetala from rounded declara
     box48: 2116.49,
   });
 
-  assertEqual(amounts.box22, 1731, 'box22');
-  assertEqual(amounts.box30, 433, 'box30');
+  // Whole kronor with the öre dropped (truncated), never rounded up.
+  assertEqual(amounts.box22, 1730, 'box22');
+  assertEqual(amounts.box30, 432, 'box30');
   assertEqual(amounts.box48, 2116, 'box48');
-  assertEqual(amounts.momsBetala, -1683, 'momsBetala');
+  assertEqual(amounts.momsBetala, -1684, 'momsBetala');
+});
+
+Deno.test('roundVatDeclarationAmount drops öre toward zero for both signs', () => {
+  assertEqual(roundVatDeclarationAmount(432.99), 432, 'positive');
+  assertEqual(roundVatDeclarationAmount(-432.99), -432, 'negative');
+  assertEqual(roundVatDeclarationAmount(0.6), 0, 'sub-krona');
+});
+
+Deno.test('reverseChargeVatRate reads the line rate and falls back to 25%', () => {
+  assertEqual(reverseChargeVatRate({ vat_treatment: 'reverse_charge_eu_goods', vat_rate: 12 }), 12, 'rate12');
+  assertEqual(reverseChargeVatRate({ vat_treatment: 'reverse_charge_eu_goods', vat_rate: 6 }), 6, 'rate6');
+  assertEqual(reverseChargeVatRate({ vat_treatment: 'reverse_charge_eu_goods', vat_rate: 25 }), 25, 'rate25');
+  assertEqual(reverseChargeVatRate({ vat_treatment: 'reverse_charge_eu_goods', vat_rate: 0 }), 25, 'rate0Fallback');
+  assertEqual(reverseChargeVatRate({ vat_treatment: 'reverse_charge_eu_goods' }), 25, 'missingFallback');
+});
+
+Deno.test('reverse-charge output VAT splits into boxes 30/31/32 by line rate', () => {
+  const lines = [
+    { vat_treatment: 'reverse_charge_eu_goods', net_amount: 1000, vat_amount: 0, vat_rate: 25 },
+    { vat_treatment: 'reverse_charge_eu_goods', net_amount: 500, vat_amount: 0, vat_rate: 12 },
+    { vat_treatment: 'reverse_charge_eu_services', net_amount: 200, vat_amount: 0, vat_rate: 6 },
+  ];
+
+  assertEqual(calculateDeclarationBoxAmount(lines, '30'), 250, 'box30');
+  assertEqual(calculateDeclarationBoxAmount(lines, '31'), 60, 'box31');
+  assertEqual(calculateDeclarationBoxAmount(lines, '32'), 12, 'box32');
+  // Box 48 deducts the same deemed VAT across all rates.
+  assertEqual(calculateDeclarationBoxAmount(lines, '48'), 322, 'box48');
+  assertEqual(lineMatchesDeclarationBox(lines[1], '31'), true, 'lineBox31');
+  assertEqual(lineMatchesDeclarationBox(lines[1], '30'), false, 'lineBox30For12');
+  assertEqual(isDeclarationBoxFilter('31'), true, 'filter31');
+  assertEqual(isDeclarationBoxFilter('32'), true, 'filter32');
 });
 
 Deno.test('buildSkatteverketXml emits internally consistent integer VAT boxes', () => {

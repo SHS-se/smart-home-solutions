@@ -242,7 +242,7 @@ export interface JournalPreviewLine {
 }
 
 export function buildJournalPreview(
-  lines: Array<{ expense_account: string; vat_treatment: VatTreatment; net_amount: number; vat_amount: number; gross_amount: number; description: string }>,
+  lines: Array<{ expense_account: string; vat_treatment: VatTreatment; net_amount: number; vat_amount: number; gross_amount: number; description: string; vat_rate?: number | null }>,
   paymentSource: PaymentSource,
   purchaseDescription: string,
 ): JournalPreviewLine[] {
@@ -278,8 +278,13 @@ export function buildJournalPreview(
         debit: line.net_amount,
         credit: 0,
       });
-      // Deemed output VAT (reverse charge)
-      const rcVat = roundMoney(line.net_amount * 0.25);
+      // Deemed output VAT (reverse charge) at the line's Swedish rate; falls
+      // back to 25% when the rate is missing/unrecognised. Must stay in sync
+      // with reverseChargeVatRate in vat-declaration.ts so the journal and
+      // the declaration boxes agree.
+      const lineRate = Number(line.vat_rate);
+      const rcRate = lineRate === 12 || lineRate === 6 ? lineRate : 25;
+      const rcVat = roundMoney(line.net_amount * rcRate / 100);
       journalLines.push({
         account: '2614',
         accountName: 'Utgående moms, omvänd skattskyldighet',

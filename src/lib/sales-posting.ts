@@ -1,9 +1,13 @@
 // Posting of sales invoices and customer payments into the accounting
 // journal (acc_verifications + acc_journal_lines), with idempotency guards
 // and explicit correction handling for invoices belonging to locked periods.
+//
+// The actual write happens in the post_verification_atomic RPC: one
+// transaction covering number allocation, the verification header, its
+// journal lines and the sales link, so a dropped connection can never leave
+// an orphaned verification or a consumed number.
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { Database } from '@/integrations/supabase/types';
-import { allocateNextVerificationNumber } from '@/lib/verification-number';
+import type { Database, Json } from '@/integrations/supabase/types';
 import {
   buildCustomerPaymentJournalLines,
   buildSalesInvoiceJournalLines,
@@ -37,24 +41,45 @@ export function isInvoicePostable(invoice: PostableInvoice): boolean {
   return Boolean(invoice.finalized_at) && !invoice.voided_at && invoice.status !== 'void' && invoice.status !== 'draft';
 }
 
-async function insertJournalLines(
-  supabase: Supabase,
-  verificationId: string,
-  lines: JournalPreviewLine[],
-): Promise<void> {
-  const { error } = await supabase.from('acc_journal_lines').insert(lines.map((line, i) => ({
-    verification_id: verificationId,
+/** SEK journal lines in the shape post_verification_atomic expects. */
+function rpcJournalLines(lines: JournalPreviewLine[]): Json {
+  return lines.map((line) => ({
     account: line.account,
     account_name: line.accountName,
     description: line.description,
     debit: line.debit,
     credit: line.credit,
-    sort_order: i,
     original_currency: 'SEK',
     exchange_rate_source: 'SEK',
     converted_amount_sek: line.debit > 0 ? line.debit : line.credit,
-  })));
+  })) as Json;
+}
+
+async function postVerificationAtomic(
+  supabase: Supabase,
+  params: {
+    verificationDate: string;
+    description: string;
+    periodId: string;
+    sourceType: string;
+    sourceId: string;
+    lines: JournalPreviewLine[];
+    invoiceLink?: { invoice_id: string; source_snapshot_json: Json; posting_reason: string };
+  },
+): Promise<string> {
+  const { data, error } = await supabase.rpc('post_verification_atomic', {
+    p_verification_date: params.verificationDate,
+    p_description: params.description,
+    p_period_id: params.periodId,
+    p_source_type: params.sourceType,
+    p_source_id: params.sourceId,
+    p_lines: rpcJournalLines(params.lines),
+    ...(params.invoiceLink ? { p_invoice_link: params.invoiceLink as unknown as Json } : {}),
+  });
   if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row?.verification_number) throw new Error('Bokföringen returnerade inget verifikationsnummer.');
+  return row.verification_number;
 }
 
 export interface PostSalesInvoiceParams {
@@ -78,7 +103,7 @@ export interface PostSalesInvoiceResult {
  * snapshot are never touched.
  */
 export async function postSalesInvoice(params: PostSalesInvoiceParams): Promise<PostSalesInvoiceResult> {
-  const { supabase, userId, invoice, lineItems, totals, correctionReason } = params;
+  const { supabase, invoice, lineItems, totals, correctionReason } = params;
 
   if (!isInvoicePostable(invoice)) {
     throw new Error('Endast slutförda, ej makulerade fakturor kan bokföras.');
@@ -108,43 +133,30 @@ export async function postSalesInvoice(params: PostSalesInvoiceParams): Promise<
     ? `Korrigering: försäljningsfaktura ${invoice.invoice_number} (fakturadatum ${economicDate}, ursprunglig period låst)`
     : `Försäljningsfaktura ${invoice.invoice_number}`;
 
-  const verificationNumber = await allocateNextVerificationNumber(supabase, resolution.verificationDate);
-  const { data: verification, error: vErr } = await supabase.from('acc_verifications').insert({
-    verification_number: verificationNumber,
-    verification_date: resolution.verificationDate,
-    description,
-    period_id: resolution.period.id,
-    source_type: resolution.isCorrection ? 'sales_invoice_correction' : 'sales_invoice',
-    source_id: invoice.id,
-    is_posted: true,
-    posted_at: new Date().toISOString(),
-    posted_by: userId,
-    created_by: userId,
-  }).select().single();
-  if (vErr) throw vErr;
-
-  await insertJournalLines(supabase, verification.id, buildSalesInvoiceJournalLines(lineItems, description));
-
   const snapshot = buildSalesInvoiceSnapshot({ invoice, lineItems, totals });
-  const { error: linkError } = await supabase.from('acc_sales_invoice_links').insert({
-    invoice_id: invoice.id,
-    verification_id: verification.id,
-    source_snapshot_json: {
-      ...snapshot,
-      ...(resolution.isCorrection ? {
-        correction: {
-          reason: correctionReason!.trim(),
-          original_invoice_date: economicDate,
-          original_finalized_at: invoice.finalized_at,
-          posted_into_period: `${resolution.period.year}-${String(resolution.period.month).padStart(2, '0')}`,
-        },
-      } : {}),
-    } as never,
-    posted_at: new Date().toISOString(),
-    posted_by: userId ?? null,
-    posting_reason: resolution.isCorrection ? `correction: ${correctionReason!.trim()}` : 'ordinary',
+  const verificationNumber = await postVerificationAtomic(supabase, {
+    verificationDate: resolution.verificationDate,
+    description,
+    periodId: resolution.period.id,
+    sourceType: resolution.isCorrection ? 'sales_invoice_correction' : 'sales_invoice',
+    sourceId: invoice.id,
+    lines: buildSalesInvoiceJournalLines(lineItems, description),
+    invoiceLink: {
+      invoice_id: invoice.id,
+      source_snapshot_json: {
+        ...snapshot,
+        ...(resolution.isCorrection ? {
+          correction: {
+            reason: correctionReason!.trim(),
+            original_invoice_date: economicDate,
+            original_finalized_at: invoice.finalized_at,
+            posted_into_period: `${resolution.period.year}-${String(resolution.period.month).padStart(2, '0')}`,
+          },
+        } : {}),
+      } as unknown as Json,
+      posting_reason: resolution.isCorrection ? `correction: ${correctionReason!.trim()}` : 'ordinary',
+    },
   });
-  if (linkError) throw linkError;
 
   return { verificationNumber, isCorrection: resolution.isCorrection };
 }
@@ -219,22 +231,12 @@ export async function recordAndPostCustomerPayment(params: RecordCustomerPayment
   if (!resolution) throw new Error('Ingen öppen bokföringsperiod hittades.');
 
   const description = `Kundbetalning ${invoice.invoice_number} (${method})`;
-  const verificationNumber = await allocateNextVerificationNumber(supabase, resolution.verificationDate);
-  const { data: verification, error: vErr } = await supabase.from('acc_verifications').insert({
-    verification_number: verificationNumber,
-    verification_date: resolution.verificationDate,
+  return await postVerificationAtomic(supabase, {
+    verificationDate: resolution.verificationDate,
     description,
-    period_id: resolution.period.id,
-    source_type: 'customer_payment',
-    source_id: payment.id,
-    is_posted: true,
-    posted_at: new Date().toISOString(),
-    posted_by: userId,
-    created_by: userId,
-  }).select().single();
-  if (vErr) throw vErr;
-
-  await insertJournalLines(supabase, verification.id, buildCustomerPaymentJournalLines(amount, method, description));
-
-  return verificationNumber;
+    periodId: resolution.period.id,
+    sourceType: 'customer_payment',
+    sourceId: payment.id,
+    lines: buildCustomerPaymentJournalLines(amount, method, description),
+  });
 }

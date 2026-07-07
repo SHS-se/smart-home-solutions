@@ -21,7 +21,7 @@ export interface VatDeclarationXmlBox {
   amount: number;
 }
 
-export type DeclarationBoxFilter = '20' | '21' | '22' | '30' | '48';
+export type DeclarationBoxFilter = '20' | '21' | '22' | '30' | '31' | '32' | '48';
 
 export interface VatDeclarationXmlValidationResult {
   ok: boolean;
@@ -35,6 +35,8 @@ export interface DeclarationBoxPurchaseLike {
     gross_amount?: number | null;
     net_amount?: number | null;
     vat_amount?: number | null;
+    /** Percent (25/12/6), as stored on acc_purchase_lines. */
+    vat_rate?: number | null;
   }>;
 }
 
@@ -48,8 +50,31 @@ function roundToCents(amount: number): number {
   return Math.round(amount * 100) / 100;
 }
 
+/**
+ * Skatteverket VAT declarations are filed in whole kronor with the öre
+ * dropped ("öretalen faller bort"), i.e. truncated toward zero — not rounded
+ * to the nearest krona.
+ */
 export function roundVatDeclarationAmount(amount: number): number {
-  return Math.round(amount);
+  return Math.trunc(amount);
+}
+
+const REVERSE_CHARGE_TREATMENTS = new Set([
+  'reverse_charge_eu_goods',
+  'reverse_charge_eu_services',
+  'reverse_charge_non_eu_services',
+]);
+
+/**
+ * The Swedish VAT rate that applies to a reverse-charge purchase line, used
+ * for the deemed output VAT (boxes 30/31/32) and the matching input VAT
+ * deduction (box 48). Lines with a missing or unrecognised rate fall back to
+ * 25% — the correct rate for virtually everything this business buys.
+ */
+export function reverseChargeVatRate(line: DeclarationBoxPurchaseLike['lines'][number]): 25 | 12 | 6 {
+  const rate = Number(line.vat_rate);
+  if (rate === 12 || rate === 6) return rate;
+  return 25;
 }
 
 export function finalizeVatDeclarationAmounts(raw: VatDeclarationRawAmounts): VatDeclarationRoundedAmounts {
@@ -99,7 +124,8 @@ export function buildSkatteverketXml(
 }
 
 export function isDeclarationBoxFilter(value: string | null | undefined): value is DeclarationBoxFilter {
-  return value === '20' || value === '21' || value === '22' || value === '30' || value === '48';
+  return value === '20' || value === '21' || value === '22'
+    || value === '30' || value === '31' || value === '32' || value === '48';
 }
 
 export function lineMatchesDeclarationBox(
@@ -114,17 +140,15 @@ export function lineMatchesDeclarationBox(
     case '22':
       return line.vat_treatment === 'reverse_charge_non_eu_services';
     case '30':
-      return (
-        line.vat_treatment === 'reverse_charge_eu_goods' ||
-        line.vat_treatment === 'reverse_charge_eu_services' ||
-        line.vat_treatment === 'reverse_charge_non_eu_services'
-      );
+      return REVERSE_CHARGE_TREATMENTS.has(line.vat_treatment) && reverseChargeVatRate(line) === 25;
+    case '31':
+      return REVERSE_CHARGE_TREATMENTS.has(line.vat_treatment) && reverseChargeVatRate(line) === 12;
+    case '32':
+      return REVERSE_CHARGE_TREATMENTS.has(line.vat_treatment) && reverseChargeVatRate(line) === 6;
     case '48':
       return (
         line.vat_treatment === 'domestic_deductible' ||
-        line.vat_treatment === 'reverse_charge_eu_goods' ||
-        line.vat_treatment === 'reverse_charge_eu_services' ||
-        line.vat_treatment === 'reverse_charge_non_eu_services'
+        REVERSE_CHARGE_TREATMENTS.has(line.vat_treatment)
       );
     default:
       return false;
@@ -165,14 +189,20 @@ export function calculateDeclarationBoxAmount(
     case '22':
       return matchingLines.reduce((sum, line) => sum + Number(line.net_amount ?? 0), 0);
     case '30':
-      return matchingLines.reduce((sum, line) => sum + roundToCents(Number(line.net_amount ?? 0) * 0.25), 0);
+    case '31':
+    case '32':
+      // Deemed output VAT on reverse-charge purchases at the line's rate.
+      return matchingLines.reduce(
+        (sum, line) => sum + roundToCents(Number(line.net_amount ?? 0) * reverseChargeVatRate(line) / 100),
+        0,
+      );
     case '48':
       return matchingLines.reduce((sum, line) => {
         if (line.vat_treatment === 'domestic_deductible') {
           return sum + Number(line.vat_amount ?? 0);
         }
 
-        return sum + roundToCents(Number(line.net_amount ?? 0) * 0.25);
+        return sum + roundToCents(Number(line.net_amount ?? 0) * reverseChargeVatRate(line) / 100);
       }, 0);
     default:
       return 0;

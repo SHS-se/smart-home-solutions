@@ -3239,6 +3239,20 @@ export type Database = {
       is_admin: { Args: { _user_id: string }; Returns: boolean }
       is_staff: { Args: { _user_id: string }; Returns: boolean }
       is_staff_table_empty: { Args: never; Returns: boolean }
+      post_verification_atomic: {
+        Args: {
+          p_verification_date: string
+          p_description: string
+          p_period_id: string
+          p_source_type: string
+          p_source_id: string
+          p_lines: Json
+          p_invoice_link?: Json
+          p_purchase_id?: string
+          p_posting_date?: string
+        }
+        Returns: { verification_id: string; verification_number: string }[]
+      }
       set_app_environment: { Args: { env: string }; Returns: undefined }
       sku_compute_pricing: {
         Args: {

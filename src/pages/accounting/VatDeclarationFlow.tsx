@@ -18,11 +18,14 @@ import {
 } from '@/lib/accounting-fx';
 import {
   buildSkatteverketXml,
+  calculateDeclarationBoxAmount,
   finalizeVatDeclarationAmounts,
   purchaseMatchesDeclarationBox,
   validateSkatteverketXml,
   type DeclarationBoxFilter,
 } from '@/lib/vat-declaration';
+import { useBusinessSettings } from '@/hooks/use-business-settings';
+import { fetchAllRows } from '@/lib/fetch-all-rows';
 import { getQuarterMonths, hasVatFilingConfirmation } from '@/lib/vat-periods';
 import { OUTPUT_VAT_BY_RATE, SALES_VERIFICATION_SOURCE_TYPES, salesVatBoxesFromJournalLines } from '@/lib/sales-accounting';
 import { toast } from 'sonner';
@@ -93,6 +96,7 @@ const VatDeclarationFlow: React.FC = () => {
   const [xmlValidationWarnings, setXmlValidationWarnings] = useState<string[]>([]);
 
   const statusLabels = language === 'sv' ? PURCHASE_STATUS_LABELS : PURCHASE_STATUS_LABELS_EN;
+  const { settings: businessSettings } = useBusinessSettings();
 
   const match = periodId?.match(/q(\d)-(\d{4})/);
   const quarter = match ? parseInt(match[1]) : 1;
@@ -123,15 +127,15 @@ const VatDeclarationFlow: React.FC = () => {
 
   const { data: purchases } = useQuery({
     queryKey: ['acc-q-purchases', year, quarter],
-    queryFn: async () => {
-      const { data } = await supabase
+    queryFn: () => fetchAllRows((from, to) =>
+      supabase
         .from('acc_purchases')
         .select('*, supplier:acc_suppliers(name, supplier_type), lines:acc_purchase_lines(*)')
         .gte('document_date', startDate)
         .lte('document_date', endDate)
-        .order('document_date');
-      return data || [];
-    },
+        .order('document_date')
+        .order('id')
+        .range(from, to)),
   });
 
   // Posted sales/correction verifications dated within the quarter, with
@@ -140,20 +144,30 @@ const VatDeclarationFlow: React.FC = () => {
   const { data: salesData } = useQuery({
     queryKey: ['acc-q-sales-journal', year, quarter],
     queryFn: async () => {
-      const { data: verifications } = await supabase
-        .from('acc_verifications')
-        .select('id, verification_number, verification_date, source_type, description')
-        .in('source_type', [...SALES_VERIFICATION_SOURCE_TYPES])
-        .eq('is_posted', true)
-        .gte('verification_date', startDate)
-        .lte('verification_date', endDate);
-      const verificationIds = (verifications || []).map(v => v.id);
+      const verifications = await fetchAllRows((from, to) =>
+        supabase
+          .from('acc_verifications')
+          .select('id, verification_number, verification_date, source_type, description')
+          .in('source_type', [...SALES_VERIFICATION_SOURCE_TYPES])
+          .eq('is_posted', true)
+          .gte('verification_date', startDate)
+          .lte('verification_date', endDate)
+          .order('verification_date')
+          .order('id')
+          .range(from, to));
+      const verificationIds = verifications.map(v => v.id);
       if (verificationIds.length === 0) return { verifications: [], lines: [] };
-      const { data: lines } = await supabase
-        .from('acc_journal_lines')
-        .select('verification_id, account, debit, credit')
-        .in('verification_id', verificationIds);
-      return { verifications: verifications || [], lines: lines || [] };
+      const verificationIdSet = new Set(verificationIds);
+      // Paged without .in(ids) (thousands of UUIDs would blow the request
+      // URL); joined client-side against the quarter's verification set.
+      const allLines = await fetchAllRows((from, to) =>
+        supabase
+          .from('acc_journal_lines')
+          .select('verification_id, account, debit, credit')
+          .order('verification_id')
+          .order('id')
+          .range(from, to));
+      return { verifications, lines: allLines.filter(l => verificationIdSet.has(l.verification_id)) };
     },
   });
   const salesVerifications = salesData?.verifications || [];
@@ -166,16 +180,21 @@ const VatDeclarationFlow: React.FC = () => {
   const { data: unpostedInvoices } = useQuery({
     queryKey: ['acc-q-unposted-invoices', year, quarter],
     queryFn: async () => {
-      const [{ data: invoices }, { data: links }] = await Promise.all([
-        supabase
-          .from('invoices')
-          .select('id, invoice_number, finalized_at, issued_at, status, voided_at')
-          .not('finalized_at', 'is', null)
-          .lte('finalized_at', `${endDate}T23:59:59Z`),
-        supabase.from('acc_sales_invoice_links').select('invoice_id'),
+      const [invoices, links] = await Promise.all([
+        fetchAllRows((from, to) =>
+          supabase
+            .from('invoices')
+            .select('id, invoice_number, finalized_at, issued_at, status, voided_at')
+            .not('finalized_at', 'is', null)
+            .lte('finalized_at', `${endDate}T23:59:59Z`)
+            .order('finalized_at')
+            .order('id')
+            .range(from, to)),
+        fetchAllRows((from, to) =>
+          supabase.from('acc_sales_invoice_links').select('invoice_id').order('invoice_id').range(from, to)),
       ]);
-      const linkedIds = new Set((links || []).map(l => l.invoice_id));
-      return (invoices || []).filter(i => i.status !== 'void' && i.status !== 'draft' && !i.voided_at && !linkedIds.has(i.id));
+      const linkedIds = new Set(links.map(l => l.invoice_id));
+      return invoices.filter(i => i.status !== 'void' && i.status !== 'draft' && !i.voided_at && !linkedIds.has(i.id));
     },
   });
   const unpostedInvoiceRows = unpostedInvoices || [];
@@ -184,7 +203,7 @@ const VatDeclarationFlow: React.FC = () => {
   const purchaseRows = (purchases || []).map((purchase) => ({
     ...purchase,
     supplier: (purchase as { supplier?: { name?: string } | null }).supplier || null,
-    lines: ((purchase as { lines?: unknown[] }).lines || []) as Array<{ vat_treatment: string; gross_amount?: number; net_amount?: number; vat_amount?: number }>,
+    lines: ((purchase as { lines?: unknown[] }).lines || []) as Array<{ vat_treatment: string; gross_amount?: number; net_amount?: number; vat_amount?: number; vat_rate?: number | null }>,
   }));
   const unpostedPurchases = purchaseRows.filter(p => p.status !== 'posted');
   const detectedCurrencyIssues = foreignPurchases.flatMap((purchase) => {
@@ -224,17 +243,19 @@ const VatDeclarationFlow: React.FC = () => {
   const box20Raw = sumNetByTreatment('reverse_charge_eu_goods');       // InkopVaruAnnatEg
   const box21Raw = sumNetByTreatment('reverse_charge_eu_services');    // InkopTjanstAnnatEg
   const box22Raw = sumNetByTreatment('reverse_charge_non_eu_services');// InkopTjanstUtomEg
-  // Section D: Output VAT on purchases (reverse-charge output VAT)
-  const box30Raw = roundMoney(postedPurchases.reduce((sum, p) => sum + p.lines
-    .filter((l) => isReverseChargeTreatment(l.vat_treatment))
-    .reduce((lineSum, l) => lineSum + roundMoney(Number(l.net_amount) * 0.25), 0), 0)); // MomsInkopUtgHog
-  const box31Raw = 0; // MomsInkopUtgMedel — 12% on RC purchases (not applicable)
-  const box32Raw = 0; // MomsInkopUtgLag — 6% on RC purchases (not applicable)
+  // Section D: Output VAT on purchases (reverse-charge output VAT), split by
+  // the applicable Swedish rate on each line (25/12/6 → boxes 30/31/32).
+  const rcOutputVatForBox = (box: '30' | '31' | '32') =>
+    roundMoney(postedPurchases.reduce((sum, p) => sum + calculateDeclarationBoxAmount(p.lines, box), 0));
+  const box30Raw = rcOutputVatForBox('30'); // MomsInkopUtgHog
+  const box31Raw = rcOutputVatForBox('31'); // MomsInkopUtgMedel
+  const box32Raw = rcOutputVatForBox('32'); // MomsInkopUtgLag
   // Section F: Deductible input VAT
   const domesticInputVat = roundMoney(postedPurchases.reduce((sum, p) => sum + p.lines
     .filter((l) => l.vat_treatment === 'domestic_deductible')
     .reduce((lineSum, l) => lineSum + Number(l.vat_amount), 0), 0));
-  const rcInputVat = box30Raw; // Reverse-charge input VAT = output VAT (net zero)
+  // Reverse-charge input VAT = deemed output VAT across all rates (net zero)
+  const rcInputVat = roundMoney(box30Raw + box31Raw + box32Raw);
   const roundedDeclarationAmounts = finalizeVatDeclarationAmounts({
     box05: box05Raw,
     box10: box10Raw,
@@ -383,8 +404,8 @@ const VatDeclarationFlow: React.FC = () => {
     { box: '22', xmlTag: 'InkopTjanstUtomEg', label: t('Inköp av tjänster från land utanför EU', 'Purchases of services from outside EU'), amount: box22, highlight: box22 > 0, section: 'C', filterBox: '22' as const },
     // Section D: Output VAT on purchases
     { box: '30', xmlTag: 'MomsInkopUtgHog', label: t('Utgående moms 25 % på inköp', 'Output VAT 25% on purchases'), amount: box30, highlight: box30 > 0, section: 'D', filterBox: '30' as const },
-    { box: '31', xmlTag: 'MomsInkopUtgMedel', label: t('Utgående moms 12 % på inköp', 'Output VAT 12% on purchases'), amount: box31, count: 0, section: 'D', filterBox: null },
-    { box: '32', xmlTag: 'MomsInkopUtgLag', label: t('Utgående moms 6 % på inköp', 'Output VAT 6% on purchases'), amount: box32, count: 0, section: 'D', filterBox: null },
+    { box: '31', xmlTag: 'MomsInkopUtgMedel', label: t('Utgående moms 12 % på inköp', 'Output VAT 12% on purchases'), amount: box31, highlight: box31 > 0, section: 'D', filterBox: '31' as const },
+    { box: '32', xmlTag: 'MomsInkopUtgLag', label: t('Utgående moms 6 % på inköp', 'Output VAT 6% on purchases'), amount: box32, highlight: box32 > 0, section: 'D', filterBox: '32' as const },
     // Section F: Input VAT
     { box: '48', xmlTag: 'MomsIngAvdr', label: t('Ingående moms att dra av', 'Deductible input VAT'), amount: box48, section: 'F', filterBox: '48' as const },
     // Section G: VAT to pay or receive
@@ -534,7 +555,10 @@ const VatDeclarationFlow: React.FC = () => {
   const generateValidatedXml = () => {
     // Last month of the quarter determines the period code
     const periodYYYYMM = `${year}${String(quarter * 3).padStart(2, '0')}`;
-    const orgNr = '790519-7591'; // SHS org number
+    const orgNr = businessSettings.org_number || '';
+    if (!orgNr) {
+      throw new Error(t('Organisationsnummer saknas i företagsinställningarna', 'Organisation number missing in business settings'));
+    }
     const xml = buildSkatteverketXml(orgNr, periodYYYYMM, declarationXmlBoxes);
     const validation = validateSkatteverketXml({
       xml,
@@ -620,7 +644,11 @@ const VatDeclarationFlow: React.FC = () => {
 
   const downloadXmlExport = () => {
     if (!generatedXml) {
-      generateValidatedXml();
+      try {
+        generateValidatedXml();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : String(e));
+      }
       return;
     }
     // Encode as ISO-8859-1
@@ -831,6 +859,14 @@ const VatDeclarationFlow: React.FC = () => {
                       {box30 > 0 && <div className="flex justify-between">
                         <span className="text-muted-foreground">{t('Ruta 30 – Utgående moms 25 % (inköp)', 'Box 30 – Output VAT 25% (purchases)')}</span>
                         <span>{formatSEK(box30)}</span>
+                      </div>}
+                      {box31 > 0 && <div className="flex justify-between">
+                        <span className="text-muted-foreground">{t('Ruta 31 – Utgående moms 12 % (inköp)', 'Box 31 – Output VAT 12% (purchases)')}</span>
+                        <span>{formatSEK(box31)}</span>
+                      </div>}
+                      {box32 > 0 && <div className="flex justify-between">
+                        <span className="text-muted-foreground">{t('Ruta 32 – Utgående moms 6 % (inköp)', 'Box 32 – Output VAT 6% (purchases)')}</span>
+                        <span>{formatSEK(box32)}</span>
                       </div>}
                       <div className="flex justify-between font-medium border-t border-border pt-1.5">
                         <span>{t('Summa utgående moms', 'Total output VAT')}</span>

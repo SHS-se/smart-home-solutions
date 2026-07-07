@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import type { Tables } from '@/integrations/supabase/types';
+import type { Json, Tables } from '@/integrations/supabase/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import DocumentPreview from '@/components/accounting/DocumentPreview';
@@ -40,7 +40,6 @@ import {
   getPurchaseExchangeSnapshot,
   isForeignCurrency,
 } from '@/lib/accounting-fx';
-import { allocateNextVerificationNumber } from '@/lib/verification-number';
 import { toast } from 'sonner';
 import { ArrowLeft, AlertTriangle, Eye, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react';
 
@@ -285,23 +284,12 @@ const PurchaseDetail: React.FC = () => {
         ));
       }
 
-      const verificationNumber = await allocateNextVerificationNumber(supabase, verificationDate);
-
-      const { data: verification, error: vErr } = await supabase.from('acc_verifications').insert({
-        verification_number: verificationNumber,
-        verification_date: verificationDate,
-        description: purchase.description || `${t('Inköp', 'Purchase')} ${supplierName}`.trim(),
-        period_id: period.id, source_type: 'purchase', source_id: purchase.id,
-        is_posted: true, posted_at: new Date().toISOString(), posted_by: user?.id, created_by: user?.id,
-      }).select().single();
-      if (vErr) throw vErr;
-
       const journalPreview = buildJournalPreview(
-        lines.map(l => ({ expense_account: l.expense_account, vat_treatment: l.vat_treatment as VatTreatment, net_amount: Number(l.net_amount), vat_amount: Number(l.vat_amount), gross_amount: Number(l.gross_amount), description: l.description })),
+        lines.map(l => ({ expense_account: l.expense_account, vat_treatment: l.vat_treatment as VatTreatment, net_amount: Number(l.net_amount), vat_amount: Number(l.vat_amount), gross_amount: Number(l.gross_amount), description: l.description, vat_rate: Number(l.vat_rate) })),
         purchase.payment_source as PaymentSource, purchase.description || '',
       );
       const primaryVatTreatment = (lines[0]?.vat_treatment as VatTreatment | undefined) || 'needs_review';
-      const journalInserts = journalPreview.map((jl, i) => {
+      const journalInserts = journalPreview.map((jl) => {
         let originalAmount: number | null = null;
         if (jl.account === '2641') {
           originalAmount = describeJournalOriginalAmount('input_vat', primaryVatTreatment, purchaseFx);
@@ -314,13 +302,11 @@ const PurchaseDetail: React.FC = () => {
         }
 
         return {
-          verification_id: verification.id,
           account: jl.account,
           account_name: jl.accountName,
           description: jl.description,
           debit: jl.debit,
           credit: jl.credit,
-          sort_order: i,
           original_currency: purchaseFx.originalCurrency,
           original_amount: originalAmount,
           exchange_rate_source: purchaseFx.exchangeRateSource,
@@ -330,14 +316,23 @@ const PurchaseDetail: React.FC = () => {
           converted_amount_sek: jl.debit > 0 ? jl.debit : jl.credit,
         };
       });
-      const { error: jErr } = await supabase.from('acc_journal_lines').insert(journalInserts);
-      if (jErr) throw jErr;
 
-      const { error: pErr } = await supabase.from('acc_purchases').update({
-        status: 'posted', verification_id: verification.id, posting_date: purchase.posting_date || purchase.document_date,
-      }).eq('id', purchase.id);
-      if (pErr) throw pErr;
-      return verification.verification_number || verificationNumber;
+      // One transaction: number allocation, verification, lines and the
+      // purchase status update all commit (or roll back) together.
+      const { data: posted, error: postError } = await supabase.rpc('post_verification_atomic', {
+        p_verification_date: verificationDate,
+        p_description: purchase.description || `${t('Inköp', 'Purchase')} ${supplierName}`.trim(),
+        p_period_id: period.id,
+        p_source_type: 'purchase',
+        p_source_id: purchase.id,
+        p_lines: journalInserts as unknown as Json,
+        p_purchase_id: purchase.id,
+        p_posting_date: purchase.posting_date || purchase.document_date,
+      });
+      if (postError) throw postError;
+      const postedRow = Array.isArray(posted) ? posted[0] : posted;
+      if (!postedRow?.verification_number) throw new Error(t('Bokföringen returnerade inget verifikationsnummer', 'Posting returned no verification number'));
+      return postedRow.verification_number;
     },
     onSuccess: (vNum) => {
       queryClient.invalidateQueries({ queryKey: ['acc-purchase', purchaseId] });
@@ -432,7 +427,7 @@ const PurchaseDetail: React.FC = () => {
 
   const journalPreview = lines && lines.length > 0
     ? buildJournalPreview(
-        lines.map(l => ({ expense_account: l.expense_account, vat_treatment: l.vat_treatment as VatTreatment, net_amount: Number(l.net_amount), vat_amount: Number(l.vat_amount), gross_amount: Number(l.gross_amount), description: l.description })),
+        lines.map(l => ({ expense_account: l.expense_account, vat_treatment: l.vat_treatment as VatTreatment, net_amount: Number(l.net_amount), vat_amount: Number(l.vat_amount), gross_amount: Number(l.gross_amount), description: l.description, vat_rate: Number(l.vat_rate) })),
         purchase.payment_source as PaymentSource, purchase.description || '',
       )
     : [];
