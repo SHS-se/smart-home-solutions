@@ -10,6 +10,7 @@
     "build:test": "vite build --mode test",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
+    "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json",
     "duplicate": "jscpd src",
     "duplicate:report": "jscpd src && open reports/jscpd/html/index.html",
     "quality": "npm run lint && npm run duplicate",

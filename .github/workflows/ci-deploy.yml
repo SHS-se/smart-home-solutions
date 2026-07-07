@@ -52,6 +52,11 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Typecheck
+        # vite build uses SWC and never runs tsc, so without this step type errors
+        # would ship silently.
+        run: npm run typecheck
+
       - name: Set up Deno
         uses: denoland/setup-deno@v2
         with:
