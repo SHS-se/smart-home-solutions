@@ -1,5 +1,16 @@
 project_id = "oosxndduqzhvrorgogaw"
 
+# verify_jwt policy
+# -----------------
+# Supabase defaults every function to verify_jwt = true (the gateway rejects a
+# request without a valid Supabase JWT before it reaches the function). Only the
+# functions listed below opt out, and each is either token-authenticated,
+# webhook-signature-verified, rate-limited, or does its own auth for a reason
+# that a plain JWT gate cannot cover. Staff-only functions are intentionally NOT
+# listed here: they inherit the secure default AND check staff_users internally,
+# so they are gated at both the edge and in code.
+
+# --- Public quote links (SHA-256 token in the URL) ---
 [functions.fetch-public-quote]
 verify_jwt = false
 
@@ -12,12 +23,34 @@ verify_jwt = false
 [functions.request-quote-revision]
 verify_jwt = false
 
+# --- Customer-authenticated (validates the caller's own JWT + ownership) ---
 [functions.customer-quote-action]
 verify_jwt = false
 
+# Runs during onboarding, before a staff/customer role is established.
 [functions.migrate-draft-profile]
 verify_jwt = false
 
+[functions.check-subscription]
+verify_jwt = false
+
+[functions.fetch-customer-invoice]
+verify_jwt = false
+
+# --- Customer billing (Stripe; caller's JWT validated in-function) ---
+[functions.create-subscription]
+verify_jwt = false
+
+[functions.cancel-subscription]
+verify_jwt = false
+
+[functions.create-setup-intent]
+verify_jwt = false
+
+[functions.set-default-payment-method]
+verify_jwt = false
+
+# --- Public, rate-limited (login-code / email flows) ---
 [functions.resolve-verification]
 verify_jwt = false
 
@@ -27,89 +60,22 @@ verify_jwt = false
 [functions.send-contact-email]
 verify_jwt = false
 
-[functions.sales-inbound-webhook]
-verify_jwt = false
-
-[functions.support-inbound-webhook]
-verify_jwt = false
-
-[functions.expire-quotes]
-verify_jwt = false
-
-[functions.check-subscription]
-verify_jwt = false
-
-[functions.send-quote-email]
-verify_jwt = false
-
+# --- Public token links (invoice viewing / unsubscribe) ---
 [functions.get-invoice-pdf]
 verify_jwt = false
 
 [functions.fetch-public-invoice]
 verify_jwt = false
 
-[functions.fetch-customer-invoice]
+[functions.unsubscribe]
 verify_jwt = false
 
-[functions.create-draft-invoice]
+# --- Inbound webhooks (verified by provider signature, not a JWT) ---
+[functions.sales-inbound-webhook]
 verify_jwt = false
 
-[functions.create-invoice-from-quote]
-verify_jwt = false
-
-[functions.finalize-new-invoice]
-verify_jwt = false
-
-[functions.finalize-invoice]
-verify_jwt = false
-
-[functions.record-invoice-payment]
-verify_jwt = false
-
-[functions.send-invoice-email]
-verify_jwt = false
-
-[functions.send-new-invoice-email]
-verify_jwt = false
-
-[functions.void-invoice]
-verify_jwt = false
-
-[functions.void-new-invoice]
-verify_jwt = false
-
-[functions.delete-contact]
-verify_jwt = false
-
-[functions.delete-customer]
-verify_jwt = false
-
-[functions.get-schema-erd]
-verify_jwt = false
-
-[functions.dump-database]
-verify_jwt = false
-
-[functions.fetch-ecb-exchange-rate]
-verify_jwt = false
-
-[functions.manage-staff]
-verify_jwt = false
-
-[functions.create-subscription]
-verify_jwt = false
-
-[functions.cancel-subscription]
+[functions.support-inbound-webhook]
 verify_jwt = false
 
 [functions.stripe-webhook]
-verify_jwt = false
-
-[functions.create-setup-intent]
-verify_jwt = false
-
-[functions.set-default-payment-method]
-verify_jwt = false
-
-[functions.unsubscribe]
 verify_jwt = false

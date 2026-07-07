@@ -1,4 +1,8 @@
+// Manual staff trigger for quote expiry. Scheduled expiry runs in Postgres
+// via pg_cron (public.expire_due_quotes()); this endpoint just lets staff
+// force a run without waiting for the next tick.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { requireStaff } from "../_shared/staff-auth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -12,6 +16,9 @@ Deno.serve(async (req) => {
   }
 
   try {
+    const auth = await requireStaff(req, corsHeaders);
+    if (auth instanceof Response) return auth;
+
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, serviceRoleKey);

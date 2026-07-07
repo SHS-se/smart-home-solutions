@@ -84,7 +84,8 @@ serve(async (req) => {
         status: "declined",
         declined_at: new Date().toISOString(),
         status_reason: reason || null,
-        accept_token_expires_at: new Date().toISOString(), // Invalidate token
+        // Keep the emailed link viewable for the rest of the quote's validity
+        // period; the status guard above prevents further actions.
       })
       .eq("id", quote_id);
 

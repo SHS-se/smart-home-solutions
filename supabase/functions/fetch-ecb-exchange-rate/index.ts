@@ -1,4 +1,5 @@
 import { fetchEcbExchangeRatesDirect, type EcbRateRequest } from "../../../src/lib/ecb-rate-core.ts";
+import { requireStaff } from "../_shared/staff-auth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -12,6 +13,11 @@ Deno.serve(async (req) => {
   }
 
   try {
+    // Only used by the staff purchase-import flow; without this gate the
+    // endpoint is an open proxy to the ECB API.
+    const auth = await requireStaff(req, corsHeaders);
+    if (auth instanceof Response) return auth;
+
     const body = await req.json();
     const requests = Array.isArray(body?.requests) ? body.requests as EcbRateRequest[] : [];
     if (requests.length === 0) {

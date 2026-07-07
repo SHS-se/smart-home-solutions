@@ -61,8 +61,15 @@ serve(async (req) => {
       });
     }
 
-    // Check token expiry
-    if (quote.accept_token_expires_at && new Date(quote.accept_token_expires_at) < new Date()) {
+    // Check token expiry. Accepted quotes stay viewable indefinitely (also for
+    // quotes accepted before the policy change, whose tokens were invalidated
+    // with a past timestamp); undecided/declined quotes are viewable until the
+    // validity period ends.
+    if (
+      quote.status !== "accepted" &&
+      quote.accept_token_expires_at &&
+      new Date(quote.accept_token_expires_at) < new Date()
+    ) {
       logStep("Token expired");
       return new Response(JSON.stringify({ error: "This link has expired" }), {
         status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },

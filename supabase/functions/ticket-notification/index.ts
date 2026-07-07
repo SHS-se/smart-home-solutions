@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { tryGetRequestAppOrigin } from "../_shared/app-origin.ts";
+import { resolveCaller } from "../_shared/staff-auth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -44,6 +45,16 @@ const handler = async (req: Request): Promise<Response> => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
+    // Only the ticket's customer or staff may trigger its notifications —
+    // otherwise anyone with the public anon key could spam email sends.
+    const caller = await resolveCaller(req);
+    if (!caller) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+
     // Fetch ticket
     const { data: ticket, error: ticketError } = await supabase
       .from("tickets")
@@ -53,6 +64,17 @@ const handler = async (req: Request): Promise<Response> => {
 
     if (ticketError || !ticket) {
       throw new Error("Ticket not found");
+    }
+
+    const [{ data: staffRow }, { data: callerCustomer }] = await Promise.all([
+      supabase.from("staff_users").select("user_id").eq("user_id", caller.userId).maybeSingle(),
+      supabase.from("customers").select("id").eq("user_id", caller.userId).maybeSingle(),
+    ]);
+    if (!staffRow && callerCustomer?.id !== ticket.customer_id) {
+      return new Response(JSON.stringify({ error: "Forbidden" }), {
+        status: 403,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
     }
 
     const ticketNumber = ticket.ticket_number || `TKT-${ticketId.split('-')[0].toUpperCase().slice(0, 5)}`;

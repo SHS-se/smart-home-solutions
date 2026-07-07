@@ -189,8 +189,10 @@ serve(async (req) => {
     const hashHex = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, "0")).join("");
 
     const expiresAt = new Date(Date.now() + validityDays * 24 * 60 * 60 * 1000).toISOString();
-    // Token expiry: 30 days (longer than quote validity to allow viewing after expiry)
-    const tokenExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    // View-link policy: the emailed link works for exactly the quote's validity
+    // period while undecided/declined; acceptance clears the expiry so accepted
+    // quotes stay viewable indefinitely (see accept-quote).
+    const tokenExpiresAt = expiresAt;
 
     // Build customer-facing links from the shared frontend URL config.
     const viewUrl = `${appOrigin}/portal/quote/${quote_id}?token=${tokenHex}`;

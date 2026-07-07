@@ -116,7 +116,9 @@ serve(async (req) => {
         accepted_by_email: customerEmail,
         accepted_ip: clientIp,
         accepted_user_agent: userAgent,
-        accept_token_expires_at: new Date().toISOString(), // Invalidate token
+        // Accepted quotes stay viewable via the emailed link indefinitely; the
+        // status guard above already prevents re-acceptance.
+        accept_token_expires_at: null,
       })
       .eq("id", quote_id);
 

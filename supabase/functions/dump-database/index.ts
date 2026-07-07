@@ -409,12 +409,14 @@ Deno.serve(async (req) => {
     const { data: { user }, error: authErr } = await anonClient.auth.getUser();
     if (authErr || !user) throw new Error("Unauthorized");
 
+    // Admin only: the dump contains auth.users (password hashes) and secrets.
     const { data: staffRow } = await anonClient
       .from("staff_users")
-      .select("user_id")
+      .select("role")
       .eq("user_id", user.id)
       .maybeSingle();
     if (!staffRow) throw new Error("Forbidden: staff only");
+    if (staffRow.role !== "admin") throw new Error("Forbidden: admin only");
 
     log("Auth OK", { userId: user.id });
 
