@@ -201,6 +201,7 @@ const FINGERPRINT_ACCOUNT_MAP: Record<string, string> = {
   openai_invoice:             '6540',
   anthropic_invoice:          '6540',
   lovable_invoice:            '6540',
+  zai_receipt:                '6540',
   ubiquiti_receipt_invoice:   '5410',
   bbqkees_invoice:            '5410',
   amazon_sweden_invoice:      '5410',

@@ -92,6 +92,7 @@ Deno.test("getAccountName returns empty for unknown", () => {
 
 Deno.test("suggestExpenseAccount matches fingerprint first", () => {
   assertEquals(suggestExpenseAccount("openai_invoice", "Some Company"), "6540");
+  assertEquals(suggestExpenseAccount("zai_receipt", "zai"), "6540");
   assertEquals(suggestExpenseAccount("bbqkees_invoice", "BBQKees Electronics B.V."), "5410");
 });
 
