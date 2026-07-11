@@ -128,7 +128,14 @@ jobs:
       - name: Push migrations
         # Applies only pending migrations from supabase/migrations (forward-only, no auto-rollback).
         # When prod is already up to date this is a no-op.
-        run: supabase db push
+        #
+        # --include-all: also apply pending migrations whose timestamps sort BEFORE the
+        # remote's last applied migration. This happens when a migration is committed with
+        # a backdated filename after a later-stamped migration already reached the target
+        # (e.g. 20260627*_stripe_* were committed on July 3). Without the flag the CLI
+        # refuses and the deploy fails. Safe here because migrations in this repo are
+        # written idempotently (IF NOT EXISTS / guarded DO blocks) — keep doing that.
+        run: supabase db push --include-all
 
   functions:
     name: Deploy edge functions
