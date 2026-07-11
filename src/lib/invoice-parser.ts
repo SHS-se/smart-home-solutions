@@ -356,6 +356,7 @@ function collectParserReviewReasons(params: {
   grossAmount: number | null;
   netAmount: number | null;
   vatAmount: number | null;
+  paymentStatusConflict: boolean;
 }): string[] {
   const reasons: string[] = [];
 
@@ -369,6 +370,9 @@ function collectParserReviewReasons(params: {
   if (params.grossAmount === null) reasons.push('Gross amount was not extracted');
   if (params.netAmount === null) reasons.push('Net amount was not extracted');
   if (params.vatAmount === null) reasons.push('VAT amount was not extracted');
+  if (params.paymentStatusConflict) {
+    reasons.push('Payment status unclear — document shows both paid markers and credit terms');
+  }
 
   return reasons;
 }
@@ -837,15 +841,46 @@ function extractInvoiceDate(text: string, fingerprintId: string): string | null 
 /** Fingerprints whose documents are always paid receipts */
 const RECEIPT_FINGERPRINTS = new Set(['cs_megastore_receipt', 'zai_receipt']);
 
-function inferDocumentType(fingerprintId: string, text: string): 'receipt' | null {
-  if (RECEIPT_FINGERPRINTS.has(fingerprintId)) return 'receipt';
-  if (
-    fingerprintId === 'elbutik_scandinavia_invoice' &&
-    /denna faktura ska inte betalas|klarna checkout/i.test(text)
-  ) {
-    return 'receipt';
+/** Explicit on-document evidence that payment is already settled */
+const PAID_SIGNALS: RegExp[] = [
+  /ordern är betald/i,
+  /denna faktura ska inte betalas/i,
+  /betalning sker via klarna/i,
+  /klarna checkout/i,
+  /marked as paid/i,
+  /\bdate paid\b/i,
+  /\bkvitto\b/i,
+  /(?<!ej )(?<!inte )(?<!icke )\bbetald\b/i,
+  /debited from your (?:stripe )?balance/i,
+  /payment received|paid in full|thank you for your payment/i,
+  /payment status\s*:?\s*(?:paid|authorized|captured)/i,
+  /(?:payment method|betalningsmetod)\s*:?\s*(?:credit ?card|card|klarna|paypal|swish|quickpay)/i,
+  /betalning\s*:?\s*\S*checkout/i,
+];
+
+/** Payment terms that imply a supplier debt outstanding until a later due date */
+const CREDIT_TERMS_SIGNALS: RegExp[] = [
+  /\b\d+\s*dagar\s+netto\b/i,
+  /\bnetto\s+\d+\s*dagar\b/i,
+  /betalningsvillkor\s*:?\s*\d+\s*dagar/i,
+  /\bnet\s*\d+\b/i,
+  /\bpayment terms\s*:?\s*\d+\s*days\b/i,
+  /\bdue in \d+ days\b/i,
+];
+
+function detectDocumentType(fingerprintId: string, text: string): {
+  documentType: 'receipt' | null;
+  paymentStatusConflict: boolean;
+} {
+  if (RECEIPT_FINGERPRINTS.has(fingerprintId)) {
+    return { documentType: 'receipt', paymentStatusConflict: false };
   }
-  return null;
+  const paidSignal = PAID_SIGNALS.some((pattern) => pattern.test(text));
+  const creditTerms = CREDIT_TERMS_SIGNALS.some((pattern) => pattern.test(text));
+  if (paidSignal && creditTerms) {
+    return { documentType: null, paymentStatusConflict: true };
+  }
+  return { documentType: paidSignal ? 'receipt' : null, paymentStatusConflict: false };
 }
 
 function extractDueDate(text: string, fingerprintId: string): string | null {
@@ -1187,6 +1222,8 @@ export function parseInvoiceText(rawText: string): ParsedInvoice {
 
   const description = extractDescription(supplierName, normalizedText);
   if (description) conf.description = 0.85;
+  const { documentType, paymentStatusConflict } = detectDocumentType(fingerprint.id, normalizedText);
+
   const parserReviewReasons = collectParserReviewReasons({
     fingerprint,
     supplierName,
@@ -1196,6 +1233,7 @@ export function parseInvoiceText(rawText: string): ParsedInvoice {
     grossAmount,
     netAmount,
     vatAmount,
+    paymentStatusConflict,
   });
 
   return {
@@ -1204,7 +1242,7 @@ export function parseInvoiceText(rawText: string): ParsedInvoice {
     invoiceNumber,
     invoiceDate,
     dueDate,
-    documentType: inferDocumentType(fingerprint.id, normalizedText),
+    documentType,
     grossAmount,
     netAmount,
     vatAmount,

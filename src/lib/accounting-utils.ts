@@ -356,6 +356,8 @@ export interface PurchaseBlocker {
 
 export function getPurchaseBlockers(purchase: {
   status: string;
+  document_type: string;
+  due_date: string | null;
   document_quality_status: string;
   vat_evidence_status: string;
   supplier_id: string | null;
@@ -363,11 +365,21 @@ export function getPurchaseBlockers(purchase: {
   gross_amount: number;
   net_amount: number;
   vat_amount: number;
-}): PurchaseBlocker[] {
+}, today: string = new Date().toISOString().split('T')[0]): PurchaseBlocker[] {
   const blockers: PurchaseBlocker[] = [];
 
   if (!purchase.supplier_id) {
     blockers.push({ type: 'error', message: 'Leverantör saknas' });
+  }
+
+  // Posting books every purchase as settled from the payment source (2018/1930) —
+  // there is no accounts-payable (2440) support. A supplier invoice that is not
+  // yet due is therefore presumed unpaid and must not be posted as if paid.
+  if (purchase.document_type === 'supplier_invoice' && purchase.due_date && purchase.due_date > today) {
+    blockers.push({
+      type: 'error',
+      message: `Leverantörsfakturan förfaller först ${purchase.due_date} — bokföring skulle registrera den som betald nu. Byt dokumenttyp till Kvitto om den redan är betald, annars vänta tills den är betald (leverantörsskulder stöds inte ännu).`,
+    });
   }
 
   if (purchase.lines.length === 0) {

@@ -166,6 +166,7 @@ Deno.test('parseInvoiceText extracts Stripe tax invoice fields from flattened PD
   assertEqual(parsed.netAmount, 290.03, 'netAmount');
   assertEqual(parsed.vatRate, 0, 'vatRate');
   assertEqual(parsed.description, 'Stripe avgifter mars 2026', 'description');
+  assertEqual(parsed.documentType, 'receipt', 'documentType');
   assertEqual(parsed.fingerprint.id, 'stripe_tax_invoice', 'fingerprint');
   assertEqual(parsed.parserReviewRequired, false, 'parserReviewRequired');
 });
@@ -184,6 +185,7 @@ Deno.test('parseInvoiceText extracts M.nu invoice fields from flattened PDF text
   assertEqual(parsed.vatRate, 25, 'vatRate');
   assertEqual(parsed.vatNumber, 'SE556871813301', 'vatNumber');
   assertEqual(parsed.description, 'Aqara Aqara Temperatur', 'description');
+  assertEqual(parsed.documentType, 'receipt', 'documentType');
   assertEqual(parsed.fingerprint.id, 'mnu_invoice', 'fingerprint');
   assertEqual(parsed.parserReviewRequired, false, 'parserReviewRequired');
 });
@@ -200,6 +202,7 @@ Deno.test('parseInvoiceText extracts Ubiquiti receipt totals from flattened PDF 
   assertEqual(parsed.vatAmount, 0, 'vatAmount');
   assertEqual(parsed.netAmount, 256.8, 'netAmount');
   assertEqual(parsed.vatRate, 0, 'vatRate');
+  assertEqual(parsed.documentType, 'receipt', 'documentType');
   assertEqual(parsed.fingerprint.id, 'ubiquiti_receipt_invoice', 'fingerprint');
   assertEqual(parsed.parserReviewRequired, false, 'parserReviewRequired');
 });
@@ -218,6 +221,7 @@ Deno.test('parseInvoiceText extracts BBQKees invoice fields from flattened PDF t
   assertEqual(parsed.vatRate, 0, 'vatRate');
   assertEqual(parsed.vatNumber, 'NL868180038B01', 'vatNumber');
   assertEqual(parsed.description, 'Gateway E32 V2 KIT (Ethernet + WiFi Edition V2 KIT)', 'description');
+  assertEqual(parsed.documentType, 'receipt', 'documentType');
   assertEqual(parsed.fingerprint.id, 'bbqkees_invoice', 'fingerprint');
   assertEqual(parsed.parserReviewRequired, false, 'parserReviewRequired');
 });
@@ -237,6 +241,7 @@ Deno.test('parseInvoiceText extracts Amazon Sweden invoice fields from flattened
   assertEqual(parsed.vatRate, 25, 'vatRate');
   assertEqual(parsed.vatNumber, 'SE516412220101', 'vatNumber');
   assertEqual(parsed.description, 'Shelly Dimmer 2 (Amazon inköp)', 'description');
+  assertEqual(parsed.documentType, 'receipt', 'documentType');
   assertEqual(parsed.fingerprint.id, 'amazon_sweden_invoice', 'fingerprint');
   assertEqual(parsed.parserReviewRequired, false, 'parserReviewRequired');
 });
@@ -288,6 +293,7 @@ Deno.test('parseInvoiceText keeps OpenAI invoice amounts in USD', () => {
   assertEqual(parsed.vatAmount, 0, 'vatAmount');
   assertEqual(parsed.netAmount, 10, 'netAmount');
   assertEqual(parsed.vatRate, 0, 'vatRate');
+  assertEqual(parsed.documentType, null, 'documentType');
   assertEqual(parsed.fingerprint.id, 'openai_invoice', 'fingerprint');
   assertEqual(parsed.parserReviewRequired, false, 'parserReviewRequired');
 });
@@ -404,5 +410,41 @@ Deno.test('parseInvoiceText flags unknown invoice layouts for parser review', ()
 
   assertEqual(parsed.fingerprint.id, 'unknown_layout', 'fingerprint');
   assertEqual(parsed.fingerprint.recognized, false, 'fingerprint.recognized');
+  assertEqual(parsed.documentType, null, 'documentType');
+  assertEqual(parsed.parserReviewRequired, true, 'parserReviewRequired');
+});
+
+Deno.test('parseInvoiceText classifies unknown layouts with paid markers as receipts', () => {
+  const parsed = parseInvoiceText(
+    'Kvitto Butiken AB 2026-06-01 Totalt 250,00 kr Betalningsmetod: Swish',
+  );
+
+  assertEqual(parsed.documentType, 'receipt', 'documentType');
+});
+
+Deno.test('parseInvoiceText leaves credit-terms invoices classified as supplier invoices', () => {
+  const parsed = parseInvoiceText(
+    'Faktura Grossisten AB Fakturanr 555 Fakturadatum 2026-07-15 Betalningsvillkor: 30 dagar netto Förfallodatum 2026-08-15 Att betala 12 500,00 kr',
+  );
+
+  assertEqual(parsed.documentType, null, 'documentType');
+  assertEqual(
+    parsed.parserReviewReasons.includes('Payment status unclear — document shows both paid markers and credit terms'),
+    false,
+    'no payment status conflict',
+  );
+});
+
+Deno.test('parseInvoiceText flags conflicting payment signals for review instead of guessing', () => {
+  const parsed = parseInvoiceText(
+    'Faktura Acme AB Fakturanr 123 Fakturadatum 2026-05-01 Betalningsvillkor: 30 dagar netto Betald via kort Total 100,00 kr',
+  );
+
+  assertEqual(parsed.documentType, null, 'documentType');
+  assertEqual(
+    parsed.parserReviewReasons.includes('Payment status unclear — document shows both paid markers and credit terms'),
+    true,
+    'payment status conflict reason',
+  );
   assertEqual(parsed.parserReviewRequired, true, 'parserReviewRequired');
 });

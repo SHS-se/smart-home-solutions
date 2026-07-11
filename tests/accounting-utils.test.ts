@@ -237,6 +237,8 @@ Deno.test("buildJournalPreview — empty lines returns empty", () => {
 
 function makePurchase(overrides: Partial<{
   status: string;
+  document_type: string;
+  due_date: string | null;
   document_quality_status: string;
   vat_evidence_status: string;
   supplier_id: string | null;
@@ -247,6 +249,8 @@ function makePurchase(overrides: Partial<{
 }> = {}) {
   return {
     status: overrides.status ?? "draft",
+    document_type: overrides.document_type ?? "supplier_invoice",
+    due_date: overrides.due_date !== undefined ? overrides.due_date : null,
     document_quality_status: overrides.document_quality_status ?? "sufficient",
     vat_evidence_status: overrides.vat_evidence_status ?? "sufficient",
     supplier_id: overrides.supplier_id !== undefined ? overrides.supplier_id : "supplier-1",
@@ -333,4 +337,28 @@ Deno.test("getPurchaseBlockers — insufficient VAT evidence with reverse charge
   }));
   // Should not produce an error about VAT evidence for reverse charge
   assertEquals(blockers.some(b => b.type === "error" && b.message.includes("underlag")), false);
+});
+
+Deno.test("getPurchaseBlockers — supplier invoice not yet due blocks posting", () => {
+  const blockers = getPurchaseBlockers(
+    makePurchase({ document_type: "supplier_invoice", due_date: "2026-08-01" }),
+    "2026-07-11",
+  );
+  assertEquals(blockers.some(b => b.type === "error" && b.message.includes("förfaller")), true);
+});
+
+Deno.test("getPurchaseBlockers — supplier invoice past its due date can be posted", () => {
+  const blockers = getPurchaseBlockers(
+    makePurchase({ document_type: "supplier_invoice", due_date: "2026-07-01" }),
+    "2026-07-11",
+  );
+  assertEquals(blockers.length, 0);
+});
+
+Deno.test("getPurchaseBlockers — receipt with a future settlement date can be posted", () => {
+  const blockers = getPurchaseBlockers(
+    makePurchase({ document_type: "receipt", due_date: "2026-08-01" }),
+    "2026-07-11",
+  );
+  assertEquals(blockers.length, 0);
 });
