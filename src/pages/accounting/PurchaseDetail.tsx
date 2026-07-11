@@ -42,6 +42,7 @@ import {
 } from '@/lib/accounting-fx';
 import {
   createBatchPurchaseReviewState,
+  getPurchaseReviewAfterDelete,
   readBatchPurchaseReviewIds,
 } from '@/lib/purchase-review-navigation';
 import { toast } from 'sonner';
@@ -252,12 +253,33 @@ const PurchaseDetail: React.FC = () => {
           });
         }
       }
+
+      return deletedPurchase.id;
     },
-    onSuccess: () => {
+    onSuccess: (deletedPurchaseId) => {
+      const { destinationPurchaseId, remainingPurchaseIds } = getPurchaseReviewAfterDelete(
+        purchaseIds,
+        deletedPurchaseId,
+      );
+
       queryClient.invalidateQueries({ queryKey: ['acc-purchases'] });
+      if (!batchPurchaseIds) {
+        queryClient.setQueryData(['acc-purchase-nav'], remainingPurchaseIds);
+      }
       queryClient.invalidateQueries({ queryKey: ['acc-purchase-nav'] });
       toast.success(t('Utkast raderat', 'Draft deleted'));
-      navigate('/accounting/purchases');
+
+      if (!destinationPurchaseId) {
+        navigate('/accounting/purchases', { replace: true });
+        return;
+      }
+
+      navigate(`/accounting/purchases/${destinationPurchaseId}`, {
+        replace: true,
+        state: batchPurchaseIds
+          ? createBatchPurchaseReviewState(remainingPurchaseIds)
+          : null,
+      });
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -436,7 +458,7 @@ const PurchaseDetail: React.FC = () => {
   const previousPurchaseId = currentPurchaseIndex > 0 ? purchaseIds[currentPurchaseIndex - 1] : null;
   const nextPurchaseId = currentPurchaseIndex >= 0 && currentPurchaseIndex < purchaseIds.length - 1 ? purchaseIds[currentPurchaseIndex + 1] : null;
   const canSave = purchase.status !== 'posted' && saveState.isDirty && !saveState.isPending && !saveState.isBlocked;
-  const canDelete = isDraftPurchase && !deleteDraft.isPending;
+  const canDelete = isDraftPurchase && currentPurchaseIndex >= 0 && !deleteDraft.isPending;
   const deleteButtonContent = (
     <>
       <Trash2 className="w-4 h-4 mr-2" />

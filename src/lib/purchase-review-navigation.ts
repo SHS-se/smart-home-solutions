@@ -5,6 +5,11 @@ export interface PurchaseReviewNavigationState {
   };
 }
 
+export interface PurchaseReviewAfterDelete {
+  destinationPurchaseId: string | null;
+  remainingPurchaseIds: string[];
+}
+
 function validatePurchaseIds(value: unknown): string[] | null {
   if (!Array.isArray(value) || value.length === 0) return null;
 
@@ -46,4 +51,20 @@ export function readBatchPurchaseReviewIds(
 
   const purchaseIds = validatePurchaseIds(navigation.purchaseIds);
   return purchaseIds?.includes(currentPurchaseId) ? purchaseIds : null;
+}
+
+export function getPurchaseReviewAfterDelete(
+  purchaseIds: string[],
+  deletedPurchaseId: string,
+): PurchaseReviewAfterDelete {
+  const deletedIndex = purchaseIds.indexOf(deletedPurchaseId);
+  if (deletedIndex === -1) {
+    throw new Error('Deleted purchase is not in the active review sequence');
+  }
+
+  return {
+    destinationPurchaseId:
+      purchaseIds[deletedIndex + 1] ?? purchaseIds[deletedIndex - 1] ?? null,
+    remainingPurchaseIds: purchaseIds.filter((id) => id !== deletedPurchaseId),
+  };
 }
