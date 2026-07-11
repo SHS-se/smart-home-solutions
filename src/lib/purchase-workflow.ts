@@ -288,7 +288,11 @@ export function inferVatTreatment(params: {
 
   if (vatAmount === 0) {
     if (supplierType === 'eu') return pickReverseChargeTreatment('eu', goodsOrServices);
-    if (supplierType === 'non_eu') return 'no_vat';
+    if (supplierType === 'non_eu') {
+      return goodsOrServices === 'services'
+        ? 'reverse_charge_non_eu_services'
+        : 'needs_review';
+    }
     if (/(momsfri|no vat|without vat|ingen moms)/i.test(text)) return 'no_vat';
   }
 

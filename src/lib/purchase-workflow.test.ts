@@ -121,6 +121,26 @@ const LOVABLE_VAT_INVOICE: ParsedInvoice = {
   parserReviewReasons: [],
 };
 
+const ZAI_RECEIPT: ParsedInvoice = {
+  supplierName: 'zai',
+  supplierCountry: 'SG',
+  invoiceNumber: 'INV-6280974-202604-0001',
+  invoiceDate: '2026-05-08',
+  dueDate: null,
+  grossAmount: 3.8,
+  netAmount: 3.8,
+  vatAmount: 0,
+  vatRate: 0,
+  currency: 'USD',
+  orgNumber: null,
+  vatNumber: null,
+  description: 'API usage (glm-5)',
+  confidence: {},
+  fingerprint: { id: 'zai_receipt', label: 'Z.ai receipt', recognized: true },
+  parserReviewRequired: false,
+  parserReviewReasons: [],
+};
+
 const AMAZON_MARKETPLACE_INVOICE: ParsedInvoice = {
   supplierName: 'Shenzhenshi LingKeYun Technology Co., Ltd.',
   supplierCountry: 'CN',
@@ -313,6 +333,30 @@ Deno.test('inferVatTreatment treats Lovable reverse-charge invoices as non-EU se
 
   // Lovable is US-based (non-EU), so services from outside EU → box 22
   assertEqual(vatTreatment, 'reverse_charge_non_eu_services', 'vatTreatment');
+});
+
+Deno.test('inferVatTreatment treats zero-VAT Z.ai API usage as non-EU services reverse charge', () => {
+  const vatTreatment = inferVatTreatment({
+    parsedInvoice: ZAI_RECEIPT,
+    extractedText: 'Singapore API usage (glm-5) Amount paid $3.7993124 USD',
+  });
+
+  assertEqual(vatTreatment, 'reverse_charge_non_eu_services', 'vatTreatment');
+});
+
+Deno.test('inferVatTreatment leaves zero-VAT non-EU goods for review instead of treating them as services', () => {
+  const vatTreatment = inferVatTreatment({
+    parsedInvoice: {
+      ...AMAZON_MARKETPLACE_INVOICE,
+      grossAmount: 100,
+      netAmount: 100,
+      vatAmount: 0,
+      vatRate: 0,
+    },
+    extractedText: 'Physical goods shipped from China without supplier VAT',
+  });
+
+  assertEqual(vatTreatment, 'needs_review', 'vatTreatment');
 });
 
 Deno.test('inferVatTreatment treats Lovable invoices with Swedish VAT as domestic deductible', () => {
