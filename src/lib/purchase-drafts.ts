@@ -266,7 +266,7 @@ export async function createPurchaseDraft(params: CreatePurchaseDraftParams): Pr
     supplier_invoice_number: supplierInvoiceNumber,
     document_type: values.documentType,
     document_date: documentDate,
-    due_date: values.dueDate || null,
+    due_date: values.documentType === 'receipt' ? null : (values.dueDate || null),
     description: values.description,
     payment_source: values.paymentSource || 'owner_paid',
     notes: buildInvoiceNumberNote(values.invoiceNumber),

@@ -65,7 +65,7 @@ const NEW_LAYOUT_CASES = [
     rawText: `Elbutik Scandinavia AB Faktura Faktura nr Datum Kund nr Ordernr Sida 10885174 23.04.2026 2022056 2742889 1 Betalningsvillkor: Nätbutiken Klarna Checkout 07.05.2026 Summa 896,00 Moms % 224,00 Att betala 1 120,00 Adress: Org.nr: Telefon: E-post: Elbutik Scandinavia AB 556688-8409 +46(0)46 460 10 90 info@elbutik.se Product no. Description Quantity Price Disc. % Amount 1820180 Schneider Electric Exxact Vipptryckknapp trapp/1-pol Vit 5 87,20 436,00 SEK`,
     expected: {
       supplierName: 'Elbutik Scandinavia AB', supplierCountry: 'SE', invoiceNumber: '10885174',
-      invoiceDate: '2026-04-23', dueDate: '2026-05-07', grossAmount: 1120, netAmount: 896,
+      invoiceDate: '2026-04-23', dueDate: null, grossAmount: 1120, netAmount: 896,
       vatAmount: 224, currency: 'SEK', description: 'Schneider Electric Exxact Vipptryckknapp trapp/1-pol Vit',
       orgNumber: '556688-8409', vatNumber: null, fingerprintId: 'elbutik_scandinavia_invoice',
       documentType: 'receipt',
@@ -76,7 +76,7 @@ const NEW_LAYOUT_CASES = [
     rawText: `Elbutik Scandinavia AB Faktura Faktura nr Datum Kund nr Ordernr Sida 10887500 30.04.2026 2022056 2742889 1 Betalningsvillkor: Nätbutiken Klarna Checkout 14.05.2026 Summa 47,20 Moms % 11,80 Att betala 59,00 Adress: Org.nr: Telefon: E-post: Elbutik Scandinavia AB 556688-8409 +46(0)46 460 10 90 info@elbutik.se Product no. Description Quantity Price Disc. % Amount 1893164 Shelly Wall Switch Adapter - Gira/Merten/Exxact 1 47,20 47,20 SEK`,
     expected: {
       supplierName: 'Elbutik Scandinavia AB', supplierCountry: 'SE', invoiceNumber: '10887500',
-      invoiceDate: '2026-04-30', dueDate: '2026-05-14', grossAmount: 59, netAmount: 47.2,
+      invoiceDate: '2026-04-30', dueDate: null, grossAmount: 59, netAmount: 47.2,
       vatAmount: 11.8, currency: 'SEK', description: 'Shelly Wall Switch Adapter - Gira/Merten/Exxact',
       orgNumber: '556688-8409', vatNumber: null, fingerprintId: 'elbutik_scandinavia_invoice',
       documentType: 'receipt',
@@ -87,7 +87,7 @@ const NEW_LAYOUT_CASES = [
     rawText: `Kvitto 500375961 CS MEGASTORE AB - www.csmegastore.se Kvitto Kundnummer: 1019412881 Kvittonr.: 500375961 Fakturadatum 13-05-2026 leveransmetod: Bring - Nordic - Business Parcel Bulk Betalingsdatum: 27-05-2026 Valuta SEK Betalningsmetod: Quickpay/Billwerk CS MEGASTORE AB * Slottsgatan 20 * SE-211 33 Malmö * salg@csmegastore.se * www.csmegastore.se Vat-no: SE5595229401 Artikelnr. Benämning Antal Pris / St. Moms % Pris (ex. moms) 21380963 Shelly PM Mini Gen3 3800235261613 4 98,40 25,00 393,60 Totalt ex. moms 393,60 Moms 98,40 Total inkl. moms SEK 492,00 Ordern är betald!`,
     expected: {
       supplierName: 'CS MEGASTORE AB', supplierCountry: 'SE', invoiceNumber: '500375961',
-      invoiceDate: '2026-05-13', dueDate: '2026-05-27', grossAmount: 492, netAmount: 393.6,
+      invoiceDate: '2026-05-13', dueDate: null, grossAmount: 492, netAmount: 393.6,
       vatAmount: 98.4, currency: 'SEK', description: 'Shelly PM Mini Gen3', orgNumber: null,
       vatNumber: 'SE5595229401', fingerprintId: 'cs_megastore_receipt', documentType: 'receipt',
     },
@@ -112,7 +112,7 @@ const NEW_LAYOUT_CASES = [
     expected: {
       supplierName: 'Lunar Bank A/S', supplierCountry: 'DK', invoiceNumber,
       invoiceDate: invoiceDate === 'Jul 02, 2026' ? '2026-07-02' : invoiceDate === 'Jun 02, 2026' ? '2026-06-02' : '2026-06-09',
-      dueDate: invoiceDate === 'Jul 02, 2026' ? '2026-07-02' : invoiceDate === 'Jun 02, 2026' ? '2026-06-02' : '2026-06-09',
+      dueDate: null,
       grossAmount: amount, netAmount: amount, vatAmount: 0, currency: 'SEK', description: product,
       orgNumber: '39697696', vatNumber: null, fingerprintId: 'lunar_bank_invoice', documentType: 'receipt',
     },
@@ -422,6 +422,15 @@ Deno.test('parseInvoiceText classifies unknown layouts with paid markers as rece
   );
 
   assertEqual(parsed.documentType, 'receipt', 'documentType');
+});
+
+Deno.test('parseInvoiceText suppresses due dates on receipts', () => {
+  const parsed = parseInvoiceText(
+    'Kvitto Butiken AB Fakturadatum 2026-06-01 Förfallodatum 2026-08-01 Totalt 250,00 kr Betalningsmetod: Swish',
+  );
+
+  assertEqual(parsed.documentType, 'receipt', 'documentType');
+  assertEqual(parsed.dueDate, null, 'dueDate');
 });
 
 Deno.test('parseInvoiceText leaves credit-terms invoices classified as supplier invoices', () => {

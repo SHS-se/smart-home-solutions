@@ -900,12 +900,6 @@ function extractDueDate(text: string, fingerprintId: string): string | null {
     return match ? parseDate(match[1]) : null;
   }
 
-  if (fingerprintId === 'cs_megastore_receipt') {
-    // Danish template: "Betalingsdatum" (one n) is the date the payment is drawn
-    const match = text.match(/Betal(?:n)?ingsdatum\s*:?\s*(\d{1,2}-\d{1,2}-\d{4})/i);
-    return match ? parseDate(match[1]) : null;
-  }
-
   return extractDate(text, ['Invoice Due', 'Due Date', 'Förfallodatum', 'Förfaller']);
 }
 
@@ -1101,7 +1095,10 @@ export function parseInvoiceText(rawText: string): ParsedInvoice {
   const invoiceDate = extractInvoiceDate(normalizedText, fingerprint.id);
   if (invoiceDate) conf.invoiceDate = 0.95;
 
-  const dueDate = extractDueDate(normalizedText, fingerprint.id);
+  const { documentType, paymentStatusConflict } = detectDocumentType(fingerprint.id, normalizedText);
+
+  // A receipt is already settled — a due date would misread as an open payable.
+  const dueDate = documentType === 'receipt' ? null : extractDueDate(normalizedText, fingerprint.id);
   if (dueDate) conf.dueDate = 0.9;
 
   const inferredCurrency = inferCurrency(normalizedText);
@@ -1233,8 +1230,6 @@ export function parseInvoiceText(rawText: string): ParsedInvoice {
 
   const description = extractDescription(supplierName, normalizedText);
   if (description) conf.description = 0.85;
-  const { documentType, paymentStatusConflict } = detectDocumentType(fingerprint.id, normalizedText);
-
   const parserReviewReasons = collectParserReviewReasons({
     fingerprint,
     supplierName,

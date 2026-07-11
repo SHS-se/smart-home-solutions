@@ -482,7 +482,7 @@ const PurchaseUploadForm: React.FC<Props> = ({
         supplier_invoice_number: supplierInvoiceNumber,
         document_type: form.documentType,
         document_date: documentDate,
-        due_date: form.dueDate || null,
+        due_date: form.documentType === 'receipt' ? null : (form.dueDate || null),
         description: form.description,
         payment_source: form.paymentSource || 'owner_paid',
         notes: buildInvoiceNumberNote(form.invoiceNumber),
@@ -603,7 +603,14 @@ const PurchaseUploadForm: React.FC<Props> = ({
 
         <div className="space-y-1.5">
           <AutoLabel text={t('Dokumenttyp', 'Document type')} field="documentType" />
-          <Select value={form.documentType} disabled={disabled || saveDraft.isPending} onValueChange={(v) => updateField('documentType', v)}>
+          <Select
+            value={form.documentType}
+            disabled={disabled || saveDraft.isPending}
+            onValueChange={(v) => {
+              updateField('documentType', v);
+              if (v === 'receipt') updateField('dueDate', '');
+            }}
+          >
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="supplier_invoice">{t('Leverantörsfaktura', 'Supplier invoice')}</SelectItem>
@@ -620,7 +627,13 @@ const PurchaseUploadForm: React.FC<Props> = ({
           </div>
           <div className="space-y-1.5">
             <AutoLabel text={t('Förfallodatum', 'Due date')} field="dueDate" />
-            <Input type="date" value={form.dueDate} disabled={disabled || saveDraft.isPending} onChange={(e) => updateField('dueDate', e.target.value)} />
+            {/* Receipts are already paid — a due date would misread as an open payable */}
+            <Input
+              type="date"
+              value={form.documentType === 'receipt' ? '' : form.dueDate}
+              disabled={disabled || saveDraft.isPending || form.documentType === 'receipt'}
+              onChange={(e) => updateField('dueDate', e.target.value)}
+            />
           </div>
         </div>
 
