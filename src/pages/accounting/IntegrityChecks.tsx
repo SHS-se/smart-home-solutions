@@ -9,6 +9,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { formatSEKDecimal } from '@/lib/accounting-utils';
 import { AR_ACCOUNT, STRIPE_CLEARING_ACCOUNT, OUTPUT_VAT_BY_RATE, SALES_VERIFICATION_SOURCE_TYPES } from '@/lib/sales-accounting';
 import { isInvoicePostable, type PostableInvoice } from '@/lib/sales-posting';
+import { fetchAllRows } from '@/lib/fetch-all-rows';
 import { Info, CheckCircle, AlertTriangle } from 'lucide-react';
 
 interface IntegrityCheck {
@@ -26,22 +27,24 @@ const IntegrityChecks: React.FC = () => {
   const { data: checks, isLoading } = useQuery({
     queryKey: ['acc-integrity-checks'],
     queryFn: async (): Promise<IntegrityCheck[]> => {
+      // Integrity checks MUST see every row: a truncated read (PostgREST caps
+      // unranged selects) would make the balance checks silently unreliable.
       const [
-        { data: verifications },
-        { data: journalLines },
-        { data: invoices },
-        { data: links },
-        { data: payments },
-        { data: totals },
-        { data: filedVatPeriods },
+        verifications,
+        journalLines,
+        invoices,
+        links,
+        payments,
+        totals,
+        filedVatPeriods,
       ] = await Promise.all([
-        supabase.from('acc_verifications').select('id, verification_number, source_type, source_id, verification_date').eq('is_posted', true),
-        supabase.from('acc_journal_lines').select('verification_id, account, debit, credit'),
-        supabase.from('invoices').select('id, invoice_number, status, finalized_at, issued_at, due_date, voided_at, customer_id').not('finalized_at', 'is', null),
-        supabase.from('acc_sales_invoice_links').select('invoice_id, verification_id, posting_reason'),
-        supabase.from('invoice_payments').select('id, invoice_id, amount'),
-        supabase.from('invoice_computed_totals').select('*'),
-        supabase.from('acc_vat_periods').select('year, quarter, status, snapshot_data').in('status', ['filed', 'locked']),
+        fetchAllRows((from, to) => supabase.from('acc_verifications').select('id, verification_number, source_type, source_id, verification_date').eq('is_posted', true).order('id').range(from, to)),
+        fetchAllRows((from, to) => supabase.from('acc_journal_lines').select('verification_id, account, debit, credit').order('id').range(from, to)),
+        fetchAllRows((from, to) => supabase.from('invoices').select('id, invoice_number, status, finalized_at, issued_at, due_date, voided_at, customer_id').not('finalized_at', 'is', null).order('id').range(from, to)),
+        fetchAllRows((from, to) => supabase.from('acc_sales_invoice_links').select('invoice_id, verification_id, posting_reason').order('invoice_id').range(from, to)),
+        fetchAllRows((from, to) => supabase.from('invoice_payments').select('id, invoice_id, amount').order('id').range(from, to)),
+        fetchAllRows((from, to) => supabase.from('invoice_computed_totals').select('*').order('invoice_id').range(from, to)),
+        fetchAllRows((from, to) => supabase.from('acc_vat_periods').select('year, quarter, status, snapshot_data').in('status', ['filed', 'locked']).order('year').order('quarter').range(from, to)),
       ]);
 
       const lines = journalLines || [];

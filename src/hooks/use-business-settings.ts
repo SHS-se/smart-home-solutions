@@ -33,8 +33,12 @@ export const BUSINESS_SETTINGS_FALLBACK: BusinessSettings = {
 export const BUSINESS_SETTINGS_QUERY_KEY = ['business_settings'] as const;
 export const PUBLIC_BUSINESS_SETTINGS_QUERY_KEY = ['business_settings_public'] as const;
 
-/** Fields that never appear in the public view (payment details). */
-const PAYMENT_FIELDS = ['bankgiro_number', 'iban', 'bic', 'bank_name'] as const;
+/**
+ * Fields that never appear in the public view (payment details). Must match
+ * the columns omitted by business_settings_public in
+ * supabase/migrations/20260707132000_business_settings_public_view.sql.
+ */
+const PAYMENT_FIELDS = ['bankgiro_number', 'iban', 'bic', 'bank_name', 'payee_name'] as const;
 
 /** Business settings minus the payment details that only staff/paying customers see. */
 export type PublicBusinessSettings = Omit<BusinessSettings, (typeof PAYMENT_FIELDS)[number]>;

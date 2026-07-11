@@ -30,7 +30,9 @@ export function useSalesInvoices() {
         fetchAllRows((from, to) =>
           supabase.from('acc_sales_invoice_links').select('invoice_id, verification_id, posting_reason, verification:acc_verifications(verification_number)').order('invoice_id').range(from, to)),
         fetchAllRows((from, to) =>
-          supabase.from('invoice_payments').select('invoice_id, amount').order('invoice_id').range(from, to)),
+          // invoice_id is not unique across payments — the id tiebreaker keeps
+          // page boundaries deterministic so no payment is dropped or doubled.
+          supabase.from('invoice_payments').select('id, invoice_id, amount').order('invoice_id').order('id').range(from, to)),
       ]);
       return (invoices || [])
         .filter((inv) => isInvoicePostable(inv as PostableInvoice))

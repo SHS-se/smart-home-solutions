@@ -120,7 +120,7 @@ const PurchasesList: React.FC = () => {
       if (declarationBoxFilter === 'all') return items;
       return items.filter((purchase) =>
         purchaseMatchesDeclarationBox(
-          { lines: ((purchase.lines as Array<{ vat_treatment: string; gross_amount: number; net_amount: number; vat_amount: number }> | null) || []) },
+          { lines: ((purchase.lines as Array<{ vat_treatment: string; gross_amount: number; net_amount: number; vat_amount: number; vat_rate: number | null }> | null) || []) },
           declarationBoxFilter,
         ),
       );
@@ -200,6 +200,7 @@ const PurchasesList: React.FC = () => {
         gross_amount?: number | null;
         net_amount?: number | null;
         vat_amount?: number | null;
+        vat_rate?: number | null;
       }> | null) || []);
       const lineTotals = summarizeDeclarationBoxLines(lines, declarationBoxFilter);
 

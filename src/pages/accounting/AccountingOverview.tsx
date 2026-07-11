@@ -9,6 +9,7 @@ import { Calendar, Receipt, ShoppingCart, AlertCircle, ArrowRight, BookOpen, Inf
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { MONTH_NAMES_SV, MONTH_NAMES_EN, PURCHASE_STATUS_LABELS, PURCHASE_STATUS_LABELS_EN, PURCHASE_STATUS_COLORS, QUARTER_LABELS, formatSEK } from '@/lib/accounting-utils';
 import { getActiveVatPeriod } from '@/lib/vat-periods';
+import { fetchAllRows } from '@/lib/fetch-all-rows';
 
 const AccountingOverview: React.FC = () => {
   const { t, language } = useLanguage();
@@ -28,12 +29,11 @@ const AccountingOverview: React.FC = () => {
 
   const { data: purchases } = useQuery({
     queryKey: ['acc-purchases-summary'],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('acc_purchases')
-        .select('id, status, gross_amount, document_date, supplier_id, description');
-      return data || [];
-    },
+    queryFn: () => fetchAllRows((from, to) => supabase
+      .from('acc_purchases')
+      .select('id, status, gross_amount, document_date, supplier_id, description')
+      .order('id')
+      .range(from, to)),
   });
 
   const { data: vatPeriods } = useQuery({
@@ -57,12 +57,12 @@ const AccountingOverview: React.FC = () => {
   const { data: unpostedInvoiceCount } = useQuery({
     queryKey: ['acc-unposted-sales-invoices-count'],
     queryFn: async () => {
-      const [{ data: invoices }, { data: links }] = await Promise.all([
-        supabase.from('invoices').select('id, status, voided_at').not('finalized_at', 'is', null),
-        supabase.from('acc_sales_invoice_links').select('invoice_id'),
+      const [invoices, links] = await Promise.all([
+        fetchAllRows((from, to) => supabase.from('invoices').select('id, status, voided_at').not('finalized_at', 'is', null).order('id').range(from, to)),
+        fetchAllRows((from, to) => supabase.from('acc_sales_invoice_links').select('invoice_id').order('invoice_id').range(from, to)),
       ]);
-      const linkedIds = new Set((links || []).map(l => l.invoice_id));
-      return (invoices || []).filter(i => i.status !== 'void' && i.status !== 'draft' && !i.voided_at && !linkedIds.has(i.id)).length;
+      const linkedIds = new Set(links.map(l => l.invoice_id));
+      return invoices.filter(i => i.status !== 'void' && i.status !== 'draft' && !i.voided_at && !linkedIds.has(i.id)).length;
     },
   });
 
