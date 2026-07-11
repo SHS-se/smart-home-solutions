@@ -15,6 +15,7 @@ import {
   collectUniquePurchaseImportRateRequests,
 } from '@/lib/purchase-import-exchange-rates';
 import { buildPurchaseDraftDefaults, createPurchaseDraft } from '@/lib/purchase-drafts';
+import { createBatchPurchaseReviewState } from '@/lib/purchase-review-navigation';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -275,7 +276,11 @@ const PurchaseUpload: React.FC = () => {
   const successfulResults = uploadResults.filter((result) => result.purchaseId);
   const failedResults = uploadResults.filter((result) => result.error);
   const parserReviewResults = uploadResults.filter((result) => result.parserReviewRequired);
-  const firstCreatedDraftId = successfulResults[0]?.purchaseId;
+  const createdDraftIds = successfulResults
+    .map((result) => result.purchaseId)
+    .filter((purchaseId): purchaseId is string => Boolean(purchaseId));
+  const firstCreatedDraftId = createdDraftIds[0];
+  const purchaseReviewState = createBatchPurchaseReviewState(createdDraftIds);
   const showingResults = isUploading || uploadResults.length > 0;
 
   return (
@@ -369,8 +374,12 @@ const PurchaseUpload: React.FC = () => {
                           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground shrink-0" />
                         )}
                       </div>
-                      {result.purchaseId && (
-                        <Link to={`/accounting/purchases/${result.purchaseId}`} className="inline-flex items-center gap-1 text-sm text-primary hover:underline mt-3">
+                      {result.purchaseId && !isUploading && purchaseReviewState && (
+                        <Link
+                          to={`/accounting/purchases/${result.purchaseId}`}
+                          state={purchaseReviewState}
+                          className="inline-flex items-center gap-1 text-sm text-primary hover:underline mt-3"
+                        >
                           {t('Granska utkast', 'Review draft')}
                           <ArrowRight className="h-4 w-4" />
                         </Link>
@@ -466,8 +475,14 @@ const PurchaseUpload: React.FC = () => {
                   </div>
                 )}
 
-                {firstCreatedDraftId ? (
-                  <Button className="w-full" onClick={() => navigate(`/accounting/purchases/${firstCreatedDraftId}`)}>
+                {firstCreatedDraftId && !isUploading && purchaseReviewState ? (
+                  <Button
+                    className="w-full"
+                    onClick={() => navigate(
+                      `/accounting/purchases/${firstCreatedDraftId}`,
+                      { state: purchaseReviewState },
+                    )}
+                  >
                     {t('Granska första utkastet', 'Review first draft')}
                   </Button>
                 ) : null}

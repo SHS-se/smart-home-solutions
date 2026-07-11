@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import type { Json, Tables } from '@/integrations/supabase/types';
@@ -40,6 +40,10 @@ import {
   getPurchaseExchangeSnapshot,
   isForeignCurrency,
 } from '@/lib/accounting-fx';
+import {
+  createBatchPurchaseReviewState,
+  readBatchPurchaseReviewIds,
+} from '@/lib/purchase-review-navigation';
 import { toast } from 'sonner';
 import { ArrowLeft, AlertTriangle, Eye, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react';
 
@@ -91,6 +95,7 @@ function normalizePurchaseDocumentPath(rawPath: string | null | undefined): stri
 
 const PurchaseDetail: React.FC = () => {
   const { purchaseId } = useParams<{ purchaseId: string }>();
+  const location = useLocation();
   const navigate = useNavigate();
   const { user } = useAuth();
   const { t, language } = useLanguage();
@@ -126,7 +131,8 @@ const PurchaseDetail: React.FC = () => {
     },
     enabled: !!purchaseId,
   });
-  const { data: purchaseIds = [] } = useQuery({
+  const batchPurchaseIds = readBatchPurchaseReviewIds(location.state, purchaseId);
+  const { data: allPurchaseIds = [] } = useQuery({
     queryKey: ['acc-purchase-nav'],
     queryFn: async () => {
       const { data } = await supabase
@@ -137,7 +143,12 @@ const PurchaseDetail: React.FC = () => {
         .order('id', { ascending: false });
       return (data || []).map((row) => row.id);
     },
+    enabled: !batchPurchaseIds,
   });
+  const purchaseIds = batchPurchaseIds || allPurchaseIds;
+  const purchaseReviewState = batchPurchaseIds
+    ? createBatchPurchaseReviewState(batchPurchaseIds)
+    : null;
   const supplier = purchase?.supplier as Tables<'acc_suppliers'> | null;
   const verification = (purchase as typeof purchase & {
     verification?: { id: string; verification_number: string | null } | null;
@@ -524,7 +535,10 @@ const PurchaseDetail: React.FC = () => {
                 <div className="flex items-center justify-center gap-2">
                   {previousPurchaseId ? (
                     <Button variant="outline" size="sm" className="w-32 justify-center" asChild>
-                      <Link to={`/accounting/purchases/${previousPurchaseId}`}>
+                      <Link
+                        to={`/accounting/purchases/${previousPurchaseId}`}
+                        state={purchaseReviewState}
+                      >
                         <ChevronLeft className="w-4 h-4 mr-1" />
                         {t('Föregående', 'Previous')}
                       </Link>
@@ -537,7 +551,10 @@ const PurchaseDetail: React.FC = () => {
                   )}
                   {nextPurchaseId ? (
                     <Button variant="outline" size="sm" className="w-32 justify-center" asChild>
-                      <Link to={`/accounting/purchases/${nextPurchaseId}`}>
+                      <Link
+                        to={`/accounting/purchases/${nextPurchaseId}`}
+                        state={purchaseReviewState}
+                      >
                         {t('Nästa', 'Next')}
                         <ChevronRight className="w-4 h-4 ml-1" />
                       </Link>
