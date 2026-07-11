@@ -179,6 +179,7 @@ const SUPPLIER_COUNTRY_CODE_SET = new Set([
   'GB',
   'NO',
   'CH',
+  'SG',
   'US',
 ]);
 const COUNTRY_NAME_TO_CODE: Array<[string, string]> = [
@@ -197,6 +198,7 @@ const COUNTRY_NAME_TO_CODE: Array<[string, string]> = [
   ['bulgaria', 'BG'],
   ['kina', 'CN'],
   ['china', 'CN'],
+  ['singapore', 'SG'],
   ['schweiz', 'CH'],
   ['switzerland', 'CH'],
   ['norge', 'NO'],
@@ -210,6 +212,46 @@ const KNOWN_INVOICE_FINGERPRINTS: Array<{
   label: string;
   match: (text: string) => boolean;
 }> = [
+  {
+    id: 'elbutik_scandinavia_invoice',
+    label: 'Elbutik Scandinavia invoice',
+    match: (text) => (
+      /elbutik scandinavia ab/i.test(text) &&
+      /info@elbutik\.se/i.test(text) &&
+      /faktura nr\s+datum\s+kund nr\s+ordernr/i.test(text) &&
+      /att betala/i.test(text)
+    ),
+  },
+  {
+    id: 'cs_megastore_receipt',
+    label: 'CS Megastore receipt',
+    match: (text) => (
+      /cs megastore ab/i.test(text) &&
+      /kvittonr\.?/i.test(text) &&
+      /total inkl\. moms/i.test(text) &&
+      /ordern är betald/i.test(text)
+    ),
+  },
+  {
+    id: 'lunar_bank_invoice',
+    label: 'Lunar Bank invoice',
+    match: (text) => (
+      /lunar bank a\/s/i.test(text) &&
+      /support@lunar\.app/i.test(text) &&
+      /invoice no\s*:/i.test(text) &&
+      /cvr\s*:\s*39697696/i.test(text)
+    ),
+  },
+  {
+    id: 'zai_receipt',
+    label: 'Z.ai receipt',
+    match: (text) => (
+      /user_feedback@z\.ai/i.test(text) &&
+      /receipt number/i.test(text) &&
+      /invoice number/i.test(text) &&
+      /amount paid/i.test(text)
+    ),
+  },
   {
     id: 'stripe_tax_invoice',
     label: 'Stripe tax invoice',
@@ -280,6 +322,7 @@ function normalizeWhitespace(text: string): string {
     // eslint-disable-next-line no-control-regex -- strip NUL bytes from extracted PDF text
     .replace(/\u0000/g, ' ')
     .replace(/\u00a0/g, ' ')
+    .replace(/\u2011/g, '-')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -376,7 +419,7 @@ function parseDate(text: string): string | null {
   m = text.match(/(\d{4})\/(\d{2})\/(\d{2})/);
   if (m) return `${m[1]}-${m[2]}-${m[3]}`;
 
-  m = text.match(/(\d{1,2})[./](\d{1,2})[./](\d{4})/);
+  m = text.match(/(\d{1,2})[./-](\d{1,2})[./-](\d{4})/);
   if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
 
   m = text.match(/([A-Za-zÅÄÖåäö]+)\s+(\d{1,2}),?\s+(\d{4})/);
@@ -587,6 +630,18 @@ function inferCurrency(text: string): string | null {
 }
 
 function extractSupplierName(lines: string[], normalizedText: string): string | null {
+  if (/elbutik scandinavia ab/i.test(normalizedText) && /info@elbutik\.se/i.test(normalizedText)) {
+    return 'Elbutik Scandinavia AB';
+  }
+  if (/cs megastore ab/i.test(normalizedText) && /csmegastore\.se/i.test(normalizedText)) {
+    return 'CS MEGASTORE AB';
+  }
+  if (/lunar bank a\/s/i.test(normalizedText) && /support@lunar\.app/i.test(normalizedText)) {
+    return 'Lunar Bank A/S';
+  }
+  if (/user_feedback@z\.ai/i.test(normalizedText) && /receipt number/i.test(normalizedText)) {
+    return 'zai';
+  }
   const openAiHeaderMatch = normalizedText.match(/OpenAI OpCo,\s*LLC/i);
   if (openAiHeaderMatch) return 'OpenAI OpCo, LLC';
   if (/bbqkees electronics b\.v\./i.test(normalizedText)) return 'BBQKees Electronics B.V.';
@@ -647,6 +702,9 @@ function extractSupplierName(lines: string[], normalizedText: string): string | 
 }
 
 function extractSupplierCountry(text: string): string | null {
+  if (/elbutik scandinavia ab/i.test(text) || /cs megastore ab/i.test(text)) return 'SE';
+  if (/lunar bank a\/s/i.test(text) && /dk-8000 aarhus/i.test(text)) return 'DK';
+  if (/user_feedback@z\.ai/i.test(text) && /singapore/i.test(text)) return 'SG';
   if (/info@m\.nu/i.test(text)) return 'SE';
   if (/bbqkees electronics b\.v\./i.test(text) && /netherlands/i.test(text)) return 'NL';
   if (/stripe payments europe,\s*limited/i.test(text) && /ireland/i.test(text)) return 'IE';
@@ -671,6 +729,11 @@ function extractSupplierCountry(text: string): string | null {
 }
 
 function extractSupplierVatNumber(text: string, supplierName: string | null): string | null {
+  if (/cs megastore ab/i.test(text)) {
+    const csMegastoreVatMatch = text.match(/\bVat-no\s*:\s*(SE\d{10,12})\b/i);
+    if (csMegastoreVatMatch) return csMegastoreVatMatch[1].toUpperCase();
+  }
+
   if (/bbqkees electronics b\.v\./i.test(text)) {
     const bbqKeesVatMatch = text.match(/\bVAT\s*:\s*(NL\s?[A-Z0-9]{2,14})\b/i);
     if (bbqKeesVatMatch) return bbqKeesVatMatch[1].replace(/\s+/g, ' ').trim();
@@ -717,6 +780,18 @@ function extractSupplierVatNumber(text: string, supplierName: string | null): st
 }
 
 function extractInvoiceNumber(text: string): string | null {
+  const lunarMatch = text.match(/Invoice No\s*:\s*([A-Z0-9][A-Z0-9-]*)/i);
+  if (lunarMatch && /lunar bank a\/s/i.test(text)) return lunarMatch[1];
+
+  const zaiMatch = text.match(/Invoice number\s+(INV-[A-Z0-9-]+)/i);
+  if (zaiMatch && /user_feedback@z\.ai/i.test(text)) return zaiMatch[1];
+
+  const elbutikMatch = text.match(/Faktura nr\s+Datum\s+Kund nr\s+Ordernr\s+Sida\s+(\d+)/i);
+  if (elbutikMatch) return elbutikMatch[1];
+
+  const receiptMatch = text.match(/Kvittonr\.?\s*:?\s*(\d+)/i);
+  if (receiptMatch) return receiptMatch[1];
+
   const direct = extractLabelValue(text, ['Invoice Number', 'Invoice No', 'Invoice #', 'Fakturanr/Order-id', 'Fakturanr', 'Fakturanummer']);
   if (direct) {
     // eslint-disable-next-line no-control-regex -- strip NUL bytes from extracted PDF text
@@ -742,7 +817,47 @@ function extractDate(text: string, labels: string[]): string | null {
   return value ? parseDate(value) : null;
 }
 
+function extractInvoiceDate(text: string, fingerprintId: string): string | null {
+  if (fingerprintId === 'elbutik_scandinavia_invoice') {
+    const match = text.match(/Faktura nr\s+Datum\s+Kund nr\s+Ordernr\s+Sida\s+\d+\s+(\d{2}\.\d{2}\.\d{4})/i);
+    return match ? parseDate(match[1]) : null;
+  }
+
+  return extractDate(text, [
+    'Invoice Date',
+    'Fakturadatum',
+    'Fakturadatum/Leveransdatum',
+    'Date paid',
+    'Date',
+  ]);
+}
+
+function extractDueDate(text: string, fingerprintId: string): string | null {
+  if (fingerprintId === 'elbutik_scandinavia_invoice') {
+    const match = text.match(/Betalningsvillkor:\s+.+?\s+(\d{2}\.\d{2}\.\d{4})\b/i);
+    return match ? parseDate(match[1]) : null;
+  }
+
+  return extractDate(text, ['Invoice Due', 'Due Date', 'Förfallodatum', 'Förfaller']);
+}
+
 function extractProductName(text: string): string | null {
+  const elbutikMatch = text.match(
+    /Product no\.\s+Description\s+Quantity\s+Price\s+Disc\. %\s+Amount\s+\S+\s+(.+?)\s+\d+\s+[\d.,]+\s+[\d.,]+/i,
+  );
+  if (elbutikMatch) return cleanProductName(elbutikMatch[1]) || null;
+
+  const csMegastoreMatch = text.match(
+    /Artikelnr\.\s+Benämning\s+Antal\s+Pris \/ St\.\s+Moms %\s+Pris \(ex\. moms\)\s+\d+\s+(.+?)\s+(?:\d{8,14}\s+)?\d+\s+[\d.,]+\s+\d{1,2}[.,]\d{2}\s+[\d.,]+/i,
+  );
+  if (csMegastoreMatch) return cleanProductName(csMegastoreMatch[1]) || null;
+
+  const lunarMatch = text.match(/Product\s+Details\s+Price\s+(.+?)\s+1x\s+/i);
+  if (lunarMatch) return cleanProductName(lunarMatch[1]) || null;
+
+  const zaiMatch = text.match(/Description\s+Qty\s+Unit price\s+Amount\s+(.+?)\s+1\s+\$[\d.,]+/i);
+  if (zaiMatch) return cleanProductName(zaiMatch[1]) || null;
+
   const bbqKeesMatch = text.match(/Product\s+HS Code\s+Quantity\s+Total\s+VAT\s+Price\s+(.+?)\s+VAT EXEMPT\s+SKU:/i);
   if (bbqKeesMatch) {
     const productName = cleanProductName(bbqKeesMatch[1]);
@@ -826,12 +941,71 @@ function extractInclusiveVatSummary(text: string): { vatRate: number | null; net
   };
 }
 
+function extractKnownLayoutSummary(
+  text: string,
+  fingerprintId: string,
+): { grossAmount: number | null; netAmount: number | null; vatAmount: number | null } | null {
+  if (fingerprintId === 'elbutik_scandinavia_invoice') {
+    const match = text.match(
+      /Summa\s+(\d[\d ]*[.,]\d+)\s+Moms %\s+(\d[\d ]*[.,]\d+).*?Att betala\s+(\d[\d ]*[.,]\d+)/i,
+    );
+    if (match) {
+      return {
+        netAmount: parseAmount(match[1]),
+        vatAmount: parseAmount(match[2]),
+        grossAmount: parseAmount(match[3]),
+      };
+    }
+  }
+
+  if (fingerprintId === 'cs_megastore_receipt') {
+    const match = text.match(
+      /Totalt ex\. moms\s+(\d[\d ]*[.,]\d+)\s+Moms\s+(\d[\d ]*[.,]\d+)\s+Total inkl\. moms\s+SEK\s+(\d[\d ]*[.,]\d+)/i,
+    );
+    if (match) {
+      return {
+        netAmount: parseAmount(match[1]),
+        vatAmount: parseAmount(match[2]),
+        grossAmount: parseAmount(match[3]),
+      };
+    }
+  }
+
+  if (fingerprintId === 'lunar_bank_invoice') {
+    const match = text.match(
+      /Subtotal\s*:\s*(\d[\d ]*(?:[.,]\d+)?)\s*kr\s+VAT\s*:\s*(\d[\d ]*(?:[.,]\d+)?)\s*kr\s+Total\s*:\s*(\d[\d ]*(?:[.,]\d+)?)\s*kr/i,
+    );
+    if (match) {
+      return {
+        netAmount: parseAmount(match[1]),
+        vatAmount: parseAmount(match[2]),
+        grossAmount: parseAmount(match[3]),
+      };
+    }
+  }
+
+  if (fingerprintId === 'zai_receipt') {
+    const match = text.match(
+      /Subtotal\s+\$(\d[\d.,]*)\s+Total\s+\$(\d[\d.,]*)\s+Amount paid\s+\$(\d[\d.,]*)\s+USD/i,
+    );
+    if (match) {
+      return {
+        netAmount: parseAmount(match[1]),
+        vatAmount: 0,
+        grossAmount: parseAmount(match[3]),
+      };
+    }
+  }
+
+  return null;
+}
+
 /* ── Main parser ────────────────────────────────────── */
 
 export function parseInvoiceText(rawText: string): ParsedInvoice {
   const conf: Record<string, number> = {};
   // eslint-disable-next-line no-control-regex -- strip NUL bytes from extracted PDF text
-  const sanitizedRawText = rawText.replace(/\u0000/g, ' ');
+  const sanitizedRawText = rawText.replace(/\u0000/g, ' ').replace(/\u2011/g, '-');
   const normalizedText = normalizeWhitespace(sanitizedRawText);
   const lines = sanitizedRawText.split('\n').map((line) => line.trim()).filter(Boolean);
   const fingerprint = detectInvoiceFingerprint(normalizedText);
@@ -844,16 +1018,22 @@ export function parseInvoiceText(rawText: string): ParsedInvoice {
   let orgNumber: string | null = null;
   const orgMatch = normalizedText.match(/(?:org\.?\s*(?:nr|nummer|no)?\.?\s*:?\s*)(\d{6}-?\d{4})/i);
   if (orgMatch) orgNumber = orgMatch[1];
+  if (!orgNumber && fingerprint.id === 'elbutik_scandinavia_invoice') {
+    orgNumber = normalizedText.match(/Elbutik Scandinavia AB\s+(\d{6}-\d{4})\s+\+46/i)?.[1] || null;
+  }
+  if (!orgNumber && fingerprint.id === 'lunar_bank_invoice') {
+    orgNumber = normalizedText.match(/CVR\s*:\s*(\d{8})/i)?.[1] || null;
+  }
 
   const vatNumber = extractSupplierVatNumber(normalizedText, supplierName);
 
   const invoiceNumber = extractInvoiceNumber(normalizedText);
   if (invoiceNumber) conf.invoiceNumber = 0.95;
 
-  const invoiceDate = extractDate(normalizedText, ['Invoice Date', 'Fakturadatum', 'Fakturadatum/Leveransdatum', 'Date']);
+  const invoiceDate = extractInvoiceDate(normalizedText, fingerprint.id);
   if (invoiceDate) conf.invoiceDate = 0.95;
 
-  const dueDate = extractDate(normalizedText, ['Due Date', 'Förfallodatum', 'Förfaller']);
+  const dueDate = extractDueDate(normalizedText, fingerprint.id);
   if (dueDate) conf.dueDate = 0.9;
 
   const inferredCurrency = inferCurrency(normalizedText);
@@ -891,6 +1071,15 @@ export function parseInvoiceText(rawText: string): ParsedInvoice {
   const swedishVatSummary = extractSwedishVatSummary(normalizedText);
   const swedishSimpleInvoiceSummary = extractSwedishSimpleInvoiceSummary(normalizedText);
   const inclusiveVatSummary = extractInclusiveVatSummary(normalizedText);
+  const knownLayoutSummary = extractKnownLayoutSummary(normalizedText, fingerprint.id);
+  if (knownLayoutSummary) {
+    grossAmount = knownLayoutSummary.grossAmount;
+    netAmount = knownLayoutSummary.netAmount;
+    vatAmount = knownLayoutSummary.vatAmount;
+    if (grossAmount !== null) conf.grossAmount = 0.99;
+    if (netAmount !== null) conf.netAmount = 0.99;
+    if (vatAmount !== null) conf.vatAmount = 0.99;
+  }
   if (swedishVatSummary) {
     if (netAmount === null && swedishVatSummary.netAmount !== null) {
       netAmount = swedishVatSummary.netAmount;

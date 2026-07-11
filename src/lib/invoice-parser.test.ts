@@ -59,6 +59,96 @@ Amount due $12.50 USD
 Page 1 of 1`;
 const UNKNOWN_LAYOUT_RAW_TEXT = `Supplier invoice Example Parts AB Reference 7721 Document date 2026-04-10 Customer Smart Home Solutions Total amount 1 245,00 kr`;
 
+const NEW_LAYOUT_CASES = [
+  {
+    name: 'Elbutik invoice 10885174',
+    rawText: `Elbutik Scandinavia AB Faktura Faktura nr Datum Kund nr Ordernr Sida 10885174 23.04.2026 2022056 2742889 1 Betalningsvillkor: Nätbutiken Klarna Checkout 07.05.2026 Summa 896,00 Moms % 224,00 Att betala 1 120,00 Adress: Org.nr: Telefon: E-post: Elbutik Scandinavia AB 556688-8409 +46(0)46 460 10 90 info@elbutik.se Product no. Description Quantity Price Disc. % Amount 1820180 Schneider Electric Exxact Vipptryckknapp trapp/1-pol Vit 5 87,20 436,00 SEK`,
+    expected: {
+      supplierName: 'Elbutik Scandinavia AB', supplierCountry: 'SE', invoiceNumber: '10885174',
+      invoiceDate: '2026-04-23', dueDate: '2026-05-07', grossAmount: 1120, netAmount: 896,
+      vatAmount: 224, currency: 'SEK', description: 'Schneider Electric Exxact Vipptryckknapp trapp/1-pol Vit',
+      orgNumber: '556688-8409', vatNumber: null, fingerprintId: 'elbutik_scandinavia_invoice',
+    },
+  },
+  {
+    name: 'Elbutik invoice 10887500',
+    rawText: `Elbutik Scandinavia AB Faktura Faktura nr Datum Kund nr Ordernr Sida 10887500 30.04.2026 2022056 2742889 1 Betalningsvillkor: Nätbutiken Klarna Checkout 14.05.2026 Summa 47,20 Moms % 11,80 Att betala 59,00 Adress: Org.nr: Telefon: E-post: Elbutik Scandinavia AB 556688-8409 +46(0)46 460 10 90 info@elbutik.se Product no. Description Quantity Price Disc. % Amount 1893164 Shelly Wall Switch Adapter - Gira/Merten/Exxact 1 47,20 47,20 SEK`,
+    expected: {
+      supplierName: 'Elbutik Scandinavia AB', supplierCountry: 'SE', invoiceNumber: '10887500',
+      invoiceDate: '2026-04-30', dueDate: '2026-05-14', grossAmount: 59, netAmount: 47.2,
+      vatAmount: 11.8, currency: 'SEK', description: 'Shelly Wall Switch Adapter - Gira/Merten/Exxact',
+      orgNumber: '556688-8409', vatNumber: null, fingerprintId: 'elbutik_scandinavia_invoice',
+    },
+  },
+  {
+    name: 'CS Megastore receipt 500375961',
+    rawText: `Kvitto 500375961 CS MEGASTORE AB - www.csmegastore.se Kvitto Kundnummer: 1019412881 Kvittonr.: 500375961 Fakturadatum 13-05-2026 Valuta SEK Betalningsmetod: Quickpay/Billwerk CS MEGASTORE AB * Slottsgatan 20 * SE-211 33 Malmö * salg@csmegastore.se * www.csmegastore.se Vat-no: SE5595229401 Artikelnr. Benämning Antal Pris / St. Moms % Pris (ex. moms) 21380963 Shelly PM Mini Gen3 3800235261613 4 98,40 25,00 393,60 Totalt ex. moms 393,60 Moms 98,40 Total inkl. moms SEK 492,00 Ordern är betald!`,
+    expected: {
+      supplierName: 'CS MEGASTORE AB', supplierCountry: 'SE', invoiceNumber: '500375961',
+      invoiceDate: '2026-05-13', dueDate: null, grossAmount: 492, netAmount: 393.6,
+      vatAmount: 98.4, currency: 'SEK', description: 'Shelly PM Mini Gen3', orgNumber: null,
+      vatNumber: 'SE5595229401', fingerprintId: 'cs_megastore_receipt',
+    },
+  },
+  {
+    name: 'CS Megastore receipt 500384956',
+    rawText: `Kvitto 500384956 CS MEGASTORE AB - www.csmegastore.se Kvitto Kundnummer: 1019412881 Kvittonr.: 500384956 Fakturadatum 21-05-2026 Valuta SEK Betalningsmetod: Quickpay/Billwerk CS MEGASTORE AB * Slottsgatan 20 * SE-211 33 Malmö * salg@csmegastore.se * www.csmegastore.se Vat-no: SE5595229401 Artikelnr. Benämning Antal Pris / St. Moms % Pris (ex. moms) 21380963 Shelly PM Mini Gen3 3800235261613 4 98,39 25,00 393,56 Totalt ex. moms 432,76 Moms 108,19 Total inkl. moms SEK 540,95 Ordern är betald!`,
+    expected: {
+      supplierName: 'CS MEGASTORE AB', supplierCountry: 'SE', invoiceNumber: '500384956',
+      invoiceDate: '2026-05-21', dueDate: null, grossAmount: 540.95, netAmount: 432.76,
+      vatAmount: 108.19, currency: 'SEK', description: 'Shelly PM Mini Gen3', orgNumber: null,
+      vatNumber: 'SE5595229401', fingerprintId: 'cs_megastore_receipt',
+    },
+  },
+  ...[
+    ['784794-1005', 'Jul 02, 2026', 'Bankgiro Number Fee', 39],
+    ['784794-1002', 'Jun 02, 2026', 'Bankgiro Number Fee', 39],
+    ['784794-1003', 'Jun 09, 2026', 'Lunar Essential', 1190],
+  ].map(([invoiceNumber, invoiceDate, product, amount]) => ({
+    name: `Lunar invoice ${invoiceNumber}`,
+    rawText: `INVOICE #${invoiceNumber} Billed to Invoice details Lunar Bank A/S Hack Kampmanns Plads 10 Invoice No: ${invoiceNumber} DK-8000 Aarhus C Invoice Date: ${invoiceDate} CVR: 39697696 Invoice Due: ${invoiceDate} lunar.app support@lunar.app Product Details Price ${product} 1x ${product} ${amount} kr Subtotal: ${amount} kr VAT: 0 kr Total: ${amount} kr Page 1 of 1`,
+    expected: {
+      supplierName: 'Lunar Bank A/S', supplierCountry: 'DK', invoiceNumber,
+      invoiceDate: invoiceDate === 'Jul 02, 2026' ? '2026-07-02' : invoiceDate === 'Jun 02, 2026' ? '2026-06-02' : '2026-06-09',
+      dueDate: invoiceDate === 'Jul 02, 2026' ? '2026-07-02' : invoiceDate === 'Jun 02, 2026' ? '2026-06-02' : '2026-06-09',
+      grossAmount: amount, netAmount: amount, vatAmount: 0, currency: 'SEK', description: product,
+      orgNumber: '39697696', vatNumber: null, fingerprintId: 'lunar_bank_invoice',
+    },
+  })),
+  {
+    name: 'Z.ai receipt with non-breaking identifier hyphens',
+    rawText: `Receipt Receipt number RCPT‑6280974‑202604‑0001 Invoice number INV‑6280974‑202604‑0001 Date paid May 8, 2026 zai 10 ANSON ROAD, #26‑03 INTERNATIONAL PLAZA, SINGAPORE SINGAPORE 079903 Singapore user_feedback@z.ai Bill to Smart Home Solutions Marked as paid on May 8, 2026 Description Qty Unit price Amount API usage (glm‑5) 1 $3.7993124 $3.7993124 Subtotal $3.7993124 Total $3.7993124 Amount paid $3.7993124 USD`,
+    expected: {
+      supplierName: 'zai', supplierCountry: 'SG', invoiceNumber: 'INV-6280974-202604-0001',
+      invoiceDate: '2026-05-08', dueDate: null, grossAmount: 3.8, netAmount: 3.8,
+      vatAmount: 0, currency: 'USD', description: 'API usage (glm-5)', orgNumber: null,
+      vatNumber: null, fingerprintId: 'zai_receipt',
+    },
+  },
+] as const;
+
+for (const testCase of NEW_LAYOUT_CASES) {
+  Deno.test(`parseInvoiceText imports ${testCase.name}`, () => {
+    const parsed = parseInvoiceText(testCase.rawText);
+    const expected = testCase.expected;
+
+    assertEqual(parsed.supplierName, expected.supplierName, 'supplierName');
+    assertEqual(parsed.supplierCountry, expected.supplierCountry, 'supplierCountry');
+    assertEqual(parsed.invoiceNumber, expected.invoiceNumber, 'invoiceNumber');
+    assertEqual(parsed.invoiceDate, expected.invoiceDate, 'invoiceDate');
+    assertEqual(parsed.dueDate, expected.dueDate, 'dueDate');
+    assertEqual(parsed.grossAmount, expected.grossAmount, 'grossAmount');
+    assertEqual(parsed.netAmount, expected.netAmount, 'netAmount');
+    assertEqual(parsed.vatAmount, expected.vatAmount, 'vatAmount');
+    assertEqual(parsed.currency, expected.currency, 'currency');
+    assertEqual(parsed.description, expected.description, 'description');
+    assertEqual(parsed.orgNumber, expected.orgNumber, 'orgNumber');
+    assertEqual(parsed.vatNumber, expected.vatNumber, 'vatNumber');
+    assertEqual(parsed.fingerprint.id, expected.fingerprintId, 'fingerprint');
+    assertEqual(parsed.parserReviewRequired, false, 'parserReviewRequired');
+  });
+}
+
 Deno.test('parseInvoiceText extracts Stripe tax invoice fields from flattened PDF text', () => {
   const parsed = parseInvoiceText(STRIPE_RAW_TEXT);
 
