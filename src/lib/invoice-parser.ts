@@ -10,6 +10,8 @@ export interface ParsedInvoice {
   invoiceNumber: string | null;
   invoiceDate: string | null;
   dueDate: string | null;
+  /** 'receipt' when the layout shows the document is already paid; null = no opinion */
+  documentType: 'receipt' | null;
   grossAmount: number | null;
   netAmount: number | null;
   vatAmount: number | null;
@@ -832,9 +834,29 @@ function extractInvoiceDate(text: string, fingerprintId: string): string | null 
   ]);
 }
 
+/** Fingerprints whose documents are always paid receipts */
+const RECEIPT_FINGERPRINTS = new Set(['cs_megastore_receipt', 'zai_receipt']);
+
+function inferDocumentType(fingerprintId: string, text: string): 'receipt' | null {
+  if (RECEIPT_FINGERPRINTS.has(fingerprintId)) return 'receipt';
+  if (
+    fingerprintId === 'elbutik_scandinavia_invoice' &&
+    /denna faktura ska inte betalas|klarna checkout/i.test(text)
+  ) {
+    return 'receipt';
+  }
+  return null;
+}
+
 function extractDueDate(text: string, fingerprintId: string): string | null {
   if (fingerprintId === 'elbutik_scandinavia_invoice') {
     const match = text.match(/Betalningsvillkor:\s+.+?\s+(\d{2}\.\d{2}\.\d{4})\b/i);
+    return match ? parseDate(match[1]) : null;
+  }
+
+  if (fingerprintId === 'cs_megastore_receipt') {
+    // Danish template: "Betalingsdatum" (one n) is the date the payment is drawn
+    const match = text.match(/Betal(?:n)?ingsdatum\s*:?\s*(\d{1,2}-\d{1,2}-\d{4})/i);
     return match ? parseDate(match[1]) : null;
   }
 
@@ -1182,6 +1204,7 @@ export function parseInvoiceText(rawText: string): ParsedInvoice {
     invoiceNumber,
     invoiceDate,
     dueDate,
+    documentType: inferDocumentType(fingerprint.id, normalizedText),
     grossAmount,
     netAmount,
     vatAmount,

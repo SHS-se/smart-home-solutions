@@ -178,6 +178,7 @@ const PurchaseUploadForm: React.FC<Props> = ({
     if (parsedInvoice.invoiceNumber && defaults.invoiceNumber) { f.invoiceNumber = defaults.invoiceNumber; filled.add('invoiceNumber'); }
     if (parsedInvoice.invoiceDate && defaults.documentDate) { f.documentDate = defaults.documentDate; filled.add('documentDate'); }
     if (parsedInvoice.dueDate && defaults.dueDate) { f.dueDate = defaults.dueDate; filled.add('dueDate'); }
+    if (parsedInvoice.documentType) { f.documentType = defaults.documentType; filled.add('documentType'); }
     if (parsedInvoice.currency && defaults.currency) { f.currency = defaults.currency; filled.add('currency'); }
     if (parsedInvoice.grossAmount != null && defaults.grossAmount) { f.grossAmount = defaults.grossAmount; filled.add('grossAmount'); }
     if (parsedInvoice.vatAmount != null && defaults.vatAmount) { f.vatAmount = defaults.vatAmount; filled.add('vatAmount'); }
@@ -601,7 +602,7 @@ const PurchaseUploadForm: React.FC<Props> = ({
         </div>
 
         <div className="space-y-1.5">
-          <Label className="text-xs text-muted-foreground">{t('Dokumenttyp', 'Document type')}</Label>
+          <AutoLabel text={t('Dokumenttyp', 'Document type')} field="documentType" />
           <Select value={form.documentType} disabled={disabled || saveDraft.isPending} onValueChange={(v) => updateField('documentType', v)}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>

@@ -96,6 +96,7 @@ export function buildPurchaseDraftDefaults(params: {
   if (parsedInvoice.invoiceNumber) form.invoiceNumber = parsedInvoice.invoiceNumber;
   if (parsedInvoice.invoiceDate) form.documentDate = parsedInvoice.invoiceDate;
   if (parsedInvoice.dueDate) form.dueDate = parsedInvoice.dueDate;
+  if (parsedInvoice.documentType) form.documentType = parsedInvoice.documentType;
   if (parsedInvoice.currency) form.currency = parsedInvoice.currency;
   if (parsedInvoice.grossAmount != null) {
     form.grossAmount = String(normalizedOriginalAmounts.gross);

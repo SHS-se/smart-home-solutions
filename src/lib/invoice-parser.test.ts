@@ -68,6 +68,7 @@ const NEW_LAYOUT_CASES = [
       invoiceDate: '2026-04-23', dueDate: '2026-05-07', grossAmount: 1120, netAmount: 896,
       vatAmount: 224, currency: 'SEK', description: 'Schneider Electric Exxact Vipptryckknapp trapp/1-pol Vit',
       orgNumber: '556688-8409', vatNumber: null, fingerprintId: 'elbutik_scandinavia_invoice',
+      documentType: 'receipt',
     },
   },
   {
@@ -78,16 +79,17 @@ const NEW_LAYOUT_CASES = [
       invoiceDate: '2026-04-30', dueDate: '2026-05-14', grossAmount: 59, netAmount: 47.2,
       vatAmount: 11.8, currency: 'SEK', description: 'Shelly Wall Switch Adapter - Gira/Merten/Exxact',
       orgNumber: '556688-8409', vatNumber: null, fingerprintId: 'elbutik_scandinavia_invoice',
+      documentType: 'receipt',
     },
   },
   {
     name: 'CS Megastore receipt 500375961',
-    rawText: `Kvitto 500375961 CS MEGASTORE AB - www.csmegastore.se Kvitto Kundnummer: 1019412881 Kvittonr.: 500375961 Fakturadatum 13-05-2026 Valuta SEK Betalningsmetod: Quickpay/Billwerk CS MEGASTORE AB * Slottsgatan 20 * SE-211 33 Malmö * salg@csmegastore.se * www.csmegastore.se Vat-no: SE5595229401 Artikelnr. Benämning Antal Pris / St. Moms % Pris (ex. moms) 21380963 Shelly PM Mini Gen3 3800235261613 4 98,40 25,00 393,60 Totalt ex. moms 393,60 Moms 98,40 Total inkl. moms SEK 492,00 Ordern är betald!`,
+    rawText: `Kvitto 500375961 CS MEGASTORE AB - www.csmegastore.se Kvitto Kundnummer: 1019412881 Kvittonr.: 500375961 Fakturadatum 13-05-2026 leveransmetod: Bring - Nordic - Business Parcel Bulk Betalingsdatum: 27-05-2026 Valuta SEK Betalningsmetod: Quickpay/Billwerk CS MEGASTORE AB * Slottsgatan 20 * SE-211 33 Malmö * salg@csmegastore.se * www.csmegastore.se Vat-no: SE5595229401 Artikelnr. Benämning Antal Pris / St. Moms % Pris (ex. moms) 21380963 Shelly PM Mini Gen3 3800235261613 4 98,40 25,00 393,60 Totalt ex. moms 393,60 Moms 98,40 Total inkl. moms SEK 492,00 Ordern är betald!`,
     expected: {
       supplierName: 'CS MEGASTORE AB', supplierCountry: 'SE', invoiceNumber: '500375961',
-      invoiceDate: '2026-05-13', dueDate: null, grossAmount: 492, netAmount: 393.6,
+      invoiceDate: '2026-05-13', dueDate: '2026-05-27', grossAmount: 492, netAmount: 393.6,
       vatAmount: 98.4, currency: 'SEK', description: 'Shelly PM Mini Gen3', orgNumber: null,
-      vatNumber: 'SE5595229401', fingerprintId: 'cs_megastore_receipt',
+      vatNumber: 'SE5595229401', fingerprintId: 'cs_megastore_receipt', documentType: 'receipt',
     },
   },
   {
@@ -97,7 +99,7 @@ const NEW_LAYOUT_CASES = [
       supplierName: 'CS MEGASTORE AB', supplierCountry: 'SE', invoiceNumber: '500384956',
       invoiceDate: '2026-05-21', dueDate: null, grossAmount: 540.95, netAmount: 432.76,
       vatAmount: 108.19, currency: 'SEK', description: 'Shelly PM Mini Gen3', orgNumber: null,
-      vatNumber: 'SE5595229401', fingerprintId: 'cs_megastore_receipt',
+      vatNumber: 'SE5595229401', fingerprintId: 'cs_megastore_receipt', documentType: 'receipt',
     },
   },
   ...[
@@ -112,7 +114,7 @@ const NEW_LAYOUT_CASES = [
       invoiceDate: invoiceDate === 'Jul 02, 2026' ? '2026-07-02' : invoiceDate === 'Jun 02, 2026' ? '2026-06-02' : '2026-06-09',
       dueDate: invoiceDate === 'Jul 02, 2026' ? '2026-07-02' : invoiceDate === 'Jun 02, 2026' ? '2026-06-02' : '2026-06-09',
       grossAmount: amount, netAmount: amount, vatAmount: 0, currency: 'SEK', description: product,
-      orgNumber: '39697696', vatNumber: null, fingerprintId: 'lunar_bank_invoice',
+      orgNumber: '39697696', vatNumber: null, fingerprintId: 'lunar_bank_invoice', documentType: null,
     },
   })),
   {
@@ -122,7 +124,7 @@ const NEW_LAYOUT_CASES = [
       supplierName: 'zai', supplierCountry: 'SG', invoiceNumber: 'INV-6280974-202604-0001',
       invoiceDate: '2026-05-08', dueDate: null, grossAmount: 3.8, netAmount: 3.8,
       vatAmount: 0, currency: 'USD', description: 'API usage (glm-5)', orgNumber: null,
-      vatNumber: null, fingerprintId: 'zai_receipt',
+      vatNumber: null, fingerprintId: 'zai_receipt', documentType: 'receipt',
     },
   },
 ] as const;
@@ -145,6 +147,7 @@ for (const testCase of NEW_LAYOUT_CASES) {
     assertEqual(parsed.orgNumber, expected.orgNumber, 'orgNumber');
     assertEqual(parsed.vatNumber, expected.vatNumber, 'vatNumber');
     assertEqual(parsed.fingerprint.id, expected.fingerprintId, 'fingerprint');
+    assertEqual(parsed.documentType, expected.documentType, 'documentType');
     assertEqual(parsed.parserReviewRequired, false, 'parserReviewRequired');
   });
 }
