@@ -214,25 +214,33 @@ const PurchaseDetail: React.FC = () => {
         throw new Error(t('Bokförda inköp kan inte raderas', 'Posted purchases cannot be deleted'));
       }
 
+      const { data: deletedPurchase, error } = await supabase
+        .from('acc_purchases')
+        .delete()
+        .eq('id', purchase.id)
+        .eq('status', 'draft')
+        .select('id')
+        .maybeSingle();
+      if (error) throw error;
+      if (!deletedPurchase) {
+        throw new Error(t(
+          'Utkastet kunde inte raderas eftersom dess status har ändrats. Ladda om sidan och försök igen.',
+          'The draft could not be deleted because its status changed. Reload the page and try again.',
+        ));
+      }
+
       if (normalizedDocumentPath) {
         const { error: storageError } = await supabase.storage
           .from(PURCHASE_DOCUMENT_BUCKET)
           .remove([normalizedDocumentPath]);
         if (storageError) {
-          console.warn('Failed to remove purchase document during draft deletion', {
+          console.warn('Failed to remove purchase document after draft deletion', {
             purchaseId: purchase.id,
             normalizedPath: normalizedDocumentPath,
             error: storageError,
           });
         }
       }
-
-      const { error } = await supabase
-        .from('acc_purchases')
-        .delete()
-        .eq('id', purchase.id)
-        .eq('status', 'draft');
-      if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['acc-purchases'] });
