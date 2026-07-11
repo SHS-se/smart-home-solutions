@@ -114,7 +114,7 @@ const NEW_LAYOUT_CASES = [
       invoiceDate: invoiceDate === 'Jul 02, 2026' ? '2026-07-02' : invoiceDate === 'Jun 02, 2026' ? '2026-06-02' : '2026-06-09',
       dueDate: invoiceDate === 'Jul 02, 2026' ? '2026-07-02' : invoiceDate === 'Jun 02, 2026' ? '2026-06-02' : '2026-06-09',
       grossAmount: amount, netAmount: amount, vatAmount: 0, currency: 'SEK', description: product,
-      orgNumber: '39697696', vatNumber: null, fingerprintId: 'lunar_bank_invoice', documentType: null,
+      orgNumber: '39697696', vatNumber: null, fingerprintId: 'lunar_bank_invoice', documentType: 'receipt',
     },
   })),
   {
@@ -293,7 +293,7 @@ Deno.test('parseInvoiceText keeps OpenAI invoice amounts in USD', () => {
   assertEqual(parsed.vatAmount, 0, 'vatAmount');
   assertEqual(parsed.netAmount, 10, 'netAmount');
   assertEqual(parsed.vatRate, 0, 'vatRate');
-  assertEqual(parsed.documentType, null, 'documentType');
+  assertEqual(parsed.documentType, 'receipt', 'documentType');
   assertEqual(parsed.fingerprint.id, 'openai_invoice', 'fingerprint');
   assertEqual(parsed.parserReviewRequired, false, 'parserReviewRequired');
 });
@@ -320,6 +320,7 @@ Deno.test('parseInvoiceText extracts Lovable invoice supplier, product descripti
   assertEqual(parsed.vatAmount, 3, 'vatAmount');
   assertEqual(parsed.vatRate, 25, 'vatRate');
   assertEqual(parsed.description, 'Build Credit Top-up Pro', 'description');
+  assertEqual(parsed.documentType, 'receipt', 'documentType');
   assertEqual(parsed.fingerprint.id, 'lovable_invoice', 'fingerprint');
   assertEqual(parsed.parserReviewRequired, false, 'parserReviewRequired');
 });
@@ -388,6 +389,7 @@ Deno.test('parseInvoiceText extracts Anthropic invoice fields and recognizes the
   assertEqual(parsed.vatAmount, 2.5, 'vatAmount');
   assertEqual(parsed.vatRate, 25, 'vatRate');
   assertEqual(parsed.description, 'One-time credit purchase', 'description');
+  assertEqual(parsed.documentType, 'receipt', 'documentType');
   assertEqual(parsed.fingerprint.id, 'anthropic_invoice', 'fingerprint');
   assertEqual(parsed.parserReviewRequired, false, 'parserReviewRequired');
 });

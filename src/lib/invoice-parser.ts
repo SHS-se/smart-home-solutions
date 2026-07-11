@@ -838,8 +838,19 @@ function extractInvoiceDate(text: string, fingerprintId: string): string | null 
   ]);
 }
 
-/** Fingerprints whose documents are always paid receipts */
-const RECEIPT_FINGERPRINTS = new Set(['cs_megastore_receipt', 'zai_receipt']);
+/**
+ * Fingerprints whose documents are always settled at issue: true receipts,
+ * plus Stripe-billed suppliers that auto-charge the card on the invoice date
+ * (confirmed for these accounts) even though the document says "Amount due".
+ */
+const RECEIPT_FINGERPRINTS = new Set([
+  'cs_megastore_receipt',
+  'zai_receipt',
+  'openai_invoice',
+  'anthropic_invoice',
+  'lovable_invoice',
+  'lunar_bank_invoice',
+]);
 
 /** Explicit on-document evidence that payment is already settled */
 const PAID_SIGNALS: RegExp[] = [
