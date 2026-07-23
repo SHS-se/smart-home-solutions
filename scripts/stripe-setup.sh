@@ -20,10 +20,10 @@ set -euo pipefail
 
 ENV_FILE="${ENV_FILE:-.env.stripe.test.local}"
 
-# ── config (smallest currency unit: SEK öre, so 24900 = 249.00 kr) ───────────
+# ── config (smallest currency unit: SEK öre, so 32000 = 320.00 kr) ───────────
 PRODUCT_NAME="${PRODUCT_NAME:-Smart Home Solutions Prenumeration}"
 PRODUCT_DESC="${PRODUCT_DESC:-Månatlig prenumeration på Smart Home Solutions-tjänster}"
-PRICE_AMOUNT="${PRICE_AMOUNT:-24900}"
+PRICE_AMOUNT="${PRICE_AMOUNT:-32000}"
 PRICE_CURRENCY="${PRICE_CURRENCY:-sek}"
 PRICE_INTERVAL="${PRICE_INTERVAL:-month}"
 PRICE_LOOKUP_KEY="${PRICE_LOOKUP_KEY:-shs_subscription_monthly}"
