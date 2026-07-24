@@ -71,7 +71,7 @@ const UpdateForm: React.FC<{ onUpdated: () => void }> = ({ onUpdated }) => {
 };
 
 const CardUpdateCard: React.FC<CardUpdateCardProps> = ({ onUpdated }) => {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -114,7 +114,7 @@ const CardUpdateCard: React.FC<CardUpdateCardProps> = ({ onUpdated }) => {
   }
 
   return (
-    <Elements stripe={getStripe()} options={{ clientSecret, locale: 'sv', appearance: { theme: 'stripe' } }}>
+    <Elements stripe={getStripe()} options={{ clientSecret, locale: language, appearance: { theme: 'stripe' } }}>
       <UpdateForm onUpdated={onUpdated} />
     </Elements>
   );

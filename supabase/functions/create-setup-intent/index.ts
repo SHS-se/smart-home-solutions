@@ -1,5 +1,5 @@
 // Returns a SetupIntent client_secret so a logged-in customer can save a new
-// card (card + Link) on our own page — the destination of the dunning email's
+// card on our own page — the destination of the dunning email's
 // "update card" link. Pairs with set-default-payment-method.
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
@@ -47,7 +47,13 @@ serve(async (req) => {
     const stripe = getStripe();
     const setupIntent = await stripe.setupIntents.create({
       customer: customer.stripe_customer_id,
-      payment_method_types: ["card", "link"],
+      // Card only (no Link) — matches create-subscription; the saved card is
+      // charged off-session on renewals. 3DS is always requested when saving
+      // (BankID for Swedish banks), giving renewals their SCA exemption.
+      payment_method_types: ["card"],
+      payment_method_options: {
+        card: { request_three_d_secure: "any" },
+      },
       usage: "off_session",
     });
 

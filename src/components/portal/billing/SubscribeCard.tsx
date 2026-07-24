@@ -56,7 +56,7 @@ const PaymentForm: React.FC<{ onSubscribed: () => void }> = ({ onSubscribed }) =
 };
 
 const SubscribeCard: React.FC<SubscribeCardProps> = ({ onSubscribed }) => {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -100,7 +100,7 @@ const SubscribeCard: React.FC<SubscribeCardProps> = ({ onSubscribed }) => {
   return (
     <Elements
       stripe={getStripe()}
-      options={{ clientSecret, locale: 'sv', appearance: { theme: 'stripe' } }}
+      options={{ clientSecret, locale: language, appearance: { theme: 'stripe' } }}
     >
       <PaymentForm onSubscribed={onSubscribed} />
     </Elements>

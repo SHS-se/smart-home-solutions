@@ -109,10 +109,16 @@ serve(async (req) => {
       payment_behavior: "default_incomplete",
       payment_settings: {
         save_default_payment_method: "on_subscription",
-        // Pin to standard cards + Link only. Explicit types override the account's
-        // dynamic payment methods, so Klarna / Amazon Pay / other (pricier) methods
-        // never appear in this flow regardless of dashboard settings.
-        payment_method_types: ["card", "link"],
+        // Card only. Explicit types override the account's dynamic payment
+        // methods, so Link / Klarna / Amazon Pay never appear in this flow
+        // regardless of dashboard settings — the Payment Element renders as a
+        // plain card form (fields stay in Stripe's iframe; PCI unchanged).
+        payment_method_types: ["card"],
+        payment_method_options: {
+          // Always request 3DS on the first payment (BankID for Swedish banks).
+          // Renewals are merchant-initiated off-session charges and are exempt.
+          card: { request_three_d_secure: "any" },
+        },
       },
       expand: ["latest_invoice.payment_intent"],
     });
