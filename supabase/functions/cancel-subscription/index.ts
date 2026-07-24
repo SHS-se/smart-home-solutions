@@ -6,6 +6,7 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { getAppEnvironment } from "../_shared/app-env.ts";
 import { getStripe } from "../_shared/stripe-client.ts";
+import { sendCancelConfirmationEmail } from "../_shared/subscription-emails.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -42,13 +43,14 @@ serve(async (req) => {
 
     const { data: customer } = await serviceClient
       .from("customers")
-      .select("id, stripe_subscription_id")
+      .select("id, stripe_subscription_id, subscription_cancel_at_period_end")
       .eq("user_id", user.id)
       .maybeSingle();
     if (!customer?.stripe_subscription_id) throw new Error("No active subscription to cancel");
+    const alreadyCanceling = customer.subscription_cancel_at_period_end === true;
 
     const stripe = getStripe();
-    await stripe.subscriptions.update(customer.stripe_subscription_id, {
+    const updated = await stripe.subscriptions.update(customer.stripe_subscription_id, {
       cancel_at_period_end: true,
     });
 
@@ -58,6 +60,36 @@ serve(async (req) => {
       .eq("id", customer.id);
 
     logStep("Subscription set to cancel at period end", { subscriptionId: customer.stripe_subscription_id });
+
+    // Confirm the cancellation by email (the only email for a voluntary cancel;
+    // the webhook stays silent when the period later runs out). Skipped on
+    // repeat calls, and a send failure must not fail the completed cancel.
+    if (!alreadyCanceling) {
+      const { data: identity } = await serviceClient
+        .from("customers_with_identity")
+        .select("contact_email, contact_name")
+        .eq("id", customer.id)
+        .maybeSingle();
+      const email = (identity as { contact_email: string | null } | null)?.contact_email;
+      if (email) {
+        const periodEnd = (updated as { current_period_end?: number | null }).current_period_end;
+        const accessUntil = typeof periodEnd === "number"
+          ? new Date(periodEnd * 1000).toISOString().slice(0, 10)
+          : null;
+        try {
+          await sendCancelConfirmationEmail(
+            email,
+            (identity as { contact_name: string | null } | null)?.contact_name ?? null,
+            accessUntil,
+          );
+          logStep("Cancel confirmation email sent");
+        } catch (emailError) {
+          logStep("Cancel confirmation email failed", {
+            message: emailError instanceof Error ? emailError.message : String(emailError),
+          });
+        }
+      }
+    }
     return new Response(JSON.stringify({ success: true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 200,

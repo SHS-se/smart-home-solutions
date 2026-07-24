@@ -11,11 +11,21 @@ interface StripeSubscriptionLike {
   status: string;
   current_period_end?: number | null; // unix seconds
   cancel_at_period_end?: boolean | null;
+  cancellation_details?: { reason?: string | null } | null;
 }
 
 // Statuses where the customer still has access. past_due keeps access while
 // Stripe retries; access is revoked once the subscription becomes canceled/unpaid.
 const ACTIVE_STATUSES = new Set(["active", "trialing", "past_due"]);
+
+/** True when the subscription ended because Stripe could not collect payment
+ *  (dunning retries exhausted, or a dispute). Only these endings warrant the
+ *  "ended because we couldn't charge you" email — voluntary cancellations are
+ *  confirmed at cancel time and get no second email at period end. */
+export function endedDueToPaymentFailure(sub: StripeSubscriptionLike): boolean {
+  const reason = sub.cancellation_details?.reason ?? null;
+  return reason === "payment_failed" || reason === "payment_disputed";
+}
 
 export function entitlementFromSubscription(
   sub: StripeSubscriptionLike,

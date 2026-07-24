@@ -2,7 +2,8 @@
 // signature (no JWT — verify_jwt=false), then:
 //   invoice.paid                  → generate OUR invoice (own numbering) + activate
 //   customer.subscription.updated → sync entitlement (incl. cancel-at-period-end)
-//   customer.subscription.deleted → revoke entitlement
+//   customer.subscription.deleted → revoke entitlement (+ email only when the
+//                                   end was caused by failed payment/dispute)
 //   invoice.payment_failed        → log (access kept until period end)
 // All customer-facing artifacts are ours; Stripe's hosted invoices/receipts are
 // never exposed.
@@ -12,7 +13,10 @@ import { getAppEnvironment } from "../_shared/app-env.ts";
 import { getStripe } from "../_shared/stripe-client.ts";
 import { buildSubscriptionInvoice } from "../_shared/subscription-invoice.ts";
 import { subscriptionInvoiceDescription } from "../_shared/subscription-invoice-description.ts";
-import { entitlementFromSubscription } from "../_shared/subscription-entitlement.ts";
+import {
+  endedDueToPaymentFailure,
+  entitlementFromSubscription,
+} from "../_shared/subscription-entitlement.ts";
 import {
   sendPaymentFailedEmail,
   sendSubscriptionCanceledEmail,
@@ -117,10 +121,18 @@ serve(async (req) => {
           .update({ ...entitlement, stripe_subscription_id: sub.id })
           .eq("id", customer.id);
         logStep("subscription synced", { active: entitlement.subscription_active });
-        // Retries exhausted → subscription cancelled: tell the customer (our email).
-        if (event.type === "customer.subscription.deleted" && customer.email) {
-          await sendSubscriptionCanceledEmail(customer.email, customer.name);
-          logStep("canceled email sent");
+        // Email only when the subscription ended because payment collection
+        // failed. Voluntary cancellations were confirmed at cancel time
+        // (cancel-subscription), so their period-end deletion stays silent.
+        if (event.type === "customer.subscription.deleted") {
+          if (customer.email && endedDueToPaymentFailure(sub)) {
+            await sendSubscriptionCanceledEmail(customer.email, customer.name);
+            logStep("canceled email sent (payment failure)");
+          } else {
+            logStep("subscription ended, no email", {
+              reason: sub.cancellation_details?.reason ?? null,
+            });
+          }
         }
         break;
       }

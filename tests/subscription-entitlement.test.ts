@@ -2,7 +2,10 @@
 // applies to the customers row.
 
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { entitlementFromSubscription } from "../supabase/functions/_shared/subscription-entitlement.ts";
+import {
+  endedDueToPaymentFailure,
+  entitlementFromSubscription,
+} from "../supabase/functions/_shared/subscription-entitlement.ts";
 
 const PERIOD_END = 1782950400; // 2026-07-01T00:00:00Z
 
@@ -35,4 +38,17 @@ Deno.test("canceled/unpaid/incomplete revoke access and clear expiry", () => {
     assertEquals(e.subscription_expires_at, null, status);
     assertEquals(e.subscription_cancel_at_period_end, false, status);
   }
+});
+
+Deno.test("only payment-failure/dispute endings trigger the canceled email", () => {
+  const ended = (reason: string | null) =>
+    endedDueToPaymentFailure({
+      status: "canceled",
+      cancellation_details: reason === null ? null : { reason },
+    });
+  assertEquals(ended("payment_failed"), true);
+  assertEquals(ended("payment_disputed"), true);
+  // Voluntary cancel (portal or Stripe dashboard) — confirmed at cancel time.
+  assertEquals(ended("cancellation_requested"), false);
+  assertEquals(ended(null), false);
 });

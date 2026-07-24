@@ -35,6 +35,33 @@ export async function sendPaymentFailedEmail(to: string, name: string | null): P
   });
 }
 
+/** Customer-requested cancellation confirmed: access continues until the paid
+ *  period ends, then no more charges. This is the only email for a voluntary
+ *  cancellation — nothing further is sent when the period actually runs out. */
+export async function sendCancelConfirmationEmail(
+  to: string,
+  name: string | null,
+  accessUntil: string | null, // YYYY-MM-DD, from the subscription's current_period_end
+): Promise<void> {
+  const hej = name ? `Hej ${name},` : "Hej,";
+  const url = billingUrl();
+  const access = accessUntil
+    ? `Du har tillgång till tjänsten till och med ${accessUntil}. Därefter dras inga fler betalningar.`
+    : `Du har tillgång till tjänsten perioden ut. Därefter dras inga fler betalningar.`;
+  const text =
+    `${hej}\n\n` +
+    `Vi bekräftar att din prenumeration på Smart Home Solutions är uppsagd.\n\n` +
+    `${access}\n\n` +
+    `Ångrar du dig? Starta prenumerationen igen när som helst här:\n${url}\n\n` +
+    `Smart Home Solutions`;
+  await resend().emails.send({
+    from: FROM,
+    to: [to],
+    subject: "Din prenumeration är uppsagd",
+    text,
+  });
+}
+
 /** Retries exhausted and the subscription was cancelled. */
 export async function sendSubscriptionCanceledEmail(to: string, name: string | null): Promise<void> {
   const hej = name ? `Hej ${name},` : "Hej,";
