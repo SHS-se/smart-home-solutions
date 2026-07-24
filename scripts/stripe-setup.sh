@@ -123,7 +123,24 @@ else
   echo "  price: $PRICE_ID"
 fi
 
-# ── 2. Webhook endpoint (reuse by URL) ───────────────────────────────────────
+# ── 2. Payment method configuration: force Link off ──────────────────────────
+# payment_method_types on intents does NOT remove the Link prompt inside the
+# Payment Element's card form (the "save my information" section) — that is
+# governed by the account's default payment method configuration.
+echo "Disabling Link in the default payment method configuration..."
+pmclist=$(scall -G "$API/payment_method_configurations" -d "limit=100")
+PMC_ID=$(printf '%s' "$pmclist" | python3 -c \
+  'import sys,json;d=json.load(sys.stdin);print(next((e["id"] for e in d.get("data",[]) if e.get("is_default")),""))')
+if [ -n "$PMC_ID" ]; then
+  pmcres=$(scall "$API/payment_method_configurations/$PMC_ID" \
+    -d "link[display_preference][preference]=off")
+  extract "$pmcres" "id" >/dev/null # surfaces Stripe errors
+  echo "  Link turned off in configuration $PMC_ID."
+else
+  echo "  WARNING: no default payment method configuration found; disable Link in the dashboard." >&2
+fi
+
+# ── 3. Webhook endpoint (reuse by URL) ───────────────────────────────────────
 echo "Checking webhook endpoint for $WEBHOOK_URL..."
 whlist=$(scall -G "$API/webhook_endpoints" -d "limit=100")
 WH_ID=$(printf '%s' "$whlist" | python3 -c \
@@ -150,7 +167,7 @@ else
   echo "  signing secret written to $WEBHOOK_SECRET_FILE (gitignored; do not commit)"
 fi
 
-# ── 3. Summary (all non-sensitive) ───────────────────────────────────────────
+# ── 4. Summary (all non-sensitive) ───────────────────────────────────────────
 cat <<SUMMARY
 
 ──────────────────────────────────────────────

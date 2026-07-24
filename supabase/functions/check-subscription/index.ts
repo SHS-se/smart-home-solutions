@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { getAppEnvironment } from "../_shared/app-env.ts";
 import { getStripe } from "../_shared/stripe-client.ts";
 import { entitlementFromSubscription } from "../_shared/subscription-entitlement.ts";
+import { cardExpiryStatus } from "../_shared/card-expiry.ts";
 import {
   loadActiveSubscriptionProduct,
   subscriptionProductFromSubscription,
@@ -105,7 +106,7 @@ serve(async (req) => {
 
     if (customer.stripe_subscription_id) {
       const subscription = await stripe.subscriptions.retrieve(customer.stripe_subscription_id, {
-        expand: ["items.data.price.product"],
+        expand: ["items.data.price.product", "default_payment_method"],
       });
       const entitlement = entitlementFromSubscription(subscription);
       await supabaseClient
@@ -116,6 +117,30 @@ serve(async (req) => {
       const product = entitlement.subscription_active
         ? subscriptionProductFromSubscription(subscription) ?? activeProduct
         : activeProduct;
+
+      // Saved card summary (brand/last4/expiry) so the portal can show the
+      // card on file and warn before an expired card kills a renewal. Only
+      // non-sensitive display fields ever leave this function.
+      // deno-lint-ignore no-explicit-any
+      const pm = subscription.default_payment_method as any;
+      const card = pm && typeof pm === "object" ? pm.card : null;
+      const paymentMethod = card
+        ? {
+            brand: card.brand ?? null,
+            last4: card.last4 ?? null,
+            exp_month: card.exp_month ?? null,
+            exp_year: card.exp_year ?? null,
+            expiry_status:
+              typeof card.exp_month === "number" && typeof card.exp_year === "number"
+                ? cardExpiryStatus({
+                    expMonth: card.exp_month,
+                    expYear: card.exp_year,
+                    now: new Date(),
+                    renewalAt: entitlement.subscription_expires_at,
+                  })
+                : null,
+          }
+        : null;
 
       logStep("Subscription checked from Stripe", {
         customerId,
@@ -128,6 +153,7 @@ serve(async (req) => {
         subscription_end: entitlement.subscription_expires_at,
         cancel_at_period_end: entitlement.subscription_cancel_at_period_end,
         product,
+        payment_method: paymentMethod,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 200,

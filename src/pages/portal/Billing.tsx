@@ -44,11 +44,20 @@ interface SubscriptionProduct {
   interval_count: number | null;
 }
 
+interface SubscriptionPaymentMethod {
+  brand: string | null;
+  last4: string | null;
+  exp_month: number | null;
+  exp_year: number | null;
+  expiry_status: 'ok' | 'expires_before_renewal' | 'expired' | null;
+}
+
 interface SubscriptionStatus {
   subscribed: boolean;
   subscription_end: string | null;
   cancel_at_period_end?: boolean;
   product?: SubscriptionProduct | null;
+  payment_method?: SubscriptionPaymentMethod | null;
 }
 
 interface BillingProps {
@@ -69,6 +78,7 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
   const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus | null>(null);
   const [subscriptionLoading, setSubscriptionLoading] = useState(true);
   const [canceling, setCanceling] = useState(false);
+  const [resuming, setResuming] = useState(false);
   const [showCardUpdate, setShowCardUpdate] = useState(false);
   const [pdfModalOpen, setPdfModalOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
@@ -264,6 +274,19 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
     }
   };
 
+  const handleResume = async () => {
+    setResuming(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('resume-subscription');
+      if (error || data?.error) throw new Error(error?.message || data?.error);
+      await checkSubscription();
+    } catch (e) {
+      console.error('Error resuming subscription:', e);
+    } finally {
+      setResuming(false);
+    }
+  };
+
 
   if (loading) {
     return (
@@ -310,6 +333,24 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
   };
 
   const subscriptionProduct = subscriptionStatus?.product ?? null;
+  const paymentMethod = subscriptionStatus?.payment_method ?? null;
+
+  const renderCardOnFile = () => {
+    if (!paymentMethod?.last4) return null;
+    const brand = paymentMethod.brand
+      ? paymentMethod.brand.charAt(0).toUpperCase() + paymentMethod.brand.slice(1)
+      : t('Kort', 'Card');
+    const expiry =
+      paymentMethod.exp_month && paymentMethod.exp_year
+        ? `${String(paymentMethod.exp_month).padStart(2, '0')}/${String(paymentMethod.exp_year).slice(-2)}`
+        : null;
+    return (
+      <p className="text-sm text-muted-foreground">
+        {brand} •••• {paymentMethod.last4}
+        {expiry ? ` · ${t('utgår', 'expires')} ${expiry}` : ''}
+      </p>
+    );
+  };
 
   const formatSubscriptionAmount = (product: SubscriptionProduct | null) => {
     if (product?.amount === null || product?.amount === undefined || !product.currency) return null;
@@ -462,16 +503,46 @@ const Billing: React.FC<BillingProps> = ({ customerId: propCustomerId, isStaffVi
                     </AlertDescription>
                   </Alert>
                 )}
+                {/* Expiry warning only while renewals are still coming. */}
+                {!subscriptionStatus.cancel_at_period_end &&
+                  (paymentMethod?.expiry_status === 'expired' ||
+                    paymentMethod?.expiry_status === 'expires_before_renewal') && (
+                  <Alert variant="destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>
+                      {paymentMethod.expiry_status === 'expired'
+                        ? t(
+                            'Ditt betalkort har gått ut. Uppdatera kortet, annars avslutas prenumerationen automatiskt efter misslyckade betalningsförsök.',
+                            'Your card has expired. Update it, otherwise the subscription is terminated automatically after failed payment attempts.'
+                          )
+                        : t(
+                            'Ditt betalkort går ut före nästa förnyelse. Uppdatera kortet för att undvika att prenumerationen avslutas automatiskt.',
+                            'Your card expires before the next renewal. Update it to avoid the subscription being terminated automatically.'
+                          )}
+                    </AlertDescription>
+                  </Alert>
+                )}
                 {renderSubscriptionProduct()}
+                {renderCardOnFile()}
                 {!isStaffView && (
                   <div className="space-y-3">
                     <div className="flex flex-wrap gap-2">
                       {!showCardUpdate && (
-                        <Button variant="outline" size="sm" onClick={() => setShowCardUpdate(true)}>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setShowCardUpdate(true)}
+                          disabled={subscriptionStatus.cancel_at_period_end}
+                        >
                           {t('Uppdatera betalkort', 'Update card')}
                         </Button>
                       )}
-                      {!subscriptionStatus.cancel_at_period_end && (
+                      {subscriptionStatus.cancel_at_period_end ? (
+                        <Button variant="outline" size="sm" onClick={handleResume} disabled={resuming}>
+                          {resuming && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                          {t('Återuppta prenumerationen', 'Resume subscription')}
+                        </Button>
+                      ) : (
                         <Button variant="outline" size="sm" onClick={handleCancel} disabled={canceling}>
                           {canceling && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                           {t('Avsluta prenumeration', 'Cancel subscription')}
