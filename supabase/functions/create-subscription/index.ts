@@ -9,6 +9,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { getAppEnvironment } from "../_shared/app-env.ts";
 import { getStripe } from "../_shared/stripe-client.ts";
 import { SUBSCRIPTION_PRICE_LOOKUP_KEY } from "../_shared/subscription-product.ts";
+import { stripeCustomerIdentity } from "../_shared/stripe-customer-identity.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -64,11 +65,10 @@ serve(async (req) => {
       .select("contact_name")
       .eq("id", customer.id)
       .maybeSingle();
-    const useSite = customer.billing_same_as_site === true;
-    const street = useSite ? customer.site_street : customer.billing_street;
-    const postcode = useSite ? customer.site_postcode : customer.billing_postcode;
-    const city = useSite ? customer.site_city : customer.billing_city;
-    if (!identity?.contact_name || !street || !postcode || !city) {
+    // Doubles as the Stripe-side identity: same name and address, published so
+    // the buyer is visible in Stripe too, not only on our own invoice.
+    const buyer = stripeCustomerIdentity(identity?.contact_name, customer);
+    if (!buyer) {
       return new Response(
         JSON.stringify({
           error: "Komplettera ditt namn och din faktureringsadress innan du startar prenumerationen.",
@@ -85,11 +85,24 @@ serve(async (req) => {
     if (!stripeCustomerId) {
       const created = await stripe.customers.create({
         email: user.email,
+        ...buyer,
         metadata: { shs_customer_id: customer.id },
       });
       stripeCustomerId = created.id;
       await serviceClient.from("customers").update({ stripe_customer_id: stripeCustomerId }).eq("id", customer.id);
       logStep("Stripe customer created", { stripeCustomerId });
+    } else {
+      // Existing Stripe customer: refresh it, both to pick up a rename since the
+      // last subscription and to fill in customers created before we sent any of
+      // this. Advisory — a failure here must not block the subscription.
+      try {
+        await stripe.customers.update(stripeCustomerId, buyer);
+        logStep("Stripe customer details refreshed", { stripeCustomerId });
+      } catch (updateError) {
+        logStep("Stripe customer refresh failed", {
+          message: updateError instanceof Error ? updateError.message : String(updateError),
+        });
+      }
     }
 
     // Resolve the recurring price by lookup_key (env-agnostic).

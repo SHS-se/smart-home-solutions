@@ -1,5 +1,7 @@
 // Stripe webhook → our entitlement + our invoices. Verifies the Stripe
 // signature (no JWT — verify_jwt=false), then:
+//   invoice.created               → publish buyer name/address to Stripe while
+//                                   the invoice is still a draft
 //   invoice.paid                  → generate OUR invoice (own numbering) + activate
 //   customer.subscription.updated → sync entitlement (incl. cancel-at-period-end)
 //   customer.subscription.deleted → revoke entitlement (+ email only when the
@@ -27,6 +29,7 @@ import {
   sendSubscriptionCanceledEmail,
 } from "../_shared/subscription-emails.ts";
 import { sendSubscriptionStaffNotice } from "../_shared/subscription-staff-notice.ts";
+import { stripeCustomerIdentity } from "../_shared/stripe-customer-identity.ts";
 
 const logStep = (step: string, details?: unknown) => {
   const detailsStr = details ? ` - ${JSON.stringify(details)}` : "";
@@ -236,6 +239,42 @@ serve(async (req) => {
           logStep("invoice.payment_failed (no email)", {
             attempt: invoice.attempt_count,
             billingReason: invoice.billing_reason ?? null,
+          });
+        }
+        break;
+      }
+      case "invoice.created": {
+        // A renewal invoice starts as a draft and only copies the customer's
+        // name and address when Stripe finalizes it (about an hour later), so
+        // this is the window in which to make sure they are current. Also what
+        // backfills customers created before we published any of this — no
+        // re-subscribe needed, their next renewal carries the name.
+        // deno-lint-ignore no-explicit-any
+        const invoice = event.data.object as any;
+        const customer = await ourCustomer(invoice.customer);
+        if (!customer) {
+          logStep("No matching customer for invoice.created", { stripeCustomer: invoice.customer });
+          break;
+        }
+        const { data: address } = await serviceClient
+          .from("customers")
+          .select(
+            "billing_same_as_site, site_street, site_postcode, site_city, billing_street, billing_postcode, billing_city",
+          )
+          .eq("id", customer.id)
+          .maybeSingle();
+        const buyer = stripeCustomerIdentity(customer.name, address);
+        if (!buyer) {
+          logStep("invoice.created: incomplete buyer details, nothing published");
+          break;
+        }
+        try {
+          await stripe.customers.update(invoice.customer, buyer);
+          logStep("Stripe customer details refreshed before finalization");
+        } catch (error) {
+          // Advisory: the invoice still finalizes, just without the update.
+          logStep("Stripe customer refresh failed", {
+            message: error instanceof Error ? error.message : String(error),
           });
         }
         break;

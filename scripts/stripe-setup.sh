@@ -35,6 +35,7 @@ WEBHOOK_SECRET_FILE="${WEBHOOK_SECRET_FILE:-.env.stripe.webhook.test.local}"
 # Everything stripe-webhook/index.ts switches on. Kept in one place because the
 # list is synced onto an existing endpoint too, not just used at creation.
 WEBHOOK_EVENTS=(
+  invoice.created
   invoice.paid
   invoice.payment_failed
   customer.subscription.updated
