@@ -17,7 +17,9 @@ function billingUrl(): string {
 }
 
 /** First failed renewal: prompt the customer to update their card during the
- *  grace period before the subscription is cancelled. */
+ *  grace period before the subscription is cancelled. Renewals only — a decline
+ *  on the signup payment is visible to the customer on the form itself, and
+ *  stripe-webhook deliberately stays quiet about it. */
 export async function sendPaymentFailedEmail(to: string, name: string | null): Promise<void> {
   const hej = name ? `Hej ${name},` : "Hej,";
   const url = billingUrl();

@@ -4,7 +4,8 @@
 //   customer.subscription.updated → sync entitlement (incl. cancel-at-period-end)
 //   customer.subscription.deleted → revoke entitlement (+ email only when the
 //                                   end was caused by failed payment/dispute)
-//   invoice.payment_failed        → log (access kept until period end)
+//   invoice.payment_failed        → dunning email on a failed RENEWAL only
+//                                   (access kept until period end)
 //   charge.dispute.created        → tell staff, nothing customer-facing
 // All customer-facing artifacts are ours; Stripe's hosted invoices/receipts are
 // never exposed.
@@ -213,25 +214,29 @@ serve(async (req) => {
         // deno-lint-ignore no-explicit-any
         const invoice = event.data.object as any;
         const customer = await ourCustomer(invoice.customer);
-        // Email only on the FIRST failure; Stripe keeps retrying through the grace
+        // Renewals only. A card declined while the customer is still on the
+        // payment form needs no mail from us — they can already see the decline
+        // and normally retry on the spot; "update your card or the subscription
+        // ends" would be nonsense about a subscription that never started. If
+        // they give up, the abandoned-signup notice covers it 23 hours later.
+        const isSignupPayment = invoice.billing_reason === "subscription_create";
+        // Then only on the FIRST failure; Stripe keeps retrying through the grace
         // period, and access continues until the subscription is finally cancelled.
-        if (customer && (invoice.attempt_count ?? 1) === 1) {
+        if (customer && !isSignupPayment && (invoice.attempt_count ?? 1) === 1) {
           if (customer.email) {
             await sendPaymentFailedEmail(customer.email, customer.name);
             logStep("payment-failed email sent");
           }
-          // Only renewals reach the sales inbox. A card declined during signup
-          // is usually retried on the spot; if it isn't, the abandoned-signup
-          // notice covers it 23 hours later.
-          if (invoice.billing_reason !== "subscription_create") {
-            await sendSubscriptionStaffNotice({
-              event: "payment_failed",
-              customer: { id: customer.id, name: customer.name, email: customer.email },
-              reasonCode: await declineCodeForInvoice(invoice),
-            });
-          }
+          await sendSubscriptionStaffNotice({
+            event: "payment_failed",
+            customer: { id: customer.id, name: customer.name, email: customer.email },
+            reasonCode: await declineCodeForInvoice(invoice),
+          });
         } else {
-          logStep("invoice.payment_failed (no email)", { attempt: invoice.attempt_count });
+          logStep("invoice.payment_failed (no email)", {
+            attempt: invoice.attempt_count,
+            billingReason: invoice.billing_reason ?? null,
+          });
         }
         break;
       }
