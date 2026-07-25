@@ -6,6 +6,10 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { getAppEnvironment } from "../_shared/app-env.ts";
 import { getStripe } from "../_shared/stripe-client.ts";
+import {
+  loadNoticeCustomer,
+  sendSubscriptionStaffNotice,
+} from "../_shared/subscription-staff-notice.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -71,6 +75,18 @@ serve(async (req) => {
       .eq("id", customer.id);
 
     logStep("Subscription resumed", { subscriptionId: customer.stripe_subscription_id });
+
+    // Counterpart to the cancellation notice — without it the sales inbox keeps
+    // showing a churn that the customer already took back.
+    const periodEnd = (subscription as { current_period_end?: number | null }).current_period_end;
+    await sendSubscriptionStaffNotice({
+      event: "resumed",
+      customer: await loadNoticeCustomer(serviceClient, customer.id),
+      date: typeof periodEnd === "number"
+        ? new Date(periodEnd * 1000).toISOString().slice(0, 10)
+        : null,
+    });
+
     return new Response(JSON.stringify({ success: true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 200,

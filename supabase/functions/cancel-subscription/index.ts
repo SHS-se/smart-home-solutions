@@ -7,6 +7,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { getAppEnvironment } from "../_shared/app-env.ts";
 import { getStripe } from "../_shared/stripe-client.ts";
 import { sendCancelConfirmationEmail } from "../_shared/subscription-emails.ts";
+import { sendSubscriptionStaffNotice } from "../_shared/subscription-staff-notice.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -70,18 +71,16 @@ serve(async (req) => {
         .select("contact_email, contact_name")
         .eq("id", customer.id)
         .maybeSingle();
-      const email = (identity as { contact_email: string | null } | null)?.contact_email;
+      const email = (identity as { contact_email: string | null } | null)?.contact_email ?? null;
+      const name = (identity as { contact_name: string | null } | null)?.contact_name ?? null;
+      const periodEnd = (updated as { current_period_end?: number | null }).current_period_end;
+      const accessUntil = typeof periodEnd === "number"
+        ? new Date(periodEnd * 1000).toISOString().slice(0, 10)
+        : null;
+
       if (email) {
-        const periodEnd = (updated as { current_period_end?: number | null }).current_period_end;
-        const accessUntil = typeof periodEnd === "number"
-          ? new Date(periodEnd * 1000).toISOString().slice(0, 10)
-          : null;
         try {
-          await sendCancelConfirmationEmail(
-            email,
-            (identity as { contact_name: string | null } | null)?.contact_name ?? null,
-            accessUntil,
-          );
+          await sendCancelConfirmationEmail(email, name, accessUntil);
           logStep("Cancel confirmation email sent");
         } catch (emailError) {
           logStep("Cancel confirmation email failed", {
@@ -89,6 +88,14 @@ serve(async (req) => {
           });
         }
       }
+
+      // Voluntary churn reaches the sales inbox here; the period-end deletion
+      // that follows weeks later stays silent in the webhook.
+      await sendSubscriptionStaffNotice({
+        event: "canceled_by_customer",
+        customer: { id: customer.id, name, email },
+        date: accessUntil,
+      });
     }
     return new Response(JSON.stringify({ success: true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

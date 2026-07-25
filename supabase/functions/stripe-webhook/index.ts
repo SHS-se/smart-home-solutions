@@ -7,6 +7,9 @@
 //   invoice.payment_failed        → log (access kept until period end)
 // All customer-facing artifacts are ours; Stripe's hosted invoices/receipts are
 // never exposed.
+//
+// Each of these also raises an internal notice to the sales inbox
+// (subscription-staff-notice.ts) — identity only, never card data.
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { getAppEnvironment } from "../_shared/app-env.ts";
@@ -21,6 +24,8 @@ import {
   sendPaymentFailedEmail,
   sendSubscriptionCanceledEmail,
 } from "../_shared/subscription-emails.ts";
+import { sendSubscriptionStaffNotice } from "../_shared/subscription-staff-notice.ts";
+import { cardExpiryStatus } from "../_shared/card-expiry.ts";
 
 const logStep = (step: string, details?: unknown) => {
   const detailsStr = details ? ` - ${JSON.stringify(details)}` : "";
@@ -65,6 +70,48 @@ serve(async (req) => {
     };
   };
 
+  // Tell the sales inbox when the saved card will not survive until the next
+  // renewal. Run on every paid invoice, so on a monthly plan the warning lands
+  // about a period ahead and exactly once per cycle — no scheduler to run and
+  // no "already warned" state to keep. The real failure is still caught later
+  // by invoice.payment_failed.
+  const noticeIfCardLapsesBeforeRenewal = async (
+    subscriptionId: unknown,
+    renewalDate: string | null,
+    customer: { id: string; name: string | null; email: string | null },
+  ) => {
+    if (typeof subscriptionId !== "string" || !renewalDate) return;
+    try {
+      const sub = await getStripe().subscriptions.retrieve(subscriptionId, {
+        expand: ["default_payment_method"],
+      });
+      // deno-lint-ignore no-explicit-any
+      const card = (sub.default_payment_method as any)?.card;
+      if (typeof card?.exp_month !== "number" || typeof card?.exp_year !== "number") return;
+
+      const status = cardExpiryStatus({
+        expMonth: card.exp_month,
+        expYear: card.exp_year,
+        now: new Date(),
+        renewalAt: renewalDate,
+      });
+      if (status === "ok") return;
+
+      await sendSubscriptionStaffNotice({
+        event: "card_expires_before_renewal",
+        customer,
+        date: renewalDate,
+      });
+      logStep("card expiry notice sent", { status });
+    } catch (error) {
+      // Advisory only — never fail the webhook over it (Stripe would retry the
+      // whole event and we'd re-issue the invoice work).
+      logStep("card expiry check failed", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+
   try {
     const appEnv = getAppEnvironment();
     const signature = req.headers.get("stripe-signature");
@@ -87,6 +134,7 @@ serve(async (req) => {
         }
         const grossAmount = (invoice.amount_paid ?? 0) / 100; // öre → kr
         const periodEnd: number | undefined = invoice.lines?.data?.[0]?.period?.end;
+        const renewalDate = periodEnd ? dateFromUnixSeconds(periodEnd) : null;
         const result = await buildSubscriptionInvoice(serviceClient, {
           customerId: customer.id,
           stripeInvoiceId: invoice.id,
@@ -104,6 +152,18 @@ serve(async (req) => {
           })
           .eq("id", customer.id);
         logStep("invoice.paid handled", { invoiceNumber: result.invoiceNumber, created: result.created });
+
+        // The first paid invoice of a subscription is the moment it really
+        // started — the subscription row exists before that, unpaid.
+        if (invoice.billing_reason === "subscription_create") {
+          await sendSubscriptionStaffNotice({
+            event: "started",
+            customer: { id: customer.id, name: customer.name, email: customer.email },
+            date: renewalDate,
+          });
+        }
+
+        await noticeIfCardLapsesBeforeRenewal(invoice.subscription, renewalDate, customer);
         break;
       }
       case "customer.subscription.updated":
@@ -125,9 +185,17 @@ serve(async (req) => {
         // failed. Voluntary cancellations were confirmed at cancel time
         // (cancel-subscription), so their period-end deletion stays silent.
         if (event.type === "customer.subscription.deleted") {
-          if (customer.email && endedDueToPaymentFailure(sub)) {
-            await sendSubscriptionCanceledEmail(customer.email, customer.name);
-            logStep("canceled email sent (payment failure)");
+          if (endedDueToPaymentFailure(sub)) {
+            if (customer.email) {
+              await sendSubscriptionCanceledEmail(customer.email, customer.name);
+              logStep("canceled email sent (payment failure)");
+            }
+            // Involuntary churn: the voluntary case was already reported to the
+            // sales inbox by cancel-subscription, so only this one is notified.
+            await sendSubscriptionStaffNotice({
+              event: "ended_payment_failure",
+              customer: { id: customer.id, name: customer.name, email: customer.email },
+            });
           } else {
             logStep("subscription ended, no email", {
               reason: sub.cancellation_details?.reason ?? null,
@@ -142,9 +210,15 @@ serve(async (req) => {
         const customer = await ourCustomer(invoice.customer);
         // Email only on the FIRST failure; Stripe keeps retrying through the grace
         // period, and access continues until the subscription is finally cancelled.
-        if (customer?.email && (invoice.attempt_count ?? 1) === 1) {
-          await sendPaymentFailedEmail(customer.email, customer.name);
-          logStep("payment-failed email sent");
+        if (customer && (invoice.attempt_count ?? 1) === 1) {
+          if (customer.email) {
+            await sendPaymentFailedEmail(customer.email, customer.name);
+            logStep("payment-failed email sent");
+          }
+          await sendSubscriptionStaffNotice({
+            event: "payment_failed",
+            customer: { id: customer.id, name: customer.name, email: customer.email },
+          });
         } else {
           logStep("invoice.payment_failed (no email)", { attempt: invoice.attempt_count });
         }

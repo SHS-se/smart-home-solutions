@@ -5,6 +5,10 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { getAppEnvironment } from "../_shared/app-env.ts";
 import { getStripe } from "../_shared/stripe-client.ts";
+import {
+  loadNoticeCustomer,
+  sendSubscriptionStaffNotice,
+} from "../_shared/subscription-staff-notice.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -42,7 +46,7 @@ serve(async (req) => {
 
     const { data: customer } = await serviceClient
       .from("customers")
-      .select("stripe_customer_id, stripe_subscription_id")
+      .select("id, stripe_customer_id, stripe_subscription_id")
       .eq("user_id", user.id)
       .maybeSingle();
     if (!customer?.stripe_customer_id) throw new Error("No Stripe customer for this user");
@@ -78,6 +82,13 @@ serve(async (req) => {
     }
 
     logStep("Default payment method updated");
+
+    // Which card it is stays in Stripe; the inbox only learns that it changed.
+    await sendSubscriptionStaffNotice({
+      event: "card_updated",
+      customer: await loadNoticeCustomer(serviceClient, customer.id),
+    });
+
     return new Response(JSON.stringify({ success: true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 200,
