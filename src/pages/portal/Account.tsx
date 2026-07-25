@@ -96,6 +96,21 @@ const Account: React.FC<AccountProps> = ({ customerId: propCustomerId, isStaffVi
   const handleSave = async () => {
     if (!resolvedCustomerId) return;
 
+    // contacts.name/email are NOT NULL, so catch blanks here instead of letting
+    // the write fail on a constraint.
+    const name = formData.name.trim();
+    const email = formData.email.trim();
+    const phone = (formData.phone || '').trim();
+
+    if (!name || !email) {
+      toast({
+        title: t('Fel', 'Error'),
+        description: t('Namn och e-post måste fyllas i.', 'Name and email are required.'),
+        variant: 'destructive',
+      });
+      return;
+    }
+
     setSaving(true);
 
     try {
@@ -115,26 +130,39 @@ const Account: React.FC<AccountProps> = ({ customerId: propCustomerId, isStaffVi
           : {}),
       };
 
-      const { error: customerError } = await supabase
+      // Select back a row so an RLS-filtered no-op surfaces as an error instead
+      // of a silent "saved" that reverts on the next refetch.
+      const { data: updatedCustomer, error: customerError } = await supabase
         .from('customers')
         .update(customerUpdateData)
-        .eq('id', resolvedCustomerId);
+        .eq('id', resolvedCustomerId)
+        .select('id')
+        .maybeSingle();
 
       if (customerError) throw customerError;
+      if (!updatedCustomer) throw new Error(t('Kunde inte spara ändringar.', 'Could not save changes.'));
 
-      // Update the contact's identity fields (name/email/phone live on contacts, not customers)
-      // This applies for both staff view and customer self-view.
-      if (resolvedCustomerData?.contact_id) {
-        const contactUpdateData = {
-          name: formData.name || null,
-          email: formData.email || null,
-          phone: formData.phone || null,
-        };
+      // Identity fields (name/email/phone) live on contacts, not customers.
+      // Staff can write that table directly; customers only have SELECT on it,
+      // so they go through an RPC scoped to their own linked contact.
+      if (isStaffView) {
+        if (resolvedCustomerData?.contact_id) {
+          const { data: updatedContact, error: contactError } = await supabase
+            .from('contacts')
+            .update({ name, email, phone: phone || null })
+            .eq('id', resolvedCustomerData.contact_id)
+            .select('id')
+            .maybeSingle();
 
-        const { error: contactError } = await supabase
-          .from('contacts')
-          .update(contactUpdateData)
-          .eq('id', resolvedCustomerData.contact_id);
+          if (contactError) throw contactError;
+          if (!updatedContact) throw new Error(t('Kunde inte spara ändringar.', 'Could not save changes.'));
+        }
+      } else {
+        const { error: contactError } = await supabase.rpc('update_own_contact_details', {
+          p_name: name,
+          p_email: email,
+          p_phone: phone || null,
+        });
 
         if (contactError) throw contactError;
       }
@@ -148,9 +176,15 @@ const Account: React.FC<AccountProps> = ({ customerId: propCustomerId, isStaffVi
         refreshUserData();
       }
     } catch (err) {
+      // contacts.email is uniquely indexed (normalized), so a clash here means
+      // the address belongs to another contact.
+      const duplicateEmail = (err as { code?: string })?.code === '23505';
+
       toast({
         title: t('Fel', 'Error'),
-        description: err.message || t('Kunde inte spara ändringar.', 'Could not save changes.'),
+        description: duplicateEmail
+          ? t('E-postadressen används redan av en annan kund.', 'That email address is already used by another customer.')
+          : err.message || t('Kunde inte spara ändringar.', 'Could not save changes.'),
         variant: 'destructive',
       });
     } finally {

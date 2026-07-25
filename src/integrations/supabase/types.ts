@@ -3293,6 +3293,10 @@ export type Database = {
         }
         Returns: undefined
       }
+      update_own_contact_details: {
+        Args: { p_email: string; p_name: string; p_phone?: string | null }
+        Returns: undefined
+      }
     }
     Enums: {
       [_ in never]: never
