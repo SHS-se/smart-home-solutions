@@ -5,11 +5,12 @@
 //   customer.subscription.deleted → revoke entitlement (+ email only when the
 //                                   end was caused by failed payment/dispute)
 //   invoice.payment_failed        → log (access kept until period end)
+//   charge.dispute.created        → tell staff, nothing customer-facing
 // All customer-facing artifacts are ours; Stripe's hosted invoices/receipts are
 // never exposed.
 //
 // Each of these also raises an internal notice to the sales inbox
-// (subscription-staff-notice.ts) — identity only, never card data.
+// (subscription-staff-notice.ts) — identity and reason codes, never card data.
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { getAppEnvironment } from "../_shared/app-env.ts";
@@ -25,7 +26,6 @@ import {
   sendSubscriptionCanceledEmail,
 } from "../_shared/subscription-emails.ts";
 import { sendSubscriptionStaffNotice } from "../_shared/subscription-staff-notice.ts";
-import { cardExpiryStatus } from "../_shared/card-expiry.ts";
 
 const logStep = (step: string, details?: unknown) => {
   const detailsStr = details ? ` - ${JSON.stringify(details)}` : "";
@@ -70,45 +70,21 @@ serve(async (req) => {
     };
   };
 
-  // Tell the sales inbox when the saved card will not survive until the next
-  // renewal. Run on every paid invoice, so on a monthly plan the warning lands
-  // about a period ahead and exactly once per cycle — no scheduler to run and
-  // no "already warned" state to keep. The real failure is still caught later
-  // by invoice.payment_failed.
-  const noticeIfCardLapsesBeforeRenewal = async (
-    subscriptionId: unknown,
-    renewalDate: string | null,
-    customer: { id: string; name: string | null; email: string | null },
-  ) => {
-    if (typeof subscriptionId !== "string" || !renewalDate) return;
+  // Why a charge failed, from the invoice's PaymentIntent: a decline code such
+  // as expired_card, never anything describing the card. Advisory — a lookup
+  // failure just means the notice goes out without a reason.
+  const declineCodeForInvoice = async (invoice: { payment_intent?: unknown }) => {
+    const paymentIntentId = invoice.payment_intent;
+    if (typeof paymentIntentId !== "string") return null;
     try {
-      const sub = await getStripe().subscriptions.retrieve(subscriptionId, {
-        expand: ["default_payment_method"],
-      });
-      // deno-lint-ignore no-explicit-any
-      const card = (sub.default_payment_method as any)?.card;
-      if (typeof card?.exp_month !== "number" || typeof card?.exp_year !== "number") return;
-
-      const status = cardExpiryStatus({
-        expMonth: card.exp_month,
-        expYear: card.exp_year,
-        now: new Date(),
-        renewalAt: renewalDate,
-      });
-      if (status === "ok") return;
-
-      await sendSubscriptionStaffNotice({
-        event: "card_expires_before_renewal",
-        customer,
-        date: renewalDate,
-      });
-      logStep("card expiry notice sent", { status });
+      const intent = await getStripe().paymentIntents.retrieve(paymentIntentId);
+      const error = intent.last_payment_error;
+      return error?.decline_code ?? error?.code ?? null;
     } catch (error) {
-      // Advisory only — never fail the webhook over it (Stripe would retry the
-      // whole event and we'd re-issue the invoice work).
-      logStep("card expiry check failed", {
+      logStep("decline code lookup failed", {
         message: error instanceof Error ? error.message : String(error),
       });
+      return null;
     }
   };
 
@@ -162,8 +138,6 @@ serve(async (req) => {
             date: renewalDate,
           });
         }
-
-        await noticeIfCardLapsesBeforeRenewal(invoice.subscription, renewalDate, customer);
         break;
       }
       case "customer.subscription.updated":
@@ -175,6 +149,37 @@ serve(async (req) => {
           logStep("No matching customer for subscription event", { stripeCustomer: sub.customer });
           break;
         }
+        // The signup's first payment was never completed, so Stripe closed the
+        // subscription after 23h. It is terminal — detach it so the portal
+        // offers a fresh subscribe instead of trying to resume a dead one.
+        //
+        // Stripe's docs don't pin down whether this arrives as .updated or
+        // .deleted, so both are handled; the conditional update is what makes
+        // that safe, since only the first event to arrive still matches the row
+        // and gets to send the notice.
+        if (sub.status === "incomplete_expired") {
+          const { data: detached } = await serviceClient
+            .from("customers")
+            .update({
+              subscription_active: false,
+              subscription_cancel_at_period_end: false,
+              stripe_subscription_id: null,
+            })
+            .eq("id", customer.id)
+            .eq("stripe_subscription_id", sub.id)
+            .select("id")
+            .maybeSingle();
+
+          if (detached) {
+            await sendSubscriptionStaffNotice({
+              event: "signup_abandoned",
+              customer: { id: customer.id, name: customer.name, email: customer.email },
+            });
+            logStep("signup abandoned", { subscriptionId: sub.id });
+          }
+          break;
+        }
+
         const entitlement = entitlementFromSubscription(sub);
         await serviceClient
           .from("customers")
@@ -215,13 +220,43 @@ serve(async (req) => {
             await sendPaymentFailedEmail(customer.email, customer.name);
             logStep("payment-failed email sent");
           }
-          await sendSubscriptionStaffNotice({
-            event: "payment_failed",
-            customer: { id: customer.id, name: customer.name, email: customer.email },
-          });
+          // Only renewals reach the sales inbox. A card declined during signup
+          // is usually retried on the spot; if it isn't, the abandoned-signup
+          // notice covers it 23 hours later.
+          if (invoice.billing_reason !== "subscription_create") {
+            await sendSubscriptionStaffNotice({
+              event: "payment_failed",
+              customer: { id: customer.id, name: customer.name, email: customer.email },
+              reasonCode: await declineCodeForInvoice(invoice),
+            });
+          }
         } else {
           logStep("invoice.payment_failed (no email)", { attempt: invoice.attempt_count });
         }
+        break;
+      }
+      case "charge.dispute.created": {
+        // deno-lint-ignore no-explicit-any
+        const dispute = event.data.object as any;
+        // The dispute carries no customer, so resolve it through the charge.
+        const charge = typeof dispute.charge === "string"
+          ? await stripe.charges.retrieve(dispute.charge)
+          : null;
+        const customer = await ourCustomer(
+          typeof charge?.customer === "string" ? charge.customer : null,
+        );
+        if (!customer) {
+          logStep("No matching customer for dispute", { charge: dispute.charge });
+          break;
+        }
+        await sendSubscriptionStaffNotice({
+          event: "dispute_opened",
+          customer: { id: customer.id, name: customer.name, email: customer.email },
+          date: dateFromUnixSeconds(dispute.evidence_details?.due_by),
+          reasonCode: dispute.reason ?? null,
+          amount: (dispute.amount ?? 0) / 100, // öre → kr
+        });
+        logStep("dispute notice sent", { disputeId: dispute.id });
         break;
       }
       default:

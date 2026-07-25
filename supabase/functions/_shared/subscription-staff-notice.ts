@@ -2,10 +2,12 @@
 // changes state. These are the counterpart to subscription-emails.ts (which
 // writes to the customer); nothing here is ever sent to a customer.
 //
-// Identity only, by design: name, email and our customer id. No card brand,
-// last4 or expiry date is accepted by these types, so a notice — and the Resend
-// log behind it — can never become a second place where card data lives. Staff
-// who need the card look it up in Stripe.
+// Identity plus the reason something happened, by design: name, email, our
+// customer id, a date, an amount and a Stripe reason code. No card brand, last4
+// or expiry date is accepted by these types, so a notice — and the Resend log
+// behind it — can never become a second place where card data lives. A decline
+// code such as expired_card says why a charge failed without describing the
+// card; staff who need the card itself look it up in Stripe.
 //
 // The message builder is pure so it can be unit-tested; sendSubscriptionStaffNotice
 // wraps it and never throws: an internal notice failing must not break a
@@ -25,7 +27,8 @@ export type SubscriptionNoticeEvent =
   | "ended_payment_failure"
   | "payment_failed"
   | "card_updated"
-  | "card_expires_before_renewal";
+  | "signup_abandoned"
+  | "dispute_opened";
 
 export interface SubscriptionNoticeCustomer {
   id: string;
@@ -36,8 +39,45 @@ export interface SubscriptionNoticeCustomer {
 export interface SubscriptionNoticeInput {
   event: SubscriptionNoticeEvent;
   customer: SubscriptionNoticeCustomer;
-  /** YYYY-MM-DD: when access ends (cancellation) or the next renewal falls due. */
+  /** YYYY-MM-DD: access end, next renewal, or the deadline to answer a dispute. */
   date?: string | null;
+  /** Stripe decline code (payments) or dispute reason. Never card data. */
+  reasonCode?: string | null;
+  /** Kronor, for disputes. */
+  amount?: number | null;
+}
+
+// Stripe decline codes and dispute reasons in Swedish. The two vocabularies
+// don't overlap, so one table covers both; anything unmapped falls back to the
+// raw code, which is still more useful than nothing.
+const REASON_TEXT: Record<string, string> = {
+  // Card / charge failures
+  expired_card: "Kortet har gått ut",
+  card_declined: "Kortet nekades av banken",
+  insufficient_funds: "Täckning saknas på kontot",
+  incorrect_cvc: "Fel CVC-kod",
+  incorrect_number: "Felaktigt kortnummer",
+  do_not_honor: "Banken nekade betalningen utan närmare orsak",
+  lost_card: "Kortet är anmält förlorat",
+  stolen_card: "Kortet är anmält stulet",
+  processing_error: "Tekniskt fel hos banken",
+  authentication_required: "3D Secure-verifiering krävs",
+  // Dispute reasons
+  fraudulent: "Kortinnehavaren säger sig inte ha godkänt köpet",
+  duplicate: "Kunden anser sig ha blivit debiterad dubbelt",
+  product_not_received: "Kunden säger sig inte ha fått tjänsten",
+  product_unacceptable: "Kunden är inte nöjd med tjänsten",
+  subscription_canceled: "Kunden anser att prenumerationen var uppsagd",
+  unrecognized: "Kunden känner inte igen debiteringen",
+  credit_not_processed: "Kunden väntar på en återbetalning",
+  general: "Ingen orsak angiven",
+};
+
+/** "Kortet har gått ut (expired_card)" — text plus the raw code for Stripe lookups. */
+export function reasonLabel(code: string | null | undefined): string | null {
+  if (!code) return null;
+  const text = REASON_TEXT[code];
+  return text ? `${text} (${code})` : code;
 }
 
 interface NoticeCopy {
@@ -47,8 +87,8 @@ interface NoticeCopy {
   dated?: (date: string) => string;
 }
 
-function copyFor(event: SubscriptionNoticeEvent, name: string): NoticeCopy {
-  switch (event) {
+function copyFor(input: SubscriptionNoticeInput, name: string): NoticeCopy {
+  switch (input.event) {
     case "started":
       return {
         subject: `Ny prenumeration: ${name}`,
@@ -76,7 +116,11 @@ function copyFor(event: SubscriptionNoticeEvent, name: string): NoticeCopy {
       };
     case "payment_failed":
       return {
-        subject: `Betalning misslyckades: ${name}`,
+        // The expired-card case gets its own subject: it is the one failure that
+        // is fixed by a single message to the customer.
+        subject: input.reasonCode === "expired_card"
+          ? `Förnyelsen misslyckades – kortet har gått ut: ${name}`
+          : `Förnyelsen misslyckades: ${name}`,
         lead:
           "Förnyelsen kunde inte dras. Stripe försöker igen under de närmaste dagarna och " +
           "kunden har fått ett mejl om att uppdatera sitt betalkort. Tillgången är kvar tills vidare.",
@@ -86,15 +130,21 @@ function copyFor(event: SubscriptionNoticeEvent, name: string): NoticeCopy {
         subject: `Betalkort uppdaterat: ${name}`,
         lead: "Kunden har sparat ett nytt betalkort i portalen.",
       };
-    case "card_expires_before_renewal":
-      // Covers both an already expired card and one that lapses before the
-      // renewal is due — from here on the outcome is the same failed charge.
+    case "signup_abandoned":
       return {
-        subject: `Betalkortet är inte giltigt vid nästa förnyelse: ${name}`,
+        subject: `Påbörjad prenumeration slutfördes aldrig: ${name}`,
         lead:
-          "Kortet som ligger på filen är inte giltigt när nästa förnyelse ska dras. " +
-          "Kunden ser en varning i portalen, men det kan vara värt att följa upp.",
-        dated: (date) => `Nästa förnyelse: ${date}.`,
+          "Kunden startade en prenumeration men den första betalningen blev aldrig genomförd, " +
+          "så Stripe har stängt den efter 23 timmar. Kunden måste börja om från början – " +
+          "ofta har något gått fel i betalningen och det är värt att höra av sig.",
+      };
+    case "dispute_opened":
+      return {
+        subject: `Chargeback öppnad: ${name}`,
+        lead:
+          "Kunden har bestridit en betalning hos sin bank. Skicka in underlag i Stripe före " +
+          "sista svarsdag – annars förloras beloppet automatiskt.",
+        dated: (date) => `Sista svarsdag: ${date}.`,
       };
   }
 }
@@ -104,14 +154,16 @@ export function buildSubscriptionStaffNotice(
   context: { appEnv: AppEnvironment; appOrigin: string; now: Date },
 ): { subject: string; text: string } {
   const name = input.customer.name?.trim() || "Namn saknas";
-  const copy = copyFor(input.event, name);
-  const dateLine = input.date && copy.dated ? copy.dated(input.date) : null;
+  const copy = copyFor(input, name);
   const stamp = context.now.toLocaleString("sv-SE", { timeZone: "Europe/Stockholm" });
+  const reason = reasonLabel(input.reasonCode);
 
   const text = [
     copy.lead,
-    dateLine,
+    input.date && copy.dated ? copy.dated(input.date) : null,
     "",
+    reason ? `Orsak: ${reason}` : null,
+    typeof input.amount === "number" ? `Belopp: ${input.amount.toLocaleString("sv-SE")} kr` : null,
     `Kund: ${name}`,
     `E-post: ${input.customer.email ?? "saknas"}`,
     `Kund-ID: ${input.customer.id}`,

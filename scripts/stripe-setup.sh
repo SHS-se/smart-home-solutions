@@ -32,6 +32,16 @@ PRICE_LOOKUP_KEY="${PRICE_LOOKUP_KEY:-shs_subscription_monthly}"
 WEBHOOK_URL="${WEBHOOK_URL:-https://vxqpgbzseckgceopitpm.supabase.co/functions/v1/stripe-webhook}"
 WEBHOOK_SECRET_FILE="${WEBHOOK_SECRET_FILE:-.env.stripe.webhook.test.local}"
 
+# Everything stripe-webhook/index.ts switches on. Kept in one place because the
+# list is synced onto an existing endpoint too, not just used at creation.
+WEBHOOK_EVENTS=(
+  invoice.paid
+  invoice.payment_failed
+  customer.subscription.updated
+  customer.subscription.deleted
+  charge.dispute.created
+)
+
 # ── load the secret key without echoing it ───────────────────────────────────
 if [ ! -f "$ENV_FILE" ]; then
   echo "ERROR: $ENV_FILE not found. Put STRIPE_SECRET_KEY=... in it (gitignored *.local)." >&2
@@ -147,18 +157,23 @@ WH_ID=$(printf '%s' "$whlist" | python3 -c \
   'import sys,json;d=json.load(sys.stdin);u=sys.argv[1];print(next((e["id"] for e in d.get("data",[]) if e.get("url")==u),""))' \
   "$WEBHOOK_URL")
 
+EVENT_ARGS=()
+for e in "${WEBHOOK_EVENTS[@]}"; do EVENT_ARGS+=(-d "enabled_events[]=$e"); done
+
 if [ -n "$WH_ID" ]; then
   echo "Reusing existing webhook endpoint $WH_ID."
+  # Re-send the event list: an endpoint created by an earlier run predates any
+  # events added since, and Stripe silently drops the ones you never enabled.
+  upd=$(scall "$API/webhook_endpoints/$WH_ID" "${EVENT_ARGS[@]}")
+  extract "$upd" "id" >/dev/null # surfaces Stripe errors
+  echo "  Subscribed events synced: ${WEBHOOK_EVENTS[*]}"
   echo "  (Stripe only reveals the signing secret at creation — if you need it again, roll it in the dashboard.)"
 else
   echo "Creating webhook endpoint..."
   wh=$(scall "$API/webhook_endpoints" \
     -d "url=$WEBHOOK_URL" \
     -d "description=SHS subscription -> own invoices ($MODE)" \
-    -d "enabled_events[]=invoice.paid" \
-    -d "enabled_events[]=invoice.payment_failed" \
-    -d "enabled_events[]=customer.subscription.updated" \
-    -d "enabled_events[]=customer.subscription.deleted")
+    "${EVENT_ARGS[@]}")
   WH_ID=$(extract "$wh" "id")
   WH_SECRET=$(extract "$wh" "secret")
   umask 077
