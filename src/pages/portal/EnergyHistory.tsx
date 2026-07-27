@@ -15,6 +15,7 @@ import {
   fetchEnergyBillingDocuments,
   toEnergyBillingSeriesDocuments,
 } from '@/lib/energy-billing-storage';
+import { detectEnergyBillingChanges } from '@/lib/energy-billing-changes';
 import { buildEnergyBillingSeries } from '@/lib/energy-billing-series';
 import EnergyDocumentUploadCard from '@/components/portal/energy-history/EnergyDocumentUploadCard';
 import EnergyHistoryDocuments from '@/components/portal/energy-history/EnergyHistoryDocuments';
@@ -54,6 +55,10 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   );
   const series = useMemo(
     () => buildEnergyBillingSeries(toEnergyBillingSeriesDocuments(documents)),
+    [documents],
+  );
+  const changes = useMemo(
+    () => detectEnergyBillingChanges(documents),
     [documents],
   );
 
@@ -180,7 +185,7 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
             <TabsTrigger value="documents">{t('Dokument', 'Documents')}</TabsTrigger>
           </TabsList>
           <TabsContent value="overview">
-            <EnergyHistoryOverview series={series} />
+            <EnergyHistoryOverview series={series} changes={changes} />
           </TabsContent>
           <TabsContent value="upload">
             <div className="grid items-start gap-6 xl:grid-cols-2">

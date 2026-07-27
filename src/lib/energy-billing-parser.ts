@@ -13,8 +13,6 @@ export const ENERGY_CHARGE_CATEGORIES = [
   'export_fee',
   'discount',
   'vat',
-  'rounding',
-  'other',
 ] as const;
 export type EnergyChargeCategory = (typeof ENERGY_CHARGE_CATEGORIES)[number];
 
@@ -546,16 +544,6 @@ function parseTibber(text: string): ParsedFields {
       amountIncludesVat: true,
     }));
   }
-  const roundingMatch = text.match(new RegExp(`Öresavrundning\\s+(${NUMBER_PATTERN})\\s+kr`, 'i'));
-  if (roundingMatch) {
-    pushIfPresent(lineItems, makeLineItem({
-      category: 'rounding',
-      label: 'Öresavrundning',
-      amount: roundingMatch[1],
-      amountIncludesVat: true,
-    }));
-  }
-
   const spot = lineItems.find((item) => item.category === 'spot_energy');
   const exportCredit = lineItems.find((item) => item.category === 'export_credit');
   const transferAmount = lastCapture(

@@ -34,6 +34,7 @@ export interface EnergyBillingMonth {
   gridCoverage: CoverageStatus;
   electricityCoverage: CoverageStatus;
   consumptionSource: EnergyDocumentKind | null;
+  exportSource: EnergyDocumentKind | null;
   consumptionKwh: number | null;
   exportedKwh: number | null;
   gridConsumptionKwh: number | null;
@@ -49,7 +50,6 @@ export interface EnergyBillingMonth {
   gridPeakSek: number;
   energyTaxSek: number;
   exportNetSek: number;
-  otherCostSek: number;
 }
 
 interface DateInterval {
@@ -147,6 +147,7 @@ function emptyMonth(date: Date): MutableMonth {
     gridCoverage: 'missing',
     electricityCoverage: 'missing',
     consumptionSource: null,
+    exportSource: null,
     consumptionKwh: null,
     exportedKwh: null,
     gridConsumptionKwh: null,
@@ -162,7 +163,6 @@ function emptyMonth(date: Date): MutableMonth {
     gridPeakSek: 0,
     energyTaxSek: 0,
     exportNetSek: 0,
-    otherCostSek: 0,
     gridCoverageIntervals: [],
     electricityCoverageIntervals: [],
   };
@@ -217,12 +217,7 @@ function addBreakdown(
     case 'markup':
     case 'discount':
     case 'vat':
-    case 'rounding':
-      if (documentKind === 'electricity') {
-        month.electricityFeesSek = round(month.electricityFeesSek + amount);
-      } else {
-        month.otherCostSek = round(month.otherCostSek + amount);
-      }
+      month.electricityFeesSek = round(month.electricityFeesSek + amount);
       break;
     case 'fixed_fee':
       if (documentKind === 'grid') {
@@ -243,9 +238,6 @@ function addBreakdown(
     case 'export_credit':
     case 'export_fee':
       month.exportNetSek = round(month.exportNetSek + amount);
-      break;
-    case 'other':
-      month.otherCostSek = round(month.otherCostSek + amount);
       break;
   }
 }
@@ -316,9 +308,7 @@ export function buildEnergyBillingSeries(
       }
     }
 
-    let lineItemTotal = 0;
     for (const lineItem of document.lineItems) {
-      lineItemTotal += lineItem.amountSek;
       const lineStart = parseDate(lineItem.periodStart ?? document.periodStart);
       const lineEnd = parseDate(lineItem.periodEnd ?? document.periodEnd);
       for (const allocation of monthAllocations(lineStart, lineEnd, monthsByKey)) {
@@ -327,18 +317,6 @@ export function buildEnergyBillingSeries(
           document.documentKind,
           lineItem.category,
           lineItem.amountSek * allocation.ratio,
-        );
-      }
-    }
-
-    const unclassifiedAmount = round(document.totalAmountSek - lineItemTotal);
-    if (Math.abs(unclassifiedAmount) >= 0.005) {
-      for (const allocation of allocations) {
-        addBreakdown(
-          allocation.month,
-          document.documentKind,
-          'other',
-          unclassifiedAmount * allocation.ratio,
         );
       }
     }
@@ -390,10 +368,18 @@ export function buildEnergyBillingSeries(
         return total + (allocation ? (document.exportedKwh ?? 0) * allocation.ratio : 0);
       }, 0);
     if (gridExport !== 0 || electricityExport !== 0) {
-      month.exportedKwh = month.gridCoverageDays >= month.electricityCoverageDays
+      month.exportSource = month.gridCoverageDays >= month.electricityCoverageDays
         && gridExport !== 0
+        ? 'grid'
+        : 'electricity';
+      month.exportedKwh = month.exportSource === 'grid'
         ? round(gridExport, 3)
         : round(electricityExport || gridExport, 3);
+    } else if (month.gridCoverageDays > 0 || month.electricityCoverageDays > 0) {
+      month.exportSource = month.gridCoverageDays >= month.electricityCoverageDays
+        ? 'grid'
+        : 'electricity';
+      month.exportedKwh = 0;
     }
 
     if (month.gridCostSek !== null || month.electricityCostSek !== null) {

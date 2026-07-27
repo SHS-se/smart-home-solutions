@@ -183,7 +183,11 @@ Deno.test('Tibber credit invoice extracts a split-month electricity period', () 
   assertEqual(parsed.consumptionKwh, 13, 'consumption');
   assertEqual(parsed.exportedKwh, 146.58, 'export');
   assertEqual(parsed.totalAmountSek, -85, 'carried credit');
-  assertEqual(parsed.lineItems.length, 8, 'line count including VAT and rounding');
+  assertEqual(parsed.lineItems.length, 7, 'line count excluding invoice rounding');
+  assert(
+    parsed.lineItems.every((line) => line.label !== 'Öresavrundning'),
+    'rounding must not be retained',
+  );
   assert(parsed.warnings.includes('partial_service_period'), 'partial period warning missing');
 });
 

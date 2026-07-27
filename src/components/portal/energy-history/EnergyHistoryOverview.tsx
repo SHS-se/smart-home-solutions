@@ -1,33 +1,66 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Activity,
+  BadgeDollarSign,
   CalendarDays,
   CheckCircle2,
   Coins,
   Gauge,
+  RefreshCw,
+  Sparkles,
   TriangleAlert,
 } from 'lucide-react';
 import {
+  Area,
   Bar,
   BarChart,
+  Brush,
   CartesianGrid,
   Cell,
   ComposedChart,
   Legend,
   Line,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts';
 import { useLanguage } from '@/contexts/LanguageContext';
+import type { EnergyBillingChange } from '@/lib/energy-billing-changes';
 import type { EnergyBillingMonth } from '@/lib/energy-billing-series';
+import {
+  estimateAnnualEnergyHistory,
+  type AnnualizedMetric,
+} from '@/lib/energy-estimation';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 interface EnergyHistoryOverviewProps {
   series: EnergyBillingMonth[];
+  changes: EnergyBillingChange[];
+}
+
+type PeriodPreset = '12' | '24' | '36' | 'all';
+
+interface TooltipPayloadItem {
+  color?: string;
+  dataKey?: string | number;
+  fill?: string;
+  name?: string | number;
+  value?: number | string;
+}
+
+interface HistoryTooltipProps {
+  active?: boolean;
+  label?: string;
+  payload?: TooltipPayloadItem[];
+  changes: EnergyBillingChange[];
+  formatMonth: (monthKey: string) => string;
+  formatValue: (item: TooltipPayloadItem) => string;
+  language: string;
 }
 
 const YEAR_COLORS = [
@@ -49,12 +82,134 @@ const COST_COLORS = {
   gridPeakSek: '#ef4444',
   energyTaxSek: '#60a5fa',
   exportNetSek: '#8b5cf6',
-  otherCostSek: '#94a3b8',
 };
 
-const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({ series }) => {
+const PERIOD_OPTIONS: Array<{ value: PeriodPreset; sv: string; en: string }> = [
+  { value: '12', sv: '12 mån', en: '12 mo' },
+  { value: '24', sv: '24 mån', en: '24 mo' },
+  { value: '36', sv: '36 mån', en: '36 mo' },
+  { value: 'all', sv: 'Allt', en: 'All' },
+];
+
+function HistoryTooltip({
+  active,
+  label,
+  payload,
+  changes,
+  formatMonth,
+  formatValue,
+  language,
+}: HistoryTooltipProps) {
+  if (!active || !label || !payload?.length) return null;
+  const monthChanges = changes.filter((change) => change.monthKey === label);
+
+  return (
+    <div className="max-w-sm rounded-xl border border-border/80 bg-background/95 p-3 shadow-xl backdrop-blur">
+      <p className="mb-2 font-medium capitalize">{formatMonth(label)}</p>
+      <div className="space-y-1.5">
+        {payload
+          .filter((item) => item.value !== null && item.value !== undefined)
+          .map((item) => (
+            <div
+              key={String(item.dataKey ?? item.name)}
+              className="flex items-center justify-between gap-5 text-xs"
+            >
+              <span className="flex min-w-0 items-center gap-2 text-muted-foreground">
+                <span
+                  className="h-2.5 w-2.5 shrink-0 rounded-full"
+                  style={{ backgroundColor: item.color ?? item.fill }}
+                />
+                <span className="truncate">{item.name}</span>
+              </span>
+              <span className="font-medium tabular-nums">{formatValue(item)}</span>
+            </div>
+          ))}
+      </div>
+      {monthChanges.length > 0 && (
+        <div className="mt-3 space-y-2 border-t border-border pt-2">
+          <p className="flex items-center gap-1.5 text-xs font-medium text-violet-700 dark:text-violet-300">
+            <Sparkles className="h-3.5 w-3.5" />
+            {language === 'sv' ? 'Ändrade villkor' : 'Changed terms'}
+          </p>
+          {monthChanges.map((change) => (
+            <div key={change.id} className="text-xs">
+              <p className="font-medium">
+                {language === 'sv' ? change.titleSv : change.titleEn}
+              </p>
+              <p className="mt-0.5 text-muted-foreground">
+                {language === 'sv' ? change.detailSv : change.detailEn}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface AnnualMetricCardProps {
+  label: string;
+  metric: AnnualizedMetric;
+  value: string;
+  detail?: React.ReactNode;
+  icon: React.ReactNode;
+  accentClass: string;
+  estimatedLabel: string;
+  actualLabel: string;
+  evidenceLabel: string;
+}
+
+function AnnualMetricCard({
+  label,
+  metric,
+  value,
+  detail,
+  icon,
+  accentClass,
+  estimatedLabel,
+  actualLabel,
+  evidenceLabel,
+}: AnnualMetricCardProps) {
+  return (
+    <Card className="group relative overflow-hidden border-border/70 bg-gradient-to-br from-background via-background to-muted/25 shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg">
+      <div className={`absolute inset-x-0 top-0 h-1 ${accentClass}`} />
+      <CardContent className="pt-6">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-sm text-muted-foreground">{label}</p>
+              <Badge
+                variant={metric.estimated ? 'secondary' : 'outline'}
+                className={metric.estimated
+                  ? 'border-amber-300 bg-amber-100 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200'
+                  : 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200'}
+              >
+                {metric.estimated ? estimatedLabel : actualLabel}
+              </Badge>
+            </div>
+            <p className="mt-2 text-2xl font-semibold tracking-tight tabular-nums">{value}</p>
+            {detail && <div className="mt-1 text-xs text-muted-foreground">{detail}</div>}
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              {evidenceLabel}
+            </p>
+          </div>
+          <div className={`rounded-xl p-2.5 text-white shadow-sm ${accentClass}`}>
+            {icon}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
+  series,
+  changes,
+}) => {
   const { t, language } = useLanguage();
   const locale = language === 'sv' ? 'sv-SE' : 'en-GB';
+  const [period, setPeriod] = useState<PeriodPreset>('12');
+  const [focusedYear, setFocusedYear] = useState<number | null>(null);
   const numberFormatter = useMemo(() => new Intl.NumberFormat(locale, {
     maximumFractionDigits: 1,
   }), [locale]);
@@ -68,21 +223,52 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({ series })
     year: '2-digit',
     timeZone: 'UTC',
   }), [locale]);
+  const fullMonthFormatter = useMemo(() => new Intl.DateTimeFormat(locale, {
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  }), [locale]);
   const monthOnlyFormatter = useMemo(() => new Intl.DateTimeFormat(locale, {
     month: 'short',
     timeZone: 'UTC',
   }), [locale]);
+  const dateFormatter = useMemo(() => new Intl.DateTimeFormat(locale, {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'UTC',
+  }), [locale]);
 
-  const years = useMemo(
-    () => Array.from(new Set(series.map((month) => month.year))).sort((a, b) => a - b),
-    [series],
+  const annual = useMemo(() => estimateAnnualEnergyHistory(series), [series]);
+  const filteredSeries = useMemo(() => {
+    if (period === 'all') return series;
+    return series.slice(-Number(period));
+  }, [period, series]);
+  const firstVisibleMonth = filteredSeries.at(0)?.monthKey ?? null;
+  const lastVisibleMonth = filteredSeries.at(-1)?.monthKey ?? null;
+  const visibleChanges = useMemo(() => changes.filter((change) => (
+    (!firstVisibleMonth || change.monthKey >= firstVisibleMonth)
+    && (!lastVisibleMonth || change.monthKey <= lastVisibleMonth)
+  )), [changes, firstVisibleMonth, lastVisibleMonth]);
+  const annotationMonths = useMemo(
+    () => Array.from(new Set(visibleChanges.map((change) => change.monthKey))),
+    [visibleChanges],
   );
+  const years = useMemo(
+    () => Array.from(new Set(filteredSeries.map((month) => month.year))).sort((a, b) => a - b),
+    [filteredSeries],
+  );
+  const activeYear = focusedYear !== null && years.includes(focusedYear)
+    ? focusedYear
+    : years.at(-1) ?? null;
   const consumptionByCalendarMonth = useMemo(() => Array.from({ length: 12 }, (_, index) => {
     const row: Record<string, string | number | boolean | null> = {
       month: monthOnlyFormatter.format(new Date(Date.UTC(2024, index, 1))),
     };
     for (const year of years) {
-      const value = series.find((month) => month.year === year && month.month === index + 1);
+      const value = filteredSeries.find(
+        (month) => month.year === year && month.month === index + 1,
+      );
       row[String(year)] = value?.consumptionKwh ?? null;
       const chosenCoverage = value?.consumptionSource === 'grid'
         ? value.gridCoverage
@@ -92,34 +278,15 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({ series })
       row[`${year}Complete`] = chosenCoverage === 'complete';
     }
     return row;
-  }), [monthOnlyFormatter, series, years]);
-
-  const recordedConsumption = series.reduce(
-    (sum, month) => sum + (month.consumptionKwh ?? 0),
-    0,
-  );
-  const recordedExport = series.reduce(
-    (sum, month) => sum + (month.exportedKwh ?? 0),
-    0,
-  );
-  const recordedCost = series.reduce(
-    (sum, month) => sum + (month.totalCostSek ?? 0),
-    0,
-  );
-  const recordedGridCost = series.reduce(
-    (sum, month) => sum + (month.gridCostSek ?? 0),
-    0,
-  );
-  const recordedElectricityCost = series.reduce(
-    (sum, month) => sum + (month.electricityCostSek ?? 0),
-    0,
-  );
-  const averageCost = recordedConsumption > 0 ? recordedCost / recordedConsumption : null;
-  const incompleteMonths = series.filter(
+  }), [filteredSeries, monthOnlyFormatter, years]);
+  const incompleteMonths = filteredSeries.filter(
     (month) => month.gridCoverage !== 'complete' || month.electricityCoverage !== 'complete',
   );
 
   const formatMonthKey = (monthKey: string) => monthFormatter.format(
+    new Date(`${monthKey}-01T00:00:00Z`),
+  );
+  const formatFullMonthKey = (monthKey: string) => fullMonthFormatter.format(
     new Date(`${monthKey}-01T00:00:00Z`),
   );
   const coverageLabel = (status: EnergyBillingMonth['gridCoverage']) => {
@@ -127,10 +294,48 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({ series })
     if (status === 'partial') return t('delvis', 'partial');
     return t('saknas', 'missing');
   };
-  const tooltipMoney = (value: number | string | undefined) => {
-    const numeric = typeof value === 'number' ? value : Number(value);
-    return Number.isFinite(numeric) ? moneyFormatter.format(numeric) : '-';
+  const metricEvidence = (metric: AnnualizedMetric) => (
+    metric.estimated
+      ? t(
+          `Baserad på ${metric.observedMonths} månaders underlag`,
+          `Based on ${metric.observedMonths} months of source data`,
+        )
+      : t('Senaste 12 kompletta månaderna', 'Latest 12 complete months')
+  );
+  const formatMetric = (
+    metric: AnnualizedMetric,
+    formatter: Intl.NumberFormat,
+    suffix = '',
+  ) => (
+    metric.value === null ? '-' : `${formatter.format(metric.value)}${suffix}`
+  );
+  const costSeriesKeys = new Set(Object.keys(COST_COLORS));
+  const formatTooltipValue = (item: TooltipPayloadItem) => {
+    const numeric = typeof item.value === 'number' ? item.value : Number(item.value);
+    if (!Number.isFinite(numeric)) return '-';
+    return costSeriesKeys.has(String(item.dataKey)) || item.dataKey === 'totalCostSek'
+      ? moneyFormatter.format(numeric)
+      : `${numberFormatter.format(numeric)} kWh`;
   };
+  const periodLabel = firstVisibleMonth && lastVisibleMonth
+    ? `${formatFullMonthKey(firstVisibleMonth)} – ${formatFullMonthKey(lastVisibleMonth)}`
+    : '';
+  const renderChangeLines = (yAxisId?: string | number) => annotationMonths.map((monthKey) => (
+    <ReferenceLine
+      key={monthKey}
+      x={monthKey}
+      yAxisId={yAxisId}
+      stroke="#7c3aed"
+      strokeDasharray="4 4"
+      strokeOpacity={0.75}
+      label={{
+        value: '◆',
+        position: 'top',
+        fill: '#7c3aed',
+        fontSize: 10,
+      }}
+    />
+  ));
 
   if (series.length === 0) {
     return (
@@ -151,56 +356,79 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({ series })
 
   return (
     <div className="space-y-6">
+      <div className="flex flex-col gap-3 rounded-xl border border-border/70 bg-gradient-to-r from-primary/5 via-background to-violet-500/5 p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-sm font-medium">{t('Visad period', 'Displayed period')}</p>
+          <p className="mt-0.5 text-xs capitalize text-muted-foreground">{periodLabel}</p>
+        </div>
+        <div className="flex flex-wrap gap-1 rounded-lg bg-muted/60 p-1" aria-label={t('Välj period', 'Select period')}>
+          {PERIOD_OPTIONS.map((option) => (
+            <Button
+              key={option.value}
+              type="button"
+              size="sm"
+              variant={period === option.value ? 'default' : 'ghost'}
+              className="h-8 px-3"
+              onClick={() => setPeriod(option.value)}
+            >
+              {language === 'sv' ? option.sv : option.en}
+            </Button>
+          ))}
+        </div>
+      </div>
+
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Card>
-          <CardContent className="flex items-start justify-between gap-4 pt-6">
-            <div>
-              <p className="text-sm text-muted-foreground">{t('Registrerad förbrukning', 'Recorded consumption')}</p>
-              <p className="mt-1 text-2xl font-semibold tabular-nums">
-                {numberFormatter.format(recordedConsumption)} kWh
-              </p>
-            </div>
-            <Gauge className="h-5 w-5 text-primary" />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-start justify-between gap-4 pt-6">
-            <div>
-              <p className="text-sm text-muted-foreground">{t('Registrerad export', 'Recorded export')}</p>
-              <p className="mt-1 text-2xl font-semibold tabular-nums">
-                {numberFormatter.format(recordedExport)} kWh
-              </p>
-            </div>
-            <Activity className="h-5 w-5 text-violet-600" />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-start justify-between gap-4 pt-6">
-            <div>
-              <p className="text-sm text-muted-foreground">{t('Registrerad totalkostnad', 'Recorded total cost')}</p>
-              <p className="mt-1 text-2xl font-semibold tabular-nums">
-                {moneyFormatter.format(recordedCost)}
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {t('Elnät', 'Grid')} {moneyFormatter.format(recordedGridCost)} · {t('Elhandel', 'Electricity')} {moneyFormatter.format(recordedElectricityCost)}
-              </p>
-            </div>
-            <Coins className="h-5 w-5 text-amber-600" />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-start justify-between gap-4 pt-6">
-            <div>
-              <p className="text-sm text-muted-foreground">{t('Kostnad per registrerad kWh', 'Cost per recorded kWh')}</p>
-              <p className="mt-1 text-2xl font-semibold tabular-nums">
-                {averageCost === null
-                  ? '-'
-                  : `${numberFormatter.format(averageCost)} ${t('kr/kWh', 'SEK/kWh')}`}
-              </p>
-            </div>
-            <CalendarDays className="h-5 w-5 text-emerald-600" />
-          </CardContent>
-        </Card>
+        <AnnualMetricCard
+          label={t('Årlig förbrukning', 'Annual consumption')}
+          metric={annual.consumptionKwh}
+          value={formatMetric(annual.consumptionKwh, numberFormatter, ' kWh')}
+          icon={<Gauge className="h-5 w-5" />}
+          accentClass="bg-gradient-to-r from-blue-600 to-cyan-500"
+          estimatedLabel={t('Estimerad', 'Estimated')}
+          actualLabel={t('Faktisk', 'Actual')}
+          evidenceLabel={metricEvidence(annual.consumptionKwh)}
+        />
+        <AnnualMetricCard
+          label={t('Årlig export', 'Annual export')}
+          metric={annual.exportedKwh}
+          value={formatMetric(annual.exportedKwh, numberFormatter, ' kWh')}
+          icon={<Activity className="h-5 w-5" />}
+          accentClass="bg-gradient-to-r from-violet-600 to-fuchsia-500"
+          estimatedLabel={t('Estimerad', 'Estimated')}
+          actualLabel={t('Faktisk', 'Actual')}
+          evidenceLabel={metricEvidence(annual.exportedKwh)}
+        />
+        <AnnualMetricCard
+          label={t('Årlig totalkostnad', 'Annual total cost')}
+          metric={annual.totalCostSek}
+          value={formatMetric(annual.totalCostSek, moneyFormatter)}
+          detail={(
+            <>
+              {t('Elnät', 'Grid')} {formatMetric(annual.gridCostSek, moneyFormatter)}
+              {' · '}
+              {t('Elhandel', 'Electricity')} {formatMetric(annual.electricityCostSek, moneyFormatter)}
+            </>
+          )}
+          icon={<Coins className="h-5 w-5" />}
+          accentClass="bg-gradient-to-r from-amber-500 to-orange-500"
+          estimatedLabel={t('Estimerad', 'Estimated')}
+          actualLabel={t('Faktisk', 'Actual')}
+          evidenceLabel={metricEvidence(annual.totalCostSek)}
+        />
+        <AnnualMetricCard
+          label={t('Årlig kostnad per kWh', 'Annual cost per kWh')}
+          metric={annual.costPerKwh}
+          value={formatMetric(
+            annual.costPerKwh,
+            numberFormatter,
+            ` ${t('kr/kWh', 'SEK/kWh')}`,
+          )}
+          icon={<CalendarDays className="h-5 w-5" />}
+          accentClass="bg-gradient-to-r from-emerald-600 to-teal-500"
+          estimatedLabel={t('Estimerad', 'Estimated')}
+          actualLabel={t('Faktisk', 'Actual')}
+          evidenceLabel={metricEvidence(annual.costPerKwh)}
+        />
       </div>
 
       {incompleteMonths.length > 0 ? (
@@ -210,8 +438,8 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({ series })
           <AlertDescription className="space-y-3">
             <p>
               {t(
-                'Saknade månader interpoleras inte. En månad med bara en av de två fakturatyperna visas, men kostnaden är då markerad som ofullständig.',
-                'Missing months are not interpolated. A month with only one invoice type remains visible, but its cost is treated as incomplete.',
+                'Månadsdiagrammen fyller inte i luckor. Årskorten ovan är tydligt markerade som estimerade och normaliserar delperioder samt svenska säsongsvariationer.',
+                'Monthly charts do not fill gaps. The annual cards above are explicitly marked as estimated and normalize partial periods and Swedish seasonality.',
               )}
             </p>
             <div className="flex flex-wrap gap-2">
@@ -234,30 +462,43 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({ series })
           <AlertTitle>{t('Komplett fakturatäckning', 'Complete invoice coverage')}</AlertTitle>
           <AlertDescription>
             {t(
-              'Alla månader i intervallet har både elnäts- och elhandelsunderlag.',
-              'Every month in the range has both grid and electricity provider coverage.',
+              'Alla synliga månader har både elnäts- och elhandelsunderlag.',
+              'Every visible month has both grid and electricity provider coverage.',
             )}
           </AlertDescription>
         </Alert>
       )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">
-            {t('Förbrukning och total kostnad per månad', 'Monthly consumption and total cost')}
-          </CardTitle>
+      <Card className="overflow-hidden border-border/70 shadow-sm">
+        <CardHeader className="border-b border-border/60 bg-gradient-to-r from-blue-500/5 to-violet-500/5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <CardTitle className="text-base">
+              {t('Förbrukning och total kostnad per månad', 'Monthly consumption and total cost')}
+            </CardTitle>
+            {visibleChanges.length > 0 && (
+              <Badge variant="outline" className="border-violet-300 text-violet-700 dark:border-violet-800 dark:text-violet-300">
+                ◆ {visibleChanges.length} {t('villkorsändringar', 'term changes')}
+              </Badge>
+            )}
+          </div>
         </CardHeader>
-        <CardContent>
-          <ResponsiveContainer width="100%" height={380}>
-            <ComposedChart data={series} margin={{ top: 12, right: 8, bottom: 28, left: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+        <CardContent className="pt-5">
+          <ResponsiveContainer width="100%" height={390}>
+            <ComposedChart data={filteredSeries} margin={{ top: 16, right: 8, bottom: 24, left: 8 }}>
+              <defs>
+                <linearGradient id="energyHistoryConsumption" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#2563eb" stopOpacity={0.72} />
+                  <stop offset="95%" stopColor="#2563eb" stopOpacity={0.05} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="4 4" className="stroke-border/70" vertical={false} />
               <XAxis
                 dataKey="monthKey"
                 minTickGap={24}
                 tickFormatter={formatMonthKey}
-                angle={series.length <= 18 ? -25 : 0}
-                textAnchor={series.length <= 18 ? 'end' : 'middle'}
-                height={series.length <= 18 ? 62 : 32}
+                angle={filteredSeries.length <= 18 ? -25 : 0}
+                textAnchor={filteredSeries.length <= 18 ? 'end' : 'middle'}
+                height={filteredSeries.length <= 18 ? 62 : 32}
                 className="text-xs"
               />
               <YAxis
@@ -270,70 +511,80 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({ series })
                 yAxisId="cost"
                 orientation="right"
                 tickFormatter={(value) => numberFormatter.format(value)}
-                label={{ value: t('SEK', 'SEK'), angle: 90, position: 'insideRight' }}
+                label={{ value: 'SEK', angle: 90, position: 'insideRight' }}
                 className="text-xs"
               />
               <Tooltip
-                labelFormatter={(label) => formatMonthKey(String(label))}
-                formatter={(value: number, name: string) => (
-                  name === 'consumptionKwh'
-                    ? [`${numberFormatter.format(value)} kWh`, t('Förbrukning', 'Consumption')]
-                    : [tooltipMoney(value), t('Totalkostnad', 'Total cost')]
+                content={(
+                  <HistoryTooltip
+                    changes={visibleChanges}
+                    formatMonth={formatMonthKey}
+                    formatValue={formatTooltipValue}
+                    language={language}
+                  />
                 )}
               />
-              <Legend
-                formatter={(value) => (
-                  value === 'consumptionKwh'
-                    ? t('Förbrukning', 'Consumption')
-                    : t('Totalkostnad', 'Total cost')
-                )}
+              <Legend />
+              {renderChangeLines('energy')}
+              <Area
+                yAxisId="energy"
+                dataKey="consumptionKwh"
+                name={t('Förbrukning', 'Consumption')}
+                type="monotone"
+                connectNulls={false}
+                stroke="#2563eb"
+                strokeWidth={2.5}
+                fill="url(#energyHistoryConsumption)"
+                activeDot={{ r: 5, strokeWidth: 2 }}
+                animationDuration={900}
               />
-              <Bar yAxisId="energy" dataKey="consumptionKwh" name="consumptionKwh" radius={[3, 3, 0, 0]}>
-                {series.map((month) => {
-                  const coverage = month.consumptionSource === 'grid'
-                    ? month.gridCoverage
-                    : month.electricityCoverage;
-                  return (
-                    <Cell
-                      key={month.monthKey}
-                      fill={coverage === 'complete' ? '#2563eb' : '#f59e0b'}
-                      fillOpacity={coverage === 'partial' ? 0.65 : 0.9}
-                    />
-                  );
-                })}
-              </Bar>
               <Line
                 yAxisId="cost"
                 dataKey="totalCostSek"
-                name="totalCostSek"
+                name={t('Totalkostnad', 'Total cost')}
                 type="monotone"
                 connectNulls={false}
-                stroke="#dc2626"
-                strokeWidth={2.5}
-                dot={{ r: 3 }}
+                stroke="#e11d48"
+                strokeWidth={3}
+                dot={{ r: 3, fill: '#fff', strokeWidth: 2 }}
+                activeDot={{ r: 5 }}
+                animationDuration={1050}
               />
+              {filteredSeries.length > 18 && (
+                <Brush
+                  dataKey="monthKey"
+                  height={26}
+                  stroke="#7c3aed"
+                  tickFormatter={formatMonthKey}
+                  travellerWidth={8}
+                />
+              )}
             </ComposedChart>
           </ResponsiveContainer>
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
+      <Card className="overflow-hidden border-border/70 shadow-sm">
+        <CardHeader className="border-b border-border/60 bg-gradient-to-r from-amber-500/5 to-violet-500/5">
           <CardTitle className="text-base">
             {t('Kostnadsfördelning per månad', 'Monthly cost breakdown')}
           </CardTitle>
         </CardHeader>
-        <CardContent>
-          <ResponsiveContainer width="100%" height={400}>
-            <BarChart data={series} margin={{ top: 12, right: 8, bottom: 28, left: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+        <CardContent className="pt-5">
+          <ResponsiveContainer width="100%" height={420}>
+            <BarChart
+              data={filteredSeries}
+              stackOffset="sign"
+              margin={{ top: 16, right: 8, bottom: 28, left: 8 }}
+            >
+              <CartesianGrid strokeDasharray="4 4" className="stroke-border/70" vertical={false} />
               <XAxis
                 dataKey="monthKey"
                 minTickGap={24}
                 tickFormatter={formatMonthKey}
-                angle={series.length <= 18 ? -25 : 0}
-                textAnchor={series.length <= 18 ? 'end' : 'middle'}
-                height={series.length <= 18 ? 62 : 32}
+                angle={filteredSeries.length <= 18 ? -25 : 0}
+                textAnchor={filteredSeries.length <= 18 ? 'end' : 'middle'}
+                height={filteredSeries.length <= 18 ? 62 : 32}
                 className="text-xs"
               />
               <YAxis
@@ -341,33 +592,80 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({ series })
                 className="text-xs"
               />
               <Tooltip
-                labelFormatter={(label) => formatMonthKey(String(label))}
-                formatter={(value: number, name: string) => [tooltipMoney(value), name]}
+                cursor={{ fill: 'hsl(var(--muted) / 0.4)' }}
+                content={(
+                  <HistoryTooltip
+                    changes={visibleChanges}
+                    formatMonth={formatMonthKey}
+                    formatValue={formatTooltipValue}
+                    language={language}
+                  />
+                )}
               />
               <Legend />
-              <Bar dataKey="electricityEnergySek" stackId="cost" name={t('Elenergi', 'Electricity energy')} fill={COST_COLORS.electricityEnergySek} />
-              <Bar dataKey="electricityFeesSek" stackId="cost" name={t('Elhandelsavgifter', 'Electricity fees')} fill={COST_COLORS.electricityFeesSek} />
-              <Bar dataKey="gridFixedSek" stackId="cost" name={t('Fast nätavgift', 'Grid fixed fee')} fill={COST_COLORS.gridFixedSek} />
-              <Bar dataKey="gridTransferSek" stackId="cost" name={t('Överföringsavgift', 'Transfer fee')} fill={COST_COLORS.gridTransferSek} />
-              <Bar dataKey="gridPeakSek" stackId="cost" name={t('Effektavgift', 'Peak-demand fee')} fill={COST_COLORS.gridPeakSek} />
-              <Bar dataKey="energyTaxSek" stackId="cost" name={t('Energiskatt', 'Energy tax')} fill={COST_COLORS.energyTaxSek} />
-              <Bar dataKey="exportNetSek" stackId="cost" name={t('Export netto', 'Net export')} fill={COST_COLORS.exportNetSek} />
-              <Bar dataKey="otherCostSek" stackId="cost" name={t('Övrigt/avrundning', 'Other/rounding')} fill={COST_COLORS.otherCostSek} />
+              <ReferenceLine y={0} stroke="hsl(var(--foreground))" strokeOpacity={0.65} />
+              {renderChangeLines()}
+              <Bar dataKey="electricityEnergySek" stackId="cost" name={t('Elenergi', 'Electricity energy')} fill={COST_COLORS.electricityEnergySek} animationDuration={750} />
+              <Bar dataKey="electricityFeesSek" stackId="cost" name={t('Elhandelsavgifter', 'Electricity fees')} fill={COST_COLORS.electricityFeesSek} animationDuration={825} />
+              <Bar dataKey="gridFixedSek" stackId="cost" name={t('Fast nätavgift', 'Grid fixed fee')} fill={COST_COLORS.gridFixedSek} animationDuration={900} />
+              <Bar dataKey="gridTransferSek" stackId="cost" name={t('Överföringsavgift', 'Transfer fee')} fill={COST_COLORS.gridTransferSek} animationDuration={975} />
+              <Bar dataKey="gridPeakSek" stackId="cost" name={t('Effektavgift', 'Peak-demand fee')} fill={COST_COLORS.gridPeakSek} animationDuration={1050} />
+              <Bar dataKey="energyTaxSek" stackId="cost" name={t('Energiskatt', 'Energy tax')} fill={COST_COLORS.energyTaxSek} animationDuration={1125} />
+              <Bar dataKey="exportNetSek" stackId="cost" name={t('Export netto', 'Net export')} fill={COST_COLORS.exportNetSek} animationDuration={1200} />
+              {filteredSeries.length > 18 && (
+                <Brush
+                  dataKey="monthKey"
+                  height={26}
+                  stroke="#7c3aed"
+                  tickFormatter={formatMonthKey}
+                  travellerWidth={8}
+                />
+              )}
             </BarChart>
           </ResponsiveContainer>
+          <p className="mt-2 text-xs text-muted-foreground">
+            {t(
+              'Exportersättning visas med sitt verkliga tecken under nollinjen. Den minskar alltså stapelns nettokostnad.',
+              'Export credits retain their true sign below the zero line, reducing the bar’s net cost.',
+            )}
+          </p>
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">
-            {t('Förbrukning per månad och år', 'Consumption by month and year')}
-          </CardTitle>
+      <Card className="overflow-hidden border-border/70 shadow-sm">
+        <CardHeader className="border-b border-border/60 bg-gradient-to-r from-emerald-500/5 to-blue-500/5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <CardTitle className="text-base">
+                {t('Förbrukning per månad och år', 'Consumption by month and year')}
+              </CardTitle>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {t(
+                  'Alltid 12 månadsgrupper. Välj ett år för att lyfta fram det och tona ned resten.',
+                  'Always 12 month groups. Select a year to highlight it and dim the rest.',
+                )}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {years.map((year) => (
+                <Button
+                  key={year}
+                  type="button"
+                  size="sm"
+                  variant={activeYear === year ? 'default' : 'outline'}
+                  className="h-8"
+                  onClick={() => setFocusedYear(year)}
+                >
+                  {year}
+                </Button>
+              ))}
+            </div>
+          </div>
         </CardHeader>
-        <CardContent>
-          <ResponsiveContainer width="100%" height={400}>
+        <CardContent className="pt-5">
+          <ResponsiveContainer width="100%" height={410}>
             <BarChart data={consumptionByCalendarMonth} margin={{ top: 12, right: 8, bottom: 8, left: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+              <CartesianGrid strokeDasharray="4 4" className="stroke-border/70" vertical={false} />
               <XAxis dataKey="month" className="text-xs" />
               <YAxis
                 tickFormatter={(value) => numberFormatter.format(value)}
@@ -379,6 +677,7 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({ series })
                   `${numberFormatter.format(value)} kWh`,
                   name,
                 ]}
+                cursor={{ fill: 'hsl(var(--muted) / 0.4)' }}
               />
               <Legend />
               {years.map((year, yearIndex) => (
@@ -387,19 +686,79 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({ series })
                   dataKey={String(year)}
                   name={String(year)}
                   fill={YEAR_COLORS[yearIndex % YEAR_COLORS.length]}
-                  radius={[2, 2, 0, 0]}
+                  radius={[3, 3, 0, 0]}
+                  animationDuration={800 + yearIndex * 90}
                 >
-                  {consumptionByCalendarMonth.map((month) => (
-                    <Cell
-                      key={`${year}-${month.month}`}
-                      fill={YEAR_COLORS[yearIndex % YEAR_COLORS.length]}
-                      fillOpacity={month[`${year}Complete`] ? 0.9 : 0.45}
-                    />
-                  ))}
+                  {consumptionByCalendarMonth.map((month) => {
+                    const isComplete = Boolean(month[`${year}Complete`]);
+                    const isFocused = activeYear === year;
+                    return (
+                      <Cell
+                        key={`${year}-${month.month}`}
+                        fill={YEAR_COLORS[yearIndex % YEAR_COLORS.length]}
+                        fillOpacity={(isFocused ? 0.95 : 0.18) * (isComplete ? 1 : 0.5)}
+                      />
+                    );
+                  })}
                 </Bar>
               ))}
             </BarChart>
           </ResponsiveContainer>
+        </CardContent>
+      </Card>
+
+      <Card className="overflow-hidden border-violet-200/80 bg-gradient-to-br from-background to-violet-500/5 shadow-sm dark:border-violet-900/70">
+        <CardHeader>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <RefreshCw className="h-4 w-4 text-violet-600" />
+              {t('Förändrade villkor', 'Changed terms')}
+            </CardTitle>
+            <Badge variant="secondary">
+              {visibleChanges.length} {t('under perioden', 'in this period')}
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {visibleChanges.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              {t(
+                'Inga byten eller bestående pris- och modelländringar upptäcktes i den valda perioden.',
+                'No provider switches or lasting price and model changes were detected in the selected period.',
+              )}
+            </p>
+          ) : (
+            <div className="grid gap-3 lg:grid-cols-2">
+              {visibleChanges.map((change) => {
+                const Icon = change.type === 'provider'
+                  ? RefreshCw
+                  : change.type === 'price'
+                    ? BadgeDollarSign
+                    : Sparkles;
+                return (
+                  <div
+                    key={change.id}
+                    className="group flex gap-3 rounded-xl border border-border/70 bg-background/80 p-4 transition-colors hover:border-violet-300 hover:bg-violet-50/40 dark:hover:border-violet-800 dark:hover:bg-violet-950/20"
+                  >
+                    <div className="mt-0.5 rounded-lg bg-violet-100 p-2 text-violet-700 dark:bg-violet-950 dark:text-violet-300">
+                      <Icon className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs capitalize text-muted-foreground">
+                        {dateFormatter.format(new Date(`${change.date}T00:00:00Z`))}
+                      </p>
+                      <p className="mt-0.5 text-sm font-medium">
+                        {language === 'sv' ? change.titleSv : change.titleEn}
+                      </p>
+                      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                        {language === 'sv' ? change.detailSv : change.detailEn}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

@@ -50,8 +50,6 @@ const EnergyHistoryDocuments: React.FC<EnergyHistoryDocumentsProps> = ({ documen
       export_fee: t('Exportavgift', 'Export fee'),
       discount: t('Rabatt', 'Discount'),
       vat: t('Moms', 'VAT'),
-      rounding: t('Avrundning', 'Rounding'),
-      other: t('Övrigt', 'Other'),
     };
     return labels[category as EnergyChargeCategory] ?? category;
   };

@@ -10,6 +10,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Badge } from '@/components/ui/badge';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
+import {
+  estimateAnnualEnergyHistory,
+  estimateNormalYearFromTemperatureSweep,
+} from '@/lib/energy-estimation';
+import {
+  fetchEnergyBillingDocuments,
+  toEnergyBillingSeriesDocuments,
+} from '@/lib/energy-billing-storage';
+import { buildEnergyBillingSeries } from '@/lib/energy-billing-series';
 import { formatPower } from '@/lib/energy-units';
 import {
   resolveProfile,
@@ -29,6 +38,7 @@ import EnergyVsTempChart from './EnergyVsTempChart';
 interface SimulatorTabProps {
   customerId: string;
   homeId: string | null;
+  homeCount: number;
 }
 
 type DeviceModelDiagnosticsRow = {
@@ -73,8 +83,11 @@ type SimulatorResults = {
   annualNetworkCost: number;
   annualEnergyCost: number;
   annualFixedCost: number;
+  annualEstimateSource: 'home_override' | 'billing_history' | 'normal_year_model';
+  annualEstimateObservedMonths: number | null;
+  annualCalibrationFactor: number;
   timeseries: Array<{ time: string; total: number; heating: number; shiftable: number; fixedActive: number; base: number }>;
-  sweepData: Array<{ tempC: number; dailyKwh: number }>;
+  sweepData: Array<{ tempC: number; dailyKwh: number; peakW: number }>;
   deviceModelDiagnostics: {
     totalAssignedDevices: number;
     boundDevices: number;
@@ -141,7 +154,7 @@ function getRuntimeRoomKey(device: DeviceRuntime): string {
   return 'default_room';
 }
 
-const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
+const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId, homeCount }) => {
   const { t } = useLanguage();
   const [mode, setMode] = useState<'design' | 'typical' | 'year'>('design');
   const [scenario, setScenario] = useState<'dumb' | 'smart'>('dumb');
@@ -343,7 +356,7 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
       });
 
       // --- Temperature sweep (-20 to +20) ---
-      const sweepData: Array<{ tempC: number; dailyKwh: number }> = [];
+      const sweepData: Array<{ tempC: number; dailyKwh: number; peakW: number }> = [];
       for (let temp = -20; temp <= 20; temp++) {
         const sweep = simulateDeviceDay({
           devices: binding.devices,
@@ -359,18 +372,70 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
             getHeatRoomKey: device => getRuntimeRoomKey(device),
           },
         });
-        sweepData.push({ tempC: temp, dailyKwh: sweep.dailyKwh });
+        sweepData.push({
+          tempC: temp,
+          dailyKwh: sweep.dailyKwh,
+          peakW: sweep.peakW,
+        });
       }
 
       // --- Compute costs ---
       const peakW = dayResult.peakW;
-      const totalKwh = Math.round(dayResult.timeseries.reduce((s, p) => s + p.total, 0) * 365 / 4 / 1000);
-      const heatingKwh = Math.round(dayResult.timeseries.reduce((s, p) => s + p.heating, 0) * 365 / 4 / 1000);
-      const baseKwh = Math.round(dayResult.timeseries.reduce((s, p) => s + p.base, 0) * 365 / 4 / 1000);
-      const shiftableKwh = Math.round(dayResult.timeseries.reduce((s, p) => s + p.shiftable, 0) * 365 / 4 / 1000);
-      const fixedActiveKwh = Math.round(dayResult.timeseries.reduce((s, p) => s + p.fixedActive, 0) * 365 / 4 / 1000);
+      const normalYear = estimateNormalYearFromTemperatureSweep(sweepData);
+      const settingsOverrides = asRecord(settings?.overrides);
+      const overrideAnnualKwh = Number(settingsOverrides?.annual_kwh_override);
+      let annualEstimateSource: SimulatorResults['annualEstimateSource'] = 'normal_year_model';
+      let annualEstimateObservedMonths: number | null = null;
+      let targetAnnualKwh = normalYear.annualKwh;
 
-      const annualNetworkCost = Math.round(peakW * networkPrice * 12);
+      if (Number.isFinite(overrideAnnualKwh) && overrideAnnualKwh > 0) {
+        targetAnnualKwh = overrideAnnualKwh;
+        annualEstimateSource = 'home_override';
+      } else if (homeCount === 1) {
+        const billingDocuments = await fetchEnergyBillingDocuments(customerId);
+        const billingSeries = buildEnergyBillingSeries(
+          toEnergyBillingSeriesDocuments(billingDocuments),
+        );
+        const billingEstimate = estimateAnnualEnergyHistory(billingSeries);
+        if (
+          billingEstimate.consumptionKwh.value !== null
+          && billingEstimate.consumptionKwh.value > 0
+          && billingEstimate.consumptionKwh.observedMonths >= 3
+        ) {
+          targetAnnualKwh = billingEstimate.consumptionKwh.value;
+          annualEstimateSource = 'billing_history';
+          annualEstimateObservedMonths = billingEstimate.consumptionKwh.observedMonths;
+        }
+      }
+
+      const totalKwh = Math.round(targetAnnualKwh);
+      const annualCalibrationFactor = normalYear.annualKwh > 0
+        ? targetAnnualKwh / normalYear.annualKwh
+        : 1;
+      const dayComponentKwh = {
+        heating: dayResult.timeseries.reduce((sum, point) => sum + point.heating, 0) / 4 / 1000,
+        base: dayResult.timeseries.reduce((sum, point) => sum + point.base, 0) / 4 / 1000,
+        shiftable: dayResult.timeseries.reduce((sum, point) => sum + point.shiftable, 0) / 4 / 1000,
+        fixedActive: dayResult.timeseries.reduce((sum, point) => sum + point.fixedActive, 0) / 4 / 1000,
+      };
+      const dayComponentTotal = Object.values(dayComponentKwh).reduce(
+        (sum, value) => sum + value,
+        0,
+      );
+      const componentScale = dayComponentTotal > 0
+        ? totalKwh / (dayComponentTotal * 365)
+        : 0;
+      const heatingKwh = Math.round(dayComponentKwh.heating * 365 * componentScale);
+      const baseKwh = Math.round(dayComponentKwh.base * 365 * componentScale);
+      const shiftableKwh = Math.round(dayComponentKwh.shiftable * 365 * componentScale);
+      const fixedActiveKwh = Math.max(
+        0,
+        totalKwh - heatingKwh - baseKwh - shiftableKwh,
+      );
+
+      const annualNetworkCost = Math.round(
+        normalYear.annualPeakWMonths * networkPrice,
+      );
       const annualEnergyCost = Math.round(totalKwh * energyPrice);
       const annualFixedCost = Math.round(fixedFee * 12);
       const annualCostSek = annualNetworkCost + annualEnergyCost + annualFixedCost;
@@ -383,16 +448,22 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
         target_peak_w: targetPeak ? Number(targetPeak) : null,
         home_id: homeId,
         ua_w_per_k: UA,
-        simulation_engine: 'device_models_v1',
+        simulation_engine: 'device_models_normal_year_v2',
         base_w: baseW,
         base_w_source: baseSource,
         shiftable_w: shiftableW,
         fixed_active_w: fixedActiveW,
+        normal_year_profile: 'central_sweden_monthly_v1',
+        model_annual_kwh: normalYear.annualKwh,
+        annual_kwh_source: annualEstimateSource,
+        annual_kwh_observed_months: annualEstimateObservedMonths,
+        annual_kwh_calibration_factor: annualCalibrationFactor,
       };
 
       const resultsSummary = {
         peakW, totalKwh, heatingKwh, baseKwh, shiftableKwh, fixedActiveKwh,
         annualNetworkCost, annualEnergyCost, annualFixedCost, annualCostSek,
+        annualEstimateSource, annualEstimateObservedMonths, annualCalibrationFactor,
       };
 
       const tariffSnapshot = tariff
@@ -512,6 +583,22 @@ const SimulatorTab: React.FC<SimulatorTabProps> = ({ customerId, homeId }) => {
             <CardContent className="space-y-2 text-sm">
               <div className="flex justify-between"><span className="text-muted-foreground">{t('Topp', 'Peak')}</span><span className="font-medium">{formatPower(results.peakW).display}</span></div>
               <div className="flex justify-between"><span className="text-muted-foreground">{t('Årlig kWh', 'Annual kWh')}</span><span className="font-medium">{results.annualKwh.toLocaleString()} kWh</span></div>
+              <div className="rounded-md bg-muted/60 px-2 py-1.5 text-xs text-muted-foreground">
+                {results.annualEstimateSource === 'home_override'
+                  ? t(
+                      'Kalibrerad mot årsuppgiften i hemprofilen.',
+                      'Calibrated against the annual value in the home profile.',
+                    )
+                  : results.annualEstimateSource === 'billing_history'
+                    ? t(
+                        `Kalibrerad mot ${results.annualEstimateObservedMonths} månaders fakturahistorik.`,
+                        `Calibrated against ${results.annualEstimateObservedMonths} months of billing history.`,
+                      )
+                    : t(
+                        'Normalårsberäknad med 12 månaders temperaturprofil.',
+                        'Normal-year estimate using a 12-month temperature profile.',
+                      )}
+              </div>
               <div className="flex justify-between"><span className="text-muted-foreground">{t('Nätavgift', 'Network Cost')}</span><span className="font-medium">{results.annualNetworkCost.toLocaleString()} SEK</span></div>
               <div className="flex justify-between"><span className="text-muted-foreground">{t('Energikostnad', 'Energy Cost')}</span><span className="font-medium">{results.annualEnergyCost.toLocaleString()} SEK</span></div>
               <div className="flex justify-between"><span className="text-muted-foreground">{t('Fast avgift', 'Fixed Fee')}</span><span className="font-medium">{results.annualFixedCost.toLocaleString()} SEK</span></div>

@@ -109,7 +109,7 @@ Deno.test('split supplier invoices combine to complete monthly coverage', () => 
   assertEqual(series[0].totalCostSek, 976.5, 'combined total');
 });
 
-Deno.test('cost breakdown reconciles invoice rounding into other cost', () => {
+Deno.test('cost breakdown intentionally ignores unclassified invoice rounding', () => {
   const series = buildEnergyBillingSeries([
     document({
       id: 'grid',
@@ -132,8 +132,15 @@ Deno.test('cost breakdown reconciles invoice rounding into other cost', () => {
   assertEqual(series[0].gridTransferSek, 82.66, 'transfer cost');
   assertEqual(series[0].gridPeakSek, 434.53, 'peak cost');
   assertEqual(series[0].energyTaxSek, 725.82, 'energy tax');
-  assertEqual(series[0].otherCostSek, -0.01, 'rounding residual');
   assertEqual(series[0].peakDemandKw, 5.35, 'peak demand');
+  assertEqual(
+    series[0].gridFixedSek
+      + series[0].gridTransferSek
+      + series[0].gridPeakSek
+      + series[0].energyTaxSek,
+    2158.01,
+    'visible charges remain their parsed values without a residual category',
+  );
 });
 
 Deno.test('partial coverage is retained as partial data rather than zero or missing', () => {
