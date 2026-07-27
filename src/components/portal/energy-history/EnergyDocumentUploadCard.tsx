@@ -226,8 +226,8 @@ const EnergyDocumentUploadCard: React.FC<EnergyDocumentUploadCardProps> = ({
               {isGrid
                 ? t('Till exempel Ellevio.', 'For example Ellevio.')
                 : t(
-                    'Till exempel Karlstads Energi, Varbergsortens eller Tibber.',
-                    'For example Karlstads Energi, Varbergsortens, or Tibber.',
+                    'Till exempel Karlstads Energi, Stockholms Elbolag, Varbergsortens eller Tibber.',
+                    'For example Karlstads Energi, Stockholms Elbolag, Varbergsortens, or Tibber.',
                   )}
             </p>
           </div>

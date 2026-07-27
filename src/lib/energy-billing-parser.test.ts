@@ -76,6 +76,24 @@ const VARBERGSORTENS_TEXT = `
   Summa Varbergsortens Elförsäljning AB 2 301,85 kr
 `;
 
+const STOCKHOLMS_ELBOLAG_COMBINED_TEXT = `
+  Stockholms Elbolag AB
+  Fakturadatum: 2021-06-10
+  OCR-nr: 823451966928
+  Fakturanr: 823451966928
+  Fakturor & Avgifter
+  Elhandel 2021-05-01 - 2021-05-31 Porfyrvägen 10 Täby 1 178,61 kr
+  Energikundservice Sverige AB 13 mar 2021 t o m 31 maj 2021 8 059,00 kr
+  Öresavrundning: 0,39
+  Totalbelopp att betala: 9 238,00 kr
+  Debiterad moms från andra leverantörer 1 611,86 kr
+  Debiterad moms från Stockholms Elbolag 235,72 kr
+  DITT ELAVTAL EXKL MOMS
+  Typ: Premium Fastpris
+  Månadsavgift inkl moms: 15 kr
+  Förbrukat: 3 188 kWh
+`;
+
 const KARLSTAD_DETAILED_TEXT = `
   Fakturadatum: 2025-08-14
   OCR-/Fakturanummer: 40487450211
@@ -247,6 +265,27 @@ Deno.test('Varbergsortens fixed-price format imports with or without a fixed-fee
   assertEqual(parsed.vatSek, 460.37, 'VAT');
   assertEqual(parsed.totalAmountSek, 2301.85, 'total');
   assertEqual(parsed.lineItems.length, 3, 'energy, fixed fee, and VAT');
+});
+
+Deno.test('Stockholms Elbolag parser excludes bundled grid charges', () => {
+  const parsed = parseEnergyBillingDocument(
+    STOCKHOLMS_ELBOLAG_COMBINED_TEXT,
+    'electricity',
+  );
+  assert(parsed.importable, `Stockholms parser errors: ${parsed.errors.join(', ')}`);
+  assertEqual(parsed.parserId, 'stockholms_elbolag_combined', 'parser id');
+  assertEqual(parsed.invoiceNumber, '823451966928', 'invoice number');
+  assertEqual(parsed.invoiceDate, '2021-06-10', 'invoice date');
+  assertEqual(parsed.periodStart, '2021-05-01', 'period start');
+  assertEqual(parsed.consumptionKwh, 3188, 'consumption');
+  assertEqual(parsed.vatSek, 235.72, 'provider VAT only');
+  assertEqual(parsed.totalAmountSek, 1178.61, 'electricity subtotal only');
+  assertEqual(parsed.lineItems.length, 2, 'energy and fixed fee');
+  assertEqual(
+    parsed.lineItems.find((line) => line.category === 'spot_energy')?.amountSek,
+    1163.61,
+    'energy charge excluding the fixed fee',
+  );
 });
 
 Deno.test('recognized document in the wrong upload area is rejected with specific feedback', () => {

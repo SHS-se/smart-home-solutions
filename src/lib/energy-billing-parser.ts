@@ -605,6 +605,102 @@ function parseVarbergsortens(text: string): ParsedFields {
   };
 }
 
+function inclusivePeriodDays(periodStart: string, periodEnd: string): number {
+  const start = new Date(`${periodStart}T00:00:00Z`);
+  const end = new Date(`${periodEnd}T00:00:00Z`);
+  return Math.floor((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)) + 1;
+}
+
+function parseStockholmsElbolag(text: string): ParsedFields {
+  const summaryMatch = text.match(new RegExp(
+    `Fakturor\\s*&\\s*Avgifter\\s+Elhandel\\s+(${ISO_DATE_PATTERN})\\s+-\\s+(${ISO_DATE_PATTERN}).{0,150}?(${NUMBER_PATTERN})\\s+kr`,
+    'i',
+  ));
+  const periodStart = parseCapturedDate(summaryMatch?.[1] ?? null);
+  const periodEnd = parseCapturedDate(summaryMatch?.[2] ?? null);
+  const totalAmountSek = parseCapturedNumber(summaryMatch?.[3] ?? null);
+  const consumptionKwh = parseCapturedNumber(firstCapture(
+    text,
+    new RegExp(`Förbrukat:\\s*(${NUMBER_PATTERN})\\s+kWh`, 'i'),
+  ));
+  const fixedAmountSek = parseCapturedNumber(firstCapture(
+    text,
+    new RegExp(`Månadsavgift\\s+inkl\\s+moms:\\s*(${NUMBER_PATTERN})\\s+kr`, 'i'),
+  ));
+  const lineItems: ParsedEnergyLineItem[] = [];
+
+  if (
+    periodStart
+    && periodEnd
+    && totalAmountSek !== null
+    && consumptionKwh !== null
+    && fixedAmountSek !== null
+  ) {
+    const coveredDays = inclusivePeriodDays(periodStart, periodEnd);
+    const periodDate = new Date(`${periodStart}T00:00:00Z`);
+    const daysInMonth = new Date(Date.UTC(
+      periodDate.getUTCFullYear(),
+      periodDate.getUTCMonth() + 1,
+      0,
+    )).getUTCDate();
+    const fullCalendarMonth = periodDate.getUTCDate() === 1
+      && coveredDays === daysInMonth;
+    const energyAmountSek = roundMoney(totalAmountSek - fixedAmountSek);
+    const effectiveUnitPriceSek = consumptionKwh > 0
+      ? energyAmountSek / consumptionKwh
+      : null;
+
+    pushIfPresent(lineItems, makeLineItem({
+      category: 'spot_energy',
+      label: 'Elhandel',
+      amount: String(energyAmountSek),
+      quantity: String(consumptionKwh),
+      unit: 'kWh',
+      unitPrice: effectiveUnitPriceSek === null ? null : String(effectiveUnitPriceSek),
+      periodStart,
+      periodEnd,
+      amountIncludesVat: true,
+    }));
+    pushIfPresent(lineItems, makeLineItem({
+      category: 'fixed_fee',
+      label: 'Månadsavgift',
+      amount: String(fixedAmountSek),
+      quantity: String(coveredDays),
+      unit: 'days',
+      unitPrice: fullCalendarMonth ? String(fixedAmountSek) : null,
+      periodStart,
+      periodEnd,
+      amountIncludesVat: true,
+    }));
+  }
+
+  const providerVat = firstCapture(
+    text,
+    new RegExp(`Debiterad moms från Stockholms Elbolag\\s+(${NUMBER_PATTERN})\\s+kr`, 'i'),
+  );
+  const invoiceVat = firstCapture(
+    text,
+    new RegExp(`Varav moms\\s+(${NUMBER_PATTERN})\\s+kr`, 'i'),
+  );
+
+  return {
+    invoiceNumber: normalizeInvoiceNumber(firstCapture(text, /Fakturanr:\s*(\d{8,})/i)),
+    invoiceDate: parseCapturedDate(firstCapture(
+      text,
+      new RegExp(`Fakturadatum:\\s*(${ISO_DATE_PATTERN})`, 'i'),
+    )),
+    periodStart,
+    periodEnd,
+    consumptionKwh,
+    exportedKwh: null,
+    peakDemandKw: null,
+    vatSek: parseCapturedNumber(providerVat ?? invoiceVat),
+    totalAmountSek,
+    lineItems,
+    requiredChargeCategories: ['spot_energy', 'fixed_fee'],
+  };
+}
+
 const KARLSTAD_LINE_DEFINITIONS: Array<{
   label: string;
   category: EnergyChargeCategory;
@@ -909,6 +1005,20 @@ const PARSERS: ParserDefinition[] = [
       && /Summa Elhandel/i.test(text)
     ),
     parse: parseVarbergsortens,
+  },
+  {
+    id: 'stockholms_elbolag_combined',
+    version: 1,
+    label: 'Stockholms Elbolag electricity invoice',
+    documentKind: 'electricity',
+    providerKey: 'stockholms_elbolag',
+    providerName: 'Stockholms Elbolag',
+    matches: (text) => (
+      /Stockholms Elbolag AB/i.test(text)
+      && /Fakturor\s*&\s*Avgifter\s+Elhandel/i.test(text)
+      && /DITT ELAVTAL/i.test(text)
+    ),
+    parse: parseStockholmsElbolag,
   },
 ];
 
