@@ -160,3 +160,60 @@ Deno.test('partial coverage is retained as partial data rather than zero or miss
   assertEqual(series[0].consumptionKwh, 13, 'partial value retained');
   assert(series[0].totalCostSek !== null, 'partial cost should be visible');
 });
+
+Deno.test('multi-month invoices use dated line quantities instead of prorating consumption', () => {
+  const series = buildEnergyBillingSeries([
+    document({
+      id: 'legacy-grid',
+      documentKind: 'grid',
+      periodStart: '2021-03-13',
+      periodEnd: '2021-05-31',
+      consumptionKwh: 60,
+      totalAmountSek: 90,
+      lineItems: [
+        {
+          category: 'fixed_fee',
+          amountSek: 30,
+          quantity: 80,
+          periodStart: '2021-03-13',
+          periodEnd: '2021-05-31',
+        },
+        {
+          category: 'energy_transfer',
+          amountSek: 10,
+          quantity: 10,
+          periodStart: '2021-03-13',
+          periodEnd: '2021-03-31',
+        },
+        {
+          category: 'energy_transfer',
+          amountSek: 20,
+          quantity: 20,
+          periodStart: '2021-04-01',
+          periodEnd: '2021-04-30',
+        },
+        {
+          category: 'energy_transfer',
+          amountSek: 30,
+          quantity: 30,
+          periodStart: '2021-05-01',
+          periodEnd: '2021-05-31',
+        },
+      ],
+    }),
+  ]);
+
+  assertEqual(series[0].consumptionKwh, 10, 'March line consumption');
+  assertEqual(series[1].consumptionKwh, 20, 'April line consumption');
+  assertEqual(series[2].consumptionKwh, 30, 'May line consumption');
+  assertEqual(series[0].gridCoverage, 'partial', 'partial first month');
+  assertEqual(series[1].gridCoverage, 'complete', 'complete April');
+  assertEqual(series[2].gridCoverage, 'complete', 'complete May');
+  assertEqual(
+    Math.round(
+      series.reduce((sum, month) => sum + (month.gridCostSek ?? 0), 0) * 100,
+    ) / 100,
+    90.01,
+    'line-allocated cost total',
+  );
+});

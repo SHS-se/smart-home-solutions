@@ -6,6 +6,7 @@ import type {
 export interface EnergyBillingLineForSeries {
   category: EnergyChargeCategory;
   amountSek: number;
+  quantity?: number | null;
   periodStart: string | null;
   periodEnd: string | null;
 }
@@ -267,6 +268,19 @@ export function buildEnergyBillingSeries(
       throw new Error(`Energy billing document ${document.id} has an inverted period`);
     }
 
+    const consumptionLines = document.lineItems.filter((lineItem) => (
+      typeof lineItem.quantity === 'number'
+      && (
+        (document.documentKind === 'grid' && lineItem.category === 'energy_transfer')
+        || (document.documentKind === 'electricity' && lineItem.category === 'spot_energy')
+      )
+    ));
+    const lineItemTotal = round(document.lineItems.reduce(
+      (total, lineItem) => total + lineItem.amountSek,
+      0,
+    ));
+    const allocateCostFromLines = document.lineItems.length > 0
+      && lineItemTotal === round(document.totalAmountSek);
     const allocations = monthAllocations(documentStart, documentEnd, monthsByKey);
     for (const allocation of allocations) {
       const coverageIntervals = document.documentKind === 'grid'
@@ -275,11 +289,13 @@ export function buildEnergyBillingSeries(
       coverageIntervals.push(allocation.overlap);
 
       if (document.documentKind === 'grid') {
-        allocation.month.gridCostSek = addNullable(
-          allocation.month.gridCostSek,
-          document.totalAmountSek * allocation.ratio,
-        );
-        if (document.consumptionKwh !== null) {
+        if (!allocateCostFromLines) {
+          allocation.month.gridCostSek = addNullable(
+            allocation.month.gridCostSek,
+            document.totalAmountSek * allocation.ratio,
+          );
+        }
+        if (document.consumptionKwh !== null && consumptionLines.length === 0) {
           allocation.month.gridConsumptionKwh = addNullable(
             allocation.month.gridConsumptionKwh,
             document.consumptionKwh * allocation.ratio,
@@ -287,11 +303,13 @@ export function buildEnergyBillingSeries(
           );
         }
       } else {
-        allocation.month.electricityCostSek = addNullable(
-          allocation.month.electricityCostSek,
-          document.totalAmountSek * allocation.ratio,
-        );
-        if (document.consumptionKwh !== null) {
+        if (!allocateCostFromLines) {
+          allocation.month.electricityCostSek = addNullable(
+            allocation.month.electricityCostSek,
+            document.totalAmountSek * allocation.ratio,
+          );
+        }
+        if (document.consumptionKwh !== null && consumptionLines.length === 0) {
           allocation.month.electricityConsumptionKwh = addNullable(
             allocation.month.electricityConsumptionKwh,
             document.consumptionKwh * allocation.ratio,
@@ -308,10 +326,44 @@ export function buildEnergyBillingSeries(
       }
     }
 
+    for (const lineItem of consumptionLines) {
+      const lineStart = parseDate(lineItem.periodStart ?? document.periodStart);
+      const lineEnd = parseDate(lineItem.periodEnd ?? document.periodEnd);
+      for (const allocation of monthAllocations(lineStart, lineEnd, monthsByKey)) {
+        const value = (lineItem.quantity ?? 0) * allocation.ratio;
+        if (document.documentKind === 'grid') {
+          allocation.month.gridConsumptionKwh = addNullable(
+            allocation.month.gridConsumptionKwh,
+            value,
+            3,
+          );
+        } else {
+          allocation.month.electricityConsumptionKwh = addNullable(
+            allocation.month.electricityConsumptionKwh,
+            value,
+            3,
+          );
+        }
+      }
+    }
+
     for (const lineItem of document.lineItems) {
       const lineStart = parseDate(lineItem.periodStart ?? document.periodStart);
       const lineEnd = parseDate(lineItem.periodEnd ?? document.periodEnd);
       for (const allocation of monthAllocations(lineStart, lineEnd, monthsByKey)) {
+        if (allocateCostFromLines) {
+          if (document.documentKind === 'grid') {
+            allocation.month.gridCostSek = addNullable(
+              allocation.month.gridCostSek,
+              lineItem.amountSek * allocation.ratio,
+            );
+          } else {
+            allocation.month.electricityCostSek = addNullable(
+              allocation.month.electricityCostSek,
+              lineItem.amountSek * allocation.ratio,
+            );
+          }
+        }
         addBreakdown(
           allocation.month,
           document.documentKind,

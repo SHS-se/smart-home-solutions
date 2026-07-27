@@ -118,6 +118,7 @@ const SWEDISH_MONTHS: Record<string, number> = {
 const NUMBER_PATTERN = String.raw`-?(?:\d{1,3}(?: \d{3})+|\d+)(?:[,.]\d+)?`;
 const ISO_DATE_PATTERN = String.raw`\d{4}-\d{2}-\d{2}`;
 const SWEDISH_DATE_PATTERN = String.raw`\d{1,2}\s+[a-zåäö]+\s+\d{4}`;
+const SWEDISH_SHORT_DATE_PATTERN = String.raw`\d{1,2}\s+[a-zåäö]{3}-\d{2}`;
 
 function normalizeText(rawText: string): string {
   return rawText
@@ -178,10 +179,15 @@ export function parseEnergyDate(value: string): string | null {
   }
 
   const swedishMatch = normalized.match(/^(\d{1,2})\s+([a-zåäö]+)\s+(\d{4})$/i);
-  if (!swedishMatch) return null;
-  const month = SWEDISH_MONTHS[swedishMatch[2]];
+  const shortSwedishMatch = normalized.match(/^(\d{1,2})\s+([a-zåäö]{3})-(\d{2})$/i);
+  const dateMatch = swedishMatch ?? shortSwedishMatch;
+  if (!dateMatch) return null;
+  const month = SWEDISH_MONTHS[dateMatch[2]];
   if (!month) return null;
-  return toIsoDate(Number(swedishMatch[3]), month, Number(swedishMatch[1]));
+  const year = shortSwedishMatch
+    ? 2000 + Number(dateMatch[3])
+    : Number(dateMatch[3]);
+  return toIsoDate(year, month, Number(dateMatch[1]));
 }
 
 function firstCapture(text: string, expression: RegExp, index = 1): string | null {
@@ -245,6 +251,133 @@ function pushIfPresent(
   item: ParsedEnergyLineItem | null,
 ): void {
   if (item) lineItems.push(item);
+}
+
+function sumLineItems(lineItems: ParsedEnergyLineItem[]): number | null {
+  if (lineItems.length === 0) return null;
+  return roundMoney(lineItems.reduce((sum, item) => sum + item.amountSek, 0));
+}
+
+function endOfMonth(date: string, maximum: string): string {
+  const start = new Date(`${date}T00:00:00Z`);
+  const monthEnd = new Date(Date.UTC(
+    start.getUTCFullYear(),
+    start.getUTCMonth() + 1,
+    0,
+  )).toISOString().slice(0, 10);
+  return monthEnd < maximum ? monthEnd : maximum;
+}
+
+function normalizeInvoiceNumber(value: string | null): string | null {
+  if (!value) return null;
+  const digits = value.replace(/\D/g, '');
+  return digits.length >= 8 ? digits : null;
+}
+
+function scaleLineItem(
+  item: ParsedEnergyLineItem | null,
+  multiplier: number,
+): ParsedEnergyLineItem | null {
+  if (!item) return null;
+  return {
+    ...item,
+    amountSek: roundMoney(item.amountSek * multiplier),
+    unitPriceSek: item.unitPriceSek === null
+      ? null
+      : Math.round((item.unitPriceSek * multiplier + Number.EPSILON) * 10_000) / 10_000,
+    amountIncludesVat: true,
+  };
+}
+
+function parseEllevioLegacyLines(
+  text: string,
+  periodStart: string | null,
+  periodEnd: string | null,
+): ParsedEnergyLineItem[] {
+  if (!periodStart || !periodEnd) return [];
+  const amountsIncludeVat = /Pris inkl\. moms/i.test(text);
+  const multiplier = amountsIncludeVat ? 1 : 1.25;
+  const definitions: Array<{
+    label: string;
+    category: EnergyChargeCategory;
+    unit: 'days' | 'kWh';
+  }> = [
+    { label: 'Fast elnätsavgift', category: 'fixed_fee', unit: 'days' },
+    { label: 'Rörlig elnätsavgift låglast', category: 'energy_transfer', unit: 'kWh' },
+    { label: 'Rörlig elnätsavgift höglast', category: 'energy_transfer', unit: 'kWh' },
+    { label: 'Energiskatt', category: 'energy_tax', unit: 'kWh' },
+  ];
+  const lineItems: ParsedEnergyLineItem[] = [];
+
+  for (const definition of definitions) {
+    const label = definition.label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const quantityUnit = definition.unit === 'days'
+      ? String.raw`dag(?:ar)?`
+      : String.raw`kWh`;
+    const priceUnit = definition.unit === 'days'
+      ? String.raw`kr\/mån`
+      : String.raw`öre\/kWh`;
+    const expression = new RegExp(
+      `${label}\\s+(?:(${SWEDISH_SHORT_DATE_PATTERN})\\s+)?(${NUMBER_PATTERN})\\s+${quantityUnit}\\s+(${NUMBER_PATTERN})\\s+${priceUnit}\\s+(${NUMBER_PATTERN})\\s+kr`,
+      'gi',
+    );
+    for (const match of text.matchAll(expression)) {
+      const rowStart = parseEnergyDate(match[1] ?? '') ?? periodStart;
+      const rowEnd = definition.unit === 'days'
+        ? periodEnd
+        : endOfMonth(rowStart, periodEnd);
+      const item = scaleLineItem(makeLineItem({
+        category: definition.category,
+        label: definition.label,
+        amount: match[4],
+        quantity: match[2],
+        unit: definition.unit,
+        unitPrice: match[3],
+        unitPriceIsOre: definition.unit === 'kWh',
+        periodStart: rowStart,
+        periodEnd: rowEnd,
+        amountIncludesVat: true,
+      }), multiplier);
+      pushIfPresent(lineItems, item);
+    }
+  }
+  return lineItems;
+}
+
+function parseEllevioLegacy(text: string): ParsedFields {
+  const periodMatch = text.match(new RegExp(
+    `Kostnad\\s+(${SWEDISH_DATE_PATTERN})\\s+t\\s*o\\s*m\\s+(${SWEDISH_DATE_PATTERN})`,
+    'i',
+  ));
+  const periodStart = parseCapturedDate(periodMatch?.[1] ?? null);
+  const periodEnd = parseCapturedDate(periodMatch?.[2] ?? null);
+  const lineItems = parseEllevioLegacyLines(text, periodStart, periodEnd);
+  const transferItems = lineItems.filter((item) => item.category === 'energy_transfer');
+
+  return {
+    invoiceNumber: normalizeInvoiceNumber(firstCapture(
+      text,
+      /Faktura\/OCR-nummer:\s*((?:\d[\s]*){8,})/i,
+    )),
+    invoiceDate: parseCapturedDate(firstCapture(
+      text,
+      new RegExp(`(?:Faktura elnät|Kreditfaktura)\\s+(${SWEDISH_DATE_PATTERN})`, 'i'),
+    )),
+    periodStart,
+    periodEnd,
+    consumptionKwh: transferItems.length === 0
+      ? null
+      : transferItems.reduce((sum, item) => sum + (item.quantity ?? 0), 0),
+    exportedKwh: null,
+    peakDemandKw: null,
+    vatSek: parseCapturedNumber(firstCapture(
+      text,
+      new RegExp(`Moms\\s+25%:\\s*(${NUMBER_PATTERN})\\s*kr`, 'i'),
+    )),
+    totalAmountSek: sumLineItems(lineItems),
+    lineItems,
+    requiredChargeCategories: ['fixed_fee', 'energy_transfer', 'energy_tax'],
+  };
 }
 
 function parseEllevioLine(
@@ -367,7 +500,10 @@ function parseEllevio(text: string, includePeakDemand: boolean): ParsedFields {
   const exportCredit = lineItems.find((item) => item.category === 'export_credit');
 
   return {
-    invoiceNumber: firstCapture(text, /Faktura\/OCR-nummer:\s*(\d{8,})/i),
+    invoiceNumber: normalizeInvoiceNumber(firstCapture(
+      text,
+      /Faktura\/OCR-nummer:\s*((?:\d[\s]*){8,})/i,
+    )),
     invoiceDate: parseCapturedDate(firstCapture(
       text,
       new RegExp(`Faktura elnät\\s+(${SWEDISH_DATE_PATTERN})`, 'i'),
@@ -386,6 +522,86 @@ function parseEllevio(text: string, includePeakDemand: boolean): ParsedFields {
     requiredChargeCategories: includePeakDemand
       ? ['fixed_fee', 'energy_transfer', 'peak_demand', 'energy_tax']
       : ['fixed_fee', 'energy_transfer', 'energy_tax'],
+  };
+}
+
+function parseVarbergsortens(text: string): ParsedFields {
+  const periodMatch = text.match(new RegExp(
+    `Avstämd period\\s+(${SWEDISH_DATE_PATTERN})\\s+-\\s+(${SWEDISH_DATE_PATTERN})`,
+    'i',
+  ));
+  const periodStart = parseCapturedDate(periodMatch?.[1] ?? null);
+  const periodEnd = parseCapturedDate(periodMatch?.[2] ?? null);
+  const lineItems: ParsedEnergyLineItem[] = [];
+  const fixedMatch = text.match(new RegExp(
+    `(?:Fast (?:månads)?avgift\\s+)?(${SWEDISH_DATE_PATTERN})\\s+-\\s+(${SWEDISH_DATE_PATTERN})\\s+(${NUMBER_PATTERN})\\s+dag(?:ar)?\\s+(${NUMBER_PATTERN})\\s+kr\\/mån\\s+(${NUMBER_PATTERN})\\s+kr`,
+    'i',
+  ));
+  if (fixedMatch) {
+    pushIfPresent(lineItems, makeLineItem({
+      category: 'fixed_fee',
+      label: 'Fast avgift',
+      amount: fixedMatch[5],
+      quantity: fixedMatch[3],
+      unit: 'days',
+      unitPrice: fixedMatch[4],
+      periodStart: fixedMatch[1],
+      periodEnd: fixedMatch[2],
+      amountIncludesVat: false,
+    }));
+  }
+  const energyMatch = text.match(new RegExp(
+    `(?:Elhandel SE3|Fast pris\\s+3\\s+år\\s+Förnybar el\\s+SE3)\\s+(${SWEDISH_DATE_PATTERN})\\s+-\\s+(${SWEDISH_DATE_PATTERN})\\s+(${NUMBER_PATTERN})\\s+kWh\\s+(${NUMBER_PATTERN})\\s+öre\\/kWh\\s+(${NUMBER_PATTERN})\\s+kr`,
+    'i',
+  ));
+  if (energyMatch) {
+    pushIfPresent(lineItems, makeLineItem({
+      category: 'spot_energy',
+      label: 'Elhandel',
+      amount: energyMatch[5],
+      quantity: energyMatch[3],
+      unit: 'kWh',
+      unitPrice: energyMatch[4],
+      unitPriceIsOre: true,
+      periodStart: energyMatch[1],
+      periodEnd: energyMatch[2],
+      amountIncludesVat: false,
+    }));
+  }
+  const vatMatch = text.match(new RegExp(
+    `Moms\\s+25\\s*%\\s+på\\s+${NUMBER_PATTERN}\\s+kr\\s+(${NUMBER_PATTERN})\\s+kr`,
+    'i',
+  ));
+  if (vatMatch) {
+    pushIfPresent(lineItems, makeLineItem({
+      category: 'vat',
+      label: 'Moms 25%',
+      amount: vatMatch[1],
+      amountIncludesVat: true,
+    }));
+  }
+
+  return {
+    invoiceNumber: normalizeInvoiceNumber(firstCapture(
+      text,
+      /Fakturanummer\s+(\d{8,})/i,
+    )),
+    invoiceDate: parseCapturedDate(firstCapture(
+      text,
+      new RegExp(`Fakturadatum\\s+(${SWEDISH_DATE_PATTERN})`, 'i'),
+    )),
+    periodStart,
+    periodEnd,
+    consumptionKwh: parseCapturedNumber(energyMatch?.[3] ?? null),
+    exportedKwh: null,
+    peakDemandKw: null,
+    vatSek: parseCapturedNumber(vatMatch?.[1] ?? null),
+    totalAmountSek: parseCapturedNumber(lastCapture(
+      text,
+      new RegExp(`Summa Elhandel\\s+(${NUMBER_PATTERN})\\s+kr`, 'i'),
+    )),
+    lineItems,
+    requiredChargeCategories: ['spot_energy', 'fixed_fee'],
   };
 }
 
@@ -575,6 +791,21 @@ function parseTibber(text: string): ParsedFields {
 
 const PARSERS: ParserDefinition[] = [
   {
+    id: 'ellevio_time_of_use',
+    version: 1,
+    label: 'Ellevio time-of-use tariff',
+    documentKind: 'grid',
+    providerKey: 'ellevio',
+    providerName: 'Ellevio',
+    matches: (text) => (
+      /(?:Faktura elnät|Kreditfaktura)/i.test(text)
+      && /Ellevio AB/i.test(text)
+      && /Fast elnätsavgift/i.test(text)
+      && /Rörlig elnätsavgift/i.test(text)
+    ),
+    parse: parseEllevioLegacy,
+  },
+  {
     id: 'ellevio_flat_transfer',
     version: 3,
     label: 'Ellevio flat transfer tariff (June 2026)',
@@ -665,20 +896,28 @@ const PARSERS: ParserDefinition[] = [
     ),
     parse: parseTibber,
   },
+  {
+    id: 'varbergsortens_fixed_price',
+    version: 1,
+    label: 'Varbergsortens fixed-price electricity invoice',
+    documentKind: 'electricity',
+    providerKey: 'varbergsortens_elforsaljning',
+    providerName: 'Varbergsortens Elförsäljning',
+    matches: (text) => (
+      /Varbergsortens Elförsäljning AB/i.test(text)
+      && /Avstämd period/i.test(text)
+      && /Summa Elhandel/i.test(text)
+    ),
+    parse: parseVarbergsortens,
+  },
 ];
 
-function isFullCalendarMonth(periodStart: string, periodEnd: string): boolean {
+function isCalendarAlignedPeriod(periodStart: string, periodEnd: string): boolean {
   const start = new Date(`${periodStart}T00:00:00Z`);
   const end = new Date(`${periodEnd}T00:00:00Z`);
-  if (
-    start.getUTCFullYear() !== end.getUTCFullYear()
-    || start.getUTCMonth() !== end.getUTCMonth()
-  ) {
-    return false;
-  }
   const lastDay = new Date(Date.UTC(
-    start.getUTCFullYear(),
-    start.getUTCMonth() + 1,
+    end.getUTCFullYear(),
+    end.getUTCMonth() + 1,
     0,
   )).getUTCDate();
   return start.getUTCDate() === 1 && end.getUTCDate() === lastDay;
@@ -729,7 +968,7 @@ export function parseEnergyBillingDocument(
     errors.push('missing_service_period');
   } else if (fields.periodStart > fields.periodEnd) {
     errors.push('invalid_service_period');
-  } else if (!isFullCalendarMonth(fields.periodStart, fields.periodEnd)) {
+  } else if (!isCalendarAlignedPeriod(fields.periodStart, fields.periodEnd)) {
     warnings.push('partial_service_period');
   }
   if (fields.consumptionKwh === null) errors.push('missing_consumption');

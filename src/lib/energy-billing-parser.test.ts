@@ -45,6 +45,37 @@ const ELLEVIO_FLAT_EXPORT_TEXT = `
   Produktionsersättning, Elnät Låglast 337 kWh -3,30 öre/kWh -11,11 kr
 `;
 
+const ELLEVIO_LEGACY_TEXT = `
+  Faktura elnät 7 juni 2021
+  Faktura/OCR-nummer: 610 017 179 943 2
+  Ellevio AB (publ)
+  Belopp att betala: 8 059,00 kr
+  Moms 25%: 1 611,86 kr
+  Kostnad 13 mar 2021 t o m 31 maj 2021
+  Pris fr o m Antal Pris exkl. moms Summa
+  Fast elnätsavgift 13 mar-21 80 dagar 488,00 kr/mån 1 275,10 kr
+  Rörlig elnätsavgift låglast 13 mar-21 1 888 kWh 8,80 öre/kWh 166,14 kr
+  Rörlig elnätsavgift höglast 13 mar-21 1 243 kWh 50,00 öre/kWh 621,50 kr
+  Rörlig elnätsavgift låglast 1 apr-21 4 177 kWh 8,80 öre/kWh 367,58 kr
+  Rörlig elnätsavgift låglast 1 maj-21 3 188 kWh 8,80 öre/kWh 280,54 kr
+  Energiskatt 13 mar-21 3 131 kWh 35,60 öre/kWh 1 114,64 kr
+  Energiskatt 1 apr-21 4 177 kWh 35,60 öre/kWh 1 487,01 kr
+  Energiskatt 1 maj-21 3 188 kWh 35,60 öre/kWh 1 134,93 kr
+`;
+
+const VARBERGSORTENS_TEXT = `
+  Varbergsortens Elförsäljning AB
+  Fakturadatum 8 apr 2025
+  Fakturanummer 4086225200
+  Avstämd period 1 mar 2025 - 31 mar 2025
+  1 mar 2025 - 31 mar 2025 31 dagar 23,00 kr/mån 23,00 kr
+  Fast pris 3 år Förnybar el SE3 1 mar 2025 - 31 mar 2025
+  1 835 kWh 99,10 öre/kWh 1 818,48 kr
+  Moms 25 % på 1 841,48 kr 460,37 kr
+  Summa Elhandel 2 301,85 kr
+  Summa Varbergsortens Elförsäljning AB 2 301,85 kr
+`;
+
 const KARLSTAD_DETAILED_TEXT = `
   Fakturadatum: 2025-08-14
   OCR-/Fakturanummer: 40487450211
@@ -121,7 +152,22 @@ Deno.test('energy number and Swedish date parsing normalize invoice notation', (
   assertEqual(parseEnergyNumber('−96,00'), -96, 'Unicode minus');
   assertEqual(parseEnergyNumber('5.35'), 5.35, 'decimal point');
   assertEqual(parseEnergyDate('6 oktober 2025'), '2025-10-06', 'Swedish long date');
+  assertEqual(parseEnergyDate('13 mar-21'), '2021-03-13', 'Swedish abbreviated date');
   assertEqual(parseEnergyDate('2026-02-29'), null, 'invalid leap date');
+});
+
+Deno.test('Ellevio legacy multi-month format preserves monthly tariff rows', () => {
+  const parsed = parseEnergyBillingDocument(ELLEVIO_LEGACY_TEXT, 'grid');
+  assert(parsed.importable, `Legacy parser errors: ${parsed.errors.join(', ')}`);
+  assertEqual(parsed.parserId, 'ellevio_time_of_use', 'parser id');
+  assertEqual(parsed.invoiceNumber, '6100171799432', 'spaced invoice number');
+  assertEqual(parsed.periodStart, '2021-03-13', 'period start');
+  assertEqual(parsed.periodEnd, '2021-05-31', 'period end');
+  assertEqual(parsed.consumptionKwh, 10496, 'multi-month consumption');
+  assertEqual(parsed.totalAmountSek, 8059.32, 'charges including VAT');
+  assertEqual(parsed.lineItems.length, 8, 'monthly charge rows');
+  assertEqual(parsed.lineItems[1].periodEnd, '2021-03-31', 'March row end');
+  assertEqual(parsed.lineItems[2].periodStart, '2021-04-01', 'April row start');
 });
 
 Deno.test('Ellevio peak-demand format extracts normalized grid charges', () => {
@@ -189,6 +235,18 @@ Deno.test('Tibber credit invoice extracts a split-month electricity period', () 
     'rounding must not be retained',
   );
   assert(parsed.warnings.includes('partial_service_period'), 'partial period warning missing');
+});
+
+Deno.test('Varbergsortens fixed-price format imports with or without a fixed-fee label', () => {
+  const parsed = parseEnergyBillingDocument(VARBERGSORTENS_TEXT, 'electricity');
+  assert(parsed.importable, `Varbergsortens parser errors: ${parsed.errors.join(', ')}`);
+  assertEqual(parsed.parserId, 'varbergsortens_fixed_price', 'parser id');
+  assertEqual(parsed.invoiceDate, '2025-04-08', 'invoice date');
+  assertEqual(parsed.periodStart, '2025-03-01', 'period start');
+  assertEqual(parsed.consumptionKwh, 1835, 'consumption');
+  assertEqual(parsed.vatSek, 460.37, 'VAT');
+  assertEqual(parsed.totalAmountSek, 2301.85, 'total');
+  assertEqual(parsed.lineItems.length, 3, 'energy, fixed fee, and VAT');
 });
 
 Deno.test('recognized document in the wrong upload area is rejected with specific feedback', () => {

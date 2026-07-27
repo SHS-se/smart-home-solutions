@@ -225,7 +225,10 @@ const EnergyDocumentUploadCard: React.FC<EnergyDocumentUploadCardProps> = ({
             <p className="mt-1 text-sm text-muted-foreground">
               {isGrid
                 ? t('Till exempel Ellevio.', 'For example Ellevio.')
-                : t('Till exempel Karlstads Energi eller Tibber.', 'For example Karlstads Energi or Tibber.')}
+                : t(
+                    'Till exempel Karlstads Energi, Varbergsortens eller Tibber.',
+                    'For example Karlstads Energi, Varbergsortens, or Tibber.',
+                  )}
             </p>
           </div>
         </div>

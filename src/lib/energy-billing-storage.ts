@@ -95,6 +95,7 @@ export function toEnergyBillingSeriesDocuments(
     lineItems: record.lineItems.map((lineItem) => ({
       category: lineItem.category as EnergyChargeCategory,
       amountSek: lineItem.amount_sek,
+      quantity: lineItem.quantity,
       periodStart: lineItem.period_start,
       periodEnd: lineItem.period_end,
     })),
