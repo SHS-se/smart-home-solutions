@@ -26,6 +26,7 @@ Deno.test("customer nav covers the customer portal pages", () => {
   assertEquals(paths, [
     "/portal",
     "/portal/home-profile",
+    "/portal/energy-history",
     "/portal/energy-modeling",
     "/portal/offers",
     "/portal/billing",
@@ -55,6 +56,7 @@ Deno.test("customer-view nav mirrors the customer nav, scoped to the customer", 
   assertEquals(viewPaths, [
     `${base}/overview`,
     `${base}/home-profile`,
+    `${base}/energy-history`,
     `${base}/energy-modeling`,
     `${base}/offers`,
     `${base}/billing`,
@@ -127,7 +129,7 @@ Deno.test("role selector returns the right groups", () => {
   assertEquals(getNavGroupsForRole("staff"), staffNavGroups);
   const customerGroups = getNavGroupsForRole("customer");
   assertEquals(customerGroups.length, 1);
-  assertEquals(customerGroups[0].items.length, 7);
+  assertEquals(customerGroups[0].items.length, 8);
 });
 
 // ─── Active-state matching ─────────────────────────────────────────────────────

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
+  BarChart3,
   Home,
   Zap,
   FileCheck,
@@ -72,6 +73,7 @@ import {
 const navIcons: Record<NavIcon, LucideIcon> = {
   overview: LayoutDashboard,
   'home-profile': Home,
+  'energy-history': BarChart3,
   energy: Zap,
   offers: FileCheck,
   billing: Receipt,

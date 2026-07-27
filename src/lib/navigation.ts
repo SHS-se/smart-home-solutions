@@ -8,6 +8,7 @@
 export type NavIcon =
   | 'overview'
   | 'home-profile'
+  | 'energy-history'
   | 'energy'
   | 'offers'
   | 'billing'
@@ -92,6 +93,7 @@ export function getCustomerNavItems(basePath: string = CUSTOMER_PORTAL_BASE): Ap
   return [
     { path: overviewPath, labelSv: 'Översikt', labelEn: 'Overview', icon: 'overview', end: true },
     { path: `${basePath}/home-profile`, labelSv: 'Hemprofil', labelEn: 'Home profile', icon: 'home-profile' },
+    { path: `${basePath}/energy-history`, labelSv: 'Energihistorik', labelEn: 'Energy history', icon: 'energy-history' },
     { path: `${basePath}/energy-modeling`, labelSv: 'Energimodellering', labelEn: 'Energy modeling', icon: 'energy' },
     { path: `${basePath}/offers`, labelSv: 'Offerter', labelEn: 'Offers', icon: 'offers' },
     { path: `${basePath}/billing`, labelSv: 'Fakturor', labelEn: 'Billing', icon: 'billing' },

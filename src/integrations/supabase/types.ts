@@ -1164,6 +1164,158 @@ export type Database = {
         }
         Relationships: []
       }
+      energy_billing_documents: {
+        Row: {
+          consumption_kwh: number
+          created_at: string
+          currency: string
+          customer_id: string
+          document_kind: string
+          document_sha256: string
+          exported_kwh: number | null
+          file_path: string
+          file_size_bytes: number
+          id: string
+          invoice_date: string
+          invoice_number: string
+          mime_type: string
+          original_file_name: string
+          parser_id: string
+          parser_version: number
+          peak_demand_kw: number | null
+          period_end: string
+          period_start: string
+          provider_key: string
+          provider_name: string
+          total_amount_sek: number
+          uploaded_by: string
+          vat_sek: number | null
+        }
+        Insert: {
+          consumption_kwh: number
+          created_at?: string
+          currency?: string
+          customer_id: string
+          document_kind: string
+          document_sha256: string
+          exported_kwh?: number | null
+          file_path: string
+          file_size_bytes: number
+          id?: string
+          invoice_date: string
+          invoice_number: string
+          mime_type: string
+          original_file_name: string
+          parser_id: string
+          parser_version: number
+          peak_demand_kw?: number | null
+          period_end: string
+          period_start: string
+          provider_key: string
+          provider_name: string
+          total_amount_sek: number
+          uploaded_by: string
+          vat_sek?: number | null
+        }
+        Update: {
+          consumption_kwh?: number
+          created_at?: string
+          currency?: string
+          customer_id?: string
+          document_kind?: string
+          document_sha256?: string
+          exported_kwh?: number | null
+          file_path?: string
+          file_size_bytes?: number
+          id?: string
+          invoice_date?: string
+          invoice_number?: string
+          mime_type?: string
+          original_file_name?: string
+          parser_id?: string
+          parser_version?: number
+          peak_demand_kw?: number | null
+          period_end?: string
+          period_start?: string
+          provider_key?: string
+          provider_name?: string
+          total_amount_sek?: number
+          uploaded_by?: string
+          vat_sek?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "energy_billing_documents_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_billing_documents_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers_with_identity"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      energy_billing_line_items: {
+        Row: {
+          amount_includes_vat: boolean
+          amount_sek: number
+          category: string
+          created_at: string
+          document_id: string
+          id: string
+          label: string
+          period_end: string | null
+          period_start: string | null
+          quantity: number | null
+          sort_order: number
+          unit: string | null
+          unit_price_sek: number | null
+        }
+        Insert: {
+          amount_includes_vat: boolean
+          amount_sek: number
+          category: string
+          created_at?: string
+          document_id: string
+          id?: string
+          label: string
+          period_end?: string | null
+          period_start?: string | null
+          quantity?: number | null
+          sort_order: number
+          unit?: string | null
+          unit_price_sek?: number | null
+        }
+        Update: {
+          amount_includes_vat?: boolean
+          amount_sek?: number
+          category?: string
+          created_at?: string
+          document_id?: string
+          id?: string
+          label?: string
+          period_end?: string | null
+          period_start?: string | null
+          quantity?: number | null
+          sort_order?: number
+          unit?: string | null
+          unit_price_sek?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "energy_billing_line_items_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "energy_billing_documents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       energy_home_settings: {
         Row: {
           created_at: string
@@ -3226,9 +3378,21 @@ export type Database = {
         | { Args: never; Returns: string }
         | { Args: { p_date?: string }; Returns: string }
       allocate_invoice_number: { Args: never; Returns: string }
+      can_access_energy_billing_customer: {
+        Args: { _customer_id: string }
+        Returns: boolean
+      }
       can_access_ticket_storage: {
         Args: { storage_path: string }
         Returns: boolean
+      }
+      create_energy_billing_document: {
+        Args: {
+          p_customer_id: string
+          p_document: Json
+          p_line_items: Json
+        }
+        Returns: string
       }
       finalize_local_invoice: {
         Args: { p_app_env: string; p_created_by?: string; p_invoice_id: string }
