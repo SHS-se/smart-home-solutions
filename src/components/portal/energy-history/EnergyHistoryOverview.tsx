@@ -3,7 +3,6 @@ import {
   Activity,
   BadgeDollarSign,
   CalendarDays,
-  CheckCircle2,
   Coins,
   Gauge,
   RefreshCw,
@@ -41,6 +40,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 interface EnergyHistoryOverviewProps {
   series: EnergyBillingMonth[];
   changes: EnergyBillingChange[];
+  isSample?: boolean;
+  onUploadClick?: () => void;
 }
 
 type PeriodPreset = '12' | '24' | '36' | 'all';
@@ -205,6 +206,8 @@ function AnnualMetricCard({
 const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
   series,
   changes,
+  isSample = false,
+  onUploadClick,
 }) => {
   const { t, language } = useLanguage();
   const locale = language === 'sv' ? 'sv-SE' : 'en-GB';
@@ -295,7 +298,9 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
     return t('saknas', 'missing');
   };
   const metricEvidence = (metric: AnnualizedMetric) => (
-    metric.estimated
+    isSample
+      ? t('Exempeldata – ersätts med dina fakturor efter import', 'Sample data – replaced by your invoices after import')
+      : metric.estimated
       ? t(
           `Baserad på ${metric.observedMonths} månaders underlag`,
           `Based on ${metric.observedMonths} months of source data`,
@@ -356,6 +361,26 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
 
   return (
     <div className="space-y-6">
+      {isSample && (
+        <Alert className="border-primary/30 bg-gradient-to-r from-primary/10 via-background to-violet-500/10 shadow-sm">
+          <Sparkles className="h-4 w-4 text-primary" />
+          <AlertTitle>{t('Så här kan din energihistorik se ut', 'This is what your energy history can look like')}</AlertTitle>
+          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span>
+              {t(
+                'Detta är exempeldata. Ladda upp fakturor från elnät och elhandel så ersätts den med dina egna kostnader, förbrukning och villkorsändringar.',
+                'This is sample data. Upload grid and electricity invoices to replace it with your own costs, consumption, and term changes.',
+              )}
+            </span>
+            {onUploadClick && (
+              <Button type="button" size="sm" onClick={onUploadClick} className="shrink-0">
+                {t('Ladda upp fakturor', 'Upload invoices')}
+              </Button>
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
+
       <div className="flex flex-col gap-3 rounded-xl border border-border/70 bg-gradient-to-r from-primary/5 via-background to-violet-500/5 p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-sm font-medium">{t('Visad period', 'Displayed period')}</p>
@@ -385,7 +410,7 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
           icon={<Gauge className="h-5 w-5" />}
           accentClass="bg-gradient-to-r from-blue-600 to-cyan-500"
           estimatedLabel={t('Estimerad', 'Estimated')}
-          actualLabel={t('Faktisk', 'Actual')}
+          actualLabel={isSample ? t('Exempel', 'Sample') : t('Faktisk', 'Actual')}
           evidenceLabel={metricEvidence(annual.consumptionKwh)}
         />
         <AnnualMetricCard
@@ -395,7 +420,7 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
           icon={<Activity className="h-5 w-5" />}
           accentClass="bg-gradient-to-r from-violet-600 to-fuchsia-500"
           estimatedLabel={t('Estimerad', 'Estimated')}
-          actualLabel={t('Faktisk', 'Actual')}
+          actualLabel={isSample ? t('Exempel', 'Sample') : t('Faktisk', 'Actual')}
           evidenceLabel={metricEvidence(annual.exportedKwh)}
         />
         <AnnualMetricCard
@@ -412,7 +437,7 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
           icon={<Coins className="h-5 w-5" />}
           accentClass="bg-gradient-to-r from-amber-500 to-orange-500"
           estimatedLabel={t('Estimerad', 'Estimated')}
-          actualLabel={t('Faktisk', 'Actual')}
+          actualLabel={isSample ? t('Exempel', 'Sample') : t('Faktisk', 'Actual')}
           evidenceLabel={metricEvidence(annual.totalCostSek)}
         />
         <AnnualMetricCard
@@ -426,7 +451,7 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
           icon={<CalendarDays className="h-5 w-5" />}
           accentClass="bg-gradient-to-r from-emerald-600 to-teal-500"
           estimatedLabel={t('Estimerad', 'Estimated')}
-          actualLabel={t('Faktisk', 'Actual')}
+          actualLabel={isSample ? t('Exempel', 'Sample') : t('Faktisk', 'Actual')}
           evidenceLabel={metricEvidence(annual.costPerKwh)}
         />
       </div>
@@ -456,18 +481,7 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
             </div>
           </AlertDescription>
         </Alert>
-      ) : (
-        <Alert className="border-emerald-300 bg-emerald-50/60 dark:border-emerald-900 dark:bg-emerald-950/20">
-          <CheckCircle2 className="h-4 w-4 text-emerald-700 dark:text-emerald-400" />
-          <AlertTitle>{t('Komplett fakturatäckning', 'Complete invoice coverage')}</AlertTitle>
-          <AlertDescription>
-            {t(
-              'Alla synliga månader har både elnäts- och elhandelsunderlag.',
-              'Every visible month has both grid and electricity provider coverage.',
-            )}
-          </AlertDescription>
-        </Alert>
-      )}
+      ) : null}
 
       <Card className="overflow-hidden border-border/70 shadow-sm">
         <CardHeader className="border-b border-border/60 bg-gradient-to-r from-blue-500/5 to-violet-500/5">

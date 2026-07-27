@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
@@ -17,6 +17,10 @@ import {
 } from '@/lib/energy-billing-storage';
 import { detectEnergyBillingChanges } from '@/lib/energy-billing-changes';
 import { buildEnergyBillingSeries } from '@/lib/energy-billing-series';
+import {
+  ENERGY_HISTORY_SAMPLE_CHANGES,
+  ENERGY_HISTORY_SAMPLE_SERIES,
+} from '@/lib/energy-history-sample';
 import EnergyDocumentUploadCard from '@/components/portal/energy-history/EnergyDocumentUploadCard';
 import EnergyHistoryDocuments from '@/components/portal/energy-history/EnergyHistoryDocuments';
 import EnergyHistoryOverview from '@/components/portal/energy-history/EnergyHistoryOverview';
@@ -43,11 +47,16 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
     error: subscriptionError,
   } = useSubscription();
   const customerId = propCustomerId || customerData?.id || '';
+  const [activeTab, setActiveTab] = useState('overview');
   const queryKey = ['energy-billing-documents', customerId] as const;
   const documentsQuery = useQuery({
     queryKey,
     queryFn: () => fetchEnergyBillingDocuments(customerId),
     enabled: Boolean(customerId && isSubscribed && !subscriptionLoading),
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
   });
   const documents = useMemo(
     () => documentsQuery.data ?? [],
@@ -178,14 +187,19 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
           </AlertDescription>
         </Alert>
       ) : (
-        <Tabs defaultValue="overview" className="space-y-5">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5">
           <TabsList className="grid w-full max-w-lg grid-cols-3">
             <TabsTrigger value="overview">{t('Översikt', 'Overview')}</TabsTrigger>
             <TabsTrigger value="upload">{t('Ladda upp', 'Upload')}</TabsTrigger>
             <TabsTrigger value="documents">{t('Dokument', 'Documents')}</TabsTrigger>
           </TabsList>
           <TabsContent value="overview">
-            <EnergyHistoryOverview series={series} changes={changes} />
+            <EnergyHistoryOverview
+              series={documents.length === 0 ? ENERGY_HISTORY_SAMPLE_SERIES : series}
+              changes={documents.length === 0 ? ENERGY_HISTORY_SAMPLE_CHANGES : changes}
+              isSample={documents.length === 0}
+              onUploadClick={() => setActiveTab('upload')}
+            />
           </TabsContent>
           <TabsContent value="upload">
             <div className="grid items-start gap-6 xl:grid-cols-2">
