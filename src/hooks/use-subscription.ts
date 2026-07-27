@@ -18,6 +18,7 @@ interface UseSubscriptionReturn {
 
 export function useSubscription(): UseSubscriptionReturn {
   const { user, isStaff, loading: authLoading } = useAuth();
+  const userId = user?.id ?? null;
   const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -28,7 +29,7 @@ export function useSubscription(): UseSubscriptionReturn {
       return;
     }
 
-    if (!user) {
+    if (!userId) {
       setLoading(false);
       setSubscriptionStatus(null);
       setError(null);
@@ -57,7 +58,7 @@ export function useSubscription(): UseSubscriptionReturn {
     } finally {
       setLoading(false);
     }
-  }, [authLoading, user, isStaff]);
+  }, [authLoading, userId, isStaff]);
 
   useEffect(() => {
     checkSubscription();
