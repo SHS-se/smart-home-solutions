@@ -20,6 +20,7 @@ import {
 import { useLanguage } from '@/contexts/LanguageContext';
 import {
   buildEnergyTemperatureAnalysis,
+  predictTemperatureRegression,
   type EnergyTemperatureAnalysis,
 } from '@/lib/energy-temperature-analysis';
 import type {
@@ -43,6 +44,7 @@ interface EnergyTemperatureAnalysisProps {
   error?: unknown;
   notesError?: unknown;
   isStaff: boolean;
+  currentUserId: string | null;
   isRefreshingWeather: boolean;
   onUploadClick: () => void;
   onRefreshWeather: () => Promise<void>;
@@ -65,16 +67,6 @@ const YEAR_COLORS = [
   '#4f46e5',
 ];
 
-function regressionValue(
-  temperatureC: number,
-  regression: NonNullable<EnergyTemperatureAnalysis['overall']['regression']>,
-): number {
-  if (regression.startTemperatureC === regression.endTemperatureC) return regression.startKwh;
-  const ratio = (temperatureC - regression.startTemperatureC)
-    / (regression.endTemperatureC - regression.startTemperatureC);
-  return regression.startKwh + (ratio * (regression.endKwh - regression.startKwh));
-}
-
 function buildMultiYearChartData(analysis: EnergyTemperatureAnalysis): MultiYearChartRow[] {
   const temperatures = Array.from(new Set(
     analysis.years.flatMap((series) => series.points.map((point) => point.temperatureC)),
@@ -89,7 +81,7 @@ function buildMultiYearChartData(analysis: EnergyTemperatureAnalysis): MultiYear
       row[`trend_${series.year}`] = regression
         && temperatureC >= regression.startTemperatureC
         && temperatureC <= regression.endTemperatureC
-        ? regressionValue(temperatureC, regression)
+        ? predictTemperatureRegression(temperatureC, regression)
         : null;
     }
     return row;
@@ -110,6 +102,7 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
   error,
   notesError,
   isStaff,
+  currentUserId,
   isRefreshingWeather,
   onUploadClick,
   onRefreshWeather,
@@ -141,7 +134,7 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
     temperatureC: point.temperatureC,
     averageKwh: point.averageKwh,
     trendKwh: analysis.overall.regression
-      ? regressionValue(point.temperatureC, analysis.overall.regression)
+      ? predictTemperatureRegression(point.temperatureC, analysis.overall.regression)
       : null,
   })), [analysis]);
   const readingStart = readings[0]?.reading_date ?? null;
@@ -286,7 +279,7 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
                       {t('Genomsnittlig energianvändning baserat på utomhustemperatur', 'Average energy usage based on outside temperature')}
                     </CardTitle>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {t('Årsserier med trendlinje. Punkterna är dygnsmedel grupperade per hel grad.', 'Year series with trend lines. Points are daily readings grouped by whole degree.')}
+                      {t('Årsserier med kvadratiska trendlinjer. Punkterna är dygnsmedel grupperade per hel grad.', 'Year series with quadratic trend lines. Points are daily readings grouped by whole degree.')}
                     </p>
                   </div>
                   <Badge variant="outline">{analysis.joinedPoints.length} {t('matchningar', 'matches')}</Badge>
@@ -319,7 +312,6 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
                     <Legend />
                     {analysis.years.map((series, index) => {
                       const color = YEAR_COLORS[index % YEAR_COLORS.length];
-                      const rSquared = series.regression?.rSquared;
                       return (
                         <React.Fragment key={series.year}>
                           <Line
@@ -332,16 +324,18 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
                             activeDot={{ r: 6 }}
                             connectNulls={false}
                           />
-                          <Line
-                            type="linear"
-                            dataKey={`trend_${series.year}`}
-                            name={`${series.year} ${t('trend', 'trend')} R²=${rSquared === undefined || rSquared === null ? '-' : rSquared.toFixed(3)}`}
-                            stroke={color}
-                            strokeWidth={2}
-                            strokeDasharray="7 5"
-                            dot={false}
-                            connectNulls
-                          />
+                          {series.regression && (
+                            <Line
+                              type="monotone"
+                              dataKey={`trend_${series.year}`}
+                              name={`${series.year} ${t('trend', 'trend')} R²=${series.regression.rSquared.toFixed(3)}`}
+                              stroke={color}
+                              strokeWidth={2}
+                              strokeDasharray="7 5"
+                              dot={false}
+                              connectNulls
+                            />
+                          )}
                         </React.Fragment>
                       );
                     })}
@@ -363,7 +357,7 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
                       {t('Alla matchande år samlade i samma temperaturprofil.', 'All matched years combined into one temperature profile.')}
                     </p>
                   </div>
-                  {analysis.overall.regression?.rSquared !== null && analysis.overall.regression?.rSquared !== undefined && (
+                  {analysis.overall.regression && (
                     <Badge variant="outline">
                       R² = {analysis.overall.regression.rSquared.toFixed(3)}
                     </Badge>
@@ -404,15 +398,17 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
                       dot={{ r: 5, fill: '#2563eb', strokeWidth: 1 }}
                       activeDot={{ r: 6 }}
                     />
-                    <Line
-                      type="linear"
-                      dataKey="trendKwh"
-                      name={t('Trendlinje', 'Trendline')}
-                      stroke="#f97373"
-                      strokeWidth={2.5}
-                      strokeDasharray="7 5"
-                      dot={false}
-                    />
+                    {analysis.overall.regression && (
+                      <Line
+                        type="monotone"
+                        dataKey="trendKwh"
+                        name={t('Kvadratisk trendlinje', 'Quadratic trendline')}
+                        stroke="#f97373"
+                        strokeWidth={2.5}
+                        strokeDasharray="7 5"
+                        dot={false}
+                      />
+                    )}
                   </LineChart>
                 </ResponsiveContainer>
               </CardContent>
@@ -429,6 +425,8 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
       )}
       <EnergyHistoryTimeline
         notes={notes}
+        currentUserId={currentUserId}
+        isStaff={isStaff}
         onCreate={onCreateNote}
         onUpdate={onUpdateNote}
         onDelete={onDeleteNote}

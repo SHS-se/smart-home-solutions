@@ -11,6 +11,8 @@ import { Textarea } from '@/components/ui/textarea';
 
 interface EnergyHistoryTimelineProps {
   notes: EnergyHistoryNoteRecord[];
+  currentUserId: string | null;
+  isStaff: boolean;
   onCreate: (values: TimelineNoteValues) => Promise<void>;
   onUpdate: (noteId: string, values: TimelineNoteValues) => Promise<void>;
   onDelete: (noteId: string) => Promise<void>;
@@ -22,14 +24,23 @@ interface NoteFormState {
   details: string;
 }
 
+function localDateInputValue(date = new Date()): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 const emptyForm = (): NoteFormState => ({
-  noteDate: new Date().toISOString().slice(0, 10),
+  noteDate: localDateInputValue(),
   title: '',
   details: '',
 });
 
 const EnergyHistoryTimeline: React.FC<EnergyHistoryTimelineProps> = ({
   notes,
+  currentUserId,
+  isStaff,
   onCreate,
   onUpdate,
   onDelete,
@@ -200,14 +211,16 @@ const EnergyHistoryTimeline: React.FC<EnergyHistoryTimelineProps> = ({
                     </p>
                     <h3 className="mt-1 text-sm font-medium">{note.title}</h3>
                   </div>
-                  <div className="flex gap-1">
-                    <Button type="button" size="icon" variant="ghost" onClick={() => editNote(note)} aria-label={t('Redigera', 'Edit')}>
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Button type="button" size="icon" variant="ghost" onClick={() => void deleteNote(note)} aria-label={t('Ta bort', 'Delete')}>
-                      <Trash2 className="h-4 w-4 text-destructive" />
-                    </Button>
-                  </div>
+                  {(isStaff || note.created_by === currentUserId) && (
+                    <div className="flex gap-1">
+                      <Button type="button" size="icon" variant="ghost" onClick={() => editNote(note)} aria-label={t('Redigera', 'Edit')}>
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button type="button" size="icon" variant="ghost" onClick={() => void deleteNote(note)} aria-label={t('Ta bort', 'Delete')}>
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </div>
+                  )}
                 </div>
                 <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">{note.details}</p>
               </div>

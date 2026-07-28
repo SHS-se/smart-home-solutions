@@ -22,18 +22,20 @@ export interface TemperatureBinPoint {
   sampleCount: number;
 }
 
-export interface RegressionLine {
+export interface QuadraticRegression {
+  temperatureCenterC: number;
+  quadraticCoefficient: number;
+  linearCoefficient: number;
+  interceptKwh: number;
   startTemperatureC: number;
   endTemperatureC: number;
-  startKwh: number;
-  endKwh: number;
-  rSquared: number | null;
+  rSquared: number;
 }
 
 export interface YearTemperatureSeries {
   year: number;
   points: TemperatureBinPoint[];
-  regression: RegressionLine | null;
+  regression: QuadraticRegression | null;
 }
 
 export interface EnergyTemperatureAnalysis {
@@ -41,12 +43,15 @@ export interface EnergyTemperatureAnalysis {
   years: YearTemperatureSeries[];
   overall: {
     points: TemperatureBinPoint[];
-    regression: RegressionLine | null;
+    regression: QuadraticRegression | null;
   };
 }
 
 function temperatureBin(temperatureC: number): number {
-  return Math.round(temperatureC);
+  const rounded = temperatureC < 0
+    ? -Math.round(Math.abs(temperatureC))
+    : Math.round(temperatureC);
+  return Object.is(rounded, -0) ? 0 : rounded;
 }
 
 function groupedTemperaturePoints(points: JoinedEnergyTemperaturePoint[]): TemperatureBinPoint[] {
@@ -67,41 +72,123 @@ function groupedTemperaturePoints(points: JoinedEnergyTemperaturePoint[]): Tempe
     }));
 }
 
-function linearRegression(points: TemperatureBinPoint[]): RegressionLine | null {
-  if (points.length < 2) return null;
+function solveThreeByThree(
+  matrix: number[][],
+  values: number[],
+): [number, number, number] | null {
+  const rows = matrix.map((row, index) => [...row, values[index]]);
 
-  const meanX = points.reduce((sum, point) => sum + point.temperatureC, 0) / points.length;
-  const meanY = points.reduce((sum, point) => sum + point.averageKwh, 0) / points.length;
-  const denominator = points.reduce(
-    (sum, point) => sum + ((point.temperatureC - meanX) ** 2),
+  for (let pivotIndex = 0; pivotIndex < 3; pivotIndex += 1) {
+    let largestRow = pivotIndex;
+    for (let rowIndex = pivotIndex + 1; rowIndex < 3; rowIndex += 1) {
+      if (Math.abs(rows[rowIndex][pivotIndex]) > Math.abs(rows[largestRow][pivotIndex])) {
+        largestRow = rowIndex;
+      }
+    }
+    if (Math.abs(rows[largestRow][pivotIndex]) < 1e-12) return null;
+    [rows[pivotIndex], rows[largestRow]] = [rows[largestRow], rows[pivotIndex]];
+
+    const pivot = rows[pivotIndex][pivotIndex];
+    for (let columnIndex = pivotIndex; columnIndex < 4; columnIndex += 1) {
+      rows[pivotIndex][columnIndex] /= pivot;
+    }
+
+    for (let rowIndex = 0; rowIndex < 3; rowIndex += 1) {
+      if (rowIndex === pivotIndex) continue;
+      const factor = rows[rowIndex][pivotIndex];
+      for (let columnIndex = pivotIndex; columnIndex < 4; columnIndex += 1) {
+        rows[rowIndex][columnIndex] -= factor * rows[pivotIndex][columnIndex];
+      }
+    }
+  }
+
+  return [rows[0][3], rows[1][3], rows[2][3]];
+}
+
+export function predictTemperatureRegression(
+  temperatureC: number,
+  regression: QuadraticRegression,
+): number {
+  const centeredTemperature = temperatureC - regression.temperatureCenterC;
+  return (regression.quadraticCoefficient * (centeredTemperature ** 2))
+    + (regression.linearCoefficient * centeredTemperature)
+    + regression.interceptKwh;
+}
+
+function quadraticRegression(points: TemperatureBinPoint[]): QuadraticRegression | null {
+  if (points.length < 3) return null;
+
+  const temperatureCenterC = points.reduce(
+    (sum, point) => sum + point.temperatureC,
     0,
+  ) / points.length;
+  const centeredPoints = points.map((point) => ({
+    x: point.temperatureC - temperatureCenterC,
+    y: point.averageKwh,
+  }));
+  const sums = centeredPoints.reduce<{
+    x: number;
+    x2: number;
+    x3: number;
+    x4: number;
+    y: number;
+    xy: number;
+    x2y: number;
+  }>((result, point) => {
+    const xSquared = point.x ** 2;
+    return {
+      x: result.x + point.x,
+      x2: result.x2 + xSquared,
+      x3: result.x3 + (xSquared * point.x),
+      x4: result.x4 + (xSquared ** 2),
+      y: result.y + point.y,
+      xy: result.xy + (point.x * point.y),
+      x2y: result.x2y + (xSquared * point.y),
+    };
+  }, {
+    x: 0,
+    x2: 0,
+    x3: 0,
+    x4: 0,
+    y: 0,
+    xy: 0,
+    x2y: 0,
+  });
+  const coefficients = solveThreeByThree(
+    [
+      [sums.x4, sums.x3, sums.x2],
+      [sums.x3, sums.x2, sums.x],
+      [sums.x2, sums.x, points.length],
+    ],
+    [sums.x2y, sums.xy, sums.y],
   );
-  if (denominator === 0) return null;
+  if (!coefficients) return null;
 
-  const slope = points.reduce(
-    (sum, point) => sum + ((point.temperatureC - meanX) * (point.averageKwh - meanY)),
-    0,
-  ) / denominator;
-  const intercept = meanY - (slope * meanX);
-  const predict = (temperatureC: number) => (slope * temperatureC) + intercept;
+  const [quadraticCoefficient, linearCoefficient, interceptKwh] = coefficients;
+  const regression: QuadraticRegression = {
+    temperatureCenterC,
+    quadraticCoefficient,
+    linearCoefficient,
+    interceptKwh,
+    startTemperatureC: points[0].temperatureC,
+    endTemperatureC: points[points.length - 1].temperatureC,
+    rSquared: 0,
+  };
+  const meanY = sums.y / points.length;
   const sumSquaredResiduals = points.reduce(
-    (sum, point) => sum + ((point.averageKwh - predict(point.temperatureC)) ** 2),
+    (sum, point) => sum + (
+      (point.averageKwh - predictTemperatureRegression(point.temperatureC, regression)) ** 2
+    ),
     0,
   );
   const sumSquaredTotal = points.reduce(
     (sum, point) => sum + ((point.averageKwh - meanY) ** 2),
     0,
   );
-
-  return {
-    startTemperatureC: points[0].temperatureC,
-    endTemperatureC: points[points.length - 1].temperatureC,
-    startKwh: predict(points[0].temperatureC),
-    endKwh: predict(points[points.length - 1].temperatureC),
-    rSquared: sumSquaredTotal === 0
-      ? 1
-      : Math.max(0, Math.min(1, 1 - (sumSquaredResiduals / sumSquaredTotal))),
-  };
+  regression.rSquared = sumSquaredTotal < 1e-12
+    ? 1
+    : Math.max(0, Math.min(1, 1 - (sumSquaredResiduals / sumSquaredTotal)));
+  return regression;
 }
 
 function seriesForPoints(year: number, points: JoinedEnergyTemperaturePoint[]): YearTemperatureSeries {
@@ -109,7 +196,7 @@ function seriesForPoints(year: number, points: JoinedEnergyTemperaturePoint[]): 
   return {
     year,
     points: grouped,
-    regression: linearRegression(grouped),
+    regression: quadraticRegression(grouped),
   };
 }
 
@@ -152,7 +239,7 @@ export function buildEnergyTemperatureAnalysis(
     years,
     overall: {
       points: overallPoints,
-      regression: linearRegression(overallPoints),
+      regression: quadraticRegression(overallPoints),
     },
   };
 }

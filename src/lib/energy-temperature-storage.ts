@@ -5,6 +5,7 @@ import {
   type ParsedEnergyUsageCsv,
 } from '@/lib/energy-usage-parser';
 import { sha256File } from '@/lib/energy-billing-storage';
+import { fetchAllRows } from '@/lib/fetch-all-rows';
 
 export const SHARED_WEATHER_DATASET_KEY = 'stockholm-taby';
 export const WEATHER_REFRESH_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -39,36 +40,36 @@ export interface TimelineNoteValues {
 export async function fetchEnergyUsageReadings(
   customerId: string,
 ): Promise<EnergyUsageReadingRecord[]> {
-  const { data, error } = await supabase
+  return fetchAllRows<EnergyUsageReadingRecord>((from, to) => supabase
     .from('energy_usage_readings')
     .select('*')
     .eq('customer_id', customerId)
-    .order('reading_date', { ascending: true });
-
-  if (error) throw error;
-  return data ?? [];
+    .order('reading_date', { ascending: true })
+    .order('id', { ascending: true })
+    .range(from, to));
 }
 
 export async function fetchSharedWeatherHistory(): Promise<SharedWeatherHistory> {
-  const [datasetResult, observationsResult] = await Promise.all([
+  const [datasetResult, observations] = await Promise.all([
     supabase
       .from('energy_weather_datasets')
       .select('*')
       .eq('dataset_key', SHARED_WEATHER_DATASET_KEY)
       .single(),
-    supabase
+    fetchAllRows<EnergyWeatherObservationRecord>((from, to) => supabase
       .from('energy_weather_observations')
       .select('*')
       .eq('dataset_key', SHARED_WEATHER_DATASET_KEY)
-      .order('observed_on', { ascending: true }),
+      .order('observed_on', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, to)),
   ]);
 
   if (datasetResult.error) throw datasetResult.error;
-  if (observationsResult.error) throw observationsResult.error;
 
   return {
     dataset: datasetResult.data,
-    observations: observationsResult.data ?? [],
+    observations,
   };
 }
 
@@ -110,15 +111,14 @@ export async function importEnergyUsageCsv(params: {
 export async function fetchEnergyHistoryNotes(
   customerId: string,
 ): Promise<EnergyHistoryNoteRecord[]> {
-  const { data, error } = await supabase
+  return fetchAllRows<EnergyHistoryNoteRecord>((from, to) => supabase
     .from('energy_history_notes')
     .select('*')
     .eq('customer_id', customerId)
     .order('note_date', { ascending: true })
-    .order('created_at', { ascending: true });
-
-  if (error) throw error;
-  return data ?? [];
+    .order('created_at', { ascending: true })
+    .order('id', { ascending: true })
+    .range(from, to));
 }
 
 async function currentUserId(): Promise<string> {
@@ -181,10 +181,15 @@ export async function deleteEnergyHistoryNote(
   customerId: string,
   noteId: string,
 ): Promise<void> {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('energy_history_notes')
     .delete()
     .eq('id', noteId)
-    .eq('customer_id', customerId);
+    .eq('customer_id', customerId)
+    .select('id')
+    .maybeSingle();
   if (error) throw error;
+  if (!data) {
+    throw new Error('The note was not found or you do not have permission to delete it.');
+  }
 }

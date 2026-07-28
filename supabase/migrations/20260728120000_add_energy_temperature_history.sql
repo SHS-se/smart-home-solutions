@@ -55,9 +55,6 @@ CREATE TABLE public.energy_weather_observations (
   UNIQUE (dataset_key, observed_on)
 );
 
-CREATE INDEX idx_energy_weather_observations_dataset_date
-  ON public.energy_weather_observations (dataset_key, observed_on);
-
 ALTER TABLE public.energy_weather_datasets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.energy_weather_observations ENABLE ROW LEVEL SECURITY;
 
@@ -73,8 +70,8 @@ CREATE POLICY "Energy subscribers read shared weather observations"
   TO authenticated
   USING (public.can_access_shared_energy_history());
 
-REVOKE INSERT, UPDATE, DELETE ON public.energy_weather_datasets FROM anon, authenticated;
-REVOKE INSERT, UPDATE, DELETE ON public.energy_weather_observations FROM anon, authenticated;
+REVOKE ALL ON public.energy_weather_datasets FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON public.energy_weather_observations FROM PUBLIC, anon, authenticated;
 GRANT SELECT ON public.energy_weather_datasets TO authenticated;
 GRANT SELECT ON public.energy_weather_observations TO authenticated;
 
@@ -91,7 +88,7 @@ VALUES (
   'stockholm-taby',
   'Stockholm / Täby reference temperature',
   'SMHI daily mean air temperature, Stockholm-Observatoriekullen A',
-  'https://opendata-download-metobs.smhi.se/api/version/latest/parameter/2/station/98230/period/corrected-archive/data.csv',
+  'https://opendata-download-metobs.smhi.se/api/version/1.0/parameter/2/station/98230/period/corrected-archive/data.csv',
   '98230',
   59.3417,
   18.0549
@@ -131,35 +128,15 @@ $$;
 REVOKE ALL ON FUNCTION public.claim_energy_weather_sync(text, boolean) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.claim_energy_weather_sync(text, boolean) TO service_role;
 
-CREATE OR REPLACE FUNCTION public.energy_weather_datasets_set_updated_at()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-BEGIN
-  NEW.updated_at = now();
-  RETURN NEW;
-END;
-$$;
-
 CREATE TRIGGER energy_weather_datasets_updated_at
   BEFORE UPDATE ON public.energy_weather_datasets
   FOR EACH ROW
-  EXECUTE FUNCTION public.energy_weather_datasets_set_updated_at();
-
-CREATE OR REPLACE FUNCTION public.energy_weather_observations_set_updated_at()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-BEGIN
-  NEW.updated_at = now();
-  RETURN NEW;
-END;
-$$;
+  EXECUTE FUNCTION public.update_simple_updated_at();
 
 CREATE TRIGGER energy_weather_observations_updated_at
   BEFORE UPDATE ON public.energy_weather_observations
   FOR EACH ROW
-  EXECUTE FUNCTION public.energy_weather_observations_set_updated_at();
+  EXECUTE FUNCTION public.update_simple_updated_at();
 
 CREATE TABLE public.energy_usage_import_batches (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -183,9 +160,6 @@ CREATE TABLE public.energy_usage_readings (
   UNIQUE (customer_id, reading_date)
 );
 
-CREATE INDEX idx_energy_usage_readings_customer_date
-  ON public.energy_usage_readings (customer_id, reading_date);
-
 CREATE INDEX idx_energy_usage_import_batches_customer_created
   ON public.energy_usage_import_batches (customer_id, created_at DESC);
 
@@ -204,25 +178,15 @@ CREATE POLICY "Energy subscribers read own daily usage"
   TO authenticated
   USING (public.can_access_energy_billing_customer(customer_id));
 
-REVOKE INSERT, UPDATE, DELETE ON public.energy_usage_import_batches FROM anon, authenticated;
-REVOKE INSERT, UPDATE, DELETE ON public.energy_usage_readings FROM anon, authenticated;
+REVOKE ALL ON public.energy_usage_import_batches FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON public.energy_usage_readings FROM PUBLIC, anon, authenticated;
 GRANT SELECT ON public.energy_usage_import_batches TO authenticated;
 GRANT SELECT ON public.energy_usage_readings TO authenticated;
-
-CREATE OR REPLACE FUNCTION public.energy_usage_readings_set_updated_at()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-BEGIN
-  NEW.updated_at = now();
-  RETURN NEW;
-END;
-$$;
 
 CREATE TRIGGER energy_usage_readings_updated_at
   BEFORE UPDATE ON public.energy_usage_readings
   FOR EACH ROW
-  EXECUTE FUNCTION public.energy_usage_readings_set_updated_at();
+  EXECUTE FUNCTION public.update_simple_updated_at();
 
 CREATE OR REPLACE FUNCTION public.import_energy_usage_readings(
   p_customer_id uuid,
@@ -253,10 +217,13 @@ BEGIN
       USING ERRCODE = '22023';
   END IF;
 
-  IF jsonb_typeof(p_readings) <> 'array'
-    OR jsonb_array_length(p_readings) = 0
-    OR jsonb_array_length(p_readings) > 5000
-  THEN
+  IF p_readings IS NULL OR jsonb_typeof(p_readings) <> 'array' THEN
+    RAISE EXCEPTION 'Energy usage readings must be a JSON array'
+      USING ERRCODE = '22023';
+  END IF;
+
+  reading_count := jsonb_array_length(p_readings);
+  IF reading_count = 0 OR reading_count > 5000 THEN
     RAISE EXCEPTION 'Energy usage readings must contain between 1 and 5000 entries'
       USING ERRCODE = '22023';
   END IF;
@@ -266,17 +233,14 @@ BEGIN
     FROM jsonb_array_elements(p_readings) AS item(value)
     WHERE jsonb_typeof(item.value) <> 'object'
       OR item.value->>'reading_date' IS NULL
-      OR item.value->>'reading_date' !~ '^\d{4}-\d{2}-\d{2}$'
+      OR item.value->>'reading_date' !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
       OR item.value->>'consumption_kwh' IS NULL
-      OR item.value->>'consumption_kwh' !~ '^[0-9]+(\.[0-9]+)?$'
+      OR item.value->>'consumption_kwh' !~ '^[0-9]+([.][0-9]+)?$'
   )
   THEN
     RAISE EXCEPTION 'Energy usage readings contain an invalid date or value'
       USING ERRCODE = '22023';
   END IF;
-
-  SELECT count(*) INTO reading_count
-  FROM jsonb_array_elements(p_readings);
 
   IF reading_count <> (
     SELECT count(DISTINCT item.value->>'reading_date')
@@ -335,8 +299,14 @@ CREATE TABLE public.energy_history_notes (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   customer_id uuid NOT NULL REFERENCES public.customers(id) ON DELETE CASCADE,
   note_date date NOT NULL,
-  title text NOT NULL CHECK (char_length(btrim(title)) BETWEEN 1 AND 200),
-  details text NOT NULL CHECK (char_length(btrim(details)) BETWEEN 1 AND 4000),
+  title text NOT NULL CHECK (
+    title = btrim(title)
+    AND char_length(title) BETWEEN 1 AND 200
+  ),
+  details text NOT NULL CHECK (
+    details = btrim(details)
+    AND char_length(details) BETWEEN 1 AND 4000
+  ),
   created_by uuid NOT NULL REFERENCES auth.users(id),
   updated_by uuid NOT NULL REFERENCES auth.users(id),
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -386,28 +356,39 @@ CREATE POLICY "Energy subscribers delete timeline notes"
     AND (created_by = auth.uid() OR public.is_staff(auth.uid()))
   );
 
+REVOKE ALL ON public.energy_history_notes FROM PUBLIC, anon, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.energy_history_notes TO authenticated;
 
-CREATE OR REPLACE FUNCTION public.energy_history_notes_set_updated_at()
+CREATE OR REPLACE FUNCTION public.energy_history_notes_before_update()
 RETURNS trigger
 LANGUAGE plpgsql
+SET search_path = public
 AS $$
 BEGIN
+  IF NEW.id IS DISTINCT FROM OLD.id
+    OR NEW.customer_id IS DISTINCT FROM OLD.customer_id
+    OR NEW.created_by IS DISTINCT FROM OLD.created_by
+    OR NEW.created_at IS DISTINCT FROM OLD.created_at
+  THEN
+    RAISE EXCEPTION 'Energy history note identity fields are immutable'
+      USING ERRCODE = '22023';
+  END IF;
+
   NEW.updated_at = now();
   RETURN NEW;
 END;
 $$;
 
-CREATE TRIGGER energy_history_notes_updated_at
+CREATE TRIGGER energy_history_notes_before_update
   BEFORE UPDATE ON public.energy_history_notes
   FOR EACH ROW
-  EXECUTE FUNCTION public.energy_history_notes_set_updated_at();
+  EXECUTE FUNCTION public.energy_history_notes_before_update();
 
 -- Refresh the shared weather data without requiring a customer-specific job.
--- The edge function is idempotent and claims the dataset only when it is stale.
+-- The daily job only fetches when the atomic claim finds data at least 7 days old.
 SELECT cron.schedule(
-  'sync-energy-weather-history-weekly',
-  '12 4 * * 1',
+  'sync-energy-weather-history-daily-check',
+  '12 4 * * *',
   $$SELECT net.http_post(
     url := 'https://oosxndduqzhvrorgogaw.supabase.co/functions/v1/sync-weather-history',
     headers := '{"Content-Type":"application/json"}'::jsonb,

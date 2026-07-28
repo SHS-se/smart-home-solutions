@@ -53,7 +53,7 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   customerId: propCustomerId,
   isStaffView = false,
 }) => {
-  const { customerData, isStaff } = useAuth();
+  const { customerData, isStaff, user } = useAuth();
   const { t } = useLanguage();
   const queryClient = useQueryClient();
   const {
@@ -69,10 +69,12 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   const usageQueryKey = ['energy-usage-readings', customerId] as const;
   const weatherQueryKey = SHARED_WEATHER_QUERY_KEY;
   const notesQueryKey = ['energy-history-notes', customerId] as const;
+  const customerEnergyEnabled = Boolean(customerId && isSubscribed && !subscriptionLoading);
+  const temperatureDataEnabled = customerEnergyEnabled && activeTab === 'temperature';
   const documentsQuery = useQuery({
     queryKey,
     queryFn: () => fetchEnergyBillingDocuments(customerId),
-    enabled: Boolean(customerId && isSubscribed && !subscriptionLoading),
+    enabled: customerEnergyEnabled,
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
     refetchOnMount: false,
@@ -81,7 +83,7 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   const moveInDateQuery = useQuery({
     queryKey: ['home-profile-functional-answer', customerId, 'move_in_date'],
     queryFn: () => fetchPrimaryHomeFunctionalDate(customerId, 'move_in_date'),
-    enabled: Boolean(customerId && isSubscribed && !subscriptionLoading),
+    enabled: customerEnergyEnabled,
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
     refetchOnMount: false,
@@ -90,7 +92,7 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   const usageQuery = useQuery({
     queryKey: usageQueryKey,
     queryFn: () => fetchEnergyUsageReadings(customerId),
-    enabled: Boolean(customerId && isSubscribed && !subscriptionLoading),
+    enabled: temperatureDataEnabled,
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
     refetchOnMount: false,
@@ -99,7 +101,7 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   const weatherQuery = useQuery({
     queryKey: weatherQueryKey,
     queryFn: fetchSharedWeatherHistory,
-    enabled: Boolean(customerId && isSubscribed && !subscriptionLoading),
+    enabled: temperatureDataEnabled,
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
     refetchOnMount: false,
@@ -108,7 +110,7 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   const notesQuery = useQuery({
     queryKey: notesQueryKey,
     queryFn: () => fetchEnergyHistoryNotes(customerId),
-    enabled: Boolean(customerId && isSubscribed && !subscriptionLoading),
+    enabled: temperatureDataEnabled,
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
     refetchOnMount: false,
@@ -130,6 +132,7 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   const pageError = documentsQuery.error ?? moveInDateQuery.error;
 
   useEffect(() => {
+    if (!temperatureDataEnabled) return;
     const dataset = weatherQuery.data?.dataset;
     if (!dataset || weatherQuery.isLoading || weatherQuery.error) return;
     const lastSyncedAt = dataset.last_synced_at;
@@ -145,7 +148,13 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
         setWeatherRefreshError(error);
         console.error('Automatic shared weather refresh failed:', error);
       });
-  }, [queryClient, weatherQuery.data?.dataset, weatherQuery.error, weatherQuery.isLoading]);
+  }, [
+    queryClient,
+    temperatureDataEnabled,
+    weatherQuery.data?.dataset,
+    weatherQuery.error,
+    weatherQuery.isLoading,
+  ]);
 
   const refreshDocuments = async () => {
     await queryClient.invalidateQueries({ queryKey });
@@ -288,7 +297,7 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
             <TabsTrigger value="overview">{t('Översikt', 'Overview')}</TabsTrigger>
             <TabsTrigger value="upload">{t('Ladda upp', 'Upload')}</TabsTrigger>
             <TabsTrigger value="documents">{t('Dokument', 'Documents')}</TabsTrigger>
-            <TabsTrigger value="temperature">{t('Temperaturanalys', 'Temperature analysis')}</TabsTrigger>
+            <TabsTrigger value="temperature">{t('Temperatur', 'Temperature')}</TabsTrigger>
           </TabsList>
           <TabsContent value="overview">
             <EnergyHistoryOverview
@@ -330,6 +339,7 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
               error={weatherQuery.error ?? weatherRefreshError}
               notesError={notesQuery.error}
               isStaff={isStaff}
+              currentUserId={user?.id ?? null}
               isRefreshingWeather={isRefreshingWeather}
               onUploadClick={() => setActiveTab('upload')}
               onRefreshWeather={refreshWeather}

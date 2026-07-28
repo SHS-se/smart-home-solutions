@@ -1410,13 +1410,6 @@ export type Database = {
             referencedRelation: "customers_with_identity"
             referencedColumns: ["id"]
           },
-          {
-            foreignKeyName: "energy_usage_import_batches_imported_by_fkey"
-            columns: ["imported_by"]
-            isOneToOne: false
-            referencedRelation: "users"
-            referencedColumns: ["id"]
-          },
         ]
       }
       energy_usage_readings: {

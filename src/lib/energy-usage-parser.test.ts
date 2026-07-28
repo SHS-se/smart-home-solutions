@@ -48,3 +48,11 @@ Deno.test('joins quoted comma-delimited files when a comma is the separator', ()
   assertEqual(parsed.delimiter, ',', 'delimiter');
   assertEqual(parsed.readings[0].consumptionKwh, 42.5, 'quoted number');
 });
+
+Deno.test('recognizes the Swedish förbrukning column advertised by the upload form', () => {
+  const parsed = parseEnergyUsageCsv(`datum;förbrukning
+2026-01-01;42,5
+`);
+
+  assertEqual(parsed.readings[0].consumptionKwh, 42.5, 'Swedish consumption column');
+});

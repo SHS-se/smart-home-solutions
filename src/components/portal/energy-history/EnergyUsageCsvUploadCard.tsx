@@ -59,6 +59,7 @@ const EnergyUsageCsvUploadCard: React.FC<EnergyUsageCsvUploadCardProps> = ({
 }) => {
   const { t, language } = useLanguage();
   const inputRef = useRef<HTMLInputElement>(null);
+  const processingRef = useRef(false);
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [results, setResults] = useState<UploadResult[]>([]);
@@ -71,7 +72,8 @@ const EnergyUsageCsvUploadCard: React.FC<EnergyUsageCsvUploadCardProps> = ({
   }, []);
 
   const processFiles = useCallback(async (files: File[]) => {
-    if (files.length === 0 || isProcessing) return;
+    if (files.length === 0 || processingRef.current) return;
+    processingRef.current = true;
     const initialResults = files.map((file) => ({
       id: crypto.randomUUID(),
       fileName: file.name,
@@ -137,8 +139,9 @@ const EnergyUsageCsvUploadCard: React.FC<EnergyUsageCsvUploadCardProps> = ({
 
     setProgress({ value: 100, message: t('Batchen är klar.', 'Batch complete.') });
     setIsProcessing(false);
+    processingRef.current = false;
     if (importedAny) await onImported();
-  }, [customerId, isProcessing, onImported, t, updateResult]);
+  }, [customerId, onImported, t, updateResult]);
 
   const chooseFiles = useCallback((selected: FileList | null) => {
     if (!selected) return;
@@ -163,7 +166,7 @@ const EnergyUsageCsvUploadCard: React.FC<EnergyUsageCsvUploadCardProps> = ({
             </CardTitle>
             <p className="mt-1 text-sm text-muted-foreground">
               {t(
-                'Importera flera månadsfiler samtidigt. Formatet date;förbrukning stöds, inklusive decimalcomma.',
+                'Importera flera månadsfiler samtidigt. Formatet date;förbrukning stöds, inklusive decimalkomma.',
                 'Import several monthly files at once. The date;consumption format is supported, including decimal commas.',
               )}
             </p>

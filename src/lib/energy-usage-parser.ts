@@ -20,6 +20,8 @@ export class EnergyUsageCsvParseError extends Error {
 }
 
 const MAX_READINGS_PER_FILE = 5000;
+const CONSUMPTION_HEADER_PATTERN =
+  /(^|[^a-z])(cons|consumption|energy|energi|forbrukning|forbruk|kwh)([^a-z]|$)/;
 
 function parseCsvLine(line: string, delimiter: ';' | ','): string[] {
   const values: string[] = [];
@@ -67,7 +69,7 @@ function normalizedHeader(value: string): string {
 function parseDate(value: string, lineNumber: number): string {
   const match = value.trim().match(/^(\d{4}-\d{2}-\d{2})/);
   if (!match) {
-    throw new EnergyUsageCsvParseError(`Line ${lineNumber}: expected an ISO date in the first column.`);
+    throw new EnergyUsageCsvParseError(`Line ${lineNumber}: expected an ISO date in the date column.`);
   }
 
   const date = match[1];
@@ -114,7 +116,7 @@ export function parseEnergyUsageCsv(
   const dateColumn = findColumn(headers, (header) => header === 'date' || header === 'datum');
   const consumptionColumn = findColumn(
     headers,
-    (header) => /(^|[^a-z])(cons|consumption|energy|forbruk|kwh)([^a-z]|$)/.test(header),
+    (header) => CONSUMPTION_HEADER_PATTERN.test(header),
   );
 
   if (dateColumn < 0 || consumptionColumn < 0 || dateColumn === consumptionColumn) {

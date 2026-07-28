@@ -1,4 +1,7 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
+import {
+  createClient,
+  type SupabaseClient,
+} from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { resolveCaller } from "../_shared/staff-auth.ts";
 
 const corsHeaders = {
@@ -9,9 +12,9 @@ const corsHeaders = {
 
 const DATASET_KEY = "stockholm-taby";
 const ARCHIVE_URL =
-  "https://opendata-download-metobs.smhi.se/api/version/latest/parameter/2/station/98230/period/corrected-archive/data.csv";
+  "https://opendata-download-metobs.smhi.se/api/version/1.0/parameter/2/station/98230/period/corrected-archive/data.csv";
 const RECENT_URL =
-  "https://opendata-download-metobs.smhi.se/api/version/latest/parameter/2/station/98230/period/latest-months/data.csv";
+  "https://opendata-download-metobs.smhi.se/api/version/1.0/parameter/2/station/98230/period/latest-months/data.csv";
 const UPSERT_CHUNK_SIZE = 2000;
 
 interface WeatherObservation {
@@ -73,7 +76,7 @@ function parseSmhiDailyMeanCsv(csvText: string): WeatherObservation[] {
 
 async function callerIsStaff(
   request: Request,
-  serviceClient: ReturnType<typeof createClient>,
+  serviceClient: SupabaseClient,
 ): Promise<boolean> {
   const caller = await resolveCaller(request);
   if (!caller) return false;
@@ -170,9 +173,10 @@ Deno.serve(async (request) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (claimed) {
+      // Keep the claim timestamp as a retry cooldown after failures.
       await serviceClient
         .from("energy_weather_datasets")
-        .update({ sync_started_at: null, sync_error: message })
+        .update({ sync_error: message })
         .eq("dataset_key", DATASET_KEY);
     }
     console.error("Shared weather history sync failed:", error);
