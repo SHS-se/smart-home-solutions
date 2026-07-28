@@ -1321,10 +1321,9 @@ export type Database = {
           created_at: string
           created_by: string
           customer_id: string
-          details: string
+          event_text: string
           id: string
           note_date: string
-          title: string
           updated_at: string
           updated_by: string
         }
@@ -1332,10 +1331,9 @@ export type Database = {
           created_at?: string
           created_by: string
           customer_id: string
-          details: string
+          event_text: string
           id?: string
           note_date: string
-          title: string
           updated_at?: string
           updated_by: string
         }
@@ -1343,10 +1341,9 @@ export type Database = {
           created_at?: string
           created_by?: string
           customer_id?: string
-          details?: string
+          event_text?: string
           id?: string
           note_date?: string
-          title?: string
           updated_at?: string
           updated_by?: string
         }

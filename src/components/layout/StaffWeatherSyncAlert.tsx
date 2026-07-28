@@ -14,7 +14,7 @@ function errorMessage(error: unknown): string {
 const StaffWeatherSyncAlert = () => {
   const { t, language } = useLanguage();
   const datasetQuery = useQuery({
-    queryKey: ['staff-weather-sync-status'],
+    queryKey: ['energy-shared-weather-dataset'],
     queryFn: fetchSharedWeatherDataset,
     staleTime: 5 * 60 * 1000,
     refetchInterval: 15 * 60 * 1000,

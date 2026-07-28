@@ -25,15 +25,9 @@ export class EnergyUsageImportError extends Error {
   }
 }
 
-export interface SharedWeatherHistory {
-  dataset: EnergyWeatherDatasetRecord;
-  observations: EnergyWeatherObservationRecord[];
-}
-
 export interface TimelineNoteValues {
   noteDate: string;
-  title: string;
-  details: string;
+  eventText: string;
 }
 
 export async function fetchEnergyUsageReadings(
@@ -48,24 +42,6 @@ export async function fetchEnergyUsageReadings(
     .range(from, to));
 }
 
-export async function fetchSharedWeatherHistory(): Promise<SharedWeatherHistory> {
-  const [datasetResult, observations] = await Promise.all([
-    fetchSharedWeatherDataset(),
-    fetchAllRows<EnergyWeatherObservationRecord>((from, to) => supabase
-      .from('energy_weather_observations')
-      .select('*')
-      .eq('dataset_key', SHARED_WEATHER_DATASET_KEY)
-      .order('observed_on', { ascending: true })
-      .order('id', { ascending: true })
-      .range(from, to)),
-  ]);
-
-  return {
-    dataset: datasetResult,
-    observations,
-  };
-}
-
 export async function fetchSharedWeatherDataset(): Promise<EnergyWeatherDatasetRecord> {
   const { data, error } = await supabase
     .from('energy_weather_datasets')
@@ -74,6 +50,25 @@ export async function fetchSharedWeatherDataset(): Promise<EnergyWeatherDatasetR
     .single();
   if (error) throw error;
   return data;
+}
+
+export async function fetchSharedWeatherObservations(
+  startDate: string,
+  endDate: string,
+): Promise<EnergyWeatherObservationRecord[]> {
+  if (!startDate || !endDate || startDate > endDate) {
+    throw new Error('A valid energy-usage date range is required to load weather observations.');
+  }
+
+  return fetchAllRows<EnergyWeatherObservationRecord>((from, to) => supabase
+    .from('energy_weather_observations')
+    .select('*')
+    .eq('dataset_key', SHARED_WEATHER_DATASET_KEY)
+    .gte('observed_on', startDate)
+    .lte('observed_on', endDate)
+    .order('observed_on', { ascending: true })
+    .order('id', { ascending: true })
+    .range(from, to));
 }
 
 export async function importEnergyUsageCsv(params: {
@@ -126,8 +121,7 @@ function notePayload(customerId: string, userId: string, values: TimelineNoteVal
   return {
     customer_id: customerId,
     note_date: values.noteDate,
-    title: values.title.trim(),
-    details: values.details.trim(),
+    event_text: values.eventText.trim(),
     created_by: userId,
     updated_by: userId,
   };
@@ -156,8 +150,7 @@ export async function updateEnergyHistoryNote(
   const userId = await currentUserId();
   const update: TablesUpdate<'energy_history_notes'> = {
     note_date: values.noteDate,
-    title: values.title.trim(),
-    details: values.details.trim(),
+    event_text: values.eventText.trim(),
     updated_by: userId,
   };
   const { data, error } = await supabase

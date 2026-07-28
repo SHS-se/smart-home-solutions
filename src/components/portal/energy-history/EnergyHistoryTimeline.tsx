@@ -11,6 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 
 interface EnergyHistoryTimelineProps {
   notes: EnergyHistoryNoteRecord[];
+  loadError?: unknown;
   currentUserId: string | null;
   isStaff: boolean;
   onCreate: (values: TimelineNoteValues) => Promise<void>;
@@ -20,8 +21,7 @@ interface EnergyHistoryTimelineProps {
 
 interface NoteFormState {
   noteDate: string;
-  title: string;
-  details: string;
+  eventText: string;
 }
 
 function localDateInputValue(date = new Date()): string {
@@ -33,12 +33,12 @@ function localDateInputValue(date = new Date()): string {
 
 const emptyForm = (): NoteFormState => ({
   noteDate: localDateInputValue(),
-  title: '',
-  details: '',
+  eventText: '',
 });
 
 const EnergyHistoryTimeline: React.FC<EnergyHistoryTimelineProps> = ({
   notes,
+  loadError,
   currentUserId,
   isStaff,
   onCreate,
@@ -50,6 +50,9 @@ const EnergyHistoryTimeline: React.FC<EnergyHistoryTimelineProps> = ({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const loadErrorMessage = loadError
+    ? loadError instanceof Error ? loadError.message : String(loadError)
+    : null;
   const dateFormatter = useMemo(() => new Intl.DateTimeFormat(
     language === 'sv' ? 'sv-SE' : 'en-GB',
     { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' },
@@ -64,7 +67,7 @@ const EnergyHistoryTimeline: React.FC<EnergyHistoryTimelineProps> = ({
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!form.noteDate || !form.title.trim() || !form.details.trim() || isSaving) return;
+    if (!form.noteDate || !form.eventText.trim() || isSaving) return;
     setIsSaving(true);
     setError(null);
     try {
@@ -84,7 +87,7 @@ const EnergyHistoryTimeline: React.FC<EnergyHistoryTimelineProps> = ({
 
   const editNote = (note: EnergyHistoryNoteRecord) => {
     setEditingId(note.id);
-    setForm({ noteDate: note.note_date, title: note.title, details: note.details });
+    setForm({ noteDate: note.note_date, eventText: note.event_text });
     setError(null);
   };
 
@@ -96,8 +99,8 @@ const EnergyHistoryTimeline: React.FC<EnergyHistoryTimelineProps> = ({
 
   const deleteNote = async (note: EnergyHistoryNoteRecord) => {
     const confirmed = window.confirm(t(
-      `Ta bort anteckningen "${note.title}"?`,
-      `Delete the note "${note.title}"?`,
+      'Ta bort den här händelsen?',
+      'Delete this event?',
     ));
     if (!confirmed) return;
     setError(null);
@@ -110,21 +113,24 @@ const EnergyHistoryTimeline: React.FC<EnergyHistoryTimelineProps> = ({
   };
 
   return (
-    <Card className="overflow-hidden border-violet-200/80 bg-gradient-to-br from-background to-violet-500/5 shadow-sm dark:border-violet-900/70">
+    <Card
+      className="overflow-hidden border-teal-200/80 bg-gradient-to-br from-background to-teal-500/5 shadow-sm dark:border-teal-900/70"
+      data-testid="energy-history-events"
+    >
       <CardHeader>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <CardTitle className="flex items-center gap-2 text-base">
-            <StickyNote className="h-4 w-4 text-violet-600" />
-            {t('Tidslinje och anteckningar', 'Timeline and notes')}
+            <StickyNote className="h-4 w-4 text-teal-700 dark:text-teal-300" />
+            {t('Händelsetidslinje', 'Event timeline')}
           </CardTitle>
           <span className="text-xs text-muted-foreground">
-            {notes.length} {t('anteckningar', 'notes')}
+            {notes.length} {t('händelser', 'events')}
           </span>
         </div>
         <p className="text-sm text-muted-foreground">
           {t(
-            'Markera renoveringar, värmesystembyten eller andra händelser som kan förklara en förändring i förbrukningen.',
-            'Record renovations, heating-system changes, or other events that may explain a change in consumption.',
+            'Markera renoveringar, värmesystembyten eller andra händelser som kan förklara förändringar i förbrukningen.',
+            'Record renovations, heating-system changes, or other events that may explain changes in consumption.',
           )}
         </p>
       </CardHeader>
@@ -133,8 +139,8 @@ const EnergyHistoryTimeline: React.FC<EnergyHistoryTimelineProps> = ({
           <div className="mb-4 flex items-center justify-between gap-3">
             <h3 className="text-sm font-medium">
               {editingId
-                ? t('Redigera anteckning', 'Edit note')
-                : t('Lägg till anteckning', 'Add note')}
+                ? t('Redigera händelse', 'Edit event')
+                : t('Lägg till händelse', 'Add event')}
             </h3>
             {editingId && (
               <Button type="button" size="sm" variant="ghost" onClick={cancelEdit}>
@@ -143,7 +149,7 @@ const EnergyHistoryTimeline: React.FC<EnergyHistoryTimelineProps> = ({
               </Button>
             )}
           </div>
-          <div className="grid gap-4 md:grid-cols-[180px_minmax(0,1fr)]">
+          <div className="grid items-start gap-4 md:grid-cols-[180px_minmax(0,1fr)]">
             <div className="space-y-2">
               <Label htmlFor="energy-history-note-date">{t('Datum', 'Date')}</Label>
               <Input
@@ -155,40 +161,32 @@ const EnergyHistoryTimeline: React.FC<EnergyHistoryTimelineProps> = ({
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="energy-history-note-title">{t('Rubrik', 'Title')}</Label>
-              <Input
-                id="energy-history-note-title"
-                value={form.title}
-                maxLength={200}
-                placeholder={t('Till exempel tilläggsisolering', 'For example, added insulation')}
-                onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))}
+              <Label htmlFor="energy-history-note-event">{t('Händelse', 'Event')}</Label>
+              <Textarea
+                id="energy-history-note-event"
+                value={form.eventText}
+                maxLength={4000}
+                rows={2}
+                placeholder={t(
+                  'Till exempel: Tilläggsisolerade vinden och bytte ytterdörr',
+                  'For example: Added attic insulation and replaced the front door',
+                )}
+                onChange={(event) => setForm((current) => ({ ...current, eventText: event.target.value }))}
                 required
               />
             </div>
           </div>
-          <div className="mt-4 space-y-2">
-            <Label htmlFor="energy-history-note-details">{t('Beskrivning', 'Description')}</Label>
-            <Textarea
-              id="energy-history-note-details"
-              value={form.details}
-              maxLength={4000}
-              rows={3}
-              placeholder={t('Vad ändrades och när blev det klart?', 'What changed and when was it completed?')}
-              onChange={(event) => setForm((current) => ({ ...current, details: event.target.value }))}
-              required
-            />
-          </div>
           <div className="mt-4 flex justify-end">
-            <Button type="submit" disabled={isSaving || !form.title.trim() || !form.details.trim()}>
+            <Button type="submit" disabled={isSaving || !form.eventText.trim()}>
               {editingId ? <Save className="mr-2 h-4 w-4" /> : <Plus className="mr-2 h-4 w-4" />}
-              {editingId ? t('Spara ändringar', 'Save changes') : t('Lägg till', 'Add note')}
+              {editingId ? t('Spara ändringar', 'Save changes') : t('Lägg till händelse', 'Add event')}
             </Button>
           </div>
         </form>
 
-        {error && (
+        {(error || loadErrorMessage) && (
           <Alert variant="destructive">
-            <AlertDescription>{error}</AlertDescription>
+            <AlertDescription>{error ?? loadErrorMessage}</AlertDescription>
           </Alert>
         )}
 
@@ -196,20 +194,20 @@ const EnergyHistoryTimeline: React.FC<EnergyHistoryTimelineProps> = ({
           <div className="rounded-xl border border-dashed border-border p-6 text-center">
             <p className="text-sm font-medium">{t('Tidslinjen är tom', 'The timeline is empty')}</p>
             <p className="mt-1 text-sm text-muted-foreground">
-              {t('Dina anteckningar visas här tillsammans med analyserna.', 'Your notes will appear here alongside the analysis.')}
+              {t('Dina händelser visas här och markeras i diagrammen.', 'Your events will appear here and be marked on the charts.')}
             </p>
           </div>
         ) : (
-          <div className="relative space-y-4 pl-6 before:absolute before:bottom-2 before:left-2 before:top-2 before:w-px before:bg-violet-200 dark:before:bg-violet-900">
+          <div className="relative space-y-4 pl-6 before:absolute before:bottom-2 before:left-2 before:top-2 before:w-px before:bg-teal-200 dark:before:bg-teal-900">
             {notes.map((note) => (
               <div key={note.id} className="relative rounded-xl border border-border/70 bg-background/80 p-4">
-                <span className="absolute -left-[1.55rem] top-5 h-3 w-3 rounded-full border-2 border-background bg-violet-600 ring-1 ring-violet-300 dark:ring-violet-800" />
+                <span className="absolute -left-[1.55rem] top-5 h-3 w-3 rounded-full border-2 border-background bg-teal-700 ring-1 ring-teal-300 dark:ring-teal-800" />
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <p className="text-xs text-muted-foreground">
                       {dateFormatter.format(new Date(`${note.note_date}T00:00:00Z`))}
                     </p>
-                    <h3 className="mt-1 text-sm font-medium">{note.title}</h3>
+                    <p className="mt-1 whitespace-pre-wrap text-sm font-medium leading-relaxed">{note.event_text}</p>
                   </div>
                   {(isStaff || note.created_by === currentUserId) && (
                     <div className="flex gap-1">
@@ -222,7 +220,6 @@ const EnergyHistoryTimeline: React.FC<EnergyHistoryTimelineProps> = ({
                     </div>
                   )}
                 </div>
-                <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">{note.details}</p>
               </div>
             ))}
           </div>

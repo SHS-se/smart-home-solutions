@@ -159,6 +159,18 @@ async function mockSupabase(context: BrowserContext, role: 'staff' | 'customer')
       if (table === 'energy_weather_observations') {
         return temperatureChartObservations;
       }
+      if (table === 'energy_history_notes') {
+        return [{
+          id: '40000000-0000-4000-8000-000000000001',
+          customer_id: CUSTOMER_ID,
+          note_date: '2025-12-03',
+          event_text: 'Installerade 3-glasfönster och nya ytterdörrar',
+          created_by: userId,
+          updated_by: userId,
+          created_at: '2026-07-28T00:00:00Z',
+          updated_at: '2026-07-28T00:00:00Z',
+        }];
+      }
       return [];
     })();
 
@@ -301,12 +313,38 @@ test.describe('staff navigation shell', () => {
   test('temperature history explains the automatic shared SMHI data', async ({ page }) => {
     await login(page);
     await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history`);
+    const weatherRequestPromise = page.waitForRequest(
+      (request) => request.url().includes('/rest/v1/energy_weather_observations'),
+    );
     await page.getByRole('tab', { name: 'Temperatur' }).click();
+    const weatherRequest = await weatherRequestPromise;
+    const weatherUrl = new URL(weatherRequest.url());
 
     await expect(page.getByText('Automatisk temperaturdata från SMHI')).toBeVisible();
     await expect(page.getByText(/hämtas automatiskt varje natt/)).toBeVisible();
     await expect(page.getByRole('link', { name: 'Visa originaldata hos SMHI' })).toBeVisible();
     await expect(page.getByRole('button', { name: /Uppdatera väderdata/ })).toHaveCount(0);
+    expect(weatherUrl.searchParams.getAll('observed_on')).toEqual([
+      'gte.2024-01-03',
+      'lte.2025-03-08',
+    ]);
+  });
+
+  test('overview shows single-field events and chart annotations', async ({ page }) => {
+    await login(page);
+    await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history`);
+
+    const events = page.getByTestId('energy-history-events');
+    await expect(events.getByRole('heading', { name: 'Händelsetidslinje' })).toBeVisible();
+    await expect(events.getByLabel('Datum')).toBeVisible();
+    await expect(events.getByLabel('Händelse')).toBeVisible();
+    await expect(events.getByLabel('Rubrik')).toHaveCount(0);
+    await expect(events.getByLabel('Beskrivning')).toHaveCount(0);
+    await expect(events.getByText('Installerade 3-glasfönster och nya ytterdörrar')).toBeVisible();
+
+    await expect(page.getByText('● 1 händelser')).toBeVisible();
+    await expect(page.locator('line[stroke="#0f766e"]')).toHaveCount(2);
+    await page.screenshot({ path: 'test-results/energy-history-events.png', fullPage: true });
   });
 
   test('temperature charts provide readable series controls', async ({ page }) => {

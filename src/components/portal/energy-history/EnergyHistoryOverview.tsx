@@ -26,8 +26,13 @@ import {
   YAxis,
 } from 'recharts';
 import { useLanguage } from '@/contexts/LanguageContext';
+import EnergyHistoryTimeline from '@/components/portal/energy-history/EnergyHistoryTimeline';
 import type { EnergyBillingChange } from '@/lib/energy-billing-changes';
 import type { EnergyBillingMonth } from '@/lib/energy-billing-series';
+import type {
+  EnergyHistoryNoteRecord,
+  TimelineNoteValues,
+} from '@/lib/energy-temperature-storage';
 import { getEnergyCoverageIssues } from '@/lib/energy-history-coverage';
 import {
   estimateAnnualEnergyHistory,
@@ -41,9 +46,16 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 interface EnergyHistoryOverviewProps {
   series: EnergyBillingMonth[];
   changes: EnergyBillingChange[];
+  notes: EnergyHistoryNoteRecord[];
+  notesError?: unknown;
+  isStaff: boolean;
+  currentUserId: string | null;
   moveInDate?: string | null;
   isSample?: boolean;
   onUploadClick?: () => void;
+  onCreateNote: (values: TimelineNoteValues) => Promise<void>;
+  onUpdateNote: (noteId: string, values: TimelineNoteValues) => Promise<void>;
+  onDeleteNote: (noteId: string) => Promise<void>;
 }
 
 type PeriodPreset = '12' | '24' | '36' | 'all';
@@ -61,7 +73,9 @@ interface HistoryTooltipProps {
   label?: string;
   payload?: TooltipPayloadItem[];
   changes: EnergyBillingChange[];
+  notes: EnergyHistoryNoteRecord[];
   formatMonth: (monthKey: string) => string;
+  formatDate: (date: string) => string;
   formatValue: (item: TooltipPayloadItem) => string;
   language: string;
 }
@@ -99,12 +113,15 @@ function HistoryTooltip({
   label,
   payload,
   changes,
+  notes,
   formatMonth,
+  formatDate,
   formatValue,
   language,
 }: HistoryTooltipProps) {
   if (!active || !label || !payload?.length) return null;
   const monthChanges = changes.filter((change) => change.monthKey === label);
+  const monthNotes = notes.filter((note) => note.note_date.slice(0, 7) === label);
 
   return (
     <div className="max-w-sm rounded-xl border border-border/80 bg-background/95 p-3 shadow-xl backdrop-blur">
@@ -142,6 +159,20 @@ function HistoryTooltip({
               <p className="mt-0.5 text-muted-foreground">
                 {language === 'sv' ? change.detailSv : change.detailEn}
               </p>
+            </div>
+          ))}
+        </div>
+      )}
+      {monthNotes.length > 0 && (
+        <div className="mt-3 space-y-2 border-t border-border pt-2">
+          <p className="flex items-center gap-1.5 text-xs font-medium text-teal-700 dark:text-teal-300">
+            <span aria-hidden="true" className="text-[10px]">●</span>
+            {language === 'sv' ? 'Registrerade händelser' : 'Recorded events'}
+          </p>
+          {monthNotes.map((note) => (
+            <div key={note.id} className="text-xs">
+              <p className="text-muted-foreground">{formatDate(note.note_date)}</p>
+              <p className="mt-0.5 whitespace-pre-wrap font-medium">{note.event_text}</p>
             </div>
           ))}
         </div>
@@ -208,9 +239,16 @@ function AnnualMetricCard({
 const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
   series,
   changes,
+  notes,
+  notesError,
+  isStaff,
+  currentUserId,
   moveInDate = null,
   isSample = false,
   onUploadClick,
+  onCreateNote,
+  onUpdateNote,
+  onDeleteNote,
 }) => {
   const { t, language } = useLanguage();
   const locale = language === 'sv' ? 'sv-SE' : 'en-GB';
@@ -256,9 +294,18 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
     (!firstVisibleMonth || change.monthKey >= firstVisibleMonth)
     && (!lastVisibleMonth || change.monthKey <= lastVisibleMonth)
   )), [changes, firstVisibleMonth, lastVisibleMonth]);
-  const annotationMonths = useMemo(
+  const visibleNotes = useMemo(() => notes.filter((note) => {
+    const monthKey = note.note_date.slice(0, 7);
+    return (!firstVisibleMonth || monthKey >= firstVisibleMonth)
+      && (!lastVisibleMonth || monthKey <= lastVisibleMonth);
+  }), [firstVisibleMonth, lastVisibleMonth, notes]);
+  const changeAnnotationMonths = useMemo(
     () => Array.from(new Set(visibleChanges.map((change) => change.monthKey))),
     [visibleChanges],
+  );
+  const eventAnnotationMonths = useMemo(
+    () => Array.from(new Set(visibleNotes.map((note) => note.note_date.slice(0, 7)))),
+    [visibleNotes],
   );
   const years = useMemo(
     () => Array.from(new Set(filteredSeries.map((month) => month.year))).sort((a, b) => a - b),
@@ -300,6 +347,9 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
   const formatFullMonthKey = (monthKey: string) => fullMonthFormatter.format(
     new Date(`${monthKey}-01T00:00:00Z`),
   );
+  const formatDate = (date: string) => dateFormatter.format(
+    new Date(`${date}T00:00:00Z`),
+  );
   const coverageLabel = (status: EnergyBillingMonth['gridCoverage']) => {
     if (status === 'complete') return t('komplett', 'complete');
     if (status === 'partial') return t('delvis', 'partial');
@@ -333,9 +383,9 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
   const periodLabel = firstVisibleMonth && lastVisibleMonth
     ? `${formatFullMonthKey(firstVisibleMonth)} – ${formatFullMonthKey(lastVisibleMonth)}`
     : '';
-  const renderChangeLines = (yAxisId?: string | number) => annotationMonths.map((monthKey) => (
+  const renderChangeLines = (yAxisId?: string | number) => changeAnnotationMonths.map((monthKey) => (
     <ReferenceLine
-      key={monthKey}
+      key={`change-${monthKey}`}
       x={monthKey}
       yAxisId={yAxisId}
       stroke="#7c3aed"
@@ -345,6 +395,22 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
         value: '◆',
         position: 'top',
         fill: '#7c3aed',
+        fontSize: 10,
+      }}
+    />
+  ));
+  const renderEventLines = (yAxisId?: string | number) => eventAnnotationMonths.map((monthKey) => (
+    <ReferenceLine
+      key={`event-${monthKey}`}
+      x={monthKey}
+      yAxisId={yAxisId}
+      stroke="#0f766e"
+      strokeWidth={2}
+      strokeOpacity={0.72}
+      label={{
+        value: '●',
+        position: 'insideTop',
+        fill: '#0f766e',
         fontSize: 10,
       }}
     />
@@ -497,11 +563,18 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
             <CardTitle className="text-base">
               {t('Förbrukning och total kostnad per månad', 'Monthly consumption and total cost')}
             </CardTitle>
-            {visibleChanges.length > 0 && (
-              <Badge variant="outline" className="border-violet-300 text-violet-700 dark:border-violet-800 dark:text-violet-300">
-                ◆ {visibleChanges.length} {t('villkorsändringar', 'term changes')}
-              </Badge>
-            )}
+            <div className="flex flex-wrap gap-2">
+              {visibleChanges.length > 0 && (
+                <Badge variant="outline" className="border-violet-300 text-violet-700 dark:border-violet-800 dark:text-violet-300">
+                  ◆ {visibleChanges.length} {t('villkorsändringar', 'term changes')}
+                </Badge>
+              )}
+              {visibleNotes.length > 0 && (
+                <Badge variant="outline" className="border-teal-300 text-teal-700 dark:border-teal-800 dark:text-teal-300">
+                  ● {visibleNotes.length} {t('händelser', 'events')}
+                </Badge>
+              )}
+            </div>
           </div>
         </CardHeader>
         <CardContent className="pt-5">
@@ -540,7 +613,9 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
                 content={(
                   <HistoryTooltip
                     changes={visibleChanges}
+                    notes={visibleNotes}
                     formatMonth={formatMonthKey}
+                    formatDate={formatDate}
                     formatValue={formatTooltipValue}
                     language={language}
                   />
@@ -548,6 +623,7 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
               />
               <Legend />
               {renderChangeLines('energy')}
+              {renderEventLines('energy')}
               <Area
                 yAxisId="energy"
                 dataKey="consumptionKwh"
@@ -618,7 +694,9 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
                 content={(
                   <HistoryTooltip
                     changes={visibleChanges}
+                    notes={visibleNotes}
                     formatMonth={formatMonthKey}
+                    formatDate={formatDate}
                     formatValue={formatTooltipValue}
                     language={language}
                   />
@@ -627,6 +705,7 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
               <Legend />
               <ReferenceLine y={0} stroke="hsl(var(--foreground))" strokeOpacity={0.65} />
               {renderChangeLines()}
+              {renderEventLines()}
               <Bar dataKey="electricityEnergySek" stackId="cost" name={t('Elenergi', 'Electricity energy')} fill={COST_COLORS.electricityEnergySek} animationDuration={750} />
               <Bar dataKey="electricityFeesSek" stackId="cost" name={t('Elhandelsavgifter', 'Electricity fees')} fill={COST_COLORS.electricityFeesSek} animationDuration={825} />
               <Bar dataKey="gridFixedSek" stackId="cost" name={t('Fast nätavgift', 'Grid fixed fee')} fill={COST_COLORS.gridFixedSek} animationDuration={900} />
@@ -728,6 +807,16 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
           </ResponsiveContainer>
         </CardContent>
       </Card>
+
+      <EnergyHistoryTimeline
+        notes={notes}
+        loadError={notesError}
+        currentUserId={currentUserId}
+        isStaff={isStaff}
+        onCreate={onCreateNote}
+        onUpdate={onUpdateNote}
+        onDelete={onDeleteNote}
+      />
 
       <Card className="overflow-hidden border-violet-200/80 bg-gradient-to-br from-background to-violet-500/5 shadow-sm dark:border-violet-900/70">
         <CardHeader>

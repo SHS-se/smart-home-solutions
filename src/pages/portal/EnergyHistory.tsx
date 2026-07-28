@@ -32,7 +32,9 @@ import {
   deleteEnergyHistoryNote,
   fetchEnergyHistoryNotes,
   fetchEnergyUsageReadings,
-  fetchSharedWeatherHistory,
+  fetchSharedWeatherDataset,
+  fetchSharedWeatherObservations,
+  type TimelineNoteValues,
   updateEnergyHistoryNote,
 } from '@/lib/energy-temperature-storage';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -45,7 +47,7 @@ interface EnergyHistoryProps {
   isStaffView?: boolean;
 }
 
-const SHARED_WEATHER_QUERY_KEY = ['energy-shared-weather-history'] as const;
+const SHARED_WEATHER_DATASET_QUERY_KEY = ['energy-shared-weather-dataset'] as const;
 
 const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   customerId: propCustomerId,
@@ -63,7 +65,6 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   const [activeTab, setActiveTab] = useState('overview');
   const queryKey = ['energy-billing-documents', customerId] as const;
   const usageQueryKey = ['energy-usage-readings', customerId] as const;
-  const weatherQueryKey = SHARED_WEATHER_QUERY_KEY;
   const notesQueryKey = ['energy-history-notes', customerId] as const;
   const customerEnergyEnabled = Boolean(customerId && isSubscribed && !subscriptionLoading);
   const temperatureDataEnabled = customerEnergyEnabled && activeTab === 'temperature';
@@ -94,10 +95,21 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
     refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
-  const weatherQuery = useQuery({
-    queryKey: weatherQueryKey,
-    queryFn: fetchSharedWeatherHistory,
+  const usageStartDate = usageQuery.data?.at(0)?.reading_date ?? null;
+  const usageEndDate = usageQuery.data?.at(-1)?.reading_date ?? null;
+  const weatherDatasetQuery = useQuery({
+    queryKey: SHARED_WEATHER_DATASET_QUERY_KEY,
+    queryFn: fetchSharedWeatherDataset,
     enabled: temperatureDataEnabled,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+  });
+  const weatherObservationsQuery = useQuery({
+    queryKey: ['energy-shared-weather-observations', usageStartDate, usageEndDate],
+    queryFn: () => fetchSharedWeatherObservations(usageStartDate!, usageEndDate!),
+    enabled: temperatureDataEnabled && Boolean(usageStartDate && usageEndDate),
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
     refetchOnMount: false,
@@ -106,7 +118,7 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   const notesQuery = useQuery({
     queryKey: notesQueryKey,
     queryFn: () => fetchEnergyHistoryNotes(customerId),
-    enabled: temperatureDataEnabled,
+    enabled: customerEnergyEnabled,
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
     refetchOnMount: false,
@@ -136,6 +148,21 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
 
   const refreshNotes = async () => {
     await queryClient.invalidateQueries({ queryKey: notesQueryKey });
+  };
+
+  const handleCreateNote = async (values: TimelineNoteValues) => {
+    await createEnergyHistoryNote(customerId, values);
+    await refreshNotes();
+  };
+
+  const handleUpdateNote = async (noteId: string, values: TimelineNoteValues) => {
+    await updateEnergyHistoryNote(customerId, noteId, values);
+    await refreshNotes();
+  };
+
+  const handleDeleteNote = async (noteId: string) => {
+    await deleteEnergyHistoryNote(customerId, noteId);
+    await refreshNotes();
   };
 
   const header = (
@@ -260,8 +287,15 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
               series={documents.length === 0 ? ENERGY_HISTORY_SAMPLE_SERIES : series}
               changes={documents.length === 0 ? ENERGY_HISTORY_SAMPLE_CHANGES : changes}
               moveInDate={documents.length === 0 ? null : moveInDateQuery.data ?? null}
+              notes={notesQuery.data ?? []}
+              notesError={notesQuery.error}
+              isStaff={isStaff}
+              currentUserId={user?.id ?? null}
               isSample={documents.length === 0}
               onUploadClick={() => setActiveTab('upload')}
+              onCreateNote={handleCreateNote}
+              onUpdateNote={handleUpdateNote}
+              onDeleteNote={handleDeleteNote}
             />
           </TabsContent>
           <TabsContent value="upload">
@@ -288,27 +322,20 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
           <TabsContent value="temperature">
             <EnergyTemperatureAnalysis
               readings={usageQuery.data ?? []}
-              weatherDataset={weatherQuery.data?.dataset ?? null}
-              weatherObservations={weatherQuery.data?.observations ?? []}
+              weatherDataset={weatherDatasetQuery.data ?? null}
+              weatherObservations={weatherObservationsQuery.data ?? []}
               notes={notesQuery.data ?? []}
-              isLoading={usageQuery.isLoading || weatherQuery.isLoading}
-              error={weatherQuery.error}
+              isLoading={usageQuery.isLoading
+                || weatherDatasetQuery.isLoading
+                || weatherObservationsQuery.isLoading}
+              error={weatherDatasetQuery.error ?? weatherObservationsQuery.error}
               notesError={notesQuery.error}
               isStaff={isStaff}
               currentUserId={user?.id ?? null}
               onUploadClick={() => setActiveTab('upload')}
-              onCreateNote={async (values) => {
-                await createEnergyHistoryNote(customerId, values);
-                await refreshNotes();
-              }}
-              onUpdateNote={async (noteId, values) => {
-                await updateEnergyHistoryNote(customerId, noteId, values);
-                await refreshNotes();
-              }}
-              onDeleteNote={async (noteId) => {
-                await deleteEnergyHistoryNote(customerId, noteId);
-                await refreshNotes();
-              }}
+              onCreateNote={handleCreateNote}
+              onUpdateNote={handleUpdateNote}
+              onDeleteNote={handleDeleteNote}
             />
           </TabsContent>
         </Tabs>

@@ -182,7 +182,6 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
   const weatherStart = weatherObservations[0]?.observed_on ?? null;
   const weatherEnd = weatherObservations.at(-1)?.observed_on ?? null;
   const weatherError = errorMessage(error);
-  const timelineError = errorMessage(notesError);
   const toggleYearSeries = (year: number) => {
     setHiddenYearSeries((current) => {
       const next = new Set(current);
@@ -531,14 +530,9 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
         </>
       )}
 
-      {timelineError && (
-        <Alert variant="destructive">
-          <AlertTitle>{t('Tidslinjeanteckningar kunde inte läsas', 'Timeline notes could not be loaded')}</AlertTitle>
-          <AlertDescription>{timelineError}</AlertDescription>
-        </Alert>
-      )}
       <EnergyHistoryTimeline
         notes={notes}
+        loadError={notesError}
         currentUserId={currentUserId}
         isStaff={isStaff}
         onCreate={onCreateNote}
