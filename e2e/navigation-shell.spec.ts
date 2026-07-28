@@ -44,6 +44,40 @@ const viewedCustomer = {
   is_test: true,
 };
 
+const temperatureChartReadings = [
+  ['2024-01-03', 152],
+  ['2024-02-04', 108],
+  ['2024-03-05', 72],
+  ['2025-01-06', 136],
+  ['2025-02-07', 95],
+  ['2025-03-08', 64],
+].map(([reading_date, consumption_kwh], index) => ({
+  id: `10000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+  customer_id: CUSTOMER_ID,
+  reading_date,
+  consumption_kwh,
+  source_import_id: '20000000-0000-4000-8000-000000000001',
+  created_at: '2026-07-28T00:00:00Z',
+  updated_at: '2026-07-28T00:00:00Z',
+}));
+
+const temperatureChartObservations = [
+  ['2024-01-03', -6],
+  ['2024-02-04', 1],
+  ['2024-03-05', 8],
+  ['2025-01-06', -5],
+  ['2025-02-07', 2],
+  ['2025-03-08', 9],
+].map(([observed_on, temperature_c], index) => ({
+  id: `30000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+  dataset_key: 'stockholm-taby',
+  observed_on,
+  temperature_c,
+  quality_code: null,
+  created_at: '2026-07-28T00:00:00Z',
+  updated_at: '2026-07-28T00:00:00Z',
+}));
+
 async function mockSupabase(context: BrowserContext, role: 'staff' | 'customer') {
   const userId = role === 'staff' ? STAFF_USER_ID : CUSTOMER_USER_ID;
   const email = role === 'staff' ? 'staff.member@smarthomesolutions.se' : 'ana@example.com';
@@ -118,6 +152,12 @@ async function mockSupabase(context: BrowserContext, role: 'staff' | 'customer')
           sync_started_at: null,
           sync_error: null,
         }];
+      }
+      if (table === 'energy_usage_readings') {
+        return temperatureChartReadings;
+      }
+      if (table === 'energy_weather_observations') {
+        return temperatureChartObservations;
       }
       return [];
     })();
@@ -267,6 +307,26 @@ test.describe('staff navigation shell', () => {
     await expect(page.getByText(/hämtas automatiskt varje natt/)).toBeVisible();
     await expect(page.getByRole('link', { name: 'Visa originaldata hos SMHI' })).toBeVisible();
     await expect(page.getByRole('button', { name: /Uppdatera väderdata/ })).toHaveCount(0);
+  });
+
+  test('temperature charts provide readable series controls', async ({ page }) => {
+    await login(page);
+    await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history`);
+    await page.getByRole('tab', { name: 'Temperatur' }).click();
+
+    const yearControls = page.getByRole('group', { name: 'Visa årsserier' });
+    await expect(yearControls).toBeVisible();
+    await expect(yearControls.getByRole('button', { name: '2024' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(yearControls.getByRole('button', { name: 'Trendlinjer' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('.recharts-legend-wrapper')).toHaveCount(0);
+
+    await yearControls.getByRole('button', { name: '2024' }).click();
+    await expect(yearControls.getByRole('button', { name: '2024' })).toHaveAttribute('aria-pressed', 'false');
+
+    const overallControls = page.getByRole('group', { name: 'Visa serier' });
+    await expect(overallControls.getByRole('button', { name: 'Genomsnittlig energianvändning' })).toHaveAttribute('aria-pressed', 'true');
+    await overallControls.getByRole('button', { name: 'Trendlinje' }).click();
+    await expect(overallControls.getByRole('button', { name: 'Trendlinje' })).toHaveAttribute('aria-pressed', 'false');
   });
 
   test('staff receives a portal-wide warning when the shared weather sync fails', async ({ page }) => {

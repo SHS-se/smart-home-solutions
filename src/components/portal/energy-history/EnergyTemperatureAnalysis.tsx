@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   CloudSun,
   ExternalLink,
@@ -8,7 +8,6 @@ import {
 } from 'lucide-react';
 import {
   CartesianGrid,
-  Legend,
   Line,
   LineChart,
   ResponsiveContainer,
@@ -53,6 +52,15 @@ interface EnergyTemperatureAnalysisProps {
 type EnergyHistoryTimelineProps = React.ComponentProps<typeof EnergyHistoryTimeline>;
 type MultiYearChartRow = Record<string, number | null> & { temperatureC: number };
 
+interface ChartSeriesControl {
+  id: string;
+  label: string;
+  color: string;
+  visible: boolean;
+  dashed?: boolean;
+  onToggle: () => void;
+}
+
 const YEAR_COLORS = [
   '#2563eb',
   '#dc2626',
@@ -90,6 +98,39 @@ function errorMessage(error: unknown): string | null {
   return error instanceof Error ? error.message : String(error);
 }
 
+function ChartSeriesControls({
+  label,
+  controls,
+}: {
+  label: string;
+  controls: ChartSeriesControl[];
+}) {
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label={label}>
+      <span className="mr-1 text-xs font-medium text-muted-foreground">{label}</span>
+      {controls.map((control) => (
+        <Button
+          key={control.id}
+          type="button"
+          size="sm"
+          variant={control.visible ? 'secondary' : 'outline'}
+          className="h-8 gap-2 px-2.5 text-xs"
+          aria-pressed={control.visible}
+          data-testid={`temperature-series-toggle-${control.id}`}
+          onClick={control.onToggle}
+        >
+          <span
+            aria-hidden="true"
+            className={control.dashed ? 'w-4 border-t-2 border-dashed' : 'w-4 border-t-2'}
+            style={{ borderColor: control.color }}
+          />
+          {control.label}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
 const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
   readings,
   weatherDataset,
@@ -106,6 +147,10 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
   onDeleteNote,
 }) => {
   const { t, language } = useLanguage();
+  const [hiddenYearSeries, setHiddenYearSeries] = useState<Set<number>>(() => new Set());
+  const [showYearTrendlines, setShowYearTrendlines] = useState(true);
+  const [showOverallEnergy, setShowOverallEnergy] = useState(true);
+  const [showOverallTrendline, setShowOverallTrendline] = useState(true);
   const locale = language === 'sv' ? 'sv-SE' : 'en-GB';
   const numberFormatter = useMemo(() => new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }), [locale]);
   const dateFormatter = useMemo(() => new Intl.DateTimeFormat(locale, {
@@ -138,6 +183,17 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
   const weatherEnd = weatherObservations.at(-1)?.observed_on ?? null;
   const weatherError = errorMessage(error);
   const timelineError = errorMessage(notesError);
+  const toggleYearSeries = (year: number) => {
+    setHiddenYearSeries((current) => {
+      const next = new Set(current);
+      if (next.has(year)) {
+        next.delete(year);
+      } else {
+        next.add(year);
+      }
+      return next;
+    });
+  };
 
   if (isLoading) {
     return (
@@ -302,8 +358,28 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
                 </div>
               </CardHeader>
               <CardContent className="pt-5">
+                <ChartSeriesControls
+                  label={t('Visa årsserier', 'Show year series')}
+                  controls={[
+                    ...analysis.years.map((series, index) => ({
+                      id: `year-${series.year}`,
+                      label: `${series.year}`,
+                      color: YEAR_COLORS[index % YEAR_COLORS.length],
+                      visible: !hiddenYearSeries.has(series.year),
+                      onToggle: () => toggleYearSeries(series.year),
+                    })),
+                    {
+                      id: 'year-trends',
+                      label: t('Trendlinjer', 'Trend lines'),
+                      color: '#64748b',
+                      dashed: true,
+                      visible: showYearTrendlines,
+                      onToggle: () => setShowYearTrendlines((visible) => !visible),
+                    },
+                  ]}
+                />
                 <ResponsiveContainer width="100%" height={430}>
-                  <LineChart data={multiYearChartData} margin={{ top: 16, right: 16, bottom: 24, left: 8 }}>
+                  <LineChart data={multiYearChartData} margin={{ top: 16, right: 16, bottom: 34, left: 8 }} data-testid="temperature-year-chart">
                     <CartesianGrid strokeDasharray="4 4" className="stroke-border/70" vertical={false} />
                     <XAxis
                       type="number"
@@ -325,9 +401,10 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
                       ]}
                       labelFormatter={(label: number) => `${label} °C`}
                     />
-                    <Legend />
                     {analysis.years.map((series, index) => {
                       const color = YEAR_COLORS[index % YEAR_COLORS.length];
+                      const visible = !hiddenYearSeries.has(series.year);
+                      if (!visible) return null;
                       return (
                         <React.Fragment key={series.year}>
                           <Line
@@ -338,9 +415,9 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
                             strokeWidth={2.5}
                             dot={{ r: 4, fill: color, strokeWidth: 1 }}
                             activeDot={{ r: 6 }}
-                            connectNulls={false}
+                            connectNulls
                           />
-                          {series.regression && (
+                          {showYearTrendlines && series.regression && (
                             <Line
                               type="monotone"
                               dataKey={`trend_${series.year}`}
@@ -381,8 +458,28 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
                 </div>
               </CardHeader>
               <CardContent className="pt-5">
+                <ChartSeriesControls
+                  label={t('Visa serier', 'Show series')}
+                  controls={[
+                    {
+                      id: 'overall-energy',
+                      label: t('Genomsnittlig energianvändning', 'Average energy use'),
+                      color: '#2563eb',
+                      visible: showOverallEnergy,
+                      onToggle: () => setShowOverallEnergy((visible) => !visible),
+                    },
+                    ...(analysis.overall.regression ? [{
+                      id: 'overall-trend',
+                      label: t('Trendlinje', 'Trendline'),
+                      color: '#f97373',
+                      dashed: true,
+                      visible: showOverallTrendline,
+                      onToggle: () => setShowOverallTrendline((visible) => !visible),
+                    }] : []),
+                  ]}
+                />
                 <ResponsiveContainer width="100%" height={430}>
-                  <LineChart data={overallChartData} margin={{ top: 16, right: 16, bottom: 24, left: 8 }}>
+                  <LineChart data={overallChartData} margin={{ top: 16, right: 16, bottom: 34, left: 8 }} data-testid="temperature-overall-chart">
                     <CartesianGrid strokeDasharray="4 4" className="stroke-border/70" vertical={false} />
                     <XAxis
                       type="number"
@@ -404,8 +501,7 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
                       ]}
                       labelFormatter={(label: number) => `${label} °C`}
                     />
-                    <Legend />
-                    <Line
+                    {showOverallEnergy && <Line
                       type="monotone"
                       dataKey="averageKwh"
                       name={t('Genomsnittlig energianvändning', 'Average energy use')}
@@ -413,8 +509,9 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
                       strokeWidth={2.5}
                       dot={{ r: 5, fill: '#2563eb', strokeWidth: 1 }}
                       activeDot={{ r: 6 }}
-                    />
-                    {analysis.overall.regression && (
+                      connectNulls
+                    />}
+                    {showOverallTrendline && analysis.overall.regression && (
                       <Line
                         type="monotone"
                         dataKey="trendKwh"
@@ -423,6 +520,7 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
                         strokeWidth={2.5}
                         strokeDasharray="7 5"
                         dot={false}
+                        connectNulls
                       />
                     )}
                   </LineChart>
