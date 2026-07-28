@@ -101,6 +101,24 @@ async function mockSupabase(context: BrowserContext, role: 'staff' | 'customer')
         // Customer role: matched by user_id. Staff customer-view: matched by id.
         return [viewedCustomer];
       }
+      if (table === 'customers') {
+        return [{ id: CUSTOMER_ID, primary_home_id: null }];
+      }
+      if (table === 'energy_weather_datasets') {
+        return [{
+          dataset_key: 'stockholm-taby',
+          display_name: 'Stockholm / Täby reference temperature',
+          source_name: 'SMHI daily mean air temperature, Stockholm-Observatoriekullen A',
+          source_url: 'https://opendata-download-metobs.smhi.se/',
+          station_id: '98230',
+          latitude: 59.3417,
+          longitude: 18.0549,
+          last_synced_at: nowIso,
+          last_observation_date: nowIso.slice(0, 10),
+          sync_started_at: null,
+          sync_error: null,
+        }];
+      }
       return [];
     })();
 
@@ -238,6 +256,43 @@ test.describe('staff navigation shell', () => {
     await page.goto(`/portal/customers/${CUSTOMER_ID}`);
     await page.waitForURL(`**/portal/customers/${CUSTOMER_ID}/overview`);
     await expect(page.getByText('du ser kundens portal som personal')).toBeVisible();
+  });
+
+  test('temperature history explains the automatic shared SMHI data', async ({ page }) => {
+    await login(page);
+    await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history`);
+    await page.getByRole('tab', { name: 'Temperatur' }).click();
+
+    await expect(page.getByText('Automatisk temperaturdata från SMHI')).toBeVisible();
+    await expect(page.getByText(/hämtas automatiskt varje natt/)).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Visa originaldata hos SMHI' })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Uppdatera väderdata/ })).toHaveCount(0);
+  });
+
+  test('staff receives a portal-wide warning when the shared weather sync fails', async ({ page }) => {
+    await page.route('**/rest/v1/energy_weather_datasets*', (route) => route.fulfill({
+      json: {
+        dataset_key: 'stockholm-taby',
+        display_name: 'Stockholm / Täby reference temperature',
+        source_name: 'SMHI daily mean air temperature, Stockholm-Observatoriekullen A',
+        source_url: 'https://opendata-download-metobs.smhi.se/',
+        station_id: '98230',
+        latitude: 59.3417,
+        longitude: 18.0549,
+        last_synced_at: '2026-07-26T04:12:00Z',
+        last_observation_date: '2026-07-25',
+        sync_started_at: null,
+        sync_error: 'SMHI returned HTTP 503',
+      },
+    }));
+
+    await login(page);
+
+    const alert = page.getByTestId('staff-weather-sync-alert');
+    await expect(alert).toBeVisible();
+    await expect(alert).toContainText('Automatisk temperaturhämtning behöver kontrolleras');
+    await expect(alert).toContainText('SMHI returned HTTP 503');
+    await expect(alert.getByRole('link', { name: 'Kontrollera SMHI-källan' })).toBeVisible();
   });
 
   test('public header offers a portal shortcut to logged-in users', async ({ page }) => {

@@ -3,7 +3,6 @@ import {
   CloudSun,
   ExternalLink,
   Loader2,
-  RefreshCw,
   Thermometer,
   Upload,
 } from 'lucide-react';
@@ -45,9 +44,7 @@ interface EnergyTemperatureAnalysisProps {
   notesError?: unknown;
   isStaff: boolean;
   currentUserId: string | null;
-  isRefreshingWeather: boolean;
   onUploadClick: () => void;
-  onRefreshWeather: () => Promise<void>;
   onCreateNote: EnergyHistoryTimelineProps['onCreate'];
   onUpdateNote: EnergyHistoryTimelineProps['onUpdate'];
   onDeleteNote: EnergyHistoryTimelineProps['onDelete'];
@@ -103,9 +100,7 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
   notesError,
   isStaff,
   currentUserId,
-  isRefreshingWeather,
   onUploadClick,
-  onRefreshWeather,
   onCreateNote,
   onUpdateNote,
   onDeleteNote,
@@ -163,9 +158,12 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
               <CloudSun className="h-5 w-5" />
             </div>
             <div>
-              <p className="text-sm font-medium">{t('Gemensam temperaturkälla', 'Shared temperature source')}</p>
+              <p className="text-sm font-medium">{t('Automatisk temperaturdata från SMHI', 'Automatic temperature data from SMHI')}</p>
               <p className="mt-1 text-sm text-muted-foreground">
-                {weatherDataset?.source_name ?? t('SMHI-data saknas ännu', 'SMHI data is not available yet')}
+                {t(
+                  'Observerad dygnsmedeltemperatur från Stockholm-Observatoriekullen A hämtas automatiskt varje natt. Samma regionala temperaturserie används för alla hem i Stockholm/Täby-området – du behöver inte uppdatera den själv.',
+                  'Observed daily mean temperature from Stockholm-Observatoriekullen A is collected automatically every night. The same regional temperature series is used for every home in the Stockholm/Täby area—you do not need to update it yourself.',
+                )}
               </p>
               {weatherDataset && (
                 <p className="mt-1 text-xs text-muted-foreground">
@@ -177,31 +175,17 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
               )}
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {weatherDataset?.source_url && (
-              <Button type="button" size="sm" variant="outline" asChild>
-                <a href={weatherDataset.source_url} target="_blank" rel="noreferrer">
-                  {t('Öppna SMHI-källa', 'Open SMHI source')}
-                  <ExternalLink className="ml-2 h-3.5 w-3.5" />
-                </a>
-              </Button>
-            )}
-            {isStaff && (
-              <Button type="button" size="sm" onClick={() => void onRefreshWeather()} disabled={isRefreshingWeather}>
-                {isRefreshingWeather ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-                {t('Uppdatera väderdata', 'Refresh weather data')}
-              </Button>
-            )}
-          </div>
+          {weatherDataset?.source_url && (
+            <Button type="button" size="sm" variant="outline" asChild>
+              <a href={weatherDataset.source_url} target="_blank" rel="noreferrer">
+                {t('Visa originaldata hos SMHI', 'View source data at SMHI')}
+                <ExternalLink className="ml-2 h-3.5 w-3.5" />
+              </a>
+            </Button>
+          )}
         </CardContent>
       </Card>
 
-      {weatherDataset?.sync_error && (
-        <Alert className="border-amber-300 bg-amber-50/60 dark:border-amber-900 dark:bg-amber-950/20">
-          <AlertTitle>{t('Temperaturdata kunde inte uppdateras', 'Temperature data could not be refreshed')}</AlertTitle>
-          <AlertDescription>{weatherDataset.sync_error}</AlertDescription>
-        </Alert>
-      )}
       {weatherError && (
         <Alert variant="destructive">
           <AlertTitle>{t('Temperaturdata kunde inte läsas', 'Temperature data could not be loaded')}</AlertTitle>
@@ -239,6 +223,38 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
         </Alert>
       ) : (
         <>
+          <Card className="border-border/70 bg-muted/20">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">
+                {t('Så läser du diagrammen', 'How to read the charts')}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-4 pt-0 text-sm text-muted-foreground md:grid-cols-2">
+              <div>
+                <p className="font-medium text-foreground">
+                  {t('Jämförelse år för år', 'Year-by-year comparison')}
+                </p>
+                <p className="mt-1">
+                  {t(
+                    'Varje punkt visar genomsnittlig energianvändning för dagar med samma avrundade utomhustemperatur. Färgade årsserier och deras streckade trendlinjer gör det lättare att se om huset använder mer eller mindre energi vid samma väder efter exempelvis en renovering.',
+                    'Each point shows average energy use for days with the same rounded outdoor temperature. Coloured yearly series and their dashed trend lines make it easier to see whether the home uses more or less energy in the same weather after changes such as a renovation.',
+                  )}
+                </p>
+              </div>
+              <div>
+                <p className="font-medium text-foreground">
+                  {t('Samlad temperaturprofil', 'Combined temperature profile')}
+                </p>
+                <p className="mt-1">
+                  {t(
+                    'Det samlade diagrammet kombinerar alla matchande år och visar den typiska relationen mellan temperatur och dygnsförbrukning. R² anger hur väl trendlinjen beskriver mätpunkterna. Använd tidslinjen nedan för att markera förändringar som kan påverka jämförelsen.',
+                    'The combined chart joins all matching years and shows the typical relationship between temperature and daily consumption. R² indicates how closely the trend line fits the measured points. Use the timeline below to mark changes that may affect the comparison.',
+                  )}
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <Card>
               <CardContent className="pt-5">

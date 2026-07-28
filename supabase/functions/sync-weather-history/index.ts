@@ -1,14 +1,4 @@
-import {
-  createClient,
-  type SupabaseClient,
-} from "https://esm.sh/@supabase/supabase-js@2.57.2";
-import { resolveCaller } from "../_shared/staff-auth.ts";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-};
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 
 const DATASET_KEY = "stockholm-taby";
 const ARCHIVE_URL =
@@ -27,7 +17,7 @@ interface WeatherObservation {
 function jsonResponse(body: Record<string, unknown>, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json" },
   });
 }
 
@@ -74,25 +64,8 @@ function parseSmhiDailyMeanCsv(csvText: string): WeatherObservation[] {
   return observations;
 }
 
-async function callerIsStaff(
-  request: Request,
-  serviceClient: SupabaseClient,
-): Promise<boolean> {
-  const caller = await resolveCaller(request);
-  if (!caller) return false;
-  const { data } = await serviceClient
-    .from("staff_users")
-    .select("user_id")
-    .eq("user_id", caller.userId)
-    .maybeSingle();
-  return Boolean(data);
-}
-
 Deno.serve(async (request) => {
-  if (request.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
-  if (request.method !== "POST" && request.method !== "GET") {
+  if (request.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405);
   }
 
@@ -103,25 +76,27 @@ Deno.serve(async (request) => {
   }
   const serviceClient = createClient(supabaseUrl, serviceRoleKey);
 
-  let force = false;
-  if (request.method === "POST") {
-    try {
-      const body = await request.json();
-      force = body?.force === true;
-    } catch {
-      force = false;
-    }
+  const syncToken = request.headers.get("x-weather-sync-token");
+  if (!syncToken) {
+    return jsonResponse({ error: "Scheduled sync authorization is required" }, 401);
+  }
+  const { data: authorized, error: authorizationError } = await serviceClient.rpc(
+    "verify_energy_weather_sync_token",
+    { p_token: syncToken },
+  );
+  if (authorizationError) {
+    console.error("Weather sync authorization failed:", authorizationError);
+    return jsonResponse({ error: "Scheduled sync authorization failed" }, 500);
+  }
+  if (!authorized) {
+    return jsonResponse({ error: "Scheduled sync authorization is invalid" }, 403);
   }
 
   let claimed = false;
   try {
-    if (force && !(await callerIsStaff(request, serviceClient))) {
-      return jsonResponse({ error: "Forced weather refresh is staff-only" }, 403);
-    }
-
     const { data: claimResult, error: claimError } = await serviceClient.rpc(
       "claim_energy_weather_sync",
-      { p_dataset_key: DATASET_KEY, p_force: force },
+      { p_dataset_key: DATASET_KEY },
     );
     if (claimError) throw claimError;
     if (!claimResult) {
@@ -129,16 +104,25 @@ Deno.serve(async (request) => {
     }
     claimed = true;
 
-    const [archiveCsv, recentCsv] = await Promise.all([
-      fetchCsv(ARCHIVE_URL),
-      fetchCsv(RECENT_URL),
-    ]);
-    const observationsByDate = new Map<string, WeatherObservation>();
-    for (const observation of parseSmhiDailyMeanCsv(archiveCsv)) {
-      observationsByDate.set(observation.observed_on, observation);
+    const { count: existingObservationCount, error: countError } =
+      await serviceClient
+        .from("energy_weather_observations")
+        .select("id", { count: "exact", head: true })
+        .eq("dataset_key", DATASET_KEY);
+    if (countError) throw countError;
+    if (existingObservationCount === null) {
+      throw new Error("Weather observation count was not returned");
     }
-    for (const observation of parseSmhiDailyMeanCsv(recentCsv)) {
-      observationsByDate.set(observation.observed_on, observation);
+
+    const sourceUrls = existingObservationCount === 0
+      ? [ARCHIVE_URL, RECENT_URL]
+      : [RECENT_URL];
+    const csvFiles = await Promise.all(sourceUrls.map(fetchCsv));
+    const observationsByDate = new Map<string, WeatherObservation>();
+    for (const csvFile of csvFiles) {
+      for (const observation of parseSmhiDailyMeanCsv(csvFile)) {
+        observationsByDate.set(observation.observed_on, observation);
+      }
     }
     const observations = Array.from(observationsByDate.values()).sort((a, b) =>
       a.observed_on.localeCompare(b.observed_on)
@@ -167,7 +151,7 @@ Deno.serve(async (request) => {
     return jsonResponse({
       synced: true,
       dataset_key: DATASET_KEY,
-      observation_count: observations.length,
+      upserted_observation_count: observations.length,
       last_observation_date: lastObservationDate,
     });
   } catch (error) {

@@ -138,6 +138,16 @@ jobs:
         # written idempotently (IF NOT EXISTS / guarded DO blocks) — keep doing that.
         run: supabase db push --include-all
 
+      - name: Configure shared weather cron endpoint
+        # The same migration runs in test and production. Store the current
+        # project's function URL in the private cron credential row so each
+        # database invokes its own sync-weather-history deployment.
+        run: |
+          supabase db query --linked \
+            "UPDATE private.energy_weather_sync_credentials
+             SET function_url = 'https://${SUPABASE_PROJECT_REF}.supabase.co/functions/v1/sync-weather-history'
+             WHERE singleton"
+
   functions:
     name: Deploy edge functions
     needs: migrate

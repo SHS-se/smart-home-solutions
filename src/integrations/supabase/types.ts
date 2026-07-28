@@ -3625,7 +3625,7 @@ export type Database = {
         Returns: boolean
       }
       claim_energy_weather_sync: {
-        Args: { p_dataset_key: string; p_force?: boolean }
+        Args: { p_dataset_key: string }
         Returns: boolean
       }
       create_energy_billing_document: {
@@ -3644,6 +3644,10 @@ export type Database = {
           p_readings: Json
         }
         Returns: string
+      }
+      verify_energy_weather_sync_token: {
+        Args: { p_token: string }
+        Returns: boolean
       }
       finalize_local_invoice: {
         Args: { p_app_env: string; p_created_by?: string; p_invoice_id: string }

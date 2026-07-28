@@ -8,7 +8,6 @@ import { sha256File } from '@/lib/energy-billing-storage';
 import { fetchAllRows } from '@/lib/fetch-all-rows';
 
 export const SHARED_WEATHER_DATASET_KEY = 'stockholm-taby';
-export const WEATHER_REFRESH_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
 export const MAX_ENERGY_USAGE_CSV_FILE_BYTES = 5 * 1024 * 1024;
 
 export type EnergyUsageReadingRecord = Tables<'energy_usage_readings'>;
@@ -51,11 +50,7 @@ export async function fetchEnergyUsageReadings(
 
 export async function fetchSharedWeatherHistory(): Promise<SharedWeatherHistory> {
   const [datasetResult, observations] = await Promise.all([
-    supabase
-      .from('energy_weather_datasets')
-      .select('*')
-      .eq('dataset_key', SHARED_WEATHER_DATASET_KEY)
-      .single(),
+    fetchSharedWeatherDataset(),
     fetchAllRows<EnergyWeatherObservationRecord>((from, to) => supabase
       .from('energy_weather_observations')
       .select('*')
@@ -65,20 +60,20 @@ export async function fetchSharedWeatherHistory(): Promise<SharedWeatherHistory>
       .range(from, to)),
   ]);
 
-  if (datasetResult.error) throw datasetResult.error;
-
   return {
-    dataset: datasetResult.data,
+    dataset: datasetResult,
     observations,
   };
 }
 
-export async function refreshSharedWeatherHistory(force = false): Promise<Record<string, unknown>> {
-  const { data, error } = await supabase.functions.invoke('sync-weather-history', {
-    body: { force },
-  });
+export async function fetchSharedWeatherDataset(): Promise<EnergyWeatherDatasetRecord> {
+  const { data, error } = await supabase
+    .from('energy_weather_datasets')
+    .select('*')
+    .eq('dataset_key', SHARED_WEATHER_DATASET_KEY)
+    .single();
   if (error) throw error;
-  return (data ?? {}) as Record<string, unknown>;
+  return data;
 }
 
 export async function importEnergyUsageCsv(params: {

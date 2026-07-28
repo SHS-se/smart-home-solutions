@@ -56,6 +56,7 @@ import ShsLogo from '@/components/ShsLogo';
 import LanguageToggle from '@/components/LanguageToggle';
 import UserMenu from '@/components/UserMenu';
 import CustomerSwitcher from '@/components/layout/CustomerSwitcher';
+import StaffWeatherSyncAlert from '@/components/layout/StaffWeatherSyncAlert';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { isTestEnvironment } from '@/lib/environment';
@@ -349,6 +350,7 @@ const AppShell: React.FC<AppShellProps> = ({ customerView, children }) => {
         </header>
 
         {inCustomerView && <CustomerViewBanner customerView={customerView} />}
+        {isStaff && <StaffWeatherSyncAlert />}
 
         <main className="flex-1">
           <div className="container mx-auto px-4 py-8">{children ?? <Outlet />}</div>

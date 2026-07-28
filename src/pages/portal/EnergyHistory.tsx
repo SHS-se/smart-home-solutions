@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
@@ -33,9 +33,7 @@ import {
   fetchEnergyHistoryNotes,
   fetchEnergyUsageReadings,
   fetchSharedWeatherHistory,
-  refreshSharedWeatherHistory,
   updateEnergyHistoryNote,
-  WEATHER_REFRESH_INTERVAL_MS,
 } from '@/lib/energy-temperature-storage';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -63,8 +61,6 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   } = useSubscription();
   const customerId = propCustomerId || customerData?.id || '';
   const [activeTab, setActiveTab] = useState('overview');
-  const [isRefreshingWeather, setIsRefreshingWeather] = useState(false);
-  const [weatherRefreshError, setWeatherRefreshError] = useState<unknown>(null);
   const queryKey = ['energy-billing-documents', customerId] as const;
   const usageQueryKey = ['energy-usage-readings', customerId] as const;
   const weatherQueryKey = SHARED_WEATHER_QUERY_KEY;
@@ -116,7 +112,6 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
     refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
-  const weatherAutoSyncRef = useRef<string | null>(null);
   const documents = useMemo(
     () => documentsQuery.data ?? [],
     [documentsQuery.data],
@@ -131,51 +126,12 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   );
   const pageError = documentsQuery.error ?? moveInDateQuery.error;
 
-  useEffect(() => {
-    if (!temperatureDataEnabled) return;
-    const dataset = weatherQuery.data?.dataset;
-    if (!dataset || weatherQuery.isLoading || weatherQuery.error) return;
-    const lastSyncedAt = dataset.last_synced_at;
-    const isStale = !lastSyncedAt
-      || Date.now() - new Date(lastSyncedAt).getTime() > WEATHER_REFRESH_INTERVAL_MS;
-    const syncKey = lastSyncedAt ?? 'never';
-    if (!isStale || weatherAutoSyncRef.current === syncKey) return;
-
-    weatherAutoSyncRef.current = syncKey;
-    void refreshSharedWeatherHistory(false)
-      .then(() => queryClient.invalidateQueries({ queryKey: SHARED_WEATHER_QUERY_KEY }))
-      .catch((error) => {
-        setWeatherRefreshError(error);
-        console.error('Automatic shared weather refresh failed:', error);
-      });
-  }, [
-    queryClient,
-    temperatureDataEnabled,
-    weatherQuery.data?.dataset,
-    weatherQuery.error,
-    weatherQuery.isLoading,
-  ]);
-
   const refreshDocuments = async () => {
     await queryClient.invalidateQueries({ queryKey });
   };
 
   const refreshUsage = async () => {
     await queryClient.invalidateQueries({ queryKey: usageQueryKey });
-  };
-
-  const refreshWeather = async () => {
-    if (!isStaff || isRefreshingWeather) return;
-    setIsRefreshingWeather(true);
-    setWeatherRefreshError(null);
-    try {
-      await refreshSharedWeatherHistory(true);
-      await queryClient.invalidateQueries({ queryKey: weatherQueryKey });
-    } catch (error) {
-      setWeatherRefreshError(error);
-    } finally {
-      setIsRefreshingWeather(false);
-    }
   };
 
   const refreshNotes = async () => {
@@ -336,13 +292,11 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
               weatherObservations={weatherQuery.data?.observations ?? []}
               notes={notesQuery.data ?? []}
               isLoading={usageQuery.isLoading || weatherQuery.isLoading}
-              error={weatherQuery.error ?? weatherRefreshError}
+              error={weatherQuery.error}
               notesError={notesQuery.error}
               isStaff={isStaff}
               currentUserId={user?.id ?? null}
-              isRefreshingWeather={isRefreshingWeather}
               onUploadClick={() => setActiveTab('upload')}
-              onRefreshWeather={refreshWeather}
               onCreateNote={async (values) => {
                 await createEnergyHistoryNote(customerId, values);
                 await refreshNotes();
