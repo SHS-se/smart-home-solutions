@@ -178,6 +178,28 @@ test.describe('staff navigation shell', () => {
     await page.screenshot({ path: 'test-results/nav-staff-accounting.png', fullPage: false });
   });
 
+  test('recovers when a route chunk is briefly unavailable during deployment', async ({ page }) => {
+    let failedChunkRequests = 0;
+    await page.route('**/assets/Customers-*.js', async (route) => {
+      if (failedChunkRequests < 2) {
+        failedChunkRequests += 1;
+        await route.fulfill({
+          status: 200,
+          contentType: 'text/html',
+          body: '<!doctype html><title>Temporary SPA fallback</title>',
+        });
+        return;
+      }
+      await route.continue();
+    });
+
+    await login(page);
+    await page.goto('/portal/customers');
+
+    await expect(page.getByRole('heading', { name: 'Kunder', exact: true })).toBeVisible();
+    expect(failedChunkRequests).toBe(2);
+  });
+
   test('customer view shows persistent banner and customer-scoped nav', async ({ page }) => {
     await login(page);
     await page.goto(`/portal/customers/${CUSTOMER_ID}/billing`);
