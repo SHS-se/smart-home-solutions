@@ -26,7 +26,7 @@ import {
   YAxis,
 } from 'recharts';
 import { useLanguage } from '@/contexts/LanguageContext';
-import EnergyHistoryTimeline from '@/components/portal/energy-history/EnergyHistoryTimeline';
+import EnergyHistoryEventForm from '@/components/portal/energy-history/EnergyHistoryEventForm';
 import type { EnergyBillingChange } from '@/lib/energy-billing-changes';
 import type { EnergyBillingMonth } from '@/lib/energy-billing-series';
 import type {
@@ -48,14 +48,10 @@ interface EnergyHistoryOverviewProps {
   changes: EnergyBillingChange[];
   notes: EnergyHistoryNoteRecord[];
   notesError?: unknown;
-  isStaff: boolean;
-  currentUserId: string | null;
   moveInDate?: string | null;
   isSample?: boolean;
   onUploadClick?: () => void;
   onCreateNote: (values: TimelineNoteValues) => Promise<void>;
-  onUpdateNote: (noteId: string, values: TimelineNoteValues) => Promise<void>;
-  onDeleteNote: (noteId: string) => Promise<void>;
 }
 
 type PeriodPreset = '12' | '24' | '36' | 'all';
@@ -166,7 +162,7 @@ function HistoryTooltip({
       {monthNotes.length > 0 && (
         <div className="mt-3 space-y-2 border-t border-border pt-2">
           <p className="flex items-center gap-1.5 text-xs font-medium text-teal-700 dark:text-teal-300">
-            <span aria-hidden="true" className="text-[10px]">●</span>
+            <span aria-hidden="true" className="text-[10px]">◆</span>
             {language === 'sv' ? 'Registrerade händelser' : 'Recorded events'}
           </p>
           {monthNotes.map((note) => (
@@ -241,14 +237,10 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
   changes,
   notes,
   notesError,
-  isStaff,
-  currentUserId,
   moveInDate = null,
   isSample = false,
   onUploadClick,
   onCreateNote,
-  onUpdateNote,
-  onDeleteNote,
 }) => {
   const { t, language } = useLanguage();
   const locale = language === 'sv' ? 'sv-SE' : 'en-GB';
@@ -405,11 +397,11 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
       x={monthKey}
       yAxisId={yAxisId}
       stroke="#0f766e"
-      strokeWidth={2}
-      strokeOpacity={0.72}
+      strokeDasharray="4 4"
+      strokeOpacity={0.75}
       label={{
-        value: '●',
-        position: 'insideTop',
+        value: '◆',
+        position: 'top',
         fill: '#0f766e',
         fontSize: 10,
       }}
@@ -571,7 +563,7 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
               )}
               {visibleNotes.length > 0 && (
                 <Badge variant="outline" className="border-teal-300 text-teal-700 dark:border-teal-800 dark:text-teal-300">
-                  ● {visibleNotes.length} {t('händelser', 'events')}
+                  ◆ {visibleNotes.length} {t('händelser', 'events')}
                 </Badge>
               )}
             </div>
@@ -808,14 +800,9 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
         </CardContent>
       </Card>
 
-      <EnergyHistoryTimeline
-        notes={notes}
+      <EnergyHistoryEventForm
         loadError={notesError}
-        currentUserId={currentUserId}
-        isStaff={isStaff}
         onCreate={onCreateNote}
-        onUpdate={onUpdateNote}
-        onDelete={onDeleteNote}
       />
 
       <Card className="overflow-hidden border-violet-200/80 bg-gradient-to-br from-background to-violet-500/5 shadow-sm dark:border-violet-900/70">

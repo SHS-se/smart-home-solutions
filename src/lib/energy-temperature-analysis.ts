@@ -47,6 +47,47 @@ export interface EnergyTemperatureAnalysis {
   };
 }
 
+export interface WeatherNormalizedDailyPoint {
+  readingDate: string;
+  monthKey: string;
+  actualKwh: number;
+  normalizedKwh: number;
+}
+
+export interface WeatherNormalizedMonth {
+  monthKey: string;
+  averageActualKwh: number;
+  averageNormalizedKwh: number;
+  sampleCount: number;
+}
+
+export interface WeatherNormalizedHistory {
+  referenceTemperatureC: number;
+  referenceUsageKwh: number;
+  dailyPoints: WeatherNormalizedDailyPoint[];
+  months: WeatherNormalizedMonth[];
+}
+
+export interface EnergyHistoryEvent {
+  id: string;
+  eventDate: string;
+  eventText: string;
+}
+
+export interface WeatherNormalizedEventImpact {
+  eventId: string;
+  eventDate: string;
+  eventText: string;
+  beforeAverageKwh: number;
+  afterAverageKwh: number;
+  changeKwh: number;
+  changePercent: number;
+  annualizedChangeKwh: number;
+  beforeSampleCount: number;
+  afterSampleCount: number;
+  windowDays: number;
+}
+
 function temperatureBin(temperatureC: number): number {
   const rounded = temperatureC < 0
     ? -Math.round(Math.abs(temperatureC))
@@ -242,4 +283,124 @@ export function buildEnergyTemperatureAnalysis(
       regression: quadraticRegression(overallPoints),
     },
   };
+}
+
+export function buildWeatherNormalizedHistory(
+  analysis: EnergyTemperatureAnalysis,
+  referenceTemperatureC = 0,
+): WeatherNormalizedHistory | null {
+  const regression = analysis.overall.regression;
+  if (!regression) return null;
+
+  const referenceUsageKwh = predictTemperatureRegression(referenceTemperatureC, regression);
+  const dailyPoints = analysis.joinedPoints.map((point) => {
+    const expectedAtObservedTemperature = predictTemperatureRegression(
+      point.temperatureC,
+      regression,
+    );
+    return {
+      readingDate: point.readingDate,
+      monthKey: point.readingDate.slice(0, 7),
+      actualKwh: point.consumptionKwh,
+      normalizedKwh: point.consumptionKwh
+        - expectedAtObservedTemperature
+        + referenceUsageKwh,
+    };
+  });
+
+  const monthGroups = new Map<string, {
+    actualTotal: number;
+    normalizedTotal: number;
+    sampleCount: number;
+  }>();
+  for (const point of dailyPoints) {
+    const group = monthGroups.get(point.monthKey) ?? {
+      actualTotal: 0,
+      normalizedTotal: 0,
+      sampleCount: 0,
+    };
+    group.actualTotal += point.actualKwh;
+    group.normalizedTotal += point.normalizedKwh;
+    group.sampleCount += 1;
+    monthGroups.set(point.monthKey, group);
+  }
+
+  return {
+    referenceTemperatureC,
+    referenceUsageKwh,
+    dailyPoints,
+    months: Array.from(monthGroups.entries())
+      .sort(([monthA], [monthB]) => monthA.localeCompare(monthB))
+      .map(([monthKey, group]) => ({
+        monthKey,
+        averageActualKwh: group.actualTotal / group.sampleCount,
+        averageNormalizedKwh: group.normalizedTotal / group.sampleCount,
+        sampleCount: group.sampleCount,
+      })),
+  };
+}
+
+const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
+
+function utcDateNumber(date: string): number {
+  const timestamp = Date.parse(`${date}T00:00:00Z`);
+  if (!Number.isFinite(timestamp)) {
+    throw new Error(`Invalid energy-history date: ${date}`);
+  }
+  return timestamp;
+}
+
+function average(values: number[]): number {
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+export function buildWeatherNormalizedEventImpacts(
+  history: WeatherNormalizedHistory,
+  events: EnergyHistoryEvent[],
+  windowDays = 90,
+  minimumSampleCount = 30,
+): WeatherNormalizedEventImpact[] {
+  if (!Number.isInteger(windowDays) || windowDays < 1) {
+    throw new Error('Event impact window must be a positive number of whole days.');
+  }
+  if (!Number.isInteger(minimumSampleCount) || minimumSampleCount < 1) {
+    throw new Error('Event impact minimum sample count must be a positive integer.');
+  }
+
+  return events.flatMap((event) => {
+    const eventTimestamp = utcDateNumber(event.eventDate);
+    const before: number[] = [];
+    const after: number[] = [];
+
+    for (const point of history.dailyPoints) {
+      const pointTimestamp = utcDateNumber(point.readingDate);
+      const dayDifference = (pointTimestamp - eventTimestamp) / MILLISECONDS_PER_DAY;
+      if (dayDifference <= -1 && dayDifference >= -windowDays) {
+        before.push(point.normalizedKwh);
+      } else if (dayDifference >= 1 && dayDifference <= windowDays) {
+        after.push(point.normalizedKwh);
+      }
+    }
+
+    if (before.length < minimumSampleCount || after.length < minimumSampleCount) return [];
+
+    const beforeAverageKwh = average(before);
+    const afterAverageKwh = average(after);
+    const changeKwh = afterAverageKwh - beforeAverageKwh;
+    return [{
+      eventId: event.id,
+      eventDate: event.eventDate,
+      eventText: event.eventText,
+      beforeAverageKwh,
+      afterAverageKwh,
+      changeKwh,
+      changePercent: beforeAverageKwh === 0
+        ? 0
+        : (changeKwh / beforeAverageKwh) * 100,
+      annualizedChangeKwh: changeKwh * 365,
+      beforeSampleCount: before.length,
+      afterSampleCount: after.length,
+      windowDays,
+    }];
+  });
 }

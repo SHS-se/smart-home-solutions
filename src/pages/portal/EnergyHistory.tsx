@@ -29,13 +29,11 @@ import EnergyHistoryOverview from '@/components/portal/energy-history/EnergyHist
 import EnergyUsageCsvUploadCard from '@/components/portal/energy-history/EnergyUsageCsvUploadCard';
 import {
   createEnergyHistoryNote,
-  deleteEnergyHistoryNote,
   fetchEnergyHistoryNotes,
   fetchEnergyUsageReadings,
   fetchSharedWeatherDataset,
   fetchSharedWeatherObservations,
   type TimelineNoteValues,
-  updateEnergyHistoryNote,
 } from '@/lib/energy-temperature-storage';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -53,7 +51,7 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   customerId: propCustomerId,
   isStaffView = false,
 }) => {
-  const { customerData, isStaff, user } = useAuth();
+  const { customerData, isStaff } = useAuth();
   const { t } = useLanguage();
   const queryClient = useQueryClient();
   const {
@@ -152,16 +150,6 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
 
   const handleCreateNote = async (values: TimelineNoteValues) => {
     await createEnergyHistoryNote(customerId, values);
-    await refreshNotes();
-  };
-
-  const handleUpdateNote = async (noteId: string, values: TimelineNoteValues) => {
-    await updateEnergyHistoryNote(customerId, noteId, values);
-    await refreshNotes();
-  };
-
-  const handleDeleteNote = async (noteId: string) => {
-    await deleteEnergyHistoryNote(customerId, noteId);
     await refreshNotes();
   };
 
@@ -289,13 +277,9 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
               moveInDate={documents.length === 0 ? null : moveInDateQuery.data ?? null}
               notes={notesQuery.data ?? []}
               notesError={notesQuery.error}
-              isStaff={isStaff}
-              currentUserId={user?.id ?? null}
               isSample={documents.length === 0}
               onUploadClick={() => setActiveTab('upload')}
               onCreateNote={handleCreateNote}
-              onUpdateNote={handleUpdateNote}
-              onDeleteNote={handleDeleteNote}
             />
           </TabsContent>
           <TabsContent value="upload">
@@ -329,13 +313,7 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
                 || weatherDatasetQuery.isLoading
                 || weatherObservationsQuery.isLoading}
               error={weatherDatasetQuery.error ?? weatherObservationsQuery.error}
-              notesError={notesQuery.error}
-              isStaff={isStaff}
-              currentUserId={user?.id ?? null}
               onUploadClick={() => setActiveTab('upload')}
-              onCreateNote={handleCreateNote}
-              onUpdateNote={handleUpdateNote}
-              onDeleteNote={handleDeleteNote}
             />
           </TabsContent>
         </Tabs>

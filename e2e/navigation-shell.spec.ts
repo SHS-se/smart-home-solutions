@@ -44,13 +44,31 @@ const viewedCustomer = {
   is_test: true,
 };
 
-const temperatureChartReadings = [
+const temperatureChartBaseReadings: Array<[string, number]> = [
   ['2024-01-03', 152],
   ['2024-02-04', 108],
   ['2024-03-05', 72],
   ['2025-01-06', 136],
   ['2025-02-07', 95],
   ['2025-03-08', 64],
+];
+
+const temperatureImpactSeries = Array.from({ length: 181 }, (_, index) => {
+  const date = new Date(Date.UTC(2025, 8, 4 + index));
+  const readingDate = date.toISOString().slice(0, 10);
+  const temperatureC = Number((4 + (12 * Math.sin(index / 28))).toFixed(1));
+  const expectedKwh = 95 - (3.2 * temperatureC) + (0.08 * (temperatureC ** 2));
+  const eventAdjustmentKwh = index < 90 ? 14 : index > 90 ? -8 : 0;
+  return {
+    readingDate,
+    temperatureC,
+    consumptionKwh: Number((expectedKwh + eventAdjustmentKwh).toFixed(1)),
+  };
+});
+
+const temperatureChartReadings = [
+  ...temperatureChartBaseReadings,
+  ...temperatureImpactSeries.map((point) => [point.readingDate, point.consumptionKwh] as const),
 ].map(([reading_date, consumption_kwh], index) => ({
   id: `10000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
   customer_id: CUSTOMER_ID,
@@ -61,13 +79,18 @@ const temperatureChartReadings = [
   updated_at: '2026-07-28T00:00:00Z',
 }));
 
-const temperatureChartObservations = [
+const temperatureChartBaseObservations: Array<[string, number]> = [
   ['2024-01-03', -6],
   ['2024-02-04', 1],
   ['2024-03-05', 8],
   ['2025-01-06', -5],
   ['2025-02-07', 2],
   ['2025-03-08', 9],
+];
+
+const temperatureChartObservations = [
+  ...temperatureChartBaseObservations,
+  ...temperatureImpactSeries.map((point) => [point.readingDate, point.temperatureC] as const),
 ].map(([observed_on, temperature_c], index) => ({
   id: `30000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
   dataset_key: 'stockholm-taby',
@@ -326,7 +349,7 @@ test.describe('staff navigation shell', () => {
     await expect(page.getByRole('button', { name: /Uppdatera väderdata/ })).toHaveCount(0);
     expect(weatherUrl.searchParams.getAll('observed_on')).toEqual([
       'gte.2024-01-03',
-      'lte.2025-03-08',
+      'lte.2026-03-03',
     ]);
   });
 
@@ -335,15 +358,15 @@ test.describe('staff navigation shell', () => {
     await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history`);
 
     const events = page.getByTestId('energy-history-events');
-    await expect(events.getByRole('heading', { name: 'Händelsetidslinje' })).toBeVisible();
+    await expect(events.getByRole('heading', { name: 'Lägg till händelse' })).toBeVisible();
     await expect(events.getByLabel('Datum')).toBeVisible();
     await expect(events.getByLabel('Händelse')).toBeVisible();
     await expect(events.getByLabel('Rubrik')).toHaveCount(0);
     await expect(events.getByLabel('Beskrivning')).toHaveCount(0);
-    await expect(events.getByText('Installerade 3-glasfönster och nya ytterdörrar')).toBeVisible();
+    await expect(events.getByText('Installerade 3-glasfönster och nya ytterdörrar')).toHaveCount(0);
 
-    await expect(page.getByText('● 1 händelser')).toBeVisible();
-    await expect(page.locator('line[stroke="#0f766e"]')).toHaveCount(2);
+    await expect(page.getByText('◆ 1 händelser')).toBeVisible();
+    await expect(page.locator('line[stroke="#0f766e"][stroke-dasharray="4 4"]')).toHaveCount(2);
     await page.screenshot({ path: 'test-results/energy-history-events.png', fullPage: true });
   });
 
@@ -351,6 +374,10 @@ test.describe('staff navigation shell', () => {
     await login(page);
     await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history`);
     await page.getByRole('tab', { name: 'Temperatur' }).click();
+
+    await expect(page.getByTestId('weather-normalized-history-chart')).toBeVisible();
+    await expect(page.getByTestId('event-impact-chart')).toBeVisible();
+    await expect(page.getByTestId('event-impact-chart').locator('.recharts-bar-rectangle')).toHaveCount(2);
 
     const yearControls = page.getByRole('group', { name: 'Visa årsserier' });
     await expect(yearControls).toBeVisible();
@@ -365,6 +392,8 @@ test.describe('staff navigation shell', () => {
     await expect(overallControls.getByRole('button', { name: 'Genomsnittlig energianvändning' })).toHaveAttribute('aria-pressed', 'true');
     await overallControls.getByRole('button', { name: 'Trendlinje' }).click();
     await expect(overallControls.getByRole('button', { name: 'Trendlinje' })).toHaveAttribute('aria-pressed', 'false');
+    await page.waitForTimeout(1200);
+    await page.screenshot({ path: 'test-results/energy-temperature-normalized.png', fullPage: true });
   });
 
   test('staff receives a portal-wide warning when the shared weather sync fails', async ({ page }) => {
