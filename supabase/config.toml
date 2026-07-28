@@ -82,3 +82,8 @@ verify_jwt = false
 
 [functions.stripe-webhook]
 verify_jwt = false
+
+# The handler enforces staff auth for forced refreshes and an atomic stale-data
+# claim for unattended weekly refreshes invoked by pg_cron.
+[functions.sync-weather-history]
+verify_jwt = false

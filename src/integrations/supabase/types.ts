@@ -1316,6 +1316,250 @@ export type Database = {
           },
         ]
       }
+      energy_history_notes: {
+        Row: {
+          created_at: string
+          created_by: string
+          customer_id: string
+          details: string
+          id: string
+          note_date: string
+          title: string
+          updated_at: string
+          updated_by: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          customer_id: string
+          details: string
+          id?: string
+          note_date: string
+          title: string
+          updated_at?: string
+          updated_by: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          customer_id?: string
+          details?: string
+          id?: string
+          note_date?: string
+          title?: string
+          updated_at?: string
+          updated_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "energy_history_notes_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_history_notes_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers_with_identity"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      energy_usage_import_batches: {
+        Row: {
+          created_at: string
+          customer_id: string
+          file_sha256: string
+          id: string
+          imported_by: string
+          original_file_name: string
+          reading_count: number
+        }
+        Insert: {
+          created_at?: string
+          customer_id: string
+          file_sha256: string
+          id?: string
+          imported_by: string
+          original_file_name: string
+          reading_count: number
+        }
+        Update: {
+          created_at?: string
+          customer_id?: string
+          file_sha256?: string
+          id?: string
+          imported_by?: string
+          original_file_name?: string
+          reading_count?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "energy_usage_import_batches_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_usage_import_batches_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers_with_identity"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_usage_import_batches_imported_by_fkey"
+            columns: ["imported_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      energy_usage_readings: {
+        Row: {
+          consumption_kwh: number
+          created_at: string
+          customer_id: string
+          id: string
+          reading_date: string
+          source_import_id: string
+          updated_at: string
+        }
+        Insert: {
+          consumption_kwh: number
+          created_at?: string
+          customer_id: string
+          id?: string
+          reading_date: string
+          source_import_id: string
+          updated_at?: string
+        }
+        Update: {
+          consumption_kwh?: number
+          created_at?: string
+          customer_id?: string
+          id?: string
+          reading_date?: string
+          source_import_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "energy_usage_readings_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_usage_readings_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers_with_identity"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_usage_readings_source_import_id_fkey"
+            columns: ["source_import_id"]
+            isOneToOne: false
+            referencedRelation: "energy_usage_import_batches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      energy_weather_datasets: {
+        Row: {
+          created_at: string
+          dataset_key: string
+          display_name: string
+          last_observation_date: string | null
+          last_synced_at: string | null
+          latitude: number
+          longitude: number
+          source_name: string
+          source_url: string
+          station_id: string
+          sync_error: string | null
+          sync_started_at: string | null
+          unit: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          dataset_key: string
+          display_name: string
+          last_observation_date?: string | null
+          last_synced_at?: string | null
+          latitude: number
+          longitude: number
+          source_name: string
+          source_url: string
+          station_id: string
+          sync_error?: string | null
+          sync_started_at?: string | null
+          unit?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          dataset_key?: string
+          display_name?: string
+          last_observation_date?: string | null
+          last_synced_at?: string | null
+          latitude?: number
+          longitude?: number
+          source_name?: string
+          source_url?: string
+          station_id?: string
+          sync_error?: string | null
+          sync_started_at?: string | null
+          unit?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      energy_weather_observations: {
+        Row: {
+          created_at: string
+          dataset_key: string
+          id: string
+          observed_on: string
+          quality_code: string | null
+          temperature_c: number
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          dataset_key: string
+          id?: string
+          observed_on: string
+          quality_code?: string | null
+          temperature_c: number
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          dataset_key?: string
+          id?: string
+          observed_on?: string
+          quality_code?: string | null
+          temperature_c?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "energy_weather_observations_dataset_key_fkey"
+            columns: ["dataset_key"]
+            isOneToOne: false
+            referencedRelation: "energy_weather_datasets"
+            referencedColumns: ["dataset_key"]
+          },
+        ]
+      }
       energy_home_settings: {
         Row: {
           created_at: string
@@ -3382,8 +3626,13 @@ export type Database = {
         Args: { _customer_id: string }
         Returns: boolean
       }
+      can_access_shared_energy_history: { Args: never; Returns: boolean }
       can_access_ticket_storage: {
         Args: { storage_path: string }
+        Returns: boolean
+      }
+      claim_energy_weather_sync: {
+        Args: { p_dataset_key: string; p_force?: boolean }
         Returns: boolean
       }
       create_energy_billing_document: {
@@ -3391,6 +3640,15 @@ export type Database = {
           p_customer_id: string
           p_document: Json
           p_line_items: Json
+        }
+        Returns: string
+      }
+      import_energy_usage_readings: {
+        Args: {
+          p_customer_id: string
+          p_file_sha256: string
+          p_original_file_name: string
+          p_readings: Json
         }
         Returns: string
       }

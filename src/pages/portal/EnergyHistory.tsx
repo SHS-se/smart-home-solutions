@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
@@ -23,8 +23,20 @@ import {
   ENERGY_HISTORY_SAMPLE_SERIES,
 } from '@/lib/energy-history-sample';
 import EnergyDocumentUploadCard from '@/components/portal/energy-history/EnergyDocumentUploadCard';
+import EnergyTemperatureAnalysis from '@/components/portal/energy-history/EnergyTemperatureAnalysis';
 import EnergyHistoryDocuments from '@/components/portal/energy-history/EnergyHistoryDocuments';
 import EnergyHistoryOverview from '@/components/portal/energy-history/EnergyHistoryOverview';
+import EnergyUsageCsvUploadCard from '@/components/portal/energy-history/EnergyUsageCsvUploadCard';
+import {
+  createEnergyHistoryNote,
+  deleteEnergyHistoryNote,
+  fetchEnergyHistoryNotes,
+  fetchEnergyUsageReadings,
+  fetchSharedWeatherHistory,
+  refreshSharedWeatherHistory,
+  updateEnergyHistoryNote,
+  WEATHER_REFRESH_INTERVAL_MS,
+} from '@/lib/energy-temperature-storage';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -34,6 +46,8 @@ interface EnergyHistoryProps {
   customerId?: string;
   isStaffView?: boolean;
 }
+
+const SHARED_WEATHER_QUERY_KEY = ['energy-shared-weather-history'] as const;
 
 const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   customerId: propCustomerId,
@@ -49,7 +63,12 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   } = useSubscription();
   const customerId = propCustomerId || customerData?.id || '';
   const [activeTab, setActiveTab] = useState('overview');
+  const [isRefreshingWeather, setIsRefreshingWeather] = useState(false);
+  const [weatherRefreshError, setWeatherRefreshError] = useState<unknown>(null);
   const queryKey = ['energy-billing-documents', customerId] as const;
+  const usageQueryKey = ['energy-usage-readings', customerId] as const;
+  const weatherQueryKey = SHARED_WEATHER_QUERY_KEY;
+  const notesQueryKey = ['energy-history-notes', customerId] as const;
   const documentsQuery = useQuery({
     queryKey,
     queryFn: () => fetchEnergyBillingDocuments(customerId),
@@ -68,6 +87,34 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
     refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
+  const usageQuery = useQuery({
+    queryKey: usageQueryKey,
+    queryFn: () => fetchEnergyUsageReadings(customerId),
+    enabled: Boolean(customerId && isSubscribed && !subscriptionLoading),
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+  });
+  const weatherQuery = useQuery({
+    queryKey: weatherQueryKey,
+    queryFn: fetchSharedWeatherHistory,
+    enabled: Boolean(customerId && isSubscribed && !subscriptionLoading),
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+  });
+  const notesQuery = useQuery({
+    queryKey: notesQueryKey,
+    queryFn: () => fetchEnergyHistoryNotes(customerId),
+    enabled: Boolean(customerId && isSubscribed && !subscriptionLoading),
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+  });
+  const weatherAutoSyncRef = useRef<string | null>(null);
   const documents = useMemo(
     () => documentsQuery.data ?? [],
     [documentsQuery.data],
@@ -82,8 +129,48 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   );
   const pageError = documentsQuery.error ?? moveInDateQuery.error;
 
+  useEffect(() => {
+    const dataset = weatherQuery.data?.dataset;
+    if (!dataset || weatherQuery.isLoading || weatherQuery.error) return;
+    const lastSyncedAt = dataset.last_synced_at;
+    const isStale = !lastSyncedAt
+      || Date.now() - new Date(lastSyncedAt).getTime() > WEATHER_REFRESH_INTERVAL_MS;
+    const syncKey = lastSyncedAt ?? 'never';
+    if (!isStale || weatherAutoSyncRef.current === syncKey) return;
+
+    weatherAutoSyncRef.current = syncKey;
+    void refreshSharedWeatherHistory(false)
+      .then(() => queryClient.invalidateQueries({ queryKey: SHARED_WEATHER_QUERY_KEY }))
+      .catch((error) => {
+        setWeatherRefreshError(error);
+        console.error('Automatic shared weather refresh failed:', error);
+      });
+  }, [queryClient, weatherQuery.data?.dataset, weatherQuery.error, weatherQuery.isLoading]);
+
   const refreshDocuments = async () => {
     await queryClient.invalidateQueries({ queryKey });
+  };
+
+  const refreshUsage = async () => {
+    await queryClient.invalidateQueries({ queryKey: usageQueryKey });
+  };
+
+  const refreshWeather = async () => {
+    if (!isStaff || isRefreshingWeather) return;
+    setIsRefreshingWeather(true);
+    setWeatherRefreshError(null);
+    try {
+      await refreshSharedWeatherHistory(true);
+      await queryClient.invalidateQueries({ queryKey: weatherQueryKey });
+    } catch (error) {
+      setWeatherRefreshError(error);
+    } finally {
+      setIsRefreshingWeather(false);
+    }
+  };
+
+  const refreshNotes = async () => {
+    await queryClient.invalidateQueries({ queryKey: notesQueryKey });
   };
 
   const header = (
@@ -197,10 +284,11 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
         </Alert>
       ) : (
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5">
-          <TabsList className="grid w-full max-w-lg grid-cols-3">
+          <TabsList className="grid w-full max-w-2xl grid-cols-4">
             <TabsTrigger value="overview">{t('Översikt', 'Overview')}</TabsTrigger>
             <TabsTrigger value="upload">{t('Ladda upp', 'Upload')}</TabsTrigger>
             <TabsTrigger value="documents">{t('Dokument', 'Documents')}</TabsTrigger>
+            <TabsTrigger value="temperature">{t('Temperaturanalys', 'Temperature analysis')}</TabsTrigger>
           </TabsList>
           <TabsContent value="overview">
             <EnergyHistoryOverview
@@ -223,10 +311,41 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
                 kind="electricity"
                 onImported={refreshDocuments}
               />
+              <EnergyUsageCsvUploadCard
+                customerId={customerId}
+                onImported={refreshUsage}
+              />
             </div>
           </TabsContent>
           <TabsContent value="documents">
             <EnergyHistoryDocuments documents={documents} />
+          </TabsContent>
+          <TabsContent value="temperature">
+            <EnergyTemperatureAnalysis
+              readings={usageQuery.data ?? []}
+              weatherDataset={weatherQuery.data?.dataset ?? null}
+              weatherObservations={weatherQuery.data?.observations ?? []}
+              notes={notesQuery.data ?? []}
+              isLoading={usageQuery.isLoading || weatherQuery.isLoading}
+              error={weatherQuery.error ?? weatherRefreshError}
+              notesError={notesQuery.error}
+              isStaff={isStaff}
+              isRefreshingWeather={isRefreshingWeather}
+              onUploadClick={() => setActiveTab('upload')}
+              onRefreshWeather={refreshWeather}
+              onCreateNote={async (values) => {
+                await createEnergyHistoryNote(customerId, values);
+                await refreshNotes();
+              }}
+              onUpdateNote={async (noteId, values) => {
+                await updateEnergyHistoryNote(customerId, noteId, values);
+                await refreshNotes();
+              }}
+              onDeleteNote={async (noteId) => {
+                await deleteEnergyHistoryNote(customerId, noteId);
+                await refreshNotes();
+              }}
+            />
           </TabsContent>
         </Tabs>
       )}
