@@ -1,5 +1,6 @@
 import type { Json } from "@/integrations/supabase/types";
 import React, { useEffect, useState, useMemo } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Loader2, Save, Pencil, X, Check, Trash2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -59,6 +60,7 @@ interface HomeProfileFormProps {
 const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, isStaffView = false, homeId }) => {
   const { toast } = useToast();
   const { t } = useLanguage();
+  const queryClient = useQueryClient();
 
   const [questions, setQuestions] = useState<Question[]>([]);
   const [questionOptions, setQuestionOptions] = useState<Record<string, QuestionOption[]>>({});
@@ -175,6 +177,9 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
       }));
       const { error } = await supabase.from('home_answers').upsert(upserts, { onConflict: 'home_id,question_id' });
       if (error) throw error;
+      await queryClient.invalidateQueries({
+        queryKey: ['home-profile-functional-answer', customerId],
+      });
       toast({ title: t('Sparat!', 'Saved!') });
     } catch (err) {
       toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
@@ -268,6 +273,16 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
             onChange={e => setAnswer(q.id, e.target.value ? Number(e.target.value) : null)}
             placeholder="0"
             className="max-w-[200px]"
+          />
+        );
+
+      case 'date':
+        return (
+          <Input
+            type="date"
+            value={typeof answers[q.id] === 'string' ? answers[q.id] as string : ''}
+            onChange={e => setAnswer(q.id, e.target.value || null)}
+            className="max-w-[220px]"
           />
         );
 

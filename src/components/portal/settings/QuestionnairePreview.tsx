@@ -77,6 +77,16 @@ const QuestionnairePreview: React.FC<QuestionnairePreviewProps> = ({
           />
         );
 
+      case 'date':
+        return (
+          <Input
+            type="date"
+            value={typeof answers[q.id] === 'string' ? answers[q.id] as string : ''}
+            onChange={e => setAnswer(q.id, e.target.value || null)}
+            className="max-w-[220px]"
+          />
+        );
+
       case 'single_choice':
         if (qOptions.length > 0) {
           const currentVal = typeof answers[q.id] === 'string' ? answers[q.id] as string : '';

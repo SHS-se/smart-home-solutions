@@ -28,6 +28,7 @@ import {
 import { useLanguage } from '@/contexts/LanguageContext';
 import type { EnergyBillingChange } from '@/lib/energy-billing-changes';
 import type { EnergyBillingMonth } from '@/lib/energy-billing-series';
+import { getEnergyCoverageIssues } from '@/lib/energy-history-coverage';
 import {
   estimateAnnualEnergyHistory,
   type AnnualizedMetric,
@@ -40,6 +41,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 interface EnergyHistoryOverviewProps {
   series: EnergyBillingMonth[];
   changes: EnergyBillingChange[];
+  moveInDate?: string | null;
   isSample?: boolean;
   onUploadClick?: () => void;
 }
@@ -206,6 +208,7 @@ function AnnualMetricCard({
 const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
   series,
   changes,
+  moveInDate = null,
   isSample = false,
   onUploadClick,
 }) => {
@@ -282,9 +285,14 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
     }
     return row;
   }), [filteredSeries, monthOnlyFormatter, years]);
-  const incompleteMonths = filteredSeries.filter(
-    (month) => month.gridCoverage !== 'complete' || month.electricityCoverage !== 'complete',
+  const allCoverageIssues = useMemo(
+    () => getEnergyCoverageIssues(series, moveInDate),
+    [series, moveInDate],
   );
+  const coverageIssues = useMemo(() => allCoverageIssues.filter((issue) => (
+    (period === 'all' || !firstVisibleMonth || issue.monthKey >= firstVisibleMonth)
+    && (!lastVisibleMonth || issue.monthKey <= lastVisibleMonth)
+  )), [allCoverageIssues, firstVisibleMonth, lastVisibleMonth, period]);
 
   const formatMonthKey = (monthKey: string) => monthFormatter.format(
     new Date(`${monthKey}-01T00:00:00Z`),
@@ -456,7 +464,7 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
         />
       </div>
 
-      {incompleteMonths.length > 0 ? (
+      {coverageIssues.length > 0 ? (
         <Alert className="border-amber-300 bg-amber-50/60 dark:border-amber-900 dark:bg-amber-950/20">
           <TriangleAlert className="h-4 w-4 text-amber-700 dark:text-amber-400" />
           <AlertTitle>{t('Luckor eller delperioder upptäckta', 'Gaps or partial periods detected')}</AlertTitle>
@@ -468,14 +476,14 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
               )}
             </p>
             <div className="flex flex-wrap gap-2">
-              {incompleteMonths.slice(0, 8).map((month) => (
-                <Badge key={month.monthKey} variant="outline" className="bg-background font-normal">
-                  {formatMonthKey(month.monthKey)} · {t('elnät', 'grid')} {coverageLabel(month.gridCoverage)} · {t('elhandel', 'electricity')} {coverageLabel(month.electricityCoverage)}
+              {coverageIssues.slice(0, 8).map((issue) => (
+                <Badge key={issue.monthKey} variant="outline" className="bg-background font-normal">
+                  {formatMonthKey(issue.monthKey)} · {t('elnät', 'grid')} {coverageLabel(issue.gridCoverage)} · {t('elhandel', 'electricity')} {coverageLabel(issue.electricityCoverage)}
                 </Badge>
               ))}
-              {incompleteMonths.length > 8 && (
+              {coverageIssues.length > 8 && (
                 <Badge variant="secondary">
-                  +{incompleteMonths.length - 8} {t('månader', 'months')}
+                  +{coverageIssues.length - 8} {t('månader', 'months')}
                 </Badge>
               )}
             </div>

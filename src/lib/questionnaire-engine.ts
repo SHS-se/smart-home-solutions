@@ -7,7 +7,7 @@
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
-export type QuestionType = 'text' | 'boolean' | 'single_choice' | 'multi_choice' | 'number';
+export type QuestionType = 'text' | 'boolean' | 'single_choice' | 'multi_choice' | 'number' | 'date';
 
 export type Operator =
   | 'equals' | 'not_equals'
@@ -76,6 +76,7 @@ const OPERATOR_MAP: Record<QuestionType, Operator[]> = {
   boolean: ['is_true', 'is_false'],
   text: ['equals', 'not_equals', 'contains', 'not_contains'],
   number: ['equals', 'not_equals', 'gt', 'lt', 'gte', 'lte'],
+  date: ['equals', 'not_equals', 'gt', 'lt', 'gte', 'lte'],
   single_choice: ['equals', 'not_equals', 'is_any_of', 'is_not_any_of'],
   multi_choice: ['contains', 'not_contains', 'is_any_of', 'is_not_any_of'],
 };
@@ -105,9 +106,29 @@ export const TYPE_LABELS: Record<QuestionType, { sv: string; en: string }> = {
   single_choice: { sv: 'Enkelval', en: 'Single choice' },
   multi_choice: { sv: 'Flerval', en: 'Multi choice' },
   number: { sv: 'Nummer', en: 'Number' },
+  date: { sv: 'Datum', en: 'Date' },
 };
 
 // ── Rule Evaluation ─────────────────────────────────────────────────────────
+
+function compareOrderedValues(
+  answer: unknown,
+  compareValue: unknown,
+  predicate: (difference: number) => boolean,
+): boolean {
+  if (typeof answer === 'number' && typeof compareValue === 'number') {
+    return predicate(answer - compareValue);
+  }
+  if (
+    typeof answer === 'string'
+    && typeof compareValue === 'string'
+    && /^\d{4}-\d{2}-\d{2}$/.test(answer)
+    && /^\d{4}-\d{2}-\d{2}$/.test(compareValue)
+  ) {
+    return predicate(answer.localeCompare(compareValue));
+  }
+  return false;
+}
 
 function checkOperator(operator: Operator, answer: unknown, compareValue: unknown): boolean {
   switch (operator) {
@@ -132,13 +153,13 @@ function checkOperator(operator: Operator, answer: unknown, compareValue: unknow
       return true;
     }
     case 'gt':
-      return typeof answer === 'number' && typeof compareValue === 'number' && answer > compareValue;
+      return compareOrderedValues(answer, compareValue, (difference) => difference > 0);
     case 'lt':
-      return typeof answer === 'number' && typeof compareValue === 'number' && answer < compareValue;
+      return compareOrderedValues(answer, compareValue, (difference) => difference < 0);
     case 'gte':
-      return typeof answer === 'number' && typeof compareValue === 'number' && answer >= compareValue;
+      return compareOrderedValues(answer, compareValue, (difference) => difference >= 0);
     case 'lte':
-      return typeof answer === 'number' && typeof compareValue === 'number' && answer <= compareValue;
+      return compareOrderedValues(answer, compareValue, (difference) => difference <= 0);
     case 'is_any_of': {
       if (!Array.isArray(compareValue)) return false;
       if (Array.isArray(answer)) return answer.some(v => compareValue.includes(v));
@@ -267,6 +288,7 @@ export function parseAnswerText(text: string, questionType: QuestionType): unkno
       } catch { /* fall through */ }
       return text ? [text] : [];
     case 'single_choice':
+    case 'date':
     case 'text':
     default:
       return text;

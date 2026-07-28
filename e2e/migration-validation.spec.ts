@@ -236,6 +236,8 @@ async function answerFirstHomeProfileQuestion(page: Page): Promise<SavedHomeAnsw
     await question.getByRole('switch').click();
   } else if (questionType === 'number') {
     await question.locator('input[type="number"]').fill('2');
+  } else if (questionType === 'date') {
+    await question.locator('input[type="date"]').fill('2021-03-13');
   } else if (questionType === 'single_choice') {
     await question.getByRole('radio').first().click();
   } else if (questionType === 'multi_choice') {
@@ -251,6 +253,9 @@ async function answerFirstHomeProfileQuestion(page: Page): Promise<SavedHomeAnsw
 
   if (questionType === 'number') {
     return { questionId, questionType, expectedNumber: '2' };
+  }
+  if (questionType === 'date') {
+    return { questionId, questionType, expectedText: '2021-03-13' };
   }
   if (questionType === 'text') {
     return {
@@ -277,6 +282,11 @@ async function verifyHomeProfileAnswerPersists(page: Page, saved: SavedHomeAnswe
 
   if (saved.questionType === 'number') {
     await expect(question.locator('input[type="number"]')).toHaveValue(saved.expectedNumber ?? '2');
+    return;
+  }
+
+  if (saved.questionType === 'date') {
+    await expect(question.locator('input[type="date"]')).toHaveValue(saved.expectedText ?? '2021-03-13');
     return;
   }
 

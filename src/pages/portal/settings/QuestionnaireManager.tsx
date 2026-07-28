@@ -1,6 +1,6 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, Plus, GripVertical, Pencil, Check, X, ChevronRight, ChevronDown, Eye, ArrowRight, ArrowLeft, Filter, Trash2 } from 'lucide-react';
+import { Loader2, Plus, GripVertical, Pencil, Check, X, ChevronRight, ChevronDown, Eye, ArrowRight, ArrowLeft, Filter, Trash2, Link2, Unplug } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -34,6 +34,12 @@ import { flattenTree, TYPE_LABELS, type TreeQuestion, type DisplayRule, type Que
 import OptionsEditor, { type QuestionOption } from '@/components/portal/settings/OptionsEditor';
 import ConditionsEditor from '@/components/portal/settings/ConditionsEditor';
 import QuestionnairePreview from '@/components/portal/settings/QuestionnairePreview';
+import QuestionFunctionalityOverview from '@/components/portal/settings/QuestionFunctionalityOverview';
+import QuestionFunctionalitySelect from '@/components/portal/settings/QuestionFunctionalitySelect';
+import {
+  getHomeQuestionFunctionality,
+  type HomeQuestionFunctionality,
+} from '@/lib/home-question-functionality';
 
 interface Question extends TreeQuestion {
   question_text: string;
@@ -41,6 +47,7 @@ interface Question extends TreeQuestion {
   display_on_contact_form: boolean;
   sort_order: number;
   allow_other: boolean;
+  semantic_key: string | null;
 }
 
 // ── Sortable Row ────────────────────────────────────────────────────────────
@@ -48,9 +55,9 @@ interface Question extends TreeQuestion {
 interface SortableRowProps {
   question: Question & { depth: number };
   editingId: string | null;
-  editDraft: { sv: string; en: string; type: string };
+  editDraft: { sv: string; en: string; type: string; semanticKey: string | null };
   setEditingId: (id: string | null) => void;
-  setEditDraft: (d: { sv: string; en: string; type: string }) => void;
+  setEditDraft: (d: { sv: string; en: string; type: string; semanticKey: string | null }) => void;
   onSaveEdit: (id: string) => void;
   onToggleActive: (id: string, active: boolean) => void;
   onToggleContactForm: (id: string, show: boolean) => void;
@@ -114,6 +121,11 @@ const SortableRow: React.FC<SortableRowProps> = ({
   };
 
   const typeLabel = TYPE_LABELS[question.question_type as QuestionType];
+  const functionality = getHomeQuestionFunctionality(question.semantic_key);
+  const hasUnknownFunctionality = Boolean(question.semantic_key && !functionality);
+  const hasWrongFunctionalityType = Boolean(
+    functionality && functionality.type !== question.question_type,
+  );
 
   return (
     <div
@@ -147,13 +159,37 @@ const SortableRow: React.FC<SortableRowProps> = ({
               <Filter className="w-3 h-3" /> {rules.length}
             </Badge>
           )}
+          {functionality ? (
+            <Badge
+              variant={hasWrongFunctionalityType ? 'destructive' : 'outline'}
+              className="text-[10px] gap-1"
+            >
+              <Link2 className="w-3 h-3" />
+              {t(functionality.label.sv, functionality.label.en)}
+              {hasWrongFunctionalityType ? ` · ${t('fel typ', 'wrong type')}` : ''}
+            </Badge>
+          ) : hasUnknownFunctionality ? (
+            <Badge variant="destructive" className="text-[10px] gap-1">
+              <Unplug className="w-3 h-3" />
+              {t('Används inte längre', 'No current use')}
+            </Badge>
+          ) : (
+            <Badge variant="secondary" className="text-[10px]">
+              {t('Endast information', 'Informational only')}
+            </Badge>
+          )}
           <Button
             size="icon"
             variant="ghost"
             className="shrink-0 h-7 w-7"
             onClick={() => {
               setEditingId(question.id);
-              setEditDraft({ sv: question.question_text, en: question.question_text_en, type: question.question_type });
+              setEditDraft({
+                sv: question.question_text,
+                en: question.question_text_en,
+                type: functionality?.type ?? question.question_type,
+                semanticKey: question.semantic_key,
+              });
             }}
           >
             <Pencil className="w-3.5 h-3.5" />
@@ -196,7 +232,11 @@ const SortableRow: React.FC<SortableRowProps> = ({
               </div>
               <div>
                 <Label className="text-xs text-muted-foreground">{t('Typ', 'Type')}</Label>
-                <Select value={editDraft.type} onValueChange={v => setEditDraft({ ...editDraft, type: v })}>
+                <Select
+                  value={editDraft.type}
+                  onValueChange={v => setEditDraft({ ...editDraft, type: v })}
+                  disabled={Boolean(editDraft.semanticKey)}
+                >
                   <SelectTrigger className="w-[160px]">
                     <SelectValue />
                   </SelectTrigger>
@@ -206,6 +246,34 @@ const SortableRow: React.FC<SortableRowProps> = ({
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground">
+                  {t('Används av webbplatsen', 'Used by the website')}
+                </Label>
+                <QuestionFunctionalitySelect
+                  value={editDraft.semanticKey}
+                  questions={allQuestions}
+                  currentQuestionId={question.id}
+                  onChange={(definition) => setEditDraft({
+                    ...editDraft,
+                    semanticKey: definition?.key ?? null,
+                    type: definition?.type ?? editDraft.type,
+                  })}
+                  t={t}
+                  className="w-full max-w-md"
+                />
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  {editDraft.semanticKey
+                    ? t(
+                        'Svarstypen styrs av den valda funktionen.',
+                        'The selected feature determines the answer type.',
+                      )
+                    : t(
+                        'Frågan visas och sparas, men svaret används inte automatiskt någon annanstans.',
+                        'The question is displayed and saved, but its answer is not used automatically elsewhere.',
+                      )}
+                </p>
               </div>
               <div className="flex gap-2">
                 <Button size="sm" variant="ghost" onClick={() => onSaveEdit(question.id)}>
@@ -311,16 +379,23 @@ const QuestionnaireManager: React.FC = () => {
   const [loadingData, setLoadingData] = useState(true);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [showPreview, setShowPreview] = useState(false);
+  const addQuestionRef = useRef<HTMLDivElement>(null);
 
   // Add question form
   const [newQuestionSv, setNewQuestionSv] = useState('');
   const [newQuestionEn, setNewQuestionEn] = useState('');
   const [newQuestionType, setNewQuestionType] = useState<string>('text');
+  const [newQuestionSemanticKey, setNewQuestionSemanticKey] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
 
   // Edit state
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editDraft, setEditDraft] = useState({ sv: '', en: '', type: 'text' });
+  const [editDraft, setEditDraft] = useState({
+    sv: '',
+    en: '',
+    type: 'text',
+    semanticKey: null as string | null,
+  });
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -400,6 +475,7 @@ const QuestionnaireManager: React.FC = () => {
         question_text: newQuestionSv.trim(),
         question_text_en: newQuestionEn.trim(),
         question_type: newQuestionType,
+        semantic_key: newQuestionSemanticKey,
         sort_order: maxOrder,
         order_index: maxOrder,
       });
@@ -407,6 +483,7 @@ const QuestionnaireManager: React.FC = () => {
       setNewQuestionSv('');
       setNewQuestionEn('');
       setNewQuestionType('text');
+      setNewQuestionSemanticKey(null);
       await fetchAll();
     } catch (err) {
       toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
@@ -422,9 +499,16 @@ const QuestionnaireManager: React.FC = () => {
         question_text: editDraft.sv.trim(),
         question_text_en: editDraft.en.trim(),
         question_type: editDraft.type,
+        semantic_key: editDraft.semanticKey,
       }).eq('id', id);
       if (error) throw error;
-      setQuestions(prev => prev.map(q => q.id === id ? { ...q, question_text: editDraft.sv.trim(), question_text_en: editDraft.en.trim(), question_type: editDraft.type as QuestionType } : q));
+      setQuestions(prev => prev.map(q => q.id === id ? {
+        ...q,
+        question_text: editDraft.sv.trim(),
+        question_text_en: editDraft.en.trim(),
+        question_type: editDraft.type as QuestionType,
+        semantic_key: editDraft.semanticKey,
+      } : q));
       setEditingId(null);
     } catch (err) {
       toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
@@ -550,6 +634,16 @@ const QuestionnaireManager: React.FC = () => {
     ]);
   };
 
+  const prepareFunctionalQuestion = (definition: HomeQuestionFunctionality) => {
+    setNewQuestionSv(definition.suggestedQuestion.sv);
+    setNewQuestionEn(definition.suggestedQuestion.en);
+    setNewQuestionType(definition.type);
+    setNewQuestionSemanticKey(definition.key);
+    requestAnimationFrame(() => {
+      addQuestionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  };
+
   if (authLoading || loadingData) {
     return (
       <>
@@ -573,13 +667,19 @@ const QuestionnaireManager: React.FC = () => {
           </Button>
         </div>
 
+        <QuestionFunctionalityOverview
+          questions={questions}
+          onCreateQuestion={prepareFunctionalQuestion}
+          t={t}
+        />
+
         <Card>
           <CardHeader>
             <CardTitle>{t('Frågor', 'Questions')}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             {/* Add new */}
-            <div className="space-y-2 border rounded-lg p-3">
+            <div ref={addQuestionRef} className="space-y-2 border rounded-lg p-3">
               <div>
                 <Label className="text-xs text-muted-foreground">🇸🇪 Svenska</Label>
                 <Input
@@ -598,7 +698,11 @@ const QuestionnaireManager: React.FC = () => {
               </div>
               <div>
                 <Label className="text-xs text-muted-foreground">{t('Typ', 'Type')}</Label>
-                <Select value={newQuestionType} onValueChange={setNewQuestionType}>
+                <Select
+                  value={newQuestionType}
+                  onValueChange={setNewQuestionType}
+                  disabled={Boolean(newQuestionSemanticKey)}
+                >
                   <SelectTrigger className="w-[160px]">
                     <SelectValue />
                   </SelectTrigger>
@@ -608,6 +712,32 @@ const QuestionnaireManager: React.FC = () => {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground">
+                  {t('Används av webbplatsen', 'Used by the website')}
+                </Label>
+                <QuestionFunctionalitySelect
+                  value={newQuestionSemanticKey}
+                  questions={questions}
+                  onChange={(definition) => {
+                    setNewQuestionSemanticKey(definition?.key ?? null);
+                    if (definition) setNewQuestionType(definition.type);
+                  }}
+                  t={t}
+                  className="w-full max-w-md"
+                />
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  {newQuestionSemanticKey
+                    ? t(
+                        'Svaret kopplas till den valda funktionen. En funktion kan bara kopplas till en fråga.',
+                        'The answer is connected to the selected feature. A feature can only be connected to one question.',
+                      )
+                    : t(
+                        'Utan koppling blir detta en informationsfråga.',
+                        'Without a connection, this will be an informational question.',
+                      )}
+                </p>
               </div>
               <Button onClick={handleAdd} disabled={adding || !newQuestionSv.trim()} size="sm">
                 {adding ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Plus className="w-4 h-4 mr-1" />}

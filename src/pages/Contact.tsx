@@ -123,6 +123,13 @@ const HomeQuestionsSection = ({
                     onChange={e => handleAnswer(q.id, e.target.value ? Number(e.target.value) : undefined)}
                   />
                 )}
+                {q.question_type === 'date' && (
+                  <Input
+                    type="date"
+                    value={typeof val === 'string' ? val : ''}
+                    onChange={e => handleAnswer(q.id, e.target.value || undefined)}
+                  />
+                )}
                 {q.question_type === 'single_choice' && qOptions.length > 0 && (
                   <RadioGroup value={(val as string) || ''} onValueChange={v => handleAnswer(q.id, v)}>
                     {qOptions.map(o => (

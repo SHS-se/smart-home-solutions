@@ -193,6 +193,17 @@ const ConditionsEditor: React.FC<ConditionsEditorProps> = ({
       );
     }
 
+    if (type === 'date') {
+      return (
+        <Input
+          type="date"
+          value={typeof rule.compare_value === 'string' ? rule.compare_value : ''}
+          onChange={e => handleUpdateRule(rule.id, { compare_value: e.target.value || null })}
+          className="w-40 text-xs"
+        />
+      );
+    }
+
     return (
       <Input
         value={typeof rule.compare_value === 'string' ? rule.compare_value : ''}

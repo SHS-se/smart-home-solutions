@@ -17,6 +17,7 @@ import {
 } from '@/lib/energy-billing-storage';
 import { detectEnergyBillingChanges } from '@/lib/energy-billing-changes';
 import { buildEnergyBillingSeries } from '@/lib/energy-billing-series';
+import { fetchPrimaryHomeFunctionalDate } from '@/lib/home-profile-functional-data';
 import {
   ENERGY_HISTORY_SAMPLE_CHANGES,
   ENERGY_HISTORY_SAMPLE_SERIES,
@@ -58,6 +59,15 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
     refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
+  const moveInDateQuery = useQuery({
+    queryKey: ['home-profile-functional-answer', customerId, 'move_in_date'],
+    queryFn: () => fetchPrimaryHomeFunctionalDate(customerId, 'move_in_date'),
+    enabled: Boolean(customerId && isSubscribed && !subscriptionLoading),
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+  });
   const documents = useMemo(
     () => documentsQuery.data ?? [],
     [documentsQuery.data],
@@ -70,6 +80,7 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
     () => detectEnergyBillingChanges(documents),
     [documents],
   );
+  const pageError = documentsQuery.error ?? moveInDateQuery.error;
 
   const refreshDocuments = async () => {
     await queryClient.invalidateQueries({ queryKey });
@@ -171,19 +182,17 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
             )}
           </AlertDescription>
         </Alert>
-      ) : documentsQuery.isLoading ? (
+      ) : documentsQuery.isLoading || moveInDateQuery.isLoading ? (
         <Card>
           <CardContent className="flex min-h-64 items-center justify-center">
             <Loader2 className="h-7 w-7 animate-spin text-primary" />
           </CardContent>
         </Card>
-      ) : documentsQuery.error ? (
+      ) : pageError ? (
         <Alert variant="destructive">
           <AlertTitle>{t('Energihistoriken kunde inte läsas', 'Energy history could not be loaded')}</AlertTitle>
           <AlertDescription>
-            {documentsQuery.error instanceof Error
-              ? documentsQuery.error.message
-              : String(documentsQuery.error)}
+            {pageError instanceof Error ? pageError.message : String(pageError)}
           </AlertDescription>
         </Alert>
       ) : (
@@ -197,6 +206,7 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
             <EnergyHistoryOverview
               series={documents.length === 0 ? ENERGY_HISTORY_SAMPLE_SERIES : series}
               changes={documents.length === 0 ? ENERGY_HISTORY_SAMPLE_CHANGES : changes}
+              moveInDate={documents.length === 0 ? null : moveInDateQuery.data ?? null}
               isSample={documents.length === 0}
               onUploadClick={() => setActiveTab('upload')}
             />
