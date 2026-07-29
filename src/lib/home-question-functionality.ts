@@ -63,11 +63,11 @@ export const HOME_QUESTION_FUNCTIONALITY: HomeQuestionFunctionality[] = [
     type: 'number',
     importance: 'required',
     dataUse: 'calculation',
-    features: ['energy_simulator', 'roi'],
+    features: ['energy_history', 'energy_simulator', 'roi'],
     label: { sv: 'Uppvärmd yta', en: 'Heated area' },
     purpose: {
-      sv: 'Skalar det beräknade värmebehovet och krävs för lönsamhetsberäkningen.',
-      en: 'Scales calculated heating demand and is required for ROI calculations.',
+      sv: 'Skalar värmebehovet, används i den indikativa energiprestandan och krävs för lönsamhetsberäkningen.',
+      en: 'Scales heating demand, supports the indicative energy-performance estimate, and is required for ROI calculations.',
     },
     suggestedQuestion: {
       sv: 'Hur stor är den uppvärmda ytan (m²)?',

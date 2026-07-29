@@ -27,6 +27,11 @@ import {
   type EnergyTemperatureAnalysis,
   type WeatherNormalizedEventImpact,
 } from '@/lib/energy-temperature-analysis';
+import {
+  selectEfficiencyReadings,
+  type DailyEnergyReading,
+} from '@/lib/energy-usage-series';
+import type { EnergyReadingKind } from '@/lib/energy-usage-parser';
 import type {
   EnergyHistoryNoteRecord,
   EnergyUsageReadingRecord,
@@ -210,16 +215,23 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
     year: 'numeric',
     timeZone: 'UTC',
   }), [locale]);
-  const analysis = useMemo(() => buildEnergyTemperatureAnalysis(
-    readings.map((reading) => ({
+  const efficiencyReadings = useMemo(() => selectEfficiencyReadings(
+    readings.map<DailyEnergyReading>((reading) => ({
       readingDate: reading.reading_date,
       consumptionKwh: reading.consumption_kwh,
+      readingKind: reading.reading_kind as EnergyReadingKind,
+    })),
+  ), [readings]);
+  const analysis = useMemo(() => buildEnergyTemperatureAnalysis(
+    efficiencyReadings.map((reading) => ({
+      readingDate: reading.readingDate,
+      consumptionKwh: reading.consumptionKwh,
     })),
     weatherObservations.map((observation) => ({
       observedOn: observation.observed_on,
       temperatureC: observation.temperature_c,
     })),
-  ), [readings, weatherObservations]);
+  ), [efficiencyReadings, weatherObservations]);
   const multiYearChartData = useMemo(() => buildMultiYearChartData(analysis), [analysis]);
   const overallChartData = useMemo(() => analysis.overall.points.map((point) => ({
     temperatureC: point.temperatureC,
@@ -253,8 +265,15 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
         .filter((monthKey) => monthKey >= firstMonth && monthKey <= lastMonth),
     ));
   }, [normalizedHistory, notes]);
-  const readingStart = readings[0]?.reading_date ?? null;
-  const readingEnd = readings.at(-1)?.reading_date ?? null;
+  const readingStart = efficiencyReadings[0]?.readingDate ?? null;
+  const readingEnd = efficiencyReadings.at(-1)?.readingDate ?? null;
+  const actualTotalDays = efficiencyReadings.filter(
+    (reading) => reading.readingKind === 'total_consumption',
+  ).length;
+  const gridProxyDays = efficiencyReadings.length - actualTotalDays;
+  const firstTotalConsumptionDate = efficiencyReadings.find(
+    (reading) => reading.readingKind === 'total_consumption',
+  )?.readingDate ?? null;
   const weatherStart = weatherObservations[0]?.observed_on ?? null;
   const weatherEnd = weatherObservations.at(-1)?.observed_on ?? null;
   const weatherError = errorMessage(error);
@@ -317,6 +336,37 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
         </CardContent>
       </Card>
 
+      {efficiencyReadings.length > 0 && (
+        <Card className="border-border/70 bg-muted/20" data-testid="temperature-energy-source">
+          <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="text-sm font-medium">
+                {t('Underlag för effektivitetsdiagrammen', 'Evidence used for the efficiency charts')}
+              </p>
+              <p className="mt-1 max-w-3xl text-xs text-muted-foreground">
+                {actualTotalDays > 0
+                  ? t(
+                      `Husets verkliga totalförbrukning används när den finns${firstTotalConsumptionDate ? `, från ${firstTotalConsumptionDate}` : ''}. För tidigare dagar används nätuttag som proxy. Solpanelernas minskning av köpt el förväxlas därför inte med en plötslig förbättring av huset.`,
+                      `Whole-home consumption is used whenever available${firstTotalConsumptionDate ? `, from ${firstTotalConsumptionDate}` : ''}. Grid import is used as a proxy for earlier days. The solar panels’ reduction in purchased electricity is therefore not mistaken for a sudden improvement in the building.`,
+                    )
+                  : t(
+                      'Endast nätuttag finns. Det fungerar som proxy innan lokal produktion, men kan underskatta husets verkliga energibehov efter installation av sol eller batteri.',
+                      'Only grid import is available. It works as a proxy before local generation, but can understate the home’s actual energy demand after solar or battery installation.',
+                    )}
+              </p>
+            </div>
+            <div className="flex shrink-0 flex-wrap gap-2">
+              <Badge variant="outline" className="border-teal-300 text-teal-700 dark:border-teal-800 dark:text-teal-300">
+                {actualTotalDays} {t('totaldagar', 'whole-home days')}
+              </Badge>
+              <Badge variant="outline" className="border-blue-300 text-blue-700 dark:border-blue-800 dark:text-blue-300">
+                {gridProxyDays} {t('proxy-dagar', 'proxy days')}
+              </Badge>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {weatherError && (
         <Alert variant="destructive">
           <AlertTitle>{t('Temperaturdata kunde inte läsas', 'Temperature data could not be loaded')}</AlertTitle>
@@ -324,20 +374,20 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
         </Alert>
       )}
 
-      {readings.length === 0 ? (
+      {efficiencyReadings.length === 0 ? (
         <Card className="border-dashed">
           <CardContent className="flex min-h-72 flex-col items-center justify-center px-6 text-center">
             <Upload className="mb-4 h-10 w-10 text-muted-foreground" />
             <h2 className="text-lg font-medium">{t('Ladda upp daglig förbrukning först', 'Upload daily consumption first')}</h2>
             <p className="mt-2 max-w-lg text-sm text-muted-foreground">
               {t(
-                'Ladda upp CSV-filer i fliken Ladda upp. När datumen matchar den gemensamma SMHI-serien byggs temperaturdiagrammen automatiskt.',
-                'Upload CSV files in the Upload tab. Once the dates match the shared SMHI series, the temperature charts are built automatically.',
+                'Ladda upp daglig energidata i fliken Ladda upp. När datumen matchar den gemensamma SMHI-serien byggs temperaturdiagrammen automatiskt.',
+                'Upload daily energy data in the Upload tab. Once the dates match the shared SMHI series, the temperature charts are built automatically.',
               )}
             </p>
             <Button type="button" className="mt-4" onClick={onUploadClick}>
               <Upload className="mr-2 h-4 w-4" />
-              {t('Ladda upp CSV', 'Upload CSV')}
+              {t('Ladda upp energidata', 'Upload energy data')}
             </Button>
           </CardContent>
         </Card>

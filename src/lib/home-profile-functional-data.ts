@@ -1,33 +1,67 @@
 import { supabase } from '@/integrations/supabase/client';
-import { normalizeHomeProfileDate } from './home-profile-values';
+import {
+  normalizeHomeProfileBoolean,
+  normalizeHomeProfileDate,
+  normalizeHomeProfileNumber,
+} from './home-profile-values';
 
-export async function fetchPrimaryHomeFunctionalDate(
+async function fetchPrimaryHomeFunctionalAnswers(
   customerId: string,
-  semanticKey: string,
-): Promise<string | null> {
+  semanticKeys: string[],
+): Promise<Record<string, unknown>> {
+  if (semanticKeys.length === 0) return {};
   const { data: customer, error: customerError } = await supabase
     .from('customers')
     .select('primary_home_id')
     .eq('id', customerId)
     .maybeSingle();
   if (customerError) throw customerError;
-  if (!customer?.primary_home_id) return null;
+  if (!customer?.primary_home_id) return {};
 
-  const { data: question, error: questionError } = await supabase
+  const { data: questions, error: questionError } = await supabase
     .from('home_questions')
-    .select('id')
-    .eq('semantic_key', semanticKey)
-    .maybeSingle();
+    .select('id, semantic_key')
+    .in('semantic_key', semanticKeys);
   if (questionError) throw questionError;
-  if (!question) return null;
+  if (!questions?.length) return {};
 
-  const { data: answer, error: answerError } = await supabase
+  const { data: answers, error: answerError } = await supabase
     .from('home_answers')
-    .select('answer_value, answer_text')
+    .select('question_id, answer_value, answer_text')
     .eq('home_id', customer.primary_home_id)
-    .eq('question_id', question.id)
-    .maybeSingle();
+    .in('question_id', questions.map((question) => question.id));
   if (answerError) throw answerError;
 
-  return normalizeHomeProfileDate(answer?.answer_value ?? answer?.answer_text);
+  const answersByQuestion = new Map(
+    (answers ?? []).map((answer) => [answer.question_id, answer]),
+  );
+  return Object.fromEntries(questions.flatMap((question) => {
+    if (!question.semantic_key) return [];
+    const answer = answersByQuestion.get(question.id);
+    return [[
+      question.semantic_key,
+      answer?.answer_value ?? answer?.answer_text ?? null,
+    ]];
+  }));
+}
+
+export interface EnergyHistoryHomeProfileInputs {
+  moveInDate: string | null;
+  heatedAreaM2: number | null;
+  hasSolar: boolean | null;
+}
+
+export async function fetchEnergyHistoryHomeProfileInputs(
+  customerId: string,
+): Promise<EnergyHistoryHomeProfileInputs> {
+  const answers = await fetchPrimaryHomeFunctionalAnswers(customerId, [
+    'move_in_date',
+    'heated_area_m2',
+    'has_solar',
+  ]);
+  return {
+    moveInDate: normalizeHomeProfileDate(answers.move_in_date),
+    heatedAreaM2: normalizeHomeProfileNumber(answers.heated_area_m2),
+    hasSolar: normalizeHomeProfileBoolean(answers.has_solar),
+  };
 }

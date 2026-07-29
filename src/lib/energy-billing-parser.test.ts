@@ -295,6 +295,13 @@ Deno.test('recognized document in the wrong upload area is rejected with specifi
   assert(parsed.errors.includes('wrong_document_kind'), 'wrong-kind error missing');
 });
 
+Deno.test('unified upload accepts a recognized invoice without a preselected kind', () => {
+  const parsed = parseEnergyBillingDocument(TIBBER_TEXT);
+  assertEqual(parsed.documentKind, 'electricity', 'detected document kind');
+  assertEqual(parsed.importable, true, 'detected invoice should import');
+  assert(!parsed.errors.includes('wrong_document_kind'), 'unexpected wrong-kind error');
+});
+
 Deno.test('unknown energy invoice layouts fail closed', () => {
   const parsed = parseEnergyBillingDocument('Generic invoice with 100 kWh and 500 kr', 'grid');
   assertEqual(parsed.formatRecognized, false, 'unknown layout recognition');

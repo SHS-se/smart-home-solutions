@@ -1173,7 +1173,7 @@ export type Database = {
           document_kind: string
           document_sha256: string
           exported_kwh: number | null
-          file_path: string
+          file_path: string | null
           file_size_bytes: number
           id: string
           invoice_date: string
@@ -1199,7 +1199,7 @@ export type Database = {
           document_kind: string
           document_sha256: string
           exported_kwh?: number | null
-          file_path: string
+          file_path?: string | null
           file_size_bytes: number
           id?: string
           invoice_date: string
@@ -1225,7 +1225,7 @@ export type Database = {
           document_kind?: string
           document_sha256?: string
           exported_kwh?: number | null
-          file_path?: string
+          file_path?: string | null
           file_size_bytes?: number
           id?: string
           invoice_date?: string
@@ -1316,6 +1316,63 @@ export type Database = {
           },
         ]
       }
+      energy_parse_failures: {
+        Row: {
+          created_at: string
+          customer_id: string
+          file_category: string
+          file_path: string
+          file_sha256: string
+          file_size_bytes: number
+          id: string
+          mime_type: string
+          original_file_name: string
+          parser_error: string
+          uploaded_by: string
+        }
+        Insert: {
+          created_at?: string
+          customer_id: string
+          file_category: string
+          file_path: string
+          file_sha256: string
+          file_size_bytes: number
+          id?: string
+          mime_type: string
+          original_file_name: string
+          parser_error: string
+          uploaded_by: string
+        }
+        Update: {
+          created_at?: string
+          customer_id?: string
+          file_category?: string
+          file_path?: string
+          file_sha256?: string
+          file_size_bytes?: number
+          id?: string
+          mime_type?: string
+          original_file_name?: string
+          parser_error?: string
+          uploaded_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "energy_parse_failures_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_parse_failures_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers_with_identity"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       energy_history_notes: {
         Row: {
           created_at: string
@@ -1373,6 +1430,7 @@ export type Database = {
           imported_by: string
           original_file_name: string
           reading_count: number
+          reading_kind: string
         }
         Insert: {
           created_at?: string
@@ -1382,6 +1440,7 @@ export type Database = {
           imported_by: string
           original_file_name: string
           reading_count: number
+          reading_kind: string
         }
         Update: {
           created_at?: string
@@ -1391,6 +1450,7 @@ export type Database = {
           imported_by?: string
           original_file_name?: string
           reading_count?: number
+          reading_kind?: string
         }
         Relationships: [
           {
@@ -1416,6 +1476,7 @@ export type Database = {
           customer_id: string
           id: string
           reading_date: string
+          reading_kind: string
           source_import_id: string
           updated_at: string
         }
@@ -1425,6 +1486,7 @@ export type Database = {
           customer_id: string
           id?: string
           reading_date: string
+          reading_kind: string
           source_import_id: string
           updated_at?: string
         }
@@ -1434,6 +1496,7 @@ export type Database = {
           customer_id?: string
           id?: string
           reading_date?: string
+          reading_kind?: string
           source_import_id?: string
           updated_at?: string
         }
@@ -3568,6 +3631,41 @@ export type Database = {
           },
         ]
       }
+      energy_usage_current_readings: {
+        Row: {
+          consumption_kwh: number
+          created_at: string
+          customer_id: string
+          id: string
+          reading_date: string
+          reading_kind: string
+          source_import_id: string
+          updated_at: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "energy_usage_readings_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_usage_readings_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers_with_identity"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_usage_readings_source_import_id_fkey"
+            columns: ["source_import_id"]
+            isOneToOne: false
+            referencedRelation: "energy_usage_import_batches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       bom_fulfillment: {
         Row: {
           bom_group_id: string | null
@@ -3633,12 +3731,48 @@ export type Database = {
         }
         Returns: string
       }
+      clear_energy_billing_file_paths: {
+        Args: {
+          p_customer_id: string
+          p_document_ids: string[]
+        }
+        Returns: number
+      }
+      delete_energy_billing_document: {
+        Args: {
+          p_customer_id: string
+          p_document_id: string
+        }
+        Returns: string
+      }
+      delete_energy_parse_failure: {
+        Args: {
+          p_customer_id: string
+          p_failure_id: string
+        }
+        Returns: string
+      }
+      delete_energy_usage_import: {
+        Args: {
+          p_customer_id: string
+          p_import_id: string
+        }
+        Returns: number
+      }
       import_energy_usage_readings: {
         Args: {
           p_customer_id: string
           p_file_sha256: string
           p_original_file_name: string
+          p_reading_kind: string
           p_readings: Json
+        }
+        Returns: string
+      }
+      record_energy_parse_failure: {
+        Args: {
+          p_customer_id: string
+          p_failure: Json
         }
         Returns: string
       }

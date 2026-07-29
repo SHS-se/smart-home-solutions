@@ -7,3 +7,19 @@ export function normalizeHomeProfileDate(value: unknown): string | null {
     ? null
     : value;
 }
+
+export function normalizeHomeProfileNumber(value: unknown): number | null {
+  const normalized = typeof value === 'number'
+    ? value
+    : typeof value === 'string'
+      ? Number(value.trim().replace(',', '.'))
+      : Number.NaN;
+  return Number.isFinite(normalized) ? normalized : null;
+}
+
+export function normalizeHomeProfileBoolean(value: unknown): boolean | null {
+  if (typeof value === 'boolean') return value;
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  return null;
+}

@@ -1,6 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   BarChart3,
   CreditCard,
@@ -12,27 +12,37 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useSubscription } from '@/hooks/use-subscription';
 import {
+  deleteEnergyBillingDocument,
   fetchEnergyBillingDocuments,
   toEnergyBillingSeriesDocuments,
+  type EnergyBillingDocumentRecord,
 } from '@/lib/energy-billing-storage';
+import {
+  deleteEnergyParseFailure,
+  ENERGY_PARSE_FAILURE_STAFF_STATUS_QUERY_KEY,
+  fetchEnergyParseFailures,
+  type EnergyParseFailureRecord,
+} from '@/lib/energy-import-file-storage';
 import { detectEnergyBillingChanges } from '@/lib/energy-billing-changes';
 import { buildEnergyBillingSeries } from '@/lib/energy-billing-series';
-import { fetchPrimaryHomeFunctionalDate } from '@/lib/home-profile-functional-data';
+import { fetchEnergyHistoryHomeProfileInputs } from '@/lib/home-profile-functional-data';
 import {
   ENERGY_HISTORY_SAMPLE_CHANGES,
   ENERGY_HISTORY_SAMPLE_SERIES,
 } from '@/lib/energy-history-sample';
-import EnergyDocumentUploadCard from '@/components/portal/energy-history/EnergyDocumentUploadCard';
+import EnergyDataUploadCard from '@/components/portal/energy-history/EnergyDataUploadCard';
 import EnergyTemperatureAnalysis from '@/components/portal/energy-history/EnergyTemperatureAnalysis';
 import EnergyHistoryDocuments from '@/components/portal/energy-history/EnergyHistoryDocuments';
 import EnergyHistoryOverview from '@/components/portal/energy-history/EnergyHistoryOverview';
-import EnergyUsageCsvUploadCard from '@/components/portal/energy-history/EnergyUsageCsvUploadCard';
 import {
   createEnergyHistoryNote,
+  deleteEnergyUsageImport,
   fetchEnergyHistoryNotes,
+  fetchEnergyUsageImportBatches,
   fetchEnergyUsageReadings,
   fetchSharedWeatherDataset,
   fetchSharedWeatherObservations,
+  type EnergyUsageImportBatchRecord,
   type TimelineNoteValues,
 } from '@/lib/energy-temperature-storage';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -46,6 +56,7 @@ interface EnergyHistoryProps {
 }
 
 const SHARED_WEATHER_DATASET_QUERY_KEY = ['energy-shared-weather-dataset'] as const;
+const ENERGY_HISTORY_TABS = new Set(['overview', 'upload', 'documents', 'temperature']);
 
 const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   customerId: propCustomerId,
@@ -54,18 +65,32 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   const { customerData, isStaff } = useAuth();
   const { t } = useLanguage();
   const queryClient = useQueryClient();
+  const [searchParams] = useSearchParams();
   const {
     isSubscribed,
     loading: subscriptionLoading,
     error: subscriptionError,
   } = useSubscription();
   const customerId = propCustomerId || customerData?.id || '';
-  const [activeTab, setActiveTab] = useState('overview');
+  const requestedTab = searchParams.get('tab');
+  const [activeTab, setActiveTab] = useState(
+    requestedTab && ENERGY_HISTORY_TABS.has(requestedTab) ? requestedTab : 'overview',
+  );
+  useEffect(() => {
+    if (requestedTab && ENERGY_HISTORY_TABS.has(requestedTab)) {
+      setActiveTab(requestedTab);
+    }
+  }, [requestedTab]);
   const queryKey = ['energy-billing-documents', customerId] as const;
   const usageQueryKey = ['energy-usage-readings', customerId] as const;
+  const usageImportsQueryKey = ['energy-usage-import-batches', customerId] as const;
+  const parseFailuresQueryKey = ['energy-parse-failures', customerId] as const;
   const notesQueryKey = ['energy-history-notes', customerId] as const;
   const customerEnergyEnabled = Boolean(customerId && isSubscribed && !subscriptionLoading);
+  const usageDataEnabled = customerEnergyEnabled
+    && (activeTab === 'overview' || activeTab === 'temperature');
   const temperatureDataEnabled = customerEnergyEnabled && activeTab === 'temperature';
+  const managementDataEnabled = customerEnergyEnabled && activeTab === 'documents';
   const documentsQuery = useQuery({
     queryKey,
     queryFn: () => fetchEnergyBillingDocuments(customerId),
@@ -75,9 +100,9 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
     refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
-  const moveInDateQuery = useQuery({
-    queryKey: ['home-profile-functional-answer', customerId, 'move_in_date'],
-    queryFn: () => fetchPrimaryHomeFunctionalDate(customerId, 'move_in_date'),
+  const homeProfileQuery = useQuery({
+    queryKey: ['energy-history-home-profile', customerId],
+    queryFn: () => fetchEnergyHistoryHomeProfileInputs(customerId),
     enabled: customerEnergyEnabled,
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
@@ -87,8 +112,26 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   const usageQuery = useQuery({
     queryKey: usageQueryKey,
     queryFn: () => fetchEnergyUsageReadings(customerId),
-    enabled: temperatureDataEnabled,
+    enabled: usageDataEnabled,
     staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+  });
+  const usageImportsQuery = useQuery({
+    queryKey: usageImportsQueryKey,
+    queryFn: () => fetchEnergyUsageImportBatches(customerId),
+    enabled: managementDataEnabled,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+  });
+  const parseFailuresQuery = useQuery({
+    queryKey: parseFailuresQueryKey,
+    queryFn: () => fetchEnergyParseFailures(customerId),
+    enabled: managementDataEnabled,
+    staleTime: 60 * 1000,
     gcTime: 30 * 60 * 1000,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
@@ -134,7 +177,7 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
     () => detectEnergyBillingChanges(documents),
     [documents],
   );
-  const pageError = documentsQuery.error ?? moveInDateQuery.error;
+  const pageError = documentsQuery.error ?? homeProfileQuery.error;
 
   const refreshDocuments = async () => {
     await queryClient.invalidateQueries({ queryKey });
@@ -142,6 +185,18 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
 
   const refreshUsage = async () => {
     await queryClient.invalidateQueries({ queryKey: usageQueryKey });
+  };
+
+  const refreshEnergyData = async () => {
+    await Promise.all([
+      refreshDocuments(),
+      refreshUsage(),
+      queryClient.invalidateQueries({ queryKey: usageImportsQueryKey }),
+      queryClient.invalidateQueries({ queryKey: parseFailuresQueryKey }),
+      queryClient.invalidateQueries({
+        queryKey: ENERGY_PARSE_FAILURE_STAFF_STATUS_QUERY_KEY,
+      }),
+    ]);
   };
 
   const refreshNotes = async () => {
@@ -153,6 +208,29 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
     await refreshNotes();
   };
 
+  const handleDeleteDocument = async (document: EnergyBillingDocumentRecord) => {
+    await deleteEnergyBillingDocument(customerId, document);
+    await refreshDocuments();
+  };
+
+  const handleDeleteUsageImport = async (usageImport: EnergyUsageImportBatchRecord) => {
+    await deleteEnergyUsageImport(customerId, usageImport.id);
+    await Promise.all([
+      refreshUsage(),
+      queryClient.invalidateQueries({ queryKey: usageImportsQueryKey }),
+    ]);
+  };
+
+  const handleDeleteParseFailure = async (failure: EnergyParseFailureRecord) => {
+    await deleteEnergyParseFailure(customerId, failure);
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: parseFailuresQueryKey }),
+      queryClient.invalidateQueries({
+        queryKey: ENERGY_PARSE_FAILURE_STAFF_STATUS_QUERY_KEY,
+      }),
+    ]);
+  };
+
   const header = (
     <div className="flex items-start gap-3">
       <div className="rounded-lg bg-primary/10 p-2 text-primary">
@@ -162,8 +240,8 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
         <h1 className="text-3xl font-medium">{t('Energihistorik', 'Energy history')}</h1>
         <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
           {t(
-            'Importera fakturor från elnät och elhandel, följ förbrukning och kostnad och se tydligt var underlag saknas.',
-            'Import grid and electricity provider invoices, track consumption and cost, and see exactly where source data is missing.',
+            'Importera energifiler, skilj nätuttag från husets verkliga energibehov och följ kostnad, effektivitet och energiprestanda.',
+            'Import energy files, separate grid import from the home’s actual energy demand, and track cost, efficiency, and energy performance.',
           )}
         </p>
       </div>
@@ -249,7 +327,7 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
             )}
           </AlertDescription>
         </Alert>
-      ) : documentsQuery.isLoading || moveInDateQuery.isLoading ? (
+      ) : documentsQuery.isLoading || homeProfileQuery.isLoading ? (
         <Card>
           <CardContent className="flex min-h-64 items-center justify-center">
             <Loader2 className="h-7 w-7 animate-spin text-primary" />
@@ -267,41 +345,62 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
           <TabsList className="grid w-full max-w-2xl grid-cols-4">
             <TabsTrigger value="overview">{t('Översikt', 'Overview')}</TabsTrigger>
             <TabsTrigger value="upload">{t('Ladda upp', 'Upload')}</TabsTrigger>
-            <TabsTrigger value="documents">{t('Dokument', 'Documents')}</TabsTrigger>
+            <TabsTrigger value="documents">{t('Data', 'Data')}</TabsTrigger>
             <TabsTrigger value="temperature">{t('Temperatur', 'Temperature')}</TabsTrigger>
           </TabsList>
           <TabsContent value="overview">
             <EnergyHistoryOverview
               series={documents.length === 0 ? ENERGY_HISTORY_SAMPLE_SERIES : series}
               changes={documents.length === 0 ? ENERGY_HISTORY_SAMPLE_CHANGES : changes}
-              moveInDate={documents.length === 0 ? null : moveInDateQuery.data ?? null}
+              moveInDate={documents.length === 0
+                ? null
+                : homeProfileQuery.data?.moveInDate ?? null}
               notes={notesQuery.data ?? []}
+              usageReadings={usageQuery.data ?? []}
               notesError={notesQuery.error}
+              usageError={usageQuery.error}
+              usageIsLoading={usageQuery.isLoading}
+              heatedAreaM2={homeProfileQuery.data?.heatedAreaM2 ?? null}
+              hasSolar={homeProfileQuery.data?.hasSolar ?? null}
               isSample={documents.length === 0}
               onUploadClick={() => setActiveTab('upload')}
               onCreateNote={handleCreateNote}
             />
           </TabsContent>
           <TabsContent value="upload">
-            <div className="grid items-start gap-6 xl:grid-cols-2">
-              <EnergyDocumentUploadCard
-                customerId={customerId}
-                kind="grid"
-                onImported={refreshDocuments}
-              />
-              <EnergyDocumentUploadCard
-                customerId={customerId}
-                kind="electricity"
-                onImported={refreshDocuments}
-              />
-              <EnergyUsageCsvUploadCard
-                customerId={customerId}
-                onImported={refreshUsage}
-              />
-            </div>
+            <EnergyDataUploadCard
+              customerId={customerId}
+              onDataChanged={refreshEnergyData}
+            />
           </TabsContent>
           <TabsContent value="documents">
-            <EnergyHistoryDocuments documents={documents} />
+            {usageImportsQuery.isLoading || parseFailuresQuery.isLoading ? (
+              <Card>
+                <CardContent className="flex min-h-48 items-center justify-center">
+                  <Loader2 className="h-7 w-7 animate-spin text-primary" />
+                </CardContent>
+              </Card>
+            ) : usageImportsQuery.error || parseFailuresQuery.error ? (
+              <Alert variant="destructive">
+                <AlertTitle>
+                  {t('Importdata kunde inte läsas', 'Import data could not be loaded')}
+                </AlertTitle>
+                <AlertDescription>
+                  {String(usageImportsQuery.error ?? parseFailuresQuery.error)}
+                </AlertDescription>
+              </Alert>
+            ) : (
+              <EnergyHistoryDocuments
+                customerId={customerId}
+                documents={documents}
+                usageImports={usageImportsQuery.data ?? []}
+                parseFailures={parseFailuresQuery.data ?? []}
+                isStaffView={isStaffView || isStaff}
+                onDeleteDocument={handleDeleteDocument}
+                onDeleteUsageImport={handleDeleteUsageImport}
+                onDeleteParseFailure={handleDeleteParseFailure}
+              />
+            )}
           </TabsContent>
           <TabsContent value="temperature">
             <EnergyTemperatureAnalysis

@@ -14,6 +14,10 @@ const CUSTOMER_ID = '11111111-2222-4333-8444-555555555555';
 const STAFF_USER_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const CUSTOMER_USER_ID = 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff';
 const VIEWED_CUSTOMER_NAME = 'Ana the Wifey';
+const PRIMARY_HOME_ID = 'cccccccc-dddd-4eee-8fff-111111111111';
+const MOVE_IN_QUESTION_ID = '50000000-0000-4000-8000-000000000001';
+const HEATED_AREA_QUESTION_ID = '50000000-0000-4000-8000-000000000002';
+const HAS_SOLAR_QUESTION_ID = '50000000-0000-4000-8000-000000000003';
 
 function fakeJwt(sub: string, email: string): string {
   const enc = (obj: unknown) => Buffer.from(JSON.stringify(obj)).toString('base64url');
@@ -50,15 +54,15 @@ const temperatureChartBaseReadings: Array<[string, number]> = [
   ['2024-03-05', 72],
   ['2025-01-06', 136],
   ['2025-02-07', 95],
-  ['2025-03-08', 64],
 ];
 
-const temperatureImpactSeries = Array.from({ length: 181 }, (_, index) => {
-  const date = new Date(Date.UTC(2025, 8, 4 + index));
+const temperatureImpactSeries = Array.from({ length: 365 }, (_, index) => {
+  const date = new Date(Date.UTC(2025, 2, 4 + index));
   const readingDate = date.toISOString().slice(0, 10);
   const temperatureC = Number((4 + (12 * Math.sin(index / 28))).toFixed(1));
   const expectedKwh = 95 - (3.2 * temperatureC) + (0.08 * (temperatureC ** 2));
-  const eventAdjustmentKwh = index < 90 ? 14 : index > 90 ? -8 : 0;
+  const eventDate = '2025-12-03';
+  const eventAdjustmentKwh = readingDate < eventDate ? 14 : readingDate > eventDate ? -8 : 0;
   return {
     readingDate,
     temperatureC,
@@ -66,18 +70,78 @@ const temperatureImpactSeries = Array.from({ length: 181 }, (_, index) => {
   };
 });
 
-const temperatureChartReadings = [
+const gridImportReadings = [
   ...temperatureChartBaseReadings,
-  ...temperatureImpactSeries.map((point) => [point.readingDate, point.consumptionKwh] as const),
+  ...temperatureImpactSeries.map((point) => [
+    point.readingDate,
+    Number(Math.max(4, point.consumptionKwh * 0.35).toFixed(1)),
+  ] as const),
 ].map(([reading_date, consumption_kwh], index) => ({
   id: `10000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
   customer_id: CUSTOMER_ID,
   reading_date,
+  reading_kind: 'grid_import',
   consumption_kwh,
   source_import_id: '20000000-0000-4000-8000-000000000001',
   created_at: '2026-07-28T00:00:00Z',
   updated_at: '2026-07-28T00:00:00Z',
 }));
+
+const totalConsumptionReadings = temperatureImpactSeries.map((point, index) => ({
+  id: `11000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+  customer_id: CUSTOMER_ID,
+  reading_date: point.readingDate,
+  reading_kind: 'total_consumption',
+  consumption_kwh: point.consumptionKwh,
+  source_import_id: '20000000-0000-4000-8000-000000000002',
+  created_at: '2026-07-28T00:00:00Z',
+  updated_at: '2026-07-28T00:00:00Z',
+}));
+
+const temperatureChartReadings = [
+  ...gridImportReadings,
+  ...totalConsumptionReadings,
+].sort((readingA, readingB) => (
+  readingA.reading_date.localeCompare(readingB.reading_date)
+  || readingA.reading_kind.localeCompare(readingB.reading_kind)
+));
+
+const energyUsageImportBatches = [
+  {
+    id: '20000000-0000-4000-8000-000000000002',
+    customer_id: CUSTOMER_ID,
+    original_file_name: 'Sigenergy total load.csv',
+    file_sha256: 'a'.repeat(64),
+    reading_kind: 'total_consumption',
+    reading_count: 365,
+    imported_by: STAFF_USER_ID,
+    created_at: '2026-07-28T10:00:00Z',
+  },
+  {
+    id: '20000000-0000-4000-8000-000000000001',
+    customer_id: CUSTOMER_ID,
+    original_file_name: 'Grid import history.csv',
+    file_sha256: 'b'.repeat(64),
+    reading_kind: 'grid_import',
+    reading_count: 370,
+    imported_by: STAFF_USER_ID,
+    created_at: '2026-07-27T10:00:00Z',
+  },
+];
+
+const energyParseFailures = [{
+  id: '21000000-0000-4000-8000-000000000001',
+  customer_id: CUSTOMER_ID,
+  original_file_name: 'unsupported-provider-invoice.pdf',
+  file_path: `${CUSTOMER_ID}/21000000-0000-4000-8000-000000000001/unsupported-provider-invoice.pdf`,
+  mime_type: 'application/pdf',
+  file_size_bytes: 12345,
+  file_sha256: 'c'.repeat(64),
+  file_category: 'document',
+  parser_error: 'Billing parser rejected the file: unknown_format',
+  uploaded_by: STAFF_USER_ID,
+  created_at: '2026-07-28T11:00:00Z',
+}];
 
 const temperatureChartBaseObservations: Array<[string, number]> = [
   ['2024-01-03', -6],
@@ -85,7 +149,6 @@ const temperatureChartBaseObservations: Array<[string, number]> = [
   ['2024-03-05', 8],
   ['2025-01-06', -5],
   ['2025-02-07', 2],
-  ['2025-03-08', 9],
 ];
 
 const temperatureChartObservations = [
@@ -116,6 +179,8 @@ async function mockSupabase(context: BrowserContext, role: 'staff' | 'customer')
     created_at: nowIso,
     updated_at: nowIso,
   };
+  let mockedUsageImports = energyUsageImportBatches.map((row) => ({ ...row }));
+  let mockedParseFailures = energyParseFailures.map((row) => ({ ...row }));
 
   await context.route('**/auth/v1/**', async (route) => {
     const url = new URL(route.request().url());
@@ -144,6 +209,20 @@ async function mockSupabase(context: BrowserContext, role: 'staff' | 'customer')
     const req = route.request();
     const url = new URL(req.url());
 
+    if (url.pathname.endsWith('/rpc/delete_energy_usage_import')) {
+      const body = req.postDataJSON() as { p_import_id?: string };
+      const deleted = mockedUsageImports.find((row) => row.id === body.p_import_id);
+      mockedUsageImports = mockedUsageImports.filter((row) => row.id !== body.p_import_id);
+      await route.fulfill({ json: deleted?.reading_count ?? 0 });
+      return;
+    }
+    if (url.pathname.endsWith('/rpc/delete_energy_parse_failure')) {
+      const body = req.postDataJSON() as { p_failure_id?: string };
+      const deleted = mockedParseFailures.find((row) => row.id === body.p_failure_id);
+      mockedParseFailures = mockedParseFailures.filter((row) => row.id !== body.p_failure_id);
+      await route.fulfill({ json: deleted?.file_path ?? null });
+      return;
+    }
     if (url.pathname.includes('/rpc/')) {
       await route.fulfill({ json: false });
       return;
@@ -159,7 +238,56 @@ async function mockSupabase(context: BrowserContext, role: 'staff' | 'customer')
         return [viewedCustomer];
       }
       if (table === 'customers') {
-        return [{ id: CUSTOMER_ID, primary_home_id: null }];
+        return [{ id: CUSTOMER_ID, primary_home_id: PRIMARY_HOME_ID }];
+      }
+      if (table === 'home_questions') {
+        const semanticKey = url.searchParams.get('semantic_key') || '';
+        const matchingQuestions: Record<string, unknown>[] = [];
+        if (semanticKey.includes('move_in_date')) {
+          matchingQuestions.push({
+            id: MOVE_IN_QUESTION_ID,
+            semantic_key: 'move_in_date',
+          });
+        }
+        if (semanticKey.includes('heated_area_m2')) {
+          matchingQuestions.push({
+            id: HEATED_AREA_QUESTION_ID,
+            semantic_key: 'heated_area_m2',
+          });
+        }
+        if (semanticKey.includes('has_solar')) {
+          matchingQuestions.push({
+            id: HAS_SOLAR_QUESTION_ID,
+            semantic_key: 'has_solar',
+          });
+        }
+        return matchingQuestions;
+      }
+      if (table === 'home_answers') {
+        const questionId = url.searchParams.get('question_id') || '';
+        const matchingAnswers: Record<string, unknown>[] = [];
+        if (questionId.includes(MOVE_IN_QUESTION_ID)) {
+          matchingAnswers.push({
+            question_id: MOVE_IN_QUESTION_ID,
+            answer_value: '2021-10-01',
+            answer_text: '2021-10-01',
+          });
+        }
+        if (questionId.includes(HEATED_AREA_QUESTION_ID)) {
+          matchingAnswers.push({
+            question_id: HEATED_AREA_QUESTION_ID,
+            answer_value: 160,
+            answer_text: '160',
+          });
+        }
+        if (questionId.includes(HAS_SOLAR_QUESTION_ID)) {
+          matchingAnswers.push({
+            question_id: HAS_SOLAR_QUESTION_ID,
+            answer_value: true,
+            answer_text: 'true',
+          });
+        }
+        return matchingAnswers;
       }
       if (table === 'energy_weather_datasets') {
         return [{
@@ -176,8 +304,14 @@ async function mockSupabase(context: BrowserContext, role: 'staff' | 'customer')
           sync_error: null,
         }];
       }
-      if (table === 'energy_usage_readings') {
+      if (table === 'energy_usage_current_readings') {
         return temperatureChartReadings;
+      }
+      if (table === 'energy_usage_import_batches') {
+        return mockedUsageImports;
+      }
+      if (table === 'energy_parse_failures') {
+        return mockedParseFailures;
       }
       if (table === 'energy_weather_observations') {
         return temperatureChartObservations;
@@ -370,11 +504,83 @@ test.describe('staff navigation shell', () => {
     await page.screenshot({ path: 'test-results/energy-history-events.png', fullPage: true });
   });
 
+  test('energy history separates grid savings from whole-home efficiency and uses one upload box', async ({ page }) => {
+    await login(page);
+    await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history`);
+
+    const sourceComparison = page.getByTestId('energy-source-comparison');
+    await expect(sourceComparison.getByText('Nätuttag och husets verkliga energibehov')).toBeVisible();
+    await expect(sourceComparison.getByText('Tekniskt årsbehov')).toBeVisible();
+    await expect(sourceComparison.getByText(/365 totaldagar/)).toBeVisible();
+
+    const performance = page.getByTestId('indicative-energy-performance');
+    await expect(performance.getByText('Indikativ energiprestanda')).toBeVisible();
+    await expect(performance.getByText('Ej officiell')).toBeVisible();
+    await expect(performance.getByText('D', { exact: true }).first()).toBeVisible();
+    await page.screenshot({ path: 'test-results/energy-source-accounting.png', fullPage: true });
+
+    await page.getByRole('tab', { name: 'Ladda upp' }).click();
+    const upload = page.getByTestId('energy-data-upload');
+    await expect(upload.getByRole('heading', { name: 'Ladda upp energidata' })).toBeVisible();
+    await expect(upload.locator('input[type="file"]')).toHaveCount(1);
+    await expect(page.getByRole('heading', { name: 'Elnätsfakturor' })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Elhandelsfakturor' })).toHaveCount(0);
+  });
+
+  test('energy imports expose privacy-safe deletion and parser review', async ({ page }) => {
+    await login(page);
+    await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history`);
+    const staffAlert = page.getByTestId('staff-energy-parse-alert');
+    await expect(staffAlert).toContainText('1 energifiler behöver parsergranskning');
+    const reviewOldest = staffAlert.getByRole('link', { name: 'Granska äldsta filen' });
+    await expect(reviewOldest).toHaveAttribute(
+      'href',
+      `/portal/customers/${CUSTOMER_ID}/energy-history?tab=documents`,
+    );
+    await reviewOldest.click();
+    await expect(page.getByRole('tab', { name: 'Data', exact: true })).toHaveAttribute(
+      'data-state',
+      'active',
+    );
+
+    const management = page.getByTestId('energy-data-management');
+    await expect(management.getByText('Källfiler minimeras')).toBeVisible();
+    await expect(management).toContainText(
+      'Originalfilen behålls endast när parsningen misslyckas',
+    );
+
+    const failures = page.getByTestId('energy-parse-failures');
+    await expect(failures).toContainText('unsupported-provider-invoice.pdf');
+    await expect(failures).toContainText('Personalåtgärd kan krävas');
+    await expect(failures.getByRole('button', { name: 'Granska' })).toBeVisible();
+    await expect(failures.getByRole('button', { name: 'Ta bort' })).toBeVisible();
+
+    const usageImports = page.getByTestId('energy-usage-imports');
+    await expect(usageImports).toContainText('Sigenergy total load.csv');
+    await expect(usageImports).toContainText('Husets totalförbrukning');
+    await page.screenshot({ path: 'test-results/energy-data-management.png', fullPage: true });
+    await usageImports.getByRole('button', { name: 'Ta bort import' }).first().click();
+
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog).toContainText('den äldre datan synlig igen');
+    await dialog.getByRole('button', { name: 'Ta bort permanent' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(usageImports).not.toContainText('Sigenergy total load.csv');
+    await expect(usageImports).toContainText('Grid import history.csv');
+
+    await failures.getByRole('button', { name: 'Ta bort' }).click();
+    await dialog.getByRole('button', { name: 'Ta bort permanent' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.getByTestId('energy-parse-failures')).toHaveCount(0);
+    await expect(page.getByTestId('staff-energy-parse-alert')).toHaveCount(0);
+  });
+
   test('temperature charts provide readable series controls', async ({ page }) => {
     await login(page);
     await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history`);
     await page.getByRole('tab', { name: 'Temperatur' }).click();
 
+    await expect(page.getByTestId('temperature-energy-source')).toContainText('365 totaldagar');
     await expect(page.getByTestId('weather-normalized-history-chart')).toBeVisible();
     await expect(page.getByTestId('event-impact-chart')).toBeVisible();
     await expect(page.getByTestId('event-impact-chart').locator('.recharts-bar-rectangle')).toHaveCount(2);

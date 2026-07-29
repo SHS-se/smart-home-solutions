@@ -1061,7 +1061,7 @@ function unknownResult(): ParsedEnergyDocument {
 
 export function parseEnergyBillingDocument(
   rawText: string,
-  expectedKind: EnergyDocumentKind,
+  expectedKind?: EnergyDocumentKind,
 ): ParsedEnergyDocument {
   const text = normalizeText(rawText);
   const parser = PARSERS.find((candidate) => candidate.matches(text));
@@ -1071,7 +1071,7 @@ export function parseEnergyBillingDocument(
   const errors: EnergyParserIssueCode[] = [];
   const warnings: EnergyParserIssueCode[] = [];
 
-  if (parser.documentKind !== expectedKind) errors.push('wrong_document_kind');
+  if (expectedKind && parser.documentKind !== expectedKind) errors.push('wrong_document_kind');
   if (!fields.invoiceNumber) errors.push('missing_invoice_number');
   if (!fields.invoiceDate) errors.push('missing_invoice_date');
   if (!fields.periodStart || !fields.periodEnd) {

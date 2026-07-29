@@ -27,10 +27,12 @@ import {
 } from 'recharts';
 import { useLanguage } from '@/contexts/LanguageContext';
 import EnergyHistoryEventForm from '@/components/portal/energy-history/EnergyHistoryEventForm';
+import EnergySourceInsights from '@/components/portal/energy-history/EnergySourceInsights';
 import type { EnergyBillingChange } from '@/lib/energy-billing-changes';
 import type { EnergyBillingMonth } from '@/lib/energy-billing-series';
 import type {
   EnergyHistoryNoteRecord,
+  EnergyUsageReadingRecord,
   TimelineNoteValues,
 } from '@/lib/energy-temperature-storage';
 import { getEnergyCoverageIssues } from '@/lib/energy-history-coverage';
@@ -47,7 +49,12 @@ interface EnergyHistoryOverviewProps {
   series: EnergyBillingMonth[];
   changes: EnergyBillingChange[];
   notes: EnergyHistoryNoteRecord[];
+  usageReadings: EnergyUsageReadingRecord[];
   notesError?: unknown;
+  usageError?: unknown;
+  usageIsLoading?: boolean;
+  heatedAreaM2?: number | null;
+  hasSolar?: boolean | null;
   moveInDate?: string | null;
   isSample?: boolean;
   onUploadClick?: () => void;
@@ -236,7 +243,12 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
   series,
   changes,
   notes,
+  usageReadings,
   notesError,
+  usageError,
+  usageIsLoading = false,
+  heatedAreaM2 = null,
+  hasSolar = null,
   moveInDate = null,
   isSample = false,
   onUploadClick,
@@ -434,13 +446,13 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>
               {t(
-                'Detta är exempeldata. Ladda upp fakturor från elnät och elhandel så ersätts den med dina egna kostnader, förbrukning och villkorsändringar.',
-                'This is sample data. Upload grid and electricity invoices to replace it with your own costs, consumption, and term changes.',
+                'Fakturadiagrammen visar exempeldata. Ladda upp dina energifiler i den gemensamma rutan; fakturor ersätter exemplen med egna kostnader, nätuttag och villkorsändringar.',
+                'The invoice charts show sample data. Upload your energy files in the shared box; invoices replace the samples with your own costs, grid import, and term changes.',
               )}
             </span>
             {onUploadClick && (
               <Button type="button" size="sm" onClick={onUploadClick} className="shrink-0">
-                {t('Ladda upp fakturor', 'Upload invoices')}
+                {t('Ladda upp energidata', 'Upload energy data')}
               </Button>
             )}
           </AlertDescription>
@@ -470,7 +482,7 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <AnnualMetricCard
-          label={t('Årlig förbrukning', 'Annual consumption')}
+          label={t('Årligt nätuttag', 'Annual grid import')}
           metric={annual.consumptionKwh}
           value={formatMetric(annual.consumptionKwh, numberFormatter, ' kWh')}
           icon={<Gauge className="h-5 w-5" />}
@@ -522,6 +534,15 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
         />
       </div>
 
+      <EnergySourceInsights
+        readings={usageReadings}
+        heatedAreaM2={heatedAreaM2}
+        hasSolar={hasSolar}
+        isLoading={usageIsLoading}
+        error={usageError}
+        onUploadClick={onUploadClick}
+      />
+
       {coverageIssues.length > 0 ? (
         <Alert className="border-amber-300 bg-amber-50/60 dark:border-amber-900 dark:bg-amber-950/20">
           <TriangleAlert className="h-4 w-4 text-amber-700 dark:text-amber-400" />
@@ -553,7 +574,7 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
         <CardHeader className="border-b border-border/60 bg-gradient-to-r from-blue-500/5 to-violet-500/5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <CardTitle className="text-base">
-              {t('Förbrukning och total kostnad per månad', 'Monthly consumption and total cost')}
+              {t('Nätuttag och total kostnad per månad', 'Monthly grid import and total cost')}
             </CardTitle>
             <div className="flex flex-wrap gap-2">
               {visibleChanges.length > 0 && (
@@ -619,7 +640,7 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
               <Area
                 yAxisId="energy"
                 dataKey="consumptionKwh"
-                name={t('Förbrukning', 'Consumption')}
+                name={t('Nätuttag', 'Grid import')}
                 type="monotone"
                 connectNulls={false}
                 stroke="#2563eb"
@@ -730,7 +751,7 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <CardTitle className="text-base">
-                {t('Förbrukning per månad och år', 'Consumption by month and year')}
+                {t('Nätuttag per månad och år', 'Grid import by month and year')}
               </CardTitle>
               <p className="mt-1 text-xs text-muted-foreground">
                 {t(

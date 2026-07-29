@@ -13,6 +13,14 @@ Deno.test('functional home-question bindings are unique and include move-in date
   ));
   assert(moveIn?.type === 'date', 'move-in binding must require a date answer');
   assert(moveIn?.dataUse === 'calculation', 'move-in date must be marked as actively used');
+
+  const heatedArea = HOME_QUESTION_FUNCTIONALITY.find((definition) => (
+    definition.key === 'heated_area_m2'
+  ));
+  assert(
+    heatedArea?.features.includes('energy_history'),
+    'heated area must be labelled as an energy-history input',
+  );
 });
 
 Deno.test('setup-only fields are not presented as current simulator calculations', () => {

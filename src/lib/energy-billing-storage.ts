@@ -5,9 +5,10 @@ import type {
   ParsedEnergyDocument,
 } from '@/lib/energy-billing-parser';
 import type { EnergyBillingDocumentForSeries } from '@/lib/energy-billing-series';
+import { resolvedEnergyFileMimeType } from '@/lib/energy-import-file-storage';
+import { fetchAllRows } from '@/lib/fetch-all-rows';
 
 export const ENERGY_BILLING_BUCKET = 'energy-billing-documents';
-export const MAX_ENERGY_BILL_FILE_BYTES = 15 * 1024 * 1024;
 
 type EnergyBillingDocumentRow = Tables<'energy_billing_documents'>;
 type EnergyBillingLineItemRow = Tables<'energy_billing_line_items'>;
@@ -16,48 +17,24 @@ export interface EnergyBillingDocumentRecord extends EnergyBillingDocumentRow {
   lineItems: EnergyBillingLineItemRow[];
 }
 
+interface LegacyEnergyBillingSourceRow {
+  customer_id: string;
+  file_path: string | null;
+  id: string;
+}
+
+interface LegacyEnergyBillingSource extends LegacyEnergyBillingSourceRow {
+  file_path: string;
+}
+
 export class EnergyBillingImportError extends Error {
   constructor(
-    public readonly code: 'duplicate' | 'upload_failed' | 'save_failed',
+    public readonly code: 'duplicate' | 'save_failed',
     message: string,
   ) {
     super(message);
     this.name = 'EnergyBillingImportError';
   }
-}
-
-function normalizeFileName(fileName: string): string {
-  const normalized = fileName
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-zA-Z0-9._-]+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
-  return normalized || 'energy-invoice';
-}
-
-function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-export async function sha256File(file: File): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
-  return bytesToHex(new Uint8Array(digest));
-}
-
-function resolvedMimeType(file: File): string {
-  if (file.type) return file.type;
-  const extension = file.name.toLocaleLowerCase().split('.').at(-1);
-  const inferredTypes: Record<string, string> = {
-    pdf: 'application/pdf',
-    jpg: 'image/jpeg',
-    jpeg: 'image/jpeg',
-    png: 'image/png',
-    webp: 'image/webp',
-    heic: 'image/heic',
-    heif: 'image/heif',
-  };
-  return inferredTypes[extension ?? ''] ?? 'application/octet-stream';
 }
 
 export async function fetchEnergyBillingDocuments(
@@ -72,12 +49,64 @@ export async function fetchEnergyBillingDocuments(
 
   if (error) throw error;
 
-  return (data ?? []).map((document) => ({
+  const records = (data ?? []).map((document) => ({
     ...document,
     lineItems: [...(document.energy_billing_line_items ?? [])].sort(
       (a, b) => a.sort_order - b.sort_order,
     ),
   }));
+  await purgeLegacyEnergyBillingSourceFiles(records);
+  return records.map((record) => (
+    record.file_path === null ? record : { ...record, file_path: null }
+  ));
+}
+
+async function purgeLegacyEnergyBillingSourceFiles(
+  records: LegacyEnergyBillingSourceRow[],
+): Promise<number> {
+  const recordsWithFiles = records.filter(
+    (record): record is LegacyEnergyBillingSource => (
+      typeof record.file_path === 'string' && record.file_path.length > 0
+    ),
+  );
+  if (recordsWithFiles.length === 0) return 0;
+
+  const customerIds = [...new Set(recordsWithFiles.map((record) => record.customer_id))];
+  for (const customerId of customerIds) {
+    const customerRecords = recordsWithFiles.filter(
+      (record) => record.customer_id === customerId,
+    );
+    for (let index = 0; index < customerRecords.length; index += 100) {
+      const batch = customerRecords.slice(index, index + 100);
+      const { error: storageError } = await supabase.storage
+        .from(ENERGY_BILLING_BUCKET)
+        .remove(batch.map((record) => record.file_path));
+      if (storageError) {
+        throw new Error(`A legacy energy source file could not be removed: ${storageError.message}`);
+      }
+
+      const { error: clearError } = await supabase.rpc('clear_energy_billing_file_paths', {
+        p_customer_id: customerId,
+        p_document_ids: batch.map((record) => record.id),
+      });
+      if (clearError) {
+        throw new Error(`Legacy energy file metadata could not be cleared: ${clearError.message}`);
+      }
+    }
+  }
+
+  return recordsWithFiles.length;
+}
+
+export async function purgeAllLegacyEnergyBillingSourceFilesForStaff(): Promise<number> {
+  const records = await fetchAllRows<LegacyEnergyBillingSourceRow>((from, to) => supabase
+    .from('energy_billing_documents')
+    .select('id, customer_id, file_path')
+    .not('file_path', 'is', null)
+    .order('customer_id', { ascending: true })
+    .order('id', { ascending: true })
+    .range(from, to));
+  return purgeLegacyEnergyBillingSourceFiles(records);
 }
 
 export function toEnergyBillingSeriesDocuments(
@@ -139,18 +168,6 @@ export async function storeEnergyBillingDocument(params: {
     throw new EnergyBillingImportError('duplicate', 'Document has already been imported');
   }
 
-  const storagePath = `${customerId}/${crypto.randomUUID()}/${normalizeFileName(file.name)}`;
-  const mimeType = resolvedMimeType(file);
-  const { error: uploadError } = await supabase.storage
-    .from(ENERGY_BILLING_BUCKET)
-    .upload(storagePath, file, {
-      contentType: mimeType,
-      upsert: false,
-    });
-  if (uploadError) {
-    throw new EnergyBillingImportError('upload_failed', uploadError.message);
-  }
-
   const documentPayload = {
     document_kind: parsed.documentKind,
     provider_key: parsed.providerKey,
@@ -167,9 +184,8 @@ export async function storeEnergyBillingDocument(params: {
     vat_sek: parsed.vatSek,
     total_amount_sek: parsed.totalAmountSek,
     currency: parsed.currency,
-    file_path: storagePath,
     original_file_name: file.name,
-    mime_type: mimeType,
+    mime_type: resolvedEnergyFileMimeType(file),
     file_size_bytes: file.size,
     document_sha256: documentSha256,
   } satisfies Json;
@@ -196,15 +212,31 @@ export async function storeEnergyBillingDocument(params: {
   );
 
   if (saveError || !documentId) {
-    const { error: cleanupError } = await supabase.storage
-      .from(ENERGY_BILLING_BUCKET)
-      .remove([storagePath]);
-    if (cleanupError) {
-      console.error('Failed to clean up energy invoice after database error:', cleanupError);
-    }
     const code = saveError?.code === '23505' ? 'duplicate' : 'save_failed';
     throw new EnergyBillingImportError(code, saveError?.message || 'Document was not saved');
   }
 
   return documentId;
+}
+
+export async function deleteEnergyBillingDocument(
+  customerId: string,
+  document: EnergyBillingDocumentRecord,
+): Promise<void> {
+  if (document.customer_id !== customerId) {
+    throw new Error('The invoice does not belong to this customer.');
+  }
+
+  if (document.file_path) {
+    const { error: storageError } = await supabase.storage
+      .from(ENERGY_BILLING_BUCKET)
+      .remove([document.file_path]);
+    if (storageError) throw storageError;
+  }
+
+  const { error } = await supabase.rpc('delete_energy_billing_document', {
+    p_customer_id: customerId,
+    p_document_id: document.id,
+  });
+  if (error) throw error;
 }

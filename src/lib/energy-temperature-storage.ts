@@ -4,13 +4,13 @@ import {
   parseEnergyUsageCsv,
   type ParsedEnergyUsageCsv,
 } from '@/lib/energy-usage-parser';
-import { sha256File } from '@/lib/energy-billing-storage';
+import { sha256File } from '@/lib/energy-import-file-storage';
 import { fetchAllRows } from '@/lib/fetch-all-rows';
 
 export const SHARED_WEATHER_DATASET_KEY = 'stockholm-taby';
-export const MAX_ENERGY_USAGE_CSV_FILE_BYTES = 5 * 1024 * 1024;
 
-export type EnergyUsageReadingRecord = Tables<'energy_usage_readings'>;
+export type EnergyUsageReadingRecord = Tables<'energy_usage_current_readings'>;
+export type EnergyUsageImportBatchRecord = Tables<'energy_usage_import_batches'>;
 export type EnergyWeatherDatasetRecord = Tables<'energy_weather_datasets'>;
 export type EnergyWeatherObservationRecord = Tables<'energy_weather_observations'>;
 export type EnergyHistoryNoteRecord = Tables<'energy_history_notes'>;
@@ -34,11 +34,23 @@ export async function fetchEnergyUsageReadings(
   customerId: string,
 ): Promise<EnergyUsageReadingRecord[]> {
   return fetchAllRows<EnergyUsageReadingRecord>((from, to) => supabase
-    .from('energy_usage_readings')
+    .from('energy_usage_current_readings')
     .select('*')
     .eq('customer_id', customerId)
     .order('reading_date', { ascending: true })
     .order('id', { ascending: true })
+    .range(from, to));
+}
+
+export async function fetchEnergyUsageImportBatches(
+  customerId: string,
+): Promise<EnergyUsageImportBatchRecord[]> {
+  return fetchAllRows<EnergyUsageImportBatchRecord>((from, to) => supabase
+    .from('energy_usage_import_batches')
+    .select('*')
+    .eq('customer_id', customerId)
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false })
     .range(from, to));
 }
 
@@ -75,10 +87,11 @@ export async function importEnergyUsageCsv(params: {
   customerId: string;
   file: File;
   parsed?: ParsedEnergyUsageCsv;
+  fileSha256?: string;
 }): Promise<string> {
   const { customerId, file } = params;
   const parsed = params.parsed ?? parseEnergyUsageCsv(await file.text(), file.name);
-  const fileSha256 = await sha256File(file);
+  const fileSha256 = params.fileSha256 ?? await sha256File(file);
   const readings = parsed.readings.map((reading) => ({
     reading_date: reading.readingDate,
     consumption_kwh: reading.consumptionKwh,
@@ -88,6 +101,7 @@ export async function importEnergyUsageCsv(params: {
     p_customer_id: customerId,
     p_original_file_name: file.name,
     p_file_sha256: fileSha256,
+    p_reading_kind: parsed.readingKind,
     p_readings: readings,
   });
 
@@ -95,6 +109,18 @@ export async function importEnergyUsageCsv(params: {
     const code = error?.code === '23505' ? 'duplicate' : 'save_failed';
     throw new EnergyUsageImportError(code, error?.message ?? 'Energy usage was not saved');
   }
+  return data;
+}
+
+export async function deleteEnergyUsageImport(
+  customerId: string,
+  importId: string,
+): Promise<number> {
+  const { data, error } = await supabase.rpc('delete_energy_usage_import', {
+    p_customer_id: customerId,
+    p_import_id: importId,
+  });
+  if (error) throw error;
   return data;
 }
 
