@@ -1,7 +1,12 @@
 # Cloudflare Pages response headers.
-# Vite emits content-hashed files under /assets, so they are safe to cache forever.
+# Revalidate hashed assets instead of marking them immutable. During a Pages
+# rollout, a temporarily unavailable chunk must never leave a stale response
+# in the browser cache.
 /assets/*
-  Cache-Control: public, max-age=31536000, immutable
+  Cache-Control: public, max-age=0, must-revalidate
+
+/404.html
+  Cache-Control: no-store
 
 /*
   X-Content-Type-Options: nosniff

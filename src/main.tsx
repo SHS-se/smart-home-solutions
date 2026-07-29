@@ -4,12 +4,36 @@ import App from "./App.tsx";
 import "./index.css";
 
 const preloadRecoveryKey = `vite-preload-recovery:${__GIT_COMMIT__}`;
-const maxPreloadRecoveryAttempts = 3;
+const preloadRecoveryQueryParam = "__shs_recovery";
+const preloadRecoveryDelaysMs = [
+  1_000,
+  2_000,
+  4_000,
+  8_000,
+  15_000,
+  30_000,
+  30_000,
+  30_000,
+] as const;
 const preloadRecoveryResetMs = 30_000;
 let preloadRecoveryScheduled = false;
 
 function resetPreloadRecovery(): void {
   sessionStorage.removeItem(preloadRecoveryKey);
+  const url = new URL(window.location.href);
+  if (url.searchParams.has(preloadRecoveryQueryParam)) {
+    url.searchParams.delete(preloadRecoveryQueryParam);
+    window.history.replaceState(window.history.state, "", url);
+  }
+}
+
+function reloadWithFreshDocument(attempt: string): void {
+  const url = new URL(window.location.href);
+  url.searchParams.set(
+    preloadRecoveryQueryParam,
+    `${__GIT_COMMIT__.slice(0, 12)}-${attempt}`,
+  );
+  window.location.replace(url);
 }
 
 const preloadRecoveryResetTimer = window.setTimeout(
@@ -19,22 +43,23 @@ const preloadRecoveryResetTimer = window.setTimeout(
 
 window.addEventListener("vite:preloadError", () => {
   if (preloadRecoveryScheduled) return;
-  window.clearTimeout(preloadRecoveryResetTimer);
   const storedAttempts = Number.parseInt(
     sessionStorage.getItem(preloadRecoveryKey) ?? "0",
     10,
   );
   const attempts = Number.isFinite(storedAttempts) ? storedAttempts : 0;
+  const retryDelayMs = preloadRecoveryDelaysMs[attempts];
 
-  if (attempts >= maxPreloadRecoveryAttempts) {
+  if (retryDelayMs === undefined) {
     return;
   }
 
+  window.clearTimeout(preloadRecoveryResetTimer);
   preloadRecoveryScheduled = true;
   sessionStorage.setItem(preloadRecoveryKey, String(attempts + 1));
   window.setTimeout(
-    () => window.location.reload(),
-    750 * (2 ** attempts),
+    () => reloadWithFreshDocument(String(attempts + 1)),
+    retryDelayMs,
   );
 });
 
@@ -62,7 +87,7 @@ class FatalErrorBoundary extends Component<
 
   private reload = (): void => {
     resetPreloadRecovery();
-    window.location.reload();
+    reloadWithFreshDocument(`manual-${Date.now()}`);
   };
 
   render(): ReactNode {
@@ -75,16 +100,20 @@ class FatalErrorBoundary extends Component<
             Sidan kunde inte laddas / The page could not be loaded
           </h1>
           <p className="mt-3 text-sm text-muted-foreground">
-            En ny version kan ha publicerats. Ladda om sidan för att fortsätta.
+            {preloadRecoveryScheduled
+              ? "En ny version hämtas. Sidan försöker automatiskt igen."
+              : "En ny version kan ha publicerats. Ladda om sidan för att fortsätta."}
             <br />
-            A new version may have been published. Reload the page to continue.
+            {preloadRecoveryScheduled
+              ? "A new version is being fetched. The page will retry automatically."
+              : "A new version may have been published. Reload the page to continue."}
           </p>
           <button
             type="button"
             className="mt-5 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
             onClick={this.reload}
           >
-            Ladda om / Reload
+            Försök nu / Retry now
           </button>
         </section>
       </main>

@@ -1,4 +1,18 @@
-# SPA fallback: serve index.html for any path that isn't a real static file,
-# so client-side React Router routes (e.g. deep links / refreshes) resolve.
-# Cloudflare Pages matches static assets first; this only catches unmatched paths.
-/*    /index.html   200
+# SPA rewrites are deliberately limited to React Router paths. A top-level
+# 404.html therefore remains authoritative for missing build assets instead
+# of returning index.html with a JavaScript URL.
+/services                  /   200
+/knowledge                 /   200
+/about                     /   200
+/contact                   /   200
+/unsubscribe               /   200
+/login                     /   200
+/reset-password            /   200
+/verify                    /   200
+/portal                    /   200
+/accounting                /   200
+
+/knowledge/*               /   200
+/onboarding/*              /   200
+/portal/*                  /   200
+/accounting/*              /   200

@@ -4,8 +4,7 @@ name: CI & Deploy
 # After the gate passes, on push to main/dev it (1) applies Supabase migrations to the matching
 # project, then (2) deploys the Supabase edge functions to that project, then (3) deploys the
 # frontend to a per-environment Cloudflare Pages project and (4) prunes that project's old
-# deployments, retaining a short rollback window so open browser sessions can still load
-# content-hashed chunks referenced by the previous versions:
+# deployments, retaining a short manual rollback window:
 #   main -> prod-smart-home-solutions  (prod Supabase oosxndduqzhvrorgogaw)  https://prod-smart-home-solutions.pages.dev
 #   dev  -> test-smart-home-solutions  (test Supabase vxqpgbzseckgceopitpm)  https://test-smart-home-solutions.pages.dev
 # Each project's production branch is the deploying branch, so the canonical <project>.pages.dev
@@ -214,9 +213,13 @@ jobs:
           # Output directory comes from wrangler.toml (pages_build_output_dir = "dist").
           $WRANGLER pages deploy --project-name="$PROJECT" --branch="$BRANCH"
 
+      - name: Verify deployed static assets
+        env:
+          DEPLOY_ORIGIN: ${{ github.ref_name == 'main' && 'https://smarthomesolutions.se' || 'https://test.smarthomesolutions.se' }}
+        run: node scripts/verify-pages-deployment.mjs dist "$DEPLOY_ORIGIN"
+
       - name: Prune old Cloudflare deployments
-        # Keep a small rollback/stale-client window instead of deleting every previous deployment:
-        # browsers with an already-open app can still request its content-hashed lazy chunks.
+        # Keep a small rollback window instead of deleting every previous deployment.
         # Best-effort: a prune hiccup must never fail an already-successful deploy, so every call is
         # guarded (the step runs under `bash -e`). The newest KEEP are never deleted, and the API
         # refuses to delete the live production deployment anyway, so the current build is safe.
@@ -224,7 +227,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          KEEP=5   # current deployment plus four recent rollback/stale-client versions
+          KEEP=5   # current deployment plus four recent manual rollback versions
           API="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/deployments"
           # Default page size is plenty: each run prunes back down to KEEP, so the list stays short.
           # (Passing per_page=100 here returns HTTP 400 from this endpoint.)
