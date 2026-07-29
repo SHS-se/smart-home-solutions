@@ -127,11 +127,13 @@ serve(async (req) => {
         // regardless of dashboard settings — the Payment Element renders as a
         // plain card form (fields stay in Stripe's iframe; PCI unchanged).
         payment_method_types: ["card"],
-        payment_method_options: {
-          // Always request 3DS on the first payment (BankID for Swedish banks).
-          // Renewals are merchant-initiated off-session charges and are exempt.
-          card: { request_three_d_secure: "any" },
-        },
+        // NO request_three_d_secure here: subscription-level payment_settings
+        // apply to EVERY invoice, and an off-session renewal that is forced
+        // into 3DS fails with requires_action (nobody is present to complete
+        // the challenge) and drives the subscription past_due. 3DS is instead
+        // requested on the first PaymentIntent below, where the customer is
+        // on-session; renewals ride the merchant-initiated exemption that the
+        // authenticated first payment establishes.
       },
       expand: ["latest_invoice.payment_intent"],
     });
@@ -143,8 +145,15 @@ serve(async (req) => {
 
     // deno-lint-ignore no-explicit-any
     const latestInvoice = subscription.latest_invoice as any;
-    const clientSecret: string | null = latestInvoice?.payment_intent?.client_secret ?? null;
+    const paymentIntent = latestInvoice?.payment_intent ?? null;
+    const clientSecret: string | null = paymentIntent?.client_secret ?? null;
     if (!clientSecret) throw new Error("No client secret on the subscription's first invoice");
+
+    // Always request 3DS on the first, on-session payment (BankID for Swedish
+    // banks). Scoped to this PaymentIntent only — see payment_settings above.
+    await stripe.paymentIntents.update(paymentIntent.id, {
+      payment_method_options: { card: { request_three_d_secure: "any" } },
+    });
 
     logStep("Subscription created", { subscriptionId: subscription.id });
     return new Response(JSON.stringify({ subscriptionId: subscription.id, clientSecret }), {

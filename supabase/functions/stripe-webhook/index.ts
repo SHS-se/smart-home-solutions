@@ -225,7 +225,9 @@ serve(async (req) => {
         const isSignupPayment = invoice.billing_reason === "subscription_create";
         // Then only on the FIRST failure; Stripe keeps retrying through the grace
         // period, and access continues until the subscription is finally cancelled.
-        if (customer && !isSignupPayment && (invoice.attempt_count ?? 1) === 1) {
+        // <= 1 because a failure that never reached the charge (e.g. the issuer
+        // demanded authentication, July 2026 incident) reports attempt_count 0.
+        if (customer && !isSignupPayment && (invoice.attempt_count ?? 1) <= 1) {
           if (customer.email) {
             await sendPaymentFailedEmail(customer.email, customer.name);
             logStep("payment-failed email sent");

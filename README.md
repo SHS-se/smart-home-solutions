@@ -82,8 +82,9 @@ npm run cf:dev
 
 The first `npm run deploy` creates a Pages project named `prod-smart-home-solutions`
 (rename in `wrangler.toml`). The build bakes in the `VITE_SUPABASE_*` values from your
-local `.env` / `.env.local`, so make sure those point at the intended Supabase project
-before deploying. The Supabase publishable/anon key is public by design, so nothing
+local `.env`, and `vite.config.ts` refuses to build if the resolved env mixes test and
+live values (Supabase project, `VITE_APP_ENV`, Stripe key). Local dev overrides live in
+`.env.development.local` (written by `scripts/dev.sh`), which builds never load. The Supabase publishable/anon key is public by design, so nothing
 secret ships in the bundle.
 
 **Automated CI/CD:** [`.github/workflows/ci-deploy.yml`](.github/workflows/ci-deploy.yml)

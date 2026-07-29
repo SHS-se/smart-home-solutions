@@ -6,8 +6,9 @@
 #   ./scripts/dev.sh pull [test|live]
 #   ./scripts/dev.sh deploy [test|live] [--force]
 #
-# Fetches the anon key from the Supabase CLI, writes a .env.local file, and
-# starts Vite on the correct port. Database migrations and edge function deploys
+# Fetches the anon key from the Supabase CLI, writes a .env.development.local
+# file (dev-mode-only, so builds never inherit it), and starts Vite on the
+# correct port. Database migrations and edge function deploys
 # are explicit commands.
 # The linked Supabase project is kept on test unless a live command is requested.
 
@@ -159,10 +160,14 @@ case "$ENV" in
   test)
     PROJECT_REF="$TEST_PROJECT_REF"
     PORT=3000
+    APP_ENV_VALUE="test"
+    STRIPE_PK_SOURCE=".env.test"
     ;;
   live|prod)
     PROJECT_REF="$LIVE_PROJECT_REF"
     PORT=3001
+    APP_ENV_VALUE="live"
+    STRIPE_PK_SOURCE=".env"
     ;;
   *)
     echo "Usage:"
@@ -318,10 +323,22 @@ if [ -z "$ANON_KEY" ]; then
   exit 1
 fi
 
-echo "→ Writing .env.local for $ENV..."
-cat > "$PROJECT_DIR/.env.local" <<EOF
+# The overrides go in .env.development.local: Vite only loads it in development
+# mode, so a later `npm run build` / `npm run build:test` can never pick up
+# these values (a plain .env.local leaks into every mode — that once put the
+# test Supabase into a local production build, which the consistency check in
+# vite.config.ts now rejects). VITE_APP_ENV and the Stripe key are written
+# alongside so `dev.sh live` serves a fully live-consistent frontend instead of
+# mixing the test banner/key with the prod database.
+STRIPE_PK=$(grep -o 'pk_\(test\|live\)_[A-Za-z0-9]*' "$PROJECT_DIR/$STRIPE_PK_SOURCE" | head -n 1 || true)
+echo "→ Writing .env.development.local for $ENV..."
+rm -f "$PROJECT_DIR/.env.local" # legacy location; stale copies contaminate builds
+cat > "$PROJECT_DIR/.env.development.local" <<EOF
+VITE_APP_ENV=${APP_ENV_VALUE}
+VITE_SUPABASE_PROJECT_ID=${PROJECT_REF}
 VITE_SUPABASE_URL=${SUPABASE_URL}
 VITE_SUPABASE_PUBLISHABLE_KEY=${ANON_KEY}
+VITE_STRIPE_PUBLISHABLE_KEY=${STRIPE_PK}
 EOF
 
 echo "→ Starting dev server on port $PORT..."
