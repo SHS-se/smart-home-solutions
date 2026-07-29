@@ -1,6 +1,6 @@
 {
   "tasks": {
-    "test": "deno test --no-check --sloppy-imports --allow-read --allow-env tests/ src/lib/"
+    "test": "deno test --no-check --sloppy-imports --allow-read --allow-write --allow-run --allow-env tests/ src/lib/"
   },
   "imports": {
     "@/": "./src/"

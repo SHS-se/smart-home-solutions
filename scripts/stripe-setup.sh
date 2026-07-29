@@ -11,7 +11,8 @@
 #
 # Usage:
 #   bash scripts/stripe-setup.sh                       # uses .env.stripe.test.local
-#   ENV_FILE=.env.stripe.live.local bash scripts/stripe-setup.sh
+#   ENV_FILE=.env.stripe.live.local ALLOW_LIVE=1 bash scripts/stripe-setup.sh
+#   bash scripts/stripe-setup.sh --webhook-only         # skips product/payment setup
 #
 # Safety: refuses to run unless the secret key is a TEST key (sk_test_/rk_test_),
 # unless ALLOW_LIVE=1 is explicitly set.
@@ -19,6 +20,15 @@
 set -euo pipefail
 
 ENV_FILE="${ENV_FILE:-.env.stripe.test.local}"
+WEBHOOK_ONLY=0
+
+if [ "$#" -gt 1 ] || { [ "$#" -eq 1 ] && [ "$1" != "--webhook-only" ]; }; then
+  echo "Usage: $0 [--webhook-only]" >&2
+  exit 1
+fi
+if [ "${1:-}" = "--webhook-only" ]; then
+  WEBHOOK_ONLY=1
+fi
 
 # ── config (smallest currency unit: SEK öre, so 32000 = 320.00 kr) ───────────
 PRODUCT_NAME="${PRODUCT_NAME:-Smart Home Solutions Prenumeration}"
@@ -27,10 +37,6 @@ PRICE_AMOUNT="${PRICE_AMOUNT:-32000}"
 PRICE_CURRENCY="${PRICE_CURRENCY:-sek}"
 PRICE_INTERVAL="${PRICE_INTERVAL:-month}"
 PRICE_LOOKUP_KEY="${PRICE_LOOKUP_KEY:-shs_subscription_monthly}"
-
-# Test Supabase project ref (vxqpgbzseckgceopitpm); override for prod.
-WEBHOOK_URL="${WEBHOOK_URL:-https://vxqpgbzseckgceopitpm.supabase.co/functions/v1/stripe-webhook}"
-WEBHOOK_SECRET_FILE="${WEBHOOK_SECRET_FILE:-.env.stripe.webhook.test.local}"
 
 # Everything stripe-webhook/index.ts switches on. Kept in one place because the
 # list is synced onto an existing endpoint too, not just used at creation.
@@ -61,6 +67,34 @@ case "$STRIPE_SECRET_KEY" in
     fi ;;
   *) echo "ERROR: STRIPE_SECRET_KEY is not a recognizable Stripe key." >&2; exit 1 ;;
 esac
+
+# Keep Stripe mode, Supabase target, and signing-secret file coupled. A signing
+# secret is unique to each endpoint, so crossing either boundary guarantees
+# signature failures (and can route live events into the test system).
+case "$MODE" in
+  test)
+    PROJECT_REF="vxqpgbzseckgceopitpm"
+    EXPECTED_WEBHOOK_URL="https://${PROJECT_REF}.supabase.co/functions/v1/stripe-webhook"
+    EXPECTED_WEBHOOK_SECRET_FILE=".env.stripe.webhook.test.local"
+    ;;
+  live)
+    PROJECT_REF="oosxndduqzhvrorgogaw"
+    EXPECTED_WEBHOOK_URL="https://${PROJECT_REF}.supabase.co/functions/v1/stripe-webhook"
+    EXPECTED_WEBHOOK_SECRET_FILE=".env.stripe.webhook.live.local"
+    ;;
+esac
+
+if [ -n "${WEBHOOK_URL:-}" ] && [ "$WEBHOOK_URL" != "$EXPECTED_WEBHOOK_URL" ]; then
+  echo "ERROR: $MODE Stripe keys must use $EXPECTED_WEBHOOK_URL, not $WEBHOOK_URL." >&2
+  exit 1
+fi
+if [ -n "${WEBHOOK_SECRET_FILE:-}" ] && [ "$WEBHOOK_SECRET_FILE" != "$EXPECTED_WEBHOOK_SECRET_FILE" ]; then
+  echo "ERROR: $MODE Stripe keys must use $EXPECTED_WEBHOOK_SECRET_FILE, not $WEBHOOK_SECRET_FILE." >&2
+  exit 1
+fi
+WEBHOOK_URL="$EXPECTED_WEBHOOK_URL"
+WEBHOOK_SECRET_FILE="$EXPECTED_WEBHOOK_SECRET_FILE"
+
 echo "Running in ${MODE} mode against Stripe."
 
 API="https://api.stripe.com/v1"
@@ -85,77 +119,79 @@ extract(){ printf '%s' "$1" | python3 -c "$PYEXTRACT" "$2"; }
 scall(){ curl -sS -u "$STRIPE_SECRET_KEY:" "$@"; }
 
 # ── 1. Price (reuse by lookup_key) + its Product ─────────────────────────────
-echo "Looking up price by lookup_key '$PRICE_LOOKUP_KEY'..."
-existing=$(scall -G "$API/prices" \
-  --data-urlencode "lookup_keys[]=$PRICE_LOOKUP_KEY" \
-  --data-urlencode "expand[]=data.product")
-PRICE_ID=$(extract "$existing" "data[0].id")
-PRODUCT_ID=$(extract "$existing" "data[0].product.id")
+if [ "$WEBHOOK_ONLY" -eq 0 ]; then
+  echo "Looking up price by lookup_key '$PRICE_LOOKUP_KEY'..."
+  existing=$(scall -G "$API/prices" \
+    --data-urlencode "lookup_keys[]=$PRICE_LOOKUP_KEY" \
+    --data-urlencode "expand[]=data.product")
+  PRICE_ID=$(extract "$existing" "data[0].id")
+  PRODUCT_ID=$(extract "$existing" "data[0].product.id")
 
-if [ -n "$PRICE_ID" ]; then
-  # Stripe prices are immutable: when the requested amount/currency/interval
-  # differs from the existing price, create a replacement and transfer the
-  # lookup_key to it (the app resolves the price by lookup_key), then archive
-  # the old price. Existing subscriptions keep their old price; new ones pick
-  # up the replacement.
-  CUR_AMOUNT=$(extract "$existing" "data[0].unit_amount")
-  CUR_CURRENCY=$(extract "$existing" "data[0].currency")
-  CUR_INTERVAL=$(extract "$existing" "data[0].recurring.interval")
-  if [ "$CUR_AMOUNT" = "$PRICE_AMOUNT" ] && [ "$CUR_CURRENCY" = "$PRICE_CURRENCY" ] && [ "$CUR_INTERVAL" = "$PRICE_INTERVAL" ]; then
-    echo "Reusing existing price $PRICE_ID (product $PRODUCT_ID)."
+  if [ -n "$PRICE_ID" ]; then
+    # Stripe prices are immutable: when the requested amount/currency/interval
+    # differs from the existing price, create a replacement and transfer the
+    # lookup_key to it (the app resolves the price by lookup_key), then archive
+    # the old price. Existing subscriptions keep their old price; new ones pick
+    # up the replacement.
+    CUR_AMOUNT=$(extract "$existing" "data[0].unit_amount")
+    CUR_CURRENCY=$(extract "$existing" "data[0].currency")
+    CUR_INTERVAL=$(extract "$existing" "data[0].recurring.interval")
+    if [ "$CUR_AMOUNT" = "$PRICE_AMOUNT" ] && [ "$CUR_CURRENCY" = "$PRICE_CURRENCY" ] && [ "$CUR_INTERVAL" = "$PRICE_INTERVAL" ]; then
+      echo "Reusing existing price $PRICE_ID (product $PRODUCT_ID)."
+    else
+      echo "Price config changed ($CUR_AMOUNT $CUR_CURRENCY/$CUR_INTERVAL -> $PRICE_AMOUNT $PRICE_CURRENCY/$PRICE_INTERVAL)."
+      OLD_PRICE_ID="$PRICE_ID"
+      price=$(scall "$API/prices" \
+        -d "product=$PRODUCT_ID" \
+        -d "unit_amount=$PRICE_AMOUNT" \
+        -d "currency=$PRICE_CURRENCY" \
+        -d "recurring[interval]=$PRICE_INTERVAL" \
+        -d "lookup_key=$PRICE_LOOKUP_KEY" \
+        -d "transfer_lookup_key=true")
+      PRICE_ID=$(extract "$price" "id")
+      scall "$API/prices/$OLD_PRICE_ID" -d "active=false" >/dev/null
+      echo "  replacement price: $PRICE_ID (lookup_key transferred; $OLD_PRICE_ID archived)"
+    fi
   else
-    echo "Price config changed ($CUR_AMOUNT $CUR_CURRENCY/$CUR_INTERVAL -> $PRICE_AMOUNT $PRICE_CURRENCY/$PRICE_INTERVAL)."
-    OLD_PRICE_ID="$PRICE_ID"
+    echo "Creating product..."
+    prod=$(scall "$API/products" -d "name=$PRODUCT_NAME" -d "description=$PRODUCT_DESC")
+    PRODUCT_ID=$(extract "$prod" "id")
+    echo "  product: $PRODUCT_ID"
+
+    echo "Creating recurring price ($PRICE_AMOUNT $PRICE_CURRENCY / $PRICE_INTERVAL)..."
     price=$(scall "$API/prices" \
       -d "product=$PRODUCT_ID" \
       -d "unit_amount=$PRICE_AMOUNT" \
       -d "currency=$PRICE_CURRENCY" \
       -d "recurring[interval]=$PRICE_INTERVAL" \
-      -d "lookup_key=$PRICE_LOOKUP_KEY" \
-      -d "transfer_lookup_key=true")
+      -d "lookup_key=$PRICE_LOOKUP_KEY")
     PRICE_ID=$(extract "$price" "id")
-    scall "$API/prices/$OLD_PRICE_ID" -d "active=false" >/dev/null
-    echo "  replacement price: $PRICE_ID (lookup_key transferred; $OLD_PRICE_ID archived)"
+    echo "  price: $PRICE_ID"
   fi
-else
-  echo "Creating product..."
-  prod=$(scall "$API/products" -d "name=$PRODUCT_NAME" -d "description=$PRODUCT_DESC")
-  PRODUCT_ID=$(extract "$prod" "id")
-  echo "  product: $PRODUCT_ID"
 
-  echo "Creating recurring price ($PRICE_AMOUNT $PRICE_CURRENCY / $PRICE_INTERVAL)..."
-  price=$(scall "$API/prices" \
-    -d "product=$PRODUCT_ID" \
-    -d "unit_amount=$PRICE_AMOUNT" \
-    -d "currency=$PRICE_CURRENCY" \
-    -d "recurring[interval]=$PRICE_INTERVAL" \
-    -d "lookup_key=$PRICE_LOOKUP_KEY")
-  PRICE_ID=$(extract "$price" "id")
-  echo "  price: $PRICE_ID"
-fi
-
-# ── 2. Payment method configuration: force Link off ──────────────────────────
-# payment_method_types on intents does NOT remove the Link prompt inside the
-# Payment Element's card form (the "save my information" section) — that is
-# governed by the account's default payment method configuration.
-echo "Disabling Link in the default payment method configuration..."
-pmclist=$(scall -G "$API/payment_method_configurations" -d "limit=100")
-PMC_ID=$(printf '%s' "$pmclist" | python3 -c \
-  'import sys,json;d=json.load(sys.stdin);print(next((e["id"] for e in d.get("data",[]) if e.get("is_default")),""))')
-if [ -n "$PMC_ID" ]; then
-  pmcres=$(scall "$API/payment_method_configurations/$PMC_ID" \
-    -d "link[display_preference][preference]=off")
-  extract "$pmcres" "id" >/dev/null # surfaces Stripe errors
-  echo "  Link turned off in configuration $PMC_ID."
-else
-  echo "  WARNING: no default payment method configuration found; disable Link in the dashboard." >&2
+  # ── 2. Payment method configuration: force Link off ────────────────────────
+  # payment_method_types on intents does NOT remove the Link prompt inside the
+  # Payment Element's card form (the "save my information" section) — that is
+  # governed by the account's default payment method configuration.
+  echo "Disabling Link in the default payment method configuration..."
+  pmclist=$(scall -G "$API/payment_method_configurations" -d "limit=100")
+  PMC_ID=$(printf '%s' "$pmclist" | python3 -c \
+    'import sys,json;d=json.load(sys.stdin);print(next((e["id"] for e in d.get("data",[]) if e.get("is_default")),""))')
+  if [ -n "$PMC_ID" ]; then
+    pmcres=$(scall "$API/payment_method_configurations/$PMC_ID" \
+      -d "link[display_preference][preference]=off")
+    extract "$pmcres" "id" >/dev/null # surfaces Stripe errors
+    echo "  Link turned off in configuration $PMC_ID."
+  else
+    echo "  WARNING: no default payment method configuration found; disable Link in the dashboard." >&2
+  fi
 fi
 
 # ── 3. Webhook endpoint (reuse by URL) ───────────────────────────────────────
 echo "Checking webhook endpoint for $WEBHOOK_URL..."
 whlist=$(scall -G "$API/webhook_endpoints" -d "limit=100")
 WH_ID=$(printf '%s' "$whlist" | python3 -c \
-  'import sys,json;d=json.load(sys.stdin);u=sys.argv[1];print(next((e["id"] for e in d.get("data",[]) if e.get("url")==u),""))' \
+  'import sys,json;d=json.load(sys.stdin);u=sys.argv[1];print(next((e["id"] for e in d.get("data",[]) if e.get("url")==u and e.get("status")=="enabled"),""))' \
   "$WEBHOOK_URL")
 
 EVENT_ARGS=()
@@ -184,18 +220,20 @@ else
 fi
 
 # ── 4. Summary (all non-sensitive) ───────────────────────────────────────────
-cat <<SUMMARY
-
-──────────────────────────────────────────────
-Stripe ${MODE} setup complete.
-  Product id : $PRODUCT_ID
-  Price id   : $PRICE_ID   (lookup_key: $PRICE_LOOKUP_KEY)
-  Webhook    : $WH_ID -> $WEBHOOK_URL
-
-Next:
-  • Set Supabase secret SHS_STRIPE_SECRET_KEY (test project) to your sk_test key.
-  • Set Supabase secret STRIPE_WEBHOOK_SECRET from $WEBHOOK_SECRET_FILE.
-  • Put the publishable (pk_) key in .env.test as VITE_STRIPE_PUBLISHABLE_KEY.
-  • Reference price id $PRICE_ID when creating subscriptions.
-──────────────────────────────────────────────
-SUMMARY
+printf '\n──────────────────────────────────────────────\n'
+printf 'Stripe %s setup complete.\n' "$MODE"
+if [ "$WEBHOOK_ONLY" -eq 0 ]; then
+  printf '  Product id : %s\n' "$PRODUCT_ID"
+  printf '  Price id   : %s   (lookup_key: %s)\n' "$PRICE_ID" "$PRICE_LOOKUP_KEY"
+fi
+printf '  Webhook    : %s -> %s\n' "$WH_ID" "$WEBHOOK_URL"
+printf '\nNext:\n'
+printf '  • Set Supabase secret SHS_STRIPE_SECRET_KEY in %s to your %s Stripe secret key.\n' "$PROJECT_REF" "$MODE"
+printf '  • Set Supabase secret STRIPE_WEBHOOK_SECRET from %s.\n' "$WEBHOOK_SECRET_FILE"
+if [ "$MODE" = "test" ]; then
+  printf '  • Put the test publishable (pk_) key in .env.test as VITE_STRIPE_PUBLISHABLE_KEY.\n'
+fi
+if [ "$WEBHOOK_ONLY" -eq 0 ]; then
+  printf '  • Reference price id %s when creating subscriptions.\n' "$PRICE_ID"
+fi
+printf '──────────────────────────────────────────────\n'
