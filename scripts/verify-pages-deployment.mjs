@@ -10,7 +10,18 @@ if (!distArgument || !originArgument) {
 
 const distDirectory = path.resolve(distArgument);
 const origin = new URL(originArgument);
-const retryDelaysMs = [0, 1_000, 2_000, 4_000, 8_000, 15_000];
+// Pages' immutable deployment URL is ready immediately, while a custom domain
+// can expose newly uploaded chunks gradually for roughly two minutes.
+const retryDelaysMs = [
+  0,
+  2_000,
+  4_000,
+  8_000,
+  15_000,
+  30_000,
+  45_000,
+  60_000,
+];
 const concurrency = 16;
 
 async function collectFiles(directory) {
@@ -81,7 +92,7 @@ async function checkFiles(filePaths) {
 
 const files = await collectFiles(distDirectory);
 let pending = files;
-for (const delayMs of retryDelaysMs) {
+for (const [attemptIndex, delayMs] of retryDelaysMs.entries()) {
   if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
   const failures = await checkFiles(pending.map((failure) => (
     typeof failure === "string" ? failure : failure.filePath
@@ -91,6 +102,13 @@ for (const delayMs of retryDelaysMs) {
     break;
   }
   pending = failures;
+  if (attemptIndex < retryDelaysMs.length - 1) {
+    console.warn(
+      `${failures.length} file(s) have not propagated; retrying in ${
+        retryDelaysMs[attemptIndex + 1] / 1_000
+      }s`,
+    );
+  }
 }
 
 if (pending.length > 0) {
