@@ -59,19 +59,35 @@ export const HOME_QUESTION_FUNCTIONALITY: HomeQuestionFunctionality[] = [
     },
   },
   {
-    key: 'heated_area_m2',
+    key: 'heated_boarea_m2',
     type: 'number',
     importance: 'required',
     dataUse: 'calculation',
     features: ['energy_history', 'energy_simulator', 'roi'],
-    label: { sv: 'Uppvärmd yta', en: 'Heated area' },
+    label: { sv: 'Uppvärmd boarea', en: 'Heated boarea' },
     purpose: {
-      sv: 'Skalar värmebehovet, används i den indikativa energiprestandan och krävs för lönsamhetsberäkningen.',
-      en: 'Scales heating demand, supports the indicative energy-performance estimate, and is required for ROI calculations.',
+      sv: 'Summeras med uppvärmd biarea för att uppskatta Atemp i energiberäkningar.',
+      en: 'Added to heated biarea to estimate Atemp for energy calculations.',
     },
     suggestedQuestion: {
-      sv: 'Hur stor är den uppvärmda ytan (m²)?',
-      en: 'What is the heated area (m²)?',
+      sv: 'Hur många kvadratmeter uppvärmd boarea finns i bostaden?',
+      en: 'How many square metres of heated boarea are in the home?',
+    },
+  },
+  {
+    key: 'heated_biarea_m2',
+    type: 'number',
+    importance: 'required',
+    dataUse: 'calculation',
+    features: ['energy_history', 'energy_simulator', 'roi'],
+    label: { sv: 'Uppvärmd biarea', en: 'Heated biarea' },
+    purpose: {
+      sv: 'Summeras med uppvärmd boarea för att uppskatta Atemp i energiberäkningar. Ange 0 om uppvärmd biarea saknas.',
+      en: 'Added to heated boarea to estimate Atemp for energy calculations. Enter 0 when there is no heated biarea.',
+    },
+    suggestedQuestion: {
+      sv: 'Hur många kvadratmeter uppvärmd biarea finns i bostaden?',
+      en: 'How many square metres of heated biarea are in the home?',
     },
   },
   {

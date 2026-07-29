@@ -360,6 +360,8 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
               notesError={notesQuery.error}
               usageError={usageQuery.error}
               usageIsLoading={usageQuery.isLoading}
+              heatedBoareaM2={homeProfileQuery.data?.heatedBoareaM2 ?? null}
+              heatedBiareaM2={homeProfileQuery.data?.heatedBiareaM2 ?? null}
               heatedAreaM2={homeProfileQuery.data?.heatedAreaM2 ?? null}
               hasSolar={homeProfileQuery.data?.hasSolar ?? null}
               isSample={documents.length === 0}

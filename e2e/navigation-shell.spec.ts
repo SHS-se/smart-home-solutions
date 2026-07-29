@@ -16,8 +16,9 @@ const CUSTOMER_USER_ID = 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff';
 const VIEWED_CUSTOMER_NAME = 'Ana the Wifey';
 const PRIMARY_HOME_ID = 'cccccccc-dddd-4eee-8fff-111111111111';
 const MOVE_IN_QUESTION_ID = '50000000-0000-4000-8000-000000000001';
-const HEATED_AREA_QUESTION_ID = '50000000-0000-4000-8000-000000000002';
-const HAS_SOLAR_QUESTION_ID = '50000000-0000-4000-8000-000000000003';
+const HEATED_BOAREA_QUESTION_ID = '50000000-0000-4000-8000-000000000002';
+const HEATED_BIAREA_QUESTION_ID = '50000000-0000-4000-8000-000000000003';
+const HAS_SOLAR_QUESTION_ID = '50000000-0000-4000-8000-000000000004';
 
 function fakeJwt(sub: string, email: string): string {
   const enc = (obj: unknown) => Buffer.from(JSON.stringify(obj)).toString('base64url');
@@ -249,10 +250,16 @@ async function mockSupabase(context: BrowserContext, role: 'staff' | 'customer')
             semantic_key: 'move_in_date',
           });
         }
-        if (semanticKey.includes('heated_area_m2')) {
+        if (semanticKey.includes('heated_boarea_m2')) {
           matchingQuestions.push({
-            id: HEATED_AREA_QUESTION_ID,
-            semantic_key: 'heated_area_m2',
+            id: HEATED_BOAREA_QUESTION_ID,
+            semantic_key: 'heated_boarea_m2',
+          });
+        }
+        if (semanticKey.includes('heated_biarea_m2')) {
+          matchingQuestions.push({
+            id: HEATED_BIAREA_QUESTION_ID,
+            semantic_key: 'heated_biarea_m2',
           });
         }
         if (semanticKey.includes('has_solar')) {
@@ -273,11 +280,18 @@ async function mockSupabase(context: BrowserContext, role: 'staff' | 'customer')
             answer_text: '2021-10-01',
           });
         }
-        if (questionId.includes(HEATED_AREA_QUESTION_ID)) {
+        if (questionId.includes(HEATED_BOAREA_QUESTION_ID)) {
           matchingAnswers.push({
-            question_id: HEATED_AREA_QUESTION_ID,
+            question_id: HEATED_BOAREA_QUESTION_ID,
             answer_value: 160,
             answer_text: '160',
+          });
+        }
+        if (questionId.includes(HEATED_BIAREA_QUESTION_ID)) {
+          matchingAnswers.push({
+            question_id: HEATED_BIAREA_QUESTION_ID,
+            answer_value: 40,
+            answer_text: '40',
           });
         }
         if (questionId.includes(HAS_SOLAR_QUESTION_ID)) {

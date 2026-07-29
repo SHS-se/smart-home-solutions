@@ -53,6 +53,8 @@ interface EnergyHistoryOverviewProps {
   notesError?: unknown;
   usageError?: unknown;
   usageIsLoading?: boolean;
+  heatedBoareaM2?: number | null;
+  heatedBiareaM2?: number | null;
   heatedAreaM2?: number | null;
   hasSolar?: boolean | null;
   moveInDate?: string | null;
@@ -247,6 +249,8 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
   notesError,
   usageError,
   usageIsLoading = false,
+  heatedBoareaM2 = null,
+  heatedBiareaM2 = null,
   heatedAreaM2 = null,
   hasSolar = null,
   moveInDate = null,
@@ -536,6 +540,8 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
 
       <EnergySourceInsights
         readings={usageReadings}
+        heatedBoareaM2={heatedBoareaM2}
+        heatedBiareaM2={heatedBiareaM2}
         heatedAreaM2={heatedAreaM2}
         hasSolar={hasSolar}
         isLoading={usageIsLoading}

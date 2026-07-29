@@ -13,11 +13,15 @@ import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { formatPower } from '@/lib/energy-units';
+import {
+  calculateHeatedAtempM2,
+  normalizeHomeProfileNumber,
+} from '@/lib/home-profile-values';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 
 const ENERGY_SEMANTIC_KEYS = [
-  'dwelling_type', 'year_built', 'heated_area_m2', 'occupants',
+  'dwelling_type', 'year_built', 'heated_boarea_m2', 'heated_biarea_m2', 'occupants',
   'heating_types', 'hot_water_type', 'has_ev', 'ev_charger_power_kw',
   'annual_kwh', 'annual_peak_kw', 'contract_type', 'has_solar', 'has_battery',
 ];
@@ -25,7 +29,8 @@ const ENERGY_SEMANTIC_KEYS = [
 const SEMANTIC_LABELS: Record<string, { sv: string; en: string }> = {
   dwelling_type: { sv: 'Bostadstyp', en: 'Dwelling Type' },
   year_built: { sv: 'Byggnadsår', en: 'Year Built' },
-  heated_area_m2: { sv: 'Uppvärmd yta (m²)', en: 'Heated Area (m²)' },
+  heated_boarea_m2: { sv: 'Uppvärmd boarea (m²)', en: 'Heated boarea (m²)' },
+  heated_biarea_m2: { sv: 'Uppvärmd biarea (m²)', en: 'Heated biarea (m²)' },
   occupants: { sv: 'Antal boende', en: 'Occupants' },
   heating_types: { sv: 'Uppvärmningstyp', en: 'Heating Types' },
   hot_water_type: { sv: 'Varmvattentyp', en: 'Hot Water Type' },
@@ -39,7 +44,7 @@ const SEMANTIC_LABELS: Record<string, { sv: string; en: string }> = {
 };
 
 const BOOLEAN_KEYS = ['has_ev', 'has_solar', 'has_battery'];
-const NUMBER_KEYS = ['year_built', 'heated_area_m2', 'occupants', 'ev_charger_power_kw', 'annual_kwh', 'annual_peak_kw'];
+const NUMBER_KEYS = ['year_built', 'heated_boarea_m2', 'heated_biarea_m2', 'occupants', 'ev_charger_power_kw', 'annual_kwh', 'annual_peak_kw'];
 const READONLY_KEYS = ['heating_types']; // complex multi-select, keep read-only
 
 function estimateUA(heatedArea: number, yearBuilt: number, dwellingType: string): number {
@@ -119,7 +124,10 @@ const HouseSetupTab: React.FC<HouseSetupTabProps> = ({ customerId, homeId }) => 
             .eq('home_id', homeId)
             .maybeSingle();
           if (!existingSettings) {
-            const area = typeof values.heated_area_m2 === 'number' ? values.heated_area_m2 : 100;
+            const area = calculateHeatedAtempM2(
+              normalizeHomeProfileNumber(values.heated_boarea_m2),
+              normalizeHomeProfileNumber(values.heated_biarea_m2),
+            ) ?? 100;
             const year = typeof values.year_built === 'number' ? values.year_built : 1980;
             const dwelling = typeof values.dwelling_type === 'string' ? values.dwelling_type : 'house';
             const ua = estimateUA(area, year, dwelling);
@@ -173,6 +181,10 @@ const HouseSetupTab: React.FC<HouseSetupTabProps> = ({ customerId, homeId }) => 
   }, [customerId, homeId, questionMap]);
 
   const effectiveUA = overrides.ua_w_per_k ?? settings?.ua_w_per_k ?? 200;
+  const heatedAtempM2 = calculateHeatedAtempM2(
+    normalizeHomeProfileNumber(profileValues.heated_boarea_m2),
+    normalizeHomeProfileNumber(profileValues.heated_biarea_m2),
+  );
 
   const chartData = useMemo(() => {
     const points = [];
@@ -288,6 +300,15 @@ const HouseSetupTab: React.FC<HouseSetupTabProps> = ({ customerId, homeId }) => 
                       </div>
                     );
                   })}
+                  {heatedAtempM2 !== null ? (
+                    <div className="flex items-center justify-between border-b border-border py-2">
+                      <div>
+                        <span className="text-sm font-medium">{t('Uppskattad Atemp', 'Estimated Atemp')}</span>
+                        <Badge variant="secondary" className="ml-2 text-xs">{t('Beräknat', 'Computed')}</Badge>
+                      </div>
+                      <span className="text-sm text-muted-foreground">{heatedAtempM2} m²</span>
+                    </div>
+                  ) : null}
                   {settings && (
                     <>
                       <div className="flex items-center justify-between py-2 border-b border-border">

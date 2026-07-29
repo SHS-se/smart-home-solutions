@@ -1,5 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
 import {
+  calculateHeatedAtempM2,
   normalizeHomeProfileBoolean,
   normalizeHomeProfileDate,
   normalizeHomeProfileNumber,
@@ -47,6 +48,8 @@ async function fetchPrimaryHomeFunctionalAnswers(
 
 export interface EnergyHistoryHomeProfileInputs {
   moveInDate: string | null;
+  heatedBoareaM2: number | null;
+  heatedBiareaM2: number | null;
   heatedAreaM2: number | null;
   hasSolar: boolean | null;
 }
@@ -56,12 +59,17 @@ export async function fetchEnergyHistoryHomeProfileInputs(
 ): Promise<EnergyHistoryHomeProfileInputs> {
   const answers = await fetchPrimaryHomeFunctionalAnswers(customerId, [
     'move_in_date',
-    'heated_area_m2',
+    'heated_boarea_m2',
+    'heated_biarea_m2',
     'has_solar',
   ]);
+  const heatedBoareaM2 = normalizeHomeProfileNumber(answers.heated_boarea_m2);
+  const heatedBiareaM2 = normalizeHomeProfileNumber(answers.heated_biarea_m2);
   return {
     moveInDate: normalizeHomeProfileDate(answers.move_in_date),
-    heatedAreaM2: normalizeHomeProfileNumber(answers.heated_area_m2),
+    heatedBoareaM2,
+    heatedBiareaM2,
+    heatedAreaM2: calculateHeatedAtempM2(heatedBoareaM2, heatedBiareaM2),
     hasSolar: normalizeHomeProfileBoolean(answers.has_solar),
   };
 }

@@ -17,6 +17,24 @@ export function normalizeHomeProfileNumber(value: unknown): number | null {
   return Number.isFinite(normalized) ? normalized : null;
 }
 
+export function calculateHeatedAtempM2(
+  heatedBoareaM2: number | null,
+  heatedBiareaM2: number | null,
+): number | null {
+  if (
+    heatedBoareaM2 === null
+    || heatedBiareaM2 === null
+    || !Number.isFinite(heatedBoareaM2)
+    || !Number.isFinite(heatedBiareaM2)
+    || heatedBoareaM2 <= 0
+    || heatedBiareaM2 < 0
+  ) {
+    return null;
+  }
+
+  return heatedBoareaM2 + heatedBiareaM2;
+}
+
 export function normalizeHomeProfileBoolean(value: unknown): boolean | null {
   if (typeof value === 'boolean') return value;
   if (value === 'true') return true;

@@ -38,6 +38,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 interface EnergySourceInsightsProps {
   readings: EnergyUsageReadingRecord[];
+  heatedBoareaM2: number | null;
+  heatedBiareaM2: number | null;
   heatedAreaM2: number | null;
   hasSolar: boolean | null;
   isLoading?: boolean;
@@ -80,6 +82,8 @@ function errorMessage(error: unknown): string | null {
 
 const EnergySourceInsights: React.FC<EnergySourceInsightsProps> = ({
   readings,
+  heatedBoareaM2,
+  heatedBiareaM2,
   heatedAreaM2,
   hasSolar,
   isLoading = false,
@@ -125,8 +129,8 @@ const EnergySourceInsights: React.FC<EnergySourceInsightsProps> = ({
   const availabilityMessage = (() => {
     if (performance.unavailableReason === 'missing_heated_area') {
       return t(
-        'Lägg till uppvärmd yta i Hemprofilen för att beräkna en indikativ energiklass.',
-        'Add the heated area in the Home profile to calculate an indicative energy class.',
+        'Fyll i både uppvärmd boarea och uppvärmd biarea i Hemprofilen för att beräkna en indikativ energiklass. Ange 0 om uppvärmd biarea saknas.',
+        'Complete both heated boarea and heated biarea in the Home profile to calculate an indicative energy class. Enter 0 if there is no heated biarea.',
       );
     }
     if (performance.unavailableReason === 'area_not_supported') {
@@ -422,8 +426,15 @@ const EnergySourceInsights: React.FC<EnergySourceInsightsProps> = ({
                 </div>
                 <div className="grid content-start gap-3 sm:grid-cols-2">
                   <div className="rounded-xl border p-3">
-                    <p className="text-xs text-muted-foreground">{t('Uppvärmd yta (Atemp)', 'Heated area (Atemp)')}</p>
+                    <p className="text-xs text-muted-foreground">{t('Uppskattad Atemp', 'Estimated Atemp')}</p>
                     <p className="mt-1 font-medium tabular-nums">{numberFormatter.format(performance.heatedAreaM2!)} m²</p>
+                    {heatedBoareaM2 !== null && heatedBiareaM2 !== null ? (
+                      <p className="mt-1 text-[11px] text-muted-foreground">
+                        {numberFormatter.format(heatedBoareaM2)} m² {t('boarea', 'boarea')}
+                        {' + '}
+                        {numberFormatter.format(heatedBiareaM2)} m² {t('biarea', 'biarea')}
+                      </p>
+                    ) : null}
                   </div>
                   <div className="rounded-xl border p-3">
                     <p className="text-xs text-muted-foreground">{t('Jämförelsekrav BBR 31', 'BBR 31 comparison requirement')}</p>
@@ -485,14 +496,14 @@ const EnergySourceInsights: React.FC<EnergySourceInsightsProps> = ({
               </p>
               <p>
                 {t(
-                  'Den här beräkningen antar ett elvärmt småhus i Stockholms län, använder elfaktorn 1,8 och geografifaktorn 1,0, drar av BEN:s normalvärde 30 kWh/m² och år för hushållsel och fördelar nätel proportionellt mellan hushållsel och byggnadsenergi när totalförbrukning finns.',
-                  'This calculation assumes an electrically heated small house in Stockholm County, uses the electricity factor 1.8 and geographic factor 1.0, deducts BEN’s normal household-electricity value of 30 kWh/m²/year, and allocates grid electricity proportionally between household and building energy when whole-home consumption is available.',
+                  'Den här beräkningen uppskattar Atemp som uppvärmd boarea plus uppvärmd biarea, antar ett elvärmt småhus i Stockholms län, använder elfaktorn 1,8 och geografifaktorn 1,0, drar av BEN:s normalvärde 30 kWh/m² och år för hushållsel och fördelar nätel proportionellt mellan hushållsel och byggnadsenergi när totalförbrukning finns.',
+                  'This calculation estimates Atemp as heated boarea plus heated biarea, assumes an electrically heated small house in Stockholm County, uses the electricity factor 1.8 and geographic factor 1.0, deducts BEN’s normal household-electricity value of 30 kWh/m²/year, and allocates grid electricity proportionally between household and building energy when whole-home consumption is available.',
                 )}
               </p>
               <p>
                 {t(
-                  'Den saknar certifierad normalårskorrigering, exakt normalisering av varmvatten och inomhustemperatur, separata mätare för hushållsel och byggnadsenergi samt säker fördelning av sol och batteri. Därför kan bokstaven avvika väsentligt från en riktig energideklaration. Den nya A0-klassen uppskattas inte.',
-                  'It lacks certified normal-year correction, exact normalization of hot water and indoor temperature, separate meters for household and building energy, and verified allocation of solar and battery energy. The letter may therefore differ materially from a real certificate. The new A0 class is not estimated.',
+                  'Boarea plus biarea kan avvika från en uppmätt Atemp. Beräkningen saknar också certifierad normalårskorrigering, exakt normalisering av varmvatten och inomhustemperatur, separata mätare för hushållsel och byggnadsenergi samt säker fördelning av sol och batteri. Därför kan bokstaven avvika väsentligt från en riktig energideklaration. Den nya A0-klassen uppskattas inte.',
+                  'Boarea plus biarea can differ from a measured Atemp. The calculation also lacks certified normal-year correction, exact normalization of hot water and indoor temperature, separate meters for household and building energy, and verified allocation of solar and battery energy. The letter may therefore differ materially from a real certificate. The new A0 class is not estimated.',
                 )}
               </p>
               <div className="flex flex-wrap gap-x-4 gap-y-2">

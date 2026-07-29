@@ -14,12 +14,20 @@ Deno.test('functional home-question bindings are unique and include move-in date
   assert(moveIn?.type === 'date', 'move-in binding must require a date answer');
   assert(moveIn?.dataUse === 'calculation', 'move-in date must be marked as actively used');
 
-  const heatedArea = HOME_QUESTION_FUNCTIONALITY.find((definition) => (
-    definition.key === 'heated_area_m2'
+  const heatedBoarea = HOME_QUESTION_FUNCTIONALITY.find((definition) => (
+    definition.key === 'heated_boarea_m2'
   ));
   assert(
-    heatedArea?.features.includes('energy_history'),
-    'heated area must be labelled as an energy-history input',
+    heatedBoarea?.features.includes('energy_history'),
+    'heated boarea must be labelled as an energy-history input',
+  );
+
+  const heatedBiarea = HOME_QUESTION_FUNCTIONALITY.find((definition) => (
+    definition.key === 'heated_biarea_m2'
+  ));
+  assert(
+    heatedBiarea?.features.includes('energy_history'),
+    'heated biarea must be labelled as an energy-history input',
   );
 });
 

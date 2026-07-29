@@ -11,9 +11,10 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
-const REQUIRED_FIELDS = ['heated_area_m2', 'year_built', 'dwelling_type'];
+const REQUIRED_FIELDS = ['heated_boarea_m2', 'heated_biarea_m2', 'year_built', 'dwelling_type'];
 const SEMANTIC_LABELS: Record<string, { sv: string; en: string }> = {
-  heated_area_m2: { sv: 'Uppvärmd yta (m²)', en: 'Heated Area (m²)' },
+  heated_boarea_m2: { sv: 'Uppvärmd boarea (m²)', en: 'Heated boarea (m²)' },
+  heated_biarea_m2: { sv: 'Uppvärmd biarea (m²)', en: 'Heated biarea (m²)' },
   year_built: { sv: 'Byggnadsår', en: 'Year Built' },
   dwelling_type: { sv: 'Bostadstyp', en: 'Dwelling Type' },
 };
