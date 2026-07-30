@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
+import { fetchLatestReadingDateByToken } from '@/lib/energy-device-readings';
 
 interface DeviceToken {
   id: string;
@@ -32,6 +33,9 @@ const HomeAssistantCard: React.FC<HomeAssistantCardProps> = ({ customerId }) => 
   const [revokingId, setRevokingId] = useState<string | null>(null);
   const [pairingCode, setPairingCode] = useState<string | null>(null);
   const [codeExpiresAt, setCodeExpiresAt] = useState<Date | null>(null);
+  const [latestDataByToken, setLatestDataByToken] = useState<Map<string, string>>(
+    () => new Map(),
+  );
 
   const loadTokens = useCallback(async () => {
     const { data, error } = await supabase
@@ -42,6 +46,12 @@ const HomeAssistantCard: React.FC<HomeAssistantCardProps> = ({ customerId }) => 
       .order('created_at', { ascending: false });
     if (!error) setTokens(data ?? []);
     setLoading(false);
+    // Best-effort: reading data is subscription-gated, token list is not.
+    try {
+      setLatestDataByToken(await fetchLatestReadingDateByToken(customerId));
+    } catch {
+      // Leave the map empty; the card still renders without "last data".
+    }
   }, [customerId]);
 
   useEffect(() => {
@@ -173,6 +183,9 @@ const HomeAssistantCard: React.FC<HomeAssistantCardProps> = ({ customerId }) => 
                     {t('Ansluten', 'Connected')}: {formatDate(token.created_at)}
                     {' · '}
                     {t('Senast sedd', 'Last seen')}: {formatDate(token.last_seen_at)}
+                    {' · '}
+                    {t('Senaste data', 'Last data')}: {latestDataByToken.get(token.id)
+                      ?? t('Ingen ännu', 'None yet')}
                   </div>
                 </div>
                 <Button

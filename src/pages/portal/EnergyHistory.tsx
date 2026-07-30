@@ -31,6 +31,11 @@ import {
   ENERGY_HISTORY_SAMPLE_SERIES,
 } from '@/lib/energy-history-sample';
 import EnergyDataUploadCard from '@/components/portal/energy-history/EnergyDataUploadCard';
+import EnergiprestandaSection from '@/components/portal/energy-history/EnergiprestandaSection';
+import {
+  fetchAllWeatherObservations,
+  fetchEnergyDeviceReadings,
+} from '@/lib/energy-device-readings';
 import EnergyTemperatureAnalysis from '@/components/portal/energy-history/EnergyTemperatureAnalysis';
 import EnergyHistoryDocuments from '@/components/portal/energy-history/EnergyHistoryDocuments';
 import EnergyHistoryOverview from '@/components/portal/energy-history/EnergyHistoryOverview';
@@ -56,7 +61,7 @@ interface EnergyHistoryProps {
 }
 
 const SHARED_WEATHER_DATASET_QUERY_KEY = ['energy-shared-weather-dataset'] as const;
-const ENERGY_HISTORY_TABS = new Set(['overview', 'upload', 'documents', 'temperature']);
+const ENERGY_HISTORY_TABS = new Set(['overview', 'upload', 'documents', 'temperature', 'performance']);
 
 const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   customerId: propCustomerId,
@@ -90,6 +95,7 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   const usageDataEnabled = customerEnergyEnabled
     && (activeTab === 'overview' || activeTab === 'temperature');
   const temperatureDataEnabled = customerEnergyEnabled && activeTab === 'temperature';
+  const performanceDataEnabled = customerEnergyEnabled && activeTab === 'performance';
   const managementDataEnabled = customerEnergyEnabled && activeTab === 'documents';
   const documentsQuery = useQuery({
     queryKey,
@@ -153,6 +159,24 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
     enabled: temperatureDataEnabled && Boolean(usageStartDate && usageEndDate),
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+  });
+  const deviceReadingsQuery = useQuery({
+    queryKey: ['energy-device-readings', customerId],
+    queryFn: () => fetchEnergyDeviceReadings(customerId),
+    enabled: performanceDataEnabled,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+  });
+  const allWeatherQuery = useQuery({
+    queryKey: ['energy-all-weather-observations'],
+    queryFn: fetchAllWeatherObservations,
+    enabled: performanceDataEnabled,
+    staleTime: 60 * 60 * 1000,
+    gcTime: 2 * 60 * 60 * 1000,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
@@ -342,11 +366,12 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
         </Alert>
       ) : (
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5">
-          <TabsList className="grid w-full max-w-2xl grid-cols-4">
+          <TabsList className="grid w-full max-w-3xl grid-cols-5">
             <TabsTrigger value="overview">{t('Översikt', 'Overview')}</TabsTrigger>
             <TabsTrigger value="upload">{t('Ladda upp', 'Upload')}</TabsTrigger>
             <TabsTrigger value="documents">{t('Data', 'Data')}</TabsTrigger>
             <TabsTrigger value="temperature">{t('Temperatur', 'Temperature')}</TabsTrigger>
+            <TabsTrigger value="performance">{t('Energiprestanda', 'Performance')}</TabsTrigger>
           </TabsList>
           <TabsContent value="overview">
             <EnergyHistoryOverview
@@ -403,6 +428,15 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
                 onDeleteParseFailure={handleDeleteParseFailure}
               />
             )}
+          </TabsContent>
+          <TabsContent value="performance">
+            <EnergiprestandaSection
+              readings={deviceReadingsQuery.data ?? []}
+              weatherObservations={allWeatherQuery.data ?? []}
+              atempM2={homeProfileQuery.data?.heatedAreaM2 ?? null}
+              isLoading={deviceReadingsQuery.isLoading || allWeatherQuery.isLoading}
+              error={deviceReadingsQuery.error ?? allWeatherQuery.error}
+            />
           </TabsContent>
           <TabsContent value="temperature">
             <EnergyTemperatureAnalysis
