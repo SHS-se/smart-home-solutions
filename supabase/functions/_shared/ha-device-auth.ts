@@ -74,9 +74,11 @@ export async function authenticateDevice(
     return { ok: false, status: 401, error: "token_revoked" };
   }
 
+  // customers has no name column — identity lives on the linked contact and
+  // is exposed via the customers_with_identity view (fetched best-effort).
   const { data: customer, error: customerError } = await supabase
     .from("customers")
-    .select("id, name, subscription_active, subscription_expires_at")
+    .select("id, subscription_active, subscription_expires_at")
     .eq("id", tokenRow.customer_id)
     .maybeSingle();
 
@@ -84,6 +86,14 @@ export async function authenticateDevice(
     console.error("[HA-DEVICE-AUTH] customer lookup failed", customerError);
     return { ok: false, status: 500, error: "customer_lookup_failed" };
   }
+
+  let customerName: string | null = null;
+  const { data: identity } = await supabase
+    .from("customers_with_identity")
+    .select("name")
+    .eq("id", tokenRow.customer_id)
+    .maybeSingle();
+  customerName = identity?.name ?? null;
 
   // Freshness marker; awaited because the edge runtime may not run work
   // scheduled after the response is returned. Failures must not block auth.
@@ -102,7 +112,7 @@ export async function authenticateDevice(
     ok: true,
     tokenId: tokenRow.id,
     customerId: customer.id,
-    customerName: customer.name ?? null,
+    customerName,
     subscriptionActive: Boolean(customer.subscription_active) && notExpired,
     subscriptionExpiresAt: customer.subscription_expires_at ?? null,
   };

@@ -94,14 +94,21 @@ serve(async (req) => {
 
     const { data: customer } = await supabase
       .from("customers")
-      .select("name, subscription_active, subscription_expires_at")
+      .select("subscription_active, subscription_expires_at")
+      .eq("id", consumed.customer_id)
+      .maybeSingle();
+
+    // Name lives on the linked contact, exposed via this view; best-effort.
+    const { data: identity } = await supabase
+      .from("customers_with_identity")
+      .select("name")
       .eq("id", consumed.customer_id)
       .maybeSingle();
 
     return json({
       device_token: deviceToken,
       device_token_id: tokenRow.id,
-      customer_name: customer?.name ?? null,
+      customer_name: identity?.name ?? null,
       subscription_active: Boolean(customer?.subscription_active),
     });
   } catch (error) {
