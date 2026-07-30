@@ -34,6 +34,24 @@ export interface RollingAnnualEnergyProfile {
   averageSelfSuppliedKwhPerDay: number | null;
 }
 
+/** Stored daily usage row, narrowed to what the series builders need. */
+export interface StoredDailyUsageReading {
+  reading_date: string;
+  consumption_kwh: number;
+  reading_kind: string;
+}
+
+/** Map stored daily usage rows onto the shape the series builders expect. */
+export function toDailyEnergyReadings(
+  readings: readonly StoredDailyUsageReading[],
+): DailyEnergyReading[] {
+  return readings.map((reading) => ({
+    readingDate: reading.reading_date,
+    consumptionKwh: reading.consumption_kwh,
+    readingKind: reading.reading_kind as EnergyReadingKind,
+  }));
+}
+
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const MIN_ANNUAL_COVERAGE_DAYS = 300;
 

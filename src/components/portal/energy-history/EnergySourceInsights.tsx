@@ -1,9 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
-  ExternalLink,
-  Gauge,
   Home,
-  Info,
   Leaf,
   Loader2,
   Sun,
@@ -22,15 +19,11 @@ import {
 } from 'recharts';
 import { useLanguage } from '@/contexts/LanguageContext';
 import type { EnergyUsageReadingRecord } from '@/lib/energy-temperature-storage';
-import type { EnergyReadingKind } from '@/lib/energy-usage-parser';
 import {
   buildMonthlyEnergyFlows,
-  type DailyEnergyReading,
+  buildRollingAnnualEnergyProfile,
+  toDailyEnergyReadings,
 } from '@/lib/energy-usage-series';
-import {
-  buildIndicativeEnergyPerformance,
-  type IndicativeEnergyGrade,
-} from '@/lib/indicative-energy-performance';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -38,10 +31,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 interface EnergySourceInsightsProps {
   readings: EnergyUsageReadingRecord[];
-  heatedBoareaM2: number | null;
-  heatedBiareaM2: number | null;
-  heatedAreaM2: number | null;
-  hasSolar: boolean | null;
   isLoading?: boolean;
   error?: unknown;
   onUploadClick?: () => void;
@@ -53,28 +42,6 @@ const SOURCE_COLORS = {
   self: '#d97706',
 };
 
-const GRADE_BANDS: Array<{
-  grade: IndicativeEnergyGrade;
-  label: string;
-  className: string;
-}> = [
-  { grade: 'A', label: '≤50%', className: 'bg-emerald-600' },
-  { grade: 'B', label: '50–75%', className: 'bg-green-500' },
-  { grade: 'C', label: '75–100%', className: 'bg-lime-500' },
-  { grade: 'D', label: '100–135%', className: 'bg-yellow-500' },
-  { grade: 'E', label: '135–180%', className: 'bg-orange-500' },
-  { grade: 'F', label: '180–235%', className: 'bg-orange-700' },
-  { grade: 'G', label: '>235%', className: 'bg-red-700' },
-];
-
-function toDailyReadings(readings: EnergyUsageReadingRecord[]): DailyEnergyReading[] {
-  return readings.map((reading) => ({
-    readingDate: reading.reading_date,
-    consumptionKwh: reading.consumption_kwh,
-    readingKind: reading.reading_kind as EnergyReadingKind,
-  }));
-}
-
 function errorMessage(error: unknown): string | null {
   if (!error) return null;
   return error instanceof Error ? error.message : String(error);
@@ -82,10 +49,6 @@ function errorMessage(error: unknown): string | null {
 
 const EnergySourceInsights: React.FC<EnergySourceInsightsProps> = ({
   readings,
-  heatedBoareaM2,
-  heatedBiareaM2,
-  heatedAreaM2,
-  hasSolar,
   isLoading = false,
   error,
   onUploadClick,
@@ -103,16 +66,15 @@ const EnergySourceInsights: React.FC<EnergySourceInsightsProps> = ({
     year: '2-digit',
     timeZone: 'UTC',
   }), [locale]);
-  const dailyReadings = useMemo(() => toDailyReadings(readings), [readings]);
+  const dailyReadings = useMemo(() => toDailyEnergyReadings(readings), [readings]);
   const monthlyFlows = useMemo(
     () => buildMonthlyEnergyFlows(dailyReadings),
     [dailyReadings],
   );
-  const performance = useMemo(
-    () => buildIndicativeEnergyPerformance(dailyReadings, heatedAreaM2, hasSolar),
-    [dailyReadings, hasSolar, heatedAreaM2],
+  const annualProfile = useMemo(
+    () => buildRollingAnnualEnergyProfile(dailyReadings),
+    [dailyReadings],
   );
-  const annualProfile = performance.profile;
   const gridReadingCount = readings.filter(
     (reading) => reading.reading_kind === 'grid_import',
   ).length;
@@ -126,34 +88,6 @@ const EnergySourceInsights: React.FC<EnergySourceInsightsProps> = ({
   const formatDaily = (value: number | null) => (
     value === null ? '–' : `${numberFormatter.format(value)} kWh/${t('dygn', 'day')}`
   );
-  const availabilityMessage = (() => {
-    if (performance.unavailableReason === 'missing_heated_area') {
-      return t(
-        'Fyll i både uppvärmd boarea och uppvärmd biarea i Hemprofilen för att beräkna en indikativ energiklass. Ange 0 om uppvärmd biarea saknas.',
-        'Complete both heated boarea and heated biarea in the Home profile to calculate an indicative energy class. Enter 0 if there is no heated biarea.',
-      );
-    }
-    if (performance.unavailableReason === 'area_not_supported') {
-      return t(
-        'BBR 31 anger inget primärenergital för småhus med högst 50 m² Atemp, så någon A–G-indikation visas inte.',
-        'BBR 31 does not specify a primary-energy requirement for small houses of at most 50 m² Atemp, so no A–G indication is shown.',
-      );
-    }
-    if (performance.unavailableReason === 'insufficient_daily_data') {
-      return t(
-        `Minst 300 dagar med både nätunderlag och tekniskt förbrukningsunderlag behövs. Just nu finns ${annualProfile.gridImportDays} nät-dagar och ${annualProfile.efficiencyDays} tekniska dagar under den senaste årsperioden.`,
-        `At least 300 days of both grid evidence and technical consumption evidence are needed. The latest annual window currently has ${annualProfile.gridImportDays} grid days and ${annualProfile.efficiencyDays} technical days.`,
-      );
-    }
-    if (performance.unavailableReason === 'solar_requires_total_consumption') {
-      return t(
-        `Hemprofilen anger att huset har solceller. Lägg till minst 30 dagar med verklig totalförbrukning innan en energiklass visas; nätuttag efter solinstallationen underskattar husets energibehov. Just nu finns ${annualProfile.actualTotalConsumptionDays} sådana dagar under den senaste årsperioden.`,
-        `The Home profile says this home has solar panels. Add at least 30 days of actual whole-home consumption before an energy class is shown; grid import after the solar installation understates the home’s energy demand. The latest annual window currently has ${annualProfile.actualTotalConsumptionDays} such days.`,
-      );
-    }
-    return null;
-  })();
-
   if (isLoading) {
     return (
       <Card>
@@ -381,162 +315,6 @@ const EnergySourceInsights: React.FC<EnergySourceInsightsProps> = ({
               </p>
             </>
           )}
-        </CardContent>
-      </Card>
-
-      <Card className="overflow-hidden border-border/70 shadow-sm" data-testid="indicative-energy-performance">
-        <CardHeader className="border-b border-border/60 bg-gradient-to-r from-emerald-500/5 via-background to-amber-500/5">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Gauge className="h-4 w-4 text-emerald-700" />
-                {t('Indikativ energiprestanda', 'Indicative energy performance')}
-              </CardTitle>
-              <p className="mt-1 max-w-3xl text-xs text-muted-foreground">
-                {t(
-                  'En förenklad A–G-indikation inspirerad av Boverkets energideklaration. Detta är inte en officiell energideklaration eller ett myndighetsbeslut.',
-                  'A simplified A–G indication inspired by Boverket’s energy performance certificate. This is not an official certificate or authority decision.',
-                )}
-              </p>
-            </div>
-            <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
-              {t('Ej officiell', 'Not official')}
-            </Badge>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-5 pt-5">
-          {performance.grade ? (
-            <>
-              <div className="grid gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
-                <div className="flex flex-col items-center justify-center rounded-2xl border border-border/70 bg-muted/20 p-5 text-center">
-                  <div className={`flex h-24 w-24 items-center justify-center rounded-2xl text-5xl font-bold text-white shadow-lg ${
-                    GRADE_BANDS.find((band) => band.grade === performance.grade)?.className
-                  }`}>
-                    {performance.grade}
-                  </div>
-                  <p className="mt-3 text-sm font-medium">
-                    {numberFormatter.format(performance.primaryEnergyKwhM2!)} kWh/m², {t('år', 'year')}
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {numberFormatter.format(performance.requirementPercent!)}% {t(
-                      'av jämförbart nybyggnadskrav',
-                      'of the comparable new-build requirement',
-                    )}
-                  </p>
-                </div>
-                <div className="grid content-start gap-3 sm:grid-cols-2">
-                  <div className="rounded-xl border p-3">
-                    <p className="text-xs text-muted-foreground">{t('Uppskattad Atemp', 'Estimated Atemp')}</p>
-                    <p className="mt-1 font-medium tabular-nums">{numberFormatter.format(performance.heatedAreaM2!)} m²</p>
-                    {heatedBoareaM2 !== null && heatedBiareaM2 !== null ? (
-                      <p className="mt-1 text-[11px] text-muted-foreground">
-                        {numberFormatter.format(heatedBoareaM2)} m² {t('boarea', 'boarea')}
-                        {' + '}
-                        {numberFormatter.format(heatedBiareaM2)} m² {t('biarea', 'biarea')}
-                      </p>
-                    ) : null}
-                  </div>
-                  <div className="rounded-xl border p-3">
-                    <p className="text-xs text-muted-foreground">{t('Jämförelsekrav BBR 31', 'BBR 31 comparison requirement')}</p>
-                    <p className="mt-1 font-medium tabular-nums">{numberFormatter.format(performance.newBuildRequirementKwhM2!)} kWh/m², {t('år', 'year')}</p>
-                  </div>
-                  <div className="rounded-xl border p-3">
-                    <p className="text-xs text-muted-foreground">{t('Uppskattad byggnadsenergi från nätet', 'Estimated building energy from grid')}</p>
-                    <p className="mt-1 font-medium tabular-nums">{formatAnnual(performance.estimatedDeliveredBuildingElectricityKwh)}</p>
-                  </div>
-                  <div className="rounded-xl border p-3">
-                    <p className="text-xs text-muted-foreground">{t('Avdragen normal hushållsel', 'Deducted normal household electricity')}</p>
-                    <p className="mt-1 font-medium tabular-nums">{formatAnnual(performance.estimatedHouseholdElectricityKwh)}</p>
-                  </div>
-                </div>
-              </div>
-
-            </>
-          ) : (
-            <Alert className="border-amber-300 bg-amber-50/60 dark:border-amber-900 dark:bg-amber-950/20">
-              <Info className="h-4 w-4 text-amber-700 dark:text-amber-400" />
-              <AlertDescription>{availabilityMessage}</AlertDescription>
-            </Alert>
-          )}
-
-          <div>
-            <p className="mb-2 text-xs text-muted-foreground">
-              {t(
-                'Klassgräns som andel av jämförbart nybyggnadskrav',
-                'Class boundary as a share of the comparable new-build requirement',
-              )}
-            </p>
-            <div className="grid grid-cols-7 overflow-hidden rounded-xl border border-border/70">
-              {GRADE_BANDS.map((band) => (
-                <div
-                  key={band.grade}
-                  className={`${band.className} px-1 py-2 text-center text-white ${
-                    performance.grade === band.grade
-                      ? 'relative z-10 ring-4 ring-foreground/25 ring-inset'
-                      : 'opacity-65'
-                  }`}
-                >
-                  <p className="font-semibold">{band.grade}</p>
-                  <p className="text-[9px] sm:text-[10px]">{band.label}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <details className="rounded-xl border border-border/70 bg-muted/15 p-4">
-            <summary className="cursor-pointer text-sm font-medium">
-              {t('Så räknas indikationen och vad som saknas', 'How the indication is calculated and what is missing')}
-            </summary>
-            <div className="mt-3 space-y-3 text-xs leading-relaxed text-muted-foreground">
-              <p>
-                {t(
-                  'Officiell energiprestanda omfattar köpt energi för uppvärmning, tappvarmvatten, komfortkyla och fastighetsenergi – inte hushållsel. Den viktas med primärenergifaktorer och geografisk faktor och jämförs sedan med nybyggnadskravet för byggnaden.',
-                  'Official energy performance covers delivered energy for heating, domestic hot water, comfort cooling, and building services—not household electricity. It is weighted using primary-energy and geographic factors, then compared with the new-build requirement for that building.',
-                )}
-              </p>
-              <p>
-                {t(
-                  'Den här beräkningen uppskattar Atemp som uppvärmd boarea plus uppvärmd biarea, antar ett elvärmt småhus i Stockholms län, använder elfaktorn 1,8 och geografifaktorn 1,0, drar av BEN:s normalvärde 30 kWh/m² och år för hushållsel och fördelar nätel proportionellt mellan hushållsel och byggnadsenergi när totalförbrukning finns.',
-                  'This calculation estimates Atemp as heated boarea plus heated biarea, assumes an electrically heated small house in Stockholm County, uses the electricity factor 1.8 and geographic factor 1.0, deducts BEN’s normal household-electricity value of 30 kWh/m²/year, and allocates grid electricity proportionally between household and building energy when whole-home consumption is available.',
-                )}
-              </p>
-              <p>
-                {t(
-                  'Boarea plus biarea kan avvika från en uppmätt Atemp. Beräkningen saknar också certifierad normalårskorrigering, exakt normalisering av varmvatten och inomhustemperatur, separata mätare för hushållsel och byggnadsenergi samt säker fördelning av sol och batteri. Därför kan bokstaven avvika väsentligt från en riktig energideklaration. Den nya A0-klassen uppskattas inte.',
-                  'Boarea plus biarea can differ from a measured Atemp. The calculation also lacks certified normal-year correction, exact normalization of hot water and indoor temperature, separate meters for household and building energy, and verified allocation of solar and battery energy. The letter may therefore differ materially from a real certificate. The new A0 class is not estimated.',
-                )}
-              </p>
-              <div className="flex flex-wrap gap-x-4 gap-y-2">
-                <a
-                  href="https://www.boverket.se/sv/energideklaration/energideklaration/energideklarationens-innehall/"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
-                >
-                  {t('Boverket: energiklasser', 'Boverket: energy classes')}
-                  <ExternalLink className="h-3 w-3" />
-                </a>
-                <a
-                  href="https://www.boverket.se/sv/byggande/bygg-och-renovera-energieffektivt/energihushallningskrav/primarenergital-och-byggnadens-energiprestanda"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
-                >
-                  {t('Boverket: primärenergital', 'Boverket: primary-energy number')}
-                  <ExternalLink className="h-3 w-3" />
-                </a>
-                <a
-                  href="https://www.boverket.se/sv/energideklaration/for-energiexperter/lokalt-producerad-solel-i-energideklarationen/"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
-                >
-                  {t('Boverket: solel i energideklarationen', 'Boverket: solar in the certificate')}
-                  <ExternalLink className="h-3 w-3" />
-                </a>
-              </div>
-            </div>
-          </details>
         </CardContent>
       </Card>
     </div>

@@ -527,10 +527,7 @@ test.describe('staff navigation shell', () => {
     await expect(sourceComparison.getByText('Tekniskt årsbehov')).toBeVisible();
     await expect(sourceComparison.getByText(/365 totaldagar/)).toBeVisible();
 
-    const performance = page.getByTestId('indicative-energy-performance');
-    await expect(performance.getByText('Indikativ energiprestanda')).toBeVisible();
-    await expect(performance.getByText('Ej officiell')).toBeVisible();
-    await expect(performance.getByText('D', { exact: true }).first()).toBeVisible();
+    await expect(page.getByTestId('energy-performance')).toHaveCount(0);
     await page.screenshot({ path: 'test-results/energy-source-accounting.png', fullPage: true });
 
     await page.getByRole('tab', { name: 'Ladda upp' }).click();
@@ -539,6 +536,25 @@ test.describe('staff navigation shell', () => {
     await expect(upload.locator('input[type="file"]')).toHaveCount(1);
     await expect(page.getByRole('heading', { name: 'Elnätsfakturor' })).toHaveCount(0);
     await expect(page.getByRole('heading', { name: 'Elhandelsfakturor' })).toHaveCount(0);
+  });
+
+  test('energiprestanda lives in its own tab and grades without Home Assistant data', async ({ page }) => {
+    await login(page);
+    await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history`);
+    await page.getByRole('tab', { name: 'Energiprestanda' }).click();
+
+    const performance = page.getByTestId('energy-performance');
+    await expect(performance.getByText('Energiprestanda (primärenergital)')).toBeVisible();
+    await expect(performance.getByText('Ej officiell')).toBeVisible();
+    await expect(page.getByTestId('energy-performance-method')).toHaveText(
+      'Uppskattad från nätuttag',
+    );
+    await expect(page.getByTestId('energy-class-badge')).toHaveText('D');
+    await expect(
+      performance.getByText('Koppla Home Assistant', { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText('Mer precision med Home Assistant')).toBeVisible();
+    await page.screenshot({ path: 'test-results/energy-performance-tab.png', fullPage: true });
   });
 
   test('energy imports expose privacy-safe deletion and parser review', async ({ page }) => {

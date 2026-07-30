@@ -93,7 +93,9 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   const notesQueryKey = ['energy-history-notes', customerId] as const;
   const customerEnergyEnabled = Boolean(customerId && isSubscribed && !subscriptionLoading);
   const usageDataEnabled = customerEnergyEnabled
-    && (activeTab === 'overview' || activeTab === 'temperature');
+    && (activeTab === 'overview'
+      || activeTab === 'temperature'
+      || activeTab === 'performance');
   const temperatureDataEnabled = customerEnergyEnabled && activeTab === 'temperature';
   const performanceDataEnabled = customerEnergyEnabled && activeTab === 'performance';
   const managementDataEnabled = customerEnergyEnabled && activeTab === 'documents';
@@ -385,10 +387,6 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
               notesError={notesQuery.error}
               usageError={usageQuery.error}
               usageIsLoading={usageQuery.isLoading}
-              heatedBoareaM2={homeProfileQuery.data?.heatedBoareaM2 ?? null}
-              heatedBiareaM2={homeProfileQuery.data?.heatedBiareaM2 ?? null}
-              heatedAreaM2={homeProfileQuery.data?.heatedAreaM2 ?? null}
-              hasSolar={homeProfileQuery.data?.hasSolar ?? null}
               isSample={documents.length === 0}
               onUploadClick={() => setActiveTab('upload')}
               onCreateNote={handleCreateNote}
@@ -432,10 +430,19 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
           <TabsContent value="performance">
             <EnergiprestandaSection
               readings={deviceReadingsQuery.data ?? []}
+              usageReadings={usageQuery.data ?? []}
               weatherObservations={allWeatherQuery.data ?? []}
               atempM2={homeProfileQuery.data?.heatedAreaM2 ?? null}
-              isLoading={deviceReadingsQuery.isLoading || allWeatherQuery.isLoading}
-              error={deviceReadingsQuery.error ?? allWeatherQuery.error}
+              heatedBoareaM2={homeProfileQuery.data?.heatedBoareaM2 ?? null}
+              heatedBiareaM2={homeProfileQuery.data?.heatedBiareaM2 ?? null}
+              hasSolar={homeProfileQuery.data?.hasSolar ?? null}
+              isLoading={deviceReadingsQuery.isLoading
+                || allWeatherQuery.isLoading
+                || usageQuery.isLoading}
+              error={deviceReadingsQuery.error
+                ?? allWeatherQuery.error
+                ?? usageQuery.error}
+              onUploadClick={() => setActiveTab('upload')}
             />
           </TabsContent>
           <TabsContent value="temperature">
