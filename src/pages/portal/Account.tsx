@@ -11,6 +11,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
+import HomeAssistantCard from '@/components/portal/account/HomeAssistantCard';
 
 interface AccountProps {
   customerId?: string;
@@ -396,6 +397,10 @@ const Account: React.FC<AccountProps> = ({ customerId: propCustomerId, isStaffVi
             </div>
           </CardContent>
         </Card>
+
+        {resolvedCustomerId && !isStaffView && (
+          <HomeAssistantCard customerId={resolvedCustomerId} />
+        )}
       </div>
     </>
   );

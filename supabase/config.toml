@@ -87,3 +87,20 @@ verify_jwt = false
 # is available only to pg_cron and then takes an atomic daily sync claim.
 [functions.sync-weather-history]
 verify_jwt = false
+
+# --- Home Assistant device link ---
+# create-pairing-code validates the caller's own JWT in-function (portal user).
+# pair-device is public by design: the single-use, short-lived pairing code is
+# the credential. ha-energy-ingest and integration-status authenticate with a
+# hashed long-lived device token and are subscription-gated in-function.
+[functions.create-pairing-code]
+verify_jwt = false
+
+[functions.pair-device]
+verify_jwt = false
+
+[functions.ha-energy-ingest]
+verify_jwt = false
+
+[functions.integration-status]
+verify_jwt = false

@@ -1421,6 +1421,61 @@ export type Database = {
           },
         ]
       }
+      energy_device_readings: {
+        Row: {
+          category: string
+          created_at: string
+          customer_id: string
+          device_token_id: string | null
+          id: string
+          kwh: number
+          reading_date: string
+          updated_at: string
+        }
+        Insert: {
+          category: string
+          created_at?: string
+          customer_id: string
+          device_token_id?: string | null
+          id?: string
+          kwh: number
+          reading_date: string
+          updated_at?: string
+        }
+        Update: {
+          category?: string
+          created_at?: string
+          customer_id?: string
+          device_token_id?: string | null
+          id?: string
+          kwh?: number
+          reading_date?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "energy_device_readings_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_device_readings_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers_with_identity"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_device_readings_device_token_id_fkey"
+            columns: ["device_token_id"]
+            isOneToOne: false
+            referencedRelation: "ha_device_tokens"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       energy_usage_import_batches: {
         Row: {
           created_at: string
@@ -1763,6 +1818,96 @@ export type Database = {
           uploaded_by?: string
         }
         Relationships: []
+      }
+      ha_device_tokens: {
+        Row: {
+          created_at: string
+          customer_id: string
+          device_name: string
+          id: string
+          last_seen_at: string | null
+          revoked_at: string | null
+          token_hash: string
+        }
+        Insert: {
+          created_at?: string
+          customer_id: string
+          device_name?: string
+          id?: string
+          last_seen_at?: string | null
+          revoked_at?: string | null
+          token_hash: string
+        }
+        Update: {
+          created_at?: string
+          customer_id?: string
+          device_name?: string
+          id?: string
+          last_seen_at?: string | null
+          revoked_at?: string | null
+          token_hash?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ha_device_tokens_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ha_device_tokens_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers_with_identity"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ha_pairing_codes: {
+        Row: {
+          code_hash: string
+          created_at: string
+          created_by: string
+          customer_id: string
+          expires_at: string
+          id: string
+          used_at: string | null
+        }
+        Insert: {
+          code_hash: string
+          created_at?: string
+          created_by: string
+          customer_id: string
+          expires_at: string
+          id?: string
+          used_at?: string | null
+        }
+        Update: {
+          code_hash?: string
+          created_at?: string
+          created_by?: string
+          customer_id?: string
+          expires_at?: string
+          id?: string
+          used_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ha_pairing_codes_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ha_pairing_codes_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers_with_identity"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       home_answers: {
         Row: {
@@ -3775,6 +3920,10 @@ export type Database = {
           p_failure: Json
         }
         Returns: string
+      }
+      revoke_ha_device_token: {
+        Args: { p_token_id: string }
+        Returns: boolean
       }
       verify_energy_weather_sync_token: {
         Args: { p_token: string }
