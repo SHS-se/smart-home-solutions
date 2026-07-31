@@ -143,6 +143,25 @@ Deno.test('cost breakdown intentionally ignores unclassified invoice rounding', 
   );
 });
 
+Deno.test('grid VAT remains separate from electricity supplier fees', () => {
+  const series = buildEnergyBillingSeries([
+    document({
+      id: 'grid-vat',
+      documentKind: 'grid',
+      periodStart: '2026-06-01',
+      periodEnd: '2026-06-30',
+      totalAmountSek: 625,
+      lineItems: [
+        { category: 'fixed_fee', amountSek: 500, periodStart: null, periodEnd: null },
+        { category: 'vat', amountSek: 125, periodStart: null, periodEnd: null },
+      ],
+    }),
+  ]);
+
+  assertEqual(series[0].gridVatSek, 125, 'grid VAT');
+  assertEqual(series[0].electricityFeesSek, 0, 'electricity fees');
+});
+
 Deno.test('partial coverage is retained as partial data rather than zero or missing', () => {
   const series = buildEnergyBillingSeries([
     document({

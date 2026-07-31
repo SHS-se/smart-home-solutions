@@ -98,6 +98,7 @@ const COST_COLORS = {
   gridFixedSek: '#14b8a6',
   gridTransferSek: '#22c55e',
   gridPeakSek: '#ef4444',
+  gridVatSek: '#f43f5e',
   energyTaxSek: '#60a5fa',
   exportNetSek: '#8b5cf6',
 };
@@ -718,6 +719,7 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
               <Bar dataKey="gridFixedSek" stackId="cost" name={t('Fast nätavgift', 'Grid fixed fee')} fill={COST_COLORS.gridFixedSek} animationDuration={900} />
               <Bar dataKey="gridTransferSek" stackId="cost" name={t('Överföringsavgift', 'Transfer fee')} fill={COST_COLORS.gridTransferSek} animationDuration={975} />
               <Bar dataKey="gridPeakSek" stackId="cost" name={t('Effektavgift', 'Peak-demand fee')} fill={COST_COLORS.gridPeakSek} animationDuration={1050} />
+              <Bar dataKey="gridVatSek" stackId="cost" name={t('Moms på nätavgifter', 'VAT on grid charges')} fill={COST_COLORS.gridVatSek} animationDuration={1085} />
               <Bar dataKey="energyTaxSek" stackId="cost" name={t('Energiskatt', 'Energy tax')} fill={COST_COLORS.energyTaxSek} animationDuration={1125} />
               <Bar dataKey="exportNetSek" stackId="cost" name={t('Export netto', 'Net export')} fill={COST_COLORS.exportNetSek} animationDuration={1200} />
               {filteredSeries.length > 18 && (

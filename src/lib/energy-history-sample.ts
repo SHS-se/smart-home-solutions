@@ -52,6 +52,7 @@ export const ENERGY_HISTORY_SAMPLE_SERIES: EnergyBillingMonth[] = SAMPLE_MONTHS.
     gridFixedSek,
     gridTransferSek: sample.transfer,
     gridPeakSek: sample.peak,
+    gridVatSek: 0,
     energyTaxSek: sample.tax,
     exportNetSek,
   };

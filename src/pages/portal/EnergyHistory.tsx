@@ -25,6 +25,12 @@ import {
 } from '@/lib/energy-import-file-storage';
 import { detectEnergyBillingChanges } from '@/lib/energy-billing-changes';
 import { buildEnergyBillingSeries } from '@/lib/energy-billing-series';
+import {
+  mergeEnergyBillingAndTariffDocuments,
+  tariffCalculationsWithoutImportedGridMonths,
+  toEnergyTariffChangeDocuments,
+} from '@/lib/energy-tariff-series';
+import { fetchEnergyTariffCalculations } from '@/lib/energy-tariff-storage';
 import { fetchEnergyHistoryHomeProfileInputs } from '@/lib/home-profile-functional-data';
 import {
   ENERGY_HISTORY_SAMPLE_CHANGES,
@@ -87,6 +93,7 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
     }
   }, [requestedTab]);
   const queryKey = ['energy-billing-documents', customerId] as const;
+  const tariffCalculationsQueryKey = ['energy-tariff-calculations', customerId] as const;
   const usageQueryKey = ['energy-usage-readings', customerId] as const;
   const usageImportsQueryKey = ['energy-usage-import-batches', customerId] as const;
   const parseFailuresQueryKey = ['energy-parse-failures', customerId] as const;
@@ -99,6 +106,7 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   const temperatureDataEnabled = customerEnergyEnabled && activeTab === 'temperature';
   const performanceDataEnabled = customerEnergyEnabled && activeTab === 'performance';
   const managementDataEnabled = customerEnergyEnabled && activeTab === 'documents';
+  const tariffCalculationsEnabled = customerEnergyEnabled && activeTab === 'overview';
   const documentsQuery = useQuery({
     queryKey,
     queryFn: () => fetchEnergyBillingDocuments(customerId),
@@ -112,6 +120,15 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
     queryKey: ['energy-history-home-profile', customerId],
     queryFn: () => fetchEnergyHistoryHomeProfileInputs(customerId),
     enabled: customerEnergyEnabled,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+  });
+  const tariffCalculationsQuery = useQuery({
+    queryKey: tariffCalculationsQueryKey,
+    queryFn: () => fetchEnergyTariffCalculations(customerId),
+    enabled: tariffCalculationsEnabled,
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
     refetchOnMount: false,
@@ -195,15 +212,38 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
     () => documentsQuery.data ?? [],
     [documentsQuery.data],
   );
-  const series = useMemo(
-    () => buildEnergyBillingSeries(toEnergyBillingSeriesDocuments(documents)),
+  const billingSeriesDocuments = useMemo(
+    () => toEnergyBillingSeriesDocuments(documents),
     [documents],
+  );
+  const seriesDocuments = useMemo(
+    () => mergeEnergyBillingAndTariffDocuments(
+      billingSeriesDocuments,
+      tariffCalculationsQuery.data ?? [],
+    ),
+    [billingSeriesDocuments, tariffCalculationsQuery.data],
+  );
+  const authoritativeTariffCalculations = useMemo(
+    () => tariffCalculationsWithoutImportedGridMonths(
+      billingSeriesDocuments,
+      tariffCalculationsQuery.data ?? [],
+    ),
+    [billingSeriesDocuments, tariffCalculationsQuery.data],
+  );
+  const series = useMemo(
+    () => buildEnergyBillingSeries(seriesDocuments),
+    [seriesDocuments],
   );
   const changes = useMemo(
-    () => detectEnergyBillingChanges(documents),
-    [documents],
+    () => detectEnergyBillingChanges([
+      ...documents,
+      ...toEnergyTariffChangeDocuments(authoritativeTariffCalculations),
+    ]),
+    [documents, authoritativeTariffCalculations],
   );
-  const pageError = documentsQuery.error ?? homeProfileQuery.error;
+  const pageError = documentsQuery.error
+    ?? homeProfileQuery.error
+    ?? tariffCalculationsQuery.error;
 
   const refreshDocuments = async () => {
     await queryClient.invalidateQueries({ queryKey });
@@ -217,6 +257,7 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
     await Promise.all([
       refreshDocuments(),
       refreshUsage(),
+      queryClient.invalidateQueries({ queryKey: tariffCalculationsQueryKey }),
       queryClient.invalidateQueries({ queryKey: usageImportsQueryKey }),
       queryClient.invalidateQueries({ queryKey: parseFailuresQueryKey }),
       queryClient.invalidateQueries({
@@ -353,7 +394,9 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
             )}
           </AlertDescription>
         </Alert>
-      ) : documentsQuery.isLoading || homeProfileQuery.isLoading ? (
+      ) : documentsQuery.isLoading
+        || homeProfileQuery.isLoading
+        || tariffCalculationsQuery.isLoading ? (
         <Card>
           <CardContent className="flex min-h-64 items-center justify-center">
             <Loader2 className="h-7 w-7 animate-spin text-primary" />
@@ -377,9 +420,9 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
           </TabsList>
           <TabsContent value="overview">
             <EnergyHistoryOverview
-              series={documents.length === 0 ? ENERGY_HISTORY_SAMPLE_SERIES : series}
-              changes={documents.length === 0 ? ENERGY_HISTORY_SAMPLE_CHANGES : changes}
-              moveInDate={documents.length === 0
+              series={seriesDocuments.length === 0 ? ENERGY_HISTORY_SAMPLE_SERIES : series}
+              changes={seriesDocuments.length === 0 ? ENERGY_HISTORY_SAMPLE_CHANGES : changes}
+              moveInDate={seriesDocuments.length === 0
                 ? null
                 : homeProfileQuery.data?.moveInDate ?? null}
               notes={notesQuery.data ?? []}
@@ -387,7 +430,7 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
               notesError={notesQuery.error}
               usageError={usageQuery.error}
               usageIsLoading={usageQuery.isLoading}
-              isSample={documents.length === 0}
+              isSample={seriesDocuments.length === 0}
               onUploadClick={() => setActiveTab('upload')}
               onCreateNote={handleCreateNote}
             />

@@ -1164,6 +1164,61 @@ export type Database = {
         }
         Relationships: []
       }
+      customer_energy_tariff_assignments: {
+        Row: {
+          configuration: Json
+          created_at: string
+          customer_id: string
+          id: string
+          profile_id: string
+          updated_at: string
+          valid_from: string
+          valid_to: string | null
+        }
+        Insert: {
+          configuration: Json
+          created_at?: string
+          customer_id: string
+          id?: string
+          profile_id: string
+          updated_at?: string
+          valid_from: string
+          valid_to?: string | null
+        }
+        Update: {
+          configuration?: Json
+          created_at?: string
+          customer_id?: string
+          id?: string
+          profile_id?: string
+          updated_at?: string
+          valid_from?: string
+          valid_to?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "customer_energy_tariff_assignments_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "customer_energy_tariff_assignments_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers_with_identity"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "customer_energy_tariff_assignments_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "energy_tariff_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       energy_billing_documents: {
         Row: {
           consumption_kwh: number
@@ -1472,6 +1527,171 @@ export type Database = {
             columns: ["device_token_id"]
             isOneToOne: false
             referencedRelation: "ha_device_tokens"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      energy_tariff_calculations: {
+        Row: {
+          billing_month: string
+          calculation_model: string
+          calculation_version: number
+          components: Json
+          coverage_end: string
+          coverage_start: string
+          created_at: string
+          currency: string
+          customer_id: string
+          device_token_id: string | null
+          grid_export_kwh: number
+          grid_import_kwh: number
+          id: string
+          input_hash: string
+          is_complete: boolean
+          peak_demand_kw: number | null
+          tariff_revisions: Json
+          total_amount_sek: number
+          updated_at: string
+        }
+        Insert: {
+          billing_month: string
+          calculation_model: string
+          calculation_version: number
+          components: Json
+          coverage_end: string
+          coverage_start: string
+          created_at?: string
+          currency?: string
+          customer_id: string
+          device_token_id?: string | null
+          grid_export_kwh?: number
+          grid_import_kwh: number
+          id?: string
+          input_hash: string
+          is_complete?: boolean
+          peak_demand_kw?: number | null
+          tariff_revisions: Json
+          total_amount_sek: number
+          updated_at?: string
+        }
+        Update: {
+          billing_month?: string
+          calculation_model?: string
+          calculation_version?: number
+          components?: Json
+          coverage_end?: string
+          coverage_start?: string
+          created_at?: string
+          currency?: string
+          customer_id?: string
+          device_token_id?: string | null
+          grid_export_kwh?: number
+          grid_import_kwh?: number
+          id?: string
+          input_hash?: string
+          is_complete?: boolean
+          peak_demand_kw?: number | null
+          tariff_revisions?: Json
+          total_amount_sek?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "energy_tariff_calculations_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_tariff_calculations_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers_with_identity"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_tariff_calculations_device_token_id_fkey"
+            columns: ["device_token_id"]
+            isOneToOne: false
+            referencedRelation: "ha_device_tokens"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      energy_tariff_profiles: {
+        Row: {
+          created_at: string
+          currency: string
+          display_name: string
+          id: string
+          provider_key: string
+          provider_name: string
+          tariff_key: string
+        }
+        Insert: {
+          created_at?: string
+          currency?: string
+          display_name: string
+          id?: string
+          provider_key: string
+          provider_name: string
+          tariff_key: string
+        }
+        Update: {
+          created_at?: string
+          currency?: string
+          display_name?: string
+          id?: string
+          provider_key?: string
+          provider_name?: string
+          tariff_key?: string
+        }
+        Relationships: []
+      }
+      energy_tariff_versions: {
+        Row: {
+          calculation_model: string
+          created_at: string
+          definition: Json
+          id: string
+          profile_id: string
+          published_at: string
+          revision: string
+          source_url: string
+          valid_from: string
+          valid_to: string | null
+        }
+        Insert: {
+          calculation_model: string
+          created_at?: string
+          definition: Json
+          id?: string
+          profile_id: string
+          published_at?: string
+          revision: string
+          source_url: string
+          valid_from: string
+          valid_to?: string | null
+        }
+        Update: {
+          calculation_model?: string
+          created_at?: string
+          definition?: Json
+          id?: string
+          profile_id?: string
+          published_at?: string
+          revision?: string
+          source_url?: string
+          valid_from?: string
+          valid_to?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "energy_tariff_versions_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "energy_tariff_profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -3924,6 +4144,15 @@ export type Database = {
       revoke_ha_device_token: {
         Args: { p_token_id: string }
         Returns: boolean
+      }
+      set_customer_energy_tariff_assignment: {
+        Args: {
+          p_configuration: Json
+          p_customer_id: string
+          p_profile_id: string
+          p_valid_from: string
+        }
+        Returns: string
       }
       verify_energy_weather_sync_token: {
         Args: { p_token: string }

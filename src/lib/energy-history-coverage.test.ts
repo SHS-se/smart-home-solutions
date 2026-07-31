@@ -39,6 +39,7 @@ function month(
     gridFixedSek: 0,
     gridTransferSek: 0,
     gridPeakSek: 0,
+    gridVatSek: 0,
     energyTaxSek: 0,
     exportNetSek: 0,
   };

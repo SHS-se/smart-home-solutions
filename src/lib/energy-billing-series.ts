@@ -49,6 +49,7 @@ export interface EnergyBillingMonth {
   gridFixedSek: number;
   gridTransferSek: number;
   gridPeakSek: number;
+  gridVatSek: number;
   energyTaxSek: number;
   exportNetSek: number;
 }
@@ -162,6 +163,7 @@ function emptyMonth(date: Date): MutableMonth {
     gridFixedSek: 0,
     gridTransferSek: 0,
     gridPeakSek: 0,
+    gridVatSek: 0,
     energyTaxSek: 0,
     exportNetSek: 0,
     gridCoverageIntervals: [],
@@ -217,8 +219,14 @@ function addBreakdown(
     case 'variable_fee':
     case 'markup':
     case 'discount':
-    case 'vat':
       month.electricityFeesSek = round(month.electricityFeesSek + amount);
+      break;
+    case 'vat':
+      if (documentKind === 'grid') {
+        month.gridVatSek = round(month.gridVatSek + amount);
+      } else {
+        month.electricityFeesSek = round(month.electricityFeesSek + amount);
+      }
       break;
     case 'fixed_fee':
       if (documentKind === 'grid') {
