@@ -3,7 +3,6 @@ import { X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Switch } from '@/components/ui/switch';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
@@ -55,15 +54,23 @@ const QuestionnairePreview: React.FC<QuestionnairePreviewProps> = ({
     switch (type) {
       case 'boolean':
         return (
-          <div className="flex items-center gap-3">
-            <Switch
-              checked={answers[q.id] === true}
-              onCheckedChange={v => setAnswer(q.id, v)}
-            />
-            <span className="text-sm text-muted-foreground">
-              {answers[q.id] === true ? t('Ja', 'Yes') : t('Nej', 'No')}
-            </span>
-          </div>
+          <RadioGroup
+            value={answers[q.id] === true ? 'true' : answers[q.id] === false ? 'false' : ''}
+            onValueChange={v => setAnswer(q.id, v === 'true')}
+          >
+            <div className="flex items-center gap-2">
+              <RadioGroupItem value="true" id={`preview-${q.id}-true`} />
+              <Label htmlFor={`preview-${q.id}-true`} className="text-sm cursor-pointer">
+                {t('Ja', 'Yes')}
+              </Label>
+            </div>
+            <div className="flex items-center gap-2">
+              <RadioGroupItem value="false" id={`preview-${q.id}-false`} />
+              <Label htmlFor={`preview-${q.id}-false`} className="text-sm cursor-pointer">
+                {t('Nej', 'No')}
+              </Label>
+            </div>
+          </RadioGroup>
         );
 
       case 'number':

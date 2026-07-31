@@ -8,7 +8,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { Switch } from '@/components/ui/switch';
 import { z } from 'zod';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -111,10 +110,23 @@ const HomeQuestionsSection = ({
                   />
                 )}
                 {q.question_type === 'boolean' && (
-                  <div className="flex items-center gap-2">
-                    <Switch checked={val === true} onCheckedChange={v => handleAnswer(q.id, v)} />
-                    <span className="text-sm text-muted-foreground">{val === true ? t('Ja', 'Yes') : t('Nej', 'No')}</span>
-                  </div>
+                  <RadioGroup
+                    value={val === true ? 'true' : val === false ? 'false' : ''}
+                    onValueChange={v => handleAnswer(q.id, v === 'true')}
+                  >
+                    <div className="flex items-center gap-2">
+                      <RadioGroupItem value="true" id={`contact-${q.id}-true`} />
+                      <Label htmlFor={`contact-${q.id}-true`} className="text-sm cursor-pointer">
+                        {t('Ja', 'Yes')}
+                      </Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <RadioGroupItem value="false" id={`contact-${q.id}-false`} />
+                      <Label htmlFor={`contact-${q.id}-false`} className="text-sm cursor-pointer">
+                        {t('Nej', 'No')}
+                      </Label>
+                    </div>
+                  </RadioGroup>
                 )}
                 {q.question_type === 'number' && (
                   <Input

@@ -6,7 +6,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
-import { Switch } from '@/components/ui/switch';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
@@ -253,16 +252,27 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
 
     switch (type) {
       case 'boolean':
+        // Radios, not a switch: an untouched switch is indistinguishable from a
+        // deliberate "no", so an unanswered question looked answered while it
+        // still saved null and kept blocking the features that require it.
         return (
-          <div className="flex items-center gap-3">
-            <Switch
-              checked={answers[q.id] === true}
-              onCheckedChange={v => setAnswer(q.id, v)}
-            />
-            <span className="text-sm text-muted-foreground">
-              {answers[q.id] === true ? t('Ja', 'Yes') : t('Nej', 'No')}
-            </span>
-          </div>
+          <RadioGroup
+            value={answers[q.id] === true ? 'true' : answers[q.id] === false ? 'false' : ''}
+            onValueChange={v => setAnswer(q.id, v === 'true')}
+          >
+            <div className="flex items-center gap-2">
+              <RadioGroupItem value="true" id={`hp-${q.id}-true`} />
+              <Label htmlFor={`hp-${q.id}-true`} className="text-sm cursor-pointer">
+                {t('Ja', 'Yes')}
+              </Label>
+            </div>
+            <div className="flex items-center gap-2">
+              <RadioGroupItem value="false" id={`hp-${q.id}-false`} />
+              <Label htmlFor={`hp-${q.id}-false`} className="text-sm cursor-pointer">
+                {t('Nej', 'No')}
+              </Label>
+            </div>
+          </RadioGroup>
         );
 
       case 'number':

@@ -59,6 +59,9 @@ serve(async (req) => {
         timezone: "Europe/Stockholm",
         configuration: null,
         missing_inputs: ["central_tariff_settings"],
+        missing_input_details: [
+          { key: "central_tariff_settings", question_sv: null, question_en: null },
+        ],
         profiles: [],
       });
     }
@@ -82,10 +85,13 @@ serve(async (req) => {
 
     let mainFuseA: number | null = null;
     let productionEnabled: boolean | null = null;
+    // Keyed by semantic key so an unanswered input can be reported by its real
+    // question text instead of an opaque key the customer has never seen.
+    const questionText = new Map<string, { sv: string; en: string }>();
     if (customer?.primary_home_id) {
       const { data: questions, error: questionError } = await supabase
         .from("home_questions")
-        .select("id, semantic_key")
+        .select("id, semantic_key, question_text, question_text_en")
         .in("semantic_key", ["main_fuse_a", "has_solar"]);
       if (questionError) {
         console.error("[INTEGRATION-TARIFF] question lookup failed", questionError);
@@ -103,6 +109,13 @@ serve(async (req) => {
       }
 
       const answersByQuestion = new Map((answers ?? []).map((answer) => [answer.question_id, answer]));
+      for (const question of questions ?? []) {
+        if (!question.semantic_key) continue;
+        questionText.set(question.semantic_key, {
+          sv: question.question_text,
+          en: question.question_text_en || question.question_text,
+        });
+      }
       const values = Object.fromEntries((questions ?? []).map((question) => [
         question.semantic_key,
         answerValue(answersByQuestion.get(question.id)),
@@ -116,6 +129,14 @@ serve(async (req) => {
     const missingInputs: string[] = [];
     if (mainFuseA === null) missingInputs.push("main_fuse_a");
     if (productionEnabled === null) missingInputs.push("has_solar");
+
+    // missing_inputs stays a plain key list for older integration builds; the
+    // details carry what the customer actually needs to read.
+    const missingInputDetails = missingInputs.map((key) => ({
+      key,
+      question_sv: questionText.get(key)?.sv ?? null,
+      question_en: questionText.get(key)?.en ?? null,
+    }));
 
     return json({
       schema_version: 2,
@@ -132,6 +153,7 @@ serve(async (req) => {
         export_vat_registered: settings.export_vat_registered,
       } : null,
       missing_inputs: missingInputs,
+      missing_input_details: missingInputDetails,
       profiles: (profiles ?? []).map((profile) => ({
         ...profile,
         versions: (versions ?? []).filter((version) => version.profile_id === profile.id),
