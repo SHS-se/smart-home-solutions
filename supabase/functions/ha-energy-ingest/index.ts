@@ -28,7 +28,7 @@ const CATEGORIES = new Set([
 ]);
 
 const MAX_READINGS_PER_PUSH = 500; // ~45 days of full category backfill
-const MAX_CALCULATIONS_PER_PUSH = 24;
+const MAX_CALCULATIONS_PER_PUSH = 240;
 const MAX_COMPONENTS_PER_CALCULATION = 100;
 const MAX_KWH_PER_READING = 10000; // sanity bound for a single day/category
 const MAX_MONTHLY_KWH = 1000000;
@@ -36,6 +36,7 @@ const MAX_AMOUNT_SEK = 10000000;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const HASH_RE = /^[0-9a-f]{64}$/;
 const REVISION_RE = /^[a-z0-9_.-]+$/;
+const COMPONENT_KEY_RE = /^[a-z0-9_]+$/;
 
 const COMPONENT_CATEGORIES = new Set([
   "fixed_fee",
@@ -61,6 +62,7 @@ interface IncomingReading {
 }
 
 interface IncomingComponent {
+  component_key: string;
   category: string;
   label: string;
   amount_sek: number;
@@ -249,7 +251,7 @@ serve(async (req) => {
       if (
         calculation?.currency !== "SEK" ||
         calculation?.calculation_model !== "se_grid_v1" ||
-        calculation?.calculation_version !== 1
+        calculation?.calculation_version !== 2
       ) {
         return json({ error: "unsupported_calculation", detail: billingMonth }, 400);
       }
@@ -300,6 +302,7 @@ serve(async (req) => {
       const components: IncomingComponent[] = [];
       let componentTotal = 0;
       for (const component of calculation.components) {
+        const componentKey = String(component?.component_key ?? "");
         const category = String(component?.category ?? "");
         const label = String(component?.label ?? "").trim();
         const amountSek = Number(component?.amount_sek);
@@ -313,6 +316,7 @@ serve(async (req) => {
         const tariffRevision = String(component?.tariff_revision ?? "");
 
         if (
+          !COMPONENT_KEY_RE.test(componentKey) ||
           !COMPONENT_CATEGORIES.has(category) ||
           label.length === 0 ||
           label.length > 120 ||
@@ -340,6 +344,7 @@ serve(async (req) => {
         const roundedAmount = round(amountSek, 2);
         componentTotal += roundedAmount;
         components.push({
+          component_key: componentKey,
           category,
           label,
           amount_sek: roundedAmount,
@@ -364,7 +369,7 @@ serve(async (req) => {
         is_complete: calculation.is_complete,
         currency: "SEK",
         calculation_model: "se_grid_v1",
-        calculation_version: 1,
+        calculation_version: 2,
         tariff_revisions: calculation.tariff_revisions,
         input_hash: calculation.input_hash,
         grid_import_kwh: round(gridImportKwh, 3),

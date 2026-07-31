@@ -1164,61 +1164,6 @@ export type Database = {
         }
         Relationships: []
       }
-      customer_energy_tariff_assignments: {
-        Row: {
-          configuration: Json
-          created_at: string
-          customer_id: string
-          id: string
-          profile_id: string
-          updated_at: string
-          valid_from: string
-          valid_to: string | null
-        }
-        Insert: {
-          configuration: Json
-          created_at?: string
-          customer_id: string
-          id?: string
-          profile_id: string
-          updated_at?: string
-          valid_from: string
-          valid_to?: string | null
-        }
-        Update: {
-          configuration?: Json
-          created_at?: string
-          customer_id?: string
-          id?: string
-          profile_id?: string
-          updated_at?: string
-          valid_from?: string
-          valid_to?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "customer_energy_tariff_assignments_customer_id_fkey"
-            columns: ["customer_id"]
-            isOneToOne: false
-            referencedRelation: "customers"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "customer_energy_tariff_assignments_customer_id_fkey"
-            columns: ["customer_id"]
-            isOneToOne: false
-            referencedRelation: "customers_with_identity"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "customer_energy_tariff_assignments_profile_id_fkey"
-            columns: ["profile_id"]
-            isOneToOne: false
-            referencedRelation: "energy_tariff_profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       energy_billing_documents: {
         Row: {
           consumption_kwh: number
@@ -1648,6 +1593,50 @@ export type Database = {
           tariff_key?: string
         }
         Relationships: []
+      }
+      energy_tariff_settings: {
+        Row: {
+          connection_type: string
+          energy_tax_reduced: boolean
+          export_vat_registered: boolean
+          grid_area: string
+          id: boolean
+          include_vat: boolean
+          profile_id: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          connection_type?: string
+          energy_tax_reduced?: boolean
+          export_vat_registered?: boolean
+          grid_area: string
+          id?: boolean
+          include_vat?: boolean
+          profile_id: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          connection_type?: string
+          energy_tax_reduced?: boolean
+          export_vat_registered?: boolean
+          grid_area?: string
+          id?: boolean
+          include_vat?: boolean
+          profile_id?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "energy_tariff_settings_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: true
+            referencedRelation: "energy_tariff_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       energy_tariff_versions: {
         Row: {
@@ -4145,14 +4134,26 @@ export type Database = {
         Args: { p_token_id: string }
         Returns: boolean
       }
-      set_customer_energy_tariff_assignment: {
+      publish_energy_tariff_version: {
         Args: {
-          p_configuration: Json
-          p_customer_id: string
+          p_calculation_model: string
+          p_definition: Json
           p_profile_id: string
+          p_revision: string
+          p_source_url: string
           p_valid_from: string
         }
         Returns: string
+      }
+      set_energy_tariff_settings: {
+        Args: {
+          p_energy_tax_reduced: boolean
+          p_export_vat_registered: boolean
+          p_grid_area: string
+          p_include_vat: boolean
+          p_profile_id: string
+        }
+        Returns: boolean
       }
       verify_energy_weather_sync_token: {
         Args: { p_token: string }

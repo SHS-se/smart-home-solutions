@@ -235,15 +235,31 @@ export const HOME_QUESTION_FUNCTIONALITY: HomeQuestionFunctionality[] = [
     },
   },
   {
+    key: 'main_fuse_a',
+    type: 'single_choice',
+    importance: 'required',
+    dataUse: 'calculation',
+    features: ['energy_history'],
+    label: { sv: 'Huvudsäkring', en: 'Main fuse' },
+    purpose: {
+      sv: 'Väljer automatiskt rätt fasta Ellevioavgift för bostadens trefasanslutning.',
+      en: 'Automatically selects the correct Ellevio fixed fee for the home’s three-phase connection.',
+    },
+    suggestedQuestion: {
+      sv: 'Vilken storlek har bostadens huvudsäkring?',
+      en: 'What is the home’s main fuse size?',
+    },
+  },
+  {
     key: 'has_solar',
     type: 'boolean',
-    importance: 'optional',
-    dataUse: 'setup_only',
-    features: ['energy_setup'],
+    importance: 'required',
+    dataUse: 'calculation',
+    features: ['energy_history', 'energy_setup'],
     label: { sv: 'Solceller', en: 'Solar panels' },
     purpose: {
-      sv: 'Registrerar om lokal elproduktion finns.',
-      en: 'Records whether on-site electricity generation is installed.',
+      sv: 'Styr om Ellevios ersättning för nätinmatning ska beräknas.',
+      en: 'Controls whether Ellevio grid-export credits are calculated.',
     },
     suggestedQuestion: {
       sv: 'Finns det solceller på bostaden?',

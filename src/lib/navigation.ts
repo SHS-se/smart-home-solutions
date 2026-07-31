@@ -35,6 +35,7 @@ export type NavIcon =
   | 'margins'
   | 'business'
   | 'questionnaire'
+  | 'tariffs'
   | 'erd'
   | 'staff';
 
@@ -183,6 +184,7 @@ export const staffNavGroups: AppNavGroup[] = [
       { path: '/portal/settings/business', labelSv: 'Företagsuppgifter', labelEn: 'Business settings', icon: 'business', adminOnly: true },
       { path: '/portal/settings/margins', labelSv: 'Marginalregler', labelEn: 'Margin rules', icon: 'margins' },
       { path: '/portal/customers/questionnaire', labelSv: 'Hemprofilfrågor', labelEn: 'Home profile questions', icon: 'questionnaire' },
+      { path: '/portal/settings/energy-tariffs', labelSv: 'Ellevio-tariffer', labelEn: 'Ellevio tariffs', icon: 'tariffs' },
       { path: '/portal/erd', labelSv: 'Databasdiagram', labelEn: 'Database ERD', icon: 'erd' },
     ],
   },

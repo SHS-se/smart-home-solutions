@@ -27,6 +27,7 @@ import { detectEnergyBillingChanges } from '@/lib/energy-billing-changes';
 import { buildEnergyBillingSeries } from '@/lib/energy-billing-series';
 import {
   mergeEnergyBillingAndTariffDocuments,
+  buildEnergyTariffInvoiceComparisons,
   tariffCalculationsWithoutImportedGridMonths,
   toEnergyTariffChangeDocuments,
 } from '@/lib/energy-tariff-series';
@@ -225,6 +226,13 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   );
   const authoritativeTariffCalculations = useMemo(
     () => tariffCalculationsWithoutImportedGridMonths(
+      billingSeriesDocuments,
+      tariffCalculationsQuery.data ?? [],
+    ),
+    [billingSeriesDocuments, tariffCalculationsQuery.data],
+  );
+  const tariffInvoiceComparisons = useMemo(
+    () => buildEnergyTariffInvoiceComparisons(
       billingSeriesDocuments,
       tariffCalculationsQuery.data ?? [],
     ),
@@ -433,6 +441,7 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
               isSample={seriesDocuments.length === 0}
               onUploadClick={() => setActiveTab('upload')}
               onCreateNote={handleCreateNote}
+              tariffInvoiceComparisons={tariffInvoiceComparisons}
             />
           </TabsContent>
           <TabsContent value="upload">

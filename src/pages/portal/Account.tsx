@@ -12,7 +12,6 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
 import HomeAssistantCard from '@/components/portal/account/HomeAssistantCard';
-import EnergyTariffCard from '@/components/portal/account/EnergyTariffCard';
 
 interface AccountProps {
   customerId?: string;
@@ -401,9 +400,6 @@ const Account: React.FC<AccountProps> = ({ customerId: propCustomerId, isStaffVi
 
         {resolvedCustomerId && !isStaffView && (
           <HomeAssistantCard customerId={resolvedCustomerId} />
-        )}
-        {resolvedCustomerId && isStaffView && (
-          <EnergyTariffCard customerId={resolvedCustomerId} />
         )}
       </div>
     </>

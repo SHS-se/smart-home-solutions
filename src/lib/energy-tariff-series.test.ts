@@ -2,6 +2,7 @@
 
 import type { EnergyBillingDocumentForSeries } from './energy-billing-series.ts';
 import {
+  buildEnergyTariffInvoiceComparisons,
   mergeEnergyBillingAndTariffDocuments,
   toEnergyTariffSeriesDocuments,
   toEnergyTariffChangeDocuments,
@@ -78,6 +79,29 @@ Deno.test('tariff calculations become grid documents with component detail', () 
   ]);
   assertEqual(changeDocument.provider_key, 'ellevio', 'change provider');
   assertEqual(changeDocument.parser_id, 'ellevio_flat_transfer', 'change model');
+});
+
+Deno.test('authoritative invoices and HA estimates remain available for comparison', () => {
+  const invoice: EnergyBillingDocumentForSeries = {
+    id: 'invoice-june',
+    documentKind: 'grid',
+    periodStart: '2026-06-01',
+    periodEnd: '2026-06-30',
+    consumptionKwh: 500,
+    exportedKwh: 25,
+    peakDemandKw: null,
+    totalAmountSek: 700,
+    lineItems: [],
+  };
+
+  const [comparison] = buildEnergyTariffInvoiceComparisons(
+    [invoice],
+    [calculation('calculation-june', '2026-06-01')],
+  );
+
+  assertEqual(comparison.invoiceAmountSek, 700, 'invoice amount');
+  assertEqual(comparison.haEstimateAmountSek, 725, 'HA estimate');
+  assertEqual(comparison.differenceSek, 25, 'difference');
 });
 
 Deno.test('an imported grid invoice replaces the calculation for every month it touches', () => {

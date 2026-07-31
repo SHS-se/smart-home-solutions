@@ -38,25 +38,10 @@ serve(async (req) => {
     const auth = await authenticateDevice(supabase, req);
     if (auth.ok === false) return json({ error: auth.error }, auth.status);
 
-    const today = new Date().toISOString().slice(0, 10);
-    const { data: tariffAssignment, error: tariffError } = await supabase
-      .from("customer_energy_tariff_assignments")
-      .select("id")
-      .eq("customer_id", auth.customerId)
-      .lte("valid_from", today)
-      .or(`valid_to.is.null,valid_to.gte.${today}`)
-      .limit(1)
-      .maybeSingle();
-    if (tariffError) {
-      console.error("[INTEGRATION-STATUS] tariff lookup failed", tariffError);
-      return json({ error: "status_lookup_failed" }, 500);
-    }
-
     return json({
       subscription_active: auth.subscriptionActive,
       subscription_expires_at: auth.subscriptionExpiresAt,
       customer_name: auth.customerName,
-      tariff_configured: Boolean(tariffAssignment),
       server_time: new Date().toISOString(),
     });
   } catch (error) {

@@ -3,6 +3,7 @@ import {
   type EnergyChargeCategory,
 } from './energy-billing-parser';
 import type { EnergyBillingDocumentForSeries } from './energy-billing-series';
+import { buildEnergyBillingSeries } from './energy-billing-series';
 import type { EnergyBillingChangeDocument } from './energy-billing-changes';
 
 const CHARGE_CATEGORIES = new Set<string>(ENERGY_CHARGE_CATEGORIES);
@@ -29,6 +30,13 @@ interface TariffCalculationComponent {
   unit_price_sek: number | null;
   period_start: string;
   period_end: string;
+}
+
+export interface EnergyTariffInvoiceComparison {
+  monthKey: string;
+  invoiceAmountSek: number;
+  haEstimateAmountSek: number;
+  differenceSek: number;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -171,4 +179,28 @@ export function mergeEnergyBillingAndTariffDocuments(
   return [...importedDocuments, ...calculatedDocuments].sort((a, b) => (
     a.periodStart.localeCompare(b.periodStart) || a.id.localeCompare(b.id)
   ));
+}
+
+/** Months where an authoritative grid invoice and the retained HA estimate coexist. */
+export function buildEnergyTariffInvoiceComparisons(
+  importedDocuments: EnergyBillingDocumentForSeries[],
+  calculations: EnergyTariffCalculationForSeries[],
+): EnergyTariffInvoiceComparison[] {
+  const invoiceSeries = buildEnergyBillingSeries(
+    importedDocuments.filter((document) => document.documentKind === 'grid'),
+  );
+  const estimateSeries = buildEnergyBillingSeries(toEnergyTariffSeriesDocuments(calculations));
+  const estimatesByMonth = new Map(
+    estimateSeries.map((month) => [month.monthKey, month.gridCostSek]),
+  );
+  return invoiceSeries.flatMap((month) => {
+    const estimate = estimatesByMonth.get(month.monthKey);
+    if (typeof month.gridCostSek !== 'number' || typeof estimate !== 'number') return [];
+    return [{
+      monthKey: month.monthKey,
+      invoiceAmountSek: month.gridCostSek,
+      haEstimateAmountSek: estimate,
+      differenceSek: Math.round((estimate - month.gridCostSek) * 100) / 100,
+    }];
+  });
 }

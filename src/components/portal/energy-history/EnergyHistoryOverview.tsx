@@ -30,6 +30,7 @@ import EnergyHistoryEventForm from '@/components/portal/energy-history/EnergyHis
 import EnergySourceInsights from '@/components/portal/energy-history/EnergySourceInsights';
 import type { EnergyBillingChange } from '@/lib/energy-billing-changes';
 import type { EnergyBillingMonth } from '@/lib/energy-billing-series';
+import type { EnergyTariffInvoiceComparison } from '@/lib/energy-tariff-series';
 import type {
   EnergyHistoryNoteRecord,
   EnergyUsageReadingRecord,
@@ -57,6 +58,7 @@ interface EnergyHistoryOverviewProps {
   isSample?: boolean;
   onUploadClick?: () => void;
   onCreateNote: (values: TimelineNoteValues) => Promise<void>;
+  tariffInvoiceComparisons?: EnergyTariffInvoiceComparison[];
 }
 
 type PeriodPreset = '12' | '24' | '36' | 'all';
@@ -250,6 +252,7 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
   isSample = false,
   onUploadClick,
   onCreateNote,
+  tariffInvoiceComparisons = [],
 }) => {
   const { t, language } = useLanguage();
   const locale = language === 'sv' ? 'sv-SE' : 'en-GB';
@@ -669,6 +672,35 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
           </ResponsiveContainer>
         </CardContent>
       </Card>
+
+      {tariffInvoiceComparisons.length > 0 && (
+        <Card className="overflow-hidden border-border/70 shadow-sm">
+          <CardHeader className="border-b border-border/60 bg-gradient-to-r from-emerald-500/5 to-blue-500/5">
+            <CardTitle className="text-base">
+              {t('Ellevio-faktura jämfört med Home Assistant', 'Ellevio invoice compared with Home Assistant')}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3 pt-5">
+            <p className="text-sm text-muted-foreground">
+              {t(
+                'Fakturan är det auktoritativa beloppet i kostnadsdiagrammen. Home Assistant-beräkningen sparas separat som en indikativ jämförelse och skrivs inte över.',
+                'The invoice is the authoritative amount in cost charts. The Home Assistant calculation is retained separately as an indicative comparison and is not overwritten.',
+              )}
+            </p>
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={tariffInvoiceComparisons.slice(-24)} margin={{ top: 12, right: 8, bottom: 20, left: 8 }}>
+                <CartesianGrid strokeDasharray="4 4" className="stroke-border/70" vertical={false} />
+                <XAxis dataKey="monthKey" tickFormatter={formatMonthKey} minTickGap={20} className="text-xs" />
+                <YAxis tickFormatter={(value) => numberFormatter.format(value)} className="text-xs" />
+                <Tooltip formatter={(value: number) => moneyFormatter.format(value)} labelFormatter={formatMonthKey} />
+                <Legend />
+                <Bar dataKey="invoiceAmountSek" name={t('Ellevio-faktura (auktoritativ)', 'Ellevio invoice (authoritative)')} fill="#059669" />
+                <Bar dataKey="haEstimateAmountSek" name={t('Home Assistant (indikativ)', 'Home Assistant (indicative)')} fill="#2563eb" />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      )}
 
       <Card className="overflow-hidden border-border/70 shadow-sm">
         <CardHeader className="border-b border-border/60 bg-gradient-to-r from-amber-500/5 to-violet-500/5">

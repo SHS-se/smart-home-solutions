@@ -3,27 +3,14 @@ import type { Json, Tables } from '@/integrations/supabase/types';
 
 export type EnergyTariffProfile = Tables<'energy_tariff_profiles'>;
 export type EnergyTariffVersion = Tables<'energy_tariff_versions'>;
-export type EnergyTariffAssignment = Tables<'customer_energy_tariff_assignments'>;
+export type EnergyTariffSettings = Tables<'energy_tariff_settings'>;
 export type EnergyTariffCalculation = Tables<'energy_tariff_calculations'>;
 
-export type TariffConnectionType = 'three_phase' | 'single_phase' | 'apartment';
-export type TariffApartmentBand = 'up_to_29' | '30_59' | '60_99' | '100_plus';
 export type TariffGridArea =
   | 'dalarna_sodra_norrland_edsbyn'
   | 'stockholm'
   | 'vastkusten'
   | 'vastra_svealand_vastergotland';
-
-export interface EnergyTariffConfiguration {
-  connection_type: TariffConnectionType;
-  fuse_a?: 16 | 20 | 25 | 35 | 50 | 63;
-  apartment_band?: TariffApartmentBand;
-  grid_area: TariffGridArea;
-  production_enabled: boolean;
-  energy_tax_reduced: boolean;
-  include_vat: boolean;
-  export_vat_registered: boolean;
-}
 
 export async function fetchEnergyTariffProfiles(): Promise<EnergyTariffProfile[]> {
   const { data, error } = await supabase
@@ -44,32 +31,51 @@ export async function fetchEnergyTariffVersions(): Promise<EnergyTariffVersion[]
   return data ?? [];
 }
 
-export async function fetchCustomerEnergyTariffAssignments(
-  customerId: string,
-): Promise<EnergyTariffAssignment[]> {
+export async function fetchEnergyTariffSettings(): Promise<EnergyTariffSettings> {
   const { data, error } = await supabase
-    .from('customer_energy_tariff_assignments')
+    .from('energy_tariff_settings')
     .select('*')
-    .eq('customer_id', customerId)
-    .order('valid_from', { ascending: false });
+    .eq('id', true)
+    .single();
   if (error) throw error;
-  return data ?? [];
+  return data;
 }
 
-export async function setCustomerEnergyTariffAssignment(params: {
-  customerId: string;
+export async function saveEnergyTariffSettings(params: {
   profileId: string;
-  validFrom: string;
-  configuration: EnergyTariffConfiguration;
-}): Promise<string> {
-  const { data, error } = await supabase.rpc('set_customer_energy_tariff_assignment', {
-    p_customer_id: params.customerId,
+  gridArea: TariffGridArea;
+  energyTaxReduced: boolean;
+  includeVat: boolean;
+  exportVatRegistered: boolean;
+}): Promise<void> {
+  const { error } = await supabase.rpc('set_energy_tariff_settings', {
     p_profile_id: params.profileId,
-    p_valid_from: params.validFrom,
-    p_configuration: params.configuration as unknown as Json,
+    p_grid_area: params.gridArea,
+    p_energy_tax_reduced: params.energyTaxReduced,
+    p_include_vat: params.includeVat,
+    p_export_vat_registered: params.exportVatRegistered,
   });
   if (error) throw error;
-  if (!data) throw new Error('Tariff assignment was not saved');
+}
+
+export async function publishEnergyTariffVersion(params: {
+  profileId: string;
+  revision: string;
+  validFrom: string;
+  calculationModel: string;
+  definition: Json;
+  sourceUrl: string;
+}): Promise<string> {
+  const { data, error } = await supabase.rpc('publish_energy_tariff_version', {
+    p_profile_id: params.profileId,
+    p_revision: params.revision,
+    p_valid_from: params.validFrom,
+    p_calculation_model: params.calculationModel,
+    p_definition: params.definition,
+    p_source_url: params.sourceUrl,
+  });
+  if (error) throw error;
+  if (!data) throw new Error('Tariff version was not published');
   return data;
 }
 

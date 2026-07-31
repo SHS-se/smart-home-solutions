@@ -16,6 +16,7 @@ import {
   Box,
   Cpu,
   Calendar,
+  Calculator,
   BookOpen,
   ShoppingCart,
   Truck,
@@ -102,6 +103,7 @@ const navIcons: Record<NavIcon, LucideIcon> = {
   margins: Settings,
   business: Landmark,
   questionnaire: ClipboardList,
+  tariffs: Calculator,
   erd: Database,
   staff: UserCog,
 };

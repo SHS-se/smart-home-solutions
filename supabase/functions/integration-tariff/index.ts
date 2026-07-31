@@ -1,6 +1,5 @@
-// Delivers the staff-selected, effective-dated tariff catalogue to a paired
-// Home Assistant device. Customers never configure or publish this data;
-// service-role reads intentionally bypass the staff-only catalogue policies.
+// Delivers the global, staff-published Ellevio catalogue plus customer facts
+// derived from the primary-home questionnaire. Customers never select a tariff.
 
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
@@ -12,19 +11,20 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
 };
 
+const VALID_FUSES = new Set([16, 20, 25, 35, 50, 63]);
+
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 
+const answerValue = (answer: { answer_value: unknown; answer_text: string | null } | undefined) =>
+  answer?.answer_value ?? answer?.answer_text ?? null;
+
 serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
-  if (req.method !== "GET") {
-    return json({ error: "method_not_allowed" }, 405);
-  }
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  if (req.method !== "GET") return json({ error: "method_not_allowed" }, 405);
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
@@ -35,64 +35,103 @@ serve(async (req) => {
   try {
     const auth = await authenticateDevice(supabase, req);
     if (auth.ok === false) return json({ error: auth.error }, auth.status);
-    if (!auth.subscriptionActive) {
-      return json({ error: "subscription_inactive" }, 402);
-    }
+    if (!auth.subscriptionActive) return json({ error: "subscription_inactive" }, 402);
 
-    const { data: assignments, error: assignmentError } = await supabase
-      .from("customer_energy_tariff_assignments")
-      .select("id, profile_id, valid_from, valid_to, configuration")
-      .eq("customer_id", auth.customerId)
-      .order("valid_from", { ascending: true });
-
-    if (assignmentError) {
-      console.error("[INTEGRATION-TARIFF] assignment lookup failed", assignmentError);
+    const [{ data: settings, error: settingsError }, { data: customer, error: customerError }] =
+      await Promise.all([
+        supabase.from("energy_tariff_settings").select(
+          "profile_id, connection_type, grid_area, energy_tax_reduced, include_vat, export_vat_registered",
+        ).eq("id", true).maybeSingle(),
+        supabase.from("customers").select("primary_home_id").eq("id", auth.customerId).maybeSingle(),
+      ]);
+    if (settingsError || customerError) {
+      console.error("[INTEGRATION-TARIFF] settings/customer lookup failed", {
+        settingsError,
+        customerError,
+      });
       return json({ error: "tariff_lookup_failed" }, 500);
     }
 
-    const profileIds = Array.from(
-      new Set((assignments ?? []).map((assignment) => assignment.profile_id)),
-    );
-    if (profileIds.length === 0) {
+    if (!settings) {
       return json({
-        schema_version: 1,
-        calculation_version: 1,
+        schema_version: 2,
+        calculation_version: 2,
         timezone: "Europe/Stockholm",
-        assignments: [],
+        configuration: null,
+        missing_inputs: ["central_tariff_settings"],
         profiles: [],
       });
     }
 
     const [{ data: profiles, error: profileError }, { data: versions, error: versionError }] =
       await Promise.all([
-        supabase
-          .from("energy_tariff_profiles")
+        supabase.from("energy_tariff_profiles")
           .select("id, provider_key, tariff_key, provider_name, display_name, currency")
-          .in("id", profileIds)
-          .order("provider_key", { ascending: true })
-          .order("tariff_key", { ascending: true }),
-        supabase
-          .from("energy_tariff_versions")
+          .eq("id", settings.profile_id),
+        supabase.from("energy_tariff_versions")
           .select(
             "id, profile_id, revision, valid_from, valid_to, calculation_model, definition, source_url, published_at",
           )
-          .in("profile_id", profileIds)
+          .eq("profile_id", settings.profile_id)
           .order("valid_from", { ascending: true }),
       ]);
-
     if (profileError || versionError) {
-      console.error("[INTEGRATION-TARIFF] catalogue lookup failed", {
-        profileError,
-        versionError,
-      });
+      console.error("[INTEGRATION-TARIFF] catalogue lookup failed", { profileError, versionError });
       return json({ error: "tariff_lookup_failed" }, 500);
     }
 
+    let mainFuseA: number | null = null;
+    let productionEnabled: boolean | null = null;
+    if (customer?.primary_home_id) {
+      const { data: questions, error: questionError } = await supabase
+        .from("home_questions")
+        .select("id, semantic_key")
+        .in("semantic_key", ["main_fuse_a", "has_solar"]);
+      if (questionError) {
+        console.error("[INTEGRATION-TARIFF] question lookup failed", questionError);
+        return json({ error: "tariff_lookup_failed" }, 500);
+      }
+
+      const { data: answers, error: answerError } = await supabase
+        .from("home_answers")
+        .select("question_id, answer_value, answer_text")
+        .eq("home_id", customer.primary_home_id)
+        .in("question_id", (questions ?? []).map((question) => question.id));
+      if (answerError) {
+        console.error("[INTEGRATION-TARIFF] answer lookup failed", answerError);
+        return json({ error: "tariff_lookup_failed" }, 500);
+      }
+
+      const answersByQuestion = new Map((answers ?? []).map((answer) => [answer.question_id, answer]));
+      const values = Object.fromEntries((questions ?? []).map((question) => [
+        question.semantic_key,
+        answerValue(answersByQuestion.get(question.id)),
+      ]));
+      const fuse = Number(values.main_fuse_a);
+      if (VALID_FUSES.has(fuse)) mainFuseA = fuse;
+      if (values.has_solar === true || values.has_solar === "true") productionEnabled = true;
+      if (values.has_solar === false || values.has_solar === "false") productionEnabled = false;
+    }
+
+    const missingInputs: string[] = [];
+    if (mainFuseA === null) missingInputs.push("main_fuse_a");
+    if (productionEnabled === null) missingInputs.push("has_solar");
+
     return json({
-      schema_version: 1,
-      calculation_version: 1,
+      schema_version: 2,
+      calculation_version: 2,
       timezone: "Europe/Stockholm",
-      assignments: assignments ?? [],
+      configuration: missingInputs.length === 0 ? {
+        profile_id: settings.profile_id,
+        connection_type: "three_phase",
+        fuse_a: mainFuseA,
+        grid_area: settings.grid_area,
+        production_enabled: productionEnabled,
+        energy_tax_reduced: settings.energy_tax_reduced,
+        include_vat: settings.include_vat,
+        export_vat_registered: settings.export_vat_registered,
+      } : null,
+      missing_inputs: missingInputs,
       profiles: (profiles ?? []).map((profile) => ({
         ...profile,
         versions: (versions ?? []).filter((version) => version.profile_id === profile.id),
