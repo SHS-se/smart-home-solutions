@@ -183,9 +183,27 @@ const EnergyTariffSettings: React.FC = () => {
             </div>
           </div>
           <div className="grid gap-4 border-t pt-4 md:grid-cols-3">
-            <Label className="flex items-center justify-between gap-3 rounded-lg border p-3"><span>{t('Priser inklusive moms', 'Prices include VAT')}</span><Switch checked={includeVat} onCheckedChange={setIncludeVat} /></Label>
-            <Label className="flex items-center justify-between gap-3 rounded-lg border p-3"><span>{t('Reducerad energiskatt', 'Reduced energy tax')}</span><Switch checked={energyTaxReduced} onCheckedChange={setEnergyTaxReduced} /></Label>
-            <Label className="flex items-center justify-between gap-3 rounded-lg border p-3"><span>{t('Momsregistrerad mikroproducent', 'VAT-registered microgenerator')}</span><Switch checked={exportVatRegistered} onCheckedChange={setExportVatRegistered} /></Label>
+            <Label className="flex flex-col gap-2 rounded-lg border p-3">
+              <span className="flex items-center justify-between gap-3">
+                <span>{t('Debitera moms', 'Charge VAT')}</span>
+                <Switch checked={includeVat} onCheckedChange={setIncludeVat} />
+              </span>
+              <span className="text-xs font-normal text-muted-foreground">{t('Katalogens priser är alltid exkl. moms. På betyder att 25 % moms läggs på summan, precis som på fakturan.', 'Catalogue rates are always ex-VAT. On adds 25% VAT to the total, exactly as the invoice does.')}</span>
+            </Label>
+            <Label className="flex flex-col gap-2 rounded-lg border p-3">
+              <span className="flex items-center justify-between gap-3">
+                <span>{t('Reducerad energiskatt', 'Reduced energy tax')}</span>
+                <Switch checked={energyTaxReduced} onCheckedChange={setEnergyTaxReduced} />
+              </span>
+              <span className="text-xs font-normal text-muted-foreground">{t('För kommuner med nedsatt energiskatt.', 'For municipalities with a reduced energy-tax rate.')}</span>
+            </Label>
+            <Label className="flex flex-col gap-2 rounded-lg border p-3">
+              <span className="flex items-center justify-between gap-3">
+                <span>{t('Momsregistrerad mikroproducent', 'VAT-registered microgenerator')}</span>
+                <Switch checked={exportVatRegistered} onCheckedChange={setExportVatRegistered} />
+              </span>
+              <span className="text-xs font-normal text-muted-foreground">{t('Av betyder att produktionsersättningen är ej momsgrundande.', 'Off means the production credit is not VAT-able.')}</span>
+            </Label>
           </div>
           <div className="flex items-center justify-between gap-4">
             <p className="text-sm text-muted-foreground">{t('Anslutning är alltid trefas. Kundens säkringsstorlek väljer prisnivån.', 'Connection is always three-phase. The customer’s fuse size selects the rate.')}</p>
