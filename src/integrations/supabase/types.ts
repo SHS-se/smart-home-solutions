@@ -1493,6 +1493,7 @@ export type Database = {
           id: string
           input_hash: string
           is_complete: boolean
+          missing_days: Json
           peak_demand_kw: number | null
           tariff_revisions: Json
           total_amount_sek: number
@@ -1514,6 +1515,7 @@ export type Database = {
           id?: string
           input_hash: string
           is_complete?: boolean
+          missing_days?: Json
           peak_demand_kw?: number | null
           tariff_revisions: Json
           total_amount_sek: number
@@ -1535,6 +1537,7 @@ export type Database = {
           id?: string
           input_hash?: string
           is_complete?: boolean
+          missing_days?: Json
           peak_demand_kw?: number | null
           tariff_revisions?: Json
           total_amount_sek?: number

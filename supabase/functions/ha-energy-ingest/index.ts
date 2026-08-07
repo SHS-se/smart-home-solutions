@@ -201,6 +201,7 @@ serve(async (req) => {
       coverage_start: string;
       coverage_end: string;
       is_complete: boolean;
+      missing_days: string[];
       currency: string;
       calculation_model: string;
       calculation_version: number;
@@ -240,7 +241,30 @@ serve(async (req) => {
       if (typeof calculation?.is_complete !== "boolean") {
         return json({ error: "invalid_calculation_completeness", detail: billingMonth }, 400);
       }
-      const coversWholeMonth = coverageStart === billingMonth && coverageEnd === expectedMonthEnd;
+      // Days the meter was down for part of the hour range. Older integration
+      // builds never send the field, and a month without gaps sends [].
+      const missingDays = calculation?.missing_days ?? [];
+      if (
+        !Array.isArray(missingDays) ||
+        missingDays.length > 31 ||
+        new Set(missingDays).size !== missingDays.length ||
+        missingDays.some(
+          (day) =>
+            typeof day !== "string" ||
+            !isValidDate(day) ||
+            !day.startsWith(`${monthPrefix}-`) ||
+            day < coverageStart ||
+            day > coverageEnd,
+        )
+      ) {
+        return json({ error: "invalid_missing_days", detail: billingMonth }, 400);
+      }
+      // Spanning the month is not the same as having metered it: a month with
+      // a hole in the middle must never be stored as the final figure, because
+      // its energy totals are short by however long the meter was out.
+      const coversWholeMonth = coverageStart === billingMonth &&
+        coverageEnd === expectedMonthEnd &&
+        missingDays.length === 0;
       if (calculation.is_complete !== coversWholeMonth) {
         return json({ error: "inconsistent_calculation_completeness", detail: billingMonth }, 400);
       }
@@ -367,6 +391,7 @@ serve(async (req) => {
         coverage_start: coverageStart,
         coverage_end: coverageEnd,
         is_complete: calculation.is_complete,
+        missing_days: [...missingDays].sort(),
         currency: "SEK",
         calculation_model: "se_grid_v1",
         calculation_version: 2,
