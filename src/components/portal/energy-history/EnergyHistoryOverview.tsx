@@ -30,12 +30,15 @@ import EnergyHistoryEventForm from '@/components/portal/energy-history/EnergyHis
 import EnergySourceInsights from '@/components/portal/energy-history/EnergySourceInsights';
 import type { EnergyBillingChange } from '@/lib/energy-billing-changes';
 import type { EnergyBillingMonth } from '@/lib/energy-billing-series';
-import type { EnergyTariffInvoiceComparison } from '@/lib/energy-tariff-series';
+import {
+  divergentTariffComparisons,
+  type EnergyTariffInvoiceComparison,
+} from '@/lib/energy-tariff-series';
 import type {
   EnergyHistoryNoteRecord,
-  EnergyUsageReadingRecord,
   TimelineNoteValues,
 } from '@/lib/energy-temperature-storage';
+import type { ResolvedUsageReading } from '@/lib/energy-usage-resolution';
 import { getEnergyCoverageIssues } from '@/lib/energy-history-coverage';
 import {
   estimateAnnualEnergyHistory,
@@ -50,7 +53,7 @@ interface EnergyHistoryOverviewProps {
   series: EnergyBillingMonth[];
   changes: EnergyBillingChange[];
   notes: EnergyHistoryNoteRecord[];
-  usageReadings: EnergyUsageReadingRecord[];
+  usageReadings: ResolvedUsageReading[];
   notesError?: unknown;
   usageError?: unknown;
   usageIsLoading?: boolean;
@@ -266,6 +269,15 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
     currency: 'SEK',
     maximumFractionDigits: 0,
   }), [locale]);
+  const percentFormatter = useMemo(() => new Intl.NumberFormat(locale, {
+    style: 'percent',
+    maximumFractionDigits: 1,
+    signDisplay: 'exceptZero',
+  }), [locale]);
+  const divergentComparisons = useMemo(
+    () => divergentTariffComparisons(tariffInvoiceComparisons),
+    [tariffInvoiceComparisons],
+  );
   const monthFormatter = useMemo(() => new Intl.DateTimeFormat(locale, {
     month: 'short',
     year: '2-digit',
@@ -687,6 +699,37 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
                 'The invoice is the authoritative amount in cost charts. The Home Assistant calculation is retained separately as an indicative comparison and is not overwritten.',
               )}
             </p>
+            {divergentComparisons.length > 0 && (
+              <Alert variant="destructive">
+                <TriangleAlert className="h-4 w-4" />
+                <AlertTitle>
+                  {t(
+                    'Home Assistant-beräkningen avviker från fakturan',
+                    'The Home Assistant calculation diverges from the invoice',
+                  )}
+                </AlertTitle>
+                <AlertDescription className="space-y-2">
+                  <p>
+                    {t(
+                      'Avvikelsen överstiger 5 % och 100 kr under följande månader. Den vanligaste orsaken är att mätdata kommer från växelriktaren i stället för elmätaren.',
+                      'The difference exceeds both 5% and 100 kr in the months below. The most common cause is meter data coming from the inverter rather than the electricity meter.',
+                    )}
+                  </p>
+                  <ul className="list-inside list-disc">
+                    {divergentComparisons.slice(-6).map((comparison) => (
+                      <li key={comparison.monthKey}>
+                        {formatMonthKey(comparison.monthKey)}
+                        {': '}
+                        {moneyFormatter.format(comparison.differenceSek)}
+                        {' ('}
+                        {percentFormatter.format(comparison.differenceRatio)}
+                        {')'}
+                      </li>
+                    ))}
+                  </ul>
+                </AlertDescription>
+              </Alert>
+            )}
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={tariffInvoiceComparisons.slice(-24)} margin={{ top: 12, right: 8, bottom: 20, left: 8 }}>
                 <CartesianGrid strokeDasharray="4 4" className="stroke-border/70" vertical={false} />

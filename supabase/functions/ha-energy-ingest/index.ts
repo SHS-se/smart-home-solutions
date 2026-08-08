@@ -61,6 +61,15 @@ interface IncomingReading {
   kwh: number;
 }
 
+interface IncomingSupplierCost {
+  date: string;
+  import_kwh: number;
+  import_cost_sek: number;
+  export_kwh: number;
+  export_credit_sek: number;
+  priced_hours: number;
+}
+
 interface IncomingComponent {
   component_key: string;
   category: string;
@@ -125,6 +134,7 @@ serve(async (req) => {
 
     let readings: IncomingReading[] = [];
     let calculations: IncomingCalculation[] = [];
+    let supplierCosts: IncomingSupplierCost[] = [];
     try {
       const body = await req.json();
       if (body === null || typeof body !== "object") throw new Error("invalid body");
@@ -134,8 +144,12 @@ serve(async (req) => {
       if (body.calculations !== undefined && !Array.isArray(body.calculations)) {
         throw new Error("invalid calculations");
       }
+      if (body.supplier_costs !== undefined && !Array.isArray(body.supplier_costs)) {
+        throw new Error("invalid supplier costs");
+      }
       readings = body.readings ?? [];
       calculations = body.calculations ?? [];
+      supplierCosts = body.supplier_costs ?? [];
     } catch {
       return json({ error: "invalid_body" }, 400);
     }
@@ -145,6 +159,9 @@ serve(async (req) => {
     }
     if (calculations.length > MAX_CALCULATIONS_PER_PUSH) {
       return json({ error: "too_many_calculations" }, 400);
+    }
+    if (supplierCosts.length > MAX_READINGS_PER_PUSH) {
+      return json({ error: "too_many_supplier_costs" }, 400);
     }
 
     const today = new Date().toISOString().slice(0, 10);
@@ -191,6 +208,64 @@ serve(async (req) => {
 
       if (upsertError) {
         console.error("[HA-ENERGY-INGEST] reading upsert failed", upsertError);
+        return json({ error: "storage_failed" }, 500);
+      }
+    }
+
+    const supplierRows: Array<{
+      customer_id: string;
+      cost_date: string;
+      import_kwh: number;
+      import_cost_sek: number;
+      export_kwh: number;
+      export_credit_sek: number;
+      priced_hours: number;
+      device_token_id: string;
+    }> = [];
+    const supplierDates = new Set<string>();
+
+    for (const cost of supplierCosts) {
+      const date = String(cost?.date ?? "");
+      const importKwh = Number(cost?.import_kwh);
+      const importCost = Number(cost?.import_cost_sek);
+      const exportKwh = Number(cost?.export_kwh ?? 0);
+      const exportCredit = Number(cost?.export_credit_sek ?? 0);
+      const pricedHours = Number(cost?.priced_hours);
+      if (!isValidDate(date) || date > today) {
+        return json({ error: "invalid_supplier_cost_date", detail: date }, 400);
+      }
+      if (supplierDates.has(date)) {
+        return json({ error: "duplicate_supplier_cost", detail: date }, 400);
+      }
+      supplierDates.add(date);
+      if (
+        !Number.isFinite(importKwh) || importKwh < 0 || importKwh > MAX_KWH_PER_READING ||
+        !Number.isFinite(exportKwh) || exportKwh < 0 || exportKwh > MAX_KWH_PER_READING ||
+        !Number.isFinite(importCost) || Math.abs(importCost) > MAX_AMOUNT_SEK ||
+        !Number.isFinite(exportCredit) || Math.abs(exportCredit) > MAX_AMOUNT_SEK ||
+        !Number.isInteger(pricedHours) || pricedHours < 0 || pricedHours > 25
+      ) {
+        return json({ error: "invalid_supplier_cost", detail: date }, 400);
+      }
+      supplierRows.push({
+        customer_id: auth.customerId,
+        cost_date: date,
+        import_kwh: round(importKwh, 3),
+        import_cost_sek: round(importCost, 2),
+        export_kwh: round(exportKwh, 3),
+        export_credit_sek: round(exportCredit, 2),
+        priced_hours: pricedHours,
+        device_token_id: auth.tokenId,
+      });
+    }
+
+    if (supplierRows.length > 0) {
+      const { error: supplierError } = await supabase
+        .from("energy_supplier_daily_costs")
+        .upsert(supplierRows, { onConflict: "customer_id,cost_date" });
+
+      if (supplierError) {
+        console.error("[HA-ENERGY-INGEST] supplier cost upsert failed", supplierError);
         return json({ error: "storage_failed" }, 500);
       }
     }
@@ -420,6 +495,7 @@ serve(async (req) => {
     return json({
       accepted: rows.length,
       calculations_accepted: calculationRows.length,
+      supplier_costs_accepted: supplierRows.length,
     });
   } catch (error) {
     console.error("[HA-ENERGY-INGEST] unexpected", error);

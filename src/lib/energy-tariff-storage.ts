@@ -1,5 +1,7 @@
 import { supabase } from '@/integrations/supabase/client';
 import type { Json, Tables } from '@/integrations/supabase/types';
+import { fetchAllRows } from '@/lib/fetch-all-rows';
+import type { EnergySupplierDailyCostRecord } from '@/lib/energy-supplier-series';
 
 export type EnergyTariffProfile = Tables<'energy_tariff_profiles'>;
 export type EnergyTariffVersion = Tables<'energy_tariff_versions'>;
@@ -89,4 +91,16 @@ export async function fetchEnergyTariffCalculations(
     .order('billing_month', { ascending: true });
   if (error) throw error;
   return data ?? [];
+}
+
+/** Daily supplier cost pushed by Home Assistant, priced hour by hour. */
+export async function fetchEnergySupplierDailyCosts(
+  customerId: string,
+): Promise<EnergySupplierDailyCostRecord[]> {
+  return fetchAllRows<EnergySupplierDailyCostRecord>((from, to) => supabase
+    .from('energy_supplier_daily_costs')
+    .select('*')
+    .eq('customer_id', customerId)
+    .order('cost_date', { ascending: true })
+    .range(from, to));
 }

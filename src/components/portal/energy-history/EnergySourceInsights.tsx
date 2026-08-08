@@ -18,7 +18,7 @@ import {
   YAxis,
 } from 'recharts';
 import { useLanguage } from '@/contexts/LanguageContext';
-import type { EnergyUsageReadingRecord } from '@/lib/energy-temperature-storage';
+import type { ResolvedUsageReading } from '@/lib/energy-usage-resolution';
 import {
   buildMonthlyEnergyFlows,
   buildRollingAnnualEnergyProfile,
@@ -30,7 +30,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 interface EnergySourceInsightsProps {
-  readings: EnergyUsageReadingRecord[];
+  readings: ResolvedUsageReading[];
   isLoading?: boolean;
   error?: unknown;
   onUploadClick?: () => void;

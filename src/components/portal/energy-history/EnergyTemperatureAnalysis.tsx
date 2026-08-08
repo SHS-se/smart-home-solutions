@@ -34,17 +34,17 @@ import {
 import type { EnergyReadingKind } from '@/lib/energy-usage-parser';
 import type {
   EnergyHistoryNoteRecord,
-  EnergyUsageReadingRecord,
   EnergyWeatherDatasetRecord,
   EnergyWeatherObservationRecord,
 } from '@/lib/energy-temperature-storage';
+import type { ResolvedUsageReading } from '@/lib/energy-usage-resolution';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 interface EnergyTemperatureAnalysisProps {
-  readings: EnergyUsageReadingRecord[];
+  readings: ResolvedUsageReading[];
   weatherDataset: EnergyWeatherDatasetRecord | null;
   weatherObservations: EnergyWeatherObservationRecord[];
   notes: EnergyHistoryNoteRecord[];

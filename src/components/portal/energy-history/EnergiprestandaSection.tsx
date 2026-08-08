@@ -16,7 +16,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/contexts/LanguageContext';
-import type { EnergyUsageReadingRecord } from '@/lib/energy-temperature-storage';
+import type { ResolvedUsageReading } from '@/lib/energy-usage-resolution';
 import { toDailyEnergyReadings } from '@/lib/energy-usage-series';
 import {
   EP_EXCLUDED_CATEGORIES,
@@ -81,7 +81,7 @@ interface EnergiprestandaSectionProps {
   /** Daily per-category readings pushed from Home Assistant, when connected. */
   readings: DailyCategoryReading[];
   /** Daily grid-import / whole-home readings from invoices and file imports. */
-  usageReadings: EnergyUsageReadingRecord[];
+  usageReadings: ResolvedUsageReading[];
   weatherObservations: DailyTemperature[];
   atempM2: number | null;
   heatedBoareaM2?: number | null;

@@ -1476,6 +1476,63 @@ export type Database = {
           },
         ]
       }
+      energy_supplier_daily_costs: {
+        Row: {
+          cost_date: string
+          created_at: string
+          customer_id: string
+          device_token_id: string | null
+          export_credit_sek: number
+          export_kwh: number
+          id: string
+          import_cost_sek: number
+          import_kwh: number
+          priced_hours: number
+          updated_at: string
+        }
+        Insert: {
+          cost_date: string
+          created_at?: string
+          customer_id: string
+          device_token_id?: string | null
+          export_credit_sek?: number
+          export_kwh?: number
+          id?: string
+          import_cost_sek: number
+          import_kwh: number
+          priced_hours: number
+          updated_at?: string
+        }
+        Update: {
+          cost_date?: string
+          created_at?: string
+          customer_id?: string
+          device_token_id?: string | null
+          export_credit_sek?: number
+          export_kwh?: number
+          id?: string
+          import_cost_sek?: number
+          import_kwh?: number
+          priced_hours?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "energy_supplier_daily_costs_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_supplier_daily_costs_device_token_id_fkey"
+            columns: ["device_token_id"]
+            isOneToOne: false
+            referencedRelation: "ha_device_tokens"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       energy_tariff_calculations: {
         Row: {
           billing_month: string

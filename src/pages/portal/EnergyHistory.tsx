@@ -31,7 +31,11 @@ import {
   tariffCalculationsWithoutImportedGridMonths,
   toEnergyTariffChangeDocuments,
 } from '@/lib/energy-tariff-series';
-import { fetchEnergyTariffCalculations } from '@/lib/energy-tariff-storage';
+import { mergeSupplierEstimates } from '@/lib/energy-supplier-series';
+import {
+  fetchEnergySupplierDailyCosts,
+  fetchEnergyTariffCalculations,
+} from '@/lib/energy-tariff-storage';
 import { fetchEnergyHistoryHomeProfileInputs } from '@/lib/home-profile-functional-data';
 import {
   ENERGY_HISTORY_SAMPLE_CHANGES,
@@ -43,6 +47,7 @@ import {
   fetchAllWeatherObservations,
   fetchEnergyDeviceReadings,
 } from '@/lib/energy-device-readings';
+import { resolveDailyUsageReadings } from '@/lib/energy-usage-resolution';
 import EnergyTemperatureAnalysis from '@/components/portal/energy-history/EnergyTemperatureAnalysis';
 import EnergyHistoryDocuments from '@/components/portal/energy-history/EnergyHistoryDocuments';
 import EnergyHistoryOverview from '@/components/portal/energy-history/EnergyHistoryOverview';
@@ -95,6 +100,7 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   }, [requestedTab]);
   const queryKey = ['energy-billing-documents', customerId] as const;
   const tariffCalculationsQueryKey = ['energy-tariff-calculations', customerId] as const;
+  const supplierCostsQueryKey = ['energy-supplier-daily-costs', customerId] as const;
   const usageQueryKey = ['energy-usage-readings', customerId] as const;
   const usageImportsQueryKey = ['energy-usage-import-batches', customerId] as const;
   const parseFailuresQueryKey = ['energy-parse-failures', customerId] as const;
@@ -135,6 +141,15 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
     refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
+  const supplierCostsQuery = useQuery({
+    queryKey: supplierCostsQueryKey,
+    queryFn: () => fetchEnergySupplierDailyCosts(customerId),
+    enabled: tariffCalculationsEnabled,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+  });
   const usageQuery = useQuery({
     queryKey: usageQueryKey,
     queryFn: () => fetchEnergyUsageReadings(customerId),
@@ -162,8 +177,28 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
     refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
-  const usageStartDate = usageQuery.data?.at(0)?.reading_date ?? null;
-  const usageEndDate = usageQuery.data?.at(-1)?.reading_date ?? null;
+  const deviceReadingsQuery = useQuery({
+    queryKey: ['energy-device-readings', customerId],
+    queryFn: () => fetchEnergyDeviceReadings(customerId),
+    // Needed wherever the usage series is: uploading is optional, so Home
+    // Assistant fills in every day no file reached.
+    enabled: usageDataEnabled,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+  });
+  const usageReadings = useMemo(
+    () => resolveDailyUsageReadings(
+      usageQuery.data ?? [],
+      deviceReadingsQuery.data ?? [],
+    ),
+    [usageQuery.data, deviceReadingsQuery.data],
+  );
+  const usageIsLoading = usageQuery.isLoading || deviceReadingsQuery.isLoading;
+  const usageError = usageQuery.error ?? deviceReadingsQuery.error;
+  const usageStartDate = usageReadings.at(0)?.reading_date ?? null;
+  const usageEndDate = usageReadings.at(-1)?.reading_date ?? null;
   const weatherDatasetQuery = useQuery({
     queryKey: SHARED_WEATHER_DATASET_QUERY_KEY,
     queryFn: fetchSharedWeatherDataset,
@@ -177,15 +212,6 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
     queryKey: ['energy-shared-weather-observations', usageStartDate, usageEndDate],
     queryFn: () => fetchSharedWeatherObservations(usageStartDate!, usageEndDate!),
     enabled: temperatureDataEnabled && Boolean(usageStartDate && usageEndDate),
-    staleTime: 5 * 60 * 1000,
-    gcTime: 30 * 60 * 1000,
-    refetchOnMount: false,
-    refetchOnWindowFocus: false,
-  });
-  const deviceReadingsQuery = useQuery({
-    queryKey: ['energy-device-readings', customerId],
-    queryFn: () => fetchEnergyDeviceReadings(customerId),
-    enabled: performanceDataEnabled,
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
     refetchOnMount: false,
@@ -218,11 +244,14 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
     [documents],
   );
   const seriesDocuments = useMemo(
-    () => mergeEnergyBillingAndTariffDocuments(
-      billingSeriesDocuments,
-      tariffCalculationsQuery.data ?? [],
+    () => mergeSupplierEstimates(
+      mergeEnergyBillingAndTariffDocuments(
+        billingSeriesDocuments,
+        tariffCalculationsQuery.data ?? [],
+      ),
+      supplierCostsQuery.data ?? [],
     ),
-    [billingSeriesDocuments, tariffCalculationsQuery.data],
+    [billingSeriesDocuments, tariffCalculationsQuery.data, supplierCostsQuery.data],
   );
   const authoritativeTariffCalculations = useMemo(
     () => tariffCalculationsWithoutImportedGridMonths(
@@ -251,7 +280,8 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   );
   const pageError = documentsQuery.error
     ?? homeProfileQuery.error
-    ?? tariffCalculationsQuery.error;
+    ?? tariffCalculationsQuery.error
+    ?? supplierCostsQuery.error;
 
   const refreshDocuments = async () => {
     await queryClient.invalidateQueries({ queryKey });
@@ -266,6 +296,7 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
       refreshDocuments(),
       refreshUsage(),
       queryClient.invalidateQueries({ queryKey: tariffCalculationsQueryKey }),
+      queryClient.invalidateQueries({ queryKey: supplierCostsQueryKey }),
       queryClient.invalidateQueries({ queryKey: usageImportsQueryKey }),
       queryClient.invalidateQueries({ queryKey: parseFailuresQueryKey }),
       queryClient.invalidateQueries({
@@ -434,10 +465,10 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
                 ? null
                 : homeProfileQuery.data?.moveInDate ?? null}
               notes={notesQuery.data ?? []}
-              usageReadings={usageQuery.data ?? []}
+              usageReadings={usageReadings}
               notesError={notesQuery.error}
-              usageError={usageQuery.error}
-              usageIsLoading={usageQuery.isLoading}
+              usageError={usageError}
+              usageIsLoading={usageIsLoading}
               isSample={seriesDocuments.length === 0}
               onUploadClick={() => setActiveTab('upload')}
               onCreateNote={handleCreateNote}
@@ -482,31 +513,29 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
           <TabsContent value="performance">
             <EnergiprestandaSection
               readings={deviceReadingsQuery.data ?? []}
-              usageReadings={usageQuery.data ?? []}
+              usageReadings={usageReadings}
               weatherObservations={allWeatherQuery.data ?? []}
               atempM2={homeProfileQuery.data?.heatedAreaM2 ?? null}
               heatedBoareaM2={homeProfileQuery.data?.heatedBoareaM2 ?? null}
               heatedBiareaM2={homeProfileQuery.data?.heatedBiareaM2 ?? null}
               hasSolar={homeProfileQuery.data?.hasSolar ?? null}
-              isLoading={deviceReadingsQuery.isLoading
-                || allWeatherQuery.isLoading
-                || usageQuery.isLoading}
-              error={deviceReadingsQuery.error
-                ?? allWeatherQuery.error
-                ?? usageQuery.error}
+              isLoading={usageIsLoading || allWeatherQuery.isLoading}
+              error={usageError ?? allWeatherQuery.error}
               onUploadClick={() => setActiveTab('upload')}
             />
           </TabsContent>
           <TabsContent value="temperature">
             <EnergyTemperatureAnalysis
-              readings={usageQuery.data ?? []}
+              readings={usageReadings}
               weatherDataset={weatherDatasetQuery.data ?? null}
               weatherObservations={weatherObservationsQuery.data ?? []}
               notes={notesQuery.data ?? []}
-              isLoading={usageQuery.isLoading
+              isLoading={usageIsLoading
                 || weatherDatasetQuery.isLoading
                 || weatherObservationsQuery.isLoading}
-              error={weatherDatasetQuery.error ?? weatherObservationsQuery.error}
+              error={usageError
+                ?? weatherDatasetQuery.error
+                ?? weatherObservationsQuery.error}
               onUploadClick={() => setActiveTab('upload')}
             />
           </TabsContent>

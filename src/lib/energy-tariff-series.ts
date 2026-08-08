@@ -37,6 +37,7 @@ export interface EnergyTariffInvoiceComparison {
   invoiceAmountSek: number;
   haEstimateAmountSek: number;
   differenceSek: number;
+  differenceRatio: number;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -201,6 +202,31 @@ export function buildEnergyTariffInvoiceComparisons(
       invoiceAmountSek: month.gridCostSek,
       haEstimateAmountSek: estimate,
       differenceSek: Math.round((estimate - month.gridCostSek) * 100) / 100,
+      differenceRatio: month.gridCostSek === 0
+        ? 0
+        : (estimate - month.gridCostSek) / month.gridCostSek,
     }];
   });
+}
+
+/**
+ * A month is only worth cautioning about when it is off by a real share *and* a
+ * real amount.
+ *
+ * A percentage alone is the wrong test. The measured error between a meter and
+ * an inverter behaves like a fixed daily offset, so the same absolute drift is
+ * a rounding error across a 2 000 kWh winter month and a third of a 35 kWh
+ * summer one. Requiring both keeps the warning for months where the money
+ * actually moved.
+ */
+export const TARIFF_DIVERGENCE_RATIO = 0.05;
+export const TARIFF_DIVERGENCE_SEK = 100;
+
+export function divergentTariffComparisons(
+  comparisons: readonly EnergyTariffInvoiceComparison[],
+): EnergyTariffInvoiceComparison[] {
+  return comparisons.filter((comparison) => (
+    Math.abs(comparison.differenceRatio) > TARIFF_DIVERGENCE_RATIO
+    && Math.abs(comparison.differenceSek) > TARIFF_DIVERGENCE_SEK
+  ));
 }
