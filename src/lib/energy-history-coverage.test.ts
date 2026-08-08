@@ -36,6 +36,8 @@ function month(
     peakDemandKw: null,
     electricityEnergySek: 0,
     electricityFeesSek: 0,
+    electricityFixedSek: 0,
+    electricityVatSek: 0,
     gridFixedSek: 0,
     gridTransferSek: 0,
     gridPeakSek: 0,

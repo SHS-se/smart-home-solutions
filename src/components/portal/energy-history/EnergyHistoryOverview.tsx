@@ -27,6 +27,7 @@ import {
 } from 'recharts';
 import { useLanguage } from '@/contexts/LanguageContext';
 import EnergyHistoryEventForm from '@/components/portal/energy-history/EnergyHistoryEventForm';
+import EnergySavingsCard from '@/components/portal/energy-history/EnergySavingsCard';
 import EnergySourceInsights from '@/components/portal/energy-history/EnergySourceInsights';
 import type { EnergyBillingChange } from '@/lib/energy-billing-changes';
 import type { EnergyBillingMonth } from '@/lib/energy-billing-series';
@@ -592,6 +593,14 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
           evidenceLabel={metricEvidence(annual.costPerKwh)}
         />
       </div>
+
+      <EnergySavingsCard
+        months={filteredSeries}
+        readings={usageReadings}
+        periodLabel={periodLabel}
+        isSample={isSample}
+        onUploadClick={onUploadClick}
+      />
 
       <EnergySourceInsights
         readings={usageReadings}

@@ -49,6 +49,10 @@ export const ENERGY_HISTORY_SAMPLE_SERIES: EnergyBillingMonth[] = SAMPLE_MONTHS.
     peakDemandKw: Number((sample.peak / 100).toFixed(1)),
     electricityEnergySek: sample.energy,
     electricityFeesSek: sample.fees,
+    // Sample amounts read as VAT-inclusive, so only the monthly subscription is
+    // separated out; the rest of the fee bucket follows the kWh.
+    electricityFixedSek: 49,
+    electricityVatSek: 0,
     gridFixedSek,
     gridTransferSek: sample.transfer,
     gridPeakSek: sample.peak,

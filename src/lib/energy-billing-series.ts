@@ -46,6 +46,14 @@ export interface EnergyBillingMonth {
   peakDemandKw: number | null;
   electricityEnergySek: number;
   electricityFeesSek: number;
+  /**
+   * The fixed-fee and VAT parts of `electricityFeesSek`, not additional cost.
+   * The charts keep using the combined figure; separating a kWh-driven charge
+   * from one that is owed whatever the meter does is what lets self-consumption
+   * be valued at the price it actually displaced.
+   */
+  electricityFixedSek: number;
+  electricityVatSek: number;
   gridFixedSek: number;
   gridTransferSek: number;
   gridPeakSek: number;
@@ -160,6 +168,8 @@ function emptyMonth(date: Date): MutableMonth {
     peakDemandKw: null,
     electricityEnergySek: 0,
     electricityFeesSek: 0,
+    electricityFixedSek: 0,
+    electricityVatSek: 0,
     gridFixedSek: 0,
     gridTransferSek: 0,
     gridPeakSek: 0,
@@ -226,6 +236,7 @@ function addBreakdown(
         month.gridVatSek = round(month.gridVatSek + amount);
       } else {
         month.electricityFeesSek = round(month.electricityFeesSek + amount);
+        month.electricityVatSek = round(month.electricityVatSek + amount);
       }
       break;
     case 'fixed_fee':
@@ -233,6 +244,7 @@ function addBreakdown(
         month.gridFixedSek = round(month.gridFixedSek + amount);
       } else {
         month.electricityFeesSek = round(month.electricityFeesSek + amount);
+        month.electricityFixedSek = round(month.electricityFixedSek + amount);
       }
       break;
     case 'energy_transfer':
