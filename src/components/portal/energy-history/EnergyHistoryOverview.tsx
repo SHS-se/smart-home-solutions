@@ -39,7 +39,11 @@ import type {
   TimelineNoteValues,
 } from '@/lib/energy-temperature-storage';
 import type { ResolvedUsageReading } from '@/lib/energy-usage-resolution';
-import { getEnergyCoverageIssues } from '@/lib/energy-history-coverage';
+import {
+  MAX_UPLOAD_SUGGESTIONS,
+  estimatedMonthKeys,
+  suggestedEnergyUploads,
+} from '@/lib/energy-upload-suggestions';
 import {
   estimateAnnualEnergyHistory,
   type AnnualizedMetric,
@@ -84,6 +88,7 @@ interface HistoryTooltipProps {
   formatDate: (date: string) => string;
   formatValue: (item: TooltipPayloadItem) => string;
   language: string;
+  estimatedMonths: Set<string>;
 }
 
 const YEAR_COLORS = [
@@ -115,6 +120,37 @@ const PERIOD_OPTIONS: Array<{ value: PeriodPreset; sv: string; en: string }> = [
   { value: 'all', sv: 'Allt', en: 'All' },
 ];
 
+/**
+ * A month carried by an estimate reads as a hollow marker rather than a filled
+ * one. It is the difference between "we know" and "we worked it out", visible
+ * at a glance and impossible to nag with.
+ */
+function CostDot({
+  cx,
+  cy,
+  monthKey,
+  estimatedMonths,
+}: {
+  cx?: number;
+  cy?: number;
+  monthKey?: string;
+  estimatedMonths: Set<string>;
+}) {
+  if (cx === undefined || cy === undefined) return null;
+  const estimated = monthKey !== undefined && estimatedMonths.has(monthKey);
+  return (
+    <circle
+      cx={cx}
+      cy={cy}
+      r={estimated ? 3.5 : 3}
+      fill={estimated ? 'transparent' : '#fff'}
+      stroke="#e11d48"
+      strokeWidth={2}
+      strokeDasharray={estimated ? '2 1.5' : undefined}
+    />
+  );
+}
+
 function HistoryTooltip({
   active,
   label,
@@ -125,6 +161,7 @@ function HistoryTooltip({
   formatDate,
   formatValue,
   language,
+  estimatedMonths,
 }: HistoryTooltipProps) {
   if (!active || !label || !payload?.length) return null;
   const monthChanges = changes.filter((change) => change.monthKey === label);
@@ -152,6 +189,13 @@ function HistoryTooltip({
             </div>
           ))}
       </div>
+      {estimatedMonths.has(label) && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          {language === 'sv'
+            ? 'Delvis beräknad från Home Assistant — ingen kvittofil täcker hela månaden.'
+            : 'Partly calculated from Home Assistant — no receipt covers the whole month.'}
+        </p>
+      )}
       {monthChanges.length > 0 && (
         <div className="mt-3 space-y-2 border-t border-border pt-2">
           <p className="flex items-center gap-1.5 text-xs font-medium text-violet-700 dark:text-violet-300">
@@ -348,14 +392,22 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
     }
     return row;
   }), [filteredSeries, monthOnlyFormatter, years]);
-  const allCoverageIssues = useMemo(
-    () => getEnergyCoverageIssues(series, moveInDate),
-    [series, moveInDate],
+  // Sample data is a placeholder for a customer with nothing uploaded yet.
+  // Marking its months as estimated, or asking for receipts to fill them,
+  // would be advice about numbers that are not theirs.
+  const estimatedMonths = useMemo(
+    () => (isSample ? new Set<string>() : estimatedMonthKeys(series, moveInDate)),
+    [series, moveInDate, isSample],
   );
-  const coverageIssues = useMemo(() => allCoverageIssues.filter((issue) => (
-    (period === 'all' || !firstVisibleMonth || issue.monthKey >= firstVisibleMonth)
-    && (!lastVisibleMonth || issue.monthKey <= lastVisibleMonth)
-  )), [allCoverageIssues, firstVisibleMonth, lastVisibleMonth, period]);
+  const uploadSuggestions = useMemo(
+    () => (isSample ? [] : suggestedEnergyUploads(series, moveInDate))
+      .filter((suggestion) => (
+        (period === 'all' || !firstVisibleMonth || suggestion.monthKey >= firstVisibleMonth)
+        && (!lastVisibleMonth || suggestion.monthKey <= lastVisibleMonth)
+      ))
+      .slice(0, MAX_UPLOAD_SUGGESTIONS),
+    [series, moveInDate, firstVisibleMonth, lastVisibleMonth, period, isSample],
+  );
 
   const formatMonthKey = (monthKey: string) => monthFormatter.format(
     new Date(`${monthKey}-01T00:00:00Z`),
@@ -366,11 +418,6 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
   const formatDate = (date: string) => dateFormatter.format(
     new Date(`${date}T00:00:00Z`),
   );
-  const coverageLabel = (status: EnergyBillingMonth['gridCoverage']) => {
-    if (status === 'complete') return t('komplett', 'complete');
-    if (status === 'partial') return t('delvis', 'partial');
-    return t('saknas', 'missing');
-  };
   const metricEvidence = (metric: AnnualizedMetric) => (
     isSample
       ? t('Exempeldata – ersätts med dina fakturor efter import', 'Sample data – replaced by your invoices after import')
@@ -553,33 +600,6 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
         onUploadClick={onUploadClick}
       />
 
-      {coverageIssues.length > 0 ? (
-        <Alert className="border-amber-300 bg-amber-50/60 dark:border-amber-900 dark:bg-amber-950/20">
-          <TriangleAlert className="h-4 w-4 text-amber-700 dark:text-amber-400" />
-          <AlertTitle>{t('Luckor eller delperioder upptäckta', 'Gaps or partial periods detected')}</AlertTitle>
-          <AlertDescription className="space-y-3">
-            <p>
-              {t(
-                'Månadsdiagrammen fyller inte i luckor. Årskorten ovan är tydligt markerade som estimerade och normaliserar delperioder samt svenska säsongsvariationer.',
-                'Monthly charts do not fill gaps. The annual cards above are explicitly marked as estimated and normalize partial periods and Swedish seasonality.',
-              )}
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {coverageIssues.slice(0, 8).map((issue) => (
-                <Badge key={issue.monthKey} variant="outline" className="bg-background font-normal">
-                  {formatMonthKey(issue.monthKey)} · {t('elnät', 'grid')} {coverageLabel(issue.gridCoverage)} · {t('elhandel', 'electricity')} {coverageLabel(issue.electricityCoverage)}
-                </Badge>
-              ))}
-              {coverageIssues.length > 8 && (
-                <Badge variant="secondary">
-                  +{coverageIssues.length - 8} {t('månader', 'months')}
-                </Badge>
-              )}
-            </div>
-          </AlertDescription>
-        </Alert>
-      ) : null}
-
       <Card className="overflow-hidden border-border/70 shadow-sm">
         <CardHeader className="border-b border-border/60 bg-gradient-to-r from-blue-500/5 to-violet-500/5">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -641,6 +661,7 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
                     formatDate={formatDate}
                     formatValue={formatTooltipValue}
                     language={language}
+                    estimatedMonths={estimatedMonths}
                   />
                 )}
               />
@@ -667,7 +688,15 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
                 connectNulls={false}
                 stroke="#e11d48"
                 strokeWidth={3}
-                dot={{ r: 3, fill: '#fff', strokeWidth: 2 }}
+                dot={(props) => (
+                  <CostDot
+                    key={`cost-dot-${props.payload?.monthKey ?? props.index}`}
+                    cx={props.cx}
+                    cy={props.cy}
+                    monthKey={props.payload?.monthKey}
+                    estimatedMonths={estimatedMonths}
+                  />
+                )}
                 activeDot={{ r: 5 }}
                 animationDuration={1050}
               />
@@ -682,6 +711,37 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
               )}
             </ComposedChart>
           </ResponsiveContainer>
+          {uploadSuggestions.length > 0 && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              {t(
+                'Ihåliga punkter är månader utan komplett kvitto.',
+                'Hollow markers are months without a complete receipt.',
+              )}
+              {' '}
+              {uploadSuggestions.length === 1
+                ? t('Ett kvitto skulle skärpa bilden:', 'One receipt would sharpen this:')
+                : t('Kvitton som skulle skärpa bilden:', 'Receipts that would sharpen this:')}
+              {' '}
+              {uploadSuggestions.map((suggestion, index) => (
+                <React.Fragment key={`${suggestion.monthKey}-${suggestion.kind}`}>
+                  {index > 0 && ', '}
+                  <span className="text-foreground">
+                    {suggestion.kind === 'grid' ? t('elnät', 'grid') : t('elhandel', 'electricity')}
+                    {' '}
+                    {formatMonthKey(suggestion.monthKey)}
+                  </span>
+                </React.Fragment>
+              ))}
+              {'. '}
+              <button
+                type="button"
+                onClick={onUploadClick}
+                className="underline underline-offset-2 hover:text-foreground"
+              >
+                {t('Ladda upp', 'Upload')}
+              </button>
+            </p>
+          )}
         </CardContent>
       </Card>
 
@@ -782,6 +842,7 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
                     formatDate={formatDate}
                     formatValue={formatTooltipValue}
                     language={language}
+                    estimatedMonths={estimatedMonths}
                   />
                 )}
               />

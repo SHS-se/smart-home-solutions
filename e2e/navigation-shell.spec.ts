@@ -538,6 +538,58 @@ test.describe('staff navigation shell', () => {
     await expect(page.getByRole('heading', { name: 'Elhandelsfakturor' })).toHaveCount(0);
   });
 
+  test('gaps are shown discreetly and only where a receipt would help', async ({ page }) => {
+    // Two grid invoices with April missing between them, and no electricity
+    // invoice at all — the shape that used to raise a permanent yellow banner.
+    const gridInvoice = (id: string, month: string, days: number) => ({
+      id,
+      customer_id: CUSTOMER_ID,
+      document_kind: 'grid',
+      provider_key: 'ellevio',
+      provider_name: 'Ellevio',
+      period_start: `${month}-01`,
+      period_end: `${month}-${String(days).padStart(2, '0')}`,
+      consumption_kwh: 1200,
+      exported_kwh: null,
+      peak_demand_kw: null,
+      total_amount_sek: 2400,
+      vat_sek: 480,
+      invoice_number: id,
+      invoice_date: `${month}-28`,
+      currency: 'SEK',
+      energy_billing_line_items: [],
+    });
+    await page.route('**/rest/v1/energy_billing_documents*', (route) => route.fulfill({
+      json: [
+        gridInvoice('inv-mar', '2026-03', 31),
+        gridInvoice('inv-may', '2026-05', 31),
+      ],
+    }));
+
+    await login(page);
+    await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history`);
+
+    // The alarm is gone for good.
+    await expect(page.getByText('Luckor eller delperioder upptäckta')).toHaveCount(0);
+
+    // What remains is one quiet, actionable line naming the receipts.
+    const hint = page.getByText('Ihåliga punkter är månader utan komplett kvitto.');
+    await expect(hint).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Ladda upp' })).toBeVisible();
+
+    // The months themselves are marked in the chart: a hollow, dashed marker
+    // where an estimate carries the month, a solid one where a receipt does.
+    await expect(
+      page.locator('svg circle[stroke-dasharray="2 1.5"]').first(),
+    ).toBeVisible();
+
+    await page.screenshot({ path: 'test-results/energy-gap-hint.png', fullPage: true });
+
+    // The full inventory moved to the Data tab, where it is reference material.
+    await page.getByRole('tab', { name: 'Data' }).click();
+    await expect(page.getByRole('heading', { name: 'Månadstäckning' })).toBeVisible();
+  });
+
   test('energiprestanda lives in its own tab and grades without Home Assistant data', async ({ page }) => {
     await login(page);
     await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history`);

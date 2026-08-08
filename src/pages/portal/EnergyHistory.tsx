@@ -50,6 +50,7 @@ import {
 import { resolveDailyUsageReadings } from '@/lib/energy-usage-resolution';
 import EnergyTemperatureAnalysis from '@/components/portal/energy-history/EnergyTemperatureAnalysis';
 import EnergyHistoryDocuments from '@/components/portal/energy-history/EnergyHistoryDocuments';
+import EnergyCoverageTable from '@/components/portal/energy-history/EnergyCoverageTable';
 import EnergyHistoryOverview from '@/components/portal/energy-history/EnergyHistoryOverview';
 import {
   createEnergyHistoryNote,
@@ -113,7 +114,10 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   const temperatureDataEnabled = customerEnergyEnabled && activeTab === 'temperature';
   const performanceDataEnabled = customerEnergyEnabled && activeTab === 'performance';
   const managementDataEnabled = customerEnergyEnabled && activeTab === 'documents';
-  const tariffCalculationsEnabled = customerEnergyEnabled && activeTab === 'overview';
+  // The Data tab's coverage table reads the same merged series, so it needs the
+  // calculated halves too or it would report every month as thinner than it is.
+  const tariffCalculationsEnabled = customerEnergyEnabled
+    && (activeTab === 'overview' || activeTab === 'documents');
   const documentsQuery = useQuery({
     queryKey,
     queryFn: () => fetchEnergyBillingDocuments(customerId),
@@ -508,6 +512,14 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
                 onDeleteUsageImport={handleDeleteUsageImport}
                 onDeleteParseFailure={handleDeleteParseFailure}
               />
+            )}
+            {seriesDocuments.length > 0 && (
+              <div className="mt-6">
+                <EnergyCoverageTable
+                  series={series}
+                  moveInDate={homeProfileQuery.data?.moveInDate ?? null}
+                />
+              </div>
             )}
           </TabsContent>
           <TabsContent value="performance">
