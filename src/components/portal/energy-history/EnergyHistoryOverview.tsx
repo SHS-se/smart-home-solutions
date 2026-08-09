@@ -506,7 +506,14 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
   }
 
   return (
-    <div className="space-y-6">
+    <Tabs defaultValue="summary" className="space-y-6">
+      <TabsList className="grid h-auto w-full grid-cols-2 gap-1 p-1 lg:max-w-2xl lg:grid-cols-4">
+        <TabsTrigger value="summary">{t('Sammanfattning', 'Summary')}</TabsTrigger>
+        <TabsTrigger value="flows">{t('Energiflöden', 'Energy flow')}</TabsTrigger>
+        <TabsTrigger value="costs">{t('Kostnader', 'Costs')}</TabsTrigger>
+        <TabsTrigger value="comparisons">{t('Jämförelser', 'Comparisons')}</TabsTrigger>
+      </TabsList>
+
       {isSample && (
         <Alert className="border-primary/30 bg-gradient-to-r from-primary/10 via-background to-violet-500/10 shadow-sm">
           <Sparkles className="h-4 w-4 text-primary" />
@@ -527,7 +534,22 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
         </Alert>
       )}
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="space-y-3" aria-labelledby="energy-history-overview-heading">
+        <div className="flex flex-wrap items-end justify-between gap-2 px-1">
+          <div>
+            <h2 id="energy-history-overview-heading" className="text-sm font-medium">
+              {t('Överblick för den visade perioden', 'At a glance for the displayed period')}
+            </h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {t(
+                'Samma nyckeltal ligger kvar när du växlar vy nedan.',
+                'These headline figures stay visible when you switch views below.',
+              )}
+            </p>
+          </div>
+          {periodLabel && <Badge variant="outline" className="capitalize">{periodLabel}</Badge>}
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <AnnualMetricCard
           label={t('Årligt nätuttag', 'Annual grid import')}
           metric={annual.consumptionKwh}
@@ -579,15 +601,8 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
           actualLabel={isSample ? t('Exempel', 'Sample') : t('Faktisk', 'Actual')}
           evidenceLabel={metricEvidence(annual.costPerKwh)}
         />
-      </div>
-
-      <Tabs defaultValue="summary" className="space-y-5">
-        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 p-1 lg:max-w-2xl lg:grid-cols-4">
-          <TabsTrigger value="summary">{t('Sammanfattning', 'Summary')}</TabsTrigger>
-          <TabsTrigger value="flows">{t('Energiflöden', 'Energy flow')}</TabsTrigger>
-          <TabsTrigger value="costs">{t('Kostnader', 'Costs')}</TabsTrigger>
-          <TabsTrigger value="comparisons">{t('Jämförelser', 'Comparisons')}</TabsTrigger>
-        </TabsList>
+        </div>
+      </section>
 
         <TabsContent value="summary" className="space-y-5">
           <EnergySavingsCard
@@ -1023,8 +1038,7 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
         </CardContent>
           </Card>
         </TabsContent>
-      </Tabs>
-    </div>
+    </Tabs>
   );
 };
 

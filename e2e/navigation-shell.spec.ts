@@ -539,7 +539,18 @@ test.describe('staff navigation shell', () => {
     const weatherRequest = await weatherRequestPromise;
     const weatherUrl = new URL(weatherRequest.url());
 
-    await expect(page.getByText('Automatisk temperaturdata från SMHI')).toBeVisible();
+    const temperatureTabs = page.getByRole('tablist');
+    const analysisData = page.getByTestId('temperature-energy-source');
+    await expect(temperatureTabs).toBeVisible();
+    await expect(analysisData.getByText('Analysunderlag', { exact: true })).toBeVisible();
+    const [temperatureTabsBox, analysisDataBox] = await Promise.all([
+      temperatureTabs.boundingBox(),
+      analysisData.boundingBox(),
+    ]);
+    expect(temperatureTabsBox?.y).toBeLessThan(analysisDataBox?.y ?? 0);
+
+    await analysisData.getByText('Visa källor och metod').click();
+    await expect(analysisData.getByText('Automatisk temperaturdata från SMHI', { exact: true })).toBeVisible();
     await expect(page.getByText(/hämtas automatiskt varje natt/)).toBeVisible();
     await expect(page.getByRole('link', { name: 'Visa originaldata hos SMHI' })).toBeVisible();
     await expect(page.getByRole('button', { name: /Uppdatera väderdata/ })).toHaveCount(0);
@@ -552,6 +563,16 @@ test.describe('staff navigation shell', () => {
   test('overview shows single-field events and chart annotations', async ({ page }) => {
     await login(page);
     await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history`);
+
+    const overviewTabs = page.getByRole('tablist');
+    const overviewContext = page.getByRole('heading', { name: 'Överblick för den visade perioden' });
+    await expect(overviewTabs).toBeVisible();
+    await expect(overviewContext).toBeVisible();
+    const [overviewTabsBox, overviewContextBox] = await Promise.all([
+      overviewTabs.boundingBox(),
+      overviewContext.boundingBox(),
+    ]);
+    expect(overviewTabsBox?.y).toBeLessThan(overviewContextBox?.y ?? 0);
 
     await expect(page.getByText('◆ 1 händelser')).toBeVisible();
     await expect(page.locator('line[stroke="#0f766e"][stroke-dasharray="4 4"]')).toHaveCount(1);
@@ -750,6 +771,40 @@ test.describe('staff navigation shell', () => {
     await expect(overallControls.getByRole('button', { name: 'Trendlinje' })).toHaveAttribute('aria-pressed', 'false');
     await page.waitForTimeout(1200);
     await page.screenshot({ path: 'test-results/energy-temperature-normalized.png', fullPage: true });
+  });
+
+  test('energy history subnavigation stays first at narrow widths', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await login(page);
+    await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history`);
+
+    const overviewTabs = page.getByRole('tablist');
+    const overviewContext = page.getByRole('heading', { name: 'Överblick för den visade perioden' });
+    await expect(overviewTabs).toBeVisible();
+    await expect(overviewTabs.getByRole('tab', { name: 'Sammanfattning' })).toBeVisible();
+    const [overviewTabsBox, overviewContextBox] = await Promise.all([
+      overviewTabs.boundingBox(),
+      overviewContext.boundingBox(),
+    ]);
+    expect(overviewTabsBox?.y).toBeLessThan(overviewContextBox?.y ?? 0);
+    await expect(page.getByTestId('energy-history-period')).toBeVisible();
+
+    await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history?tab=temperature`);
+    const temperatureTabs = page.getByRole('tablist');
+    const analysisData = page.getByTestId('temperature-energy-source');
+    await expect(temperatureTabs.getByRole('tab', { name: 'Temperaturprofil' })).toBeVisible();
+    const [temperatureTabsBox, analysisDataBox] = await Promise.all([
+      temperatureTabs.boundingBox(),
+      analysisData.boundingBox(),
+    ]);
+    expect(temperatureTabsBox?.y).toBeLessThan(analysisDataBox?.y ?? 0);
+    const temperatureTabsWidth = await temperatureTabs.evaluate((element) => ({
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+    }));
+    expect(temperatureTabsWidth.scrollWidth).toBeLessThanOrEqual(
+      temperatureTabsWidth.clientWidth,
+    );
   });
 
   test('staff receives a portal-wide warning when the shared weather sync fails', async ({ page }) => {

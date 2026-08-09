@@ -39,7 +39,7 @@ const EnergyHistoryPeriodControl: React.FC<EnergyHistoryPeriodControlProps> = ({
 
   return (
     <div
-      className="flex flex-col gap-3 rounded-xl border border-border/70 bg-gradient-to-r from-primary/5 via-background to-violet-500/5 p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between"
+      className="flex w-full flex-col gap-3 rounded-xl border border-border/70 bg-gradient-to-r from-primary/5 via-background to-violet-500/5 p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between 2xl:max-w-2xl"
       data-testid="energy-history-period"
     >
       <div className="flex min-w-0 items-start gap-3">
@@ -49,7 +49,7 @@ const EnergyHistoryPeriodControl: React.FC<EnergyHistoryPeriodControlProps> = ({
         <div className="min-w-0">
           <p className="text-sm font-medium">{t('Visad period', 'Displayed period')}</p>
           <p className="mt-0.5 truncate text-xs capitalize text-muted-foreground">{periodLabel}</p>
-          <p className="mt-1 text-[11px] text-muted-foreground">
+          <p className="mt-0.5 text-[11px] text-muted-foreground">
             {t(
               'Gäller alla diagram i Översikt, Temperatur och Energiprestanda.',
               'Applies to every chart in Overview, Temperature, and Performance.',

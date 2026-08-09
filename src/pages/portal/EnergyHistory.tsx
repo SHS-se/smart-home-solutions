@@ -398,20 +398,32 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
     ]);
   };
 
+  const showPeriodControl = Boolean(
+    customerId && !subscriptionLoading && isSubscribed && activeTab !== 'data',
+  );
   const header = (
-    <div className="flex items-start gap-3">
-      <div className="rounded-lg bg-primary/10 p-2 text-primary">
-        <BarChart3 className="h-6 w-6" />
+    <div className="flex flex-col gap-4 2xl:flex-row 2xl:items-start 2xl:justify-between">
+      <div className="flex items-start gap-3">
+        <div className="rounded-lg bg-primary/10 p-2 text-primary">
+          <BarChart3 className="h-6 w-6" />
+        </div>
+        <div>
+          <h1 className="text-3xl font-medium">{t('Energihistorik', 'Energy history')}</h1>
+          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+            {t(
+              'Importera energifiler, skilj nätuttag från husets verkliga energibehov och följ kostnad, effektivitet och energiprestanda.',
+              'Import energy files, separate grid import from the home’s actual energy demand, and track cost, efficiency, and energy performance.',
+            )}
+          </p>
+        </div>
       </div>
-      <div>
-        <h1 className="text-3xl font-medium">{t('Energihistorik', 'Energy history')}</h1>
-        <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-          {t(
-            'Importera energifiler, skilj nätuttag från husets verkliga energibehov och följ kostnad, effektivitet och energiprestanda.',
-            'Import energy files, separate grid import from the home’s actual energy demand, and track cost, efficiency, and energy performance.',
-          )}
-        </p>
-      </div>
+      {showPeriodControl && (
+        <EnergyHistoryPeriodControl
+          value={displayedPeriod}
+          onChange={setDisplayedPeriod}
+          latestMonth={latestAnalyticalMonth}
+        />
+      )}
     </div>
   );
 
@@ -496,13 +508,6 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
         </Alert>
       ) : (
         <div className="space-y-5">
-          {activeTab !== 'data' && (
-            <EnergyHistoryPeriodControl
-              value={displayedPeriod}
-              onChange={setDisplayedPeriod}
-              latestMonth={latestAnalyticalMonth}
-            />
-          )}
           {activeTab === 'overview' && (
             billingDataIsLoading || homeProfileQuery.isLoading ? (
               <Card>

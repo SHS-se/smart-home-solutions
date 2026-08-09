@@ -421,72 +421,105 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
   }
 
   return (
-    <div className="space-y-6">
-      <Card className="overflow-hidden border-sky-200/80 bg-gradient-to-r from-sky-500/10 via-background to-amber-500/10 shadow-sm dark:border-sky-900/70">
-        <CardContent className="flex flex-col gap-4 p-5 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-start gap-3">
-            <div className="rounded-xl bg-sky-100 p-2.5 text-sky-700 dark:bg-sky-950 dark:text-sky-300">
-              <CloudSun className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-sm font-medium">{t('Automatisk temperaturdata från SMHI', 'Automatic temperature data from SMHI')}</p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {t(
-                  'Observerad dygnsmedeltemperatur från Stockholm-Observatoriekullen A hämtas automatiskt varje natt. Samma regionala temperaturserie används för alla hem i Stockholm/Täby-området – du behöver inte uppdatera den själv.',
-                  'Observed daily mean temperature from Stockholm-Observatoriekullen A is collected automatically every night. The same regional temperature series is used for every home in the Stockholm/Täby area—you do not need to update it yourself.',
-                )}
-              </p>
-              {weatherDataset && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {t('Station', 'Station')} {weatherDataset.station_id} · {weatherDataset.latitude.toFixed(4)}, {weatherDataset.longitude.toFixed(4)}
-                  {weatherDataset.last_observation_date && (
-                    <> · {t('senaste observation', 'latest observation')} {dateFormatter.format(new Date(`${weatherDataset.last_observation_date}T00:00:00Z`))}</>
+    <Tabs defaultValue="history" className="space-y-6">
+      {analysis.joinedPoints.length > 0 && (
+        <TabsList className="grid h-auto w-full grid-cols-3 gap-1 p-1 lg:max-w-2xl">
+          <TabsTrigger value="history">{t('Utveckling', 'Trend')}</TabsTrigger>
+          <TabsTrigger value="events">{t('Händelser', 'Events')}</TabsTrigger>
+          <TabsTrigger value="profile">{t('Temperaturprofil', 'Temperature profile')}</TabsTrigger>
+        </TabsList>
+      )}
+
+      <Card
+        className="overflow-hidden border-sky-200/80 bg-gradient-to-r from-sky-500/10 via-background to-amber-500/10 shadow-sm dark:border-sky-900/70"
+        data-testid={efficiencyReadings.length > 0 ? 'temperature-energy-source' : undefined}
+      >
+        <CardContent className="p-0">
+          <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-3">
+              <div className="rounded-xl bg-sky-100 p-2.5 text-sky-700 dark:bg-sky-950 dark:text-sky-300">
+                <CloudSun className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-sm font-medium">{t('Analysunderlag', 'Analysis data')}</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {t(
+                    'Automatisk temperaturdata från SMHI kombineras med hemmets bästa tillgängliga energimätning.',
+                    'Automatic temperature data from SMHI is combined with the home’s best available energy reading.',
                   )}
                 </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {efficiencyReadings.length > 0 && (
+                <>
+                  <Badge variant="outline" className="border-teal-300 text-teal-700 dark:border-teal-800 dark:text-teal-300">
+                    {actualTotalDays} {t('totaldagar', 'whole-home days')}
+                  </Badge>
+                  <Badge variant="outline" className="border-blue-300 text-blue-700 dark:border-blue-800 dark:text-blue-300">
+                    {gridProxyDays} {t('proxy-dagar', 'proxy days')}
+                  </Badge>
+                </>
+              )}
+              {weatherDataset?.source_url && (
+                <Button type="button" size="sm" variant="outline" asChild>
+                  <a href={weatherDataset.source_url} target="_blank" rel="noreferrer">
+                    {t('Visa originaldata hos SMHI', 'View source data at SMHI')}
+                    <ExternalLink className="ml-2 h-3.5 w-3.5" />
+                  </a>
+                </Button>
               )}
             </div>
           </div>
-          {weatherDataset?.source_url && (
-            <Button type="button" size="sm" variant="outline" asChild>
-              <a href={weatherDataset.source_url} target="_blank" rel="noreferrer">
-                {t('Visa originaldata hos SMHI', 'View source data at SMHI')}
-                <ExternalLink className="ml-2 h-3.5 w-3.5" />
-              </a>
-            </Button>
-          )}
+          <details className="group border-t border-border/60">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
+              <span className="text-xs font-medium text-muted-foreground">
+                {t('Visa källor och metod', 'Show sources and method')}
+              </span>
+              <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180" />
+            </summary>
+            <div className="grid gap-4 border-t border-border/60 bg-background/60 p-4 text-xs text-muted-foreground lg:grid-cols-2">
+              <div>
+                <p className="font-medium text-foreground">
+                  {t('Automatisk temperaturdata från SMHI', 'Automatic temperature data from SMHI')}
+                </p>
+                <p className="mt-1">
+                  {t(
+                    'Observerad dygnsmedeltemperatur från Stockholm-Observatoriekullen A hämtas automatiskt varje natt. Samma regionala temperaturserie används för alla hem i Stockholm/Täby-området.',
+                    'Observed daily mean temperature from Stockholm-Observatoriekullen A is collected automatically every night. The same regional temperature series is used for every home in the Stockholm/Täby area.',
+                  )}
+                </p>
+                {weatherDataset && (
+                  <p className="mt-1">
+                    {t('Station', 'Station')} {weatherDataset.station_id} · {weatherDataset.latitude.toFixed(4)}, {weatherDataset.longitude.toFixed(4)}
+                    {weatherDataset.last_observation_date && (
+                      <> · {t('senaste observation', 'latest observation')} {dateFormatter.format(new Date(`${weatherDataset.last_observation_date}T00:00:00Z`))}</>
+                    )}
+                  </p>
+                )}
+              </div>
+              {efficiencyReadings.length > 0 && (
+                <div>
+                  <p className="font-medium text-foreground">
+                    {t('Underlag för effektivitetsdiagrammen', 'Evidence used for the efficiency charts')}
+                  </p>
+                  <p className="mt-1">
+                    {actualTotalDays > 0
+                      ? t(
+                          `Husets verkliga totalförbrukning används när den finns${firstTotalConsumptionDate ? `, från ${firstTotalConsumptionDate}` : ''}. För tidigare dagar används nätuttag som proxy. Solpanelernas minskning av köpt el förväxlas därför inte med en plötslig förbättring av huset.`,
+                          `Whole-home consumption is used whenever available${firstTotalConsumptionDate ? `, from ${firstTotalConsumptionDate}` : ''}. Grid import is used as a proxy for earlier days. The solar panels’ reduction in purchased electricity is therefore not mistaken for a sudden improvement in the building.`,
+                        )
+                      : t(
+                          'Endast nätuttag finns. Det fungerar som proxy innan lokal produktion, men kan underskatta husets verkliga energibehov efter installation av sol eller batteri.',
+                          'Only grid import is available. It works as a proxy before local generation, but can understate the home’s actual energy demand after solar or battery installation.',
+                        )}
+                  </p>
+                </div>
+              )}
+            </div>
+          </details>
         </CardContent>
       </Card>
-
-      {efficiencyReadings.length > 0 && (
-        <Card className="border-border/70 bg-muted/20" data-testid="temperature-energy-source">
-          <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <p className="text-sm font-medium">
-                {t('Underlag för effektivitetsdiagrammen', 'Evidence used for the efficiency charts')}
-              </p>
-              <p className="mt-1 max-w-3xl text-xs text-muted-foreground">
-                {actualTotalDays > 0
-                  ? t(
-                      `Husets verkliga totalförbrukning används när den finns${firstTotalConsumptionDate ? `, från ${firstTotalConsumptionDate}` : ''}. För tidigare dagar används nätuttag som proxy. Solpanelernas minskning av köpt el förväxlas därför inte med en plötslig förbättring av huset.`,
-                      `Whole-home consumption is used whenever available${firstTotalConsumptionDate ? `, from ${firstTotalConsumptionDate}` : ''}. Grid import is used as a proxy for earlier days. The solar panels’ reduction in purchased electricity is therefore not mistaken for a sudden improvement in the building.`,
-                    )
-                  : t(
-                      'Endast nätuttag finns. Det fungerar som proxy innan lokal produktion, men kan underskatta husets verkliga energibehov efter installation av sol eller batteri.',
-                      'Only grid import is available. It works as a proxy before local generation, but can understate the home’s actual energy demand after solar or battery installation.',
-                    )}
-              </p>
-            </div>
-            <div className="flex shrink-0 flex-wrap gap-2">
-              <Badge variant="outline" className="border-teal-300 text-teal-700 dark:border-teal-800 dark:text-teal-300">
-                {actualTotalDays} {t('totaldagar', 'whole-home days')}
-              </Badge>
-              <Badge variant="outline" className="border-blue-300 text-blue-700 dark:border-blue-800 dark:text-blue-300">
-                {gridProxyDays} {t('proxy-dagar', 'proxy days')}
-              </Badge>
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
       {weatherError && (
         <Alert variant="destructive">
@@ -525,80 +558,30 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
         </Alert>
       ) : (
         <>
-          <Card className="border-border/70 bg-muted/20">
-            <CardContent className="p-0">
-              <details className="group">
-                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4">
-                  <span className="text-sm font-medium">
-                    {t('Så läser du diagrammen', 'How to read the charts')}
-                  </span>
-                  <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180" />
-                </summary>
-                <div className="grid gap-4 border-t border-border/60 p-4 text-sm text-muted-foreground md:grid-cols-2">
-                  <div>
-                    <p className="font-medium text-foreground">
-                      {t('Jämförelse år för år', 'Year-by-year comparison')}
-                    </p>
-                    <p className="mt-1">
-                      {t(
-                        'Varje punkt visar genomsnittlig energianvändning för dagar med samma avrundade utomhustemperatur. Färgade årsserier och deras streckade trendlinjer gör det lättare att se om huset använder mer eller mindre energi vid samma väder efter exempelvis en renovering.',
-                        'Each point shows average energy use for days with the same rounded outdoor temperature. Coloured yearly series and their dashed trend lines make it easier to see whether the home uses more or less energy in the same weather after changes such as a renovation.',
-                      )}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="font-medium text-foreground">
-                      {t('Samlad temperaturprofil', 'Combined temperature profile')}
-                    </p>
-                    <p className="mt-1">
-                      {t(
-                        'Det samlade diagrammet kombinerar alla matchande år och visar den typiska relationen mellan temperatur och dygnsförbrukning. R² anger hur väl trendlinjen beskriver mätpunkterna. Använd tidslinjen nedan för att markera förändringar som kan påverka jämförelsen.',
-                        'The combined chart joins all matching years and shows the typical relationship between temperature and daily consumption. R² indicates how closely the trend line fits the measured points. Use the timeline below to mark changes that may affect the comparison.',
-                      )}
-                    </p>
-                  </div>
-                </div>
-              </details>
+          <Card className="overflow-hidden border-border/70 shadow-sm">
+            <CardContent className="grid p-0 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="border-border/60 p-4 sm:border-r xl:border-r">
+                <p className="text-sm text-muted-foreground">{t('Matchande dagar', 'Matched days')}</p>
+                <p className="mt-1 text-xl font-semibold tabular-nums">{numberFormatter.format(analysis.joinedPoints.length)}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{t('förbrukning + temperatur', 'consumption + temperature')}</p>
+              </div>
+              <div className="border-t border-border/60 p-4 sm:border-r sm:border-t-0 xl:border-r">
+                <p className="text-sm text-muted-foreground">{t('Analyserade år', 'Analyzed years')}</p>
+                <p className="mt-1 text-xl font-semibold tabular-nums">{analysis.years.length}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{analysis.years.map((series) => series.year).join(', ')}</p>
+              </div>
+              <div className="border-t border-border/60 p-4 sm:border-r xl:border-t-0 xl:border-r">
+                <p className="text-sm text-muted-foreground">{t('Förbrukningsperiod', 'Consumption period')}</p>
+                <p className="mt-1 text-sm font-semibold">{readingStart ? dateFormatter.format(new Date(`${readingStart}T00:00:00Z`)) : '-'}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{readingEnd ? dateFormatter.format(new Date(`${readingEnd}T00:00:00Z`)) : '-'}</p>
+              </div>
+              <div className="border-t border-border/60 p-4 xl:border-t-0">
+                <p className="text-sm text-muted-foreground">{t('Temperaturbinning', 'Temperature bins')}</p>
+                <p className="mt-1 text-xl font-semibold tabular-nums">{analysis.overall.points.length}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{t('avrundat till hela °C', 'rounded to whole °C')}</p>
+              </div>
             </CardContent>
           </Card>
-
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <Card>
-              <CardContent className="pt-5">
-                <p className="text-sm text-muted-foreground">{t('Matchande dagar', 'Matched days')}</p>
-                <p className="mt-2 text-2xl font-semibold tabular-nums">{numberFormatter.format(analysis.joinedPoints.length)}</p>
-                <p className="mt-1 text-xs text-muted-foreground">{t('förbrukning + temperatur', 'consumption + temperature')}</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="pt-5">
-                <p className="text-sm text-muted-foreground">{t('Analyserade år', 'Analyzed years')}</p>
-                <p className="mt-2 text-2xl font-semibold tabular-nums">{analysis.years.length}</p>
-                <p className="mt-1 text-xs text-muted-foreground">{analysis.years.map((series) => series.year).join(', ')}</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="pt-5">
-                <p className="text-sm text-muted-foreground">{t('Förbrukningsperiod', 'Consumption period')}</p>
-                <p className="mt-2 text-sm font-semibold">{readingStart ? dateFormatter.format(new Date(`${readingStart}T00:00:00Z`)) : '-'}</p>
-                <p className="mt-1 text-xs text-muted-foreground">{readingEnd ? dateFormatter.format(new Date(`${readingEnd}T00:00:00Z`)) : '-'}</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="pt-5">
-                <p className="text-sm text-muted-foreground">{t('Temperaturbinning', 'Temperature bins')}</p>
-                <p className="mt-2 text-2xl font-semibold tabular-nums">{analysis.overall.points.length}</p>
-                <p className="mt-1 text-xs text-muted-foreground">{t('avrundat till hela °C', 'rounded to whole °C')}</p>
-              </CardContent>
-            </Card>
-          </div>
-
-          <Tabs defaultValue="history" className="space-y-5">
-            <TabsList className="grid h-auto w-full grid-cols-3 gap-1 p-1 lg:max-w-2xl">
-              <TabsTrigger value="history">{t('Utveckling', 'Trend')}</TabsTrigger>
-              <TabsTrigger value="events">{t('Händelser', 'Events')}</TabsTrigger>
-              <TabsTrigger value="profile">{t('Temperaturprofil', 'Temperature profile')}</TabsTrigger>
-            </TabsList>
 
             <TabsContent value="history">
               {normalizedHistory && normalizedHistory.months.length > 0 ? (
@@ -896,7 +879,43 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
             </TabsContent>
 
           {analysis.overall.points.length > 0 && (
-            <TabsContent value="profile">
+            <TabsContent value="profile" className="space-y-5">
+              <Card className="border-border/70 bg-muted/20">
+                <CardContent className="p-0">
+                  <details className="group">
+                    <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4">
+                      <span className="text-sm font-medium">
+                        {t('Så läser du temperaturprofilen', 'How to read the temperature profile')}
+                      </span>
+                      <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180" />
+                    </summary>
+                    <div className="grid gap-4 border-t border-border/60 p-4 text-sm text-muted-foreground md:grid-cols-2">
+                      <div>
+                        <p className="font-medium text-foreground">
+                          {t('Jämförelse år för år', 'Year-by-year comparison')}
+                        </p>
+                        <p className="mt-1">
+                          {t(
+                            'Varje punkt visar genomsnittlig energianvändning för dagar med samma avrundade utomhustemperatur. Färgade årsserier och deras streckade trendlinjer gör det lättare att se om huset använder mer eller mindre energi vid samma väder efter exempelvis en renovering.',
+                            'Each point shows average energy use for days with the same rounded outdoor temperature. Coloured yearly series and their dashed trend lines make it easier to see whether the home uses more or less energy in the same weather after changes such as a renovation.',
+                          )}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="font-medium text-foreground">
+                          {t('Samlad temperaturprofil', 'Combined temperature profile')}
+                        </p>
+                        <p className="mt-1">
+                          {t(
+                            'Det samlade diagrammet kombinerar alla matchande år och visar den typiska relationen mellan temperatur och dygnsförbrukning. R² anger hur väl trendlinjen beskriver mätpunkterna.',
+                            'The combined chart joins all matching years and shows the typical relationship between temperature and daily consumption. R² indicates how closely the trend line fits the measured points.',
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                  </details>
+                </CardContent>
+              </Card>
               <Card className="overflow-hidden border-border/70 shadow-sm">
               <CardHeader className="border-b border-border/60 bg-gradient-to-r from-blue-500/5 via-background to-violet-500/5">
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1005,11 +1024,10 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
               </Card>
             </TabsContent>
           )}
-          </Tabs>
         </>
       )}
 
-    </div>
+    </Tabs>
   );
 };
 
