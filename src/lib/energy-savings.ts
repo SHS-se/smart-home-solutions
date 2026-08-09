@@ -62,6 +62,13 @@ export interface EnergySavingsSummary {
   lastMeasuredMonth: string | null;
 }
 
+export interface VariableImportPriceComponents {
+  /** Volume-linked grid price, including the VAT apportioned to those charges. */
+  gridSekPerKwh: number | null;
+  /** Volume-linked supplier price, including the VAT apportioned to those charges. */
+  electricitySekPerKwh: number | null;
+}
+
 function round(value: number, decimals = 2): number {
   const factor = 10 ** decimals;
   return Math.round((value + Number.EPSILON) * factor) / factor;
@@ -88,6 +95,80 @@ function vatOnVariable(
   return vatSek * (variableExVat / base);
 }
 
+interface ScaledVariableCosts {
+  gridCostSek: number | null;
+  electricityCostSek: number | null;
+  gridScale: number | null;
+  electricityScale: number | null;
+}
+
+function scaledVariableImportCosts(month: EnergyBillingMonth): ScaledVariableCosts {
+  const gridScale = coverageScale(month.gridCoverageDays, month.daysInMonth);
+  const electricityScale = coverageScale(
+    month.electricityCoverageDays,
+    month.daysInMonth,
+  );
+  const gridVariableExVat = month.gridTransferSek + month.energyTaxSek;
+  const gridFixedExVat = month.gridFixedSek + month.gridPeakSek;
+  const electricityVariableExVat = month.electricityEnergySek
+    + (month.electricityFeesSek - month.electricityFixedSek - month.electricityVatSek);
+
+  return {
+    gridCostSek: gridScale === null
+      ? null
+      : (
+        gridVariableExVat
+        + vatOnVariable(gridVariableExVat, gridFixedExVat, month.gridVatSek)
+      ) * gridScale,
+    electricityCostSek: electricityScale === null
+      ? null
+      : (
+        electricityVariableExVat
+        + vatOnVariable(
+          electricityVariableExVat,
+          month.electricityFixedSek,
+          month.electricityVatSek,
+        )
+      ) * electricityScale,
+    gridScale,
+    electricityScale,
+  };
+}
+
+/**
+ * Split the volume-linked price into grid and electricity-supplier parts.
+ * Fixed subscriptions, peak-demand charges, and export credits are deliberately
+ * absent, leaving a price that does not move merely because usage changed.
+ */
+export function variableImportPriceComponentsSekPerKwh(
+  month: EnergyBillingMonth,
+): VariableImportPriceComponents {
+  const costs = scaledVariableImportCosts(month);
+  const gridConsumption = costs.gridScale !== null
+    && month.gridConsumptionKwh !== null
+    && month.gridConsumptionKwh > 0
+    ? month.gridConsumptionKwh * costs.gridScale
+    : null;
+  const electricityConsumption = costs.electricityScale !== null
+    && month.electricityConsumptionKwh !== null
+    && month.electricityConsumptionKwh > 0
+    ? month.electricityConsumptionKwh * costs.electricityScale
+    : null;
+
+  return {
+    gridSekPerKwh: costs.gridCostSek !== null
+      && costs.gridCostSek !== 0
+      && gridConsumption !== null
+      ? round(costs.gridCostSek / gridConsumption, 8)
+      : null,
+    electricitySekPerKwh: costs.electricityCostSek !== null
+      && costs.electricityCostSek !== 0
+      && electricityConsumption !== null
+      ? round(costs.electricityCostSek / electricityConsumption, 8)
+      : null,
+  };
+}
+
 /**
  * Cost of one more imported kWh, counting only charges that follow the kWh.
  *
@@ -99,17 +180,13 @@ function vatOnVariable(
 export function variableImportPriceSekPerKwh(
   month: EnergyBillingMonth,
 ): number | null {
-  const gridScale = coverageScale(month.gridCoverageDays, month.daysInMonth);
-  const electricityScale = coverageScale(
-    month.electricityCoverageDays,
-    month.daysInMonth,
-  );
+  const costs = scaledVariableImportCosts(month);
   const consumptionScale = month.consumptionSource === 'grid'
-    ? gridScale
-    : electricityScale;
+    ? costs.gridScale
+    : costs.electricityScale;
   if (
-    gridScale === null
-    || electricityScale === null
+    costs.gridCostSek === null
+    || costs.electricityCostSek === null
     || consumptionScale === null
     || month.consumptionKwh === null
     || month.consumptionKwh <= 0
@@ -117,17 +194,7 @@ export function variableImportPriceSekPerKwh(
     return null;
   }
 
-  const gridVariableExVat = month.gridTransferSek + month.energyTaxSek;
-  const gridFixedExVat = month.gridFixedSek + month.gridPeakSek;
-  const electricityVariableExVat = month.electricityEnergySek
-    + (month.electricityFeesSek - month.electricityFixedSek - month.electricityVatSek);
-  const variableCostSek = (
-    gridVariableExVat
-    + vatOnVariable(gridVariableExVat, gridFixedExVat, month.gridVatSek)
-  ) * gridScale + (
-    electricityVariableExVat
-    + vatOnVariable(electricityVariableExVat, month.electricityFixedSek, month.electricityVatSek)
-  ) * electricityScale;
+  const variableCostSek = costs.gridCostSek + costs.electricityCostSek;
   if (variableCostSek <= 0) return null;
 
   return round(variableCostSek / (month.consumptionKwh * consumptionScale), 4);

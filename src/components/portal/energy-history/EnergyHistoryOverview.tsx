@@ -27,6 +27,7 @@ import {
 } from 'recharts';
 import { useLanguage } from '@/contexts/LanguageContext';
 import EnergyHistoryEventForm from '@/components/portal/energy-history/EnergyHistoryEventForm';
+import EnergyPriceInflationCard from '@/components/portal/energy-history/EnergyPriceInflationCard';
 import EnergySavingsCard from '@/components/portal/energy-history/EnergySavingsCard';
 import EnergySourceInsights from '@/components/portal/energy-history/EnergySourceInsights';
 import type { EnergyBillingChange } from '@/lib/energy-billing-changes';
@@ -495,8 +496,8 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
           <h2 className="text-lg font-medium">{t('Ingen energihistorik ännu', 'No energy history yet')}</h2>
           <p className="mt-2 max-w-lg text-sm text-muted-foreground">
             {t(
-              'Ladda upp elnäts- och elhandelsfakturor på fliken Data. Diagrammen byggs automatiskt när det finns importerad data.',
-              'Upload grid and electricity provider invoices in the Data tab. Charts are built automatically once data has been imported.',
+              'Ladda upp elnäts- och elhandelsfakturor under Data i sidomenyn. Diagrammen byggs automatiskt när det finns importerad data.',
+              'Upload grid and electricity provider invoices under Data in the sidebar. Charts are built automatically once data has been imported.',
             )}
           </p>
         </CardContent>
@@ -752,6 +753,8 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
         </TabsContent>
 
         <TabsContent value="costs" className="space-y-5">
+          <EnergyPriceInflationCard months={filteredSeries} />
+
           {visibleTariffInvoiceComparisons.length > 0 && (
           <Card className="overflow-hidden border-border/70 shadow-sm">
           <CardHeader className="border-b border-border/60 bg-gradient-to-r from-emerald-500/5 to-blue-500/5">

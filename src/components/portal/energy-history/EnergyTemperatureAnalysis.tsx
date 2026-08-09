@@ -502,8 +502,8 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
             <h2 className="text-lg font-medium">{t('Ladda upp daglig förbrukning först', 'Upload daily consumption first')}</h2>
             <p className="mt-2 max-w-lg text-sm text-muted-foreground">
               {t(
-                'Ladda upp daglig energidata på fliken Data. När datumen matchar den gemensamma SMHI-serien byggs temperaturdiagrammen automatiskt.',
-                'Upload daily energy data in the Data tab. Once the dates match the shared SMHI series, the temperature charts are built automatically.',
+                'Ladda upp daglig energidata under Data i sidomenyn. När datumen matchar den gemensamma SMHI-serien byggs temperaturdiagrammen automatiskt.',
+                'Upload daily energy data under Data in the sidebar. Once the dates match the shared SMHI series, the temperature charts are built automatically.',
               )}
             </p>
             <Button type="button" className="mt-4" onClick={onUploadClick}>

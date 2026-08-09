@@ -44,12 +44,22 @@ export interface AppNavItem {
   labelSv: string;
   labelEn: string;
   icon: NavIcon;
+  /** Secondary destinations rendered beneath the active sidebar item. */
+  subItems?: AppNavSubItem[];
   /** Only highlight on an exact path match (for overview/index items). */
   end?: boolean;
   /** Additional paths that should highlight this item (e.g. route aliases). */
   aliases?: string[];
   /** Only show this item to admin staff (e.g. staff account management). */
   adminOnly?: boolean;
+}
+
+export interface AppNavSubItem {
+  path: string;
+  labelSv: string;
+  labelEn: string;
+  /** Match this item when the page is opened without an explicit query value. */
+  default?: boolean;
 }
 
 export interface AppNavGroup {
@@ -94,7 +104,35 @@ export function getCustomerNavItems(basePath: string = CUSTOMER_PORTAL_BASE): Ap
   return [
     { path: overviewPath, labelSv: 'Översikt', labelEn: 'Overview', icon: 'overview', end: true },
     { path: `${basePath}/home-profile`, labelSv: 'Hemprofil', labelEn: 'Home profile', icon: 'home-profile' },
-    { path: `${basePath}/energy-history`, labelSv: 'Energihistorik', labelEn: 'Energy history', icon: 'energy-history' },
+    {
+      path: `${basePath}/energy-history`,
+      labelSv: 'Energihistorik',
+      labelEn: 'Energy history',
+      icon: 'energy-history',
+      subItems: [
+        {
+          path: `${basePath}/energy-history?tab=overview`,
+          labelSv: 'Översikt',
+          labelEn: 'Overview',
+          default: true,
+        },
+        {
+          path: `${basePath}/energy-history?tab=data`,
+          labelSv: 'Data',
+          labelEn: 'Data',
+        },
+        {
+          path: `${basePath}/energy-history?tab=temperature`,
+          labelSv: 'Temperatur',
+          labelEn: 'Temperature',
+        },
+        {
+          path: `${basePath}/energy-history?tab=performance`,
+          labelSv: 'Energiprestanda',
+          labelEn: 'Performance',
+        },
+      ],
+    },
     { path: `${basePath}/energy-modeling`, labelSv: 'Energimodellering', labelEn: 'Energy modeling', icon: 'energy' },
     { path: `${basePath}/offers`, labelSv: 'Offerter', labelEn: 'Offers', icon: 'offers' },
     { path: `${basePath}/billing`, labelSv: 'Fakturor', labelEn: 'Billing', icon: 'billing' },
@@ -204,6 +242,23 @@ export function isNavItemActive(item: AppNavItem, pathname: string): boolean {
   if (normalized === item.path) return true;
   if (item.end) return false;
   return normalized.startsWith(`${item.path}/`);
+}
+
+/** True when both the route and query string identify a sidebar sub-item. */
+export function isNavSubItemActive(
+  item: AppNavSubItem,
+  pathname: string,
+  search: string,
+): boolean {
+  const target = new URL(item.path, 'https://navigation.local');
+  const normalized = pathname.replace(/\/+$/, '') || '/';
+  const targetPath = target.pathname.replace(/\/+$/, '') || '/';
+  if (normalized !== targetPath) return false;
+
+  const activeParams = new URLSearchParams(search);
+  const targetTab = target.searchParams.get('tab');
+  const activeTab = activeParams.get('tab');
+  return activeTab === targetTab || (item.default === true && activeTab === null);
 }
 
 export interface ActiveNavMatch {

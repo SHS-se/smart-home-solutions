@@ -5,6 +5,7 @@ import type { MonthlyEnergyFlow } from './energy-usage-series.ts';
 import {
   buildMonthlyEnergySavings,
   summariseEnergySavings,
+  variableImportPriceComponentsSekPerKwh,
   variableImportPriceSekPerKwh,
 } from './energy-savings.ts';
 
@@ -69,6 +70,13 @@ function flow(overrides: Partial<MonthlyEnergyFlow> = {}): MonthlyEnergyFlow {
 
 Deno.test('the avoided price counts only charges that follow the kWh', () => {
   assertEqual(variableImportPriceSekPerKwh(month()), 2, 'variable price');
+});
+
+Deno.test('the avoided price can be inspected by grid and supplier', () => {
+  const price = variableImportPriceComponentsSekPerKwh(month());
+
+  assertEqual(price.gridSekPerKwh, 0.91666667, 'grid price');
+  assertEqual(price.electricitySekPerKwh, 1.08333333, 'supplier price');
 });
 
 Deno.test('a bill quoted inclusive of VAT prices the same as one that itemises it', () => {

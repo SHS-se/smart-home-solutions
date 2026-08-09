@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
@@ -71,7 +71,6 @@ import {
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 interface EnergyHistoryProps {
   customerId?: string;
@@ -79,8 +78,18 @@ interface EnergyHistoryProps {
 }
 
 const SHARED_WEATHER_DATASET_QUERY_KEY = ['energy-shared-weather-dataset'] as const;
-const ENERGY_HISTORY_TABS = new Set(['overview', 'data', 'temperature', 'performance']);
+type EnergyHistorySection = 'overview' | 'data' | 'temperature' | 'performance';
+const ENERGY_HISTORY_SECTIONS = new Set<EnergyHistorySection>([
+  'overview',
+  'data',
+  'temperature',
+  'performance',
+]);
 const PERFORMANCE_WEATHER_MINIMUM_DAYS = 329;
+
+function isEnergyHistorySection(value: string | null): value is EnergyHistorySection {
+  return value !== null && ENERGY_HISTORY_SECTIONS.has(value as EnergyHistorySection);
+}
 
 const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   customerId: propCustomerId,
@@ -89,7 +98,7 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   const { customerData, isStaff } = useAuth();
   const { t } = useLanguage();
   const queryClient = useQueryClient();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const {
     isSubscribed,
     loading: subscriptionLoading,
@@ -97,15 +106,15 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   } = useSubscription();
   const customerId = propCustomerId || customerData?.id || '';
   const requestedTab = searchParams.get('tab');
-  const [activeTab, setActiveTab] = useState(
-    requestedTab && ENERGY_HISTORY_TABS.has(requestedTab) ? requestedTab : 'overview',
-  );
+  const activeTab: EnergyHistorySection = isEnergyHistorySection(requestedTab)
+    ? requestedTab
+    : 'overview';
   const [displayedPeriod, setDisplayedPeriod] = useState<EnergyHistoryPeriod>('12');
-  useEffect(() => {
-    if (requestedTab && ENERGY_HISTORY_TABS.has(requestedTab)) {
-      setActiveTab(requestedTab);
-    }
-  }, [requestedTab]);
+  const showSection = (section: EnergyHistorySection) => {
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set('tab', section);
+    setSearchParams(nextParams);
+  };
   const queryKey = ['energy-billing-documents', customerId] as const;
   const tariffCalculationsQueryKey = ['energy-tariff-calculations', customerId] as const;
   const supplierCostsQueryKey = ['energy-supplier-daily-costs', customerId] as const;
@@ -127,7 +136,7 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   const managementDataEnabled = customerEnergyEnabled && activeTab === 'data';
   const notesDataEnabled = customerEnergyEnabled
     && (activeTab === 'overview' || activeTab === 'temperature');
-  // The Data tab's coverage table reads the same merged series, so it needs the
+  // The Data section's coverage table reads the same merged series, so it needs the
   // calculated halves too or it would report every month as thinner than it is.
   const tariffCalculationsEnabled = customerEnergyEnabled
     && (activeTab === 'overview' || activeTab === 'data' || activeTab === 'temperature');
@@ -486,13 +495,7 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
           </AlertDescription>
         </Alert>
       ) : (
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5">
-          <TabsList className="grid w-full max-w-3xl grid-cols-4">
-            <TabsTrigger value="overview">{t('Översikt', 'Overview')}</TabsTrigger>
-            <TabsTrigger value="data">{t('Data', 'Data')}</TabsTrigger>
-            <TabsTrigger value="temperature">{t('Temperatur', 'Temperature')}</TabsTrigger>
-            <TabsTrigger value="performance">{t('Energiprestanda', 'Performance')}</TabsTrigger>
-          </TabsList>
+        <div className="space-y-5">
           {activeTab !== 'data' && (
             <EnergyHistoryPeriodControl
               value={displayedPeriod}
@@ -500,8 +503,8 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
               latestMonth={latestAnalyticalMonth}
             />
           )}
-          <TabsContent value="overview">
-            {billingDataIsLoading || homeProfileQuery.isLoading ? (
+          {activeTab === 'overview' && (
+            billingDataIsLoading || homeProfileQuery.isLoading ? (
               <Card>
                 <CardContent className="flex min-h-64 items-center justify-center">
                   <Loader2 className="h-7 w-7 animate-spin text-primary" />
@@ -529,13 +532,13 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
                 isSample={seriesDocuments.length === 0}
                 periodStartMonth={displayedPeriodStart}
                 periodEndMonth={latestAnalyticalMonth}
-                onUploadClick={() => setActiveTab('data')}
+                onUploadClick={() => showSection('data')}
                 onCreateNote={handleCreateNote}
                 tariffInvoiceComparisons={tariffInvoiceComparisons}
               />
-            )}
-          </TabsContent>
-          <TabsContent value="data">
+            )
+          )}
+          {activeTab === 'data' && (
             <div className="space-y-5">
               {billingDataIsLoading || homeProfileQuery.isLoading ? (
                 <Card>
@@ -588,8 +591,8 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
                 />
               )}
             </div>
-          </TabsContent>
-          <TabsContent value="performance">
+          )}
+          {activeTab === 'performance' && (
             <EnergiprestandaSection
               readings={deviceReadingsQuery.data ?? []}
               usageReadings={usageReadings}
@@ -602,10 +605,10 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
               periodEndMonth={latestAnalyticalMonth}
               isLoading={homeProfileQuery.isLoading || usageIsLoading || allWeatherQuery.isLoading}
               error={homeProfileQuery.error ?? usageError ?? allWeatherQuery.error}
-              onUploadClick={() => setActiveTab('data')}
+              onUploadClick={() => showSection('data')}
             />
-          </TabsContent>
-          <TabsContent value="temperature">
+          )}
+          {activeTab === 'temperature' && (
             <EnergyTemperatureAnalysis
               readings={usageReadings}
               weatherDataset={weatherDatasetQuery.data ?? null}
@@ -621,10 +624,10 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
               error={usageError
                 ?? weatherDatasetQuery.error
                 ?? weatherObservationsQuery.error}
-              onUploadClick={() => setActiveTab('data')}
+              onUploadClick={() => showSection('data')}
             />
-          </TabsContent>
-        </Tabs>
+          )}
+        </div>
       )}
     </div>
   );

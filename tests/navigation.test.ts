@@ -6,6 +6,7 @@ import {
   getNavGroupsForRole,
   isCustomerViewPath,
   isNavItemActive,
+  isNavSubItemActive,
   publicNavItems,
   staffNavGroups,
 } from "@/lib/navigation.ts";
@@ -33,6 +34,22 @@ Deno.test("customer nav covers the customer portal pages", () => {
     "/portal/tickets",
     "/portal/account",
   ]);
+});
+
+Deno.test("energy history exposes its four sections as sidebar sub-navigation", () => {
+  const energyHistory = getCustomerNavItems().find((item) => item.path === "/portal/energy-history")!;
+  assertEquals(energyHistory.subItems?.map((item) => item.path), [
+    "/portal/energy-history?tab=overview",
+    "/portal/energy-history?tab=data",
+    "/portal/energy-history?tab=temperature",
+    "/portal/energy-history?tab=performance",
+  ]);
+
+  const [overview, data] = energyHistory.subItems!;
+  assert(isNavSubItemActive(overview, "/portal/energy-history", ""));
+  assert(isNavSubItemActive(overview, "/portal/energy-history", "?tab=overview"));
+  assert(isNavSubItemActive(data, "/portal/energy-history", "?tab=data"));
+  assertFalse(isNavSubItemActive(data, "/portal/energy-history", "?tab=overview"));
 });
 
 Deno.test("customer nav contains no staff-only routes", () => {

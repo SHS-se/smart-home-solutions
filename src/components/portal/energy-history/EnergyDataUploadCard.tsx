@@ -581,8 +581,8 @@ const EnergyDataUploadCard: React.FC<EnergyDataUploadCardProps> = ({
             <AlertTriangle className="h-4 w-4" />
             <AlertDescription>
               {t(
-                'Problemfiler visas även under fliken Data. Där kan de tas bort, eller granskas av personal så att parsern kan rättas.',
-                'Problem files also appear on the Data tab. They can be deleted there or reviewed by staff so the parser can be fixed.',
+                'Problemfiler visas även under Data i sidomenyn. Där kan de tas bort, eller granskas av personal så att parsern kan rättas.',
+                'Problem files also appear under Data in the sidebar. They can be deleted there or reviewed by staff so the parser can be fixed.',
               )}
             </AlertDescription>
           </Alert>

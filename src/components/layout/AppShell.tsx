@@ -46,6 +46,9 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
   SidebarProvider,
   SidebarTrigger,
   useSidebar,
@@ -68,6 +71,7 @@ import {
   getCustomerViewBasePath,
   getNavGroupsForRole,
   isNavItemActive,
+  isNavSubItemActive,
   type AppNavGroup,
   type AppNavItem,
   type NavIcon,
@@ -126,15 +130,32 @@ const NavMenuLink: React.FC<{ item: AppNavItem }> = ({ item }) => {
   const { isMobile, setOpenMobile } = useSidebar();
   const Icon = navIcons[item.icon];
   const active = isNavItemActive(item, location.pathname);
+  const destination = item.subItems?.find((subItem) => subItem.default)?.path ?? item.path;
 
   return (
     <SidebarMenuItem>
       <SidebarMenuButton asChild isActive={active}>
-        <Link to={item.path} onClick={() => isMobile && setOpenMobile(false)}>
+        <Link to={destination} onClick={() => isMobile && setOpenMobile(false)}>
           <Icon />
           <span>{language === 'sv' ? item.labelSv : item.labelEn}</span>
         </Link>
       </SidebarMenuButton>
+      {active && item.subItems && item.subItems.length > 0 && (
+        <SidebarMenuSub>
+          {item.subItems.map((subItem) => (
+            <SidebarMenuSubItem key={subItem.path}>
+              <SidebarMenuSubButton
+                asChild
+                isActive={isNavSubItemActive(subItem, location.pathname, location.search)}
+              >
+                <Link to={subItem.path} onClick={() => isMobile && setOpenMobile(false)}>
+                  <span>{language === 'sv' ? subItem.labelSv : subItem.labelEn}</span>
+                </Link>
+              </SidebarMenuSubButton>
+            </SidebarMenuSubItem>
+          ))}
+        </SidebarMenuSub>
+      )}
     </SidebarMenuItem>
   );
 };
