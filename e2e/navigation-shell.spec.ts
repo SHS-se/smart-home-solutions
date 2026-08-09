@@ -108,7 +108,10 @@ const gridImportReadings = [
   updated_at: '2026-07-28T00:00:00Z',
 }));
 
-const totalConsumptionReadings = temperatureAnalysisSeries.map((point, index) => ({
+// Whole-home readings begin later than the historical grid-import series. The
+// event comparison must therefore fall back to grid import instead of mixing
+// the two measurement types across the year-over-year window.
+const totalConsumptionReadings = temperatureImpactSeries.map((point, index) => ({
   id: `11000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
   customer_id: CUSTOMER_ID,
   reading_date: point.readingDate,
@@ -700,6 +703,12 @@ test.describe('staff navigation shell', () => {
     await page.getByRole('tab', { name: 'Händelser' }).click();
     await expect(page.getByTestId('event-impact-chart')).toBeVisible();
     await expect(page.getByTestId('event-impact-chart').locator('.recharts-bar-rectangle')).toHaveCount(2);
+    await expect(page.getByTestId('event-impact-chart')).toContainText('Köpt el från nätet');
+    await expect(page.getByTestId('event-impact-chart')).toContainText('inte hela hemmets energieffektivitet');
+    await expect(page.getByTestId('event-impact-chart')).toContainText('Medeltemperatur ute');
+    await expect(page.getByTestId('event-impact-chart')).toContainText('Beräknad fakturaskillnad (rå)');
+    await page.waitForTimeout(1200);
+    await page.screenshot({ path: 'test-results/energy-event-impact.png', fullPage: true });
 
     await page.getByRole('tab', { name: 'Temperaturprofil' }).click();
     const yearControls = page.getByRole('group', { name: 'Visa årsserier' });

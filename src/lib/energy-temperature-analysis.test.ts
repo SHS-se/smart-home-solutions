@@ -27,9 +27,9 @@ function assertClose(actual: number, expected: number, label: string): void {
 Deno.test('matches daily usage and weather by date and groups by rounded temperature', () => {
   const result = buildEnergyTemperatureAnalysis(
     [
-      { readingDate: '2025-01-01', consumptionKwh: 100 },
-      { readingDate: '2025-01-02', consumptionKwh: 80 },
-      { readingDate: '2025-01-03', consumptionKwh: 60 },
+      { readingDate: '2025-01-01', consumptionKwh: 100, readingKind: 'grid_import' },
+      { readingDate: '2025-01-02', consumptionKwh: 80, readingKind: 'grid_import' },
+      { readingDate: '2025-01-03', consumptionKwh: 60, readingKind: 'grid_import' },
     ],
     [
       { observedOn: '2025-01-01', temperatureC: -2.4 },
@@ -47,8 +47,8 @@ Deno.test('matches daily usage and weather by date and groups by rounded tempera
 Deno.test('rounds negative half-degree temperatures away from zero like spreadsheets', () => {
   const result = buildEnergyTemperatureAnalysis(
     [
-      { readingDate: '2025-01-01', consumptionKwh: 100 },
-      { readingDate: '2025-01-02', consumptionKwh: 80 },
+      { readingDate: '2025-01-01', consumptionKwh: 100, readingKind: 'grid_import' },
+      { readingDate: '2025-01-02', consumptionKwh: 80, readingKind: 'grid_import' },
     ],
     [
       { observedOn: '2025-01-01', temperatureC: -2.5 },
@@ -63,11 +63,11 @@ Deno.test('rounds negative half-degree temperatures away from zero like spreadsh
 Deno.test('fits the quadratic trend curve used by the reference graphs', () => {
   const result = buildEnergyTemperatureAnalysis(
     [
-      { readingDate: '2025-01-01', consumptionKwh: 3 },
-      { readingDate: '2025-01-02', consumptionKwh: 2 },
-      { readingDate: '2025-01-03', consumptionKwh: 3 },
-      { readingDate: '2025-01-04', consumptionKwh: 6 },
-      { readingDate: '2025-01-05', consumptionKwh: 11 },
+      { readingDate: '2025-01-01', consumptionKwh: 3, readingKind: 'grid_import' },
+      { readingDate: '2025-01-02', consumptionKwh: 2, readingKind: 'grid_import' },
+      { readingDate: '2025-01-03', consumptionKwh: 3, readingKind: 'grid_import' },
+      { readingDate: '2025-01-04', consumptionKwh: 6, readingKind: 'grid_import' },
+      { readingDate: '2025-01-05', consumptionKwh: 11, readingKind: 'grid_import' },
     ],
     [
       { observedOn: '2025-01-01', temperatureC: -2 },
@@ -105,6 +105,7 @@ Deno.test('normalizes daily consumption to a fixed reference temperature', () =>
         temperatureC: -10,
         temperatureBinC: -10,
         consumptionKwh: 130,
+        readingKind: 'grid_import',
       },
       {
         readingDate: '2025-01-02',
@@ -112,6 +113,7 @@ Deno.test('normalizes daily consumption to a fixed reference temperature', () =>
         temperatureC: 10,
         temperatureBinC: 10,
         consumptionKwh: 90,
+        readingKind: 'grid_import',
       },
     ],
     years: [],
@@ -137,8 +139,10 @@ Deno.test('compares post-event usage with the same dates one year earlier', () =
     return {
       readingDate,
       monthKey: readingDate.slice(0, 7),
+      temperatureC: year === 2024 ? 4 : 1,
       actualKwh: consumption * 10,
       normalizedKwh: consumption,
+      readingKind: 'grid_import' as const,
     };
   }));
   const impacts = buildSeasonalEventImpacts(
@@ -154,11 +158,12 @@ Deno.test('compares post-event usage with the same dates one year earlier', () =
       eventText: 'Installed new windows',
     }],
     [
-      { monthKey: '2024-01', consumptionKwh: 100, totalCostSek: 100 },
-      { monthKey: '2024-02', consumptionKwh: 100, totalCostSek: 100 },
-      { monthKey: '2025-01', consumptionKwh: 100, totalCostSek: 200 },
-      { monthKey: '2025-02', consumptionKwh: 100, totalCostSek: 200 },
+      { monthKey: '2024-01', daysInMonth: 31, gridCoverage: 'complete', electricityCoverage: 'complete', totalCostSek: 3100 },
+      { monthKey: '2024-02', daysInMonth: 29, gridCoverage: 'complete', electricityCoverage: 'complete', totalCostSek: 2900 },
+      { monthKey: '2025-01', daysInMonth: 31, gridCoverage: 'complete', electricityCoverage: 'complete', totalCostSek: 6200 },
+      { monthKey: '2025-02', daysInMonth: 28, gridCoverage: 'complete', electricityCoverage: 'complete', totalCostSek: 5600 },
     ],
+    'grid_import',
     3,
     30,
   );
@@ -166,11 +171,15 @@ Deno.test('compares post-event usage with the same dates one year earlier', () =
   assertEqual(impacts.length, 1, 'event impact count');
   assertClose(impacts[0].referenceAverageKwh, 100, 'previous-year average');
   assertClose(impacts[0].comparisonAverageKwh, 80, 'post-event average');
+  assertClose(impacts[0].referenceActualAverageKwh, 1000, 'previous-year raw average');
+  assertClose(impacts[0].comparisonActualAverageKwh, 800, 'post-event raw average');
+  assertClose(impacts[0].referenceAverageTemperatureC, 4, 'previous-year temperature');
+  assertClose(impacts[0].comparisonAverageTemperatureC, 1, 'post-event temperature');
   assertClose(impacts[0].changePercent, -20, 'weather-normalized percent change');
   assertClose(impacts[0].referenceCostSek!, 4000, 'previous-year comparable cost');
-  assertClose(impacts[0].comparisonCostSek!, 6400, 'post-event comparable cost');
-  assertClose(impacts[0].costChangeSek!, 2400, 'price-aware cost change');
-  assertClose(impacts[0].costChangePercent!, 60, 'price-aware cost percent');
+  assertClose(impacts[0].comparisonCostSek!, 8000, 'post-event comparable cost');
+  assertClose(impacts[0].costChangeSek!, 4000, 'raw billed-cost change');
+  assertClose(impacts[0].costChangePercent!, 100, 'raw billed-cost percent');
   assertEqual(impacts[0].matchedDayCount, 40, 'paired days');
   assertEqual(impacts[0].completeWindow, false, 'in-progress window');
 });
@@ -181,18 +190,55 @@ Deno.test('does not reuse 28 February as the reference for leap day', () => {
       referenceTemperatureC: 0,
       referenceUsageKwh: 100,
       dailyPoints: [
-        { readingDate: '2023-02-28', monthKey: '2023-02', actualKwh: 100, normalizedKwh: 100 },
-        { readingDate: '2024-02-28', monthKey: '2024-02', actualKwh: 80, normalizedKwh: 80 },
-        { readingDate: '2024-02-29', monthKey: '2024-02', actualKwh: 70, normalizedKwh: 70 },
+        { readingDate: '2023-02-28', monthKey: '2023-02', temperatureC: 2, actualKwh: 100, normalizedKwh: 100, readingKind: 'grid_import' },
+        { readingDate: '2024-02-28', monthKey: '2024-02', temperatureC: 3, actualKwh: 80, normalizedKwh: 80, readingKind: 'grid_import' },
+        { readingDate: '2024-02-29', monthKey: '2024-02', temperatureC: 4, actualKwh: 70, normalizedKwh: 70, readingKind: 'grid_import' },
       ],
       months: [],
     },
     [{ id: 'leap', eventDate: '2024-02-27', eventText: 'Leap-year event' }],
     [],
+    'grid_import',
     3,
     1,
   );
 
   assertEqual(impacts[0].matchedDayCount, 1, 'leap-day pairs');
   assertClose(impacts[0].comparisonAverageKwh, 80, 'leap day is excluded');
+});
+
+Deno.test('withholds billed cost when either monthly bill is incomplete', () => {
+  const dailyPoints = [2024, 2025].flatMap((year) => Array.from({ length: 30 }, (_, index) => {
+    const readingDate = new Date(Date.UTC(year, 0, index + 2)).toISOString().slice(0, 10);
+    return {
+      readingDate,
+      monthKey: readingDate.slice(0, 7),
+      temperatureC: 0,
+      actualKwh: 80,
+      normalizedKwh: 80,
+      readingKind: 'grid_import' as const,
+    };
+  }));
+  const impacts = buildSeasonalEventImpacts(
+    {
+      referenceTemperatureC: 0,
+      referenceUsageKwh: 80,
+      dailyPoints,
+      months: [],
+    },
+    [{ id: 'solar', eventDate: '2025-01-01', eventText: 'Installed solar' }],
+    [
+      { monthKey: '2024-01', daysInMonth: 31, gridCoverage: 'complete', electricityCoverage: 'complete', totalCostSek: 3100 },
+      { monthKey: '2025-01', daysInMonth: 31, gridCoverage: 'complete', electricityCoverage: 'partial', totalCostSek: 150000 },
+    ],
+    'grid_import',
+    3,
+    30,
+  );
+
+  assertEqual(impacts.length, 1, 'event impact count');
+  assertEqual(impacts[0].referenceCostSek, null, 'previous-year cost withheld');
+  assertEqual(impacts[0].comparisonCostSek, null, 'post-event cost withheld');
+  assertEqual(impacts[0].costChangeSek, null, 'cost change withheld');
+  assertEqual(impacts[0].costedDayCount, 0, 'no incomparable cost days used');
 });

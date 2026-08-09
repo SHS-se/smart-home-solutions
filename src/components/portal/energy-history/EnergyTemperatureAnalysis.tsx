@@ -25,8 +25,10 @@ import {
   buildSeasonalEventImpacts,
   buildWeatherNormalizedHistory,
   predictTemperatureRegression,
+  type EnergyAnalysisReadingKind,
   type EnergyTemperatureAnalysis,
   type SeasonalEventImpact,
+  type WeatherNormalizedHistory,
 } from '@/lib/energy-temperature-analysis';
 import type { EnergyBillingMonth } from '@/lib/energy-billing-series';
 import {
@@ -80,6 +82,11 @@ const YEAR_COLORS = [
   '#0891b2',
   '#db2777',
   '#4f46e5',
+];
+
+const EVENT_READING_KINDS: EnergyAnalysisReadingKind[] = [
+  'total_consumption',
+  'grid_import',
 ];
 
 function buildMultiYearChartData(analysis: EnergyTemperatureAnalysis): MultiYearChartRow[] {
@@ -161,6 +168,11 @@ function EventImpactTooltip({
   formatMoney,
   referenceLabel,
   comparisonLabel,
+  sourceLabel,
+  energyUnit,
+  normalizedLabel,
+  rawLabel,
+  temperatureLabel,
   energyChangeLabel,
   costChangeLabel,
 }: {
@@ -172,6 +184,11 @@ function EventImpactTooltip({
   formatMoney: (value: number) => string;
   referenceLabel: string;
   comparisonLabel: string;
+  sourceLabel: (readingKind: EnergyAnalysisReadingKind) => string;
+  energyUnit: string;
+  normalizedLabel: string;
+  rawLabel: string;
+  temperatureLabel: string;
   energyChangeLabel: string;
   costChangeLabel: string;
 }) {
@@ -182,15 +199,24 @@ function EventImpactTooltip({
     <div className="max-w-sm rounded-xl border border-border/80 bg-background/95 p-3 text-xs shadow-xl backdrop-blur">
       <p className="text-muted-foreground">{formatDate(impact.eventDate)}</p>
       <p className="mt-1 whitespace-pre-wrap font-medium">{impact.eventText}</p>
+      <p className="mt-2 text-[11px] font-medium text-muted-foreground">
+        {sourceLabel(impact.readingKind)}
+      </p>
+      <div className="mt-3 grid grid-cols-[minmax(5.5rem,1fr)_auto_auto] gap-x-4 gap-y-1.5 border-t border-border pt-2 tabular-nums">
+        <span />
+        <span className="text-right font-medium">{referenceLabel}</span>
+        <span className="text-right font-medium">{comparisonLabel}</span>
+        <span className="text-muted-foreground">{normalizedLabel}</span>
+        <span className="text-right">{formatNumber(impact.referenceAverageKwh)} {energyUnit}</span>
+        <span className="text-right">{formatNumber(impact.comparisonAverageKwh)} {energyUnit}</span>
+        <span className="text-muted-foreground">{rawLabel}</span>
+        <span className="text-right">{formatNumber(impact.referenceActualAverageKwh)} {energyUnit}</span>
+        <span className="text-right">{formatNumber(impact.comparisonActualAverageKwh)} {energyUnit}</span>
+        <span className="text-muted-foreground">{temperatureLabel}</span>
+        <span className="text-right">{formatNumber(impact.referenceAverageTemperatureC)} °C</span>
+        <span className="text-right">{formatNumber(impact.comparisonAverageTemperatureC)} °C</span>
+      </div>
       <div className="mt-3 space-y-1.5 border-t border-border pt-2">
-        <div className="flex justify-between gap-6">
-          <span className="text-muted-foreground">{referenceLabel}</span>
-          <span className="font-medium tabular-nums">{formatNumber(impact.referenceAverageKwh)} kWh</span>
-        </div>
-        <div className="flex justify-between gap-6">
-          <span className="text-muted-foreground">{comparisonLabel}</span>
-          <span className="font-medium tabular-nums">{formatNumber(impact.comparisonAverageKwh)} kWh</span>
-        </div>
         <div className="flex justify-between gap-6">
           <span className="text-muted-foreground">{energyChangeLabel}</span>
           <span className="font-medium tabular-nums">{formatSignedNumber(impact.changePercent)}%</span>
@@ -250,13 +276,15 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
     year: 'numeric',
     timeZone: 'UTC',
   }), [locale]);
-  const allEfficiencyReadings = useMemo(() => selectEfficiencyReadings(
-    readings.map<DailyEnergyReading>((reading) => ({
-      readingDate: reading.reading_date,
-      consumptionKwh: reading.consumption_kwh,
-      readingKind: reading.reading_kind as EnergyReadingKind,
-    })),
-  ), [readings]);
+  const allDailyReadings = useMemo(() => readings.map<DailyEnergyReading>((reading) => ({
+    readingDate: reading.reading_date,
+    consumptionKwh: reading.consumption_kwh,
+    readingKind: reading.reading_kind as EnergyReadingKind,
+  })), [readings]);
+  const allEfficiencyReadings = useMemo(
+    () => selectEfficiencyReadings(allDailyReadings),
+    [allDailyReadings],
+  );
   const efficiencyReadings = useMemo(() => allEfficiencyReadings.filter((reading) => {
     const monthKey = reading.readingDate.slice(0, 7);
     return (!periodStartMonth || monthKey >= periodStartMonth)
@@ -271,22 +299,13 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
     efficiencyReadings.map((reading) => ({
       readingDate: reading.readingDate,
       consumptionKwh: reading.consumptionKwh,
+      readingKind: reading.readingKind,
     })),
     visibleWeatherObservations.map((observation) => ({
       observedOn: observation.observed_on,
       temperatureC: observation.temperature_c,
     })),
   ), [efficiencyReadings, visibleWeatherObservations]);
-  const fullAnalysis = useMemo(() => buildEnergyTemperatureAnalysis(
-    allEfficiencyReadings.map((reading) => ({
-      readingDate: reading.readingDate,
-      consumptionKwh: reading.consumptionKwh,
-    })),
-    weatherObservations.map((observation) => ({
-      observedOn: observation.observed_on,
-      temperatureC: observation.temperature_c,
-    })),
-  ), [allEfficiencyReadings, weatherObservations]);
   const multiYearChartData = useMemo(() => buildMultiYearChartData(analysis), [analysis]);
   const overallChartData = useMemo(() => analysis.overall.points.map((point) => ({
     temperatureC: point.temperatureC,
@@ -299,10 +318,27 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
     () => buildWeatherNormalizedHistory(analysis),
     [analysis],
   );
-  const fullNormalizedHistory = useMemo(
-    () => buildWeatherNormalizedHistory(fullAnalysis),
-    [fullAnalysis],
-  );
+  const eventNormalizedHistories = useMemo(() => Object.fromEntries(
+    EVENT_READING_KINDS.map((readingKind) => {
+      const sourceAnalysis = buildEnergyTemperatureAnalysis(
+        allDailyReadings
+          .filter((reading) => reading.readingKind === readingKind)
+          .map((reading) => ({
+            readingDate: reading.readingDate,
+            consumptionKwh: reading.consumptionKwh,
+            readingKind,
+          })),
+        weatherObservations.map((observation) => ({
+          observedOn: observation.observed_on,
+          temperatureC: observation.temperature_c,
+        })),
+      );
+      return [readingKind, buildWeatherNormalizedHistory(sourceAnalysis)];
+    }),
+  ) as Record<EnergyAnalysisReadingKind, WeatherNormalizedHistory | null>, [
+    allDailyReadings,
+    weatherObservations,
+  ]);
   const analysisEvents = useMemo(() => notes
     .filter((note) => {
       const monthKey = note.note_date.slice(0, 7);
@@ -314,11 +350,26 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
       eventDate: note.note_date,
       eventText: note.event_text,
     })), [notes, periodEndMonth, periodStartMonth]);
-  const eventImpacts = useMemo(
-    () => fullNormalizedHistory
-      ? buildSeasonalEventImpacts(fullNormalizedHistory, analysisEvents, billingMonths)
-      : [],
-    [analysisEvents, billingMonths, fullNormalizedHistory],
+  const eventImpacts = useMemo(() => {
+    const impactsByReadingKind = new Map(EVENT_READING_KINDS.map((readingKind) => {
+      const history = eventNormalizedHistories[readingKind];
+      return [readingKind, history
+        ? buildSeasonalEventImpacts(history, analysisEvents, billingMonths, readingKind)
+        : []] as const;
+    }));
+    const impactsByEvent = new Map<string, SeasonalEventImpact>();
+    for (const readingKind of EVENT_READING_KINDS) {
+      for (const impact of impactsByReadingKind.get(readingKind) ?? []) {
+        if (!impactsByEvent.has(impact.eventId)) impactsByEvent.set(impact.eventId, impact);
+      }
+    }
+    return analysisEvents.flatMap((event) => {
+      const impact = impactsByEvent.get(event.id);
+      return impact ? [impact] : [];
+    });
+  }, [analysisEvents, billingMonths, eventNormalizedHistories]);
+  const hasEventNormalizedHistory = EVENT_READING_KINDS.some(
+    (readingKind) => eventNormalizedHistories[readingKind] !== null,
   );
   const normalizedEventMonths = useMemo(() => {
     const firstMonth = normalizedHistory?.months.at(0)?.monthKey;
@@ -342,6 +393,11 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
   const weatherStart = weatherObservations[0]?.observed_on ?? null;
   const weatherEnd = weatherObservations.at(-1)?.observed_on ?? null;
   const weatherError = errorMessage(error);
+  const eventSourceLabel = (readingKind: EnergyAnalysisReadingKind) => (
+    readingKind === 'total_consumption'
+      ? t('Hela hemmets förbrukning', 'Whole-home consumption')
+      : t('Köpt el från nätet', 'Electricity bought from the grid')
+  );
   const toggleYearSeries = (year: number) => {
     setHiddenYearSeries((current) => {
       const next = new Set(current);
@@ -629,12 +685,12 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
             </TabsContent>
 
             <TabsContent value="events">
-              {!fullNormalizedHistory ? (
+              {!hasEventNormalizedHistory ? (
                 <AnalysisEmptyState
                   title={t('Mer historik behövs', 'More history is needed')}
                   description={t(
-                    'Händelser kan jämföras när det finns en stabil temperaturmodell och matchande dagar från året före.',
-                    'Events can be compared once there is a stable temperature model and matching days from the previous year.',
+                    'Händelser kan jämföras när samma typ av energimätning har en stabil temperaturmodell och matchande dagar från året före.',
+                    'Events can be compared once the same type of energy reading has a stable temperature model and matching days from the previous year.',
                   )}
                 />
               ) : analysisEvents.length === 0 ? (
@@ -646,138 +702,196 @@ const EnergyTemperatureAnalysis: React.FC<EnergyTemperatureAnalysisProps> = ({
                   )}
                 />
               ) : (
-              <Card className="overflow-hidden border-border/70 shadow-sm" data-testid="event-impact-chart">
-              <CardHeader className="border-b border-border/60 bg-gradient-to-r from-amber-500/5 to-teal-500/5">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <CardTitle className="text-base">
-                      {t('Resultat efter händelser', 'Results after events')}
-                    </CardTitle>
-                    <p className="mt-1 max-w-3xl text-xs text-muted-foreground">
-                      {t(
-                        'De tre månaderna efter händelsen jämförs med exakt samma kalenderdagar året före. Endast dagar som finns i båda perioderna används. Energin vädernormaliseras och kostnaden uppskattas med respektive månads effektiva fakturapris, så både säsong och prisförändringar hanteras.',
-                        'The three months after the event are compared with the exact same calendar dates one year earlier. Only days present in both periods are used. Energy is weather-normalized and cost is estimated using each month’s effective bill rate, accounting for both seasonality and price changes.',
-                      )}
-                    </p>
-                  </div>
-                  <Badge variant="outline">{t('3 månader · år mot år', '3 months · year over year')}</Badge>
-                </div>
-              </CardHeader>
-              <CardContent className="pt-5">
-                {eventImpacts.length === 0 ? (
-                  <div className="flex min-h-48 items-center justify-center rounded-xl border border-dashed border-border px-6 text-center">
-                    <p className="max-w-xl text-sm text-muted-foreground">
-                      {t(
-                        'Det finns ännu inte minst 30 dagpar efter händelsen och under samma period föregående år.',
-                        'There are not yet at least 30 paired days after an event and in the same period one year earlier.',
-                      )}
-                    </p>
-                  </div>
-                ) : (
-                  <>
-                    <div className="mb-2 flex flex-wrap justify-center gap-x-5 gap-y-2 text-xs text-muted-foreground">
-                      <span className="inline-flex items-center gap-2">
-                        <span className="h-2.5 w-2.5 rounded-sm bg-slate-500" aria-hidden="true" />
-                        {t('Samma period året före', 'Same period one year earlier')}
-                      </span>
-                      <span className="inline-flex items-center gap-2">
-                        <span className="h-2.5 w-2.5 rounded-sm bg-teal-700" aria-hidden="true" />
-                        {t('Efter händelsen', 'After the event')}
-                      </span>
-                    </div>
-                    <ResponsiveContainer width="100%" height={350}>
-                      <BarChart
-                        data={eventImpacts}
-                        margin={{ top: 16, right: 16, bottom: 28, left: 8 }}
-                        barGap={6}
-                      >
-                        <CartesianGrid strokeDasharray="4 4" className="stroke-border/70" vertical={false} />
-                        <XAxis
-                          dataKey="eventDate"
-                          tickFormatter={(date) => dateFormatter.format(new Date(`${date}T00:00:00Z`))}
-                          className="text-xs"
-                        />
-                        <YAxis
-                          tickFormatter={(value) => numberFormatter.format(value)}
-                          label={{ value: t('kWh/dygn vid 0 °C', 'kWh/day at 0 °C'), angle: -90, position: 'insideLeft' }}
-                          className="text-xs"
-                        />
-                        <Tooltip
-                          content={(
-                            <EventImpactTooltip
-                              formatDate={(date) => dateFormatter.format(new Date(`${date}T00:00:00Z`))}
-                              formatNumber={(value) => numberFormatter.format(value)}
-                              formatSignedNumber={(value) => signedNumberFormatter.format(value)}
-                              formatMoney={(value) => moneyFormatter.format(value)}
-                              referenceLabel={t('Året före', 'Previous year')}
-                              comparisonLabel={t('Efter händelsen', 'After event')}
-                              energyChangeLabel={t('Energiförändring', 'Energy change')}
-                              costChangeLabel={t('Kostnadsförändring', 'Cost change')}
-                            />
+                <Card className="overflow-hidden border-border/70 shadow-sm" data-testid="event-impact-chart">
+                  <CardHeader className="border-b border-border/60 bg-gradient-to-r from-amber-500/5 to-teal-500/5">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <CardTitle className="text-base">
+                          {t('Resultat efter händelser', 'Results after events')}
+                        </CardTitle>
+                        <p className="mt-1 max-w-4xl text-xs text-muted-foreground">
+                          {t(
+                            'Staplarna jämför samma kalenderdagar året före och visar energi väderjusterad till 0 °C. Hela hemmets förbrukning används bara när den finns i båda perioderna; annars visas köpt el från nätet tydligt som ett mått på nätberoende. Rå förbrukning och medeltemperatur visas under diagrammet. Månadens fakturakostnad fördelas per kalenderdag, är inte vädernormaliserad och visas bara när kompletta nät- och elhandelskostnader täcker båda perioderna. Resultatet är en utfallsindikator, inte ett mått på enbart renoveringens effekt.',
+                            'The bars compare the same calendar dates one year earlier and show energy weather-adjusted to 0 °C. Whole-home consumption is used only when both periods contain it; otherwise electricity bought from the grid is clearly labelled as a measure of grid dependence. Raw usage and average temperature appear below the chart. Monthly billed cost is allocated by calendar day, is not weather-normalized, and is shown only when complete grid and supplier costs cover both periods. The result is an outcome indicator, not a measurement of the renovation alone.',
                           )}
-                        />
-                        <Bar
-                          dataKey="referenceAverageKwh"
-                          name={t('Samma period året före', 'Same period one year earlier')}
-                          fill="#64748b"
-                          radius={[4, 4, 0, 0]}
-                        />
-                        <Bar
-                          dataKey="comparisonAverageKwh"
-                          name={t('Efter händelsen', 'After the event')}
-                          fill="#0f766e"
-                          radius={[4, 4, 0, 0]}
-                        />
-                      </BarChart>
-                    </ResponsiveContainer>
-                    <div className="mt-4 grid gap-3 lg:grid-cols-2">
-                      {eventImpacts.map((impact) => (
-                        <div key={impact.eventId} className="rounded-xl border border-border/70 bg-muted/15 p-4">
-                          <div className="flex flex-wrap items-start justify-between gap-2">
-                            <div>
-                              <p className="text-xs text-muted-foreground">
-                                {dateFormatter.format(new Date(`${impact.eventDate}T00:00:00Z`))}
+                        </p>
+                      </div>
+                      <Badge variant="outline">{t('3 månader · år mot år', '3 months · year over year')}</Badge>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="pt-5">
+                    {eventImpacts.length === 0 ? (
+                      <div className="flex min-h-48 items-center justify-center rounded-xl border border-dashed border-border px-6 text-center">
+                        <p className="max-w-xl text-sm text-muted-foreground">
+                          {t(
+                            'Det finns ännu inte minst 30 dagpar med samma typ av energimätning efter händelsen och under samma period föregående år.',
+                            'There are not yet at least 30 paired days with the same type of energy reading after an event and in the same period one year earlier.',
+                          )}
+                        </p>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="mb-2 flex flex-wrap justify-center gap-x-5 gap-y-2 text-xs text-muted-foreground">
+                          <span className="inline-flex items-center gap-2">
+                            <span className="h-2.5 w-2.5 rounded-sm bg-slate-500" aria-hidden="true" />
+                            {t('Samma period året före', 'Same period one year earlier')}
+                          </span>
+                          <span className="inline-flex items-center gap-2">
+                            <span className="h-2.5 w-2.5 rounded-sm bg-teal-700" aria-hidden="true" />
+                            {t('Efter händelsen', 'After the event')}
+                          </span>
+                        </div>
+                        <ResponsiveContainer width="100%" height={330}>
+                          <BarChart
+                            data={eventImpacts}
+                            margin={{ top: 16, right: 16, bottom: 28, left: 8 }}
+                            barGap={6}
+                          >
+                            <CartesianGrid strokeDasharray="4 4" className="stroke-border/70" vertical={false} />
+                            <XAxis
+                              dataKey="eventDate"
+                              tickFormatter={(date) => dateFormatter.format(new Date(`${date}T00:00:00Z`))}
+                              className="text-xs"
+                            />
+                            <YAxis
+                              tickFormatter={(value) => numberFormatter.format(value)}
+                              label={{ value: t('kWh/dygn vid 0 °C', 'kWh/day at 0 °C'), angle: -90, position: 'insideLeft' }}
+                              className="text-xs"
+                            />
+                            <Tooltip
+                              content={(
+                                <EventImpactTooltip
+                                  formatDate={(date) => dateFormatter.format(new Date(`${date}T00:00:00Z`))}
+                                  formatNumber={(value) => numberFormatter.format(value)}
+                                  formatSignedNumber={(value) => signedNumberFormatter.format(value)}
+                                  formatMoney={(value) => moneyFormatter.format(value)}
+                                  referenceLabel={t('Året före', 'Previous year')}
+                                  comparisonLabel={t('Efter', 'After')}
+                                  sourceLabel={eventSourceLabel}
+                                  energyUnit={t('kWh/dygn', 'kWh/day')}
+                                  normalizedLabel={t('Vid 0 °C', 'At 0 °C')}
+                                  rawLabel={t('Rådata', 'Raw')}
+                                  temperatureLabel={t('Utomhus', 'Outdoors')}
+                                  energyChangeLabel={t('Väderjusterad skillnad', 'Weather-adjusted difference')}
+                                  costChangeLabel={t('Beräknad fakturaskillnad (rå)', 'Estimated billed-cost difference (raw)')}
+                                />
+                              )}
+                            />
+                            <Bar
+                              dataKey="referenceAverageKwh"
+                              name={t('Samma period året före', 'Same period one year earlier')}
+                              fill="#64748b"
+                              radius={[4, 4, 0, 0]}
+                            />
+                            <Bar
+                              dataKey="comparisonAverageKwh"
+                              name={t('Efter händelsen', 'After the event')}
+                              fill="#0f766e"
+                              radius={[4, 4, 0, 0]}
+                            />
+                          </BarChart>
+                        </ResponsiveContainer>
+                        <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                          {eventImpacts.map((impact) => (
+                            <div key={impact.eventId} className="rounded-xl border border-border/70 bg-muted/15 p-4">
+                              <div className="flex flex-wrap items-start justify-between gap-2">
+                                <div>
+                                  <p className="text-xs text-muted-foreground">
+                                    {dateFormatter.format(new Date(`${impact.eventDate}T00:00:00Z`))}
+                                  </p>
+                                  <p className="mt-1 text-sm font-medium">{impact.eventText}</p>
+                                </div>
+                                <div className="flex flex-wrap gap-1.5">
+                                  <Badge variant="secondary">{eventSourceLabel(impact.readingKind)}</Badge>
+                                  {!impact.completeWindow && (
+                                    <Badge variant="outline">{t('Pågående', 'In progress')}</Badge>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                                {([
+                                  {
+                                    label: t('Samma period året före', 'Same period one year earlier'),
+                                    startDate: impact.referenceStartDate,
+                                    endDate: impact.referenceEndDate,
+                                    normalizedKwh: impact.referenceAverageKwh,
+                                    actualKwh: impact.referenceActualAverageKwh,
+                                    temperatureC: impact.referenceAverageTemperatureC,
+                                  },
+                                  {
+                                    label: t('Efter händelsen', 'After the event'),
+                                    startDate: impact.comparisonStartDate,
+                                    endDate: impact.comparisonEndDate,
+                                    normalizedKwh: impact.comparisonAverageKwh,
+                                    actualKwh: impact.comparisonActualAverageKwh,
+                                    temperatureC: impact.comparisonAverageTemperatureC,
+                                  },
+                                ] as const).map((period) => (
+                                  <div key={period.label} className="rounded-lg border border-border/60 bg-background/70 p-3">
+                                    <p className="text-[11px] font-medium">{period.label}</p>
+                                    <p className="mt-0.5 text-[10px] text-muted-foreground">
+                                      {dateFormatter.format(new Date(`${period.startDate}T00:00:00Z`))}
+                                      {' – '}
+                                      {dateFormatter.format(new Date(`${period.endDate}T00:00:00Z`))}
+                                    </p>
+                                    <p className="mt-2 text-base font-semibold tabular-nums">
+                                      {numberFormatter.format(period.normalizedKwh)} {t('kWh/dygn vid 0 °C', 'kWh/day at 0 °C')}
+                                    </p>
+                                    <p className="mt-1 text-[11px] tabular-nums text-muted-foreground">
+                                      {t('Rådata', 'Raw')}: {numberFormatter.format(period.actualKwh)} {t('kWh/dygn', 'kWh/day')}
+                                    </p>
+                                    <p className="text-[11px] tabular-nums text-muted-foreground">
+                                      {t('Medeltemperatur ute', 'Average outdoors')}: {numberFormatter.format(period.temperatureC)} °C
+                                    </p>
+                                  </div>
+                                ))}
+                              </div>
+                              <div className="mt-3 grid grid-cols-2 gap-3">
+                                <div>
+                                  <p className="text-[11px] text-muted-foreground">
+                                    {t('Väderjusterad skillnad', 'Weather-adjusted difference')}
+                                  </p>
+                                  <p className={`mt-1 text-lg font-semibold tabular-nums ${impact.changePercent <= 0 ? 'text-emerald-700 dark:text-emerald-300' : 'text-rose-700 dark:text-rose-300'}`}>
+                                    {signedNumberFormatter.format(impact.changePercent)}%
+                                  </p>
+                                </div>
+                                <div>
+                                  <p className="text-[11px] text-muted-foreground">
+                                    {t('Beräknad fakturaskillnad (rå)', 'Estimated billed-cost difference (raw)')}
+                                  </p>
+                                  <p className={`mt-1 text-lg font-semibold tabular-nums ${impact.costChangeSek === null ? 'text-foreground' : impact.costChangeSek <= 0 ? 'text-emerald-700 dark:text-emerald-300' : 'text-rose-700 dark:text-rose-300'}`}>
+                                    {impact.costChangeSek === null
+                                      ? costDataIsLoading ? t('Läser…', 'Loading…') : '–'
+                                      : moneyFormatter.format(impact.costChangeSek)}
+                                  </p>
+                                  {impact.costChangePercent !== null && (
+                                    <p className="mt-0.5 text-xs tabular-nums text-muted-foreground">
+                                      {signedNumberFormatter.format(impact.costChangePercent)}%
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                              <p className="mt-3 text-[11px] text-muted-foreground">
+                                {impact.matchedDayCount} {t('matchade dagpar', 'matched day pairs')}
+                                {impact.readingKind === 'grid_import'
+                                  ? t(' · visar köpt el, inte hela hemmets energieffektivitet', ' · measures grid purchases, not whole-home efficiency')
+                                  : ''}
                               </p>
-                              <p className="mt-1 text-sm font-medium">{impact.eventText}</p>
-                            </div>
-                            {!impact.completeWindow && (
-                              <Badge variant="outline">{t('Pågående', 'In progress')}</Badge>
-                            )}
-                          </div>
-                          <div className="mt-4 grid grid-cols-2 gap-3">
-                            <div>
-                              <p className="text-[11px] text-muted-foreground">{t('Energiskillnad', 'Energy difference')}</p>
-                              <p className={`mt-1 text-lg font-semibold tabular-nums ${impact.changePercent <= 0 ? 'text-emerald-700 dark:text-emerald-300' : 'text-rose-700 dark:text-rose-300'}`}>
-                                {signedNumberFormatter.format(impact.changePercent)}%
-                              </p>
-                            </div>
-                            <div>
-                              <p className="text-[11px] text-muted-foreground">{t('Uppskattad kostnadsskillnad', 'Estimated cost difference')}</p>
-                              <p className={`mt-1 text-lg font-semibold tabular-nums ${impact.costChangeSek !== null && impact.costChangeSek <= 0 ? 'text-emerald-700 dark:text-emerald-300' : 'text-foreground'}`}>
-                                {impact.costChangeSek === null
-                                  ? costDataIsLoading ? t('Läser…', 'Loading…') : '–'
-                                  : moneyFormatter.format(impact.costChangeSek)}
-                              </p>
-                              {impact.costChangePercent !== null && (
-                                <p className="mt-0.5 text-xs tabular-nums text-muted-foreground">
-                                  {signedNumberFormatter.format(impact.costChangePercent)}%
+                              {impact.costChangeSek === null && !costDataIsLoading && (
+                                <p className="mt-1 text-[11px] text-muted-foreground">
+                                  {t(
+                                    'Fakturaskillnaden kräver kompletta nät- och elhandelskostnader för varje jämförd månad.',
+                                    'Billed-cost difference requires complete grid and supplier costs for every compared month.',
+                                  )}
                                 </p>
                               )}
                             </div>
-                          </div>
-                          <p className="mt-3 text-[11px] text-muted-foreground">
-                            {impact.matchedDayCount} {t('matchade dagpar', 'matched day pairs')}
-                            {impact.costChangeSek === null && !costDataIsLoading
-                              ? t(' · kostnaden kräver fakturaunderlag för båda perioderna', ' · cost requires invoice data for both periods')
-                              : ''}
-                          </p>
+                          ))}
                         </div>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </CardContent>
-              </Card>
+                      </>
+                    )}
+                  </CardContent>
+                </Card>
               )}
             </TabsContent>
 

@@ -1,7 +1,10 @@
 export interface EnergyUsageAnalysisReading {
   readingDate: string;
   consumptionKwh: number;
+  readingKind: EnergyAnalysisReadingKind;
 }
+
+export type EnergyAnalysisReadingKind = 'grid_import' | 'total_consumption';
 
 export interface WeatherAnalysisObservation {
   observedOn: string;
@@ -14,6 +17,7 @@ export interface JoinedEnergyTemperaturePoint {
   temperatureC: number;
   temperatureBinC: number;
   consumptionKwh: number;
+  readingKind: EnergyAnalysisReadingKind;
 }
 
 export interface TemperatureBinPoint {
@@ -50,8 +54,10 @@ export interface EnergyTemperatureAnalysis {
 export interface WeatherNormalizedDailyPoint {
   readingDate: string;
   monthKey: string;
+  temperatureC: number;
   actualKwh: number;
   normalizedKwh: number;
+  readingKind: EnergyAnalysisReadingKind;
 }
 
 export interface WeatherNormalizedMonth {
@@ -76,7 +82,9 @@ export interface EnergyHistoryEvent {
 
 export interface MonthlyEnergyCost {
   monthKey: string;
-  consumptionKwh: number | null;
+  daysInMonth: number;
+  gridCoverage: 'complete' | 'partial' | 'missing';
+  electricityCoverage: 'complete' | 'partial' | 'missing';
   totalCostSek: number | null;
 }
 
@@ -84,10 +92,15 @@ export interface SeasonalEventImpact {
   eventId: string;
   eventDate: string;
   eventText: string;
+  readingKind: EnergyAnalysisReadingKind;
   referenceStartDate: string;
   referenceEndDate: string;
   comparisonStartDate: string;
   comparisonEndDate: string;
+  referenceAverageTemperatureC: number;
+  comparisonAverageTemperatureC: number;
+  referenceActualAverageKwh: number;
+  comparisonActualAverageKwh: number;
   referenceAverageKwh: number;
   comparisonAverageKwh: number;
   changeKwh: number;
@@ -99,7 +112,7 @@ export interface SeasonalEventImpact {
   costChangeSek: number | null;
   costChangePercent: number | null;
   matchedDayCount: number;
-  pricedDayCount: number;
+  costedDayCount: number;
   windowMonths: number;
   completeWindow: boolean;
 }
@@ -274,6 +287,7 @@ export function buildEnergyTemperatureAnalysis(
         temperatureC,
         temperatureBinC: temperatureBin(temperatureC),
         consumptionKwh: reading.consumptionKwh,
+        readingKind: reading.readingKind,
       } satisfies JoinedEnergyTemperaturePoint;
     })
     .filter((point): point is JoinedEnergyTemperaturePoint => point !== null)
@@ -317,10 +331,12 @@ export function buildWeatherNormalizedHistory(
     return {
       readingDate: point.readingDate,
       monthKey: point.readingDate.slice(0, 7),
+      temperatureC: point.temperatureC,
       actualKwh: point.consumptionKwh,
       normalizedKwh: point.consumptionKwh
         - expectedAtObservedTemperature
         + referenceUsageKwh,
+      readingKind: point.readingKind,
     };
   });
 
@@ -422,14 +438,16 @@ function shiftYearExact(date: string, years: number): string | null {
  *
  * Only year-over-year day pairs present in both windows are used, so an event
  * whose three-month follow-up is still in progress is never compared with a
- * longer reference period. Energy is weather-normalized; comparable cost uses
- * each month's effective all-in bill rate, preserving price changes between
- * the two periods.
+ * longer reference period. Energy is weather-normalized. Cost is kept separate
+ * from that model: complete monthly grid and supplier bills are allocated by
+ * calendar day, so the result remains a raw billed-cost comparison and never
+ * applies a grid-import price to whole-home consumption.
  */
 export function buildSeasonalEventImpacts(
   history: WeatherNormalizedHistory,
   events: EnergyHistoryEvent[],
   costMonths: readonly MonthlyEnergyCost[],
+  readingKind: EnergyAnalysisReadingKind,
   windowMonths = 3,
   minimumSampleCount = 30,
 ): SeasonalEventImpact[] {
@@ -439,13 +457,17 @@ export function buildSeasonalEventImpacts(
   if (!Number.isInteger(minimumSampleCount) || minimumSampleCount < 1) {
     throw new Error('Event impact minimum sample count must be a positive integer.');
   }
+  if (history.dailyPoints.some((point) => point.readingKind !== readingKind)) {
+    throw new Error('Event impact history must contain one consistent energy-reading source.');
+  }
 
   const pointsByDate = new Map(history.dailyPoints.map((point) => [point.readingDate, point]));
-  const effectiveRateByMonth = new Map(costMonths.flatMap((month) => (
+  const billedCostPerDayByMonth = new Map(costMonths.flatMap((month) => (
     month.totalCostSek !== null
-      && month.consumptionKwh !== null
-      && month.consumptionKwh > 0
-      ? [[month.monthKey, month.totalCostSek / month.consumptionKwh] as const]
+      && month.daysInMonth > 0
+      && month.gridCoverage === 'complete'
+      && month.electricityCoverage === 'complete'
+      ? [[month.monthKey, month.totalCostSek / month.daysInMonth] as const]
       : []
   )));
   const latestDate = history.dailyPoints.at(-1)?.readingDate ?? null;
@@ -456,11 +478,15 @@ export function buildSeasonalEventImpacts(
     const comparisonEndDate = addDays(comparisonEndExclusive, -1);
     const referenceStartDate = shiftYear(comparisonStartDate, -1);
     const referenceEndDate = shiftYear(comparisonEndDate, -1);
+    const referenceTemperatures: number[] = [];
+    const comparisonTemperatures: number[] = [];
+    const referenceActualEnergy: number[] = [];
+    const comparisonActualEnergy: number[] = [];
     const referenceEnergy: number[] = [];
     const comparisonEnergy: number[] = [];
     let referenceCostSek = 0;
     let comparisonCostSek = 0;
-    let pricedDayCount = 0;
+    let costedDayCount = 0;
 
     for (const comparison of history.dailyPoints) {
       if (
@@ -471,15 +497,21 @@ export function buildSeasonalEventImpacts(
       if (!referenceDate) continue;
       const reference = pointsByDate.get(referenceDate);
       if (!reference) continue;
+      referenceTemperatures.push(reference.temperatureC);
+      comparisonTemperatures.push(comparison.temperatureC);
+      referenceActualEnergy.push(reference.actualKwh);
+      comparisonActualEnergy.push(comparison.actualKwh);
       referenceEnergy.push(reference.normalizedKwh);
       comparisonEnergy.push(comparison.normalizedKwh);
 
-      const referenceRate = effectiveRateByMonth.get(referenceDate.slice(0, 7));
-      const comparisonRate = effectiveRateByMonth.get(comparison.readingDate.slice(0, 7));
-      if (referenceRate !== undefined && comparisonRate !== undefined) {
-        referenceCostSek += reference.normalizedKwh * referenceRate;
-        comparisonCostSek += comparison.normalizedKwh * comparisonRate;
-        pricedDayCount += 1;
+      const referenceDailyCost = billedCostPerDayByMonth.get(referenceDate.slice(0, 7));
+      const comparisonDailyCost = billedCostPerDayByMonth.get(
+        comparison.readingDate.slice(0, 7),
+      );
+      if (referenceDailyCost !== undefined && comparisonDailyCost !== undefined) {
+        referenceCostSek += referenceDailyCost;
+        comparisonCostSek += comparisonDailyCost;
+        costedDayCount += 1;
       }
     }
 
@@ -488,8 +520,8 @@ export function buildSeasonalEventImpacts(
     const referenceAverageKwh = average(referenceEnergy);
     const comparisonAverageKwh = average(comparisonEnergy);
     const changeKwh = comparisonAverageKwh - referenceAverageKwh;
-    const hasComparableCosts = pricedDayCount >= minimumSampleCount
-      && pricedDayCount === referenceEnergy.length;
+    const hasComparableCosts = costedDayCount >= minimumSampleCount
+      && costedDayCount === referenceEnergy.length;
     const costChangeSek = hasComparableCosts
       ? comparisonCostSek - referenceCostSek
       : null;
@@ -497,10 +529,15 @@ export function buildSeasonalEventImpacts(
       eventId: event.id,
       eventDate: event.eventDate,
       eventText: event.eventText,
+      readingKind,
       referenceStartDate,
       referenceEndDate,
       comparisonStartDate,
       comparisonEndDate,
+      referenceAverageTemperatureC: average(referenceTemperatures),
+      comparisonAverageTemperatureC: average(comparisonTemperatures),
+      referenceActualAverageKwh: average(referenceActualEnergy),
+      comparisonActualAverageKwh: average(comparisonActualEnergy),
       referenceAverageKwh,
       comparisonAverageKwh,
       changeKwh,
@@ -516,7 +553,7 @@ export function buildSeasonalEventImpacts(
         ? (costChangeSek! / referenceCostSek) * 100
         : null,
       matchedDayCount: referenceEnergy.length,
-      pricedDayCount,
+      costedDayCount,
       windowMonths,
       completeWindow: latestDate !== null && latestDate >= comparisonEndDate,
     }];
