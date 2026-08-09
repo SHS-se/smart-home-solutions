@@ -410,6 +410,29 @@ async function login(page: Page) {
   await page.waitForURL('**/portal');
 }
 
+const ENERGY_HISTORY_SECTION_TABS = {
+  Data: 'data',
+  Temperatur: 'temperature',
+  Energiprestanda: 'performance',
+} as const;
+
+type EnergyHistorySection = keyof typeof ENERGY_HISTORY_SECTION_TABS;
+
+function energyHistorySectionLink(page: Page, section: EnergyHistorySection) {
+  return page
+    .locator('[data-sidebar="sidebar"]')
+    .getByRole('link', { name: section, exact: true });
+}
+
+async function openEnergyHistorySection(page: Page, section: EnergyHistorySection) {
+  const link = energyHistorySectionLink(page, section);
+  await link.click();
+  await expect(page).toHaveURL(
+    new RegExp(`[?&]tab=${ENERGY_HISTORY_SECTION_TABS[section]}(?:&|$)`),
+  );
+  await expect(link).toHaveAttribute('data-active', 'true');
+}
+
 test.describe('staff navigation shell', () => {
   test.beforeEach(async ({ context }) => {
     await mockSupabase(context, 'staff');
@@ -512,7 +535,7 @@ test.describe('staff navigation shell', () => {
     const weatherRequestPromise = page.waitForRequest(
       (request) => request.url().includes('/rest/v1/energy_weather_observations'),
     );
-    await page.getByRole('tab', { name: 'Temperatur' }).click();
+    await openEnergyHistorySection(page, 'Temperatur');
     const weatherRequest = await weatherRequestPromise;
     const weatherUrl = new URL(weatherRequest.url());
 
@@ -558,7 +581,7 @@ test.describe('staff navigation shell', () => {
     await expect(page.getByTestId('energy-performance')).toHaveCount(0);
     await page.screenshot({ path: 'test-results/energy-source-accounting.png', fullPage: true });
 
-    await page.getByRole('tab', { name: 'Data', exact: true }).click();
+    await openEnergyHistorySection(page, 'Data');
     const upload = page.getByTestId('energy-data-upload');
     await expect(upload.getByRole('heading', { name: 'Ladda upp energidata' })).toBeVisible();
     await expect(upload.locator('input[type="file"]')).toHaveCount(1);
@@ -613,12 +636,12 @@ test.describe('staff navigation shell', () => {
 
     await page.screenshot({ path: 'test-results/energy-gap-hint.png', fullPage: true });
 
-    // The full inventory moved to the Data tab, where it is reference material.
-    await page.getByRole('tab', { name: 'Data' }).click();
+    // The full inventory lives in the Data section, where it is reference material.
+    await openEnergyHistorySection(page, 'Data');
     await expect(page.getByRole('heading', { name: 'Månadstäckning' })).toBeVisible();
   });
 
-  test('energiprestanda lives in its own tab and grades without Home Assistant data', async ({ page }) => {
+  test('energiprestanda lives in its own section and grades without Home Assistant data', async ({ page }) => {
     const weatherObservationRequests: string[] = [];
     page.on('request', (request) => {
       if (request.url().includes('/rest/v1/energy_weather_observations')) {
@@ -627,7 +650,7 @@ test.describe('staff navigation shell', () => {
     });
     await login(page);
     await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history`);
-    await page.getByRole('tab', { name: 'Energiprestanda' }).click();
+    await openEnergyHistorySection(page, 'Energiprestanda');
 
     const performance = page.getByTestId('energy-performance');
     await expect(performance.getByText('Energiprestanda (primärenergital)')).toBeVisible();
@@ -655,10 +678,7 @@ test.describe('staff navigation shell', () => {
       `/portal/customers/${CUSTOMER_ID}/energy-history?tab=data`,
     );
     await reviewOldest.click();
-    await expect(page.getByRole('tab', { name: 'Data', exact: true })).toHaveAttribute(
-      'data-state',
-      'active',
-    );
+    await expect(energyHistorySectionLink(page, 'Data')).toHaveAttribute('data-active', 'true');
 
     const management = page.getByTestId('energy-data-management');
     await expect(management.getByText('Källfiler minimeras')).toBeVisible();
@@ -696,7 +716,7 @@ test.describe('staff navigation shell', () => {
   test('temperature charts provide readable series controls', async ({ page }) => {
     await login(page);
     await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history`);
-    await page.getByRole('tab', { name: 'Temperatur' }).click();
+    await openEnergyHistorySection(page, 'Temperatur');
 
     await expect(page.getByTestId('temperature-energy-source')).toContainText('totaldagar');
     await expect(page.getByTestId('weather-normalized-history-chart')).toBeVisible();
