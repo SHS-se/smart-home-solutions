@@ -53,6 +53,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 interface EnergyHistoryOverviewProps {
   series: EnergyBillingMonth[];
@@ -64,12 +65,12 @@ interface EnergyHistoryOverviewProps {
   usageIsLoading?: boolean;
   moveInDate?: string | null;
   isSample?: boolean;
+  periodStartMonth: string | null;
+  periodEndMonth: string | null;
   onUploadClick?: () => void;
   onCreateNote: (values: TimelineNoteValues) => Promise<void>;
   tariffInvoiceComparisons?: EnergyTariffInvoiceComparison[];
 }
-
-type PeriodPreset = '12' | '24' | '36' | 'all';
 
 interface TooltipPayloadItem {
   color?: string;
@@ -113,13 +114,6 @@ const COST_COLORS = {
   energyTaxSek: '#60a5fa',
   exportNetSek: '#8b5cf6',
 };
-
-const PERIOD_OPTIONS: Array<{ value: PeriodPreset; sv: string; en: string }> = [
-  { value: '12', sv: '12 mån', en: '12 mo' },
-  { value: '24', sv: '24 mån', en: '24 mo' },
-  { value: '36', sv: '36 mån', en: '36 mo' },
-  { value: 'all', sv: 'Allt', en: 'All' },
-];
 
 /**
  * A month carried by an estimate reads as a hollow marker rather than a filled
@@ -298,13 +292,14 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
   usageIsLoading = false,
   moveInDate = null,
   isSample = false,
+  periodStartMonth,
+  periodEndMonth,
   onUploadClick,
   onCreateNote,
   tariffInvoiceComparisons = [],
 }) => {
   const { t, language } = useLanguage();
   const locale = language === 'sv' ? 'sv-SE' : 'en-GB';
-  const [period, setPeriod] = useState<PeriodPreset>('12');
   const [focusedYear, setFocusedYear] = useState<number | null>(null);
   const numberFormatter = useMemo(() => new Intl.NumberFormat(locale, {
     maximumFractionDigits: 1,
@@ -319,9 +314,16 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
     maximumFractionDigits: 1,
     signDisplay: 'exceptZero',
   }), [locale]);
+  const visibleTariffInvoiceComparisons = useMemo(
+    () => tariffInvoiceComparisons.filter((comparison) => (
+      (!periodStartMonth || comparison.monthKey >= periodStartMonth)
+      && (!periodEndMonth || comparison.monthKey <= periodEndMonth)
+    )),
+    [periodEndMonth, periodStartMonth, tariffInvoiceComparisons],
+  );
   const divergentComparisons = useMemo(
-    () => divergentTariffComparisons(tariffInvoiceComparisons),
-    [tariffInvoiceComparisons],
+    () => divergentTariffComparisons(visibleTariffInvoiceComparisons),
+    [visibleTariffInvoiceComparisons],
   );
   const monthFormatter = useMemo(() => new Intl.DateTimeFormat(locale, {
     month: 'short',
@@ -345,21 +347,26 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
   }), [locale]);
 
   const annual = useMemo(() => estimateAnnualEnergyHistory(series), [series]);
-  const filteredSeries = useMemo(() => {
-    if (period === 'all') return series;
-    return series.slice(-Number(period));
-  }, [period, series]);
+  const filteredSeries = useMemo(() => series.filter((month) => (
+    (!periodStartMonth || month.monthKey >= periodStartMonth)
+    && (!periodEndMonth || month.monthKey <= periodEndMonth)
+  )), [periodEndMonth, periodStartMonth, series]);
+  const filteredUsageReadings = useMemo(() => usageReadings.filter((reading) => {
+    const monthKey = reading.reading_date.slice(0, 7);
+    return (!periodStartMonth || monthKey >= periodStartMonth)
+      && (!periodEndMonth || monthKey <= periodEndMonth);
+  }), [periodEndMonth, periodStartMonth, usageReadings]);
   const firstVisibleMonth = filteredSeries.at(0)?.monthKey ?? null;
   const lastVisibleMonth = filteredSeries.at(-1)?.monthKey ?? null;
   const visibleChanges = useMemo(() => changes.filter((change) => (
-    (!firstVisibleMonth || change.monthKey >= firstVisibleMonth)
-    && (!lastVisibleMonth || change.monthKey <= lastVisibleMonth)
-  )), [changes, firstVisibleMonth, lastVisibleMonth]);
+    (!periodStartMonth || change.monthKey >= periodStartMonth)
+    && (!periodEndMonth || change.monthKey <= periodEndMonth)
+  )), [changes, periodEndMonth, periodStartMonth]);
   const visibleNotes = useMemo(() => notes.filter((note) => {
     const monthKey = note.note_date.slice(0, 7);
-    return (!firstVisibleMonth || monthKey >= firstVisibleMonth)
-      && (!lastVisibleMonth || monthKey <= lastVisibleMonth);
-  }), [firstVisibleMonth, lastVisibleMonth, notes]);
+    return (!periodStartMonth || monthKey >= periodStartMonth)
+      && (!periodEndMonth || monthKey <= periodEndMonth);
+  }), [notes, periodEndMonth, periodStartMonth]);
   const changeAnnotationMonths = useMemo(
     () => Array.from(new Set(visibleChanges.map((change) => change.monthKey))),
     [visibleChanges],
@@ -403,11 +410,11 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
   const uploadSuggestions = useMemo(
     () => (isSample ? [] : suggestedEnergyUploads(series, moveInDate))
       .filter((suggestion) => (
-        (period === 'all' || !firstVisibleMonth || suggestion.monthKey >= firstVisibleMonth)
-        && (!lastVisibleMonth || suggestion.monthKey <= lastVisibleMonth)
+        (!periodStartMonth || suggestion.monthKey >= periodStartMonth)
+        && (!periodEndMonth || suggestion.monthKey <= periodEndMonth)
       ))
       .slice(0, MAX_UPLOAD_SUGGESTIONS),
-    [series, moveInDate, firstVisibleMonth, lastVisibleMonth, period, isSample],
+    [series, moveInDate, periodStartMonth, periodEndMonth, isSample],
   );
 
   const formatMonthKey = (monthKey: string) => monthFormatter.format(
@@ -488,8 +495,8 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
           <h2 className="text-lg font-medium">{t('Ingen energihistorik ännu', 'No energy history yet')}</h2>
           <p className="mt-2 max-w-lg text-sm text-muted-foreground">
             {t(
-              'Ladda upp elnäts- och elhandelsfakturor i fliken Ladda upp. Diagrammen byggs automatiskt när det finns importerad data.',
-              'Upload grid and electricity provider invoices in the Upload tab. Charts are built automatically once data has been imported.',
+              'Ladda upp elnäts- och elhandelsfakturor på fliken Data. Diagrammen byggs automatiskt när det finns importerad data.',
+              'Upload grid and electricity provider invoices in the Data tab. Charts are built automatically once data has been imported.',
             )}
           </p>
         </CardContent>
@@ -518,27 +525,6 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
           </AlertDescription>
         </Alert>
       )}
-
-      <div className="flex flex-col gap-3 rounded-xl border border-border/70 bg-gradient-to-r from-primary/5 via-background to-violet-500/5 p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="text-sm font-medium">{t('Visad period', 'Displayed period')}</p>
-          <p className="mt-0.5 text-xs capitalize text-muted-foreground">{periodLabel}</p>
-        </div>
-        <div className="flex flex-wrap gap-1 rounded-lg bg-muted/60 p-1" aria-label={t('Välj period', 'Select period')}>
-          {PERIOD_OPTIONS.map((option) => (
-            <Button
-              key={option.value}
-              type="button"
-              size="sm"
-              variant={period === option.value ? 'default' : 'ghost'}
-              className="h-8 px-3"
-              onClick={() => setPeriod(option.value)}
-            >
-              {language === 'sv' ? option.sv : option.en}
-            </Button>
-          ))}
-        </div>
-      </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <AnnualMetricCard
@@ -594,22 +580,23 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
         />
       </div>
 
-      <EnergySavingsCard
-        months={filteredSeries}
-        readings={usageReadings}
-        periodLabel={periodLabel}
-        isSample={isSample}
-        onUploadClick={onUploadClick}
-      />
+      <Tabs defaultValue="summary" className="space-y-5">
+        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 p-1 lg:max-w-2xl lg:grid-cols-4">
+          <TabsTrigger value="summary">{t('Sammanfattning', 'Summary')}</TabsTrigger>
+          <TabsTrigger value="flows">{t('Energiflöden', 'Energy flow')}</TabsTrigger>
+          <TabsTrigger value="costs">{t('Kostnader', 'Costs')}</TabsTrigger>
+          <TabsTrigger value="comparisons">{t('Jämförelser', 'Comparisons')}</TabsTrigger>
+        </TabsList>
 
-      <EnergySourceInsights
-        readings={usageReadings}
-        isLoading={usageIsLoading}
-        error={usageError}
-        onUploadClick={onUploadClick}
-      />
-
-      <Card className="overflow-hidden border-border/70 shadow-sm">
+        <TabsContent value="summary" className="space-y-5">
+          <EnergySavingsCard
+            months={filteredSeries}
+            readings={filteredUsageReadings}
+            periodLabel={periodLabel}
+            isSample={isSample}
+            onUploadClick={onUploadClick}
+          />
+          <Card className="overflow-hidden border-border/70 shadow-sm">
         <CardHeader className="border-b border-border/60 bg-gradient-to-r from-blue-500/5 to-violet-500/5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <CardTitle className="text-base">
@@ -752,10 +739,21 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
             </p>
           )}
         </CardContent>
-      </Card>
+          </Card>
+        </TabsContent>
 
-      {tariffInvoiceComparisons.length > 0 && (
-        <Card className="overflow-hidden border-border/70 shadow-sm">
+        <TabsContent value="flows" className="space-y-5">
+          <EnergySourceInsights
+            readings={filteredUsageReadings}
+            isLoading={usageIsLoading}
+            error={usageError}
+            onUploadClick={onUploadClick}
+          />
+        </TabsContent>
+
+        <TabsContent value="costs" className="space-y-5">
+          {visibleTariffInvoiceComparisons.length > 0 && (
+          <Card className="overflow-hidden border-border/70 shadow-sm">
           <CardHeader className="border-b border-border/60 bg-gradient-to-r from-emerald-500/5 to-blue-500/5">
             <CardTitle className="text-base">
               {t('Ellevio-faktura jämfört med Home Assistant', 'Ellevio invoice compared with Home Assistant')}
@@ -800,7 +798,7 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
               </Alert>
             )}
             <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={tariffInvoiceComparisons.slice(-24)} margin={{ top: 12, right: 8, bottom: 20, left: 8 }}>
+              <BarChart data={visibleTariffInvoiceComparisons} margin={{ top: 12, right: 8, bottom: 20, left: 8 }}>
                 <CartesianGrid strokeDasharray="4 4" className="stroke-border/70" vertical={false} />
                 <XAxis dataKey="monthKey" tickFormatter={formatMonthKey} minTickGap={20} className="text-xs" />
                 <YAxis tickFormatter={(value) => numberFormatter.format(value)} className="text-xs" />
@@ -811,10 +809,10 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
               </BarChart>
             </ResponsiveContainer>
           </CardContent>
-        </Card>
-      )}
+          </Card>
+          )}
 
-      <Card className="overflow-hidden border-border/70 shadow-sm">
+          <Card className="overflow-hidden border-border/70 shadow-sm">
         <CardHeader className="border-b border-border/60 bg-gradient-to-r from-amber-500/5 to-violet-500/5">
           <CardTitle className="text-base">
             {t('Kostnadsfördelning per månad', 'Monthly cost breakdown')}
@@ -885,9 +883,11 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
             )}
           </p>
         </CardContent>
-      </Card>
+          </Card>
+        </TabsContent>
 
-      <Card className="overflow-hidden border-border/70 shadow-sm">
+        <TabsContent value="comparisons" className="space-y-5">
+          <Card className="overflow-hidden border-border/70 shadow-sm">
         <CardHeader className="border-b border-border/60 bg-gradient-to-r from-emerald-500/5 to-blue-500/5">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
@@ -960,14 +960,12 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
             </BarChart>
           </ResponsiveContainer>
         </CardContent>
-      </Card>
-
-      <EnergyHistoryEventForm
-        loadError={notesError}
-        onCreate={onCreateNote}
-      />
-
-      <Card className="overflow-hidden border-violet-200/80 bg-gradient-to-br from-background to-violet-500/5 shadow-sm dark:border-violet-900/70">
+          </Card>
+          <EnergyHistoryEventForm
+            loadError={notesError}
+            onCreate={onCreateNote}
+          />
+          <Card className="overflow-hidden border-violet-200/80 bg-gradient-to-br from-background to-violet-500/5 shadow-sm dark:border-violet-900/70">
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <CardTitle className="flex items-center gap-2 text-base">
@@ -1020,7 +1018,9 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
             </div>
           )}
         </CardContent>
-      </Card>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 };

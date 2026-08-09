@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  ChevronDown,
   Database,
   Download,
   FileText,
@@ -112,6 +113,18 @@ const EnergyHistoryDocuments: React.FC<EnergyHistoryDocumentsProps> = ({
   const sortedDocuments = [...documents].sort(
     (a, b) => b.period_start.localeCompare(a.period_start),
   );
+  const documentGroups = [
+    {
+      kind: 'grid' as const,
+      label: t('Elnätsfakturor', 'Grid invoices'),
+      documents: sortedDocuments.filter((document) => document.document_kind === 'grid'),
+    },
+    {
+      kind: 'electricity' as const,
+      label: t('Elhandelsfakturor', 'Electricity invoices'),
+      documents: sortedDocuments.filter((document) => document.document_kind === 'electricity'),
+    },
+  ];
 
   const handleDelete = async () => {
     if (!deletionTarget) return;
@@ -266,141 +279,195 @@ const EnergyHistoryDocuments: React.FC<EnergyHistoryDocumentsProps> = ({
       )}
 
       <Card data-testid="energy-usage-imports">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Database className="h-4 w-4" />
-            {t('Importerade dagliga mätvärden', 'Imported daily readings')} ({usageImports.length})
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {usageImports.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              {t('Inga CSV-importer ännu.', 'No CSV imports yet.')}
-            </p>
-          ) : (
-            <div className="divide-y divide-border rounded-lg border border-border">
-              {usageImports.map((usageImport) => (
-                <div
-                  key={usageImport.id}
-                  className="flex flex-col gap-3 p-4 md:flex-row md:items-center"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="truncate text-sm font-medium">{usageImport.original_file_name}</p>
-                      <Badge variant={usageImport.reading_kind === 'total_consumption' ? 'sky' : 'secondary'}>
-                        {usageImport.reading_kind === 'total_consumption'
-                          ? t('Husets totalförbrukning', 'Whole-home consumption')
-                          : t('Nätuttag', 'Grid import')}
-                      </Badge>
-                    </div>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {usageImport.reading_count} {t('dagar', 'days')}
-                      {' · '}
-                      {dateTimeFormatter.format(new Date(usageImport.created_at))}
-                    </p>
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="self-start text-destructive hover:text-destructive md:self-auto"
-                    onClick={() => setDeletionTarget({ kind: 'usage', record: usageImport })}
-                  >
-                    <Trash2 className="mr-1.5 h-4 w-4" />
-                    {t('Ta bort import', 'Delete import')}
-                  </Button>
-                </div>
-              ))}
+        <details className="group">
+          <summary className="flex cursor-pointer list-none items-center gap-3 p-5">
+            <Database className="h-4 w-4 text-primary" />
+            <div className="min-w-0 flex-1">
+              <h2 className="text-sm font-medium">
+                {t('Importerade dagliga mätvärden', 'Imported daily readings')}
+              </h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {usageImports.length === 0
+                  ? t('Inga CSV-importer ännu.', 'No CSV imports yet.')
+                  : t(
+                      `${usageImports.length} filer med nätuttag eller totalförbrukning`,
+                      `${usageImports.length} files with grid import or whole-home consumption`,
+                    )}
+              </p>
             </div>
-          )}
-        </CardContent>
+            <Badge variant="secondary">{usageImports.length}</Badge>
+            <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180" />
+          </summary>
+          <CardContent className="border-t border-border/60 pt-5">
+            {usageImports.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                {t('Inga CSV-importer ännu.', 'No CSV imports yet.')}
+              </p>
+            ) : (
+              <div className="divide-y divide-border rounded-lg border border-border">
+                {usageImports.map((usageImport) => (
+                  <div
+                    key={usageImport.id}
+                    className="flex flex-col gap-3 p-4 md:flex-row md:items-center"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="truncate text-sm font-medium">{usageImport.original_file_name}</p>
+                        <Badge variant={usageImport.reading_kind === 'total_consumption' ? 'sky' : 'secondary'}>
+                          {usageImport.reading_kind === 'total_consumption'
+                            ? t('Husets totalförbrukning', 'Whole-home consumption')
+                            : t('Nätuttag', 'Grid import')}
+                        </Badge>
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {usageImport.reading_count} {t('dagar', 'days')}
+                        {' · '}
+                        {dateTimeFormatter.format(new Date(usageImport.created_at))}
+                      </p>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="self-start text-destructive hover:text-destructive md:self-auto"
+                      onClick={() => setDeletionTarget({ kind: 'usage', record: usageImport })}
+                    >
+                      <Trash2 className="mr-1.5 h-4 w-4" />
+                      {t('Ta bort import', 'Delete import')}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </details>
       </Card>
 
       <Card data-testid="energy-billing-imports">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <FileText className="h-4 w-4" />
-            {t('Importerade fakturor', 'Imported invoices')} ({documents.length})
-          </CardTitle>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <FileText className="h-4 w-4" />
+                {t('Importerade fakturor', 'Imported invoices')}
+              </CardTitle>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {t(
+                  'Fakturorna är uppdelade efter vad de debiterar. Öppna en grupp och sedan en faktura för radnivån.',
+                  'Invoices are separated by what they charge. Open a group and then an invoice to see line items.',
+                )}
+              </p>
+            </div>
+            <Badge variant="secondary">{documents.length}</Badge>
+          </div>
         </CardHeader>
         <CardContent className="space-y-3">
           {sortedDocuments.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               {t('Inga importerade fakturor ännu.', 'No imported invoices yet.')}
             </p>
-          ) : sortedDocuments.map((document) => (
-            <details key={document.id} className="group rounded-lg border border-border">
-              <summary className="cursor-pointer list-none p-4">
-                <div className="grid items-center gap-3 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_auto_auto]">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">{document.provider_name}</p>
-                    <p className="truncate text-xs text-muted-foreground">
-                      {document.original_file_name}
-                    </p>
-                  </div>
-                  <div className="text-sm">
-                    <p>{formatDate(document.period_start)} – {formatDate(document.period_end)}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {t('Faktura', 'Invoice')} {document.invoice_number}
-                    </p>
-                  </div>
-                  <Badge variant={document.document_kind === 'grid' ? 'sky' : 'secondary'}>
-                    {document.document_kind === 'grid'
-                      ? t('Elnät', 'Grid')
-                      : t('Elhandel', 'Electricity')}
-                  </Badge>
-                  <p className="text-right text-sm font-semibold tabular-nums">
-                    {moneyFormatter.format(document.total_amount_sek)}
+          ) : documentGroups.map((group) => (
+            <details key={group.kind} className="group rounded-xl border border-border/70">
+              <summary className="flex cursor-pointer list-none items-center gap-3 p-4">
+                <div className={group.kind === 'grid'
+                  ? 'rounded-lg bg-sky-500/10 p-2 text-sky-700 dark:text-sky-300'
+                  : 'rounded-lg bg-amber-500/10 p-2 text-amber-700 dark:text-amber-300'}
+                >
+                  <FileText className="h-4 w-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-sm font-medium">{group.label}</h3>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {group.documents.length === 0
+                      ? t('Inga fakturor i gruppen', 'No invoices in this group')
+                      : t(
+                          `Senaste perioden ${formatDate(group.documents[0].period_start)} – ${formatDate(group.documents[0].period_end)}`,
+                          `Latest period ${formatDate(group.documents[0].period_start)} – ${formatDate(group.documents[0].period_end)}`,
+                        )}
                   </p>
                 </div>
+                <Badge variant={group.kind === 'grid' ? 'sky' : 'secondary'}>
+                  {group.documents.length}
+                </Badge>
+                <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180" />
               </summary>
-              <div className="border-t border-border bg-muted/20 p-4">
-                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex flex-wrap gap-x-6 gap-y-2 text-xs text-muted-foreground">
-                    <span>{t('Förbrukning', 'Consumption')}: {numberFormatter.format(document.consumption_kwh)} kWh</span>
-                    {document.exported_kwh !== null && (
-                      <span>{t('Export', 'Export')}: {numberFormatter.format(document.exported_kwh)} kWh</span>
-                    )}
-                    {document.peak_demand_kw !== null && (
-                      <span>{t('Effekttopp', 'Peak demand')}: {numberFormatter.format(document.peak_demand_kw)} kW</span>
-                    )}
-                    <span>{t('Parser', 'Parser')}: {document.parser_id} v{document.parser_version}</span>
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-destructive hover:text-destructive"
-                    onClick={() => setDeletionTarget({ kind: 'document', record: document })}
-                  >
-                    <Trash2 className="mr-1.5 h-4 w-4" />
-                    {t('Ta bort faktura', 'Delete invoice')}
-                  </Button>
-                </div>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>{t('Post', 'Line item')}</TableHead>
-                      <TableHead>{t('Kategori', 'Category')}</TableHead>
-                      <TableHead>{t('Antal', 'Quantity')}</TableHead>
-                      <TableHead className="text-right">{t('Belopp', 'Amount')}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {document.lineItems.map((lineItem) => (
-                      <TableRow key={lineItem.id}>
-                        <TableCell className="font-medium">{lineItem.label}</TableCell>
-                        <TableCell>{categoryLabel(lineItem.category)}</TableCell>
-                        <TableCell>
-                          {lineItem.quantity === null
-                            ? '–'
-                            : `${numberFormatter.format(lineItem.quantity)} ${lineItem.unit ?? ''}`}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          {moneyFormatter.format(lineItem.amount_sek)}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+              <div className="space-y-2 border-t border-border/60 bg-muted/10 p-3">
+                {group.documents.length === 0 ? (
+                  <p className="p-2 text-sm text-muted-foreground">
+                    {t('Inga importerade fakturor ännu.', 'No imported invoices yet.')}
+                  </p>
+                ) : group.documents.map((document) => (
+                  <details key={document.id} className="group/invoice rounded-lg border border-border bg-background">
+                    <summary className="cursor-pointer list-none p-4">
+                      <div className="grid items-center gap-3 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_auto_auto]">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium">{document.provider_name}</p>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {document.original_file_name}
+                          </p>
+                        </div>
+                        <div className="text-sm">
+                          <p>{formatDate(document.period_start)} – {formatDate(document.period_end)}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {t('Faktura', 'Invoice')} {document.invoice_number}
+                          </p>
+                        </div>
+                        <p className="text-right text-sm font-semibold tabular-nums">
+                          {moneyFormatter.format(document.total_amount_sek)}
+                        </p>
+                        <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-open/invoice:rotate-180" />
+                      </div>
+                    </summary>
+                    <div className="border-t border-border bg-muted/20 p-4">
+                      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex flex-wrap gap-x-6 gap-y-2 text-xs text-muted-foreground">
+                          <span>{t('Förbrukning', 'Consumption')}: {numberFormatter.format(document.consumption_kwh)} kWh</span>
+                          {document.exported_kwh !== null && (
+                            <span>{t('Export', 'Export')}: {numberFormatter.format(document.exported_kwh)} kWh</span>
+                          )}
+                          {document.peak_demand_kw !== null && (
+                            <span>{t('Effekttopp', 'Peak demand')}: {numberFormatter.format(document.peak_demand_kw)} kW</span>
+                          )}
+                          <span>{t('Parser', 'Parser')}: {document.parser_id} v{document.parser_version}</span>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-destructive hover:text-destructive"
+                          onClick={() => setDeletionTarget({ kind: 'document', record: document })}
+                        >
+                          <Trash2 className="mr-1.5 h-4 w-4" />
+                          {t('Ta bort faktura', 'Delete invoice')}
+                        </Button>
+                      </div>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>{t('Post', 'Line item')}</TableHead>
+                            <TableHead>{t('Kategori', 'Category')}</TableHead>
+                            <TableHead>{t('Antal', 'Quantity')}</TableHead>
+                            <TableHead className="text-right">{t('Belopp', 'Amount')}</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {document.lineItems.map((lineItem) => (
+                            <TableRow key={lineItem.id}>
+                              <TableCell className="font-medium">{lineItem.label}</TableCell>
+                              <TableCell>{categoryLabel(lineItem.category)}</TableCell>
+                              <TableCell>
+                                {lineItem.quantity === null
+                                  ? '–'
+                                  : `${numberFormatter.format(lineItem.quantity)} ${lineItem.unit ?? ''}`}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {moneyFormatter.format(lineItem.amount_sek)}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </details>
+                ))}
               </div>
             </details>
           ))}

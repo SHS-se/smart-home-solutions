@@ -1,9 +1,10 @@
 import React, { useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { ExternalLink, Gauge, HousePlug, Info, Loader2 } from 'lucide-react';
+import { ChevronDown, ExternalLink, Gauge, HousePlug, Info, Loader2 } from 'lucide-react';
 import {
   Bar,
   BarChart,
+  Brush,
   CartesianGrid,
   Legend,
   ResponsiveContainer,
@@ -87,6 +88,8 @@ interface EnergiprestandaSectionProps {
   heatedBoareaM2?: number | null;
   heatedBiareaM2?: number | null;
   hasSolar?: boolean | null;
+  periodStartMonth: string | null;
+  periodEndMonth: string | null;
   isLoading: boolean;
   error: unknown;
   onUploadClick?: () => void;
@@ -170,6 +173,8 @@ const EnergiprestandaSection: React.FC<EnergiprestandaSectionProps> = ({
   heatedBoareaM2 = null,
   heatedBiareaM2 = null,
   hasSolar = null,
+  periodStartMonth,
+  periodEndMonth,
   isLoading,
   error,
   onUploadClick,
@@ -178,6 +183,12 @@ const EnergiprestandaSection: React.FC<EnergiprestandaSectionProps> = ({
   const locale = language === 'sv' ? 'sv-SE' : 'en-GB';
   const numberFormatter = useMemo(() => new Intl.NumberFormat(locale, {
     maximumFractionDigits: 1,
+  }), [locale]);
+  const dateFormatter = useMemo(() => new Intl.DateTimeFormat(locale, {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'UTC',
   }), [locale]);
 
   const dailyReadings = useMemo(() => toDailyEnergyReadings(usageReadings), [usageReadings]);
@@ -192,9 +203,15 @@ const EnergiprestandaSection: React.FC<EnergiprestandaSectionProps> = ({
     [atempM2, dailyReadings, hasSolar, readings, weatherObservations],
   );
 
+  const visibleCategoryReadings = useMemo(() => readings.filter((reading) => {
+    const monthKey = reading.reading_date.slice(0, 7);
+    return (!periodStartMonth || monthKey >= periodStartMonth)
+      && (!periodEndMonth || monthKey <= periodEndMonth);
+  }), [periodEndMonth, periodStartMonth, readings]);
+
   const monthlyByCategory = useMemo(() => {
     const months = new Map<string, Record<string, number | string>>();
-    for (const reading of readings) {
+    for (const reading of visibleCategoryReadings) {
       const month = reading.reading_date.slice(0, 7);
       const row = months.get(month) ?? { month };
       row[reading.category] = round(
@@ -204,14 +221,24 @@ const EnergiprestandaSection: React.FC<EnergiprestandaSectionProps> = ({
       months.set(month, row);
     }
     return Array.from(months.values())
-      .sort((a, b) => String(a.month).localeCompare(String(b.month)))
-      .slice(-13);
+      .sort((a, b) => String(a.month).localeCompare(String(b.month)));
+  }, [visibleCategoryReadings]);
+
+  const categoryCoverage = useMemo(() => {
+    const dates = [...new Set(readings.map((reading) => reading.reading_date))].sort();
+    const months = new Set(dates.map((date) => date.slice(0, 7)));
+    return {
+      days: dates.length,
+      months: months.size,
+      firstDate: dates.at(0) ?? null,
+      lastDate: dates.at(-1) ?? null,
+    };
   }, [readings]);
 
   const chartCategories = useMemo(() => {
-    const present = new Set(readings.map((r) => r.category));
+    const present = new Set(visibleCategoryReadings.map((r) => r.category));
     return CHART_CATEGORY_ORDER.filter((category) => present.has(category));
-  }, [readings]);
+  }, [visibleCategoryReadings]);
 
   const formatKwh = (value: number | null) => (
     value === null ? '–' : `${numberFormatter.format(value)} kWh`
@@ -568,35 +595,65 @@ const EnergiprestandaSection: React.FC<EnergiprestandaSectionProps> = ({
       </Card>
 
       {monthlyByCategory.length > 0 ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">
-              {t('Månadsvis per kategori (från Home Assistant)', 'Monthly by category (from Home Assistant)')}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={320}>
-              <BarChart data={monthlyByCategory}>
-                <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.35} />
-                <XAxis dataKey="month" tick={{ fontSize: 12 }} />
-                <YAxis
-                  tick={{ fontSize: 12 }}
-                  label={{ value: 'kWh', angle: -90, position: 'insideLeft' }}
-                />
-                <Tooltip cursor={{ fill: 'hsl(var(--muted) / 0.4)' }} />
-                <Legend />
-                {chartCategories.map((category) => (
-                  <Bar
-                    key={category}
-                    dataKey={category}
-                    stackId="energy"
-                    name={categoryLabel(category, t)}
-                    fill={CATEGORY_COLORS[category]}
-                    animationDuration={750}
-                  />
-                ))}
-              </BarChart>
-            </ResponsiveContainer>
+        <Card data-testid="energy-performance-source-data">
+          <CardContent className="p-0">
+            <details className="group">
+              <summary className="flex cursor-pointer list-none items-center gap-3 p-5">
+                <div className="rounded-lg bg-blue-500/10 p-2 text-blue-700 dark:text-blue-300">
+                  <HousePlug className="h-4 w-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h2 className="text-sm font-medium">
+                    {t('Kategoridata från Home Assistant', 'Category data from Home Assistant')}
+                  </h2>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {categoryCoverage.firstDate && categoryCoverage.lastDate
+                      ? t(
+                          `${categoryCoverage.days} dagar från ${dateFormatter.format(new Date(`${categoryCoverage.firstDate}T00:00:00Z`))} till ${dateFormatter.format(new Date(`${categoryCoverage.lastDate}T00:00:00Z`))}. Första månaden är ofta delvis återfylld och den pågående månaden är inte färdig ännu.`,
+                          `${categoryCoverage.days} days from ${dateFormatter.format(new Date(`${categoryCoverage.firstDate}T00:00:00Z`))} to ${dateFormatter.format(new Date(`${categoryCoverage.lastDate}T00:00:00Z`))}. The first month is often a partial backfill and the current month is not complete yet.`,
+                        )
+                      : null}
+                  </p>
+                </div>
+                <Badge variant="outline" className="hidden shrink-0 sm:inline-flex">
+                  {categoryCoverage.months} {t('månader', 'months')}
+                </Badge>
+                <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
+              </summary>
+              <div className="border-t border-border/60 p-5">
+                <p className="mb-4 text-xs leading-relaxed text-muted-foreground">
+                  {t(
+                    'När integrationen ansluts skickar den upp till 30 tidigare dagar som finns kvar i Home Assistants recorder. Därefter läggs den senast avslutade dagen till varje natt. Därför blir den första och den pågående månaden normalt ofullständiga, medan månaderna däremellan blir kompletta.',
+                    'When the integration is connected, it sends up to 30 previous days still retained by the Home Assistant recorder. It then adds the latest completed day every night. That normally leaves the first and current months incomplete, while the months between them become complete.',
+                  )}
+                </p>
+                <ResponsiveContainer width="100%" height={320}>
+                  <BarChart data={monthlyByCategory}>
+                    <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.35} />
+                    <XAxis dataKey="month" minTickGap={24} tick={{ fontSize: 12 }} />
+                    <YAxis
+                      tick={{ fontSize: 12 }}
+                      label={{ value: 'kWh', angle: -90, position: 'insideLeft' }}
+                    />
+                    <Tooltip cursor={{ fill: 'hsl(var(--muted) / 0.4)' }} />
+                    <Legend />
+                    {chartCategories.map((category) => (
+                      <Bar
+                        key={category}
+                        dataKey={category}
+                        stackId="energy"
+                        name={categoryLabel(category, t)}
+                        fill={CATEGORY_COLORS[category]}
+                        animationDuration={750}
+                      />
+                    ))}
+                    {monthlyByCategory.length > 18 && (
+                      <Brush dataKey="month" height={26} travellerWidth={8} />
+                    )}
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </details>
           </CardContent>
         </Card>
       ) : (

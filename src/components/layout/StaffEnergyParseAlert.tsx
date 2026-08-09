@@ -66,7 +66,7 @@ const StaffEnergyParseAlert = () => {
             className="border-orange-400 bg-background/80"
             asChild
           >
-            <Link to={`/portal/customers/${firstFailure.customer_id}/energy-history?tab=documents`}>
+            <Link to={`/portal/customers/${firstFailure.customer_id}/energy-history?tab=data`}>
               {t('Granska äldsta filen', 'Review oldest file')}
             </Link>
           </Button>

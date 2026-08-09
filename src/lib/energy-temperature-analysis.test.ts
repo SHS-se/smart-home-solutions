@@ -2,7 +2,7 @@
 
 import {
   buildEnergyTemperatureAnalysis,
-  buildWeatherNormalizedEventImpacts,
+  buildSeasonalEventImpacts,
   buildWeatherNormalizedHistory,
   predictTemperatureRegression,
   type EnergyTemperatureAnalysis,
@@ -129,17 +129,19 @@ Deno.test('normalizes daily consumption to a fixed reference temperature', () =>
   assertClose(normalized.months[0].averageNormalizedKwh, 110, 'monthly normalized average');
 });
 
-Deno.test('compares weather-normalized usage before and after an event', () => {
-  const dailyPoints = Array.from({ length: 60 }, (_, index) => {
-    const date = new Date(Date.UTC(2025, 0, index + 1));
+Deno.test('compares post-event usage with the same dates one year earlier', () => {
+  const dailyPoints = [2024, 2025].flatMap((year) => Array.from({ length: 40 }, (_, index) => {
+    const date = new Date(Date.UTC(year, 0, index + 2));
+    const readingDate = date.toISOString().slice(0, 10);
+    const consumption = year === 2024 ? 100 : 80;
     return {
-      readingDate: date.toISOString().slice(0, 10),
-      monthKey: date.toISOString().slice(0, 7),
-      actualKwh: index < 30 ? 110 : 90,
-      normalizedKwh: index < 30 ? 110 : 90,
+      readingDate,
+      monthKey: readingDate.slice(0, 7),
+      actualKwh: consumption * 10,
+      normalizedKwh: consumption,
     };
-  });
-  const impacts = buildWeatherNormalizedEventImpacts(
+  }));
+  const impacts = buildSeasonalEventImpacts(
     {
       referenceTemperatureC: 0,
       referenceUsageKwh: 100,
@@ -148,16 +150,49 @@ Deno.test('compares weather-normalized usage before and after an event', () => {
     },
     [{
       id: 'windows',
-      eventDate: '2025-01-31',
+      eventDate: '2025-01-01',
       eventText: 'Installed new windows',
     }],
+    [
+      { monthKey: '2024-01', consumptionKwh: 100, totalCostSek: 100 },
+      { monthKey: '2024-02', consumptionKwh: 100, totalCostSek: 100 },
+      { monthKey: '2025-01', consumptionKwh: 100, totalCostSek: 200 },
+      { monthKey: '2025-02', consumptionKwh: 100, totalCostSek: 200 },
+    ],
+    3,
     30,
-    20,
   );
 
   assertEqual(impacts.length, 1, 'event impact count');
-  assertClose(impacts[0].beforeAverageKwh, 110, 'before-event average');
-  assertClose(impacts[0].afterAverageKwh, 90, 'after-event average');
-  assertClose(impacts[0].changePercent, (-20 / 110) * 100, 'weather-normalized percent change');
-  assertClose(impacts[0].annualizedChangeKwh, -7300, 'annualized consumption change');
+  assertClose(impacts[0].referenceAverageKwh, 100, 'previous-year average');
+  assertClose(impacts[0].comparisonAverageKwh, 80, 'post-event average');
+  assertClose(impacts[0].changePercent, -20, 'weather-normalized percent change');
+  assertClose(impacts[0].referenceCostSek!, 4000, 'previous-year comparable cost');
+  assertClose(impacts[0].comparisonCostSek!, 6400, 'post-event comparable cost');
+  assertClose(impacts[0].costChangeSek!, 2400, 'price-aware cost change');
+  assertClose(impacts[0].costChangePercent!, 60, 'price-aware cost percent');
+  assertEqual(impacts[0].matchedDayCount, 40, 'paired days');
+  assertEqual(impacts[0].completeWindow, false, 'in-progress window');
+});
+
+Deno.test('does not reuse 28 February as the reference for leap day', () => {
+  const impacts = buildSeasonalEventImpacts(
+    {
+      referenceTemperatureC: 0,
+      referenceUsageKwh: 100,
+      dailyPoints: [
+        { readingDate: '2023-02-28', monthKey: '2023-02', actualKwh: 100, normalizedKwh: 100 },
+        { readingDate: '2024-02-28', monthKey: '2024-02', actualKwh: 80, normalizedKwh: 80 },
+        { readingDate: '2024-02-29', monthKey: '2024-02', actualKwh: 70, normalizedKwh: 70 },
+      ],
+      months: [],
+    },
+    [{ id: 'leap', eventDate: '2024-02-27', eventText: 'Leap-year event' }],
+    [],
+    3,
+    1,
+  );
+
+  assertEqual(impacts[0].matchedDayCount, 1, 'leap-day pairs');
+  assertClose(impacts[0].comparisonAverageKwh, 80, 'leap day is excluded');
 });

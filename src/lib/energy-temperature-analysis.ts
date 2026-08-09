@@ -74,18 +74,34 @@ export interface EnergyHistoryEvent {
   eventText: string;
 }
 
-export interface WeatherNormalizedEventImpact {
+export interface MonthlyEnergyCost {
+  monthKey: string;
+  consumptionKwh: number | null;
+  totalCostSek: number | null;
+}
+
+export interface SeasonalEventImpact {
   eventId: string;
   eventDate: string;
   eventText: string;
-  beforeAverageKwh: number;
-  afterAverageKwh: number;
+  referenceStartDate: string;
+  referenceEndDate: string;
+  comparisonStartDate: string;
+  comparisonEndDate: string;
+  referenceAverageKwh: number;
+  comparisonAverageKwh: number;
   changeKwh: number;
   changePercent: number;
-  annualizedChangeKwh: number;
-  beforeSampleCount: number;
-  afterSampleCount: number;
-  windowDays: number;
+  referenceTotalKwh: number;
+  comparisonTotalKwh: number;
+  referenceCostSek: number | null;
+  comparisonCostSek: number | null;
+  costChangeSek: number | null;
+  costChangePercent: number | null;
+  matchedDayCount: number;
+  pricedDayCount: number;
+  windowMonths: number;
+  completeWindow: boolean;
 }
 
 function temperatureBin(temperatureC: number): number {
@@ -354,53 +370,155 @@ function average(values: number[]): number {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
-export function buildWeatherNormalizedEventImpacts(
+function isoDate(timestamp: number): string {
+  return new Date(timestamp).toISOString().slice(0, 10);
+}
+
+function addDays(date: string, days: number): string {
+  return isoDate(utcDateNumber(date) + (days * MILLISECONDS_PER_DAY));
+}
+
+function addMonths(date: string, months: number): string {
+  const parsed = new Date(utcDateNumber(date));
+  const targetMonth = parsed.getUTCMonth() + months;
+  const targetYear = parsed.getUTCFullYear() + Math.floor(targetMonth / 12);
+  const normalizedMonth = ((targetMonth % 12) + 12) % 12;
+  const lastDay = new Date(Date.UTC(targetYear, normalizedMonth + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(
+    targetYear,
+    normalizedMonth,
+    Math.min(parsed.getUTCDate(), lastDay),
+  )).toISOString().slice(0, 10);
+}
+
+function shiftYear(date: string, years: number): string {
+  const parsed = new Date(utcDateNumber(date));
+  const targetYear = parsed.getUTCFullYear() + years;
+  const month = parsed.getUTCMonth();
+  const lastDay = new Date(Date.UTC(targetYear, month + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(
+    targetYear,
+    month,
+    Math.min(parsed.getUTCDate(), lastDay),
+  )).toISOString().slice(0, 10);
+}
+
+function shiftYearExact(date: string, years: number): string | null {
+  const parsed = new Date(utcDateNumber(date));
+  const targetYear = parsed.getUTCFullYear() + years;
+  const target = new Date(Date.UTC(
+    targetYear,
+    parsed.getUTCMonth(),
+    parsed.getUTCDate(),
+  ));
+  return target.getUTCMonth() === parsed.getUTCMonth()
+    && target.getUTCDate() === parsed.getUTCDate()
+    ? target.toISOString().slice(0, 10)
+    : null;
+}
+
+/**
+ * Compare the three months after an event with the same dates one year earlier.
+ *
+ * Only year-over-year day pairs present in both windows are used, so an event
+ * whose three-month follow-up is still in progress is never compared with a
+ * longer reference period. Energy is weather-normalized; comparable cost uses
+ * each month's effective all-in bill rate, preserving price changes between
+ * the two periods.
+ */
+export function buildSeasonalEventImpacts(
   history: WeatherNormalizedHistory,
   events: EnergyHistoryEvent[],
-  windowDays = 90,
+  costMonths: readonly MonthlyEnergyCost[],
+  windowMonths = 3,
   minimumSampleCount = 30,
-): WeatherNormalizedEventImpact[] {
-  if (!Number.isInteger(windowDays) || windowDays < 1) {
-    throw new Error('Event impact window must be a positive number of whole days.');
+): SeasonalEventImpact[] {
+  if (!Number.isInteger(windowMonths) || windowMonths < 1) {
+    throw new Error('Event impact window must be a positive number of whole months.');
   }
   if (!Number.isInteger(minimumSampleCount) || minimumSampleCount < 1) {
     throw new Error('Event impact minimum sample count must be a positive integer.');
   }
 
-  return events.flatMap((event) => {
-    const eventTimestamp = utcDateNumber(event.eventDate);
-    const before: number[] = [];
-    const after: number[] = [];
+  const pointsByDate = new Map(history.dailyPoints.map((point) => [point.readingDate, point]));
+  const effectiveRateByMonth = new Map(costMonths.flatMap((month) => (
+    month.totalCostSek !== null
+      && month.consumptionKwh !== null
+      && month.consumptionKwh > 0
+      ? [[month.monthKey, month.totalCostSek / month.consumptionKwh] as const]
+      : []
+  )));
+  const latestDate = history.dailyPoints.at(-1)?.readingDate ?? null;
 
-    for (const point of history.dailyPoints) {
-      const pointTimestamp = utcDateNumber(point.readingDate);
-      const dayDifference = (pointTimestamp - eventTimestamp) / MILLISECONDS_PER_DAY;
-      if (dayDifference <= -1 && dayDifference >= -windowDays) {
-        before.push(point.normalizedKwh);
-      } else if (dayDifference >= 1 && dayDifference <= windowDays) {
-        after.push(point.normalizedKwh);
+  return events.flatMap((event) => {
+    const comparisonStartDate = addDays(event.eventDate, 1);
+    const comparisonEndExclusive = addMonths(comparisonStartDate, windowMonths);
+    const comparisonEndDate = addDays(comparisonEndExclusive, -1);
+    const referenceStartDate = shiftYear(comparisonStartDate, -1);
+    const referenceEndDate = shiftYear(comparisonEndDate, -1);
+    const referenceEnergy: number[] = [];
+    const comparisonEnergy: number[] = [];
+    let referenceCostSek = 0;
+    let comparisonCostSek = 0;
+    let pricedDayCount = 0;
+
+    for (const comparison of history.dailyPoints) {
+      if (
+        comparison.readingDate < comparisonStartDate
+        || comparison.readingDate >= comparisonEndExclusive
+      ) continue;
+      const referenceDate = shiftYearExact(comparison.readingDate, -1);
+      if (!referenceDate) continue;
+      const reference = pointsByDate.get(referenceDate);
+      if (!reference) continue;
+      referenceEnergy.push(reference.normalizedKwh);
+      comparisonEnergy.push(comparison.normalizedKwh);
+
+      const referenceRate = effectiveRateByMonth.get(referenceDate.slice(0, 7));
+      const comparisonRate = effectiveRateByMonth.get(comparison.readingDate.slice(0, 7));
+      if (referenceRate !== undefined && comparisonRate !== undefined) {
+        referenceCostSek += reference.normalizedKwh * referenceRate;
+        comparisonCostSek += comparison.normalizedKwh * comparisonRate;
+        pricedDayCount += 1;
       }
     }
 
-    if (before.length < minimumSampleCount || after.length < minimumSampleCount) return [];
+    if (referenceEnergy.length < minimumSampleCount) return [];
 
-    const beforeAverageKwh = average(before);
-    const afterAverageKwh = average(after);
-    const changeKwh = afterAverageKwh - beforeAverageKwh;
+    const referenceAverageKwh = average(referenceEnergy);
+    const comparisonAverageKwh = average(comparisonEnergy);
+    const changeKwh = comparisonAverageKwh - referenceAverageKwh;
+    const hasComparableCosts = pricedDayCount >= minimumSampleCount
+      && pricedDayCount === referenceEnergy.length;
+    const costChangeSek = hasComparableCosts
+      ? comparisonCostSek - referenceCostSek
+      : null;
     return [{
       eventId: event.id,
       eventDate: event.eventDate,
       eventText: event.eventText,
-      beforeAverageKwh,
-      afterAverageKwh,
+      referenceStartDate,
+      referenceEndDate,
+      comparisonStartDate,
+      comparisonEndDate,
+      referenceAverageKwh,
+      comparisonAverageKwh,
       changeKwh,
-      changePercent: beforeAverageKwh === 0
+      changePercent: referenceAverageKwh === 0
         ? 0
-        : (changeKwh / beforeAverageKwh) * 100,
-      annualizedChangeKwh: changeKwh * 365,
-      beforeSampleCount: before.length,
-      afterSampleCount: after.length,
-      windowDays,
+        : (changeKwh / referenceAverageKwh) * 100,
+      referenceTotalKwh: referenceEnergy.reduce((sum, value) => sum + value, 0),
+      comparisonTotalKwh: comparisonEnergy.reduce((sum, value) => sum + value, 0),
+      referenceCostSek: hasComparableCosts ? referenceCostSek : null,
+      comparisonCostSek: hasComparableCosts ? comparisonCostSek : null,
+      costChangeSek,
+      costChangePercent: hasComparableCosts && referenceCostSek !== 0
+        ? (costChangeSek! / referenceCostSek) * 100
+        : null,
+      matchedDayCount: referenceEnergy.length,
+      pricedDayCount,
+      windowMonths,
+      completeWindow: latestDate !== null && latestDate >= comparisonEndDate,
     }];
   });
 }

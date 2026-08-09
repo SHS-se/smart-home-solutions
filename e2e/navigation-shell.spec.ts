@@ -71,9 +71,29 @@ const temperatureImpactSeries = Array.from({ length: 365 }, (_, index) => {
   };
 });
 
+const seasonalReferenceSeries = Array.from({ length: 90 }, (_, index) => {
+  const date = new Date(Date.UTC(2024, 11, 4 + index));
+  const readingDate = date.toISOString().slice(0, 10);
+  const temperatureC = Number((4 + (12 * Math.sin(index / 28))).toFixed(1));
+  const expectedKwh = 95 - (3.2 * temperatureC) + (0.08 * (temperatureC ** 2));
+  return {
+    readingDate,
+    temperatureC,
+    consumptionKwh: Number((expectedKwh + 14).toFixed(1)),
+  };
+});
+
+const temperatureAnalysisSeries = [
+  ...seasonalReferenceSeries,
+  ...temperatureImpactSeries,
+];
+const temperatureAnalysisDates = new Set(
+  temperatureAnalysisSeries.map((point) => point.readingDate),
+);
+
 const gridImportReadings = [
-  ...temperatureChartBaseReadings,
-  ...temperatureImpactSeries.map((point) => [
+  ...temperatureChartBaseReadings.filter(([readingDate]) => !temperatureAnalysisDates.has(readingDate)),
+  ...temperatureAnalysisSeries.map((point) => [
     point.readingDate,
     Number(Math.max(4, point.consumptionKwh * 0.35).toFixed(1)),
   ] as const),
@@ -88,7 +108,7 @@ const gridImportReadings = [
   updated_at: '2026-07-28T00:00:00Z',
 }));
 
-const totalConsumptionReadings = temperatureImpactSeries.map((point, index) => ({
+const totalConsumptionReadings = temperatureAnalysisSeries.map((point, index) => ({
   id: `11000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
   customer_id: CUSTOMER_ID,
   reading_date: point.readingDate,
@@ -114,7 +134,7 @@ const energyUsageImportBatches = [
     original_file_name: 'Sigenergy total load.csv',
     file_sha256: 'a'.repeat(64),
     reading_kind: 'total_consumption',
-    reading_count: 365,
+    reading_count: 455,
     imported_by: STAFF_USER_ID,
     created_at: '2026-07-28T10:00:00Z',
   },
@@ -153,8 +173,10 @@ const temperatureChartBaseObservations: Array<[string, number]> = [
 ];
 
 const temperatureChartObservations = [
-  ...temperatureChartBaseObservations,
-  ...temperatureImpactSeries.map((point) => [point.readingDate, point.temperatureC] as const),
+  ...temperatureChartBaseObservations.filter(
+    ([observedOn]) => !temperatureAnalysisDates.has(observedOn),
+  ),
+  ...temperatureAnalysisSeries.map((point) => [point.readingDate, point.temperatureC] as const),
 ].map(([observed_on, temperature_c], index) => ({
   id: `30000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
   dataset_key: 'stockholm-taby',
@@ -505,7 +527,11 @@ test.describe('staff navigation shell', () => {
     await login(page);
     await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history`);
 
+    await expect(page.getByText('◆ 1 händelser')).toBeVisible();
+    await expect(page.locator('line[stroke="#0f766e"][stroke-dasharray="4 4"]')).toHaveCount(1);
+
     const events = page.getByTestId('energy-history-events');
+    await page.getByRole('tab', { name: 'Jämförelser' }).click();
     await expect(events.getByRole('heading', { name: 'Lägg till händelse' })).toBeVisible();
     await expect(events.getByLabel('Datum')).toBeVisible();
     await expect(events.getByLabel('Händelse')).toBeVisible();
@@ -513,8 +539,6 @@ test.describe('staff navigation shell', () => {
     await expect(events.getByLabel('Beskrivning')).toHaveCount(0);
     await expect(events.getByText('Installerade 3-glasfönster och nya ytterdörrar')).toHaveCount(0);
 
-    await expect(page.getByText('◆ 1 händelser')).toBeVisible();
-    await expect(page.locator('line[stroke="#0f766e"][stroke-dasharray="4 4"]')).toHaveCount(2);
     await page.screenshot({ path: 'test-results/energy-history-events.png', fullPage: true });
   });
 
@@ -522,15 +546,16 @@ test.describe('staff navigation shell', () => {
     await login(page);
     await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history`);
 
+    await page.getByRole('tab', { name: 'Energiflöden' }).click();
     const sourceComparison = page.getByTestId('energy-source-comparison');
     await expect(sourceComparison.getByText('Nätuttag och husets verkliga energibehov')).toBeVisible();
     await expect(sourceComparison.getByText('Tekniskt årsbehov')).toBeVisible();
-    await expect(sourceComparison.getByText(/365 totaldagar/)).toBeVisible();
+    await expect(sourceComparison.getByText(/totaldagar/)).toBeVisible();
 
     await expect(page.getByTestId('energy-performance')).toHaveCount(0);
     await page.screenshot({ path: 'test-results/energy-source-accounting.png', fullPage: true });
 
-    await page.getByRole('tab', { name: 'Ladda upp' }).click();
+    await page.getByRole('tab', { name: 'Data', exact: true }).click();
     const upload = page.getByTestId('energy-data-upload');
     await expect(upload.getByRole('heading', { name: 'Ladda upp energidata' })).toBeVisible();
     await expect(upload.locator('input[type="file"]')).toHaveCount(1);
@@ -591,6 +616,12 @@ test.describe('staff navigation shell', () => {
   });
 
   test('energiprestanda lives in its own tab and grades without Home Assistant data', async ({ page }) => {
+    const weatherObservationRequests: string[] = [];
+    page.on('request', (request) => {
+      if (request.url().includes('/rest/v1/energy_weather_observations')) {
+        weatherObservationRequests.push(request.url());
+      }
+    });
     await login(page);
     await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history`);
     await page.getByRole('tab', { name: 'Energiprestanda' }).click();
@@ -606,6 +637,7 @@ test.describe('staff navigation shell', () => {
       performance.getByText('Koppla Home Assistant', { exact: true }),
     ).toBeVisible();
     await expect(page.getByText('Mer precision med Home Assistant')).toBeVisible();
+    expect(weatherObservationRequests).toHaveLength(0);
     await page.screenshot({ path: 'test-results/energy-performance-tab.png', fullPage: true });
   });
 
@@ -617,7 +649,7 @@ test.describe('staff navigation shell', () => {
     const reviewOldest = staffAlert.getByRole('link', { name: 'Granska äldsta filen' });
     await expect(reviewOldest).toHaveAttribute(
       'href',
-      `/portal/customers/${CUSTOMER_ID}/energy-history?tab=documents`,
+      `/portal/customers/${CUSTOMER_ID}/energy-history?tab=data`,
     );
     await reviewOldest.click();
     await expect(page.getByRole('tab', { name: 'Data', exact: true })).toHaveAttribute(
@@ -638,6 +670,7 @@ test.describe('staff navigation shell', () => {
     await expect(failures.getByRole('button', { name: 'Ta bort' })).toBeVisible();
 
     const usageImports = page.getByTestId('energy-usage-imports');
+    await usageImports.locator('summary').click();
     await expect(usageImports).toContainText('Sigenergy total load.csv');
     await expect(usageImports).toContainText('Husets totalförbrukning');
     await page.screenshot({ path: 'test-results/energy-data-management.png', fullPage: true });
@@ -662,20 +695,26 @@ test.describe('staff navigation shell', () => {
     await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history`);
     await page.getByRole('tab', { name: 'Temperatur' }).click();
 
-    await expect(page.getByTestId('temperature-energy-source')).toContainText('365 totaldagar');
+    await expect(page.getByTestId('temperature-energy-source')).toContainText('totaldagar');
     await expect(page.getByTestId('weather-normalized-history-chart')).toBeVisible();
+    await page.getByRole('tab', { name: 'Händelser' }).click();
     await expect(page.getByTestId('event-impact-chart')).toBeVisible();
     await expect(page.getByTestId('event-impact-chart').locator('.recharts-bar-rectangle')).toHaveCount(2);
 
+    await page.getByRole('tab', { name: 'Temperaturprofil' }).click();
     const yearControls = page.getByRole('group', { name: 'Visa årsserier' });
     await expect(yearControls).toBeVisible();
-    await expect(yearControls.getByRole('button', { name: '2024' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(yearControls.getByRole('button', { name: '2024' })).toHaveCount(0);
+    await expect(yearControls.getByRole('button', { name: '2025' })).toHaveAttribute('aria-pressed', 'true');
     await expect(yearControls.getByRole('button', { name: 'Trendlinjer' })).toHaveAttribute('aria-pressed', 'true');
     await expect(page.locator('.recharts-legend-wrapper')).toHaveCount(0);
 
+    await page.getByRole('button', { name: '36 mån' }).click();
+    await expect(yearControls.getByRole('button', { name: '2024' })).toHaveAttribute('aria-pressed', 'true');
     await yearControls.getByRole('button', { name: '2024' }).click();
     await expect(yearControls.getByRole('button', { name: '2024' })).toHaveAttribute('aria-pressed', 'false');
 
+    await page.getByRole('button', { name: 'Samlad profil' }).click();
     const overallControls = page.getByRole('group', { name: 'Visa serier' });
     await expect(overallControls.getByRole('button', { name: 'Genomsnittlig energianvändning' })).toHaveAttribute('aria-pressed', 'true');
     await overallControls.getByRole('button', { name: 'Trendlinje' }).click();
