@@ -1,11 +1,11 @@
 import type {
   GeneratedPlan,
-  OptimisationPlanV1,
+  OptimisationPlanV2,
   PlanKey,
   PlannedSlot,
 } from '../../../supabase/functions/_shared/energy-optimisation';
 
-export type { GeneratedPlan, OptimisationPlanV1, PlanKey, PlannedSlot };
+export type { GeneratedPlan, OptimisationPlanV2, PlanKey, PlannedSlot };
 
 export interface ActualEnergySlot {
   start_ts: string;
@@ -17,10 +17,10 @@ export interface ActualEnergySlot {
   battery_discharge_kwh: number | null;
 }
 
-export function isOptimisationPlan(value: unknown): value is OptimisationPlanV1 {
+export function isOptimisationPlan(value: unknown): value is OptimisationPlanV2 {
   if (!value || typeof value !== 'object') return false;
-  const plan = value as Partial<OptimisationPlanV1>;
-  return plan.schema_version === 1
+  const plan = value as Partial<OptimisationPlanV2>;
+  return plan.schema_version === 2
     && plan.slot_minutes === 15
     && typeof plan.issued_at === 'string'
     && typeof plan.valid_until === 'string'

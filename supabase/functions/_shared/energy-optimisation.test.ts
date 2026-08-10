@@ -1,6 +1,6 @@
 import {
   generateOptimisationPlan,
-  type OptimisationSnapshotV1,
+  type OptimisationSnapshotV2,
   validateSnapshot,
 } from "./energy-optimisation.ts";
 
@@ -12,8 +12,8 @@ const assert: (condition: boolean, message: string) => asserts condition = (
 };
 
 const input = (
-  overrides: Partial<OptimisationSnapshotV1> = {},
-): OptimisationSnapshotV1 => {
+  overrides: Partial<OptimisationSnapshotV2> = {},
+): OptimisationSnapshotV2 => {
   const start = Date.parse("2026-08-10T08:00:00.000Z");
   const slots = Array.from({ length: 64 }, (_, index) => ({
     start: new Date(start + index * 15 * 60_000).toISOString(),
@@ -25,7 +25,15 @@ const input = (
     export_price_sek_per_kwh: index < 20 ? 0.2 + index / 200 : null,
   }));
   return {
-    schema_version: 1,
+    schema_version: 2,
+    mode: "live",
+    capabilities: {
+      pv: true,
+      battery: true,
+      pool: true,
+      boiler: true,
+      ev: false,
+    },
     snapshot_id: "00000000-0000-4000-8000-000000000001",
     captured_at: "2026-08-10T07:55:00.000Z",
     timezone: "Europe/Stockholm",
@@ -161,7 +169,7 @@ Deno.test("all scenarios use equal discrete contiguous service workloads", () =>
 
 Deno.test("prices stay directional and PV calibration is applied", () => {
   const snapshot = input();
-  snapshot.battery = { ...snapshot.battery, soc: 1, charge_max_w: 0 };
+  snapshot.battery = { ...snapshot.battery!, soc: 1, charge_max_w: 0 };
   const result = generateOptimisationPlan(
     snapshot,
     new Date("2026-08-10T07:55:00Z"),
@@ -187,6 +195,48 @@ Deno.test("prices stay directional and PV calibration is applied", () => {
           (exportSlot.export_price_sek_per_kwh ?? 0),
     ) < 1e-5,
     "export revenue did not use the export price",
+  );
+});
+
+Deno.test("homes without PV or a battery still receive a valid price-led plan", () => {
+  const snapshot = input({
+    capabilities: {
+      pv: false,
+      battery: false,
+      pool: true,
+      boiler: true,
+      ev: false,
+    },
+    battery: null,
+    sources: {
+      ...input().sources,
+      pv: null,
+      battery: null,
+    },
+    policy: {
+      battery_end_of_solar_target_soc: 0,
+      battery_target_is_hard: false,
+      terminal_soc_min: 0,
+      terminal_energy_value_sek_per_kwh: 0,
+    },
+    slots: input().slots.map((slot) => ({ ...slot, pv_forecast_w: 0 })),
+    pv_calibration: {
+      correction_factor_by_lead_day: [1, 1, 1, 1],
+      sample_count_by_lead_day: [0, 0, 0, 0],
+    },
+  });
+
+  assert(validateSnapshot(snapshot).length === 0, "optional capabilities rejected");
+  const result = generateOptimisationPlan(
+    snapshot,
+    new Date("2026-08-10T07:55:00Z"),
+  );
+  assert(result.battery === null, "a battery was invented");
+  assert(
+    result.plans.priority.slots.every((slot) =>
+      slot.battery_charge_w === 0 && slot.battery_discharge_w === 0
+    ),
+    "a disabled battery exchanged power",
   );
 });
 

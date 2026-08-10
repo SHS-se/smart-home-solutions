@@ -10,7 +10,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { authenticateDevice, sha256Hex } from "../_shared/ha-device-auth.ts";
 import {
   generateOptimisationPlan,
-  type OptimisationSnapshotV1,
+  type OptimisationSnapshotV2,
 } from "../_shared/energy-optimisation.ts";
 
 const corsHeaders = {
@@ -104,7 +104,7 @@ serve(async (req) => {
     }
 
     let actuals: IncomingActualSlot[] = [];
-    let snapshot: OptimisationSnapshotV1 | null = null;
+    let snapshot: OptimisationSnapshotV2 | null = null;
     try {
       const declaredLength = Number(req.headers.get("content-length") ?? 0);
       if (declaredLength > MAX_REQUEST_BYTES) {

@@ -1,6 +1,6 @@
 # Energy optimisation architecture
 
-Status: **core data path and shadow planner implemented; device executors remain to be commissioned**
+Status: **schema-v2 optional-capability path implemented; deployment, live commissioning and device executors remain**
 
 Date: **2026-08-10**
 
@@ -14,8 +14,9 @@ this repository, the current `shs_energy` Home Assistant integration in
 Build energy optimisation as three layers with deliberately different
 responsibilities:
 
-1. **SHS portal and backend — model and plan.** The portal owns home/device
-   configuration, customer preferences, tariffs, scenario simulation,
+1. **SHS portal and backend — model and plan.** The portal owns the product
+   home/device model and policy; Home Assistant owns local entity bindings. The
+   portal owns customer preferences, tariffs, scenario simulation,
    calibration, plan history, actuals, and savings reporting. A separate
    server-side deterministic planner owns the first rolling optimisation
    calculation. The React browser application does not run the production
@@ -55,8 +56,8 @@ static portal prototype:
 | Customer telemetry was compiled into the public JavaScript bundle | Deleted the hard-coded input snapshot. The selected `home_id` now reads a row protected by RLS. Pairing codes and active device tokens are bound to one home. |
 | The page was a manually copied snapshot | `shs_energy` now uploads completed 15-minute actuals and requests a fresh rolling plan hourly. The portal shows issue/expiry/source freshness and measured overlays. |
 | A/B/C used unequal work and fabricated a final partial day | Services have explicit earliest times and deadlines. Only deadlines inside the horizon create work; all scenarios use the same rounded integer slot count, and end-of-solar metrics omit an unfinished final local day. |
-| Pool, boiler and EV used fractional/chattering power and an invented 11 kW EV rate | Each service is a contiguous block of whole 15-minute slots respecting its configured measured/available power and minimum run. EV power is a required input. |
-| The 80% battery claim was not verified | End-of-solar and terminal SOC are simulation invariants. A missed hard target marks the plan infeasible and prevents local request entities from becoming active. |
+| Pool, boiler and EV used fractional/chattering power and an invented 11 kW EV rate | Each service is a contiguous block of whole 15-minute slots. EV power follows the configured current entity when available: the verified 5 A, three-phase setting is about 3.45 kW, not 11 kW. |
+| The 80% battery claim was not verified | End-of-solar and terminal SOC are simulation invariants. The 80% target is soft by default so it cannot silently reserve solar and force pool/hot-water work onto night import; explicitly making it hard retains fail-closed infeasibility checks. |
 | Export was valued with the import supplier price | Import and export are separate required timestamped entities, each combined with the correct grid direction. The integration rejects using the same entity for both. |
 | One August day was repeated as baseload | Baseload is the per-local-quarter median of recorder history after subtracting separately modelled loads; p10/p90 and sample counts are retained for explanation. |
 | Raw PV forecasts were treated as truth | HA keeps a compact forecast ledger, matches completed slots to actual solar, and publishes lead-day correction factors, sample counts, MAPE and bias. Raw and calibrated curves are both visible. |
@@ -64,6 +65,46 @@ static portal prototype:
 This is deliberately a **shadow/advisory release**. The integration exposes
 verified planned-power requests and measured reactive surplus, but it does not
 bypass existing thermostats, completion logic, manual overrides or interlocks.
+
+### 1.2 Configuration and customer capability decision
+
+Planning configuration is now deliberately smaller than reporting
+configuration:
+
+- **Off** keeps energy history and tariff exchange active without a planner or
+  repair warning.
+- **Live / automatic** reads aggregate meters from Home Assistant's Energy
+  Dashboard and discovers supported forecasts, battery and EV entities.
+- **Live / manual** exposes the same options in small capability-specific steps,
+  not one scrolling form.
+- **Demo** creates a clearly labelled synthetic plan. The integration refuses
+  to expose demo plan slots to executor automations.
+
+Solar, battery, pool, water heating and EV are independent optional
+capabilities in snapshot schema 2. A category mapped for reporting is not
+assumed controllable. Installation ratings still require measured or explicitly
+commissioned values; product defaults are limited to policy/orchestration facts
+such as 15-minute slots, efficiency starting values, and default time windows.
+
+The GUI is stored as a Home Assistant config entry in
+`.storage/core.config_entries`, but that file must never be hand-edited. The
+supported machine/AI surface is the read-only
+`shs_energy.discover_configuration` action and validated
+`shs_energy.apply_configuration` action. This makes MCP-based commissioning
+possible without granting an agent arbitrary file access.
+
+For the inspected home, automatic discovery has verified the following source
+set:
+
+| Capability | Verified source or value |
+|---|---|
+| Whole-home energy | Energy Dashboard grid/solar/battery balance, checked against `sensor.sigen_plant_total_load_consumption` |
+| PV forecast | Eight `sensor.meteo_solar_production_forecast_estimate_*` entities, 96 timestamped quarter-hours each; home location comes from HA because the entities do not repeat coordinates |
+| Price forecasts | Tibber `get_prices` supplies import energy; Nord Pool `get_prices_for_date` supplies SE3 export spot; SHS grid tariffs are then added once per direction |
+| Battery | 18.08 kWh, 8.8 kW charge, 9.6 kW discharge, live Sigen SOC, 13.2 kW plant/grid envelope |
+| Pool | `sensor.pool_heater_energy` plus `sensor.pool_pump_energy`; active measured power about 3.67 kW; `input_boolean.pool_heating` is the season gate |
+| Hot water | `sensor.hot_water_energy`; 3.0 kW installed rating remains an explicit commissioned fact |
+| EV | `sensor.car_charging_lifetime_energy`, Tesla cable/SOC/target/energy-remaining entities, and live charge-current entity; no departure entity exists, so the next configured default departure time is used |
 
 ## 2. Terms
 
@@ -143,13 +184,19 @@ prices and subscription status.
 The implementation in this change adds:
 
 - one-home pairing and token binding, including home-scoped tariff lookup;
+- schema 2 with optional solar/battery/device capabilities and explicit
+  `live`/`demo` mode;
+- automatic aggregate-meter discovery from the Energy Dashboard, plus a short
+  multi-step advanced flow and validated AI/MCP actions;
 - a strict 15-minute contract for timestamped PV and separate supplier import
   and export forecasts;
 - explicit market area, PV coordinates, source units, freshness, battery/grid
   capabilities, service deadlines, whole-slot minimum runs, and EV state;
 - complete 15-minute recorder bins, a weekday/weekend median baseload profile,
   daily remaining-service estimates, and conservative lead-day PV calibration;
-- an hourly 72-hour plan request plus quarter-hour actual upload;
+- an hourly 72-hour plan request plus quarter-hour actual upload, with
+  whole-home consumption derived from the grid/solar/battery energy balance
+  when no separate total meter is configured;
 - local cached plan/status and bounded boiler, pool and EV request sensors; and
 - a live measured-export signal for a single reactive executor.
 
@@ -273,8 +320,8 @@ constraints.
 The integration owns:
 
 - an explicit one-token-to-one-home binding;
-- an options/config flow that maps portal device IDs to HA entities and declares
-  local capabilities;
+- an automatic options/config flow whose metering source of truth is the HA
+  Energy Dashboard, with small manual steps for unusual installations;
 - provider adapters that return canonical 15-minute PV, weather, and supplier
   price series regardless of whether the source uses attributes or service
   responses;
@@ -296,9 +343,11 @@ A planned-request entity is unavailable when the planner has no authority.
 `0 W` is used only inside a valid binding slot to mean an explicit off request;
 this distinction prevents an outage from masquerading as a stop command.
 
-The integration does **not** guess a missing device rating, target, price, SOC,
-or temperature. A missing required input makes that device ineligible and is
-reported both as an HA repair issue and in the portal.
+The integration does **not** guess a missing installation rating, live state,
+price or temperature. A missing device-specific fact makes only that optional
+capability ineligible. Product-owned policy defaults are applied at runtime and
+persisted when configuration is saved, so an unset optional feature does not
+turn the whole integration into a wall of missing internal field names.
 
 The full 72-hour plan should remain in integration storage rather than a large
 recorder-backed sensor attribute. HA entities expose plan status, current/next
@@ -362,11 +411,15 @@ contract.
   stated overlap. A shorter supplier forecast shortens the binding price
   horizon; it is never extended by repeating a value.
 - Every source carries `observed_at` or `issued_at`, `valid_until`, and quality.
-- PV adapters declare and match the HA home latitude/longitude; import and
-  export adapters independently declare the same `SE1`–`SE4` market area.
-  Configured coordinates without matching source metadata are not accepted.
-- Validation errors name the exact field/device/source. There are no silent
-  numerical defaults or legacy aliases in the production contract.
+- PV location is the configured HA home location. An adapter-provided location,
+  when present, must match it; a canonical timestamped-watts provider need not
+  duplicate location in every sensor. Import and export adapters independently
+  use the same discovered or commissioned `SE1`–`SE4` market area.
+- Validation errors name the exact field/device/source. Versioned product
+  defaults are allowed only for visible policy/orchestration choices such as
+  soft targets, efficiency starting points and normal time windows. Equipment
+  ratings, entity bindings, locations and electrical limits are never guessed,
+  and the production contract has no legacy aliases.
 
 ### 5.2 Home/device capability input
 
@@ -402,6 +455,11 @@ Each solve receives:
 - work already completed in the relevant service period;
 - plan-versus-actual state from the preceding slot; and
 - the terminal assumptions used beyond the binding horizon.
+
+Schema 2 additionally carries `mode`, an explicit capability map, nullable PV
+and battery provenance, and a nullable battery model. Disabled capabilities
+must contribute zero power and cannot appear in a service request. Demo sources
+are marked `synthetic` and are accepted only when `mode=demo`.
 
 Only snapshot data needed for the solve is uploaded. High-frequency reactive
 control remains local; the backend receives 15-minute actuals and discrete
@@ -762,8 +820,9 @@ states, and all reason codes.
 
 1. **Objective policy:** resolve the self-consumption-versus-money conflict in
    section 8.
-2. **Home scope:** bind each HA token and every reading/plan to a `home_id` and
-   define multiple-HA-per-home and multiple-home-per-customer behaviour.
+2. **Multiple-instance policy:** token/read/plan binding to one `home_id` is
+   implemented; still define whether multiple HA instances may represent one
+   home and which instance is authoritative.
 3. **Control authority:** confirm that optimisation is advisory for thermal and
    service loads, and define when battery direct control is permitted.
 4. **Global precedence:** approve the conflict order in section 6.3 and define
@@ -790,13 +849,15 @@ states, and all reason codes.
 
 ### 11.2 Needed to parameterise Phil's house
 
-- a fresh inventory mapping every portal device to its HA state, power, energy,
-  actuator, availability, and confirmation entity;
+- the Energy Dashboard and current planner source inventory is now reconciled;
+  actuator, availability and command-confirmation bindings remain for each
+  executor;
 - meter-boundary reconciliation, including the negative unmetered helper and
   the unidentified Shelly channel;
-- battery usable capacity/efficiency/reserve and Sigen write-mode semantics;
-- EV charge current granularity, charge efficiency, departure policy, and SOC
-  reliability;
+- battery capacity/power/SOC sources are verified; usable-vs-rated capacity,
+  efficiency calibration, reserve policy and Sigen write-mode semantics remain;
+- EV charge-current granularity and live power are verified; charge efficiency,
+  default-departure policy and SOC reliability remain commissioning decisions;
 - boiler tank state, hard temperature bounds, losses, and hygiene policy;
 - pool water state, cover/season policy, loss model, filtration requirement,
   and hard bounds;
@@ -805,8 +866,8 @@ states, and all reason codes.
   consistent IR power thresholds;
 - at least a full heating season of base-load and zone response history, or an
   explicit lower-confidence commissioning model until that history exists;
-- an agreed 15-minute supplier/PV forecast adapter and source-freshness rules;
-  and
+- live commissioning evidence for the implemented Tibber, Nord Pool and PV
+  adapters, including source-freshness and publication-gap behaviour; and
 - a current export of all Node-RED control, pool, EV, IR, and override flows.
 
 ### 11.3 Forecast horizon specification
@@ -968,11 +1029,13 @@ Required invariants include:
 
 1. Deploy the migration, edge functions and portal to the test environment;
    install the matching integration build and pair it to the intended home.
-2. Commission the explicit Phil-house inputs: PV entity and coordinates, SE
-   price area, separate import/export forecast entities, battery/grid limits,
-   pool season state and power, boiler settings, and EV state/capabilities.
-3. Decide the objective and hard/soft target semantics, particularly whether
-   80% end-of-solar SOC is an unconditional reserve or a priced preference.
+2. Install integration `0.6.0-beta.1`, run **Live / automatic**, then apply the
+   two explicit installed ratings that discovery cannot infer while equipment
+   is off: 3.0 kW boiler and the confirmed pool rating if its commissioning
+   measurement is unavailable.
+3. Keep the 80% end-of-solar target as a priced preference during shadow mode;
+   make it hard only after replay demonstrates that the resulting displaced
+   loads and imports match the intended customer promise.
 4. Obtain a fresh Node-RED export and create one visible, confirmation-aware
    executor per device that consumes the planned and reactive request entities.
 5. Capture at least 30 observe-only days, reconcile the model against HA's

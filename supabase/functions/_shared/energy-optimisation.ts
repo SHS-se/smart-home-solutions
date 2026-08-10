@@ -8,8 +8,8 @@
  * verified before it may be published as `ready`.
  */
 
-export const OPTIMISATION_SCHEMA_VERSION = 1;
-export const OPTIMISATION_MODEL_VERSION = "quarter-hour-heuristic-v1";
+export const OPTIMISATION_SCHEMA_VERSION = 2;
+export const OPTIMISATION_MODEL_VERSION = "quarter-hour-heuristic-v2";
 export const SLOT_MINUTES = 15;
 export const SLOT_HOURS = SLOT_MINUTES / 60;
 export const MAX_FORECAST_SLOTS = 72 * 4;
@@ -28,13 +28,22 @@ const SOURCE_MAX_AGE_MS = {
 
 export type PlanKey = "baseline" | "priority" | "cost";
 export type DeviceKey = "pool" | "boiler" | "ev";
+export type PlanMode = "live" | "demo";
+
+export interface OptimisationCapabilities {
+  pv: boolean;
+  battery: boolean;
+  pool: boolean;
+  boiler: boolean;
+  ev: boolean;
+}
 
 export interface SourceProvenance {
   provider: string;
   entity_ids: string[];
   issued_at: string;
   valid_until: string;
-  quality: "measured" | "calibrated" | "provider_raw";
+  quality: "measured" | "calibrated" | "provider_raw" | "synthetic";
   sample_count?: number;
   mape_percent?: number;
   bias_percent?: number;
@@ -78,25 +87,27 @@ export interface ServiceInput {
   baseline_preferred_start?: string;
 }
 
-export interface OptimisationSnapshotV1 {
-  schema_version: 1;
+export interface OptimisationSnapshotV2 {
+  schema_version: 2;
+  mode: PlanMode;
+  capabilities: OptimisationCapabilities;
   snapshot_id: string;
   captured_at: string;
   timezone: string;
   slot_minutes: 15;
   slots: ForecastSlotInput[];
   sources: {
-    pv: SourceProvenance;
+    pv: SourceProvenance | null;
     base_load: SourceProvenance;
     import_price: SourceProvenance;
     export_price: SourceProvenance;
-    battery: SourceProvenance;
+    battery: SourceProvenance | null;
   };
   pv_calibration: {
     correction_factor_by_lead_day: number[];
     sample_count_by_lead_day: number[];
   };
-  battery: BatteryInput;
+  battery: BatteryInput | null;
   grid: {
     import_limit_w: number;
     export_limit_w: number;
@@ -165,8 +176,10 @@ export interface GeneratedPlan {
   service_slots: Record<string, number[]>;
 }
 
-export interface OptimisationPlanV1 {
-  schema_version: 1;
+export interface OptimisationPlanV2 {
+  schema_version: 2;
+  mode: PlanMode;
+  capabilities: OptimisationCapabilities;
   model_version: string;
   plan_id: string;
   snapshot_id: string;
@@ -177,11 +190,11 @@ export interface OptimisationPlanV1 {
   slot_minutes: 15;
   status: "ready" | "incomplete" | "infeasible";
   validation_errors: string[];
-  sources: OptimisationSnapshotV1["sources"];
-  pv_calibration: OptimisationSnapshotV1["pv_calibration"];
-  policy: OptimisationSnapshotV1["policy"];
-  battery: BatteryInput;
-  grid: OptimisationSnapshotV1["grid"];
+  sources: OptimisationSnapshotV2["sources"];
+  pv_calibration: OptimisationSnapshotV2["pv_calibration"];
+  policy: OptimisationSnapshotV2["policy"];
+  battery: BatteryInput | null;
+  grid: OptimisationSnapshotV2["grid"];
   services: ServiceInput[];
   service_requirement_sample_days: Record<string, number>;
   plans: Record<PlanKey, GeneratedPlan>;
@@ -250,10 +263,21 @@ function completedLocalDays(
   );
 }
 
-export function validateSnapshot(snapshot: OptimisationSnapshotV1): string[] {
+export function validateSnapshot(snapshot: OptimisationSnapshotV2): string[] {
   const errors: string[] = [];
   if (snapshot?.schema_version !== OPTIMISATION_SCHEMA_VERSION) {
-    errors.push("schema_version must be 1");
+    errors.push("schema_version must be 2");
+  }
+  if (!(["live", "demo"] as const).includes(snapshot?.mode)) {
+    errors.push("mode must be live or demo");
+  }
+  const capabilityKeys = ["pv", "battery", "pool", "boiler", "ev"] as const;
+  if (
+    !snapshot?.capabilities || capabilityKeys.some((key) =>
+      typeof snapshot.capabilities[key] !== "boolean"
+    )
+  ) {
+    errors.push("capabilities are invalid");
   }
   if (snapshot?.slot_minutes !== SLOT_MINUTES) {
     errors.push("slot_minutes must be 15");
@@ -329,9 +353,14 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV1): string[] {
   }
 
   const battery = snapshot?.battery;
-  if (!battery || !inRange(battery.capacity_kwh, 0.1, 1_000)) {
-    errors.push("battery.capacity_kwh is invalid");
-  } else {
+  if (snapshot?.capabilities?.battery && !battery) {
+    errors.push("battery is required when the capability is enabled");
+  } else if (!snapshot?.capabilities?.battery && battery !== null) {
+    errors.push("battery must be null when the capability is disabled");
+  } else if (battery) {
+    if (!inRange(battery.capacity_kwh, 0.1, 1_000)) {
+      errors.push("battery.capacity_kwh is invalid");
+    }
     if (
       !inRange(battery.min_soc, 0, 1) || !inRange(battery.max_soc, 0, 1) ||
       battery.min_soc >= battery.max_soc
@@ -366,6 +395,13 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV1): string[] {
     !inRange(snapshot.policy.terminal_energy_value_sek_per_kwh, -20, 100)
   ) {
     errors.push("policy is invalid");
+  } else if (!battery && (
+    snapshot.policy.battery_target_is_hard ||
+    snapshot.policy.battery_end_of_solar_target_soc !== 0 ||
+    snapshot.policy.terminal_soc_min !== 0 ||
+    snapshot.policy.terminal_energy_value_sek_per_kwh !== 0
+  )) {
+    errors.push("battery policy must be disabled when no battery is configured");
   } else if (
     battery && (
       !inRange(
@@ -409,6 +445,8 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV1): string[] {
     ids.add(service?.id);
     if (!["pool", "boiler", "ev"].includes(service?.device)) {
       errors.push(`services[${index}].device is invalid`);
+    } else if (!snapshot?.capabilities?.[service.device]) {
+      errors.push(`services[${index}] uses a disabled capability`);
     }
     const earliest = isoMs(service?.earliest_start);
     const deadline = isoMs(service?.deadline);
@@ -432,23 +470,25 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV1): string[] {
     }
   }
 
-  for (
-    const key of [
-      "pv",
-      "base_load",
-      "import_price",
-      "export_price",
-      "battery",
-    ] as const
-  ) {
+  const requiredSources = ["base_load", "import_price", "export_price"] as const;
+  const optionalSources = ["pv", "battery"] as const;
+  for (const key of [...requiredSources, ...optionalSources]) {
     const source = snapshot?.sources?.[key];
+    const enabled = key === "pv" || key === "battery"
+      ? snapshot?.capabilities?.[key]
+      : true;
+    if (!enabled) {
+      if (source !== null) errors.push(`sources.${key} must be null`);
+      continue;
+    }
     if (
       !source?.provider || !Array.isArray(source?.entity_ids) ||
       source.entity_ids.length === 0 ||
       source.entity_ids.some((entityId) =>
         typeof entityId !== "string" || !entityId
       ) ||
-      !["measured", "calibrated", "provider_raw"].includes(source?.quality) ||
+      !["measured", "calibrated", "provider_raw", "synthetic"].includes(source?.quality) ||
+      (source?.quality === "synthetic" && snapshot?.mode !== "demo") ||
       !Number.isFinite(isoMs(source?.issued_at)) ||
       !Number.isFinite(isoMs(source?.valid_until))
     ) {
@@ -468,11 +508,11 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV1): string[] {
     }
   }
   const pvLocation = snapshot?.sources?.pv?.location;
-  if (
+  if (snapshot?.capabilities?.pv && (
     !finite(pvLocation?.latitude) || !finite(pvLocation?.longitude) ||
     !inRange(pvLocation.latitude, -90, 90) ||
     !inRange(pvLocation.longitude, -180, 180)
-  ) {
+  )) {
     errors.push("sources.pv.location is required");
   }
   const importArea = snapshot?.sources?.import_price?.location?.market_area;
@@ -491,6 +531,12 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV1): string[] {
     )
   ) {
     errors.push("import and export prices must use separate source entities");
+  }
+  if (
+    !snapshot?.capabilities?.pv &&
+    (snapshot?.slots ?? []).some((slot) => slot.pv_forecast_w !== 0)
+  ) {
+    errors.push("PV forecast must be zero when the capability is disabled");
   }
   const factors = snapshot?.pv_calibration?.correction_factor_by_lead_day;
   const counts = snapshot?.pv_calibration?.sample_count_by_lead_day;
@@ -517,7 +563,7 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV1): string[] {
   return [...new Set(errors)];
 }
 
-function preparedSlots(snapshot: OptimisationSnapshotV1): PreparedSlot[] {
+function preparedSlots(snapshot: OptimisationSnapshotV2): PreparedSlot[] {
   const captured = isoMs(snapshot.captured_at);
   let priceGapSeen = false;
   return snapshot.slots.map((slot, index) => {
@@ -584,7 +630,7 @@ function emptySchedule(length: number): Schedule {
 function scheduleServices(
   key: PlanKey,
   slots: PreparedSlot[],
-  snapshot: OptimisationSnapshotV1,
+  snapshot: OptimisationSnapshotV2,
   reservedW: number[],
 ): { schedule: Schedule; errors: string[] } {
   const schedule = emptySchedule(slots.length);
@@ -672,11 +718,11 @@ function scheduleServices(
 
 function batteryReservation(
   slots: PreparedSlot[],
-  snapshot: OptimisationSnapshotV1,
+  snapshot: OptimisationSnapshotV2,
 ): { reservedW: number[]; protectedSoc: (number | null)[] } {
   const reservedW = new Array(slots.length).fill(0);
   const protectedSoc: (number | null)[] = new Array(slots.length).fill(null);
-  if (!snapshot.policy.battery_target_is_hard) {
+  if (!snapshot.battery || !snapshot.policy.battery_target_is_hard) {
     return { reservedW, protectedSoc };
   }
 
@@ -761,11 +807,20 @@ function batteryReservation(
 
 function simulate(
   slots: PreparedSlot[],
-  snapshot: OptimisationSnapshotV1,
+  snapshot: OptimisationSnapshotV2,
   schedule: Schedule,
   protectedSoc: (number | null)[],
 ): { slots: PlannedSlot[]; summary: PlanSummary; errors: string[] } {
-  const battery = snapshot.battery;
+  const battery = snapshot.battery ?? {
+    capacity_kwh: 1,
+    soc: 0,
+    min_soc: 0,
+    max_soc: 0,
+    charge_max_w: 0,
+    discharge_max_w: 0,
+    charge_efficiency: 1,
+    discharge_efficiency: 1,
+  };
   let soc = battery.soc;
   let socLow = soc;
   const output: PlannedSlot[] = [];
@@ -1026,7 +1081,7 @@ function simulate(
 function buildPlan(
   key: PlanKey,
   slots: PreparedSlot[],
-  snapshot: OptimisationSnapshotV1,
+  snapshot: OptimisationSnapshotV2,
   reservedW: number[],
   protectedSoc: (number | null)[],
 ): GeneratedPlan {
@@ -1059,9 +1114,9 @@ function buildPlan(
 }
 
 export function generateOptimisationPlan(
-  snapshot: OptimisationSnapshotV1,
+  snapshot: OptimisationSnapshotV2,
   now = new Date(),
-): OptimisationPlanV1 {
+): OptimisationPlanV2 {
   const validationErrors = validateSnapshot(snapshot);
   const snapshotAge = now.getTime() - isoMs(snapshot.captured_at);
   if (
@@ -1127,7 +1182,9 @@ export function generateOptimisationPlan(
     : "ready";
 
   return {
-    schema_version: 1,
+    schema_version: 2,
+    mode: snapshot.mode,
+    capabilities: snapshot.capabilities,
     model_version: OPTIMISATION_MODEL_VERSION,
     // One snapshot produces one deterministic plan identity, so retries cannot
     // append duplicate run-history rows.
