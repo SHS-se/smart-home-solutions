@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Area,
   CartesianGrid,
@@ -31,12 +32,19 @@ import { createWebsiteDemoActuals, createWebsiteDemoPlan } from '@/lib/energy-sh
 interface LoadShiftTabProps {
   customerId?: string;
   homeId: string | null;
+  accountPath: string;
 }
 
 interface CurrentRow {
   plan: OptimisationPlanV3;
   captured_at: string;
   updated_at: string;
+}
+
+interface HomeAssistantConnection {
+  device_name: string;
+  home_id: string;
+  last_seen_at: string | null;
 }
 
 const COLORS = {
@@ -73,10 +81,11 @@ const scenarioFingerprint = (plan: GeneratedPlan) => JSON.stringify({
   ]),
 });
 
-const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId }) => {
+const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, accountPath }) => {
   const { t } = useLanguage();
   const [current, setCurrent] = useState<CurrentRow | null>(null);
   const [actuals, setActuals] = useState<ActualEnergySlot[]>([]);
+  const [connections, setConnections] = useState<HomeAssistantConnection[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<'live' | 'demo'>('live');
@@ -87,6 +96,7 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId }) => {
     if (!customerId || !homeId) {
       setCurrent(null);
       setActuals([]);
+      setConnections([]);
       return;
     }
     if (!background) setLoading(true);
@@ -95,7 +105,7 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId }) => {
       const toMs = Math.floor(Date.now() / (15 * 60_000)) * 15 * 60_000;
       const from = new Date(toMs - 24 * 60 * 60_000).toISOString();
       const to = new Date(toMs).toISOString();
-      const [planResult, actualResult] = await Promise.all([
+      const [planResult, actualResult, connectionResult] = await Promise.all([
         supabase
           .from('energy_optimisation_current')
           .select('plan, captured_at, updated_at')
@@ -110,12 +120,21 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId }) => {
           .gte('start_ts', from)
           .lt('start_ts', to)
           .order('start_ts'),
+        supabase
+          .from('ha_device_tokens')
+          .select('device_name, home_id, last_seen_at')
+          .eq('customer_id', customerId)
+          .is('revoked_at', null)
+          .order('created_at', { ascending: false }),
       ]);
       const { data, error: planError } = planResult;
       if (planError) throw planError;
       const { data: actualRows, error: actualError } = actualResult;
       if (actualError) throw actualError;
+      const { data: connectionRows, error: connectionError } = connectionResult;
+      if (connectionError) throw connectionError;
       setActuals(actualRows ?? []);
+      setConnections((connectionRows ?? []) as HomeAssistantConnection[]);
       if (!data) {
         setCurrent(null);
         return;
@@ -152,6 +171,7 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId }) => {
     () => createWebsiteDemoActuals(demoReferenceTime),
     [demoReferenceTime],
   );
+  const activeConnection = connections.find(connection => connection.home_id === homeId);
 
   let content: React.ReactNode;
   if (view === 'demo') {
@@ -176,21 +196,43 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId }) => {
       </Alert>
     );
   } else if (!current) {
+    const hasConnectionForAnotherHome = connections.length > 0 && !activeConnection;
     content = (
       <div className="space-y-6">
         <Card>
           <CardContent className="space-y-4 py-8">
             <div>
-              <p className="font-medium">{t('Väntar på den första liveplanen', 'Waiting for the first live plan')}</p>
+              <p className="font-medium">
+                {activeConnection
+                  ? t('Home Assistant är ansluten — väntar på den första godkända planen', 'Home Assistant is connected — waiting for the first accepted plan')
+                  : hasConnectionForAnotherHome
+                    ? t('Home Assistant är ansluten till ett annat hem', 'Home Assistant is connected to another home')
+                    : t('Det här hemmet har ingen aktiv Home Assistant-anslutning', 'This home has no active Home Assistant connection')}
+              </p>
               <p className="mt-1 text-sm text-muted-foreground">
-                {t(
-                  'Home Assistant skickar nästa verifierade 15-minutersplan automatiskt. Den här sidan kontrollerar nu efter ny data var 30:e sekund.',
-                  'Home Assistant will send the next verified 15-minute plan automatically. This page now checks for new data every 30 seconds.',
-                )}
+                {activeConnection
+                  ? t(
+                    `Anslutningen ${activeConnection.device_name} sågs senast ${activeConnection.last_seen_at ? new Date(activeConnection.last_seen_at).toLocaleString() : 'aldrig'}. Portalen kontrollerar efter en plan var 30:e sekund.`,
+                    `The ${activeConnection.device_name} connection was last seen ${activeConnection.last_seen_at ? new Date(activeConnection.last_seen_at).toLocaleString() : 'never'}. The portal checks for a plan every 30 seconds.`,
+                  )
+                  : hasConnectionForAnotherHome
+                    ? t(
+                      'Den aktiva anslutningen är bunden till ett annat hem. Välj det hemmet ovan eller skapa en anslutning för det valda hemmet.',
+                      'The active connection is bound to another home. Select that home above or create a connection for the selected home.',
+                    )
+                    : t(
+                      'Skapa en parningskod på kontosidan och anslut Smart Home Solutions Energy i Home Assistant.',
+                      'Create a pairing code on the Account page and connect Smart Home Solutions Energy in Home Assistant.',
+                    )}
               </p>
               {lastCheckedAt && <p className="mt-2 text-xs text-muted-foreground">{t('Senast kontrollerad', 'Last checked')} {new Date(lastCheckedAt).toLocaleTimeString()}</p>}
             </div>
             <div className="flex flex-wrap gap-2">
+              {!activeConnection && (
+                <Button size="sm" variant="outline" asChild>
+                  <Link to={accountPath}>{t('Öppna Home Assistant-anslutningar', 'Open Home Assistant connections')}</Link>
+                </Button>
+              )}
               <Button size="sm" onClick={() => setView('demo')}>
                 <Sparkles className="mr-2 h-4 w-4" />
                 {t('Visa exempelhemmet', 'View example home')}
