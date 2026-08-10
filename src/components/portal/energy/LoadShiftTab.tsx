@@ -23,7 +23,7 @@ import {
   isOptimisationPlan,
   type ActualEnergySlot,
   type GeneratedPlan,
-  type OptimisationPlanV2,
+  type OptimisationPlanV3,
   type PlanKey,
 } from '@/lib/energy-shift/contracts';
 
@@ -33,7 +33,7 @@ interface LoadShiftTabProps {
 }
 
 interface CurrentRow {
-  plan: OptimisationPlanV2;
+  plan: OptimisationPlanV3;
   captured_at: string;
   updated_at: string;
 }
@@ -43,6 +43,7 @@ const COLORS = {
   boiler: '#38bdf8',
   pool: '#14b8a6',
   ev: '#a78bfa',
+  evCurrent: '#6d28d9',
   pv: '#f59e0b',
   pvRaw: '#fbbf24',
   soc: '#f43f5e',
@@ -185,6 +186,7 @@ const PlanView: React.FC<{
       boiler: slot.boiler_w,
       pool: slot.pool_w,
       ev: slot.ev_w,
+      evCurrent: slot.ev_target_current_a,
       soc: slot.battery_soc * 100,
       gridImport: slot.grid_import_w,
       gridExport: slot.grid_export_w,
@@ -199,6 +201,7 @@ const PlanView: React.FC<{
     .map(({ index }) => index);
   const hasBattery = plan.capabilities.battery && plan.battery !== null;
   const hasPv = plan.capabilities.pv;
+  const hasVariableEv = plan.services.some(service => service.control.type === 'discrete_current');
   const isDemo = plan.mode === 'demo';
   const solarDays = hasBattery ? Object.keys(active.summary.battery_end_of_solar_soc) : [];
   const sourceStale = Object.entries(plan.sources)
@@ -207,6 +210,8 @@ const PlanView: React.FC<{
   const bindingExpired = Date.now() >= Date.parse(plan.binding_until);
   const ready = !stale && !bindingExpired && plan.status === 'ready' && active.status === 'ready' && sourceStale.length === 0;
   const pct = (value: number) => `${(value * 100).toFixed(0)}%`;
+  const batterySocLabel = t('Batteri SOC', 'Battery SOC');
+  const evCurrentLabel = t('Bilens målström', 'EV target current');
 
   return (
     <div className="space-y-6">
@@ -285,6 +290,7 @@ const PlanView: React.FC<{
               <XAxis dataKey="i" type="number" domain={[0, chartData.length - 1]} ticks={ticks} tickFormatter={index => chartData[index]?.label ?? ''} tick={{ fontSize: 11 }} interval={0} />
               <YAxis yAxisId="power" tick={{ fontSize: 11 }} tickFormatter={watts => `${(watts / 1_000).toFixed(0)}`} label={{ value: 'kW', angle: -90, position: 'insideLeft', fontSize: 11 }} />
               <YAxis yAxisId="soc" orientation="right" domain={[0, 100]} tick={{ fontSize: 11 }} tickFormatter={value => `${value}%`} />
+              <YAxis yAxisId="current" hide domain={[0, 'dataMax + 1']} />
               {bindingIndex < chartData.length && <ReferenceArea yAxisId="power" x1={bindingIndex} x2={chartData.length - 1} fill="currentColor" className="text-muted" fillOpacity={0.24} />}
               {hasBattery && <ReferenceLine yAxisId="soc" y={plan.policy.battery_end_of_solar_target_soc * 100} stroke={COLORS.soc} strokeDasharray="3 3" strokeOpacity={0.45} />}
               {hasPv && <Area yAxisId="power" type="monotone" dataKey="pv" name={t('Kalibrerad solprognos', 'Calibrated PV')} stroke={COLORS.pv} fill={COLORS.pv} fillOpacity={0.14} dot={false} />}
@@ -295,10 +301,11 @@ const PlanView: React.FC<{
               <Area yAxisId="power" type="step" dataKey="boiler" stackId="load" name={t('Varmvatten', 'Hot water')} fill={COLORS.boiler} strokeWidth={0} />
               <Area yAxisId="power" type="step" dataKey="pool" stackId="load" name={t('Pool', 'Pool')} fill={COLORS.pool} strokeWidth={0} />
               <Area yAxisId="power" type="step" dataKey="ev" stackId="load" name={t('Bil', 'EV')} fill={COLORS.ev} strokeWidth={0} />
+              {hasVariableEv && <Line yAxisId="current" type="stepAfter" dataKey="evCurrent" name={evCurrentLabel} stroke={COLORS.evCurrent} strokeWidth={2} dot={false} />}
               <Line yAxisId="power" type="step" dataKey="gridImport" name={t('Importeffekt', 'Grid import')} stroke={COLORS.import} dot={false} />
               <Line yAxisId="power" type="step" dataKey="gridExport" name={t('Exporteffekt', 'Grid export')} stroke={COLORS.export} dot={false} />
-              {hasBattery && <Line yAxisId="soc" type="monotone" dataKey="soc" name={t('Batteri SOC', 'Battery SOC')} stroke={COLORS.soc} strokeWidth={2} dot={false} />}
-              <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} labelFormatter={index => chartData[index as number]?.label ?? ''} formatter={(value, name) => [name === 'Battery SOC' || name === 'Batteri SOC' ? `${Number(value).toFixed(1)}%` : `${(Number(value) / 1_000).toFixed(2)} kW`, name]} />
+              {hasBattery && <Line yAxisId="soc" type="monotone" dataKey="soc" name={batterySocLabel} stroke={COLORS.soc} strokeWidth={2} dot={false} />}
+              <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} labelFormatter={index => chartData[index as number]?.label ?? ''} formatter={(value, name) => [name === evCurrentLabel ? `${Number(value).toFixed(0)} A` : name === batterySocLabel ? `${Number(value).toFixed(1)}%` : `${(Number(value) / 1_000).toFixed(2)} kW`, name]} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
             </ComposedChart>
           </ResponsiveContainer>
@@ -344,7 +351,7 @@ const PlanView: React.FC<{
             </table>
           </div>
           <p className="text-sm text-muted-foreground">
-            {t('Alla tre scenarier kör exakt samma heltalsantal 15-minuterspass. Ett hårt batterimål som prognosen inte kan nå visas som ogenomförbart; det presenteras aldrig som uppfyllt.', 'All three scenarios run exactly the same integer number of 15-minute service slots. A hard battery target the forecast cannot reach is marked infeasible; it is never presented as achieved.')}
+            {t('Alla tre scenarier levererar samma flexibla energi. Fasta laster använder hela 15-minuterspass; en reglerbar bil använder endast laddarens giltiga strömsteg. Ett hårt batterimål som prognosen inte kan nå visas som ogenomförbart.', 'All three scenarios deliver the same flexible energy. Fixed loads use whole 15-minute slots; a controllable EV uses only valid charger current steps. A hard battery target the forecast cannot reach is marked infeasible.')}
           </p>
         </CardContent>
       </Card>
@@ -373,7 +380,9 @@ const PlanView: React.FC<{
                   const samples = plan.service_requirement_sample_days[sampleKey];
                   return (
                     <div key={service.id}>
-                      {service.id}: {service.required_kwh.toFixed(2)} kWh @ {(service.power_w / 1_000).toFixed(1)} kW · {t('minsta körning', 'minimum run')} {service.min_run_slots * 15} min · {t('deadline', 'deadline')} {new Date(service.deadline).toLocaleString()}{samples != null ? ` · n=${samples} active days` : ''}
+                      {service.id}: {service.required_kwh.toFixed(2)} kWh · {service.control.type === 'fixed_power'
+                        ? `${(service.control.power_w / 1_000).toFixed(1)} kW`
+                        : `${service.control.min_current_a}–${service.control.max_current_a} A (${service.control.current_step_a} A ${t('steg', 'steps')}, ${service.control.phase_count}×${service.control.voltage_v} V)`} · {t('minsta körning', 'minimum run')} {service.min_run_slots * 15} min · {t('deadline', 'deadline')} {new Date(service.deadline).toLocaleString()}{samples != null ? ` · n=${samples} active days` : ''}
                     </div>
                   );
                 })}
@@ -453,7 +462,7 @@ const PlanRow: React.FC<{ plan: GeneratedPlan; selected: boolean; solarDays: str
 
 const SourceRow: React.FC<{
   name: string;
-  source: NonNullable<OptimisationPlanV2['sources'][keyof OptimisationPlanV2['sources']]>;
+  source: NonNullable<OptimisationPlanV3['sources'][keyof OptimisationPlanV3['sources']]>;
 }> = ({ name, source }) => (
   <div className="grid grid-cols-1 gap-x-4 gap-y-0.5 md:grid-cols-[140px_180px_1fr]">
     <div className="font-medium capitalize">{name}</div>

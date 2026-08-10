@@ -1,6 +1,6 @@
 import {
   generateOptimisationPlan,
-  type OptimisationSnapshotV2,
+  type OptimisationSnapshotV3,
   validateSnapshot,
 } from "./energy-optimisation.ts";
 
@@ -12,8 +12,8 @@ const assert: (condition: boolean, message: string) => asserts condition = (
 };
 
 const input = (
-  overrides: Partial<OptimisationSnapshotV2> = {},
-): OptimisationSnapshotV2 => {
+  overrides: Partial<OptimisationSnapshotV3> = {},
+): OptimisationSnapshotV3 => {
   const start = Date.parse("2026-08-10T08:00:00.000Z");
   const slots = Array.from({ length: 64 }, (_, index) => ({
     start: new Date(start + index * 15 * 60_000).toISOString(),
@@ -25,7 +25,7 @@ const input = (
     export_price_sek_per_kwh: index < 20 ? 0.2 + index / 200 : null,
   }));
   return {
-    schema_version: 2,
+    schema_version: 3,
     mode: "live",
     capabilities: {
       pv: true,
@@ -110,7 +110,7 @@ const input = (
         earliest_start: slots[0].start,
         deadline: new Date(start + 8 * 60 * 60_000).toISOString(),
         required_kwh: 1.5,
-        power_w: 3_000,
+        control: { type: "fixed_power", power_w: 3_000 },
         min_run_slots: 2,
         priority: 1,
         baseline_preferred_start: slots[0].start,
@@ -121,7 +121,7 @@ const input = (
         earliest_start: slots[0].start,
         deadline: new Date(start + 8 * 60 * 60_000).toISOString(),
         required_kwh: 2,
-        power_w: 2_000,
+        control: { type: "fixed_power", power_w: 2_000 },
         min_run_slots: 4,
         priority: 2,
         baseline_preferred_start: slots[12].start,
@@ -165,6 +165,126 @@ Deno.test("all scenarios use equal discrete contiguous service workloads", () =>
       );
     }
   }
+});
+
+Deno.test("EV charging is planned as valid discrete current setpoints", () => {
+  const base = input();
+  const snapshot = input({
+    capabilities: {
+      pv: true,
+      battery: false,
+      pool: false,
+      boiler: false,
+      ev: true,
+    },
+    battery: null,
+    sources: { ...base.sources, battery: null },
+    policy: {
+      battery_end_of_solar_target_soc: 0,
+      battery_target_is_hard: false,
+      terminal_soc_min: 0,
+      terminal_energy_value_sek_per_kwh: 0,
+    },
+    services: [{
+      id: "ev:departure",
+      device: "ev",
+      earliest_start: base.slots[0].start,
+      deadline: base.slots[48].start,
+      required_kwh: 8,
+      control: {
+        type: "discrete_current",
+        min_current_a: 5,
+        max_current_a: 16,
+        current_step_a: 1,
+        phase_count: 3,
+        voltage_v: 230,
+      },
+      min_run_slots: 2,
+      priority: 3,
+      baseline_preferred_start: base.slots[0].start,
+    }],
+    service_requirement_sample_days: { ev_charging: 1 },
+  });
+
+  const result = generateOptimisationPlan(
+    snapshot,
+    new Date("2026-08-10T07:55:00Z"),
+  );
+  assert(result.schema_version === 3, "wrong plan schema");
+  assert(result.status === "ready", "feasible EV plan was rejected");
+  for (const plan of Object.values(result.plans)) {
+    const positive = plan.slots.filter((slot) => slot.ev_target_current_a > 0);
+    assert(positive.length === 9, "EV was not spread across the expected run");
+    assert(
+      new Set(positive.map((slot) => slot.ev_target_current_a)).size > 1,
+      "EV current was flattened to one fixed power",
+    );
+    for (const slot of plan.slots) {
+      const current = slot.ev_target_current_a;
+      assert(
+        current === 0 ||
+          (current >= 5 && current <= 16 && Number.isInteger(current)),
+        "EV current is outside the charger steps",
+      );
+      assert(
+        Math.abs(slot.ev_w - current * 3 * 230) < 1e-6,
+        "EV power does not match its planned current",
+      );
+      assert(
+        slot.ev_min_current_a <= current && current <= slot.ev_max_current_a,
+        "EV target is outside its reactive envelope",
+      );
+    }
+    const delivered = plan.slots.reduce(
+      (sum, slot) => sum + slot.ev_w / 1_000 * 0.25,
+      0,
+    );
+    assert(delivered >= 8, "EV requirement was under-delivered");
+    assert(delivered < 8 + 0.173, "EV quantisation over-delivered by too much");
+    assert(
+      plan.service_currents_a["ev:departure"].length === positive.length,
+      "EV service current schedule is incomplete",
+    );
+    assert(
+      plan.slots.slice(0, 48).every((slot) => slot.ev_max_current_a === 16),
+      "the reactive controller lost recovery headroom before departure",
+    );
+  }
+
+  const infeasible = structuredClone(snapshot);
+  infeasible.services[0].deadline = base.slots[2].start;
+  const infeasibleResult = generateOptimisationPlan(
+    infeasible,
+    new Date("2026-08-10T07:55:00Z"),
+  );
+  assert(
+    infeasibleResult.status === "infeasible" &&
+      Object.values(infeasibleResult.plans).every((plan) =>
+        plan.status === "infeasible"
+      ),
+    "an EV requirement above the departure-window capacity was accepted",
+  );
+  assert(
+    Object.values(infeasibleResult.plans).every((plan) =>
+      plan.slots.every((slot) =>
+        slot.ev_target_current_a === 0 && slot.ev_min_current_a === 0 &&
+        slot.ev_max_current_a === 0
+      )
+    ),
+    "an infeasible EV plan exposed an actionable current envelope",
+  );
+
+  const service = snapshot.services[0];
+  if (service.control.type !== "discrete_current") {
+    throw new Error("invalid test fixture");
+  }
+  service.control.max_current_a = 16.5;
+  assert(
+    validateSnapshot(snapshot).some((error) =>
+      error.includes("discrete current control")
+    ),
+    "misaligned charger current range was accepted",
+  );
 });
 
 Deno.test("prices stay directional and PV calibration is applied", () => {
@@ -340,7 +460,7 @@ Deno.test("overlapping commitments cannot double-book one physical device", () =
       earliest_start: snapshot.slots[0].start,
       deadline,
       required_kwh: 1.5,
-      power_w: 3_000,
+      control: { type: "fixed_power", power_w: 3_000 },
       min_run_slots: 2,
       priority: 1,
     },
@@ -350,7 +470,7 @@ Deno.test("overlapping commitments cannot double-book one physical device", () =
       earliest_start: snapshot.slots[0].start,
       deadline,
       required_kwh: 1.5,
-      power_w: 3_000,
+      control: { type: "fixed_power", power_w: 3_000 },
       min_run_slots: 2,
       priority: 1,
     },

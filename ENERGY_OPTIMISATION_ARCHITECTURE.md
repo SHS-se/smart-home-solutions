@@ -1,6 +1,6 @@
 # Energy optimisation architecture
 
-Status: **schema-v2 optional-capability path implemented; deployment, live commissioning and device executors remain**
+Status: **schema-v3 optional-capability and discrete EV-current path implemented; deployment, live commissioning and device executors remain**
 
 Date: **2026-08-10**
 
@@ -40,11 +40,12 @@ The canonical timestep is **15 minutes**. The server replans from measured state
 the local reactive layer corrects for what actually happens between plans.
 
 The first shadow release simulates the battery, protects an explicit reserve,
-and optimises the timing of discrete boiler, pool, and EV work while publishing
-opportunity/surplus signals. Price-led battery grid charging/export and thermal
-state optimisation belong to the next solver stage. Device controllers retain
-their existing closed-loop logic. EMHASS remains a useful reference and shadow
-comparator, not the product runtime.
+optimises discrete boiler/pool work, and assigns a valid charger current to
+every planned EV quarter while publishing opportunity/surplus signals.
+Price-led battery grid charging/export and thermal state optimisation belong to
+the next solver stage. Device controllers retain their existing closed-loop
+logic. EMHASS remains a useful reference and shadow comparator, not the product
+runtime.
 
 ### 1.1 Implementation checkpoint (2026-08-10)
 
@@ -56,7 +57,7 @@ static portal prototype:
 | Customer telemetry was compiled into the public JavaScript bundle | Deleted the hard-coded input snapshot. The selected `home_id` now reads a row protected by RLS. Pairing codes and active device tokens are bound to one home. |
 | The page was a manually copied snapshot | `shs_energy` now uploads completed 15-minute actuals and requests a fresh rolling plan hourly. The portal shows issue/expiry/source freshness and measured overlays. |
 | A/B/C used unequal work and fabricated a final partial day | Services have explicit earliest times and deadlines. Only deadlines inside the horizon create work; all scenarios use the same rounded integer slot count, and end-of-solar metrics omit an unfinished final local day. |
-| Pool, boiler and EV used fractional/chattering power and an invented 11 kW EV rate | Each service is a contiguous block of whole 15-minute slots. EV power follows the configured current entity when available: the verified 5 A, three-phase setting is about 3.45 kW, not 11 kW. |
+| Pool, boiler and EV used fractional/chattering power and an invented 11 kW EV rate | Pool and boiler remain contiguous whole-slot services. An EV current controller declares its minimum, maximum, step, phases and voltage; the planner chooses a supported current per 15-minute slot. Phil's 5–16 A three-phase range therefore models 3.45–11.04 kW rather than freezing the plan at the entity's instantaneous state. |
 | The 80% battery claim was not verified | End-of-solar and terminal SOC are simulation invariants. The 80% target is soft by default so it cannot silently reserve solar and force pool/hot-water work onto night import; explicitly making it hard retains fail-closed infeasibility checks. |
 | Export was valued with the import supplier price | Import and export are separate required timestamped entities, each combined with the correct grid direction. The integration rejects using the same entity for both. |
 | One August day was repeated as baseload | Baseload is the per-local-quarter median of recorder history after subtracting separately modelled loads; p10/p90 and sample counts are retained for explanation. |
@@ -81,7 +82,7 @@ configuration:
   to expose demo plan slots to executor automations.
 
 Solar, battery, pool, water heating and EV are independent optional
-capabilities in snapshot schema 2. A category mapped for reporting is not
+capabilities in snapshot schema 3. A category mapped for reporting is not
 assumed controllable. Installation ratings still require measured or explicitly
 commissioned values; product defaults are limited to policy/orchestration facts
 such as 15-minute slots, efficiency starting values, and default time windows.
@@ -104,7 +105,7 @@ set:
 | Battery | 18.08 kWh, 8.8 kW charge, 9.6 kW discharge, live Sigen SOC, 13.2 kW plant/grid envelope |
 | Pool | `sensor.pool_heater_energy` plus `sensor.pool_pump_energy`; active measured power about 3.67 kW; `input_boolean.pool_heating` is the season gate |
 | Hot water | `sensor.hot_water_energy`; 3.0 kW installed rating remains an explicit commissioned fact |
-| EV | `sensor.car_charging_lifetime_energy`, Tesla cable/SOC/target/energy-remaining entities, and live charge-current entity; no departure entity exists, so the next configured default departure time is used |
+| EV | `sensor.car_charging_lifetime_energy`, Tesla cable/SOC/target/energy-remaining entities, and `number.tesla_model_y_charge_current`; its 5 A minimum, 16 A maximum and 1 A step are read from entity attributes. No departure entity exists, so the next configured default departure time is used |
 
 ## 2. Terms
 
@@ -184,7 +185,8 @@ prices and subscription status.
 The implementation in this change adds:
 
 - one-home pairing and token binding, including home-scoped tariff lookup;
-- schema 2 with optional solar/battery/device capabilities and explicit
+- schema 3 with optional solar/battery/device capabilities, fixed-power and
+  discrete-current service controls, and explicit
   `live`/`demo` mode;
 - automatic aggregate-meter discovery from the Energy Dashboard, plus a short
   multi-step advanced flow and validated AI/MCP actions;
@@ -197,7 +199,8 @@ The implementation in this change adds:
 - an hourly 72-hour plan request plus quarter-hour actual upload, with
   whole-home consumption derived from the grid/solar/battery energy balance
   when no separate total meter is configured;
-- local cached plan/status and bounded boiler, pool and EV request sensors; and
+- local cached plan/status, bounded boiler/pool/EV power requests, a dedicated
+  EV current target/envelope sensor; and
 - a live measured-export signal for a single reactive executor.
 
 It still does not own device actuators, confirmation, thermal state models,
@@ -302,9 +305,12 @@ Python container with a pinned solver/runtime. The facade authorises the device
 token and home, submits a typed job, and returns or retrieves the result.
 
 The implemented initial service is synchronous and uses a pure, deterministic
-TypeScript heuristic in the authenticated edge function. It schedules whole,
-contiguous service blocks, simulates battery/grid physics, and refuses invalid
-or infeasible output. Requests are idempotent by `home_id` and `snapshot_id`.
+TypeScript heuristic in the authenticated edge function. It schedules
+contiguous service runs, keeps fixed loads at rated power, and distributes an
+EV energy obligation across supported current steps. Every selected current is
+converted to watts before battery/grid simulation. Invalid input is rejected;
+infeasible output is explicitly marked and cannot become actionable. Requests
+are idempotent by `home_id` and `snapshot_id`.
 Battery dispatch in this stage is a self-consumption/reserve policy, not a full
 price-arbitrage optimiser; the UI labels its terminal-energy adjustment so it
 cannot be mistaken for a complete MILP result.
@@ -341,7 +347,12 @@ The integration owns:
 
 A planned-request entity is unavailable when the planner has no authority.
 `0 W` is used only inside a valid binding slot to mean an explicit off request;
-this distinction prevents an outage from masquerading as a stop command.
+this distinction prevents an outage from masquerading as a stop command. A
+discrete-current EV additionally exposes target, deadline-safe minimum and
+hardware maximum amperes. The target is the expected forecast load; the local
+controller may move inside the envelope and must account for any resulting
+energy deficit before departure. Maximum recovery headroom remains available
+through the departure window even when the forecast target finishes early.
 
 The integration does **not** guess a missing installation rating, live state,
 price or temperature. A missing device-specific fact makes only that optional
@@ -379,7 +390,7 @@ an existing Node-RED flow to consume the same request entities.
 | Device class | Planner output | Reactive/local work | Initial control authority |
 |---|---|---|---|
 | Battery | Charge/discharge envelope and target SOC trajectory | Clamp to live SOC, inverter limits, reserve, grid mode, and confirmation | Direct bounded target only after shadow validation |
-| EV charger | Required energy by deadline, preferred slots, maximum current | Presence/SOC check, deadline override, current-step selection, confirmation | Advisory target to EV controller |
+| EV charger | Required energy by deadline plus target/minimum/maximum current for every slot | Presence/SOC check, reactive step adjustment, delivered-energy/deadline guard, confirmation | Advisory current target to EV controller |
 | Water boiler | Opportunity windows and normal/soft/hard temperature targets | Thermostat, hygiene cycle, maximum runtime, completion | Permit/request only |
 | Pool heating | Opportunity windows and soft/hard water targets | Pump/heater coupling, filtration requirement, seasonal enable, completion | Permit/request only |
 | Resistive room heating | Setpoint offset or cheap-window preference | Room thermostat, occupancy, manual override, hard comfort floor | Setpoint advice only |
@@ -456,10 +467,12 @@ Each solve receives:
 - plan-versus-actual state from the preceding slot; and
 - the terminal assumptions used beyond the binding horizon.
 
-Schema 2 additionally carries `mode`, an explicit capability map, nullable PV
-and battery provenance, and a nullable battery model. Disabled capabilities
-must contribute zero power and cannot appear in a service request. Demo sources
-are marked `synthetic` and are accepted only when `mode=demo`.
+Schema 3 carries `mode`, an explicit capability map, nullable PV and battery
+provenance, a nullable battery model, and a typed service control. A fixed load
+declares `fixed_power`; a modulating EV declares `discrete_current` with
+minimum/maximum/step amperes, phase count and per-phase voltage. Disabled
+capabilities must contribute zero power and cannot appear in a service request.
+Demo sources are marked `synthetic` and are accepted only when `mode=demo`.
 
 Only snapshot data needed for the solve is uploaded. High-frequency reactive
 control remains local; the backend receives 15-minute actuals and discrete
@@ -484,7 +497,7 @@ The implemented storage budget is bounded:
 A plan contains:
 
 - a 72-hour forecast and confidence/provenance per slot;
-- the measured battery source plus the exact battery, grid, service-power,
+- the measured battery source plus the exact battery, grid, service-control,
   minimum-run, deadline, and active-day sample inputs used by the solve;
 - a `binding_until` boundary based on exact price availability;
 - all-in import/export marginal prices;
@@ -492,7 +505,8 @@ A plan contains:
 - an import/export envelope and an opportunity rank or marginal value;
 - a battery power/SOC plan;
 - per-device required service, preferred windows, bounded target/offset, reason,
-  and whether the output is binding or advisory;
+  and whether the output is binding or advisory; discrete EV slots carry
+  target/minimum/maximum current and the power derived from the target;
 - an ordered surplus-allocation policy with promotion/demotion conditions;
 - expected cost, self-consumption, peak, comfort deviations, terminal state, and
   constraint margins; and
@@ -653,8 +667,10 @@ Provide three versioned executor templates:
    an on/off request, applies local completion/temperature and minimum-run
    guards, then confirms from power/state.
 2. **Variable-power executor** for EV and, after separate commissioning,
-   battery/inverter control. It clamps the requested watts/current to device and
-   live-state limits and confirms the achieved value.
+   battery/inverter control. For EVs it starts from the planned current, moves
+   only in the charger's declared steps inside the slot envelope, and confirms
+   the achieved value. Delivered-energy drift is carried into the deadline
+   guard and next replan rather than being erased at the slot boundary.
 3. **Thermal setpoint executor** for rooms and aircon. It applies only a bounded
    offset or mode request to the existing thermostat/occupancy controller.
 
@@ -668,6 +684,14 @@ mode/override/thermostat gate and report the resulting state after that gate.
 Do not replace the gate. For a product installation, instantiate the matching
 native HA executor blueprint during an explicit commissioning step and leave it
 visible and editable in the HA automation UI.
+
+For `number.tesla_model_y_charge_current`, the planned automation consumes the
+quarter's target amperes. The existing one-minute reactive loop may then raise
+or lower that target by 1 A using measured export/import and battery state, but
+it clamps to the plan's current envelope and the entity's 5–16 A capability.
+Starting, stopping, cable/SOC checks, cooldowns and command confirmation remain
+local. A material target-versus-delivered energy difference triggers replanning;
+it is not hidden by uploading high-frequency samples.
 
 ## 8. Objective function
 
@@ -1029,7 +1053,7 @@ Required invariants include:
 
 1. Deploy the migration, edge functions and portal to the test environment;
    install the matching integration build and pair it to the intended home.
-2. Install integration `0.6.0-beta.1`, run **Live / automatic**, then apply the
+2. Install integration `0.6.0-beta.2`, run **Live / automatic**, then apply the
    two explicit installed ratings that discovery cannot infer while equipment
    is off: 3.0 kW boiler and the confirmed pool rating if its commissioning
    measurement is unavailable.
