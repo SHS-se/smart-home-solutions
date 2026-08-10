@@ -95,7 +95,7 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
           <TabsContent value="home-setup"><HouseSetupTab customerId={resolvedCustomerId} homeId={selectedHomeId} /></TabsContent>
           <TabsContent value="home-devices"><HomeDevicesTab customerId={resolvedCustomerId} homeId={selectedHomeId} /></TabsContent>
           <TabsContent value="simulator"><SimulatorTab customerId={resolvedCustomerId} homeId={selectedHomeId} homeCount={homeCount} /></TabsContent>
-          <TabsContent value="load-shift"><LoadShiftTab /></TabsContent>
+          <TabsContent value="load-shift"><LoadShiftTab customerId={resolvedCustomerId} homeId={selectedHomeId} /></TabsContent>
           <TabsContent value="tariff">{resolvedCustomerId ? <TariffPricingTab customerId={resolvedCustomerId} /> : null}</TabsContent>
         </Tabs>
       </div>

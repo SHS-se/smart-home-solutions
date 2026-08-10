@@ -42,6 +42,7 @@ serve(async (req) => {
       subscription_active: auth.subscriptionActive,
       subscription_expires_at: auth.subscriptionExpiresAt,
       customer_name: auth.customerName,
+      home_id: auth.homeId,
       server_time: new Date().toISOString(),
     });
   } catch (error) {

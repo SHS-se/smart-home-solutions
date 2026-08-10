@@ -1848,6 +1848,202 @@ export type Database = {
           },
         ]
       }
+      energy_optimisation_actual_slots: {
+        Row: {
+          battery_charge_kwh: number | null
+          battery_discharge_kwh: number | null
+          customer_id: string
+          device_token_id: string | null
+          ev_charging_kwh: number | null
+          grid_export_kwh: number | null
+          grid_import_kwh: number | null
+          home_id: string
+          hot_water_kwh: number | null
+          id: string
+          pool_heating_kwh: number | null
+          quality: Json
+          received_at: string
+          solar_production_kwh: number | null
+          start_ts: string
+          total_load_kwh: number | null
+        }
+        Insert: {
+          battery_charge_kwh?: number | null
+          battery_discharge_kwh?: number | null
+          customer_id: string
+          device_token_id?: string | null
+          ev_charging_kwh?: number | null
+          grid_export_kwh?: number | null
+          grid_import_kwh?: number | null
+          home_id: string
+          hot_water_kwh?: number | null
+          id?: string
+          pool_heating_kwh?: number | null
+          quality?: Json
+          received_at?: string
+          solar_production_kwh?: number | null
+          start_ts: string
+          total_load_kwh?: number | null
+        }
+        Update: {
+          battery_charge_kwh?: number | null
+          battery_discharge_kwh?: number | null
+          customer_id?: string
+          device_token_id?: string | null
+          ev_charging_kwh?: number | null
+          grid_export_kwh?: number | null
+          grid_import_kwh?: number | null
+          home_id?: string
+          hot_water_kwh?: number | null
+          id?: string
+          pool_heating_kwh?: number | null
+          quality?: Json
+          received_at?: string
+          solar_production_kwh?: number | null
+          start_ts?: string
+          total_load_kwh?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "energy_optimisation_actual_slots_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_optimisation_actual_slots_home_id_fkey"
+            columns: ["home_id"]
+            isOneToOne: false
+            referencedRelation: "homes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_optimisation_actual_slots_device_token_id_fkey"
+            columns: ["device_token_id"]
+            isOneToOne: false
+            referencedRelation: "ha_device_tokens"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      energy_optimisation_current: {
+        Row: {
+          binding_until: string
+          captured_at: string
+          customer_id: string
+          home_id: string
+          input_hash: string
+          issued_at: string
+          model_version: string
+          plan: Json
+          snapshot: Json
+          snapshot_id: string
+          status: string
+          updated_at: string
+          valid_until: string
+        }
+        Insert: {
+          binding_until: string
+          captured_at: string
+          customer_id: string
+          home_id: string
+          input_hash: string
+          issued_at: string
+          model_version: string
+          plan: Json
+          snapshot: Json
+          snapshot_id: string
+          status: string
+          updated_at?: string
+          valid_until: string
+        }
+        Update: {
+          binding_until?: string
+          captured_at?: string
+          customer_id?: string
+          home_id?: string
+          input_hash?: string
+          issued_at?: string
+          model_version?: string
+          plan?: Json
+          snapshot?: Json
+          snapshot_id?: string
+          status?: string
+          updated_at?: string
+          valid_until?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "energy_optimisation_current_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_optimisation_current_home_id_fkey"
+            columns: ["home_id"]
+            isOneToOne: true
+            referencedRelation: "homes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      energy_optimisation_plan_runs: {
+        Row: {
+          customer_id: string
+          home_id: string
+          id: string
+          input_hash: string
+          issued_at: string
+          model_version: string
+          snapshot_id: string
+          status: string
+          summary: Json
+          validation_errors: string[]
+        }
+        Insert: {
+          customer_id: string
+          home_id: string
+          id: string
+          input_hash: string
+          issued_at: string
+          model_version: string
+          snapshot_id: string
+          status: string
+          summary: Json
+          validation_errors?: string[]
+        }
+        Update: {
+          customer_id?: string
+          home_id?: string
+          id?: string
+          input_hash?: string
+          issued_at?: string
+          model_version?: string
+          snapshot_id?: string
+          status?: string
+          summary?: Json
+          validation_errors?: string[]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "energy_optimisation_plan_runs_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_optimisation_plan_runs_home_id_fkey"
+            columns: ["home_id"]
+            isOneToOne: false
+            referencedRelation: "homes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       energy_weather_datasets: {
         Row: {
           created_at: string
@@ -2094,6 +2290,7 @@ export type Database = {
           customer_id: string
           device_name: string
           id: string
+          home_id: string
           last_seen_at: string | null
           revoked_at: string | null
           token_hash: string
@@ -2103,6 +2300,7 @@ export type Database = {
           customer_id: string
           device_name?: string
           id?: string
+          home_id: string
           last_seen_at?: string | null
           revoked_at?: string | null
           token_hash: string
@@ -2112,11 +2310,19 @@ export type Database = {
           customer_id?: string
           device_name?: string
           id?: string
+          home_id?: string
           last_seen_at?: string | null
           revoked_at?: string | null
           token_hash?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "ha_device_tokens_home_id_fkey"
+            columns: ["home_id"]
+            isOneToOne: false
+            referencedRelation: "homes"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "ha_device_tokens_customer_id_fkey"
             columns: ["customer_id"]
@@ -2141,6 +2347,7 @@ export type Database = {
           customer_id: string
           expires_at: string
           id: string
+          home_id: string
           used_at: string | null
         }
         Insert: {
@@ -2150,6 +2357,7 @@ export type Database = {
           customer_id: string
           expires_at: string
           id?: string
+          home_id: string
           used_at?: string | null
         }
         Update: {
@@ -2159,9 +2367,17 @@ export type Database = {
           customer_id?: string
           expires_at?: string
           id?: string
+          home_id?: string
           used_at?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "ha_pairing_codes_home_id_fkey"
+            columns: ["home_id"]
+            isOneToOne: false
+            referencedRelation: "homes"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "ha_pairing_codes_customer_id_fkey"
             columns: ["customer_id"]
@@ -4173,6 +4389,10 @@ export type Database = {
         }
         Returns: number
       }
+      energy_home_matches_customer: {
+        Args: { p_customer_id: string; p_home_id: string }
+        Returns: boolean
+      }
       import_energy_usage_readings: {
         Args: {
           p_customer_id: string
@@ -4182,6 +4402,10 @@ export type Database = {
           p_readings: Json
         }
         Returns: string
+      }
+      prune_energy_optimisation_data: {
+        Args: { p_home_id: string }
+        Returns: undefined
       }
       record_energy_parse_failure: {
         Args: {

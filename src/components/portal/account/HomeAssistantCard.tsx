@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { HousePlug, Loader2, Plus, Unplug } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -13,6 +14,12 @@ interface DeviceToken {
   created_at: string;
   last_seen_at: string | null;
   revoked_at: string | null;
+  home_id: string;
+}
+
+interface HomeEntry {
+  id: string;
+  name: string;
 }
 
 interface HomeAssistantCardProps {
@@ -28,6 +35,8 @@ const HomeAssistantCard: React.FC<HomeAssistantCardProps> = ({ customerId }) => 
   const { t } = useLanguage();
   const { toast } = useToast();
   const [tokens, setTokens] = useState<DeviceToken[]>([]);
+  const [homes, setHomes] = useState<HomeEntry[]>([]);
+  const [selectedHomeId, setSelectedHomeId] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [revokingId, setRevokingId] = useState<string | null>(null);
@@ -38,13 +47,24 @@ const HomeAssistantCard: React.FC<HomeAssistantCardProps> = ({ customerId }) => 
   );
 
   const loadTokens = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('ha_device_tokens')
-      .select('id, device_name, created_at, last_seen_at, revoked_at')
-      .eq('customer_id', customerId)
-      .is('revoked_at', null)
-      .order('created_at', { ascending: false });
-    if (!error) setTokens(data ?? []);
+    const [{ data, error }, { data: homeRows }] = await Promise.all([
+      supabase
+        .from('ha_device_tokens')
+        .select('id, device_name, created_at, last_seen_at, revoked_at, home_id')
+        .eq('customer_id', customerId)
+        .is('revoked_at', null)
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('homes')
+        .select('id, name')
+        .eq('customer_id', customerId)
+        .order('created_at'),
+    ]);
+    if (!error) setTokens((data ?? []) as DeviceToken[]);
+    if (homeRows) {
+      setHomes(homeRows);
+      setSelectedHomeId(current => current || homeRows[0]?.id || '');
+    }
     setLoading(false);
     // Best-effort: reading data is subscription-gated, token list is not.
     try {
@@ -74,7 +94,7 @@ const HomeAssistantCard: React.FC<HomeAssistantCardProps> = ({ customerId }) => 
     setGenerating(true);
     try {
       const { data, error } = await supabase.functions.invoke('create-pairing-code', {
-        body: {},
+        body: { customer_id: customerId, home_id: selectedHomeId },
       });
       if (error || !data?.code) {
         const detail = data?.error === 'subscription_inactive'
@@ -134,10 +154,22 @@ const HomeAssistantCard: React.FC<HomeAssistantCardProps> = ({ customerId }) => 
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">
           {t(
-            'Koppla din Home Assistant för att automatiskt skicka daglig energianvändning per kategori till din energihistorik.',
-            'Connect your Home Assistant to automatically push daily energy use per category into your energy history.'
+            'Koppla Home Assistant till ett hem för daglig energihistorik och kompakta 15-minutersvärden för energiplaneringen.',
+            'Connect Home Assistant to one home for daily energy history and compact 15-minute values used by energy planning.'
           )}
         </p>
+
+        {homes.length > 1 && !pairingCode && (
+          <div className="max-w-sm space-y-1.5">
+            <div className="text-sm font-medium">{t('Hem att ansluta', 'Home to connect')}</div>
+            <Select value={selectedHomeId} onValueChange={setSelectedHomeId}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {homes.map(home => <SelectItem key={home.id} value={home.id}>{home.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
 
         {pairingCode ? (
           <div
@@ -156,7 +188,7 @@ const HomeAssistantCard: React.FC<HomeAssistantCardProps> = ({ customerId }) => 
           <Button
             variant="outline"
             onClick={generateCode}
-            disabled={generating}
+            disabled={generating || !selectedHomeId}
             data-testid="generate-pairing-code"
           >
             {generating ? (
@@ -179,6 +211,9 @@ const HomeAssistantCard: React.FC<HomeAssistantCardProps> = ({ customerId }) => 
               >
                 <div>
                   <div className="text-sm font-medium">{token.device_name}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {homes.find(home => home.id === token.home_id)?.name ?? token.home_id}
+                  </div>
                   <div className="text-xs text-muted-foreground">
                     {t('Ansluten', 'Connected')}: {formatDate(token.created_at)}
                     {' · '}

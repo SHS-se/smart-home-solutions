@@ -58,22 +58,23 @@ serve(async (req) => {
     const user = userData.user;
 
     let requestedCustomerId: string | null = null;
+    let requestedHomeId: string | null = null;
     try {
       const body = await req.json();
       requestedCustomerId = body?.customer_id ?? null;
+      requestedHomeId = body?.home_id ?? null;
     } catch {
       // Empty body is fine.
     }
 
     let customerId: string | null = null;
     if (requestedCustomerId) {
-      const { data: staffRow } = await supabase
-        .from("staff_users")
-        .select("user_id")
-        .eq("user_id", user.id)
-        .maybeSingle();
-      if (!staffRow) {
-        return json({ error: "staff_only_customer_override" }, 403);
+      const [{ data: ownCustomer }, { data: staffRow }] = await Promise.all([
+        supabase.from("customers").select("id").eq("user_id", user.id).maybeSingle(),
+        supabase.from("staff_users").select("user_id").eq("user_id", user.id).maybeSingle(),
+      ]);
+      if (ownCustomer?.id !== requestedCustomerId && !staffRow) {
+        return json({ error: "customer_access_denied" }, 403);
       }
       customerId = requestedCustomerId;
     } else {
@@ -85,6 +86,19 @@ serve(async (req) => {
       customerId = custRow?.id ?? null;
     }
     if (!customerId) return json({ error: "no_customer" }, 404);
+    if (!requestedHomeId) return json({ error: "home_id_required" }, 400);
+
+    const { data: home, error: homeError } = await supabase
+      .from("homes")
+      .select("id")
+      .eq("id", requestedHomeId)
+      .eq("customer_id", customerId)
+      .maybeSingle();
+    if (homeError) {
+      console.error("[CREATE-PAIRING-CODE] home lookup failed", homeError);
+      return json({ error: "home_lookup_failed" }, 500);
+    }
+    if (!home) return json({ error: "home_not_found" }, 404);
 
     const { data: customer } = await supabase
       .from("customers")
@@ -101,7 +115,7 @@ serve(async (req) => {
     await supabase
       .from("ha_pairing_codes")
       .update({ expires_at: new Date().toISOString() })
-      .eq("customer_id", customerId)
+      .eq("home_id", requestedHomeId)
       .is("used_at", null);
 
     const code = generateCode();
@@ -112,6 +126,7 @@ serve(async (req) => {
       .from("ha_pairing_codes")
       .insert({
         customer_id: customerId,
+        home_id: requestedHomeId,
         code_hash: await sha256Hex(code),
         created_by: user.id,
         expires_at: expiresAt,
@@ -121,7 +136,7 @@ serve(async (req) => {
       return json({ error: "code_creation_failed" }, 500);
     }
 
-    return json({ code, expires_at: expiresAt });
+    return json({ code, expires_at: expiresAt, home_id: requestedHomeId });
   } catch (error) {
     console.error("[CREATE-PAIRING-CODE] unexpected", error);
     return json({ error: "internal_error" }, 500);

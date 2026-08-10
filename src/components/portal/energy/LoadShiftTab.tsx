@@ -1,320 +1,369 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, ReferenceArea, ReferenceLine, Legend,
+  Area,
+  CartesianGrid,
+  ComposedChart,
+  Legend,
+  Line,
+  ReferenceArea,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
 } from 'recharts';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { AlertTriangle, Loader2, RefreshCw } from 'lucide-react';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { buildPlans, type SimSlot } from '@/lib/energy-shift/model';
+import { supabase } from '@/integrations/supabase/client';
 import {
-  ISSUED_AT, BINDING_UNTIL_SLOT, INITIAL, PLANT, DEVICES,
-  GRID_IMPORT_SEK, GRID_EXPORT_SEK, PV_FORECAST_DAILY_KWH, MEASURED_DAILY_KWH,
-} from '@/lib/energy-shift/inputs';
+  isOptimisationPlan,
+  type ActualEnergySlot,
+  type GeneratedPlan,
+  type OptimisationPlanV1,
+  type PlanKey,
+} from '@/lib/energy-shift/contracts';
 
-type PlanKey = 'baseline' | 'stack' | 'cost';
+interface LoadShiftTabProps {
+  customerId?: string;
+  homeId: string | null;
+}
+
+interface CurrentRow {
+  plan: OptimisationPlanV1;
+  captured_at: string;
+  updated_at: string;
+}
 
 const COLORS = {
   base: '#64748b',
   boiler: '#38bdf8',
   pool: '#14b8a6',
-  car: '#a78bfa',
+  ev: '#a78bfa',
   pv: '#f59e0b',
+  pvRaw: '#fbbf24',
   soc: '#f43f5e',
+  import: '#dc2626',
+  export: '#0f766e',
+  actual: '#111827',
+  batteryCharge: '#2563eb',
+  batteryDischarge: '#7c3aed',
 };
 
-const LoadShiftTab: React.FC = () => {
+const PLAN_KEYS: PlanKey[] = ['baseline', 'priority', 'cost'];
+
+const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId }) => {
   const { t } = useLanguage();
-  const [planKey, setPlanKey] = useState<PlanKey>('stack');
+  const [planKey, setPlanKey] = useState<PlanKey>('priority');
+  const [current, setCurrent] = useState<CurrentRow | null>(null);
+  const [actuals, setActuals] = useState<ActualEnergySlot[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [clock, setClock] = useState(Date.now());
 
-  const plans = useMemo(() => buildPlans(), []);
-  const runs = {
-    baseline: plans.baseline,
-    stack: plans.stack,
-    cost: plans.cost,
-  };
-  const active = runs[planKey];
+  const load = useCallback(async () => {
+    if (!customerId || !homeId) {
+      setCurrent(null);
+      setActuals([]);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const toMs = Math.floor(Date.now() / (15 * 60_000)) * 15 * 60_000;
+      const from = new Date(toMs - 24 * 60 * 60_000).toISOString();
+      const to = new Date(toMs).toISOString();
+      const [planResult, actualResult] = await Promise.all([
+        supabase
+          .from('energy_optimisation_current')
+          .select('plan, captured_at, updated_at')
+          .eq('customer_id', customerId)
+          .eq('home_id', homeId)
+          .maybeSingle(),
+        supabase
+          .from('energy_optimisation_actual_slots')
+          .select('start_ts, total_load_kwh, solar_production_kwh, grid_import_kwh, grid_export_kwh, battery_charge_kwh, battery_discharge_kwh')
+          .eq('customer_id', customerId)
+          .eq('home_id', homeId)
+          .gte('start_ts', from)
+          .lt('start_ts', to)
+          .order('start_ts'),
+      ]);
+      const { data, error: planError } = planResult;
+      if (planError) throw planError;
+      const { data: actualRows, error: actualError } = actualResult;
+      if (actualError) throw actualError;
+      setActuals(actualRows ?? []);
+      if (!data) {
+        setCurrent(null);
+        return;
+      }
+      if (!isOptimisationPlan(data.plan)) {
+        throw new Error(t('Planformatet stöds inte.', 'The stored plan format is not supported.'));
+      }
+      setCurrent({ plan: data.plan, captured_at: data.captured_at, updated_at: data.updated_at });
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : String(loadError));
+    } finally {
+      setLoading(false);
+    }
+  }, [customerId, homeId, t]);
 
-  const chartData = useMemo(
-    () => active.slots.map((s: SimSlot) => ({
-      i: s.index,
-      label: s.label,
-      pv: Math.round(s.pvW),
-      base: Math.round(s.baseW),
-      boiler: Math.round(s.boilerW),
-      pool: Math.round(s.poolW),
-      car: Math.round(s.carW),
-      soc: Number((s.soc * 100).toFixed(1)),
-      price: s.importSek,
-    })),
-    [active],
+  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  if (!homeId) {
+    return <EmptyState text={t('Välj ett hem för att visa energiplanen.', 'Select a home to view its energy plan.')} />;
+  }
+  if (loading && !current) {
+    return <div className="flex items-center gap-2 py-12 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t('Laddar energiplan…', 'Loading energy plan…')}</div>;
+  }
+  if (error) {
+    return (
+      <Alert variant="destructive">
+        <AlertTriangle className="h-4 w-4" />
+        <AlertTitle>{t('Kunde inte läsa energiplanen', 'Could not load the energy plan')}</AlertTitle>
+        <AlertDescription>{error}</AlertDescription>
+      </Alert>
+    );
+  }
+  if (!current) {
+    return (
+      <div className="space-y-6">
+        <EmptyState
+          text={t(
+            'Ingen liveplan finns ännu. Uppdatera SHS-integrationen i Home Assistant, bind den till detta hem och konfigurera separata sol-, importpris- och exportprisprognoser samt batteri- och enhetsdata.',
+            'No live plan exists yet. Update the SHS Home Assistant integration, bind it to this home, and configure separate PV, import-price and export-price forecasts plus the battery and device inputs.',
+          )}
+        />
+        <ActualPerformance actuals={actuals} />
+      </div>
+    );
+  }
+
+  return (
+    <PlanView
+      current={current}
+      actuals={actuals}
+      planKey={planKey}
+      setPlanKey={setPlanKey}
+      stale={clock > Date.parse(current.plan.valid_until)}
+      refreshing={loading}
+      refresh={load}
+    />
   );
+};
 
-  // Day boundaries for axis ticks: one label every 4 hours.
-  const ticks = useMemo(
-    () => active.slots.filter((s) => s.minute === 0 && s.hour % 4 === 0).map((s) => s.index),
-    [active],
-  );
-
-  const minSoc = (r: typeof active) => Math.min(...r.slots.map((s) => s.soc));
-  const floorSlots = (r: typeof active) => r.slots.filter((s) => s.soc <= 0.055).length;
-  const eod = (r: typeof active, day: string) => {
-    const last = r.slots.filter((s) => s.day === day && s.pvW > 200).pop();
-    return last ? last.soc : null;
-  };
-  const SOLAR_DAYS = ['2026-08-10', '2026-08-11', '2026-08-12'];
-
-  const pct = (n: number | null) => (n === null ? '—' : `${(n * 100).toFixed(0)}%`);
-  const kwh = (n: number) => `${n.toFixed(1)} kWh`;
-
-  const planMeta: Record<PlanKey, { label: string; sub: string }> = {
-    baseline: {
-      label: t('A · Nuläge', 'A · Baseline'),
-      sub: t('bilen laddar direkt, poolen kör fast middagsblock',
-            'car charges immediately, pool on a fixed midday block'),
-    },
-    stack: {
-      label: t('B · Prioritetsordning', 'B · Priority stack'),
-      sub: t('batteriet reserveras till 80 % före pool och bil',
-            'battery reserved to 80% before pool and car get any sun'),
-    },
-    cost: {
-      label: t('C · Kostnadsstyrd', 'C · Cost-led'),
-      sub: t('samma ordning, men ingen sol hålls tillbaka',
-            'same ranking, but no sun is held back'),
-    },
-  };
+const PlanView: React.FC<{
+  current: CurrentRow;
+  actuals: ActualEnergySlot[];
+  planKey: PlanKey;
+  setPlanKey: (key: PlanKey) => void;
+  stale: boolean;
+  refreshing: boolean;
+  refresh: () => Promise<void>;
+}> = ({ current, actuals, planKey, setPlanKey, stale, refreshing, refresh }) => {
+  const { t } = useLanguage();
+  const { plan } = current;
+  const active = plan.plans[planKey];
+  const chartData = useMemo(() => active.slots.map((slot, index) => {
+    return {
+      i: index,
+      start: slot.start,
+      label: new Date(slot.start).toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
+      pv: slot.pv_w,
+      pvRaw: slot.pv_raw_w,
+      base: slot.base_w,
+      baseP10: slot.base_p10_w,
+      baseP90: slot.base_p90_w,
+      boiler: slot.boiler_w,
+      pool: slot.pool_w,
+      ev: slot.ev_w,
+      soc: slot.battery_soc * 100,
+      gridImport: slot.grid_import_w,
+      gridExport: slot.grid_export_w,
+      importPrice: slot.import_price_sek_per_kwh,
+      exportPrice: slot.export_price_sek_per_kwh,
+    };
+  }), [active]);
+  const firstAdvisory = active.slots.findIndex(slot => !slot.binding);
+  const bindingIndex = firstAdvisory < 0 ? active.slots.length : firstAdvisory;
+  const ticks = active.slots.map((slot, index) => ({ slot, index }))
+    .filter(({ slot }) => new Date(slot.start).getMinutes() === 0 && new Date(slot.start).getHours() % 6 === 0)
+    .map(({ index }) => index);
+  const solarDays = Object.keys(active.summary.battery_end_of_solar_soc);
+  const sourceStale = Object.entries(plan.sources)
+    .filter(([, source]) => Date.parse(source.valid_until) < Date.now())
+    .map(([name]) => name);
+  const bindingExpired = Date.now() >= Date.parse(plan.binding_until);
+  const ready = !stale && !bindingExpired && plan.status === 'ready' && active.status === 'ready' && sourceStale.length === 0;
+  const pct = (value: number) => `${(value * 100).toFixed(0)}%`;
 
   return (
     <div className="space-y-6">
+      {(!ready || plan.validation_errors.length > 0 || active.validation_errors.length > 0) && (
+        <Alert variant={stale || bindingExpired || sourceStale.length > 0 ? 'destructive' : 'default'}>
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>
+            {stale
+              ? t('Planen har gått ut', 'Plan expired')
+              : bindingExpired
+                ? t('Den prissatta perioden har gått ut', 'The priced interval has ended')
+              : sourceStale.length > 0
+                ? t('En prognoskälla är gammal', 'A forecast source is stale')
+                : t('Planen är inte genomförbar', 'Plan is not feasible')}
+          </AlertTitle>
+          <AlertDescription>
+            {[
+              ...(bindingExpired ? [t('Home Assistant utför inte rådgivande, oprissatta pass.', 'Home Assistant does not execute advisory, unpriced slots.')] : []),
+              ...sourceStale.map(source => `${source}: valid_until passed`),
+              ...plan.validation_errors,
+              ...active.validation_errors,
+            ].slice(0, 8).join(' · ') || t('Home Assistant använder baskontrollerna tills en giltig plan finns.', 'Home Assistant uses its baseline controllers until a valid plan is available.')}
+          </AlertDescription>
+        </Alert>
+      )}
+
       <Card>
         <CardHeader className="pb-3">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <CardTitle className="text-lg">
-                {t('Lastförflyttning mot solprognos', 'Shifting load onto forecast solar')}
-              </CardTitle>
-              <p className="text-sm text-muted-foreground mt-1">
-                {t(
-                  `72 timmar i 15-minutersupplösning · plan utfärdad ${ISSUED_AT.slice(0, 16).replace('T', ' ')}`,
-                  `72 hours at 15-minute resolution · plan issued ${ISSUED_AT.slice(0, 16).replace('T', ' ')}`,
-                )}
+              <div className="flex items-center gap-2">
+                <CardTitle className="text-lg">{t('Liveplan för 15-minutersstyrning', 'Live 15-minute energy plan')}</CardTitle>
+                <Badge variant={ready ? 'secondary' : 'destructive'}>
+                  {ready ? t('Giltig', 'Ready') : stale ? t('Utgången', 'Expired') : bindingExpired ? t('Endast rådgivande', 'Advisory only') : plan.status}
+                </Badge>
+              </div>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {t('Utfärdad', 'Issued')} {new Date(plan.issued_at).toLocaleString()} · {plan.model_version} · {actuals.length} {t('faktiska kvartar', 'actual quarters')}
               </p>
             </div>
-            <div className="flex gap-1.5">
-              {(Object.keys(planMeta) as PlanKey[]).map((k) => (
-                <Button
-                  key={k}
-                  size="sm"
-                  variant={planKey === k ? 'default' : 'outline'}
-                  onClick={() => setPlanKey(k)}
-                >
-                  {planMeta[k].label}
+            <div className="flex flex-wrap gap-1.5">
+              {PLAN_KEYS.map(key => (
+                <Button key={key} size="sm" variant={planKey === key ? 'default' : 'outline'} onClick={() => setPlanKey(key)}>
+                  {plan.plans[key].label}
                 </Button>
               ))}
+              <Button size="icon" variant="ghost" disabled={refreshing} onClick={() => void refresh()}>
+                <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+              </Button>
             </div>
           </div>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-muted-foreground mb-4">{planMeta[planKey].sub}</p>
-
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
-            <Kpi
-              label={t('Lägsta SOC', 'Battery low point')}
-              value={pct(minSoc(active))}
-              detail={floorSlots(active) === 0
-                ? t('rör aldrig golvet', 'never touches the floor')
-                : t(`${floorSlots(active)} kvartar på 5 %-golvet`, `${floorSlots(active)} quarters on the 5% floor`)}
-              tone={floorSlots(active) === 0 ? 'good' : 'bad'}
-            />
-            <Kpi
-              label={t('Import', 'Grid import')}
-              value={kwh(active.totals.importKwh)}
-              detail={t(`av ${kwh(active.totals.loadKwh)} last`, `of ${kwh(active.totals.loadKwh)} load`)}
-            />
-            <Kpi
-              label={t('Export', 'Exported')}
-              value={kwh(active.totals.exportKwh)}
-              detail={t('sista utvägen', 'sink of last resort')}
-            />
-            <Kpi
-              label={t('Batteri vid soldagens slut', 'Battery, end of solar day')}
-              value={SOLAR_DAYS.map((d) => pct(eod(active, d))).join(' / ')}
-              detail={t('mål > 80 %', 'target >80%')}
-            />
-            <Kpi
-              label={t('Nettokostnad', 'Net cost')}
-              value={`${active.totals.netCost.toFixed(2)} SEK`}
-              detail={t('endast prissatt fönster', 'priced window only')}
-            />
+          <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-6">
+            <Kpi label={t('Samma arbetsmängd', 'Equal workload')} value={`${active.summary.flexible_load_kwh.toFixed(1)} kWh`} detail={`${active.summary.service_delivered_kwh.toFixed(1)} / ${active.summary.service_required_kwh.toFixed(1)} kWh`} tone={active.summary.service_delivered_kwh >= active.summary.service_required_kwh ? 'good' : 'bad'} />
+            <Kpi label={t('Lägsta batteri', 'Battery low')} value={pct(active.summary.battery_soc_low)} detail={`${pct(active.summary.battery_soc_start)} → ${pct(active.summary.battery_soc_end)}`} />
+            <Kpi label={t('Nätimport', 'Grid import')} value={`${active.summary.grid_import_kwh.toFixed(1)} kWh`} detail={`${active.summary.priced_import_kwh.toFixed(1)} ${t('prissatt', 'priced')}`} />
+            <Kpi label={t('Nätexport', 'Grid export')} value={`${active.summary.grid_export_kwh.toFixed(1)} kWh`} detail={`${active.summary.priced_export_kwh.toFixed(1)} ${t('prissatt', 'priced')}`} />
+            <Kpi label={t('Nettokostnad', 'Net cost')} value={`${active.summary.net_cost_sek.toFixed(2)} SEK`} detail={t('endast publicerade priser', 'published prices only')} />
+            <Kpi label={t('Terminaljusterad', 'Terminal-adjusted')} value={`${active.summary.terminal_adjusted_cost_sek.toFixed(2)} SEK`} detail={t('värderar kvarvarande batteri', 'values remaining battery')} />
           </div>
 
-          <ResponsiveContainer width="100%" height={340}>
-            <ComposedChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
+          <ResponsiveContainer width="100%" height={360}>
+            <ComposedChart data={chartData} margin={{ top: 8, right: 10, left: 0, bottom: 4 }}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-muted" vertical={false} />
-              {/* Numeric axis, not categorical: ReferenceArea x1/x2 have to be
-                  compared as numbers for the advisory shading to land on the
-                  right slot boundary. */}
-              <XAxis
-                dataKey="i"
-                type="number"
-                domain={[0, chartData.length - 1]}
-                ticks={ticks}
-                tickFormatter={(i) => chartData[i as number]?.label.slice(6) ?? ''}
-                tick={{ fontSize: 11 }}
-                interval={0}
-              />
-              <YAxis
-                yAxisId="p"
-                tick={{ fontSize: 11 }}
-                tickFormatter={(w) => `${(w / 1000).toFixed(0)}`}
-                label={{ value: 'kW', angle: -90, position: 'insideLeft', fontSize: 11 }}
-              />
-              <YAxis
-                yAxisId="s"
-                orientation="right"
-                domain={[0, 100]}
-                tick={{ fontSize: 11 }}
-                tickFormatter={(v) => `${v}%`}
-              />
-
-              {/* Everything past the published price series is advisory. */}
-              <ReferenceArea
-                yAxisId="p"
-                x1={BINDING_UNTIL_SLOT}
-                x2={chartData.length - 1}
-                fill="currentColor"
-                className="text-muted"
-                fillOpacity={0.28}
-              />
-              <ReferenceLine
-                yAxisId="s"
-                y={PLANT.socMin * 100}
-                stroke={COLORS.soc}
-                strokeDasharray="3 3"
-                strokeOpacity={0.6}
-              />
-
-              <Area yAxisId="p" type="monotone" dataKey="pv" name={t('Solprognos', 'PV forecast')}
-                stroke={COLORS.pv} fill={COLORS.pv} fillOpacity={0.16} strokeWidth={1.5} dot={false} />
-              <Area yAxisId="p" type="step" dataKey="base" stackId="l" name={t('Baslast', 'Base load')}
-                stroke={COLORS.base} fill={COLORS.base} fillOpacity={0.85} strokeWidth={0} dot={false} />
-              <Area yAxisId="p" type="step" dataKey="boiler" stackId="l" name={t('Varmvatten', 'Hot water')}
-                stroke={COLORS.boiler} fill={COLORS.boiler} fillOpacity={0.9} strokeWidth={0} dot={false} />
-              <Area yAxisId="p" type="step" dataKey="pool" stackId="l" name={t('Pool', 'Pool heating')}
-                stroke={COLORS.pool} fill={COLORS.pool} fillOpacity={0.9} strokeWidth={0} dot={false} />
-              <Area yAxisId="p" type="step" dataKey="car" stackId="l" name={t('Bil', 'Car charging')}
-                stroke={COLORS.car} fill={COLORS.car} fillOpacity={0.9} strokeWidth={0} dot={false} />
-              <Line yAxisId="s" type="monotone" dataKey="soc" name={t('Batteri SOC', 'Battery SOC')}
-                stroke={COLORS.soc} strokeWidth={2} dot={false} />
-
-              <Tooltip
-                contentStyle={{ fontSize: 12, borderRadius: 8 }}
-                labelFormatter={(i) => chartData[i as number]?.label ?? ''}
-                formatter={(v, n) => [n === 'Battery SOC' || n === 'Batteri SOC'
-                  ? `${v}%` : `${((v as number) / 1000).toFixed(2)} kW`, n]}
-              />
+              <XAxis dataKey="i" type="number" domain={[0, chartData.length - 1]} ticks={ticks} tickFormatter={index => chartData[index]?.label ?? ''} tick={{ fontSize: 11 }} interval={0} />
+              <YAxis yAxisId="power" tick={{ fontSize: 11 }} tickFormatter={watts => `${(watts / 1_000).toFixed(0)}`} label={{ value: 'kW', angle: -90, position: 'insideLeft', fontSize: 11 }} />
+              <YAxis yAxisId="soc" orientation="right" domain={[0, 100]} tick={{ fontSize: 11 }} tickFormatter={value => `${value}%`} />
+              {bindingIndex < chartData.length && <ReferenceArea yAxisId="power" x1={bindingIndex} x2={chartData.length - 1} fill="currentColor" className="text-muted" fillOpacity={0.24} />}
+              <ReferenceLine yAxisId="soc" y={plan.policy.battery_end_of_solar_target_soc * 100} stroke={COLORS.soc} strokeDasharray="3 3" strokeOpacity={0.45} />
+              <Area yAxisId="power" type="monotone" dataKey="pv" name={t('Kalibrerad solprognos', 'Calibrated PV')} stroke={COLORS.pv} fill={COLORS.pv} fillOpacity={0.14} dot={false} />
+              <Line yAxisId="power" type="monotone" dataKey="pvRaw" name={t('Rå solprognos', 'Raw PV')} stroke={COLORS.pvRaw} strokeDasharray="4 3" dot={false} />
+              <Area yAxisId="power" type="step" dataKey="base" stackId="load" name={t('Baslast', 'Base load')} fill={COLORS.base} strokeWidth={0} />
+              <Line yAxisId="power" type="step" dataKey="baseP10" name={t('Baslast p10', 'Base load p10')} stroke={COLORS.base} strokeOpacity={0.45} strokeDasharray="2 3" dot={false} />
+              <Line yAxisId="power" type="step" dataKey="baseP90" name={t('Baslast p90', 'Base load p90')} stroke={COLORS.base} strokeOpacity={0.65} strokeDasharray="5 3" dot={false} />
+              <Area yAxisId="power" type="step" dataKey="boiler" stackId="load" name={t('Varmvatten', 'Hot water')} fill={COLORS.boiler} strokeWidth={0} />
+              <Area yAxisId="power" type="step" dataKey="pool" stackId="load" name={t('Pool', 'Pool')} fill={COLORS.pool} strokeWidth={0} />
+              <Area yAxisId="power" type="step" dataKey="ev" stackId="load" name={t('Bil', 'EV')} fill={COLORS.ev} strokeWidth={0} />
+              <Line yAxisId="power" type="step" dataKey="gridImport" name={t('Importeffekt', 'Grid import')} stroke={COLORS.import} dot={false} />
+              <Line yAxisId="power" type="step" dataKey="gridExport" name={t('Exporteffekt', 'Grid export')} stroke={COLORS.export} dot={false} />
+              <Line yAxisId="soc" type="monotone" dataKey="soc" name={t('Batteri SOC', 'Battery SOC')} stroke={COLORS.soc} strokeWidth={2} dot={false} />
+              <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} labelFormatter={index => chartData[index as number]?.label ?? ''} formatter={(value, name) => [name === 'Battery SOC' || name === 'Batteri SOC' ? `${Number(value).toFixed(1)}%` : `${(Number(value) / 1_000).toFixed(2)} kW`, name]} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
             </ComposedChart>
           </ResponsiveContainer>
-
-          <p className="text-xs text-muted-foreground mt-2">
-            {t(
-              `Skuggat område = rådgivande. Spotpris finns bara till 2026-08-10 23:45 (${BINDING_UNTIL_SLOT} av ${chartData.length} kvartar).`,
-              `Shaded region is advisory. Spot price exists only to 2026-08-10 23:45 — ${BINDING_UNTIL_SLOT} of ${chartData.length} quarter-hours are binding.`,
-            )}
+          <p className="mt-2 text-xs text-muted-foreground">
+            {t('Skuggat område är rådgivande eftersom båda prisserierna inte längre är publicerade.', 'The shaded interval is advisory because both price series are no longer published.')}
           </p>
         </CardContent>
       </Card>
 
+      <ActualPerformance actuals={actuals} />
+
       <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base">
-            {t('Prioritetslistan har två tolkningar', 'The priority list has two readings')}
-          </CardTitle>
-        </CardHeader>
+        <CardHeader className="pb-3"><CardTitle className="text-base">{t('Import- och exportpris', 'Import and export prices')}</CardTitle></CardHeader>
         <CardContent>
+          <ResponsiveContainer width="100%" height={190}>
+            <ComposedChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
+              <CartesianGrid strokeDasharray="3 3" className="stroke-muted" vertical={false} />
+              <XAxis dataKey="i" type="number" domain={[0, chartData.length - 1]} ticks={ticks} tickFormatter={index => chartData[index]?.label ?? ''} tick={{ fontSize: 11 }} interval={0} />
+              <YAxis tick={{ fontSize: 11 }} tickFormatter={value => `${Number(value).toFixed(2)}`} label={{ value: 'SEK/kWh', angle: -90, position: 'insideLeft', fontSize: 11 }} />
+              <Line type="stepAfter" dataKey="importPrice" name={t('Köpa', 'Import')} stroke={COLORS.import} dot={false} connectNulls={false} />
+              <Line type="stepAfter" dataKey="exportPrice" name={t('Sälja', 'Export')} stroke={COLORS.export} dot={false} connectNulls={false} />
+              <Tooltip labelFormatter={index => chartData[index as number]?.label ?? ''} formatter={value => [`${Number(value).toFixed(3)} SEK/kWh`, '']} />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-3"><CardTitle className="text-base">{t('Jämförbara scenarier', 'Comparable scenarios')}</CardTitle></CardHeader>
+        <CardContent className="space-y-4">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead>
-                <tr className="text-muted-foreground text-xs uppercase tracking-wide">
-                  <th className="text-left font-medium py-2">{t('Plan', 'Plan')}</th>
-                  <th className="text-right font-medium py-2">{t('Import', 'Import')}</th>
-                  <th className="text-right font-medium py-2">{t('Export', 'Export')}</th>
-                  <th className="text-right font-medium py-2">{t('Netto', 'Net')}</th>
-                  <th className="text-right font-medium py-2">{t('Kvartar på golv', 'Floor quarters')}</th>
-                  {SOLAR_DAYS.map((d) => (
-                    <th key={d} className="text-right font-medium py-2">{d.slice(5)}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {(Object.keys(planMeta) as PlanKey[]).map((k) => (
-                  <tr key={k} className={`border-t ${k === planKey ? 'bg-muted/40' : ''}`}>
-                    <td className="py-2">{planMeta[k].label}</td>
-                    <td className="text-right tabular-nums">{runs[k].totals.importKwh.toFixed(1)}</td>
-                    <td className="text-right tabular-nums">{runs[k].totals.exportKwh.toFixed(1)}</td>
-                    <td className="text-right tabular-nums">{runs[k].totals.netCost.toFixed(2)}</td>
-                    <td className="text-right tabular-nums">{floorSlots(runs[k])}</td>
-                    {SOLAR_DAYS.map((d) => (
-                      <td key={d} className="text-right tabular-nums">{pct(eod(runs[k], d))}</td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
+              <thead><tr className="text-xs uppercase tracking-wide text-muted-foreground">
+                <th className="py-2 text-left font-medium">{t('Plan', 'Plan')}</th>
+                <th className="py-2 text-right font-medium">{t('Flexibel last', 'Flexible load')}</th>
+                <th className="py-2 text-right font-medium">{t('Import', 'Import')}</th>
+                <th className="py-2 text-right font-medium">{t('Export', 'Export')}</th>
+                <th className="py-2 text-right font-medium">{t('Terminaljusterad', 'Terminal-adjusted')}</th>
+                {solarDays.map(day => <th key={day} className="py-2 text-right font-medium">SOC {day.slice(5)}</th>)}
+              </tr></thead>
+              <tbody>{PLAN_KEYS.map(key => <PlanRow key={key} plan={plan.plans[key]} selected={key === planKey} solarDays={solarDays} />)}</tbody>
             </table>
           </div>
-          <p className="text-sm text-muted-foreground mt-4">
-            {t(
-              'Att läsa "batteri > 80 % vid soldagens slut" som en hård reservation innebär att sol hålls tillbaka från poolen, som då måste köra på nattimport. Vilken tolkning som gäller är beslutet i arkitekturdokumentets avsnitt 8.2 som ännu inte är fattat.',
-              'Reading “battery >80% by end of solar day” as a hard reservation means holding sun back from the pool, which then runs on night import. Which reading applies is the decision in architecture §8.2 that has not been made yet.',
-            )}
+          <p className="text-sm text-muted-foreground">
+            {t('Alla tre scenarier kör exakt samma heltalsantal 15-minuterspass. Ett hårt batterimål som prognosen inte kan nå visas som ogenomförbart; det presenteras aldrig som uppfyllt.', 'All three scenarios run exactly the same integer number of 15-minute service slots. A hard battery target the forecast cannot reach is marked infeasible; it is never presented as achieved.')}
           </p>
         </CardContent>
       </Card>
 
       <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base">{t('Varifrån siffrorna kommer', 'Where the numbers come from')}</CardTitle>
-        </CardHeader>
+        <CardHeader className="pb-3"><CardTitle className="text-base">{t('Datakällor och kvalitet', 'Data sources and quality')}</CardTitle></CardHeader>
         <CardContent className="space-y-3 text-sm">
-          <Row k={t('Solprognos', 'PV forecast')}
-            v={SOLAR_DAYS.map((d) => PV_FORECAST_DAILY_KWH[d].toFixed(1)).join(' / ') + ' kWh'}
-            s="meteo_solar_production_forecast_estimate_* · 96-point watts attribute, 15 min native" />
-          <Row k={t('Spotpris', 'Spot price')} v="0.157–0.404 SEK/kWh"
-            s="tibber.get_prices · 15 min native · published to 2026-08-10 only" />
-          <Row k={t('Nättariff', 'Grid tariff')} v={`${GRID_IMPORT_SEK} / ${GRID_EXPORT_SEK} SEK/kWh`}
-            s="smart_home_solutions_grid_import_price.forecast · flat across every published slot" />
-          <Row k={t('Batteri', 'Battery')}
-            v={`${PLANT.batteryCapacityKwh} kWh @ ${(INITIAL.batterySoc * 100).toFixed(1)}%`}
-            s="sigen_plant_rated_energy_capacity · _battery_state_of_charge, measured" />
-          <Row k={t('Bil', 'Car')}
-            v={`${(INITIAL.carSoc * 100).toFixed(0)}% → ${(DEVICES.car.targetSoc * 100).toFixed(0)}%`}
-            s="tesla_model_y_charge_cable = on · energy_remaining 55.26 kWh implies a 75.7 kWh pack" />
-          <Row k={t('Poolbehov', 'Pool requirement')} v={`${DEVICES.pool.dailyRequirementKwh} kWh/${t('dygn', 'day')}`}
-            s={`median of ${MEASURED_DAILY_KWH.pool.length} measured days — the helper says ${DEVICES.pool.configuredTargetKwh}`}
-            warn />
-          <Row k={t('Varmvattenbehov', 'Hot water requirement')} v={`${DEVICES.boiler.dailyRequirementKwh} kWh/${t('dygn', 'day')}`}
-            s={`median of ${MEASURED_DAILY_KWH.boiler.length} measured days — the helper says ${DEVICES.boiler.configuredTargetKwh}`}
-            warn />
-          <Row k={t('Baslast', 'Base load')} v="18.2 kWh/day"
-            s="derived: 2026-08-01 total load minus the four modelled devices · hourly source, held flat" />
-
-          <div className="pt-3 border-t">
-            <Badge variant={plans.problems.length ? 'destructive' : 'secondary'}>
-              {plans.problems.length
-                ? t(`${plans.problems.length} invarianter bröts`, `${plans.problems.length} invariant failures`)
-                : t('Alla invarianter håller', 'All invariants hold')}
-            </Badge>
-            <p className="text-xs text-muted-foreground mt-2">
-              {plans.problems.length
-                ? plans.problems.slice(0, 5).join(' · ')
-                : t(
-                  `Energibalansen stämmer inom 1 W över ${active.slots.length * 3} simulerade kvartar · SOC håller sig inom [5 %, 100 %] · ingen import över ${PLANT.gridImportMaxW / 1000} kW · aldrig import och export samtidigt · aldrig laddning och urladdning samtidigt.`,
-                  `Per-slot energy balance closes within 1 W across ${active.slots.length * 3} simulated quarter-hours · SOC stays inside [5%, 100%] · import never exceeds ${PLANT.gridImportMaxW / 1000} kW · no slot both imports and exports · no slot both charges and discharges.`,
-                )}
-            </p>
+          {Object.entries(plan.sources).map(([key, source]) => (
+            <SourceRow key={key} name={key.replace('_', ' ')} source={source} />
+          ))}
+          <div className="border-t pt-3">
+            <div className="font-medium">{t('Verifierade modellindata', 'Verified model inputs')}</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              {t('Batteri', 'Battery')} {plan.battery.capacity_kwh.toFixed(2)} kWh · SOC {pct(plan.battery.soc)} · {t('ladda/urladda', 'charge/discharge')} {(plan.battery.charge_max_w / 1_000).toFixed(1)}/{(plan.battery.discharge_max_w / 1_000).toFixed(1)} kW · η {(plan.battery.charge_efficiency * 100).toFixed(0)}/{(plan.battery.discharge_efficiency * 100).toFixed(0)}%
+              {' · '}{t('Nätgräns in/ut', 'Grid limit in/out')} {(plan.grid.import_limit_w / 1_000).toFixed(1)}/{(plan.grid.export_limit_w / 1_000).toFixed(1)} kW
+            </div>
+            {plan.services.length > 0 && (
+              <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                {plan.services.map(service => {
+                  const sampleKey = service.device === 'boiler' ? 'hot_water' : service.device === 'pool' ? 'pool_heating' : 'ev_charging';
+                  const samples = plan.service_requirement_sample_days[sampleKey];
+                  return (
+                    <div key={service.id}>
+                      {service.id}: {service.required_kwh.toFixed(2)} kWh @ {(service.power_w / 1_000).toFixed(1)} kW · {t('minsta körning', 'minimum run')} {service.min_run_slots * 15} min · {t('deadline', 'deadline')} {new Date(service.deadline).toLocaleString()}{samples != null ? ` · n=${samples} active days` : ''}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          <div className="border-t pt-3 text-xs text-muted-foreground">
+            {t('Home Assistant behåller rådata. Webbplatsen får högst 96 aggregerade rader per dygn och hem, en aktuell plan som skrivs över varje timme och små körsammanfattningar. Kvartsdata rensas efter 120 dagar och körhistorik efter 30 dagar.', 'Home Assistant retains raw samples. The website receives at most 96 aggregated rows per day and home, one current plan overwritten hourly, and small run summaries. Quarter-hour data is pruned after 120 days and run history after 30 days.')}
           </div>
         </CardContent>
       </Card>
@@ -322,25 +371,98 @@ const LoadShiftTab: React.FC = () => {
   );
 };
 
-const Kpi: React.FC<{ label: string; value: string; detail: string; tone?: 'good' | 'bad' }> = ({
-  label, value, detail, tone,
-}) => (
-  <div className="rounded-lg border p-3">
-    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
-    <div className={`text-xl font-medium mt-1 tabular-nums ${
-      tone === 'good' ? 'text-emerald-600 dark:text-emerald-400'
-        : tone === 'bad' ? 'text-rose-600 dark:text-rose-400' : ''
-    }`}>{value}</div>
-    <div className="text-[11px] text-muted-foreground mt-0.5">{detail}</div>
+const ActualPerformance: React.FC<{ actuals: ActualEnergySlot[] }> = ({ actuals }) => {
+  const { t } = useLanguage();
+  const data = useMemo(() => actuals.map((slot, index) => ({
+    i: index,
+    label: new Date(slot.start_ts).toLocaleString([], { hour: '2-digit', minute: '2-digit' }),
+    load: slot.total_load_kwh == null ? null : slot.total_load_kwh * 4_000,
+    pv: slot.solar_production_kwh == null ? null : slot.solar_production_kwh * 4_000,
+    gridImport: slot.grid_import_kwh == null ? null : slot.grid_import_kwh * 4_000,
+    gridExport: slot.grid_export_kwh == null ? null : slot.grid_export_kwh * 4_000,
+    batteryCharge: slot.battery_charge_kwh == null ? null : slot.battery_charge_kwh * 4_000,
+    batteryDischarge: slot.battery_discharge_kwh == null ? null : slot.battery_discharge_kwh * 4_000,
+  })), [actuals]);
+  const ticks = data.filter((_, index) => index % 12 === 0).map(value => value.i);
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">{t('Uppmätt prestanda — senaste 24 timmarna', 'Measured performance — last 24 hours')}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {data.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            {t('Inga kompletta 15-minutersvärden har tagits emot ännu.', 'No complete 15-minute actuals have been received yet.')}
+          </p>
+        ) : (
+          <>
+            <ResponsiveContainer width="100%" height={230}>
+              <ComposedChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-muted" vertical={false} />
+                <XAxis dataKey="i" type="number" domain={[0, data.length - 1]} ticks={ticks} tickFormatter={index => data[index]?.label ?? ''} tick={{ fontSize: 11 }} interval={0} />
+                <YAxis tick={{ fontSize: 11 }} tickFormatter={watts => `${(Number(watts) / 1_000).toFixed(0)}`} label={{ value: 'kW', angle: -90, position: 'insideLeft', fontSize: 11 }} />
+                <Line type="stepAfter" dataKey="load" name={t('Faktisk last', 'Actual load')} stroke={COLORS.actual} strokeWidth={2} dot={false} connectNulls={false} />
+                <Line type="stepAfter" dataKey="pv" name={t('Faktisk sol', 'Actual PV')} stroke={COLORS.pv} strokeWidth={2} dot={false} connectNulls={false} />
+                <Line type="stepAfter" dataKey="gridImport" name={t('Faktisk import', 'Actual import')} stroke={COLORS.import} dot={false} connectNulls={false} />
+                <Line type="stepAfter" dataKey="gridExport" name={t('Faktisk export', 'Actual export')} stroke={COLORS.export} dot={false} connectNulls={false} />
+                <Line type="stepAfter" dataKey="batteryCharge" name={t('Faktisk batteriladdning', 'Actual battery charge')} stroke={COLORS.batteryCharge} dot={false} connectNulls={false} />
+                <Line type="stepAfter" dataKey="batteryDischarge" name={t('Faktisk batteriurladdning', 'Actual battery discharge')} stroke={COLORS.batteryDischarge} dot={false} connectNulls={false} />
+                <Tooltip labelFormatter={index => data[index as number]?.label ?? ''} formatter={(value, name) => [`${(Number(value) / 1_000).toFixed(2)} kW`, name]} />
+                <Legend wrapperStyle={{ fontSize: 12 }} />
+              </ComposedChart>
+            </ResponsiveContainer>
+            <p className="mt-2 text-xs text-muted-foreground">
+              {t('Varje punkt är energi från Home Assistants recorder summerad i en komplett kvart och visad som medeleffekt; råa sekundvärden lagras inte på webbplatsen.', 'Each point is Home Assistant recorder energy summed into one complete quarter and shown as average power; raw per-second values are not stored by the website.')}
+            </p>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+};
+
+const PlanRow: React.FC<{ plan: GeneratedPlan; selected: boolean; solarDays: string[] }> = ({ plan, selected, solarDays }) => (
+  <tr className={`border-t ${selected ? 'bg-muted/40' : ''}`}>
+    <td className="py-2">{plan.label} {plan.status !== 'ready' && <Badge variant="destructive" className="ml-1">{plan.status}</Badge>}</td>
+    <td className="text-right tabular-nums">{plan.summary.flexible_load_kwh.toFixed(1)} kWh</td>
+    <td className="text-right tabular-nums">{plan.summary.grid_import_kwh.toFixed(1)}</td>
+    <td className="text-right tabular-nums">{plan.summary.grid_export_kwh.toFixed(1)}</td>
+    <td className="text-right tabular-nums">{plan.summary.terminal_adjusted_cost_sek.toFixed(2)} SEK</td>
+    {solarDays.map(day => <td key={day} className="text-right tabular-nums">{plan.summary.battery_end_of_solar_soc[day] == null ? '—' : `${(plan.summary.battery_end_of_solar_soc[day] * 100).toFixed(0)}%`}</td>)}
+  </tr>
+);
+
+const SourceRow: React.FC<{
+  name: string;
+  source: OptimisationPlanV1['sources'][keyof OptimisationPlanV1['sources']];
+}> = ({ name, source }) => (
+  <div className="grid grid-cols-1 gap-x-4 gap-y-0.5 md:grid-cols-[140px_180px_1fr]">
+    <div className="font-medium capitalize">{name}</div>
+    <div>{source.provider} · {source.quality}</div>
+    <div className="text-xs text-muted-foreground">
+      {source.entity_ids.join(', ')} · valid {new Date(source.valid_until).toLocaleString()}
+      {source.sample_count != null ? ` · n=${source.sample_count}` : ''}
+      {source.mape_percent != null ? ` · MAPE ${source.mape_percent.toFixed(1)}%` : ''}
+      {source.bias_percent != null ? ` · bias ${source.bias_percent.toFixed(1)}%` : ''}
+      {source.location?.market_area ? ` · ${source.location.market_area}` : ''}
+      {source.location?.latitude != null && source.location?.longitude != null
+        ? ` · ${source.location.latitude.toFixed(3)}, ${source.location.longitude.toFixed(3)}`
+        : ''}
+    </div>
   </div>
 );
 
-const Row: React.FC<{ k: string; v: string; s: string; warn?: boolean }> = ({ k, v, s, warn }) => (
-  <div className="grid grid-cols-1 md:grid-cols-[200px_180px_1fr] gap-x-4 gap-y-0.5">
-    <div className="font-medium">{k}</div>
-    <div className="tabular-nums">{v}</div>
-    <div className={`text-xs ${warn ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>{s}</div>
+const Kpi: React.FC<{ label: string; value: string; detail: string; tone?: 'good' | 'bad' }> = ({ label, value, detail, tone }) => (
+  <div className="rounded-lg border p-3">
+    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
+    <div className={`mt-1 text-xl font-medium tabular-nums ${tone === 'good' ? 'text-emerald-600 dark:text-emerald-400' : tone === 'bad' ? 'text-rose-600 dark:text-rose-400' : ''}`}>{value}</div>
+    <div className="mt-0.5 text-[11px] text-muted-foreground">{detail}</div>
   </div>
+);
+
+const EmptyState: React.FC<{ text: string }> = ({ text }) => (
+  <Card><CardContent className="py-10 text-sm text-muted-foreground">{text}</CardContent></Card>
 );
 
 export default LoadShiftTab;

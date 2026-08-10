@@ -37,18 +37,13 @@ serve(async (req) => {
     if (auth.ok === false) return json({ error: auth.error }, auth.status);
     if (!auth.subscriptionActive) return json({ error: "subscription_inactive" }, 402);
 
-    const [{ data: settings, error: settingsError }, { data: customer, error: customerError }] =
-      await Promise.all([
-        supabase.from("energy_tariff_settings").select(
-          "profile_id, connection_type, grid_area, energy_tax_reduced, include_vat, export_vat_registered",
-        ).eq("id", true).maybeSingle(),
-        supabase.from("customers").select("primary_home_id").eq("id", auth.customerId).maybeSingle(),
-      ]);
-    if (settingsError || customerError) {
-      console.error("[INTEGRATION-TARIFF] settings/customer lookup failed", {
-        settingsError,
-        customerError,
-      });
+    const { data: settings, error: settingsError } = await supabase
+      .from("energy_tariff_settings")
+      .select("profile_id, connection_type, grid_area, energy_tax_reduced, include_vat, export_vat_registered")
+      .eq("id", true)
+      .maybeSingle();
+    if (settingsError) {
+      console.error("[INTEGRATION-TARIFF] settings lookup failed", settingsError);
       return json({ error: "tariff_lookup_failed" }, 500);
     }
 
@@ -88,7 +83,7 @@ serve(async (req) => {
     // Keyed by semantic key so an unanswered input can be reported by its real
     // question text instead of an opaque key the customer has never seen.
     const questionText = new Map<string, { sv: string; en: string }>();
-    if (customer?.primary_home_id) {
+    if (auth.homeId) {
       const { data: questions, error: questionError } = await supabase
         .from("home_questions")
         .select("id, semantic_key, question_text, question_text_en")
@@ -101,7 +96,7 @@ serve(async (req) => {
       const { data: answers, error: answerError } = await supabase
         .from("home_answers")
         .select("question_id, answer_value, answer_text")
-        .eq("home_id", customer.primary_home_id)
+        .eq("home_id", auth.homeId)
         .in("question_id", (questions ?? []).map((question) => question.id));
       if (answerError) {
         console.error("[INTEGRATION-TARIFF] answer lookup failed", answerError);

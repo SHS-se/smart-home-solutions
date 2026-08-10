@@ -65,7 +65,7 @@ serve(async (req) => {
       .eq("code_hash", codeHash)
       .is("used_at", null)
       .gt("expires_at", new Date().toISOString())
-      .select("id, customer_id")
+      .select("id, customer_id, home_id")
       .maybeSingle();
 
     if (consumeError) {
@@ -81,6 +81,7 @@ serve(async (req) => {
       .from("ha_device_tokens")
       .insert({
         customer_id: consumed.customer_id,
+        home_id: consumed.home_id,
         device_name: deviceName,
         token_hash: await sha256Hex(deviceToken),
       })
@@ -108,6 +109,7 @@ serve(async (req) => {
     return json({
       device_token: deviceToken,
       device_token_id: tokenRow.id,
+      home_id: consumed.home_id,
       customer_name: identity?.name ?? null,
       subscription_active: Boolean(customer?.subscription_active),
     });

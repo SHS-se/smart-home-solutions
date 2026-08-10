@@ -29,6 +29,7 @@ export interface DeviceAuthSuccess {
   ok: true;
   tokenId: string;
   customerId: string;
+  homeId: string;
   customerName: string | null;
   subscriptionActive: boolean;
   subscriptionExpiresAt: string | null;
@@ -59,7 +60,7 @@ export async function authenticateDevice(
   const tokenHash = await sha256Hex(token);
   const { data: tokenRow, error: tokenError } = await supabase
     .from("ha_device_tokens")
-    .select("id, customer_id, revoked_at")
+    .select("id, customer_id, home_id, revoked_at")
     .eq("token_hash", tokenHash)
     .maybeSingle();
 
@@ -72,6 +73,9 @@ export async function authenticateDevice(
   }
   if (tokenRow.revoked_at) {
     return { ok: false, status: 401, error: "token_revoked" };
+  }
+  if (!tokenRow.home_id) {
+    return { ok: false, status: 401, error: "token_not_bound_to_home" };
   }
 
   // customers has no name column — identity lives on the linked contact and
@@ -112,6 +116,7 @@ export async function authenticateDevice(
     ok: true,
     tokenId: tokenRow.id,
     customerId: customer.id,
+    homeId: tokenRow.home_id,
     customerName,
     subscriptionActive: Boolean(customer.subscription_active) && notExpired,
     subscriptionExpiresAt: customer.subscription_expires_at ?? null,

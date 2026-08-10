@@ -1,0 +1,984 @@
+# Energy optimisation architecture
+
+Status: **core data path and shadow planner implemented; device executors remain to be commissioned**
+
+Date: **2026-08-10**
+
+Source material: `ENERGY_OPTIMISATION_NOTES.md`, the current portal implementation in
+this repository, the current `shs_energy` Home Assistant integration in
+`../shs-ha-integration`, and the exported Node-RED flows in
+`~/Code/ha/node-red-flows`.
+
+## 1. Decision summary
+
+Build energy optimisation as three layers with deliberately different
+responsibilities:
+
+1. **SHS portal and backend — model and plan.** The portal owns home/device
+   configuration, customer preferences, tariffs, scenario simulation,
+   calibration, plan history, actuals, and savings reporting. A separate
+   server-side deterministic planner owns the first rolling optimisation
+   calculation. The React browser application does not run the production
+   optimiser. A Python/MILP service remains the planned replacement when the
+   device/thermal constraint set outgrows the verified heuristic.
+2. **`shs_energy` integration — observe and coordinate locally.** The integration
+   normalises Home Assistant entities into one typed contract, sends measured
+   state and forecasts to the backend, validates and caches returned plans,
+   exposes the current recommendations as Home Assistant entities, runs one
+   local surplus/load arbiter, and reports plan-versus-actual data.
+3. **Home Assistant controllers — enforce and actuate.** Existing Node-RED flows,
+   and later native HA blueprints/controllers, retain manual overrides,
+   thermostats, completion detection, equipment interlocks, minimum run times,
+   and command confirmation. Optimisation requests permission or a target; it
+   does not bypass these controllers.
+
+The server produces a rolling **72-hour look-ahead**, but only the portion backed
+by published prices is binding. Later slots are advisory and exist primarily so
+the model can value stored electricity and heat across a solar/weather change.
+The canonical timestep is **15 minutes**. The server replans from measured state;
+the local reactive layer corrects for what actually happens between plans.
+
+The first shadow release simulates the battery, protects an explicit reserve,
+and optimises the timing of discrete boiler, pool, and EV work while publishing
+opportunity/surplus signals. Price-led battery grid charging/export and thermal
+state optimisation belong to the next solver stage. Device controllers retain
+their existing closed-loop logic. EMHASS remains a useful reference and shadow
+comparator, not the product runtime.
+
+### 1.1 Implementation checkpoint (2026-08-10)
+
+The initial production-shaped path now resolves the eight defects found in the
+static portal prototype:
+
+| Defect | Implemented correction |
+|---|---|
+| Customer telemetry was compiled into the public JavaScript bundle | Deleted the hard-coded input snapshot. The selected `home_id` now reads a row protected by RLS. Pairing codes and active device tokens are bound to one home. |
+| The page was a manually copied snapshot | `shs_energy` now uploads completed 15-minute actuals and requests a fresh rolling plan hourly. The portal shows issue/expiry/source freshness and measured overlays. |
+| A/B/C used unequal work and fabricated a final partial day | Services have explicit earliest times and deadlines. Only deadlines inside the horizon create work; all scenarios use the same rounded integer slot count, and end-of-solar metrics omit an unfinished final local day. |
+| Pool, boiler and EV used fractional/chattering power and an invented 11 kW EV rate | Each service is a contiguous block of whole 15-minute slots respecting its configured measured/available power and minimum run. EV power is a required input. |
+| The 80% battery claim was not verified | End-of-solar and terminal SOC are simulation invariants. A missed hard target marks the plan infeasible and prevents local request entities from becoming active. |
+| Export was valued with the import supplier price | Import and export are separate required timestamped entities, each combined with the correct grid direction. The integration rejects using the same entity for both. |
+| One August day was repeated as baseload | Baseload is the per-local-quarter median of recorder history after subtracting separately modelled loads; p10/p90 and sample counts are retained for explanation. |
+| Raw PV forecasts were treated as truth | HA keeps a compact forecast ledger, matches completed slots to actual solar, and publishes lead-day correction factors, sample counts, MAPE and bias. Raw and calibrated curves are both visible. |
+
+This is deliberately a **shadow/advisory release**. The integration exposes
+verified planned-power requests and measured reactive surplus, but it does not
+bypass existing thermostats, completion logic, manual overrides or interlocks.
+
+## 2. Terms
+
+- **Baseline controller:** the normal local schedule, thermostat, occupancy, and
+  safety logic that works without SHS optimisation.
+- **Plan:** a versioned, time-indexed recommendation calculated from forecasts
+  and a measured initial state.
+- **Planned control:** use of the current plan's preferred windows, power target,
+  setpoint offset, or import envelope.
+- **Reactive control:** local allocation or shedding in response to measured
+  grid flow, device availability, temperatures, SOC, overrides, or unexpected
+  load. It operates inside the plan's policy and hard limits.
+- **Executor:** the per-device HA or Node-RED controller that translates an SHS
+  request into a device-specific command and confirms the physical result.
+- **Hard constraint:** a safety, equipment, legal, or explicitly guaranteed
+  customer limit. Optimisation may never violate it.
+- **Soft target:** a preferred state that can move within a separately defined
+  hard range when another sink is more valuable.
+
+## 3. What exists today
+
+### 3.1 Portal energy modelling
+
+The website now has a separate live shadow-planning view. Its older
+device-day/annual simulator remains a useful **forward load simulator**, not an
+energy optimiser, and should not be confused with the new server-side planner.
+
+Reusable foundations:
+
+- `device_types`, `device_instances`, `home_device_assignments`, and
+  `device_profiles` provide a reusable catalogue, home inventory, and
+  performance-profile model.
+- `energy_home_settings` stores a home-level UA estimate and overrides.
+- `model_runs` snapshots inputs, device bindings, profiles, tariff inputs,
+  results, and a daily time series.
+- The simulator has five stateful device models:
+  `fixed_baseload`, `electric_resistive_thermostat`,
+  `air_to_air_heat_pump_inverter`, `fridge_freezer_compressor`, and
+  `event_appliance`.
+- The heat-pump model already supports COP/capacity curves, two-dimensional
+  performance surfaces, modulation, and a startup transient.
+- The device-day engine advances at five-minute intervals and emits 15-minute
+  load data. It includes a simple per-room 1R1C thermal calculation.
+- Manufacturer performance profiles and per-device calibration metadata can be
+  stored and resolved.
+
+Material limitations in that legacy simulator:
+
+| Area | Current behaviour | Consequence |
+|---|---|---|
+| Dumb vs smart | `scenario` is saved to `model_runs`, but is never passed into or read by `simulateDeviceDay()` | A “smart” run has no smart behaviour. The ROI comparison is not evidence of optimisation savings. |
+| Mode | `design` uses the selected outdoor temperature; both `typical` and `year` simulate one day at 0 °C | The mode selector does not yet represent typical weather or a chronological year. |
+| Annual model | Forty-one independent constant-temperature days are interpolated against monthly mean temperatures | No chronology, solar, weather variability, state carried between days, or price correlation is represented. |
+| Prices | The simulator reads legacy scalar fields from `tariff_instances` | It does not use the effective-dated tariff catalogue, spot-price series, separate import/export prices, or actual billing-period peak state. |
+| PV/grid/battery | None are in the device-day energy balance | The current simulator cannot model self-consumption, export, battery arbitrage, curtailment, or grid limits. |
+| Controls | `controllable` and `priority` are diagnostic metadata. `shiftable` only chooses a chart category | They do not change device timing or resolve concurrency. |
+| UI controls | `comfortBand` and `targetPeak` are displayed/snapshotted but do not constrain the simulation | Runs can imply a promise that the engine did not evaluate. |
+| Home settings | The simulator preloads indoor temperature, but ignores the saved UA override and thermal-capacity class | The simulator can show an override in setup while calculating with a different building model. |
+| Initial state | Every device and room starts from a generated default | Battery SOC, EV SOC/presence, tank/pool/room temperatures, completed cycles, and manual overrides are absent. |
+| Building model | UA and thermal mass are divided equally among inferred room keys | Zone heat loss and thermal storage are not physically calibrated. |
+| House-model tool | The detailed envelope calculator stores its inputs only in browser `localStorage` and is not connected to a selected home or the simulator | Its more detailed UA calculation is not a production model input. |
+| Calibration | Annual device energy is scaled to an override or billing history, but the day shape and peaks remain uncalibrated | Energy totals and network-peak costs can be based on inconsistent scales. Grid import can also be mistaken for whole-home use at a solar home. |
+| ROI pairing | ROI independently selects the newest dumb and newest smart run | Even after smart behaviour exists, runs with different inputs, tariffs, or model versions could be compared. |
+| Missing data | Binding code guesses values from device names and supplies defaults for UA, prices, setpoints, COP, schedules, and cycles | A run can look precise while depending on unverified assumptions. Production optimisation must fail validation instead. |
+
+The current models should be retained for device physics, scenario replay, and
+counterfactual simulation. They should not be extended into a browser-based
+production scheduler.
+
+### 3.2 Current `shs_energy` integration
+
+The pre-change integration already mapped `total_increasing` energy sensors to
+daily categories, backfilled daily totals, downloaded the tariff catalogue,
+calculated monthly grid-tariff components locally, and exposed current grid
+prices and subscription status.
+
+The implementation in this change adds:
+
+- one-home pairing and token binding, including home-scoped tariff lookup;
+- a strict 15-minute contract for timestamped PV and separate supplier import
+  and export forecasts;
+- explicit market area, PV coordinates, source units, freshness, battery/grid
+  capabilities, service deadlines, whole-slot minimum runs, and EV state;
+- complete 15-minute recorder bins, a weekday/weekend median baseload profile,
+  daily remaining-service estimates, and conservative lead-day PV calibration;
+- an hourly 72-hour plan request plus quarter-hour actual upload;
+- local cached plan/status and bounded boiler, pool and EV request sensors; and
+- a live measured-export signal for a single reactive executor.
+
+It still does not own device actuators, confirmation, thermal state models,
+weather-conditioned load, or the central reactive allocator. Those remain
+commissioning/product work. The existing daily energy, supplier-cost and tariff
+history tables also remain customer-scoped until that older feature is made
+multi-home; the new optimisation path itself is home-scoped end to end.
+
+### 3.3 Existing local control
+
+The exported Node-RED flows already provide valuable closed-loop behaviour:
+
+- per-zone high, low, sleeping, and temporary setpoints;
+- schedules, occupancy modes, and manual overrides;
+- thermostat hysteresis and grouped actuators;
+- outdoor-aware summer lockout, warm-weather hysteresis, and cold boost; and
+- reusable subflows for overrides, timers, schedules, and floor thermostats.
+
+In the outdoor-aware snapshot, the seasonal rules are hard-coded as June–August
+heating lockout, 15/13 °C outdoor-mean hysteresis, and cold boosts below 5 °C and
+0 °C. These are useful prototype settings, not yet a product parameter model.
+
+The notes also describe power-confirmed IR control, pool cycle detection, EV
+state, and Sigen inverter control. Those IR groups are not in the exported flow
+set, so a fresh export is required before treating them as reproducible product
+logic.
+
+### 3.4 Corrections and conflicts in the working notes
+
+Later verified observations in the notes supersede the stale “outstanding” list
+in section 13: the EMHASS deferrable count was raised to four and dynamic required
+hours were implemented earlier in the same document.
+
+The notes also call missing effektavgift attributes an open defect. The current
+tariff implementation and published `ellevio-2026-06-01` definition deliberately
+contain no demand rule, so `capacity_cost_per_kw`, `demand_charge`, and
+`billing_period_peak_kw` being absent is expected for the active revision. The
+commercial tariff source should still be rechecked before release, but the model
+must not invent a demand charge while the published contract has none.
+
+Finally, “money saved” and the proposed strict ordering “self-consumption first,
+balanced load second, cost third” are not equivalent. The EMHASS experiment
+already showed that a self-consumption objective can import at the cap because
+import has no cost in that objective. Section 8.2 makes the required product
+decision explicit.
+
+## 4. Target architecture
+
+```mermaid
+flowchart LR
+    subgraph HA["Home Assistant — local execution plane"]
+        A["Source adapters<br/>prices · PV · weather · live state"]
+        I["shs_energy<br/>plan cache · validation · arbiter"]
+        C["Closed-loop controllers<br/>HA blueprints or Node-RED"]
+        D["Physical devices<br/>battery · EV · boiler · pool · zones"]
+        A --> I
+        I -->|"advisory request / bounded target"| C
+        C -->|"device-specific command"| D
+        D -->|"measurement and confirmation"| A
+    end
+
+    subgraph SHS["SHS server — control plane"]
+        E["Authenticated optimisation API"]
+        O["Versioned server-side planner<br/>verified heuristic, then MILP"]
+        P["Plans · actuals · policies · model versions"]
+        W["Portal configuration, simulation, explanation, savings"]
+        E --> O
+        E --> P
+        P --> W
+        W --> P
+    end
+
+    I -->|"home-scoped snapshots, forecasts, and actuals"| E
+    E -->|"versioned plan and surplus policy"| I
+```
+
+### 4.1 Portal and backend responsibilities
+
+The portal/backend owns:
+
+- home identity, location/timezone, grid connection, tariff assignment, and
+  subscription entitlement;
+- the device inventory, capability model, relationships, performance profiles,
+  and customer preferences;
+- a commissioning UI showing every required and missing input;
+- scenario simulation and historical replay;
+- canonical model and policy versions;
+- construction of a complete, validated optimisation problem;
+- the versioned server-side planner and its future solver infrastructure;
+- a versioned current plan, compact immutable run summaries, actuals,
+  explanations, and model errors;
+- counterfactual baseline and savings calculations; and
+- fleet-level monitoring without exposing one customer's data to another.
+
+The browser is a UI over these services. It must not be required to be open for
+planning, and it must not receive device tokens or call the solver with
+untrusted customer-supplied home IDs.
+
+Supabase Edge Functions remain suitable as the authenticated facade and for
+database work. The numerical optimiser should run in a separately deployed
+Python container with a pinned solver/runtime. The facade authorises the device
+token and home, submits a typed job, and returns or retrieves the result.
+
+The implemented initial service is synchronous and uses a pure, deterministic
+TypeScript heuristic in the authenticated edge function. It schedules whole,
+contiguous service blocks, simulates battery/grid physics, and refuses invalid
+or infeasible output. Requests are idempotent by `home_id` and `snapshot_id`.
+Battery dispatch in this stage is a self-consumption/reserve policy, not a full
+price-arbitrage optimiser; the UI labels its terminal-energy adjustment so it
+cannot be mistaken for a complete MILP result.
+The next solver stage can move the same versioned contract behind a small
+FastAPI/Pydantic service with a pinned open-source MILP solver such as HiGHS.
+That service must receive a complete snapshot; it must not query Home Assistant
+or silently fill missing inputs. If EMHASS formulation code is reused, retain
+its MIT attribution and add contract-level regression tests around the adapted
+constraints.
+
+### 4.2 Integration responsibilities
+
+The integration owns:
+
+- an explicit one-token-to-one-home binding;
+- an options/config flow that maps portal device IDs to HA entities and declares
+  local capabilities;
+- provider adapters that return canonical 15-minute PV, weather, and supplier
+  price series regardless of whether the source uses attributes or service
+  responses;
+- live measurements and state required to seed every stateful device;
+- calculation of base load excluding separately modelled variable loads;
+- contract validation, units, UTC timestamp conversion, and source freshness;
+- request idempotency, plan polling/refresh, local storage, expiry, and model
+  version compatibility;
+- Home Assistant entities representing plan health and the **current** request
+  for each device;
+- one central local reactive allocator so independent loads cannot all claim the
+  same surplus;
+- actual power/state sampling, command outcome events, and 15-minute aggregation;
+  and
+- safe disengagement: once a plan is expired or a required sensor is invalid,
+  issue no new optimisation request and leave the baseline controller in charge.
+
+A planned-request entity is unavailable when the planner has no authority.
+`0 W` is used only inside a valid binding slot to mean an explicit off request;
+this distinction prevents an outage from masquerading as a stop command.
+
+The integration does **not** guess a missing device rating, target, price, SOC,
+or temperature. A missing required input makes that device ineligible and is
+reported both as an HA repair issue and in the portal.
+
+The full 72-hour plan should remain in integration storage rather than a large
+recorder-backed sensor attribute. HA entities expose plan status, current/next
+slot, current opportunity signal, and per-device request/reason.
+
+### 4.3 Local controller responsibilities
+
+Each executor owns:
+
+- manual override precedence;
+- equipment safety and hard temperature/SOC limits;
+- baseline schedule and occupancy logic;
+- thermostat or completion detection;
+- coupled equipment such as pool pump plus heater;
+- minimum on/off time, quiet hours, rate limits, and anti-chatter hysteresis;
+- device-specific service calls and inverter modes;
+- command confirmation from measured state/power; and
+- a fault result when an expected transition does not occur.
+
+For the prototype, existing Node-RED subflows can implement these adapters. The
+customer product should use versioned native HA blueprints or integration-owned
+controller entities so Node-RED is not a prerequisite. The integration should
+not silently create or edit customer automations. Commissioning should import a
+known blueprint and create one visible automation per mapped executor, or allow
+an existing Node-RED flow to consume the same request entities.
+
+### 4.4 Supported control boundary by device class
+
+| Device class | Planner output | Reactive/local work | Initial control authority |
+|---|---|---|---|
+| Battery | Charge/discharge envelope and target SOC trajectory | Clamp to live SOC, inverter limits, reserve, grid mode, and confirmation | Direct bounded target only after shadow validation |
+| EV charger | Required energy by deadline, preferred slots, maximum current | Presence/SOC check, deadline override, current-step selection, confirmation | Advisory target to EV controller |
+| Water boiler | Opportunity windows and normal/soft/hard temperature targets | Thermostat, hygiene cycle, maximum runtime, completion | Permit/request only |
+| Pool heating | Opportunity windows and soft/hard water targets | Pump/heater coupling, filtration requirement, seasonal enable, completion | Permit/request only |
+| Resistive room heating | Setpoint offset or cheap-window preference | Room thermostat, occupancy, manual override, hard comfort floor | Setpoint advice only |
+| Inverter heat pump/aircon | Mode, bounded setpoint offset, preferred recovery window | Native thermostat, COP/defrost behaviour, minimum run time, IR/power confirmation | Setpoint advice only |
+| Duty-cycle appliance | Start-by window or “avoid now” signal | User intent and non-interruptible cycle | Advisory; never force-start initially |
+| Fixed baseload | Forecast only | None | No control |
+
+Power shape and stored state are orthogonal. For example, an EV is variable power
+with SOC; a boiler is fixed power with temperature; a pool process is coupled
+fixed power with temperature and cycle state. Both axes belong in the device
+contract.
+
+## 5. Canonical contracts
+
+### 5.1 General rules
+
+- Timestamps are UTC ISO-8601 and slots are half-open `[start, end)` intervals.
+- The canonical step is 900 seconds; 23-hour and 25-hour local days are normal.
+- Power is watts, energy is watt-hours or explicitly named kWh, temperature is
+  °C, SOC is a fraction from 0 to 1, and prices are SEK/kWh.
+- Avoid ambiguous signed fields. Publish separate non-negative
+  `grid_import_w`/`grid_export_w` and
+  `battery_charge_w`/`battery_discharge_w` values.
+- The authenticated envelope derives `home_id` from the device token; the
+  client cannot choose it. Snapshots carry schema/ID/capture metadata and the
+  stored row adds the input hash; plans add model version, issue time and
+  validity.
+- Arrays must be contiguous, sorted, unique, and the same length over their
+  stated overlap. A shorter supplier forecast shortens the binding price
+  horizon; it is never extended by repeating a value.
+- Every source carries `observed_at` or `issued_at`, `valid_until`, and quality.
+- PV adapters declare and match the HA home latitude/longitude; import and
+  export adapters independently declare the same `SE1`–`SE4` market area.
+  Configured coordinates without matching source metadata are not accepted.
+- Validation errors name the exact field/device/source. There are no silent
+  numerical defaults or legacy aliases in the production contract.
+
+### 5.2 Home/device capability input
+
+The existing `device_instances.field_values` is suitable for catalogue facts but
+should not become an unstructured bucket for control policy and HA entity IDs.
+Add explicit, versioned records for:
+
+- **installation capability:** rated/minimum power, modulation steps, usable
+  capacity, efficiency, export/grid-charge permissions, supported modes;
+- **state model:** state kind, sensor source, valid range, freshness limit;
+- **policy:** normal target, soft range, hard range, deadline/window, priority
+  rules, manual override semantics;
+- **dynamics:** minimum on/off, startup curve, thermal loss/capacity, COP curve;
+- **relationships:** coupled-with, mutually-exclusive-with, requires, and
+  sequence-after; and
+- **HA binding:** measurement, state, completion, availability, actuator, and
+  command-confirmation entities/services.
+
+Recommended new stores are `ha_home_bindings`, `ha_device_bindings`,
+`energy_control_policies`, and versioned `energy_device_model_parameters`.
+`model_runs` remains the offline scenario-run table; it should not be overloaded
+as the live plan store.
+
+### 5.3 Optimisation snapshot
+
+Each solve receives:
+
+- the complete validated static capability/policy snapshot;
+- live battery, EV, boiler, pool, zone, cycle, availability, and override state;
+- PV, outdoor-temperature, all-in import/export price, and base-load forecasts;
+- grid import/export limits and, only when present in the tariff contract,
+  demand-charge rules plus month-to-date billed peak;
+- work already completed in the relevant service period;
+- plan-versus-actual state from the preceding slot; and
+- the terminal assumptions used beyond the binding horizon.
+
+Only snapshot data needed for the solve is uploaded. High-frequency reactive
+control remains local; the backend receives 15-minute actuals and discrete
+control/fault events.
+
+The implemented storage budget is bounded:
+
+- raw/per-second samples never leave Home Assistant;
+- only complete recorder 5-minute statistics are summed locally into at most 96
+  unique actual rows per home/day; each request is capped at 192 rows and 1 MB;
+- actuals deliberately trail real time by one quarter so recorder statistics can
+  settle, and the most recently accepted quarter is re-sent once by idempotent
+  upsert so a late category can complete without increasing row count;
+- actual quarter-hours have 120-day rolling retention (11,520 rows/home);
+- the large 72-hour snapshot and plan overwrite one current row per home;
+- only compact run summaries are appended, hourly, with 30-day retention; and
+- daily category and billing aggregates continue through the existing nightly
+  path and are not duplicated into the optimisation series.
+
+### 5.4 Plan output
+
+A plan contains:
+
+- a 72-hour forecast and confidence/provenance per slot;
+- the measured battery source plus the exact battery, grid, service-power,
+  minimum-run, deadline, and active-day sample inputs used by the solve;
+- a `binding_until` boundary based on exact price availability;
+- all-in import/export marginal prices;
+- PV and base-load forecasts;
+- an import/export envelope and an opportunity rank or marginal value;
+- a battery power/SOC plan;
+- per-device required service, preferred windows, bounded target/offset, reason,
+  and whether the output is binding or advisory;
+- an ordered surplus-allocation policy with promotion/demotion conditions;
+- expected cost, self-consumption, peak, comfort deviations, terminal state, and
+  constraint margins; and
+- human-readable reason codes suitable for the portal and HA logbook.
+
+The plan is not a list of unconditional on/off commands.
+
+## 6. Planned-control scenario
+
+### 6.1 Cadence
+
+Generate a plan:
+
+- when a new day-ahead supplier-price forecast becomes available;
+- at least hourly while optimisation is enabled;
+- when the integration reports a material state change such as EV arrival,
+  changed departure target, manual override, completed pool/boiler service,
+  battery SOC drift, or a forecast revision; and
+- after a device fault changes the eligible capability set.
+
+Rate-limit event-triggered replans. The integration continues using a plan only
+until its explicit expiry; local controllers continue independently.
+
+### 6.2 Planning flow
+
+```mermaid
+sequenceDiagram
+    participant HA as shs_energy
+    participant API as SHS optimisation API
+    participant Solver as Versioned server planner
+    participant Ctrl as Local controllers
+    participant DB as Plan/actual store
+
+    HA->>HA: Normalise forecasts and measured state
+    HA->>API: Submit home-scoped, versioned snapshot
+    API->>Solver: Validate and compile model
+    Solver-->>API: Return plan plus binding/expiry metadata
+    API->>DB: Overwrite current full plan; append compact summary
+    API-->>HA: Authorised plan response
+    HA->>HA: Validate slots, units, home, version, freshness
+    HA->>Ctrl: Publish current advisory request / bounded target
+    Ctrl->>Ctrl: Apply overrides, safety, thermostat, and interlocks
+    Ctrl-->>HA: Confirm actual state or report fault
+    HA->>API: Upload 15-minute actuals and control events
+    API->>DB: Store measured outcomes
+```
+
+### 6.3 Priority and conflict order
+
+All executors use the same precedence:
+
+1. physical/electrical safety, equipment hard limits, and island/emergency mode;
+2. explicit manual override;
+3. hard service commitments such as minimum room temperature, hot-water hygiene,
+   pool freeze protection, and EV departure minimum;
+4. local reactive correction within the current plan policy;
+5. planned preference or target;
+6. baseline schedule when no optimisation request applies.
+
+The planner cannot downgrade levels 1–3. The reactive layer may change level 5
+when actual conditions differ, but only within the plan's hard envelope.
+
+### 6.4 Executor state machine
+
+Every controlled process should use the same observable state machine, with
+device-specific guards:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Idle
+    Idle --> Eligible: baseline controller permits
+    Eligible --> StartPending: planned/reactive request
+    StartPending --> Running: measured confirmation
+    StartPending --> Fault: confirmation timeout
+    Running --> Complete: physical target/cycle reached
+    Running --> StopPending: request removed or shedding required
+    StopPending --> Idle: measured confirmation
+    StopPending --> Fault: confirmation timeout
+    Complete --> Idle: service period resets
+    Idle --> Blocked: manual override, unavailable, or hard guard
+    Eligible --> Blocked: manual override, unavailable, or hard guard
+    Blocked --> Idle: guard clears
+    Fault --> Idle: explicit recovery/reset
+```
+
+State changes, guard failures, requests, commands, and confirmations are logged
+with reason codes. An IR toggle is not considered successful until measured
+power confirms it.
+
+## 7. Reactive-control scenario
+
+Reactive control is one local allocator, not one competing “surplus automation”
+per load.
+
+### 7.1 Inputs
+
+- stable measured grid import/export and whole-home load;
+- actual PV and battery power/SOC/headroom;
+- current plan envelope and surplus policy;
+- device presence, state, target, hard limit, completion, and availability;
+- manual overrides and baseline-controller eligibility; and
+- unexpected high-load events.
+
+Never trigger from the flapping Sigen import binary sensor. Use numeric grid
+power with separate import/export thresholds, hysteresis, and a stable duration.
+
+### 7.2 Allocation loop
+
+1. Calculate usable surplus after the battery's current commitment and a
+   configurable measurement/error reserve.
+2. Filter the policy to locally eligible sinks.
+3. Apply promotion/demotion rules from live state. Example: an EV at very low
+   SOC and present is promoted; a completed pool cycle is demoted.
+4. Allocate to the highest-ranked sink whose minimum stable power fits. A
+   variable sink can take the remainder; a binary sink requires its start
+   threshold and minimum run commitment.
+5. Wait for measured confirmation before allocating the same watts elsewhere.
+6. When import exceeds the plan envelope or a large uncontrolled load starts,
+   shed controllable sinks in reverse service priority, respecting minimum run
+   and hard-service constraints.
+7. Re-evaluate on confirmed transitions and stable material power changes, not
+   on every noisy sensor sample.
+
+### 7.3 Solar-cliff policy
+
+For “sunny today, cloudy tomorrow,” the server can promote storage sinks and
+raise soft targets because it sees the multi-day forecast. The local allocator
+decides whether forecast surplus actually materialises.
+
+- If the EV is absent or already sufficiently charged, battery, hot water, and
+  pool thermal storage may move from normal target toward their hard upper
+  limits before exporting.
+- If the EV is present below its urgent threshold, it is promoted above pool
+  comfort. The pool may stop below its normal target but never below its hard
+  minimum/freeze constraint.
+- If tomorrow becomes sunny in a revised forecast, the promotion disappears on
+  the next plan; no local controller needs bespoke forecast logic.
+
+The required policy fields are therefore **normal target, soft range, hard
+range, ranking, and conditional promotions**. A single setpoint and integer
+priority are insufficient.
+
+### 7.4 Automation packaging
+
+The integration should expose one merged effective request per bound device,
+regardless of whether its source is planned, reactive, hard-service recovery,
+or load shedding. At minimum, expose:
+
+- requested state or bounded power/setpoint target;
+- request source and reason code;
+- request/plan expiry;
+- eligibility and the guard currently blocking execution; and
+- last command/confirmation/fault status.
+
+Provide three versioned executor templates:
+
+1. **Binary process executor** for boiler, pool process, and relays. It consumes
+   an on/off request, applies local completion/temperature and minimum-run
+   guards, then confirms from power/state.
+2. **Variable-power executor** for EV and, after separate commissioning,
+   battery/inverter control. It clamps the requested watts/current to device and
+   live-state limits and confirms the achieved value.
+3. **Thermal setpoint executor** for rooms and aircon. It applies only a bounded
+   offset or mode request to the existing thermostat/occupancy controller.
+
+The planned trigger is a new valid plan or a slot boundary. The reactive trigger
+is a stable material change in grid flow, state, or eligibility. Both update the
+same effective request entity; they do not call the physical device in parallel.
+The executor alone performs service calls.
+
+For Phil's current Node-RED setup, insert the SHS request before the existing
+mode/override/thermostat gate and report the resulting state after that gate.
+Do not replace the gate. For a product installation, instantiate the matching
+native HA executor blueprint during an explicit commissioning step and leave it
+visible and editable in the HA automation UI.
+
+## 8. Objective function
+
+### 8.1 Recommended hierarchy
+
+Use hard constraints first, then a cost-aligned objective:
+
+1. satisfy safety and hard service constraints;
+2. minimise expected total customer cost: imports minus exports plus any
+   tariff-defined demand cost, explicitly configured degradation cost, and a
+   quantified penalty for deviation inside each soft comfort/service range; and
+3. among economically near-equivalent plans, avoid unnecessary import peaks,
+   switching, and loss of terminal flexibility.
+
+Self-consumption does not need an independent first-priority objective when
+import and export are priced correctly: consuming a solar kWh instead of
+exporting it is valued by the actual avoided-import versus forgone-export
+spread. Thermal preheating is valuable when it avoids forecast future imports,
+not merely because it consumes PV.
+
+### 8.2 Policy is explicit per home
+
+The notes state a strict “self-consumption, then balance, then cost” hierarchy.
+That conflicts with the stated customer value and can choose a more expensive
+plan. The contract therefore records `battery_target_is_hard` rather than
+silently choosing an interpretation:
+
+- **Cost-led:** minimise the real bill with hard service constraints and use
+  balance/self-consumption as tie-breakers and explanatory metrics; or
+- **Hard reserve:** define a quantified battery target, its allowed cost premium,
+  and exceptions for negative/high export prices, battery wear, and future
+  service needs.
+
+Both are shown for commissioning comparison. The integration executes only the
+configured priority policy and only when its target verifies; it never selects
+whichever chart happens to look cheapest. Do not expose EMHASS's raw `profit`,
+`cost`, and `self-consumption` modes to customers.
+
+No demand-charge term is included unless the effective tariff version contains
+one. A general import envelope and smoothing tie-breaker may still protect the
+connection and reduce avoidable spikes, but must not be presented as a billed
+effektavgift.
+
+## 9. Parameter model
+
+### 9.1 Parameter classes and ownership
+
+| Class | Examples | Source/owner | Can be learned? |
+|---|---|---|---|
+| Hard installation | Fuse/import/export limit, rated power, battery min/max SOC, inverter modes, actuator relationship | Staff commissioning + integration verification | No |
+| Customer policy | Comfort targets/ranges, EV departure target, pool season, quiet hours, reserve preference | Customer/staff in portal | No; suggestions only |
+| Live state | SOC, temperatures, presence, cycle complete, override, availability, work completed | Integration from HA | No substitution |
+| Forecast | PV, outdoor temperature, base load, import/export prices | Integration adapters + server models | Bias/error can be learned |
+| Device dynamics | COP, modulation, startup, efficiency, thermal capacity/loss, power curve | Manufacturer profile, then measured calibration | Yes, within validated bounds |
+| Market/tariff | Effective version, price series, demand rule, month peak | Portal catalogue + integration recorder | No |
+| Orchestration | 15-minute step, 72-hour look-ahead, binding horizon, replan thresholds | SHS model version | Product-controlled |
+
+### 9.2 Minimum device specifications
+
+**Battery/inverter**
+
+- usable capacity, current measured SOC, min/max/backup reserve;
+- maximum charge/discharge power as a function of SOC if applicable;
+- charge/discharge efficiency and optional cycle-wear valuation;
+- grid-charge, export, and island-mode permissions;
+- plant import/export limit and unambiguous command sign/mode mapping; and
+- write confirmation and recovery behaviour.
+
+**EV/charger**
+
+- presence/cable state, SOC source and freshness, usable battery capacity;
+- a mapped EV energy meter whenever EV scheduling is enabled, so historical EV
+  demand can be removed from base load before a new EV service is added;
+- minimum departure SOC, preferred target, deadline, and urgent threshold;
+- charger phase/current steps, maximum power, efficiency, and vehicle limit;
+- customer force-charge/manual semantics; and
+- behaviour when SOC is unavailable but the vehicle is connected. This must be
+  an explicit policy, not a guessed SOC.
+
+**Hot water**
+
+- heater power, tank temperature or a validated energy-to-state estimator;
+- normal target, hard minimum/maximum, hygiene/legionella requirement;
+- standing loss/usable thermal capacity, occupancy demand pattern;
+- minimum run/off time and completion sensor; and
+- whether interruption is permitted once heating starts.
+
+**Pool**
+
+- seasonal enabled/closed state, water target and hard bounds;
+- pool volume/thermal capacity, heat loss, cover state if available;
+- pump filtration requirement distinct from heating requirement;
+- pump/heater coupling and confirmation; and
+- freeze, flow, and equipment protection constraints.
+
+**Thermal zones and aircon**
+
+- zone-specific temperature sensors, UA, thermal capacity, and heater mapping;
+- occupancy-specific normal target plus soft/hard bands;
+- rated resistive power or heat-pump input/capacity surface;
+- minimum modulation, start/stop/defrost behaviour, and operating cutoffs;
+- heating/cooling mode and seasonal transition policy; and
+- manual override precedence and expiry.
+
+**Base load and event appliances**
+
+- base load excluding all separately modelled loads;
+- weekday/weekend/occupancy/weather features and adequate history;
+- event cycle stages, interruptibility, allowed/start-by windows, and user
+  intent; and
+- metering boundaries that prevent aggregate plus child double counting.
+
+## 10. Seasonal and condition scenario matrix
+
+Yes: more scenarios are required before parameters or control policy can be
+considered complete. Tests should assert invariants and direction of behaviour,
+not one brittle exact schedule.
+
+| Scenario | Essential setup | Expected behaviour / invariant | Parameters exercised |
+|---|---|---|---|
+| Sunny summer, EV away | Battery near target, pool below normal target, large midday surplus | Charge useful electrical/thermal storage toward hard limits; export only after eligible sinks are satisfied | PV bias, pool loss/capacity, battery headroom, soft/hard targets |
+| Sunny today, rainy tomorrow | More surplus than normal daily needs | Pre-charge/preheat according to future avoided import and terminal value | 72 h forecast, terminal state, thermal storage |
+| Sunny summer, EV home below urgent SOC | Same as above with low-SOC connected EV | EV is conditionally promoted; pool may undershoot normal target but not hard minimum | EV urgency/deadline, conditional ranking |
+| Cloudy today, sunny tomorrow | Low current PV, high forecast PV | Avoid unnecessary grid-funded overshoot today; preserve room for tomorrow's PV | Forecast confidence, terminal capacity |
+| Flat-price summer | No economic time spread | Avoid gratuitous switching and peaks; satisfy service with simple stable operation | Tie-breakers, hysteresis |
+| Negative or extreme prices | Very low/negative import or unusually valuable export | Respect hard limits and use actual economics; do not assume export is always last | Objective policy, battery wear, grid permissions |
+| Dark deep winter | Near-zero PV, high heat demand, varying prices | Maintain hard comfort; use battery/thermal flexibility without inventing solar work | COP, zone UA/C, reserve, base-load forecast |
+| Extreme cold / heat-pump cutoff | Outdoor temperature near device limit | Preserve comfort with available sources; never schedule unavailable capacity | Capacity curve, backup heat, hard comfort |
+| Cold but sunny winter | PV coincides with heating and low COP | Allocate PV using actual source efficiency and zone need | COP surface, resistive-vs-HP choice |
+| Shoulder season with rapid weather change | Heating demand toggles around cutoff | Replan without chatter; manual and occupancy rules remain authoritative | Seasonal thresholds, hysteresis, forecast error |
+| Heatwave / active cooling | High indoor temperature and strong PV | Hard maximum indoor temperature outranks savings; pre-cooling only inside comfort policy | Cooling model, occupancy, soft/hard band |
+| Pool closed / freeze protection | Pool season disabled or cold equipment space | No comfort heating when closed; mandatory protection still runs | Seasonal enable, hard safety rule |
+| EV absent, then arrives late | Original plan assumed no EV | Arrival triggers bounded replan; no phantom EV work before presence | Live availability, replan trigger |
+| Boiler/pool already complete | Daily service was completed before replan | Required remaining service is zero; no duplicate run | State-derived requirement |
+| Unexpected stove/sauna load | Large uncontrolled load starts during planned charging | Shed lowest-priority controllable load and stay inside connection envelope | Import envelope, reverse priority, confirmation |
+| Near a real monthly demand peak | Effective tariff has a demand rule and month peak is known | Value only the incremental new billed peak; existing peak is sunk | Tariff rule, month-to-date peak |
+| Sensor unavailable/stale | SOC, temperature, price, or power source expires | Affected device becomes ineligible; no guessed value; repair/status explains why | Freshness, safe disengagement |
+| Actuator fails to change state | Command sent but power/state does not confirm | Enter fault, stop reallocating assumed watts, notify, replan without device | Confirmation timeout, fault state |
+| Manual override/vacation | User changes local mode | Manual state wins immediately and is included in the next snapshot | Precedence, override expiry |
+| DST transition | 23- or 25-hour local day | UTC slots remain contiguous and no service is duplicated or omitted | Time contract, daily reset semantics |
+| Forecast miss | Planned sun does not arrive, or surplus exceeds forecast | Local allocator corrects within hard policy; material drift triggers replan | Reactive reserve, deviation threshold |
+
+For each scenario, record at least energy balance, cost, import peak, export,
+self-consumption, comfort violations, unmet service, switching count, final
+states, and all reason codes.
+
+## 11. Missing information and specifications
+
+### 11.1 Must be decided before any production control
+
+1. **Objective policy:** resolve the self-consumption-versus-money conflict in
+   section 8.
+2. **Home scope:** bind each HA token and every reading/plan to a `home_id` and
+   define multiple-HA-per-home and multiple-home-per-customer behaviour.
+3. **Control authority:** confirm that optimisation is advisory for thermal and
+   service loads, and define when battery direct control is permitted.
+4. **Global precedence:** approve the conflict order in section 6.3 and define
+   what “manual override” means for every device.
+5. **Connection constraints:** confirm real import/export limits, whether the
+   temporary 5 kW EMHASS cap should disappear, and whether any device-level
+   concurrency exclusions exist. Phase balancing remains out of scope.
+6. **Tariff truth:** verify the active commercial tariff publication. The code
+   correctly models no demand charge from June 2026; future rules must arrive as
+   effective-dated versions rather than assumptions.
+7. **Battery policy:** reserve, grid charging/export permission, cycle-wear
+   treatment, terminal SOC value, and behaviour in backup/island mode.
+8. **Required state sources:** identify reliable tank/pool/zone temperature,
+   EV SOC/presence, completion, power, and actuator-confirmation entities.
+9. **Soft versus hard targets:** define normal, acceptable, and inviolable limits
+   for EV, hot water, pool, and each thermal zone.
+10. **Failure behaviour:** approve plan expiry, stale-sensor, failed-command,
+    backend-unavailable, and partial-forecast behaviour. No hidden fallback
+    numbers are allowed.
+11. **Privacy/retention:** approve uploading 15-minute home and device aggregates,
+    retention duration, customer disclosure, and deletion/export behaviour.
+12. **Baseline/savings method:** define the clean pre-control period and the
+    counterfactual method. The current dumb/smart ROI runs are not valid for this.
+
+### 11.2 Needed to parameterise Phil's house
+
+- a fresh inventory mapping every portal device to its HA state, power, energy,
+  actuator, availability, and confirmation entity;
+- meter-boundary reconciliation, including the negative unmetered helper and
+  the unidentified Shelly channel;
+- battery usable capacity/efficiency/reserve and Sigen write-mode semantics;
+- EV charge current granularity, charge efficiency, departure policy, and SOC
+  reliability;
+- boiler tank state, hard temperature bounds, losses, and hygiene policy;
+- pool water state, cover/season policy, loss model, filtration requirement,
+  and hard bounds;
+- zone-specific heat loss and thermal capacity rather than equal UA splitting;
+- heat-pump/aircon measured input curves, mode, defrost/startup behaviour, and
+  consistent IR power thresholds;
+- at least a full heating season of base-load and zone response history, or an
+  explicit lower-confidence commissioning model until that history exists;
+- an agreed 15-minute supplier/PV forecast adapter and source-freshness rules;
+  and
+- a current export of all Node-RED control, pool, EV, IR, and override flows.
+
+### 11.3 Forecast horizon specification
+
+The requested three-day horizon needs an explicit uncertainty rule because
+exact spot prices do not cover all 72 hours. Recommended:
+
+- `binding_until`: end of the exact overlapping import/export price series;
+- later slots: advisory weather/PV/load plus a documented price forecast or
+  terminal value;
+- only the first binding slot is executed before the next regular replan; and
+- the portal visibly distinguishes exact, forecast, and missing data.
+
+Without this distinction a three-day schedule has false precision.
+
+## 12. Data model changes
+
+The bounded-volume exchange implemented now adds:
+
+- `home_id` to pairing codes and device tokens with a database consistency
+  constraint and server-side ownership check;
+- `energy_optimisation_actual_slots`, unique by home/start, for sparse completed
+  quarter-hours with 120-day retention;
+- `energy_optimisation_current`, one overwritten full snapshot/plan per home;
+  and
+- `energy_optimisation_plan_runs`, compact summaries/errors only, with 30-day
+  retention.
+
+This deliberately avoids appending roughly 250–500 kB of repeated 72-hour JSON
+every hour. The exact current plan is explainable; historical evaluation uses
+the compact run summary plus actual slots. If regulatory/product audit later
+requires every historical slot, archive a compressed daily plan artefact in
+object storage rather than duplicating rolling horizons in PostgreSQL.
+
+Before multi-home energy-history/billing is enabled, also add `home_id` to the
+older category readings, supplier costs, and tariff calculations and update
+those screens to select a home. They remain customer-scoped today.
+
+The control-product stages still need:
+
+- `ha_home_bindings` for source adapters and whole-home entities;
+- `ha_device_bindings` for device state/measurement/actuator/confirmation maps;
+- `energy_control_policies` for versioned normal/soft/hard targets and rules;
+- `energy_device_model_parameters` for versioned installed and calibrated model
+  values plus provenance/confidence;
+- `energy_control_events` for request/command/confirmation/fault/reason events;
+  and
+- a model-evaluation record linking baseline, plan, actual, model version, and
+  forecast error.
+
+The full current plan is mutable by design and bounded; its immutable compact
+run record is not. The integration accepts only a verified, unexpired plan for
+its bound home.
+
+## 13. Implementation sequence
+
+### Phase 0 — specification and truth cleanup
+
+- Resolve every item in section 11.1.
+- Mark current portal smart/dumb ROI as experimental or disable it until the
+  scenarios actually differ.
+- Remove production-path guessed defaults and define the canonical contracts.
+- Bind HA tokens and data to homes.
+- Reconcile the tariff note with the intentional June 2026 no-demand revision.
+
+Exit criterion: a commissioning report can say **ready** or name every missing
+field without running a guessed model.
+
+### Phase 1 — observe-only data plane
+
+- Expose 15-minute resolution in the integration options flow.
+- Implement canonical supplier, PV, weather, base-load, and live-state adapters.
+- Add all-in import/export forecast entities using only the series overlap.
+- Add device bindings and upload 15-minute actuals/control state.
+- Store baseline data before enabling any optimiser command.
+
+Exit criterion: 30 consecutive days have complete, balanced, home-scoped inputs
+and explainable gaps; no control has changed.
+
+### Phase 2 — server planner in shadow mode (initial heuristic implemented)
+
+- Run the verified edge heuristic now; deploy the Python/MILP optimiser behind
+  the same typed API when thermal/device constraints require it.
+- Start with battery physics, grid balance, prices, PV/base-load forecast,
+  import/export envelopes, opportunity ranking, and surplus policy.
+- Seed every solve from measured state and produce 72-hour/15-minute plans.
+- Compare plans against EMHASS and replay historical seasonal fixtures.
+- Persist plan-versus-actual and explanations.
+
+Exit criterion: energy balance and all hard constraints pass, stale/missing data
+fails loudly, and shadow results beat the agreed baseline without execution.
+
+### Phase 3 — planned advisory control
+
+- Add per-device request entities and executor blueprints/adapters.
+- Start with boiler and coupled pool heating under local termination, then EV.
+- Keep thermal zones advisory through bounded setpoint changes.
+- Commission battery direct control separately after inverter write/confirmation
+  tests and reserve/island behaviour are approved.
+
+Exit criterion: every command is confirmed, every rejected request has a reason,
+and baseline/manual control remains independently operable.
+
+### Phase 4 — reactive allocation and shedding
+
+- Implement the single local allocator, power hysteresis, confirmation-aware
+  allocation, and reverse-priority shedding.
+- Validate the two solar-cliff cases, unexpected-load case, and forecast misses.
+- Add event-triggered replanning with rate limits.
+
+Exit criterion: no double allocation, no oscillation, and no connection/comfort
+hard-limit violation in replay and live commissioning.
+
+### Phase 5 — heating-season models and calibration
+
+- Fit zone UA/thermal capacity, base-load forecasts, HP/COP behaviour, and device
+  completion/loss models from actuals.
+- Add winter, shoulder-season, cooling, and DST scenario fixtures.
+- Replace one-house Node-RED assumptions with versioned product parameters and
+  native HA controller templates.
+
+Exit criterion: model error and comfort/service metrics meet agreed thresholds
+across representative seasonal conditions.
+
+### Phase 6 — customer value and fleet operation
+
+- Calculate transparent counterfactual savings with uncertainty.
+- Show planned versus actual energy, money, comfort, and reasons in the portal.
+- Add model-drift, stale-source, failed-command, and fleet health monitoring.
+- Roll out by device class and home cohort with explicit enablement.
+
+## 14. Verification strategy
+
+Use four complementary levels:
+
+1. **Contract tests:** units, signs, UTC/DST, slot overlap, freshness, missing
+   fields, plan expiry, idempotency, and schema/model version rejection.
+2. **Model tests:** battery conservation, SOC bounds, device state transitions,
+   thermal balance, coupling/exclusion/sequencing, and terminal state.
+3. **Scenario/replay tests:** every row in section 10 using synthetic fixtures
+   and selected historical days from each season.
+4. **Live shadow/commissioning:** compare forecast, plan, actual, baseline, and
+   command confirmation before enabling each executor.
+
+Required invariants include:
+
+- per-slot electrical energy balances within a stated tolerance;
+- no power, SOC, temperature, service, availability, or relationship constraint
+  is violated;
+- required work is derived from live state and cannot become phantom demand;
+- a missing source never becomes a plausible numeric value;
+- one watt of surplus is allocated at most once;
+- expired plans issue no new optimisation requests;
+- manual override changes local behaviour without waiting for the backend; and
+- every action can be reconstructed from plan version, inputs, policy, reason,
+  command, and measured result.
+
+## 15. Immediate next actions
+
+1. Deploy the migration, edge functions and portal to the test environment;
+   install the matching integration build and pair it to the intended home.
+2. Commission the explicit Phil-house inputs: PV entity and coordinates, SE
+   price area, separate import/export forecast entities, battery/grid limits,
+   pool season state and power, boiler settings, and EV state/capabilities.
+3. Decide the objective and hard/soft target semantics, particularly whether
+   80% end-of-solar SOC is an unconditional reserve or a priced preference.
+4. Obtain a fresh Node-RED export and create one visible, confirmation-aware
+   executor per device that consumes the planned and reactive request entities.
+5. Capture at least 30 observe-only days, reconcile the model against HA's
+   Energy dashboard, and publish forecast-versus-actual error by source.
+6. Build and replay the seasonal/condition fixtures in section 10 before fitting
+   thermal, pool, boiler or weather-sensitive parameters or enabling control.
+
+The central architectural principle is: **the server decides what energy is
+valuable and when; the home decides whether a device may safely act right now.**

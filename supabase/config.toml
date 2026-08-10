@@ -91,9 +91,10 @@ verify_jwt = false
 # --- Home Assistant device link ---
 # create-pairing-code validates the caller's own JWT in-function (portal user).
 # pair-device is public by design: the single-use, short-lived pairing code is
-# the credential. ha-energy-ingest and integration-status authenticate with a
-# hashed long-lived device token and are subscription-gated in-function;
-# integration-tariff serves the staff-assigned, effective-dated catalogue.
+# the credential. ha-energy-ingest, energy-optimisation-ingest and
+# integration-status authenticate with a hashed long-lived device token and
+# are subscription-gated in-function; integration-tariff serves the
+# staff-assigned, effective-dated catalogue.
 [functions.create-pairing-code]
 verify_jwt = false
 
@@ -101,6 +102,9 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.ha-energy-ingest]
+verify_jwt = false
+
+[functions.energy-optimisation-ingest]
 verify_jwt = false
 
 [functions.integration-status]
