@@ -8,6 +8,7 @@ import HouseSetupTab from '@/components/portal/energy/HouseSetupTab';
 import HomeDevicesTab from '@/components/portal/energy/HomeDevicesTab';
 import TariffPricingTab from '@/components/portal/energy/TariffPricingTab';
 import SimulatorTab from '@/components/portal/energy/SimulatorTab';
+import LoadShiftTab from '@/components/portal/energy/LoadShiftTab';
 import ROITab from '@/components/portal/energy/ROITab';
 import HomeSelector from '@/components/portal/energy/HomeSelector';
 
@@ -87,12 +88,14 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
             <TabsTrigger value="home-setup">{t('Heminställningar', 'Home Setup')}</TabsTrigger>
             <TabsTrigger value="home-devices">{t('Hemenheter', 'Home Devices')}</TabsTrigger>
             <TabsTrigger value="simulator">{t('Simulator', 'Simulator')}</TabsTrigger>
+            <TabsTrigger value="load-shift">{t('Lastförflyttning', 'Load Shifting')}</TabsTrigger>
             <TabsTrigger value="tariff">{t('Tariff & Pris', 'Tariff & Pricing')}</TabsTrigger>
           </TabsList>
           <TabsContent value="roi"><ROITab customerId={resolvedCustomerId} homeId={selectedHomeId} homeCount={homeCount} /></TabsContent>
           <TabsContent value="home-setup"><HouseSetupTab customerId={resolvedCustomerId} homeId={selectedHomeId} /></TabsContent>
           <TabsContent value="home-devices"><HomeDevicesTab customerId={resolvedCustomerId} homeId={selectedHomeId} /></TabsContent>
           <TabsContent value="simulator"><SimulatorTab customerId={resolvedCustomerId} homeId={selectedHomeId} homeCount={homeCount} /></TabsContent>
+          <TabsContent value="load-shift"><LoadShiftTab /></TabsContent>
           <TabsContent value="tariff">{resolvedCustomerId ? <TariffPricingTab customerId={resolvedCustomerId} /> : null}</TabsContent>
         </Tabs>
       </div>
