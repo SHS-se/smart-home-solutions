@@ -498,12 +498,22 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV3): string[] {
     }
     const earliest = isoMs(service?.earliest_start);
     const deadline = isoMs(service?.deadline);
-    if (
-      !Number.isFinite(earliest) || !Number.isFinite(deadline) ||
-      earliest >= deadline ||
-      earliest < firstStart || deadline > horizonEnd
-    ) {
-      errors.push(`services[${index}] has an invalid service window`);
+    const windowErrors: string[] = [];
+    if (!Number.isFinite(earliest)) windowErrors.push("earliest_start is invalid");
+    if (!Number.isFinite(deadline)) windowErrors.push("deadline is invalid");
+    if (Number.isFinite(earliest) && Number.isFinite(deadline) && earliest >= deadline) {
+      windowErrors.push("earliest_start is not before deadline");
+    }
+    if (Number.isFinite(earliest) && earliest < firstStart) {
+      windowErrors.push("earliest_start precedes the first forecast slot");
+    }
+    if (Number.isFinite(deadline) && deadline > horizonEnd) {
+      windowErrors.push("deadline exceeds the forecast horizon");
+    }
+    if (windowErrors.length > 0) {
+      errors.push(
+        `services[${index}] has an invalid service window: ${windowErrors.join(", ")}`,
+      );
     }
     if (
       !inRange(service?.required_kwh, 0, 1_000) ||
