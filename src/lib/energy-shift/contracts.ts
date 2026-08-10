@@ -21,6 +21,7 @@ export function isOptimisationPlan(value: unknown): value is OptimisationPlanV3 
   if (!value || typeof value !== 'object') return false;
   const plan = value as Partial<OptimisationPlanV3>;
   return plan.schema_version === 3
+    && plan.mode === 'live'
     && plan.slot_minutes === 15
     && typeof plan.issued_at === 'string'
     && typeof plan.valid_until === 'string'

@@ -115,7 +115,9 @@ export type ServiceInput =
 
 export interface OptimisationSnapshotV3 {
   schema_version: 3;
-  mode: PlanMode;
+  // Only Home Assistant live snapshots cross the ingestion boundary. The
+  // website's promotional demo is a client-side plan fixture, not a snapshot.
+  mode: "live";
   capabilities: OptimisationCapabilities;
   snapshot_id: string;
   captured_at: string;
@@ -314,8 +316,8 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV3): string[] {
   if (snapshot?.schema_version !== OPTIMISATION_SCHEMA_VERSION) {
     errors.push("schema_version must be 3");
   }
-  if (!(["live", "demo"] as const).includes(snapshot?.mode)) {
-    errors.push("mode must be live or demo");
+  if (snapshot?.mode !== "live") {
+    errors.push("mode must be live");
   }
   const capabilityKeys = ["pv", "battery", "pool", "boiler", "ev"] as const;
   if (
@@ -564,8 +566,7 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV3): string[] {
       source.entity_ids.some((entityId) =>
         typeof entityId !== "string" || !entityId
       ) ||
-      !["measured", "calibrated", "provider_raw", "synthetic"].includes(source?.quality) ||
-      (source?.quality === "synthetic" && snapshot?.mode !== "demo") ||
+      !["measured", "calibrated", "provider_raw"].includes(source?.quality) ||
       !Number.isFinite(isoMs(source?.issued_at)) ||
       !Number.isFinite(isoMs(source?.valid_until))
     ) {

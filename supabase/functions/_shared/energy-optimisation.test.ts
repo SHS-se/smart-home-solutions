@@ -427,6 +427,22 @@ Deno.test("stale snapshots and unpriced first slots fail closed", () => {
   );
 });
 
+Deno.test("ingestion snapshots are live and never synthetic", () => {
+  const demo = input() as unknown as {
+    mode: string;
+    sources: OptimisationSnapshotV3["sources"];
+  };
+  demo.mode = "demo";
+  demo.sources.base_load.quality = "synthetic";
+
+  const errors = validateSnapshot(demo as OptimisationSnapshotV3);
+  assert(errors.includes("mode must be live"), "demo snapshot was accepted");
+  assert(
+    errors.some((error) => error.includes("sources.base_load is incomplete")),
+    "synthetic source was accepted",
+  );
+});
+
 Deno.test("a truncated final local day is not labelled end-of-solar", () => {
   const snapshot = input();
   snapshot.slots = snapshot.slots.slice(0, 32).map((slot) => ({

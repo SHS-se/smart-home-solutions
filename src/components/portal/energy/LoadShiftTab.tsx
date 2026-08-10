@@ -12,7 +12,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { AlertTriangle, Loader2, RefreshCw } from 'lucide-react';
+import { AlertTriangle, Loader2, RefreshCw, Sparkles } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -26,6 +26,7 @@ import {
   type OptimisationPlanV3,
   type PlanKey,
 } from '@/lib/energy-shift/contracts';
+import { createWebsiteDemoActuals, createWebsiteDemoPlan } from '@/lib/energy-shift/demo';
 
 interface LoadShiftTabProps {
   customerId?: string;
@@ -63,15 +64,17 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId }) => {
   const [actuals, setActuals] = useState<ActualEnergySlot[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [view, setView] = useState<'live' | 'demo'>('live');
+  const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
   const [clock, setClock] = useState(Date.now());
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (background = false) => {
     if (!customerId || !homeId) {
       setCurrent(null);
       setActuals([]);
       return;
     }
-    setLoading(true);
+    if (!background) setLoading(true);
     setError(null);
     try {
       const toMs = Math.floor(Date.now() / (15 * 60_000)) * 15 * 60_000;
@@ -109,55 +112,130 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId }) => {
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : String(loadError));
     } finally {
-      setLoading(false);
+      setLastCheckedAt(Date.now());
+      if (!background) setLoading(false);
     }
   }, [customerId, homeId, t]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(false); }, [load]);
+  useEffect(() => {
+    const timer = window.setInterval(() => void load(true), 30_000);
+    return () => window.clearInterval(timer);
+  }, [load]);
   useEffect(() => {
     const timer = window.setInterval(() => setClock(Date.now()), 30_000);
     return () => window.clearInterval(timer);
   }, []);
 
-  if (!homeId) {
-    return <EmptyState text={t('Välj ett hem för att visa energiplanen.', 'Select a home to view its energy plan.')} />;
-  }
-  if (loading && !current) {
-    return <div className="flex items-center gap-2 py-12 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t('Laddar energiplan…', 'Loading energy plan…')}</div>;
-  }
-  if (error) {
-    return (
+  const demoBucket = Math.floor(clock / (15 * 60_000));
+  const demoReferenceTime = demoBucket * 15 * 60_000 + 1;
+  const demoCurrent = useMemo<CurrentRow>(() => {
+    const plan = createWebsiteDemoPlan(demoReferenceTime);
+    return { plan, captured_at: plan.issued_at, updated_at: plan.issued_at };
+  }, [demoReferenceTime]);
+  const demoActuals = useMemo(
+    () => createWebsiteDemoActuals(demoReferenceTime),
+    [demoReferenceTime],
+  );
+
+  let content: React.ReactNode;
+  if (view === 'demo') {
+    content = (
+      <PlanView
+        current={demoCurrent}
+        actuals={demoActuals}
+        planKey={planKey}
+        setPlanKey={setPlanKey}
+        stale={false}
+        refreshing={false}
+        isDemo
+      />
+    );
+  } else if (!homeId) {
+    content = <EmptyState text={t('Välj ett hem för att visa energiplanen.', 'Select a home to view its energy plan.')} />;
+  } else if (loading && !current) {
+    content = <div className="flex items-center gap-2 py-12 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t('Laddar energiplan…', 'Loading energy plan…')}</div>;
+  } else if (error && !current) {
+    content = (
       <Alert variant="destructive">
         <AlertTriangle className="h-4 w-4" />
         <AlertTitle>{t('Kunde inte läsa energiplanen', 'Could not load the energy plan')}</AlertTitle>
         <AlertDescription>{error}</AlertDescription>
       </Alert>
     );
-  }
-  if (!current) {
-    return (
+  } else if (!current) {
+    content = (
       <div className="space-y-6">
-        <EmptyState
-          text={t(
-            'Ingen plan finns ännu. Uppdatera SHS-integrationen i Home Assistant, bind den till detta hem och välj automatisk livekonfiguration eller säkert demoläge. Sol, batteri och flexibla enheter är valfria funktioner.',
-            'No plan exists yet. Update the SHS Home Assistant integration, bind it to this home, then choose automatic live setup or the safe demo mode. Solar, battery and flexible devices are optional capabilities.',
-          )}
-        />
+        <Card>
+          <CardContent className="space-y-4 py-8">
+            <div>
+              <p className="font-medium">{t('Väntar på den första liveplanen', 'Waiting for the first live plan')}</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {t(
+                  'Home Assistant skickar nästa verifierade 15-minutersplan automatiskt. Den här sidan kontrollerar nu efter ny data var 30:e sekund.',
+                  'Home Assistant will send the next verified 15-minute plan automatically. This page now checks for new data every 30 seconds.',
+                )}
+              </p>
+              {lastCheckedAt && <p className="mt-2 text-xs text-muted-foreground">{t('Senast kontrollerad', 'Last checked')} {new Date(lastCheckedAt).toLocaleTimeString()}</p>}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="outline" disabled={loading} onClick={() => void load(false)}>
+                <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                {t('Kontrollera nu', 'Check now')}
+              </Button>
+              <Button size="sm" onClick={() => setView('demo')}>
+                <Sparkles className="mr-2 h-4 w-4" />
+                {t('Visa exempelhemmet', 'View example home')}
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {t(
+                'Exempelhemmet byggs enbart av fasta tal i webbläsaren och sparas aldrig i databasen.',
+                'The example home is built only from fixed numbers in your browser and is never stored in the database.',
+              )}
+            </p>
+          </CardContent>
+        </Card>
         <ActualPerformance actuals={actuals} />
+      </div>
+    );
+  } else {
+    content = (
+      <div className="space-y-4">
+        {error && (
+          <Alert variant="destructive">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>{t('Den senaste uppdateringen misslyckades', 'The latest refresh failed')}</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+        <PlanView
+          current={current}
+          actuals={actuals}
+          planKey={planKey}
+          setPlanKey={setPlanKey}
+          stale={clock > Date.parse(current.plan.valid_until)}
+          refreshing={loading}
+          refresh={() => load(false)}
+          isDemo={false}
+        />
       </div>
     );
   }
 
   return (
-    <PlanView
-      current={current}
-      actuals={actuals}
-      planKey={planKey}
-      setPlanKey={setPlanKey}
-      stale={clock > Date.parse(current.plan.valid_until)}
-      refreshing={loading}
-      refresh={load}
-    />
+    <div className="space-y-4">
+      <div className="flex justify-end gap-2">
+        <Button size="sm" variant={view === 'live' ? 'default' : 'outline'} onClick={() => setView('live')}>
+          {t('Mitt hem', 'My home')}
+        </Button>
+        <Button size="sm" variant={view === 'demo' ? 'default' : 'outline'} onClick={() => setView('demo')}>
+          <Sparkles className="mr-2 h-4 w-4" />
+          {t('Exempel', 'Example')}
+        </Button>
+      </div>
+      {content}
+    </div>
   );
 };
 
@@ -168,8 +246,9 @@ const PlanView: React.FC<{
   setPlanKey: (key: PlanKey) => void;
   stale: boolean;
   refreshing: boolean;
-  refresh: () => Promise<void>;
-}> = ({ current, actuals, planKey, setPlanKey, stale, refreshing, refresh }) => {
+  refresh?: () => Promise<void>;
+  isDemo: boolean;
+}> = ({ current, actuals, planKey, setPlanKey, stale, refreshing, refresh, isDemo }) => {
   const { t } = useLanguage();
   const { plan } = current;
   const active = plan.plans[planKey];
@@ -202,7 +281,6 @@ const PlanView: React.FC<{
   const hasBattery = plan.capabilities.battery && plan.battery !== null;
   const hasPv = plan.capabilities.pv;
   const hasVariableEv = plan.services.some(service => service.control.type === 'discrete_current');
-  const isDemo = plan.mode === 'demo';
   const solarDays = hasBattery ? Object.keys(active.summary.battery_end_of_solar_soc) : [];
   const sourceStale = Object.entries(plan.sources)
     .filter(([, source]) => source !== null && Date.parse(source.valid_until) < Date.now())
@@ -266,9 +344,11 @@ const PlanView: React.FC<{
                   {plan.plans[key].label}
                 </Button>
               ))}
-              <Button size="icon" variant="ghost" disabled={refreshing} onClick={() => void refresh()}>
-                <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-              </Button>
+              {refresh && (
+                <Button size="icon" variant="ghost" disabled={refreshing} onClick={() => void refresh()}>
+                  <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+                </Button>
+              )}
             </div>
           </div>
         </CardHeader>
