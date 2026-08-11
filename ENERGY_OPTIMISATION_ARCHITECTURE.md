@@ -308,9 +308,31 @@ The exported Node-RED flows already provide valuable closed-loop behaviour:
 - outdoor-aware summer lockout, warm-weather hysteresis, and cold boost; and
 - reusable subflows for overrides, timers, schedules, and floor thermostats.
 
+The inspected room flow applies a 0.2 °C hysteresis around the selected room
+setpoint, uses the lower of two sensors where a room has two, and re-evaluates
+the thermostat periodically. CronPlus schedules deliberately use different
+minutes for different rooms, which spreads scheduled transitions, but each room
+still decides independently whether it may draw power. Schedule selection,
+occupancy/manual policy, thermostat demand and relay actuation are currently
+combined inside each room flow.
+
+There is no shared `heat_request`, thermal-debt score, instantaneous heating
+budget, or home-wide grant/revoke decision. Consequently, staggering start
+times reduces one source of coincidence but cannot prevent several thermostats
+calling for heat together after a cold change or setpoint recovery. The January
+historic-device snapshot contains coincident demand around 10–11 kW, while the
+April and September snapshots have very different dominant loads. Those
+single-day screenshots are useful evidence of the coordination problem, but
+the underlying recorder series—not screenshots—must be used to fit and verify
+the planner.
+
 In the outdoor-aware snapshot, the seasonal rules are hard-coded as June–August
 heating lockout, 15/13 °C outdoor-mean hysteresis, and cold boosts below 5 °C and
 0 °C. These are useful prototype settings, not yet a product parameter model.
+They look backward at a 24-hour mean and cannot distinguish a one-day cold dip
+from a sustained cold spell or a warm forecast tomorrow. This seasonal decision
+belongs in a weather-aware heat-demand plan, with local hard comfort and frost
+limits continuing to override it.
 
 The notes also describe power-confirmed IR control, pool cycle detection, EV
 state, and Sigen inverter control. Those IR groups are not in the exported flow
@@ -484,7 +506,7 @@ an existing Node-RED flow to consume the same request entities.
 | EV charger | Required energy by deadline plus target/minimum/maximum current for every slot | Presence/SOC check, reactive step adjustment, delivered-energy/deadline guard, confirmation | Advisory current target to EV controller |
 | Water boiler | Opportunity windows and normal/soft/hard temperature targets | Thermostat, hygiene cycle, maximum runtime, completion | Permit/request only |
 | Pool heating | Opportunity windows and soft/hard water targets | Pump/heater coupling, filtration requirement, seasonal enable, completion | Permit/request only |
-| Resistive room heating | Setpoint offset or cheap-window preference | Room thermostat, occupancy, manual override, hard comfort floor | Setpoint advice only |
+| Resistive room heating | Aggregate heating-power envelope plus per-room comfort band, preheat permission and priority | Home-wide grant allocator, then room thermostat, occupancy, manual override and hard comfort floor | Bounded setpoint/permission advice; never direct relay timing |
 | Inverter heat pump/aircon | Mode, bounded setpoint offset, preferred recovery window | Native thermostat, COP/defrost behaviour, minimum run time, IR/power confirmation | Setpoint advice only |
 | Duty-cycle appliance | Start-by window or “avoid now” signal | User intent and non-interruptible cycle | Advisory; never force-start initially |
 | Fixed baseload | Forecast only | None | No control |
@@ -783,6 +805,75 @@ it clamps to the plan's current envelope and the entity's 5–16 A capability.
 Starting, stopping, cable/SOC checks, cooldowns and command confirmation remain
 local. A material target-versus-delivered energy difference triggers replanning;
 it is not hidden by uploading high-frequency samples.
+
+### 7.5 Coordinated room-heating contract
+
+Room heating needs three nested decisions rather than a choice between a
+schedule and a thermostat:
+
+1. **The 15-minute planner sets the envelope.** It forecasts zone heat demand
+   from current indoor temperatures, outdoor-temperature/weather forecasts,
+   occupancy policy, measured heater power and learned room response. It emits
+   an aggregate heating-power cap for each slot, an allowed comfort band and
+   optional per-room preheat/relaxation advice. It does not predict or command
+   exact relay duty cycles.
+2. **One local coordinator allocates the envelope.** Each room reports a heat
+   request, measured temperature, target/band, rated power, on/off state,
+   minimum on/off timers and a thermal-debt score. The coordinator grants a
+   subset of requests that fits the current home/heating power budget, rotates
+   equal-priority rooms fairly, and sheds in reverse priority when an
+   uncontrolled load appears. A room below its hard comfort or frost limit is a
+   hard request, not an optimisation preference.
+3. **The existing room thermostat executes a grant.** Sensor selection,
+   hysteresis, relay calls, manual overrides, occupancy and command confirmation
+   stay local. A grant only permits heat while the thermostat is requesting it;
+   it never forces a warm room's relay on.
+
+The coordinator should rank requests by a transparent thermal-debt metric such
+as temperature deficit relative to the active comfort band, time waiting,
+forecast heat loss and room priority. Minimum on/off times and fairness prevent
+chatter and starvation. The planner reserves enough aggregate energy over the
+horizon; the coordinator owns the unknowable minute-by-minute duty allocation.
+Material aggregate heat or temperature drift triggers an early replan.
+
+Shoulder-season control should use a forecast indoor-temperature trajectory or,
+initially, forecast heating degree-hours over the next 24–48 hours. A cold
+morning followed by a warm day may justify allowing temperature to coast inside
+the comfort band; sustained forecast cold justifies recovery or preheating.
+This replaces calendar lockouts and backward-looking cutoffs without weakening
+hard comfort, frost, manual or sensor-validity constraints.
+
+Peak policy is external to the room algorithm. The tariff catalogue supplies
+an effective-dated demand-charge rule and current billing-period reference peak
+when one exists; otherwise the same coordinator may enforce only the physical
+connection limit or an explicitly configured smoothing target. A future
+Ellevio rule change therefore changes planner inputs, not every room flow.
+
+### 7.6 One plan, synchronized explanatory views
+
+Do not put power, SOC, temperature and price on additional axes in one crowded
+chart. They are projections of one plan and should share the same time range,
+cursor, selection and slot tooltip:
+
+| View | Default content | Question it answers |
+|---|---|---|
+| Power and control | Stacked empirical base load plus controllable devices, grid import/export, aggregate room-heating envelope and physical/tariff peak reference | What is expected to draw power, and what is being limited? |
+| Thermal | Outdoor forecast, aggregate worst-room comfort margin and the selected room's forecast temperature/comfort band; other rooms appear only on selection | Is heating being delayed safely, and which room needs attention? |
+| Economics | All-in import and export prices, incremental peak price when applicable, and shaded planned-action windows | Why is energy being moved to this slot? |
+| Storage | Battery SOC, reserve/target band and optionally thermal-service state | What flexibility is being stored or consumed? |
+
+Energy belongs in summary totals and selected-window integrals; instantaneous
+series stay in kW. Each slot carries compact reason codes such as `comfort
+recovery`, `cheap import`, `solar surplus`, `peak cap`, `battery reserve` or
+`manual constraint`. The shared tooltip shows the relevant inputs, binding
+constraint, expected incremental cost and rejected alternative. The economics
+view therefore explains planner decisions instead of leaving price as an
+unconnected secondary graph.
+
+The default overview shows aggregate room heating, not every heater and room
+temperature. Selecting the aggregate or a room opens the same plan at room
+resolution. This preserves one authoritative plan while allowing both a clean
+whole-home explanation and detailed commissioning diagnostics.
 
 ## 8. Objective function
 

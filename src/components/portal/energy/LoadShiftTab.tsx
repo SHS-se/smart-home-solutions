@@ -28,6 +28,10 @@ import {
 } from '@/lib/energy-shift/contracts';
 import { createWebsiteDemoActuals, createWebsiteDemoPlan } from '@/lib/energy-shift/demo';
 import { comparePlans, formatSigned } from '@/lib/energy-shift/plan-comparison';
+import {
+  foldDevicePowerIntoBase,
+  reconcilePlanDeviceRoles,
+} from '@/lib/energy-shift/plan-device-roles';
 import EmpiricalDeviceModelsCard, {
   type EmpiricalEnergyDevice,
 } from './EmpiricalDeviceModelsCard';
@@ -357,6 +361,10 @@ const PlanView: React.FC<{
     () => comparePlans(plan.plans.priority, plan.plans.baseline),
     [plan],
   );
+  const deviceRoleView = useMemo(
+    () => reconcilePlanDeviceRoles(plan.device_models, empiricalDevices),
+    [empiricalDevices, plan.device_models],
+  );
   const chartData = useMemo(() => active.slots.map((slot, index) => {
     return {
       i: index,
@@ -364,7 +372,11 @@ const PlanView: React.FC<{
       label: new Date(slot.start).toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
       pv: slot.pv_w,
       pvRaw: slot.pv_raw_w,
-      base: slot.base_w,
+      base: foldDevicePowerIntoBase(
+        slot.base_w,
+        slot.device_loads_w,
+        deviceRoleView.baseLoadModels,
+      ),
       boiler: slot.boiler_expected_w,
       pool: slot.pool_w,
       ev: slot.ev_w,
@@ -374,12 +386,12 @@ const PlanView: React.FC<{
       gridExport: slot.grid_export_w,
       importPrice: slot.import_price_sek_per_kwh,
       exportPrice: slot.export_price_sek_per_kwh,
-      ...Object.fromEntries(plan.device_models.map((model, modelIndex) => [
+      ...Object.fromEntries(deviceRoleView.visibleModels.map((model, modelIndex) => [
         `device${modelIndex}`,
         slot.device_loads_w[model.key] ?? 0,
       ])),
     };
-  }), [active, plan.device_models]);
+  }), [active, deviceRoleView]);
   const firstAdvisory = active.slots.findIndex(slot => !slot.binding);
   const bindingIndex = firstAdvisory < 0 ? active.slots.length : firstAdvisory;
   const ticks = active.slots.map((slot, index) => ({ slot, index }))
@@ -408,7 +420,7 @@ const PlanView: React.FC<{
     gridExport: { key: 'gridExport', label: t('Exporteffekt', 'Grid export'), color: COLORS.export },
     soc: { key: 'soc', label: batterySocLabel, color: COLORS.soc },
   };
-  const deviceSeries: PlanChartSeries[] = plan.device_models.map((model, index) => ({
+  const deviceSeries: PlanChartSeries[] = deviceRoleView.visibleModels.map((model, index) => ({
     key: `device:${model.key}`,
     dataKey: `device${index}`,
     label: `${model.name} · ${model.control_type.replace(/_/g, ' ')}`,
@@ -605,6 +617,10 @@ const PlanView: React.FC<{
           />
           <p className="mt-2 text-xs text-muted-foreground">
             {t('Välj en serie i teckenförklaringen för att visa eller dölja den. Baslasten innehåller alla enheter som inte är markerade som styrbara. Styrbara enheter visas separat och räknas inte en gång till i baslasten. Skuggat område är rådgivande eftersom båda prisserierna inte längre är publicerade.', 'Select any legend series to show or hide it. Base load contains every device not marked controllable. Controllable devices are shown separately and are not counted again in base load. The shaded interval is advisory because both price series are no longer published.')}
+            {deviceRoleView.requiresPlanRefresh && ` ${t(
+              'Den ändrade enhetsrollen visas direkt; schema- och kostnadsberäkningarna uppdateras vid nästa Home Assistant-plan.',
+              'The changed device role is shown immediately; schedule and cost calculations update with the next Home Assistant plan.',
+            )}`}
           </p>
         </CardContent>
       </Card>
