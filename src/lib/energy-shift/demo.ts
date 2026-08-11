@@ -238,6 +238,9 @@ export function createWebsiteDemoPlan(
       battery_target_is_hard: false,
       terminal_soc_min: advancedHome ? 0.1 : 0,
       terminal_energy_value_sek_per_kwh: advancedHome ? 1.1 : 0,
+      battery_export_enabled: advancedHome,
+      battery_export_reserve_soc: advancedHome ? 0.8 : 0,
+      battery_export_min_price_sek_per_kwh: advancedHome ? 2.5 : 0,
     },
     device_models: advancedHome ? [
       {

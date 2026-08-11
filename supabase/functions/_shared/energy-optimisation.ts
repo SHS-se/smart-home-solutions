@@ -9,7 +9,7 @@
  */
 
 export const OPTIMISATION_SCHEMA_VERSION = 5;
-export const OPTIMISATION_MODEL_VERSION = "controllable-device-planner-v5";
+export const OPTIMISATION_MODEL_VERSION = "battery-export-planner-v6";
 export const SLOT_MINUTES = 15;
 export const SLOT_HOURS = SLOT_MINUTES / 60;
 export const MAX_FORECAST_SLOTS = 72 * 4;
@@ -222,6 +222,9 @@ export interface OptimisationSnapshotV5 {
     battery_target_is_hard: boolean;
     terminal_soc_min: number;
     terminal_energy_value_sek_per_kwh: number;
+    battery_export_enabled: boolean;
+    battery_export_reserve_soc: number;
+    battery_export_min_price_sek_per_kwh: number;
   };
   device_models: EmpiricalDeviceModelInput[];
   services: ServiceInput[];
@@ -251,6 +254,7 @@ export interface PlannedSlot {
   load_w: number;
   battery_charge_w: number;
   battery_discharge_w: number;
+  battery_export_w: number;
   battery_soc: number;
   grid_import_w: number;
   grid_export_w: number;
@@ -608,6 +612,36 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV5): string[] {
     )
   ) {
     errors.push("battery policy targets are outside the configured SOC bounds");
+  }
+  if (
+    typeof snapshot.policy.battery_export_enabled !== "boolean" ||
+    !inRange(snapshot.policy.battery_export_reserve_soc, 0, 1) ||
+    !inRange(
+      snapshot.policy.battery_export_min_price_sek_per_kwh,
+      0,
+      100,
+    )
+  ) {
+    errors.push("battery export policy is invalid");
+  } else if (
+    battery && snapshot.policy.battery_export_enabled &&
+    !inRange(
+      snapshot.policy.battery_export_reserve_soc,
+      battery.min_soc,
+      battery.max_soc,
+    )
+  ) {
+    errors.push("battery export reserve is outside the configured SOC bounds");
+  } else if (
+    !battery && (
+      snapshot.policy.battery_export_enabled ||
+      snapshot.policy.battery_export_reserve_soc !== 0 ||
+      snapshot.policy.battery_export_min_price_sek_per_kwh !== 0
+    )
+  ) {
+    errors.push(
+      "battery export policy must be disabled when no battery is configured",
+    );
   }
 
   const firstStart = isoMs(snapshot?.slots?.[0]?.start);
@@ -1536,6 +1570,7 @@ function empiricalDeviceLoads(
 }
 
 function simulate(
+  key: PlanKey,
   slots: PreparedSlot[],
   snapshot: OptimisationSnapshotV5,
   schedule: Schedule,
@@ -1635,21 +1670,63 @@ function simulate(
     const netW = slot.pv_w - loadW;
     let batteryChargeW = 0;
     let batteryDischargeW = 0;
+    let batteryExportW = 0;
     let gridImportW = 0;
     let gridExportW = 0;
     let curtailedW = 0;
     let unservedW = 0;
+    const deliberateExport = key !== "baseline" &&
+      snapshot.policy.battery_export_enabled === true && slot.binding &&
+      slot.export_price_sek_per_kwh! >=
+        snapshot.policy.battery_export_min_price_sek_per_kwh;
+    const exportFloor = Math.max(
+      battery.min_soc,
+      floor ?? battery.min_soc,
+      snapshot.policy.battery_export_reserve_soc,
+    );
+    const exportableKwh = Math.max(
+      0,
+      (soc - exportFloor) * battery.capacity_kwh,
+    );
+    const maxExportDischargeW = Math.min(
+      maxDischargeW,
+      exportableKwh * battery.discharge_efficiency * 1_000 / SLOT_HOURS,
+    );
     if (netW >= 0) {
       batteryChargeW = Math.min(netW, maxChargeW);
       const afterBatteryW = netW - batteryChargeW;
-      gridExportW = Math.min(afterBatteryW, snapshot.grid.export_limit_w);
-      curtailedW = Math.max(0, afterBatteryW - gridExportW);
+      if (deliberateExport && batteryChargeW <= 0.01) {
+        batteryExportW = Math.min(
+          maxExportDischargeW,
+          Math.max(0, snapshot.grid.export_limit_w - afterBatteryW),
+        );
+        batteryDischargeW = batteryExportW;
+      }
+      gridExportW = Math.min(
+        afterBatteryW + batteryExportW,
+        snapshot.grid.export_limit_w,
+      );
+      curtailedW = Math.max(
+        0,
+        afterBatteryW + batteryExportW - gridExportW,
+      );
     } else {
       const deficitW = -netW;
       batteryDischargeW = Math.min(deficitW, maxDischargeW);
       const afterBatteryW = deficitW - batteryDischargeW;
-      gridImportW = Math.min(afterBatteryW, snapshot.grid.import_limit_w);
-      unservedW = Math.max(0, afterBatteryW - gridImportW);
+      if (deliberateExport && afterBatteryW <= 0.01) {
+        batteryExportW = Math.min(
+          Math.max(0, maxExportDischargeW - batteryDischargeW),
+          snapshot.grid.export_limit_w,
+        );
+        batteryDischargeW += batteryExportW;
+      }
+      if (afterBatteryW > 0) {
+        gridImportW = Math.min(afterBatteryW, snapshot.grid.import_limit_w);
+        unservedW = Math.max(0, afterBatteryW - gridImportW);
+      } else {
+        gridExportW = batteryExportW;
+      }
     }
     soc += (
       batteryChargeW * battery.charge_efficiency -
@@ -1697,6 +1774,7 @@ function simulate(
       load_w: round(loadW, 2),
       battery_charge_w: round(batteryChargeW, 2),
       battery_discharge_w: round(batteryDischargeW, 2),
+      battery_export_w: round(batteryExportW, 2),
       battery_soc: round(soc, 6),
       grid_import_w: round(gridImportW, 2),
       grid_export_w: round(gridExportW, 2),
@@ -1924,6 +2002,7 @@ function buildPlan(
     key === "priority" ? reservedW : new Array(slots.length).fill(0),
   );
   const simulated = simulate(
+    key,
     slots,
     snapshot,
     scheduled.schedule,

@@ -103,6 +103,9 @@ const input = (
       battery_target_is_hard: true,
       terminal_soc_min: 0.05,
       terminal_energy_value_sek_per_kwh: 1,
+      battery_export_enabled: false,
+      battery_export_reserve_soc: 0.8,
+      battery_export_min_price_sek_per_kwh: 2.5,
     },
     device_models: [],
     services: [
@@ -232,6 +235,9 @@ Deno.test("empirical device forecasts participate in the energy balance", () => 
     battery_target_is_hard: false,
     terminal_soc_min: 0,
     terminal_energy_value_sek_per_kwh: 0,
+    battery_export_enabled: false,
+    battery_export_reserve_soc: 0,
+    battery_export_min_price_sek_per_kwh: 0,
   };
   snapshot.slots = snapshot.slots.map((slot) => ({
     ...slot,
@@ -362,6 +368,9 @@ Deno.test("EV charging is planned as valid discrete current setpoints", () => {
       battery_target_is_hard: false,
       terminal_soc_min: 0,
       terminal_energy_value_sek_per_kwh: 0,
+      battery_export_enabled: false,
+      battery_export_reserve_soc: 0,
+      battery_export_min_price_sek_per_kwh: 0,
     },
     services: [{
       id: "ev:departure",
@@ -488,6 +497,9 @@ Deno.test("existing EV snapshots remain executable while telemetry rolls forward
       battery_target_is_hard: false,
       terminal_soc_min: 0,
       terminal_energy_value_sek_per_kwh: 0,
+      battery_export_enabled: false,
+      battery_export_reserve_soc: 0,
+      battery_export_min_price_sek_per_kwh: 0,
     },
     services: [{
       id: "ev:legacy",
@@ -557,6 +569,76 @@ Deno.test("prices stay directional and PV calibration is applied", () => {
   );
 });
 
+Deno.test("high-price battery export respects the configured SOC reserve", () => {
+  const base = input();
+  const snapshot = input({
+    capabilities: {
+      pv: false,
+      battery: true,
+      pool: false,
+      boiler: false,
+      ev: false,
+    },
+    battery: {
+      ...base.battery!,
+      soc: 1,
+      charge_max_w: 0,
+      discharge_max_w: 4_000,
+    },
+    sources: { ...base.sources, pv: null },
+    pv_calibration: {
+      correction_factor_by_lead_day: [1, 1, 1, 1],
+      sample_count_by_lead_day: [0, 0, 0, 0],
+    },
+    slots: base.slots.map((slot, index) => ({
+      ...slot,
+      pv_forecast_w: 0,
+      import_price_sek_per_kwh: index < 20 ? 3 : null,
+      export_price_sek_per_kwh: index < 20
+        ? index === 4 || index === 5 ? 2.6 : 1
+        : null,
+    })),
+    policy: {
+      ...base.policy,
+      battery_end_of_solar_target_soc: 0.05,
+      battery_target_is_hard: false,
+      battery_export_enabled: true,
+      battery_export_reserve_soc: 0.8,
+      battery_export_min_price_sek_per_kwh: 2.5,
+    },
+    device_models: [],
+    services: [],
+    service_requirement_sample_days: {},
+  });
+
+  const result = generateOptimisationPlan(
+    snapshot,
+    new Date("2026-08-10T07:55:00Z"),
+  );
+  const baseline = result.plans.baseline;
+  const planned = result.plans.priority;
+  const exportSlots = planned.slots.filter((slot) => slot.battery_export_w > 0);
+
+  assert(result.status === "ready", "battery export made the plan infeasible");
+  assert(exportSlots.length === 2, "battery exported outside the price window");
+  assert(
+    exportSlots.every((slot) =>
+      slot.export_price_sek_per_kwh === 2.6 &&
+      slot.grid_export_w === slot.battery_export_w &&
+      slot.battery_soc + 1e-6 >= 0.8
+    ),
+    "battery export crossed the configured reserve",
+  );
+  assert(
+    baseline.slots.every((slot) => slot.battery_export_w === 0),
+    "the without-plan scenario deliberately exported storage",
+  );
+  assert(
+    planned.summary.net_cost_sek < baseline.summary.net_cost_sek,
+    "high-price export did not improve the priced plan",
+  );
+});
+
 Deno.test("homes without PV or a battery still receive a valid price-led plan", () => {
   const snapshot = input({
     capabilities: {
@@ -577,6 +659,9 @@ Deno.test("homes without PV or a battery still receive a valid price-led plan", 
       battery_target_is_hard: false,
       terminal_soc_min: 0,
       terminal_energy_value_sek_per_kwh: 0,
+      battery_export_enabled: false,
+      battery_export_reserve_soc: 0,
+      battery_export_min_price_sek_per_kwh: 0,
     },
     slots: input().slots.map((slot) => ({ ...slot, pv_forecast_w: 0 })),
     pv_calibration: {

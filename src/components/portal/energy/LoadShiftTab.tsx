@@ -73,6 +73,7 @@ const COLORS = {
   actual: '#111827',
   batteryCharge: '#2563eb',
   batteryDischarge: '#7c3aed',
+  batteryExport: '#059669',
 };
 
 type PlanViewMode = 'planned' | 'unplanned';
@@ -102,6 +103,7 @@ type StorageSeriesKey =
   | 'homeTarget'
   | 'homeCharge'
   | 'homeDischarge'
+  | 'homeExport'
   | 'evSoc'
   | 'evTarget'
   | 'evCharge';
@@ -439,6 +441,7 @@ const PlanView: React.FC<{
       evConnected: slot.ev_connected,
       homeCharge: slot.battery_charge_w,
       homeDischarge: slot.battery_discharge_w,
+      homeExport: slot.battery_export_w,
       evCharge: slot.ev_w,
       gridImport: slot.grid_import_w,
       gridExport: slot.grid_export_w,
@@ -571,7 +574,8 @@ const PlanView: React.FC<{
       { key: 'homeSoc' as const, label: t('Hembatteri SOC', 'Home battery SOC'), color: COLORS.soc },
       { key: 'homeTarget' as const, label: t('Hembatteriets mål', 'Home battery target'), color: '#fb7185' },
       { key: 'homeCharge' as const, label: t('Batteriladdning', 'Battery charge'), color: COLORS.batteryCharge },
-      { key: 'homeDischarge' as const, label: t('Batteriurladdning', 'Battery discharge'), color: COLORS.batteryDischarge },
+      { key: 'homeDischarge' as const, label: t('Total batteriurladdning', 'Total battery discharge'), color: COLORS.batteryDischarge },
+      { key: 'homeExport' as const, label: t('Batteriexport till nätet', 'Battery-to-grid export'), color: COLORS.batteryExport },
     ] : []),
     ...(hasEvBattery ? [
       { key: 'evSoc' as const, label: t('Bilbatteri SOC', 'EV battery SOC'), color: COLORS.ev },
@@ -794,9 +798,17 @@ const PlanView: React.FC<{
               </p>
             </>
           ) : (
-            <p className="py-16 text-center text-sm text-muted-foreground">
-              {t('Ingen bekräftad termisk modell har publicerats för detta hem ännu. Effektplanen fortsätter att fungera oförändrad.', 'No confirmed thermal model has been published for this home yet. The electrical plan continues unchanged.')}
-            </p>
+            <div className="mx-auto max-w-3xl py-14 text-center text-sm text-muted-foreground">
+              <p className="font-medium text-foreground">
+                {t('Ingen termisk modell har publicerats för detta hem ännu.', 'No thermal model has been published for this home yet.')}
+              </p>
+              <p className="mt-2">
+                {t(
+                  'För att schemalägga ett värmeelement måste det markeras som styrbart och kopplas till bekräftade rumstemperatur-, börvärdes/överstyrnings-, aktuator- och effekt/energientiteter samt utomhusprognosen. Historik används sedan för att lära byggnadens respons; enbart energihistorik räcker inte. Effektplanen fortsätter oförändrad.',
+                  'To schedule a heater it must be marked controllable and mapped to confirmed room-temperature, setpoint/override, actuator, and power/energy entities plus the outdoor forecast. History is then used to learn the building response; energy history alone is not enough. The electrical plan continues unchanged.',
+                )}
+              </p>
+            </div>
           ))}
 
           {dimension === 'economics' && (
@@ -839,6 +851,7 @@ const PlanView: React.FC<{
                   {evConnectedStart !== undefined && evConnectedEnd !== undefined && <ReferenceArea yAxisId="soc" x1={evConnectedStart} x2={evConnectedEnd + 1} y1={0} y2={100} fill={COLORS.ev} fillOpacity={0.06} />}
                   {storageVisibility.visible('homeCharge') && <Area yAxisId="power" type="step" dataKey="homeCharge" name={storageSeries.find(item => item.key === 'homeCharge')?.label} fill={COLORS.batteryCharge} stroke={COLORS.batteryCharge} fillOpacity={0.18} dot={false} />}
                   {storageVisibility.visible('homeDischarge') && <Area yAxisId="power" type="step" dataKey="homeDischarge" name={storageSeries.find(item => item.key === 'homeDischarge')?.label} fill={COLORS.batteryDischarge} stroke={COLORS.batteryDischarge} fillOpacity={0.18} dot={false} />}
+                  {storageVisibility.visible('homeExport') && <Line yAxisId="power" type="step" dataKey="homeExport" name={storageSeries.find(item => item.key === 'homeExport')?.label} stroke={COLORS.batteryExport} strokeWidth={2} strokeDasharray="5 3" dot={false} />}
                   {storageVisibility.visible('evCharge') && <Area yAxisId="power" type="step" dataKey="evCharge" name={storageSeries.find(item => item.key === 'evCharge')?.label} fill="#7c3aed" stroke="#7c3aed" fillOpacity={0.12} dot={false} />}
                   {storageVisibility.visible('homeSoc') && <Line yAxisId="soc" type="monotone" dataKey="homeSoc" name={storageSeries.find(item => item.key === 'homeSoc')?.label} stroke={COLORS.soc} strokeWidth={2} dot={false} />}
                   {storageVisibility.visible('homeTarget') && <Line yAxisId="soc" type="stepAfter" dataKey="homeTarget" name={storageSeries.find(item => item.key === 'homeTarget')?.label} stroke="#fb7185" strokeDasharray="4 3" dot={false} />}
@@ -856,6 +869,11 @@ const PlanView: React.FC<{
               <p className="mt-2 text-xs text-muted-foreground">
                 {plan.ev_battery
                   ? `${plan.ev_battery.name}: ${pct(plan.ev_battery.soc)} → ${pct(plan.ev_battery.departure_target_soc)} · ${plan.ev_battery.capacity_kwh.toFixed(1)} kWh · ${t('prioritet', 'priority')} ${plan.ev_battery.priority} (${t('1 är högst', '1 is highest')})${plan.ev_battery.departure ? ` · ${t('avgång', 'departure')} ${new Date(plan.ev_battery.departure).toLocaleString()}` : ''}. `
+                  : ''}
+                {hasBattery
+                  ? plan.policy.battery_export_enabled
+                    ? `${t('Planerad batteriexport vid minst', 'Planned battery export at or above')} ${plan.policy.battery_export_min_price_sek_per_kwh.toFixed(2)} SEK/kWh · ${t('exportreserv', 'export reserve')} ${pct(plan.policy.battery_export_reserve_soc)}. ${t('Detta visualiserar en rådgivande preferens; batteriutförande är ännu inte aktiverat.', 'This visualizes an advisory preference; battery execution is not enabled yet.')} `
+                    : `${t('Planerad batteriexport är avstängd.', 'Planned battery export is disabled.')} `
                   : ''}
                 {t('Det skuggade intervallet visar när bilen är ansluten och tillgänglig för planerad laddning.', 'The shaded interval shows when the EV is connected and available for planned charging.')}
               </p>
