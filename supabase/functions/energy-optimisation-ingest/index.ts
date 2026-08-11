@@ -9,8 +9,9 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { authenticateDevice, sha256Hex } from "../_shared/ha-device-auth.ts";
 import {
+  type DeviceLoadType,
   generateOptimisationPlan,
-  type OptimisationSnapshotV3,
+  type OptimisationSnapshotV4,
 } from "../_shared/energy-optimisation.ts";
 
 const corsHeaders = {
@@ -19,9 +20,10 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
 };
 
-const MAX_ACTUAL_SLOTS_PER_PUSH = 192;
+const MAX_ACTUAL_SLOTS_PER_PUSH = 288;
+const MAX_DEVICES_PER_PUSH = 100;
 const MAX_QUARTER_KWH = 100;
-const MAX_REQUEST_BYTES = 1_000_000;
+const MAX_REQUEST_BYTES = 2_000_000;
 const SLOT_MS = 15 * 60_000;
 const ACTUAL_AGGREGATION = "sum_of_recorder_5minute_changes";
 
@@ -36,7 +38,24 @@ interface IncomingActualSlot {
   ev_charging_kwh?: number | null;
   battery_charge_kwh?: number | null;
   battery_discharge_kwh?: number | null;
+  device_energy_kwh?: Record<string, number>;
   quality?: Record<string, unknown>;
+}
+
+interface IncomingDevice {
+  key: string;
+  statistic_id: string;
+  name: string;
+  category: string;
+  suggested_load_type: DeviceLoadType;
+  active_power_w: number | null;
+  profile_sample_count: number;
+  inference: Record<string, unknown>;
+}
+
+interface StoredDevice extends IncomingDevice {
+  id: string;
+  load_type_override: DeviceLoadType | null;
 }
 
 const ENERGY_FIELDS = [
@@ -73,6 +92,16 @@ const compactPlanSummary = (
   battery: plan.battery,
   grid: plan.grid,
   services: plan.services,
+  device_models: plan.device_models.map((model) => ({
+    key: model.key,
+    name: model.name,
+    statistic_id: model.statistic_id,
+    category: model.category,
+    suggested_load_type: model.suggested_load_type,
+    load_type: model.load_type,
+    active_power_w: model.active_power_w,
+    profile_sample_count: model.profile_sample_count,
+  })),
   service_requirement_sample_days: plan.service_requirement_sample_days,
   plans: Object.fromEntries(
     Object.entries(plan.plans).map(([key, value]) => [key, {
@@ -81,6 +110,7 @@ const compactPlanSummary = (
       summary: value.summary,
       service_slots: value.service_slots,
       service_currents_a: value.service_currents_a,
+      service_inhibited_slots: value.service_inhibited_slots,
     }]),
   ),
 });
@@ -105,7 +135,8 @@ serve(async (req) => {
     }
 
     let actuals: IncomingActualSlot[] = [];
-    let snapshot: OptimisationSnapshotV3 | null = null;
+    let devices: IncomingDevice[] = [];
+    let snapshot: OptimisationSnapshotV4 | null = null;
     try {
       const declaredLength = Number(req.headers.get("content-length") ?? 0);
       if (declaredLength > MAX_REQUEST_BYTES) {
@@ -128,7 +159,11 @@ serve(async (req) => {
       ) {
         throw new Error("snapshot");
       }
+      if (body.devices !== undefined && !Array.isArray(body.devices)) {
+        throw new Error("devices");
+      }
       actuals = body.actual_slots ?? [];
+      devices = body.devices ?? [];
       snapshot = body.snapshot ?? null;
     } catch {
       return json({ error: "invalid_body" }, 400);
@@ -139,11 +174,103 @@ serve(async (req) => {
     if (actuals.length > MAX_ACTUAL_SLOTS_PER_PUSH) {
       return json({ error: "too_many_actual_slots" }, 400);
     }
+    if (devices.length > MAX_DEVICES_PER_PUSH) {
+      return json({ error: "too_many_devices" }, 400);
+    }
+
+    const loadTypes = new Set<DeviceLoadType>([
+      "fixed_full_load",
+      "variable_full_load",
+      "duty_cycle",
+      "inverter",
+    ]);
+    const deviceCategories = new Set([
+      "heating",
+      "hot_water",
+      "cooling",
+      "property_energy",
+      "pool_heating",
+      "ev_charging",
+      "household",
+    ]);
+    const deviceKeys = new Set<string>();
+    const deviceRows: Record<string, unknown>[] = [];
+    for (const [index, device] of devices.entries()) {
+      if (
+        typeof device?.key !== "string" || device.key.length < 1 ||
+        device.key.length > 255 || deviceKeys.has(device.key) ||
+        typeof device.statistic_id !== "string" ||
+        device.statistic_id.length < 1 || device.statistic_id.length > 255 ||
+        typeof device.name !== "string" || device.name.length < 1 ||
+        device.name.length > 255 || !deviceCategories.has(device.category) ||
+        !loadTypes.has(device.suggested_load_type) ||
+        (device.active_power_w !== null &&
+          (typeof device.active_power_w !== "number" ||
+            !Number.isFinite(device.active_power_w) ||
+            device.active_power_w < 0 || device.active_power_w > 100_000)) ||
+        !Number.isInteger(device.profile_sample_count) ||
+        device.profile_sample_count < 0 ||
+        !device.inference || typeof device.inference !== "object" ||
+        Array.isArray(device.inference)
+      ) {
+        return json(
+          { error: "invalid_device", detail: `devices[${index}]` },
+          400,
+        );
+      }
+      deviceKeys.add(device.key);
+      deviceRows.push({
+        customer_id: auth.customerId,
+        home_id: auth.homeId,
+        device_key: device.key,
+        statistic_id: device.statistic_id,
+        name: device.name,
+        category: device.category,
+        suggested_load_type: device.suggested_load_type,
+        active_power_w: device.active_power_w,
+        profile_sample_count: device.profile_sample_count,
+        inference: device.inference,
+        device_token_id: auth.tokenId,
+        last_seen_at: new Date().toISOString(),
+      });
+    }
+
+    let storedDevices: StoredDevice[] = [];
+    if (deviceRows.length > 0) {
+      const { data, error } = await supabase
+        .from("energy_optimisation_devices")
+        .upsert(deviceRows, { onConflict: "home_id,device_key" })
+        .select(
+          "id, device_key, statistic_id, name, category, suggested_load_type, load_type_override, active_power_w, profile_sample_count, inference",
+        );
+      if (error) {
+        console.error("[ENERGY-OPTIMISATION] device upsert failed", error);
+        return json({ error: "storage_failed" }, 500);
+      }
+      storedDevices = (data ?? []).map((row) => ({
+        id: row.id,
+        key: row.device_key,
+        statistic_id: row.statistic_id,
+        name: row.name,
+        category: row.category,
+        suggested_load_type: row.suggested_load_type,
+        load_type_override: row.load_type_override,
+        active_power_w: row.active_power_w === null
+          ? null
+          : Number(row.active_power_w),
+        profile_sample_count: row.profile_sample_count,
+        inference: row.inference,
+      })) as StoredDevice[];
+    }
+    const storedDeviceByKey = new Map(
+      storedDevices.map((device) => [device.key, device]),
+    );
 
     const now = Date.now();
     const latestCompleteStart = Math.floor(now / SLOT_MS) * SLOT_MS - SLOT_MS;
     const earliestAcceptedStart = latestCompleteStart - 8 * 24 * 60 * 60_000;
     const actualRows: Record<string, unknown>[] = [];
+    const deviceSlotRows: Record<string, unknown>[] = [];
     const starts = new Set<number>();
     for (const [index, actual] of actuals.entries()) {
       const start = Date.parse(String(actual?.start ?? ""));
@@ -208,6 +335,40 @@ serve(async (req) => {
         }, 400);
       }
       actualRows.push(row);
+      const deviceEnergy = actual.device_energy_kwh ?? {};
+      if (
+        !deviceEnergy || typeof deviceEnergy !== "object" ||
+        Array.isArray(deviceEnergy)
+      ) {
+        return json({
+          error: "invalid_device_energy",
+          detail: `actual_slots[${index}].device_energy_kwh`,
+        }, 400);
+      }
+      for (const [deviceKey, value] of Object.entries(deviceEnergy)) {
+        const storedDevice = storedDeviceByKey.get(deviceKey);
+        if (
+          !storedDevice || typeof value !== "number" ||
+          !Number.isFinite(value) || value < 0 || value > MAX_QUARTER_KWH
+        ) {
+          return json({
+            error: "invalid_device_energy",
+            detail: `actual_slots[${index}].device_energy_kwh.${deviceKey}`,
+          }, 400);
+        }
+        deviceSlotRows.push({
+          customer_id: auth.customerId,
+          home_id: auth.homeId,
+          device_id: storedDevice.id,
+          start_ts: new Date(start).toISOString(),
+          energy_kwh: round(value),
+          quality: {
+            aggregation: ACTUAL_AGGREGATION,
+            duration_seconds: 900,
+          },
+          device_token_id: auth.tokenId,
+        });
+      }
     }
     actualRows.sort((a, b) =>
       Date.parse(String(a.start_ts)) - Date.parse(String(b.start_ts))
@@ -222,9 +383,38 @@ serve(async (req) => {
         return json({ error: "storage_failed" }, 500);
       }
     }
+    if (deviceSlotRows.length > 0) {
+      const { error } = await supabase
+        .from("energy_optimisation_device_slots")
+        .upsert(deviceSlotRows, { onConflict: "device_id,start_ts" });
+      if (error) {
+        console.error("[ENERGY-OPTIMISATION] device slot upsert failed", error);
+        return json({ error: "storage_failed" }, 500);
+      }
+    }
 
     let generated: ReturnType<typeof generateOptimisationPlan> | null = null;
     if (snapshot !== null) {
+      const models = new Map(
+        snapshot.device_models.map((model) => [model.key, model]),
+      );
+      if (
+        models.size !== snapshot.device_models.length ||
+        [...models.keys()].some((key) => !storedDeviceByKey.has(key))
+      ) {
+        return json({ error: "snapshot_device_inventory_mismatch" }, 400);
+      }
+      snapshot = {
+        ...snapshot,
+        device_models: snapshot.device_models.map((model) => {
+          const stored = storedDeviceByKey.get(model.key)!;
+          return {
+            ...model,
+            suggested_load_type: stored.suggested_load_type,
+            load_type: stored.load_type_override ?? stored.suggested_load_type,
+          };
+        }),
+      };
       try {
         generated = generateOptimisationPlan(snapshot);
       } catch (error) {
@@ -298,6 +488,11 @@ serve(async (req) => {
         ? actualRows[actualRows.length - 1].start_ts
         : null,
       plan: generated,
+      device_models: storedDevices.map((device) => ({
+        key: device.key,
+        suggested_load_type: device.suggested_load_type,
+        load_type: device.load_type_override ?? device.suggested_load_type,
+      })),
     });
   } catch (error) {
     console.error("[ENERGY-OPTIMISATION] unexpected", error);

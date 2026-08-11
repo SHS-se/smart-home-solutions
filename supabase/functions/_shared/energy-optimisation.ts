@@ -8,8 +8,8 @@
  * verified before it may be published as `ready`.
  */
 
-export const OPTIMISATION_SCHEMA_VERSION = 3;
-export const OPTIMISATION_MODEL_VERSION = "quarter-hour-heuristic-v3";
+export const OPTIMISATION_SCHEMA_VERSION = 4;
+export const OPTIMISATION_MODEL_VERSION = "empirical-device-planner-v4";
 export const SLOT_MINUTES = 15;
 export const SLOT_HOURS = SLOT_MINUTES / 60;
 export const MAX_FORECAST_SLOTS = 72 * 4;
@@ -29,6 +29,11 @@ const SOURCE_MAX_AGE_MS = {
 export type PlanKey = "baseline" | "priority" | "cost";
 export type DeviceKey = "pool" | "boiler" | "ev";
 export type PlanMode = "live" | "demo";
+export type DeviceLoadType =
+  | "fixed_full_load"
+  | "variable_full_load"
+  | "duty_cycle"
+  | "inverter";
 
 export interface OptimisationCapabilities {
   pv: boolean;
@@ -75,14 +80,17 @@ export interface BatteryInput {
   discharge_efficiency: number;
 }
 
-interface ServiceInputBase {
+interface ServiceWindowInput {
   id: string;
   device: DeviceKey;
   earliest_start: string;
   deadline: string;
+  priority: number;
+}
+
+interface DispatchableServiceInputBase extends ServiceWindowInput {
   required_kwh: number;
   min_run_slots: number;
-  priority: number;
   baseline_preferred_start?: string;
 }
 
@@ -100,21 +108,53 @@ export interface DiscreteCurrentControl {
   voltage_v: number;
 }
 
-export interface FixedPowerServiceInput extends ServiceInputBase {
+export interface DutyCycleControl {
+  type: "duty_cycle";
+  rated_power_w: number;
+  expected_power_w_by_slot: number[];
+  max_consecutive_inhibit_slots: number;
+}
+
+export interface FixedPowerServiceInput extends DispatchableServiceInputBase {
+  device: "pool" | "ev";
   control: FixedPowerControl;
 }
 
-export interface DiscreteCurrentServiceInput extends ServiceInputBase {
+export interface DiscreteCurrentServiceInput
+  extends DispatchableServiceInputBase {
   device: "ev";
   control: DiscreteCurrentControl;
 }
 
+export interface DutyCycleServiceInput extends ServiceWindowInput {
+  device: "boiler";
+  required_kwh: number;
+  control: DutyCycleControl;
+}
+
 export type ServiceInput =
+  | FixedPowerServiceInput
+  | DiscreteCurrentServiceInput
+  | DutyCycleServiceInput;
+
+type DispatchableServiceInput =
   | FixedPowerServiceInput
   | DiscreteCurrentServiceInput;
 
-export interface OptimisationSnapshotV3 {
-  schema_version: 3;
+export interface EmpiricalDeviceModelInput {
+  key: string;
+  name: string;
+  statistic_id: string;
+  category: string;
+  suggested_load_type: DeviceLoadType;
+  load_type: DeviceLoadType;
+  active_power_w: number | null;
+  profile_sample_count: number;
+  forecast_w_by_slot: number[];
+}
+
+export interface OptimisationSnapshotV4 {
+  schema_version: 4;
   // Only Home Assistant live snapshots cross the ingestion boundary. The
   // website's promotional demo is a client-side plan fixture, not a snapshot.
   mode: "live";
@@ -146,6 +186,7 @@ export interface OptimisationSnapshotV3 {
     terminal_soc_min: number;
     terminal_energy_value_sek_per_kwh: number;
   };
+  device_models: EmpiricalDeviceModelInput[];
   services: ServiceInput[];
   service_requirement_sample_days: Record<string, number>;
 }
@@ -161,8 +202,10 @@ export interface PlannedSlot {
   import_price_sek_per_kwh: number | null;
   export_price_sek_per_kwh: number | null;
   pool_w: number;
-  boiler_w: number;
+  boiler_expected_w: number;
+  boiler_permitted: boolean;
   ev_w: number;
+  device_loads_w: Record<string, number>;
   ev_target_current_a: number;
   ev_min_current_a: number;
   ev_max_current_a: number;
@@ -195,6 +238,7 @@ export interface PlanSummary {
   battery_end_of_solar_soc: Record<string, number>;
   service_required_kwh: number;
   service_delivered_kwh: number;
+  duty_cycle_deferred_kwh: number;
 }
 
 export interface GeneratedPlan {
@@ -206,10 +250,11 @@ export interface GeneratedPlan {
   summary: PlanSummary;
   service_slots: Record<string, number[]>;
   service_currents_a: Record<string, number[]>;
+  service_inhibited_slots: Record<string, number[]>;
 }
 
-export interface OptimisationPlanV3 {
-  schema_version: 3;
+export interface OptimisationPlanV4 {
+  schema_version: 4;
   mode: PlanMode;
   capabilities: OptimisationCapabilities;
   model_version: string;
@@ -222,11 +267,12 @@ export interface OptimisationPlanV3 {
   slot_minutes: 15;
   status: "ready" | "incomplete" | "infeasible";
   validation_errors: string[];
-  sources: OptimisationSnapshotV3["sources"];
-  pv_calibration: OptimisationSnapshotV3["pv_calibration"];
-  policy: OptimisationSnapshotV3["policy"];
+  sources: OptimisationSnapshotV4["sources"];
+  pv_calibration: OptimisationSnapshotV4["pv_calibration"];
+  policy: OptimisationSnapshotV4["policy"];
   battery: BatteryInput | null;
-  grid: OptimisationSnapshotV3["grid"];
+  grid: OptimisationSnapshotV4["grid"];
+  device_models: EmpiricalDeviceModelInput[];
   services: ServiceInput[];
   service_requirement_sample_days: Record<string, number>;
   plans: Record<PlanKey, GeneratedPlan>;
@@ -237,18 +283,21 @@ interface PreparedSlot extends ForecastSlotInput {
   epoch_ms: number;
   pv_raw_w: number;
   pv_w: number;
+  uncontrolled_device_w: number;
   binding: boolean;
 }
 
 interface Schedule {
   pool: number[];
   boiler: number[];
+  boilerPermitted: boolean[];
   ev: number[];
   evTargetCurrentA: number[];
   evMinCurrentA: number[];
   evMaxCurrentA: number[];
   serviceSlots: Record<string, number[]>;
   serviceCurrentsA: Record<string, number[]>;
+  serviceInhibitedSlots: Record<string, number[]>;
 }
 
 const finite = (value: unknown): value is number =>
@@ -272,6 +321,14 @@ const isDiscreteCurrentService = (
   service: ServiceInput,
 ): service is DiscreteCurrentServiceInput =>
   service.control.type === "discrete_current";
+
+const isDutyCycleService = (
+  service: ServiceInput,
+): service is DutyCycleServiceInput => service.control.type === "duty_cycle";
+
+const isDispatchableService = (
+  service: ServiceInput,
+): service is DispatchableServiceInput => !isDutyCycleService(service);
 
 const wattsPerAmp = (control: DiscreteCurrentControl) =>
   control.phase_count * control.voltage_v;
@@ -311,17 +368,18 @@ function completedLocalDays(
   );
 }
 
-export function validateSnapshot(snapshot: OptimisationSnapshotV3): string[] {
+export function validateSnapshot(snapshot: OptimisationSnapshotV4): string[] {
   const errors: string[] = [];
   if (snapshot?.schema_version !== OPTIMISATION_SCHEMA_VERSION) {
-    errors.push("schema_version must be 3");
+    errors.push("schema_version must be 4");
   }
   if (snapshot?.mode !== "live") {
     errors.push("mode must be live");
   }
   const capabilityKeys = ["pv", "battery", "pool", "boiler", "ev"] as const;
   if (
-    !snapshot?.capabilities || capabilityKeys.some((key) =>
+    !snapshot?.capabilities ||
+    capabilityKeys.some((key) =>
       typeof snapshot.capabilities[key] !== "boolean"
     )
   ) {
@@ -443,13 +501,17 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV3): string[] {
     !inRange(snapshot.policy.terminal_energy_value_sek_per_kwh, -20, 100)
   ) {
     errors.push("policy is invalid");
-  } else if (!battery && (
-    snapshot.policy.battery_target_is_hard ||
-    snapshot.policy.battery_end_of_solar_target_soc !== 0 ||
-    snapshot.policy.terminal_soc_min !== 0 ||
-    snapshot.policy.terminal_energy_value_sek_per_kwh !== 0
-  )) {
-    errors.push("battery policy must be disabled when no battery is configured");
+  } else if (
+    !battery && (
+      snapshot.policy.battery_target_is_hard ||
+      snapshot.policy.battery_end_of_solar_target_soc !== 0 ||
+      snapshot.policy.terminal_soc_min !== 0 ||
+      snapshot.policy.terminal_energy_value_sek_per_kwh !== 0
+    )
+  ) {
+    errors.push(
+      "battery policy must be disabled when no battery is configured",
+    );
   } else if (
     battery && (
       !inRange(
@@ -482,6 +544,36 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV3): string[] {
   if (snapshot?.slots?.[0]?.import_price_sek_per_kwh === null) {
     errors.push("the first forecast slot must have import and export prices");
   }
+  if (!Array.isArray(snapshot?.device_models)) {
+    errors.push("device_models must be an array");
+  }
+  const deviceModelKeys = new Set<string>();
+  const loadTypes = new Set<DeviceLoadType>([
+    "fixed_full_load",
+    "variable_full_load",
+    "duty_cycle",
+    "inverter",
+  ]);
+  for (const [index, model] of (snapshot?.device_models ?? []).entries()) {
+    if (!model?.key || deviceModelKeys.has(model.key)) {
+      errors.push(`device_models[${index}].key is missing or duplicated`);
+    }
+    deviceModelKeys.add(model?.key);
+    if (
+      !model?.name || !model?.statistic_id || !model?.category ||
+      !loadTypes.has(model?.suggested_load_type) ||
+      !loadTypes.has(model?.load_type) ||
+      (model.active_power_w !== null &&
+        !inRange(model.active_power_w, 0, 100_000)) ||
+      !Number.isInteger(model?.profile_sample_count) ||
+      model.profile_sample_count < 0 ||
+      !Array.isArray(model?.forecast_w_by_slot) ||
+      model.forecast_w_by_slot.length !== snapshot.slots.length ||
+      model.forecast_w_by_slot.some((value) => !inRange(value, 0, 100_000))
+    ) {
+      errors.push(`device_models[${index}] is invalid`);
+    }
+  }
   if (!Array.isArray(snapshot?.services)) {
     errors.push("services must be an array");
   }
@@ -499,9 +591,14 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV3): string[] {
     const earliest = isoMs(service?.earliest_start);
     const deadline = isoMs(service?.deadline);
     const windowErrors: string[] = [];
-    if (!Number.isFinite(earliest)) windowErrors.push("earliest_start is invalid");
+    if (!Number.isFinite(earliest)) {
+      windowErrors.push("earliest_start is invalid");
+    }
     if (!Number.isFinite(deadline)) windowErrors.push("deadline is invalid");
-    if (Number.isFinite(earliest) && Number.isFinite(deadline) && earliest >= deadline) {
+    if (
+      Number.isFinite(earliest) && Number.isFinite(deadline) &&
+      earliest >= deadline
+    ) {
       windowErrors.push("earliest_start is not before deadline");
     }
     if (Number.isFinite(earliest) && earliest < firstStart) {
@@ -512,22 +609,28 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV3): string[] {
     }
     if (windowErrors.length > 0) {
       errors.push(
-        `services[${index}] has an invalid service window: ${windowErrors.join(", ")}`,
+        `services[${index}] has an invalid service window: ${
+          windowErrors.join(", ")
+        }`,
       );
     }
     if (
       !inRange(service?.required_kwh, 0, 1_000) ||
-      !Number.isInteger(service?.min_run_slots) || service.min_run_slots < 1 ||
-      service.min_run_slots > 96 || !Number.isInteger(service?.priority) ||
-      service.priority < 1
-    ) {
-      errors.push(`services[${index}] has invalid energy or run constraints`);
-    }
+      !Number.isInteger(service?.priority) || service.priority < 1
+    ) errors.push(`services[${index}] has invalid energy or priority`);
     const control = service?.control;
+    const minimumRunSlots = "min_run_slots" in service
+      ? service.min_run_slots
+      : Number.NaN;
     if (!control || typeof control !== "object") {
       errors.push(`services[${index}].control is missing`);
     } else if (control.type === "fixed_power") {
-      if (!inRange(control.power_w, 100, 100_000)) {
+      if (
+        service.device === "boiler" ||
+        !inRange(control.power_w, 100, 100_000) ||
+        !Number.isInteger(minimumRunSlots) ||
+        !inRange(minimumRunSlots, 1, 96)
+      ) {
         errors.push(`services[${index}] has invalid fixed power`);
       }
     } else if (control.type === "discrete_current") {
@@ -550,16 +653,35 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV3): string[] {
           control.max_current_a * wattsPerAmp(control),
           100,
           100_000,
-        )
+        ) || !Number.isInteger(minimumRunSlots) ||
+        !inRange(minimumRunSlots, 1, 96)
       ) {
         errors.push(`services[${index}] has invalid discrete current control`);
+      }
+    } else if (control.type === "duty_cycle") {
+      if (
+        service.device !== "boiler" ||
+        !inRange(control.rated_power_w, 100, 100_000) ||
+        !Number.isInteger(control.max_consecutive_inhibit_slots) ||
+        !inRange(control.max_consecutive_inhibit_slots, 1, 96) ||
+        !Array.isArray(control.expected_power_w_by_slot) ||
+        control.expected_power_w_by_slot.length !== snapshot.slots.length ||
+        control.expected_power_w_by_slot.some((value) =>
+          !inRange(value, 0, control.rated_power_w)
+        )
+      ) {
+        errors.push(`services[${index}] has invalid duty-cycle control`);
       }
     } else {
       errors.push(`services[${index}].control type is unsupported`);
     }
   }
 
-  const requiredSources = ["base_load", "import_price", "export_price"] as const;
+  const requiredSources = [
+    "base_load",
+    "import_price",
+    "export_price",
+  ] as const;
   const optionalSources = ["pv", "battery"] as const;
   for (const key of [...requiredSources, ...optionalSources]) {
     const source = snapshot?.sources?.[key];
@@ -596,11 +718,13 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV3): string[] {
     }
   }
   const pvLocation = snapshot?.sources?.pv?.location;
-  if (snapshot?.capabilities?.pv && (
-    !finite(pvLocation?.latitude) || !finite(pvLocation?.longitude) ||
-    !inRange(pvLocation.latitude, -90, 90) ||
-    !inRange(pvLocation.longitude, -180, 180)
-  )) {
+  if (
+    snapshot?.capabilities?.pv && (
+      !finite(pvLocation?.latitude) || !finite(pvLocation?.longitude) ||
+      !inRange(pvLocation.latitude, -90, 90) ||
+      !inRange(pvLocation.longitude, -180, 180)
+    )
+  ) {
     errors.push("sources.pv.location is required");
   }
   const importArea = snapshot?.sources?.import_price?.location?.market_area;
@@ -651,8 +775,12 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV3): string[] {
   return [...new Set(errors)];
 }
 
-function preparedSlots(snapshot: OptimisationSnapshotV3): PreparedSlot[] {
+function preparedSlots(snapshot: OptimisationSnapshotV4): PreparedSlot[] {
   const captured = isoMs(snapshot.captured_at);
+  const controlledCategories = new Set<string>();
+  if (snapshot.capabilities.boiler) controlledCategories.add("hot_water");
+  if (snapshot.capabilities.pool) controlledCategories.add("pool_heating");
+  if (snapshot.capabilities.ev) controlledCategories.add("ev_charging");
   let priceGapSeen = false;
   return snapshot.slots.map((slot, index) => {
     const epoch = isoMs(slot.start);
@@ -674,10 +802,21 @@ function preparedSlots(snapshot: OptimisationSnapshotV3): PreparedSlot[] {
       epoch_ms: epoch,
       pv_raw_w: slot.pv_forecast_w,
       pv_w: Math.max(0, slot.pv_forecast_w * factor),
+      uncontrolled_device_w: snapshot.device_models.reduce(
+        (sum, model) =>
+          sum +
+          (controlledCategories.has(model.category)
+            ? 0
+            : model.forecast_w_by_slot[index]),
+        0,
+      ),
       binding,
     };
   });
 }
+
+const fixedLoadW = (slot: PreparedSlot) =>
+  slot.base_load_forecast_w + slot.uncontrolled_device_w;
 
 interface ServiceShape {
   count: number;
@@ -689,7 +828,7 @@ const ceilEnergySteps = (value: number) => Math.ceil(value - 1e-9);
 
 function availableServiceSlots(
   slots: PreparedSlot[],
-  service: ServiceInput,
+  service: DispatchableServiceInput,
 ): number {
   const earliest = isoMs(service.earliest_start);
   const deadline = isoMs(service.deadline);
@@ -700,7 +839,7 @@ function availableServiceSlots(
 
 function serviceShape(
   slots: PreparedSlot[],
-  service: ServiceInput,
+  service: DispatchableServiceInput,
 ): ServiceShape {
   if (service.required_kwh <= 0) {
     return { count: 0, target_kwh: 0, current_increments: 0 };
@@ -749,7 +888,7 @@ function serviceShape(
 
 function candidateStarts(
   slots: PreparedSlot[],
-  service: ServiceInput,
+  service: DispatchableServiceInput,
   count: number,
 ): number[] {
   if (count === 0) return [];
@@ -770,12 +909,14 @@ function emptySchedule(length: number): Schedule {
   return {
     pool: new Array(length).fill(0),
     boiler: new Array(length).fill(0),
+    boilerPermitted: new Array(length).fill(true),
     ev: new Array(length).fill(0),
     evTargetCurrentA: new Array(length).fill(0),
     evMinCurrentA: new Array(length).fill(0),
     evMaxCurrentA: new Array(length).fill(0),
     serviceSlots: {},
     serviceCurrentsA: {},
+    serviceInhibitedSlots: {},
   };
 }
 
@@ -796,7 +937,7 @@ function serviceCost(
     const slot = slots[index];
     const remainingSolar = Math.max(
       0,
-      slot.pv_w - slot.base_load_forecast_w - occupiedW[index] -
+      slot.pv_w - fixedLoadW(slot) - occupiedW[index] -
         reservedW[index],
     );
     const solarW = Math.min(powerW, remainingSolar);
@@ -819,14 +960,16 @@ function serviceCost(
 function discreteCurrentCandidate(
   key: PlanKey,
   slots: PreparedSlot[],
-  snapshot: OptimisationSnapshotV3,
+  snapshot: OptimisationSnapshotV4,
   service: DiscreteCurrentServiceInput,
   shape: ServiceShape,
   start: number,
   occupiedW: number[],
   reservedW: number[],
   preferred: number,
-): { start: number; powers: number[]; currents: number[]; score: number } | null {
+):
+  | { start: number; powers: number[]; currents: number[]; score: number }
+  | null {
   const control = service.control;
   const powerPerAmp = wattsPerAmp(control);
   const powers = new Array(shape.count).fill(
@@ -836,19 +979,23 @@ function discreteCurrentCandidate(
   for (let offset = 0; offset < shape.count; offset += 1) {
     const index = start + offset;
     if (
-      slots[index].base_load_forecast_w + occupiedW[index] + powers[offset] >
+      fixedLoadW(slots[index]) + occupiedW[index] + powers[offset] >
         snapshot.grid.import_limit_w + Math.max(0, slots[index].pv_w)
     ) return null;
   }
 
   const deltaW = control.current_step_a * powerPerAmp;
-  for (let increment = 0; increment < shape.current_increments; increment += 1) {
+  for (
+    let increment = 0;
+    increment < shape.current_increments;
+    increment += 1
+  ) {
     const choices = currents.flatMap((currentA, offset) => {
       const nextCurrentA = currentA + control.current_step_a;
       const index = start + offset;
       if (
         nextCurrentA > control.max_current_a + 1e-6 ||
-        slots[index].base_load_forecast_w + occupiedW[index] + powers[offset] +
+        fixedLoadW(slots[index]) + occupiedW[index] + powers[offset] +
               deltaW >
           snapshot.grid.import_limit_w + Math.max(0, slots[index].pv_w)
       ) return [];
@@ -857,7 +1004,7 @@ function discreteCurrentCandidate(
       }
       const availableSolar = Math.max(
         0,
-        slots[index].pv_w - slots[index].base_load_forecast_w -
+        slots[index].pv_w - fixedLoadW(slots[index]) -
           occupiedW[index] - reservedW[index],
       );
       const solarBefore = Math.min(powers[offset], availableSolar);
@@ -957,16 +1104,114 @@ function applyEvCurrentEnvelopes(
   }
 }
 
+function wouldExceedInhibitLimit(
+  permitted: boolean[],
+  index: number,
+  maximum: number,
+): boolean {
+  let run = 1;
+  for (let cursor = index - 1; cursor >= 0 && !permitted[cursor]; cursor -= 1) {
+    run += 1;
+  }
+  for (
+    let cursor = index + 1;
+    cursor < permitted.length && !permitted[cursor];
+    cursor += 1
+  ) {
+    run += 1;
+  }
+  return run > maximum;
+}
+
+function applyDutyCycleServices(
+  key: PlanKey,
+  slots: PreparedSlot[],
+  snapshot: OptimisationSnapshotV4,
+  services: DutyCycleServiceInput[],
+  occupiedW: number[],
+  schedule: Schedule,
+): void {
+  for (const service of services) {
+    const earliest = isoMs(service.earliest_start);
+    const deadline = isoMs(service.deadline);
+    const indices = slots.filter((slot) =>
+      slot.epoch_ms >= earliest && slot.epoch_ms + SLOT_MS <= deadline
+    ).map((slot) => slot.index);
+    const expected = service.control.expected_power_w_by_slot;
+
+    for (const index of indices) {
+      schedule.boiler[index] += expected[index];
+    }
+
+    const inhibited: number[] = [];
+    if (key !== "baseline") {
+      for (const index of indices) {
+        const otherPlannedLoad = occupiedW[index];
+        const nonBoilerLoad = fixedLoadW(slots[index]) + otherPlannedLoad;
+        const relativelyHighLoad = otherPlannedLoad > 0 ||
+          nonBoilerLoad >= snapshot.grid.import_limit_w * 0.65;
+        if (
+          !relativelyHighLoad ||
+          wouldExceedInhibitLimit(
+            schedule.boilerPermitted,
+            index,
+            service.control.max_consecutive_inhibit_slots,
+          )
+        ) continue;
+        schedule.boilerPermitted[index] = false;
+        schedule.boiler[index] -= expected[index];
+        inhibited.push(index);
+      }
+
+      // A thermostat normally catches up after an inhibit interval. Preserve
+      // that empirical expected energy inside the same local-day window when
+      // there is later headroom, without claiming an exact compressor or
+      // element switch-on time.
+      let deferredW = inhibited.reduce(
+        (sum, index) => sum + expected[index],
+        0,
+      );
+      const firstInhibited = inhibited[0] ?? Number.POSITIVE_INFINITY;
+      const recovery = indices.filter((index) =>
+        index > firstInhibited && schedule.boilerPermitted[index]
+      ).sort((left, right) =>
+        fixedLoadW(slots[left]) + occupiedW[left] - slots[left].pv_w -
+          (fixedLoadW(slots[right]) + occupiedW[right] - slots[right].pv_w) ||
+        left - right
+      );
+      for (const index of recovery) {
+        if (deferredW <= 1e-6) break;
+        const roomW = Math.max(
+          0,
+          service.control.rated_power_w - schedule.boiler[index],
+        );
+        const recoveredW = Math.min(roomW, deferredW);
+        schedule.boiler[index] += recoveredW;
+        deferredW -= recoveredW;
+      }
+    }
+
+    schedule.serviceSlots[service.id] = indices.filter((index) =>
+      schedule.boiler[index] > 0
+    );
+    schedule.serviceInhibitedSlots[service.id] = inhibited;
+    for (const index of indices) occupiedW[index] += schedule.boiler[index];
+  }
+}
+
 function scheduleServices(
   key: PlanKey,
   slots: PreparedSlot[],
-  snapshot: OptimisationSnapshotV3,
+  snapshot: OptimisationSnapshotV4,
   reservedW: number[],
 ): { schedule: Schedule; errors: string[] } {
   const schedule = emptySchedule(slots.length);
   const occupiedW = new Array(slots.length).fill(0);
   const errors: string[] = [];
-  const services = [...snapshot.services].sort((a, b) =>
+  const services = snapshot.services.filter(isDispatchableService).sort((
+    a,
+    b,
+  ) =>
     isoMs(a.deadline) - isoMs(b.deadline) || a.priority - b.priority ||
     a.id.localeCompare(b.id)
   );
@@ -1003,11 +1248,13 @@ function scheduleServices(
           return candidate ? [candidate] : [];
         }
         const powers = new Array(shape.count).fill(service.control.power_w);
-        if (powers.some((powerW, offset) => {
-          const index = start + offset;
-          return slots[index].base_load_forecast_w + occupiedW[index] + powerW >
-            snapshot.grid.import_limit_w + Math.max(0, slots[index].pv_w);
-        })) return [];
+        if (
+          powers.some((powerW, offset) => {
+            const index = start + offset;
+            return fixedLoadW(slots[index]) + occupiedW[index] + powerW >
+              snapshot.grid.import_limit_w + Math.max(0, slots[index].pv_w);
+          })
+        ) return [];
         return [{
           start,
           powers,
@@ -1052,13 +1299,21 @@ function scheduleServices(
       schedule.serviceCurrentsA[service.id] = chosen.currents;
     }
   }
+  applyDutyCycleServices(
+    key,
+    slots,
+    snapshot,
+    snapshot.services.filter(isDutyCycleService),
+    occupiedW,
+    schedule,
+  );
   applyEvCurrentEnvelopes(schedule, slots, services);
   return { schedule, errors };
 }
 
 function batteryReservation(
   slots: PreparedSlot[],
-  snapshot: OptimisationSnapshotV3,
+  snapshot: OptimisationSnapshotV4,
 ): { reservedW: number[]; protectedSoc: (number | null)[] } {
   const reservedW = new Array(slots.length).fill(0);
   const protectedSoc: (number | null)[] = new Array(slots.length).fill(null);
@@ -1088,7 +1343,7 @@ function batteryReservation(
     const firstSolar = enforceTarget ? solar[0] : -1;
     const lastSolar = enforceTarget ? solar[solar.length - 1] : -1;
     for (const index of indices) {
-      const netW = slots[index].pv_w - slots[index].base_load_forecast_w;
+      const netW = slots[index].pv_w - fixedLoadW(slots[index]);
       const roomKwh = Math.max(
         0,
         (battery.max_soc - assumedSoc) * battery.capacity_kwh,
@@ -1145,9 +1400,54 @@ function batteryReservation(
   return { reservedW, protectedSoc };
 }
 
+function empiricalDeviceLoads(
+  snapshot: OptimisationSnapshotV4,
+  index: number,
+  controlled: Record<string, number>,
+): Record<string, number> {
+  const result: Record<string, number> = {};
+  const controlledCategory = new Map<string, number>();
+  if (snapshot.capabilities.boiler) {
+    controlledCategory.set("hot_water", controlled.boiler);
+  }
+  if (snapshot.capabilities.pool) {
+    controlledCategory.set("pool_heating", controlled.pool);
+  }
+  if (snapshot.capabilities.ev) {
+    controlledCategory.set("ev_charging", controlled.ev);
+  }
+  for (const model of snapshot.device_models) {
+    if (!controlledCategory.has(model.category)) {
+      result[model.key] = round(model.forecast_w_by_slot[index], 2);
+      continue;
+    }
+    const categoryModels = snapshot.device_models.filter((candidate) =>
+      candidate.category === model.category
+    );
+    const forecastTotal = categoryModels.reduce(
+      (sum, candidate) => sum + candidate.forecast_w_by_slot[index],
+      0,
+    );
+    const activeTotal = categoryModels.reduce(
+      (sum, candidate) => sum + (candidate.active_power_w ?? 0),
+      0,
+    );
+    const share = forecastTotal > 0
+      ? model.forecast_w_by_slot[index] / forecastTotal
+      : activeTotal > 0
+      ? (model.active_power_w ?? 0) / activeTotal
+      : 1 / categoryModels.length;
+    result[model.key] = round(
+      controlledCategory.get(model.category)! * share,
+      2,
+    );
+  }
+  return result;
+}
+
 function simulate(
   slots: PreparedSlot[],
-  snapshot: OptimisationSnapshotV3,
+  snapshot: OptimisationSnapshotV4,
   schedule: Schedule,
   protectedSoc: (number | null)[],
 ): { slots: PlannedSlot[]; summary: PlanSummary; errors: string[] } {
@@ -1190,13 +1490,27 @@ function simulate(
   let curtailedKwh = 0;
   let importCost = 0;
   let exportRevenue = 0;
+  const representedCategories = new Set(
+    snapshot.device_models.map((model) => model.category),
+  );
 
   for (const slot of slots) {
     const poolW = schedule.pool[slot.index];
     const boilerW = schedule.boiler[slot.index];
     const evW = schedule.ev[slot.index];
     const flexibleW = poolW + boilerW + evW;
-    const loadW = slot.base_load_forecast_w + flexibleW;
+    const deviceLoads = empiricalDeviceLoads(snapshot, slot.index, {
+      boiler: boilerW,
+      pool: poolW,
+      ev: evW,
+    });
+    const unrepresentedControlledW =
+      (representedCategories.has("pool_heating") ? 0 : poolW) +
+      (representedCategories.has("hot_water") ? 0 : boilerW) +
+      (representedCategories.has("ev_charging") ? 0 : evW);
+    const loadW = slot.base_load_forecast_w +
+      Object.values(deviceLoads).reduce((sum, watts) => sum + watts, 0) +
+      unrepresentedControlledW;
     const roomKwh = Math.max(0, (battery.max_soc - soc) * battery.capacity_kwh);
     const availableKwh = Math.max(
       0,
@@ -1265,8 +1579,10 @@ function simulate(
       import_price_sek_per_kwh: slot.import_price_sek_per_kwh,
       export_price_sek_per_kwh: slot.export_price_sek_per_kwh,
       pool_w: poolW,
-      boiler_w: boilerW,
+      boiler_expected_w: round(boilerW, 2),
+      boiler_permitted: schedule.boilerPermitted[slot.index],
       ev_w: evW,
+      device_loads_w: deviceLoads,
       ev_target_current_a: schedule.evTargetCurrentA[slot.index],
       ev_min_current_a: schedule.evMinCurrentA[slot.index],
       ev_max_current_a: schedule.evMaxCurrentA[slot.index],
@@ -1327,39 +1643,35 @@ function simulate(
     if (endMarkerByDay.get(day) === slot.index) endOfSolar[day] = round(soc, 6);
   }
 
-  const scheduledKwh = snapshot.services.reduce(
-    (sum, service) => sum + serviceShape(slots, service).target_kwh,
-    0,
-  );
   const requestedKwh = snapshot.services.reduce(
     (sum, service) => sum + service.required_kwh,
     0,
   );
-  const deliveredKwh = Object.entries(schedule.serviceSlots).reduce(
-    (sum, [id, indices]) => {
-      const service = snapshot.services.find((item) => item.id === id);
-      if (!service) return sum;
-      if (isDiscreteCurrentService(service)) {
-        const currents = schedule.serviceCurrentsA[id] ?? [];
-        return sum + currents.reduce(
-          (serviceSum, currentA) =>
-            serviceSum + currentA * wattsPerAmp(service.control) / 1_000 *
-              SLOT_HOURS,
+  const deliveredKwh = snapshot.services.reduce((sum, service) => {
+    const indices = schedule.serviceSlots[service.id] ?? [];
+    if (isDutyCycleService(service)) {
+      const earliest = isoMs(service.earliest_start);
+      const deadline = isoMs(service.deadline);
+      return sum +
+        slots.reduce(
+          (serviceSum, slot) =>
+            slot.epoch_ms >= earliest && slot.epoch_ms + SLOT_MS <= deadline
+              ? serviceSum + schedule.boiler[slot.index] / 1_000 * SLOT_HOURS
+              : serviceSum,
           0,
         );
-      }
-      return sum + indices.length * service.control.power_w / 1_000 *
-        SLOT_HOURS;
-    },
-    0,
-  );
-  if (Math.abs(scheduledKwh - deliveredKwh) > 1e-6) {
-    errors.push(
-      `services delivered ${round(deliveredKwh, 3)} of ${
-        round(scheduledKwh, 3)
-      } scheduled kWh`,
-    );
-  }
+    }
+    if (isDiscreteCurrentService(service)) {
+      const currents = schedule.serviceCurrentsA[service.id] ?? [];
+      return sum + currents.reduce(
+        (serviceSum, currentA) =>
+          serviceSum + currentA * wattsPerAmp(service.control) / 1_000 *
+            SLOT_HOURS,
+        0,
+      );
+    }
+    return sum + indices.length * service.control.power_w / 1_000 * SLOT_HOURS;
+  }, 0);
   if (Math.abs(flexibleKwh - deliveredKwh) > 1e-6) {
     errors.push(
       `simulated flexible load ${round(flexibleKwh, 3)} differs from ` +
@@ -1368,6 +1680,27 @@ function simulate(
   }
   for (const service of snapshot.services) {
     const indices = schedule.serviceSlots[service.id] ?? [];
+    if (isDutyCycleService(service)) {
+      let consecutive = 0;
+      const inhibited = new Set(
+        schedule.serviceInhibitedSlots[service.id] ?? [],
+      );
+      const earliest = isoMs(service.earliest_start);
+      const deadline = isoMs(service.deadline);
+      for (const slot of slots) {
+        if (slot.epoch_ms < earliest || slot.epoch_ms + SLOT_MS > deadline) {
+          continue;
+        }
+        consecutive = inhibited.has(slot.index) ? consecutive + 1 : 0;
+        if (consecutive > service.control.max_consecutive_inhibit_slots) {
+          errors.push(
+            `${service.id}: maximum consecutive inhibit was exceeded`,
+          );
+          break;
+        }
+      }
+      continue;
+    }
     if (indices.length > 0 && indices.length < service.min_run_slots) {
       errors.push(
         `${service.id}: run is shorter than ${service.min_run_slots} slots`,
@@ -1438,6 +1771,32 @@ function simulate(
       battery_end_of_solar_soc: endOfSolar,
       service_required_kwh: round(requestedKwh, 3),
       service_delivered_kwh: round(deliveredKwh, 3),
+      duty_cycle_deferred_kwh: round(
+        Math.max(
+          0,
+          snapshot.services.filter(isDutyCycleService).reduce(
+            (sum, service) => sum + service.required_kwh,
+            0,
+          ) - snapshot.services.filter(isDutyCycleService).reduce(
+            (sum, service) => {
+              const earliest = isoMs(service.earliest_start);
+              const deadline = isoMs(service.deadline);
+              return sum +
+                slots.reduce(
+                  (serviceSum, slot) =>
+                    slot.epoch_ms >= earliest &&
+                      slot.epoch_ms + SLOT_MS <= deadline
+                      ? serviceSum +
+                        schedule.boiler[slot.index] / 1_000 * SLOT_HOURS
+                      : serviceSum,
+                  0,
+                );
+            },
+            0,
+          ),
+        ),
+        3,
+      ),
     },
     errors,
   };
@@ -1446,7 +1805,7 @@ function simulate(
 function buildPlan(
   key: PlanKey,
   slots: PreparedSlot[],
-  snapshot: OptimisationSnapshotV3,
+  snapshot: OptimisationSnapshotV4,
   reservedW: number[],
   protectedSoc: (number | null)[],
 ): GeneratedPlan {
@@ -1476,13 +1835,14 @@ function buildPlan(
     summary: simulated.summary,
     service_slots: scheduled.schedule.serviceSlots,
     service_currents_a: scheduled.schedule.serviceCurrentsA,
+    service_inhibited_slots: scheduled.schedule.serviceInhibitedSlots,
   };
 }
 
 export function generateOptimisationPlan(
-  snapshot: OptimisationSnapshotV3,
+  snapshot: OptimisationSnapshotV4,
   now = new Date(),
-): OptimisationPlanV3 {
+): OptimisationPlanV4 {
   const validationErrors = validateSnapshot(snapshot);
   const snapshotAge = now.getTime() - isoMs(snapshot.captured_at);
   if (
@@ -1513,16 +1873,11 @@ export function generateOptimisationPlan(
   const cost = buildPlan("cost", slots, snapshot, reservedW, protectedSoc);
   const plans = { baseline, priority, cost };
 
-  // Comparisons are only valid when every plan carries exactly the same
-  // quarter-hour service workload. This catches truncated-tail and silently
-  // unmet-service bugs before a plan reaches the portal.
-  const flexible = Object.values(plans).map((plan) =>
-    plan.summary.flexible_load_kwh
-  );
-  if (Math.max(...flexible) - Math.min(...flexible) > 1e-6) {
-    validationErrors.push("plans do not contain equal flexible workload");
-  }
-  for (const service of snapshot.services) {
+  // Dispatchable jobs must carry equal workloads. Duty-cycle devices are
+  // intentionally different: the plan controls only permission to run, and
+  // the portal reports any empirically expected energy deferred past the
+  // horizon instead of pretending the thermostat can be commanded on.
+  for (const service of snapshot.services.filter(isDispatchableService)) {
     const counts = Object.values(plans).map((plan) =>
       plan.service_slots[service.id]?.length ?? 0
     );
@@ -1548,7 +1903,7 @@ export function generateOptimisationPlan(
     : "ready";
 
   return {
-    schema_version: 3,
+    schema_version: 4,
     mode: snapshot.mode,
     capabilities: snapshot.capabilities,
     model_version: OPTIMISATION_MODEL_VERSION,
@@ -1568,6 +1923,7 @@ export function generateOptimisationPlan(
     policy: snapshot.policy,
     battery: snapshot.battery,
     grid: snapshot.grid,
+    device_models: snapshot.device_models,
     services: snapshot.services,
     service_requirement_sample_days: snapshot.service_requirement_sample_days,
     plans,

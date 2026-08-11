@@ -4,7 +4,6 @@ import {
   Area,
   CartesianGrid,
   ComposedChart,
-  Legend,
   Line,
   ReferenceArea,
   ReferenceLine,
@@ -23,10 +22,13 @@ import { supabase } from '@/integrations/supabase/client';
 import {
   isOptimisationPlan,
   type ActualEnergySlot,
-  type OptimisationPlanV3,
+  type OptimisationPlanV4,
 } from '@/lib/energy-shift/contracts';
 import { createWebsiteDemoActuals, createWebsiteDemoPlan } from '@/lib/energy-shift/demo';
 import { comparePlans, formatSigned } from '@/lib/energy-shift/plan-comparison';
+import EmpiricalDeviceModelsCard, {
+  type EmpiricalEnergyDevice,
+} from './EmpiricalDeviceModelsCard';
 
 interface LoadShiftTabProps {
   customerId?: string;
@@ -35,9 +37,14 @@ interface LoadShiftTabProps {
 }
 
 interface CurrentRow {
-  plan: OptimisationPlanV3;
+  plan: OptimisationPlanV4;
   captured_at: string;
   updated_at: string;
+}
+
+interface EmpiricalDeviceSlotMatrix {
+  start_ts: string;
+  device_energy_kwh: Record<string, number>;
 }
 
 interface HomeAssistantConnection {
@@ -73,18 +80,24 @@ type PlanChartSeriesKey =
   | 'evCurrent'
   | 'gridImport'
   | 'gridExport'
-  | 'soc';
+  | 'soc'
+  | `device:${string}`;
 
 interface PlanChartSeries {
   key: PlanChartSeriesKey;
   label: string;
   color: string;
+  dataKey?: string;
 }
+
+const DEVICE_COLORS = ['#0ea5e9', '#8b5cf6', '#22c55e', '#eab308', '#f97316', '#ec4899', '#06b6d4', '#84cc16'];
 
 const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, accountPath }) => {
   const { t } = useLanguage();
   const [current, setCurrent] = useState<CurrentRow | null>(null);
   const [actuals, setActuals] = useState<ActualEnergySlot[]>([]);
+  const [empiricalDevices, setEmpiricalDevices] = useState<EmpiricalEnergyDevice[]>([]);
+  const [deviceActuals, setDeviceActuals] = useState<EmpiricalDeviceSlotMatrix[]>([]);
   const [connections, setConnections] = useState<HomeAssistantConnection[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -96,6 +109,8 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, account
     if (!customerId || !homeId) {
       setCurrent(null);
       setActuals([]);
+      setEmpiricalDevices([]);
+      setDeviceActuals([]);
       setConnections([]);
       return;
     }
@@ -103,9 +118,9 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, account
     setError(null);
     try {
       const toMs = Math.floor(Date.now() / (15 * 60_000)) * 15 * 60_000;
-      const from = new Date(toMs - 24 * 60 * 60_000).toISOString();
+      const from = new Date(toMs - 72 * 60 * 60_000).toISOString();
       const to = new Date(toMs).toISOString();
-      const [planResult, actualResult, connectionResult] = await Promise.all([
+      const [planResult, actualResult, connectionResult, deviceResult, deviceActualResult] = await Promise.all([
         supabase
           .from('energy_optimisation_current')
           .select('plan, captured_at, updated_at')
@@ -126,6 +141,18 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, account
           .eq('customer_id', customerId)
           .is('revoked_at', null)
           .order('created_at', { ascending: false }),
+        supabase
+          .from('energy_optimisation_devices')
+          .select('id, device_key, statistic_id, name, category, suggested_load_type, load_type_override, active_power_w, profile_sample_count, last_seen_at')
+          .eq('customer_id', customerId)
+          .eq('home_id', homeId)
+          .order('name'),
+        supabase.rpc('get_energy_optimisation_device_slots', {
+          p_customer_id: customerId,
+          p_home_id: homeId,
+          p_from: from,
+          p_to: to,
+        }),
       ]);
       const { data, error: planError } = planResult;
       if (planError) throw planError;
@@ -133,7 +160,13 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, account
       if (actualError) throw actualError;
       const { data: connectionRows, error: connectionError } = connectionResult;
       if (connectionError) throw connectionError;
+      const { data: deviceRows, error: deviceError } = deviceResult;
+      if (deviceError) throw deviceError;
+      const { data: deviceActualRows, error: deviceActualError } = deviceActualResult;
+      if (deviceActualError) throw deviceActualError;
       setActuals(actualRows ?? []);
+      setEmpiricalDevices((deviceRows ?? []) as EmpiricalEnergyDevice[]);
+      setDeviceActuals((deviceActualRows ?? []) as EmpiricalDeviceSlotMatrix[]);
       setConnections((connectionRows ?? []) as HomeAssistantConnection[]);
       if (!data) {
         setCurrent(null);
@@ -179,6 +212,8 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, account
       <PlanView
         current={demoCurrent}
         actuals={demoActuals}
+        empiricalDevices={[]}
+        deviceActuals={[]}
         stale={false}
         isDemo
       />
@@ -246,7 +281,7 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, account
             </p>
           </CardContent>
         </Card>
-        <ActualPerformance actuals={actuals} />
+        <ActualPerformance actuals={actuals} devices={empiricalDevices} deviceActuals={deviceActuals} />
       </div>
     );
   } else {
@@ -262,6 +297,8 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, account
         <PlanView
           current={current}
           actuals={actuals}
+          empiricalDevices={empiricalDevices}
+          deviceActuals={deviceActuals}
           stale={clock > Date.parse(current.plan.valid_until)}
           isDemo={false}
           lastCheckedAt={lastCheckedAt}
@@ -282,6 +319,12 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, account
         </Button>
       </div>
       {content}
+      {view === 'live' && customerId && homeId && (
+        <EmpiricalDeviceModelsCard
+          devices={empiricalDevices}
+          onChanged={() => load(true)}
+        />
+      )}
     </div>
   );
 };
@@ -289,14 +332,19 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, account
 const PlanView: React.FC<{
   current: CurrentRow;
   actuals: ActualEnergySlot[];
+  empiricalDevices: EmpiricalEnergyDevice[];
+  deviceActuals: EmpiricalDeviceSlotMatrix[];
   stale: boolean;
   isDemo: boolean;
   lastCheckedAt?: number | null;
-}> = ({ current, actuals, stale, isDemo, lastCheckedAt }) => {
+}> = ({ current, actuals, empiricalDevices, deviceActuals, stale, isDemo, lastCheckedAt }) => {
   const { t } = useLanguage();
   const { plan } = current;
   const [planView, setPlanView] = useState<PlanViewMode>('planned');
   const [hiddenSeries, setHiddenSeries] = useState<Set<PlanChartSeriesKey>>(
+    () => new Set(),
+  );
+  const [hiddenPriceSeries, setHiddenPriceSeries] = useState<Set<'importPrice' | 'exportPrice'>>(
     () => new Set(),
   );
   // Home Assistant executes the priority scenario. Baseline is exposed only
@@ -315,7 +363,7 @@ const PlanView: React.FC<{
       pv: slot.pv_w,
       pvRaw: slot.pv_raw_w,
       base: slot.base_w,
-      boiler: slot.boiler_w,
+      boiler: slot.boiler_expected_w,
       pool: slot.pool_w,
       ev: slot.ev_w,
       evCurrent: slot.ev_target_current_a,
@@ -324,8 +372,12 @@ const PlanView: React.FC<{
       gridExport: slot.grid_export_w,
       importPrice: slot.import_price_sek_per_kwh,
       exportPrice: slot.export_price_sek_per_kwh,
+      ...Object.fromEntries(plan.device_models.map((model, modelIndex) => [
+        `device${modelIndex}`,
+        slot.device_loads_w[model.key] ?? 0,
+      ])),
     };
-  }), [active]);
+  }), [active, plan.device_models]);
   const firstAdvisory = active.slots.findIndex(slot => !slot.binding);
   const bindingIndex = firstAdvisory < 0 ? active.slots.length : firstAdvisory;
   const ticks = active.slots.map((slot, index) => ({ slot, index }))
@@ -342,11 +394,11 @@ const PlanView: React.FC<{
   const pct = (value: number) => `${(value * 100).toFixed(0)}%`;
   const batterySocLabel = t('Batteri SOC', 'Battery SOC');
   const evCurrentLabel = t('Bilens målström', 'EV target current');
-  const seriesByKey: Record<PlanChartSeriesKey, PlanChartSeries> = {
+  const seriesByKey: Record<Exclude<PlanChartSeriesKey, `device:${string}`>, PlanChartSeries> = {
     pv: { key: 'pv', label: t('Kalibrerad solprognos', 'Calibrated PV'), color: COLORS.pv },
     pvRaw: { key: 'pvRaw', label: t('Rå solprognos', 'Raw PV'), color: COLORS.pvRaw },
-    base: { key: 'base', label: t('Baslast', 'Base load'), color: COLORS.base },
-    boiler: { key: 'boiler', label: t('Varmvatten', 'Hot water'), color: COLORS.boiler },
+    base: { key: 'base', label: t('Återstående baslast', 'Residual base load'), color: COLORS.base },
+    boiler: { key: 'boiler', label: t('Förväntat varmvatten', 'Expected hot water'), color: COLORS.boiler },
     pool: { key: 'pool', label: t('Pool', 'Pool'), color: COLORS.pool },
     ev: { key: 'ev', label: t('Bil', 'EV'), color: COLORS.ev },
     evCurrent: { key: 'evCurrent', label: evCurrentLabel, color: COLORS.evCurrent },
@@ -354,6 +406,12 @@ const PlanView: React.FC<{
     gridExport: { key: 'gridExport', label: t('Exporteffekt', 'Grid export'), color: COLORS.export },
     soc: { key: 'soc', label: batterySocLabel, color: COLORS.soc },
   };
+  const deviceSeries: PlanChartSeries[] = plan.device_models.map((model, index) => ({
+    key: `device:${model.key}`,
+    dataKey: `device${index}`,
+    label: `${model.name} · ${model.load_type.replace(/_/g, ' ')}`,
+    color: DEVICE_COLORS[index % DEVICE_COLORS.length],
+  }));
   const planChartSeries: PlanChartSeries[] = [
     ...(hasPv ? [seriesByKey.pv, seriesByKey.pvRaw] : []),
     seriesByKey.base,
@@ -364,10 +422,23 @@ const PlanView: React.FC<{
     seriesByKey.gridImport,
     seriesByKey.gridExport,
     ...(hasBattery ? [seriesByKey.soc] : []),
+    ...deviceSeries,
   ];
   const seriesVisible = (key: PlanChartSeriesKey) => !hiddenSeries.has(key);
   const toggleSeries = (key: PlanChartSeriesKey) => {
     setHiddenSeries(currentHidden => {
+      const next = new Set(currentHidden);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+  const priceSeries = [
+    { key: 'importPrice' as const, label: t('Köpa', 'Import'), color: COLORS.import },
+    { key: 'exportPrice' as const, label: t('Sälja', 'Export'), color: COLORS.export },
+  ];
+  const togglePriceSeries = (key: 'importPrice' | 'exportPrice') => {
+    setHiddenPriceSeries(currentHidden => {
       const next = new Set(currentHidden);
       if (next.has(key)) next.delete(key);
       else next.add(key);
@@ -485,7 +556,7 @@ const PlanView: React.FC<{
             />
           </div>
           <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-6">
-            <Kpi label={t('Samma arbetsmängd', 'Equal workload')} value={`${active.summary.flexible_load_kwh.toFixed(1)} kWh`} detail={`${active.summary.service_delivered_kwh.toFixed(1)} / ${active.summary.service_required_kwh.toFixed(1)} kWh`} tone={active.summary.service_delivered_kwh >= active.summary.service_required_kwh ? 'good' : 'bad'} />
+            <Kpi label={t('Modellerad flexibel energi', 'Modeled flexible energy')} value={`${active.summary.flexible_load_kwh.toFixed(1)} kWh`} detail={active.summary.duty_cycle_deferred_kwh > 0.005 ? `${active.summary.duty_cycle_deferred_kwh.toFixed(2)} kWh ${t('förskjuts utanför perioden', 'deferred beyond the period')}` : `${active.summary.service_delivered_kwh.toFixed(1)} / ${active.summary.service_required_kwh.toFixed(1)} kWh`} />
             {hasBattery
               ? <Kpi label={t('Lägsta batteri', 'Battery low')} value={pct(active.summary.battery_soc_low)} detail={`${pct(active.summary.battery_soc_start)} → ${pct(active.summary.battery_soc_end)}`} />
               : <Kpi label={t('Batteri', 'Battery')} value={t('Saknas', 'Not installed')} detail={t('ingen batterimodell används', 'no battery model used')} />}
@@ -510,6 +581,9 @@ const PlanView: React.FC<{
               {plan.capabilities.boiler && seriesVisible('boiler') && <Area yAxisId="power" type="step" dataKey="boiler" stackId="load" name={seriesByKey.boiler.label} fill={COLORS.boiler} strokeWidth={0} />}
               {plan.capabilities.pool && seriesVisible('pool') && <Area yAxisId="power" type="step" dataKey="pool" stackId="load" name={seriesByKey.pool.label} fill={COLORS.pool} strokeWidth={0} />}
               {plan.capabilities.ev && seriesVisible('ev') && <Area yAxisId="power" type="step" dataKey="ev" stackId="load" name={seriesByKey.ev.label} fill={COLORS.ev} strokeWidth={0} />}
+              {deviceSeries.map(series => seriesVisible(series.key) && (
+                <Line key={series.key} yAxisId="power" type="stepAfter" dataKey={series.dataKey} name={series.label} stroke={series.color} strokeWidth={1.5} strokeDasharray="3 2" dot={false} connectNulls={false} />
+              ))}
               {hasVariableEv && seriesVisible('evCurrent') && <Line yAxisId="current" type="stepAfter" dataKey="evCurrent" name={seriesByKey.evCurrent.label} stroke={COLORS.evCurrent} strokeWidth={2} dot={false} />}
               {seriesVisible('gridImport') && <Line yAxisId="power" type="step" dataKey="gridImport" name={seriesByKey.gridImport.label} stroke={COLORS.import} dot={false} />}
               {seriesVisible('gridExport') && <Line yAxisId="power" type="step" dataKey="gridExport" name={seriesByKey.gridExport.label} stroke={COLORS.export} dot={false} />}
@@ -524,12 +598,12 @@ const PlanView: React.FC<{
             ariaLabel={t('Diagramserier', 'Chart series')}
           />
           <p className="mt-2 text-xs text-muted-foreground">
-            {t('Välj en serie i teckenförklaringen för att visa eller dölja den. Skuggat område är rådgivande eftersom båda prisserierna inte längre är publicerade.', 'Select any legend series to show or hide it. The shaded interval is advisory because both price series are no longer published.')}
+            {t('Välj en serie i teckenförklaringen för att visa eller dölja den. Streckade enhetslinjer är empiriska delserier som räknas separat från den återstående baslasten. Skuggat område är rådgivande eftersom båda prisserierna inte längre är publicerade.', 'Select any legend series to show or hide it. Dashed device lines are empirical components counted separately from the residual base load. The shaded interval is advisory because both price series are no longer published.')}
           </p>
         </CardContent>
       </Card>
 
-      <ActualPerformance actuals={actuals} />
+      <ActualPerformance actuals={actuals} devices={empiricalDevices} deviceActuals={deviceActuals} />
 
       <Card>
         <CardHeader className="pb-3"><CardTitle className="text-base">{t('Import- och exportpris', 'Import and export prices')}</CardTitle></CardHeader>
@@ -539,12 +613,17 @@ const PlanView: React.FC<{
               <CartesianGrid strokeDasharray="3 3" className="stroke-muted" vertical={false} />
               <XAxis dataKey="i" type="number" domain={[0, chartData.length - 1]} ticks={ticks} tickFormatter={index => chartData[index]?.label ?? ''} tick={{ fontSize: 11 }} interval={0} />
               <YAxis tick={{ fontSize: 11 }} tickFormatter={value => `${Number(value).toFixed(2)}`} label={{ value: 'SEK/kWh', angle: -90, position: 'insideLeft', fontSize: 11 }} />
-              <Line type="stepAfter" dataKey="importPrice" name={t('Köpa', 'Import')} stroke={COLORS.import} dot={false} connectNulls={false} />
-              <Line type="stepAfter" dataKey="exportPrice" name={t('Sälja', 'Export')} stroke={COLORS.export} dot={false} connectNulls={false} />
+              {!hiddenPriceSeries.has('importPrice') && <Line type="stepAfter" dataKey="importPrice" name={priceSeries[0].label} stroke={COLORS.import} dot={false} connectNulls={false} />}
+              {!hiddenPriceSeries.has('exportPrice') && <Line type="stepAfter" dataKey="exportPrice" name={priceSeries[1].label} stroke={COLORS.export} dot={false} connectNulls={false} />}
               <Tooltip labelFormatter={index => chartData[index as number]?.label ?? ''} formatter={value => [`${Number(value).toFixed(3)} SEK/kWh`, '']} />
-              <Legend wrapperStyle={{ fontSize: 12 }} />
             </ComposedChart>
           </ResponsiveContainer>
+          <SeriesToggleLegend
+            series={priceSeries}
+            hidden={hiddenPriceSeries}
+            onToggle={togglePriceSeries}
+            ariaLabel={t('Prisserier', 'Price series')}
+          />
         </CardContent>
       </Card>
 
@@ -570,11 +649,14 @@ const PlanView: React.FC<{
                 {plan.services.map(service => {
                   const sampleKey = service.device === 'boiler' ? 'hot_water' : service.device === 'pool' ? 'pool_heating' : 'ev_charging';
                   const samples = plan.service_requirement_sample_days[sampleKey];
+                  const minimumRunMinutes = 'min_run_slots' in service ? service.min_run_slots * 15 : 0;
                   return (
                     <div key={service.id}>
                       {service.id}: {service.required_kwh.toFixed(2)} kWh · {service.control.type === 'fixed_power'
-                        ? `${(service.control.power_w / 1_000).toFixed(1)} kW`
-                        : `${service.control.min_current_a}–${service.control.max_current_a} A (${service.control.current_step_a} A ${t('steg', 'steps')}, ${service.control.phase_count}×${service.control.voltage_v} V)`} · {t('minsta körning', 'minimum run')} {service.min_run_slots * 15} min · {t('deadline', 'deadline')} {new Date(service.deadline).toLocaleString()}{samples != null ? ` · n=${samples} active days` : ''}
+                        ? `${(service.control.power_w / 1_000).toFixed(1)} kW · ${t('minsta körning', 'minimum run')} ${minimumRunMinutes} min`
+                        : service.control.type === 'discrete_current'
+                          ? `${service.control.min_current_a}–${service.control.max_current_a} A (${service.control.current_step_a} A ${t('steg', 'steps')}, ${service.control.phase_count}×${service.control.voltage_v} V) · ${t('minsta körning', 'minimum run')} ${minimumRunMinutes} min`
+                          : `${t('empirisk förväntan', 'empirical expectation')} · ${(service.control.rated_power_w / 1_000).toFixed(1)} kW ${t('märkeffekt', 'rated')} · ${t('högst avstängd', 'maximum inhibit')} ${service.control.max_consecutive_inhibit_slots * 15} min`} · {t('fönster slutar', 'window ends')} {new Date(service.deadline).toLocaleString()}{samples != null ? ` · n=${samples} ${service.control.type === 'duty_cycle' ? t('kvartsvärden', 'quarter samples') : t('aktiva dagar', 'active days')}` : ''}
                     </div>
                   );
                 })}
@@ -590,24 +672,71 @@ const PlanView: React.FC<{
   );
 };
 
-const ActualPerformance: React.FC<{ actuals: ActualEnergySlot[] }> = ({ actuals }) => {
+type ActualSeriesKey =
+  | 'load'
+  | 'pv'
+  | 'gridImport'
+  | 'gridExport'
+  | 'batteryCharge'
+  | 'batteryDischarge'
+  | `device:${string}`;
+
+const ActualPerformance: React.FC<{
+  actuals: ActualEnergySlot[];
+  devices: EmpiricalEnergyDevice[];
+  deviceActuals: EmpiricalDeviceSlotMatrix[];
+}> = ({ actuals, devices, deviceActuals }) => {
   const { t } = useLanguage();
+  const [hidden, setHidden] = useState<Set<ActualSeriesKey>>(() => new Set());
+  const actualByDeviceAndStart = useMemo(() => {
+    const rows = new Map<string, number>();
+    for (const slot of deviceActuals) {
+      for (const [deviceId, energyKwh] of Object.entries(slot.device_energy_kwh)) {
+        rows.set(`${deviceId}:${slot.start_ts}`, energyKwh * 4_000);
+      }
+    }
+    return rows;
+  }, [deviceActuals]);
   const data = useMemo(() => actuals.map((slot, index) => ({
     i: index,
-    label: new Date(slot.start_ts).toLocaleString([], { hour: '2-digit', minute: '2-digit' }),
+    label: new Date(slot.start_ts).toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
     load: slot.total_load_kwh == null ? null : slot.total_load_kwh * 4_000,
     pv: slot.solar_production_kwh == null ? null : slot.solar_production_kwh * 4_000,
     gridImport: slot.grid_import_kwh == null ? null : slot.grid_import_kwh * 4_000,
     gridExport: slot.grid_export_kwh == null ? null : slot.grid_export_kwh * 4_000,
     batteryCharge: slot.battery_charge_kwh == null ? null : slot.battery_charge_kwh * 4_000,
     batteryDischarge: slot.battery_discharge_kwh == null ? null : slot.battery_discharge_kwh * 4_000,
-  })), [actuals]);
+    ...Object.fromEntries(devices.map((device, deviceIndex) => [
+      `device${deviceIndex}`,
+      actualByDeviceAndStart.get(`${device.id}:${slot.start_ts}`) ?? null,
+    ])),
+  })), [actualByDeviceAndStart, actuals, devices]);
   const ticks = data.filter((_, index) => index % 12 === 0).map(value => value.i);
+  const series = [
+    { key: 'load' as const, label: t('Faktisk last', 'Actual load'), color: COLORS.actual },
+    { key: 'pv' as const, label: t('Faktisk sol', 'Actual PV'), color: COLORS.pv },
+    { key: 'gridImport' as const, label: t('Faktisk import', 'Actual import'), color: COLORS.import },
+    { key: 'gridExport' as const, label: t('Faktisk export', 'Actual export'), color: COLORS.export },
+    { key: 'batteryCharge' as const, label: t('Faktisk batteriladdning', 'Actual battery charge'), color: COLORS.batteryCharge },
+    { key: 'batteryDischarge' as const, label: t('Faktisk batteriurladdning', 'Actual battery discharge'), color: COLORS.batteryDischarge },
+    ...devices.map((device, index) => ({
+      key: `device:${device.id}` as const,
+      dataKey: `device${index}`,
+      label: device.name,
+      color: DEVICE_COLORS[index % DEVICE_COLORS.length],
+    })),
+  ];
+  const toggle = (key: ActualSeriesKey) => setHidden(current => {
+    const next = new Set(current);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    return next;
+  });
 
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="text-base">{t('Uppmätt prestanda — senaste 24 timmarna', 'Measured performance — last 24 hours')}</CardTitle>
+        <CardTitle className="text-base">{t('Uppmätt prestanda — senaste 72 timmarna', 'Measured performance — last 72 hours')}</CardTitle>
       </CardHeader>
       <CardContent>
         {data.length === 0 ? (
@@ -621,16 +750,27 @@ const ActualPerformance: React.FC<{ actuals: ActualEnergySlot[] }> = ({ actuals 
                 <CartesianGrid strokeDasharray="3 3" className="stroke-muted" vertical={false} />
                 <XAxis dataKey="i" type="number" domain={[0, data.length - 1]} ticks={ticks} tickFormatter={index => data[index]?.label ?? ''} tick={{ fontSize: 11 }} interval={0} />
                 <YAxis tick={{ fontSize: 11 }} tickFormatter={watts => `${(Number(watts) / 1_000).toFixed(0)}`} label={{ value: 'kW', angle: -90, position: 'insideLeft', fontSize: 11 }} />
-                <Line type="stepAfter" dataKey="load" name={t('Faktisk last', 'Actual load')} stroke={COLORS.actual} strokeWidth={2} dot={false} connectNulls={false} />
-                <Line type="stepAfter" dataKey="pv" name={t('Faktisk sol', 'Actual PV')} stroke={COLORS.pv} strokeWidth={2} dot={false} connectNulls={false} />
-                <Line type="stepAfter" dataKey="gridImport" name={t('Faktisk import', 'Actual import')} stroke={COLORS.import} dot={false} connectNulls={false} />
-                <Line type="stepAfter" dataKey="gridExport" name={t('Faktisk export', 'Actual export')} stroke={COLORS.export} dot={false} connectNulls={false} />
-                <Line type="stepAfter" dataKey="batteryCharge" name={t('Faktisk batteriladdning', 'Actual battery charge')} stroke={COLORS.batteryCharge} dot={false} connectNulls={false} />
-                <Line type="stepAfter" dataKey="batteryDischarge" name={t('Faktisk batteriurladdning', 'Actual battery discharge')} stroke={COLORS.batteryDischarge} dot={false} connectNulls={false} />
+                {series.map(item => !hidden.has(item.key) && (
+                  <Line
+                    key={item.key}
+                    type="stepAfter"
+                    dataKey={'dataKey' in item ? item.dataKey : item.key}
+                    name={item.label}
+                    stroke={item.color}
+                    strokeWidth={item.key === 'load' || item.key === 'pv' ? 2 : 1.5}
+                    dot={false}
+                    connectNulls={false}
+                  />
+                ))}
                 <Tooltip labelFormatter={index => data[index as number]?.label ?? ''} formatter={(value, name) => [`${(Number(value) / 1_000).toFixed(2)} kW`, name]} />
-                <Legend wrapperStyle={{ fontSize: 12 }} />
               </ComposedChart>
             </ResponsiveContainer>
+            <SeriesToggleLegend
+              series={series}
+              hidden={hidden}
+              onToggle={toggle}
+              ariaLabel={t('Uppmätta serier', 'Measured series')}
+            />
             <p className="mt-2 text-xs text-muted-foreground">
               {t('Varje punkt är energi från Home Assistants recorder summerad i en komplett kvart och visad som medeleffekt; råa sekundvärden lagras inte på webbplatsen.', 'Each point is Home Assistant recorder energy summed into one complete quarter and shown as average power; raw per-second values are not stored by the website.')}
             </p>
@@ -643,7 +783,7 @@ const ActualPerformance: React.FC<{ actuals: ActualEnergySlot[] }> = ({ actuals 
 
 const SourceRow: React.FC<{
   name: string;
-  source: NonNullable<OptimisationPlanV3['sources'][keyof OptimisationPlanV3['sources']]>;
+  source: NonNullable<OptimisationPlanV4['sources'][keyof OptimisationPlanV4['sources']]>;
 }> = ({ name, source }) => (
   <div className="grid grid-cols-1 gap-x-4 gap-y-0.5 md:grid-cols-[140px_180px_1fr]">
     <div className="font-medium capitalize">{name}</div>
@@ -695,12 +835,12 @@ const DeltaKpi: React.FC<{
   </div>
 );
 
-const SeriesToggleLegend: React.FC<{
-  series: PlanChartSeries[];
-  hidden: Set<PlanChartSeriesKey>;
-  onToggle: (key: PlanChartSeriesKey) => void;
+const SeriesToggleLegend = <Key extends string,>({ series, hidden, onToggle, ariaLabel }: {
+  series: Array<{ key: Key; label: string; color: string }>;
+  hidden: Set<Key>;
+  onToggle: (key: Key) => void;
   ariaLabel: string;
-}> = ({ series, hidden, onToggle, ariaLabel }) => (
+}) => (
   <div className="mt-3 flex flex-wrap justify-center gap-x-3 gap-y-2" role="group" aria-label={ariaLabel}>
     {series.map(item => {
       const visible = !hidden.has(item.key);

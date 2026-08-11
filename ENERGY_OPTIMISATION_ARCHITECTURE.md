@@ -1,8 +1,8 @@
 # Energy optimisation architecture
 
-Status: **schema-v3 optional-capability and discrete EV-current path implemented; deployment, live commissioning and device executors remain**
+Status: **schema-v4 empirical device history and duty-cycle permit path implemented; deployment, live commissioning and device executors remain**
 
-Date: **2026-08-10**
+Date: **2026-08-11**
 
 Source material: `ENERGY_OPTIMISATION_NOTES.md`, the current portal implementation in
 this repository, the current `shs_energy` Home Assistant integration in
@@ -40,7 +40,7 @@ The canonical timestep is **15 minutes**. The server replans from measured state
 the local reactive layer corrects for what actually happens between plans.
 
 The first shadow release simulates the battery, protects an explicit reserve,
-optimises discrete boiler/pool work, and assigns a valid charger current to
+optimises discrete pool work, inhibits empirical boiler duty cycles around high loads, and assigns a valid charger current to
 every planned EV quarter while publishing opportunity/surplus signals.
 Price-led battery grid charging/export and thermal state optimisation belong to
 the next solver stage. Device controllers retain their existing closed-loop
@@ -57,10 +57,10 @@ static portal prototype:
 | Customer telemetry was compiled into the public JavaScript bundle | Deleted the hard-coded input snapshot. The selected `home_id` now reads a row protected by RLS. Pairing codes and active device tokens are bound to one home. |
 | The page was a manually copied snapshot | `shs_energy` now uploads completed 15-minute actuals and requests a fresh rolling plan hourly. The portal shows issue/expiry/source freshness and measured overlays. |
 | A/B/C used unequal work and fabricated a final partial day | Services have explicit earliest times and deadlines. Only deadlines inside the horizon create work; all scenarios use the same rounded integer slot count, and end-of-solar metrics omit an unfinished final local day. |
-| Pool, boiler and EV used fractional/chattering power and an invented 11 kW EV rate | Pool and boiler remain contiguous whole-slot services. An EV current controller declares its minimum, maximum, step, phases and voltage; the planner chooses a supported current per 15-minute slot. Phil's 5–16 A three-phase range therefore models 3.45–11.04 kW rather than freezing the plan at the entity's instantaneous state. |
+| Pool, boiler and EV used fractional/chattering power and an invented 11 kW EV rate | Pool remains a contiguous whole-slot service. The boiler is now a probability-weighted empirical duty forecast with a separate bounded permit/inhibit control. An EV current controller declares its minimum, maximum, step, phases and voltage; the planner chooses a supported current per 15-minute slot. Phil's 5–16 A three-phase range therefore models 3.45–11.04 kW rather than freezing the plan at the entity's instantaneous state. |
 | The 80% battery claim was not verified | End-of-solar and terminal SOC are simulation invariants. The 80% target is soft by default so it cannot silently reserve solar and force pool/hot-water work onto night import; explicitly making it hard retains fail-closed infeasibility checks. |
 | Export was valued with the import supplier price | Import and export are separate required timestamped entities, each combined with the correct grid direction. The integration rejects using the same entity for both. |
-| One August day was repeated as baseload | Baseload is the per-local-quarter median of recorder history after subtracting separately modelled loads; p10/p90 and sample counts are retained for explanation. |
+| One August day was repeated as baseload | Baseload is a weekday/weekend per-local-quarter median of recorder history after subtracting every complete Energy Dashboard device series. Each empirical device profile is then added explicitly to scheduling headroom, battery simulation and grid balance; p10/p90 and sample counts remain diagnostic data rather than graph noise. |
 | Raw PV forecasts were treated as truth | HA keeps a compact forecast ledger, matches completed slots to actual solar, and publishes lead-day correction factors, sample counts, MAPE and bias. Raw and calibrated curves are both visible. |
 
 This is deliberately a **shadow/advisory release**. The integration exposes
@@ -82,7 +82,7 @@ configuration:
   to expose demo plan slots to executor automations.
 
 Solar, battery, pool, water heating and EV are independent optional
-capabilities in snapshot schema 3. A category mapped for reporting is not
+capabilities in snapshot schema 4. A category mapped for reporting is not
 assumed controllable. Installation ratings still require measured or explicitly
 commissioned values; product defaults are limited to policy/orchestration facts
 such as 15-minute slots, efficiency starting values, and default time windows.
@@ -194,10 +194,9 @@ empirical baseload unless their power is material to the connection limit. The
 five simulator implementations remain useful ways to simulate the four shapes;
 they are not five production scheduling contracts.
 
-The current schema-3 boiler representation is incorrect for a
-thermostat-controlled tank. It converts median daily energy into one contiguous
-full-power run, even though the controller cannot demand heat and does not know
-when hot water will be used. The boiler contract must instead:
+The schema-4 boiler representation corrects the old contiguous fixed-power job.
+The controller cannot demand heat and does not know when hot water will be used,
+so the boiler contract now:
 
 - remain permitted by default so its own thermostat can maintain service;
 - publish explicit inhibit slots around higher-priority pool, EV or unexpected
@@ -238,12 +237,11 @@ roughly 0.6–1.0 kW modulating region, indexed by outdoor temperature and elaps
 run time. Manufacturer COP/capacity data may constrain the fit, but measured
 electrical power is the source for the plan graph.
 
-This requires one coordinated, fail-fast schema increment across the edge
-planner and `shs_energy`. Schema 3 must not be partially reinterpreted: the
-integration currently validates fixed-power service slots and exposes
-`boiler_w` as a power request. Until both sides support separate forecast and
-control fields, the existing boiler schedule remains shadow-only and must not
-be treated as an accurate duty-cycle command.
+This was delivered as one coordinated, fail-fast schema increment across the
+edge planner and `shs_energy`. Schema 4 uses `boiler_expected_w` for the energy
+balance and `boiler_permitted` for authority. The Home Assistant request sensor
+returns the reviewed rating only while permission is true and reports expected
+power separately in its attributes.
 
 ### 3.2 Current `shs_energy` integration
 
@@ -255,8 +253,8 @@ prices and subscription status.
 The implementation in this change adds:
 
 - one-home pairing and token binding, including home-scoped tariff lookup;
-- schema 3 with optional solar/battery/device capabilities, fixed-power and
-  discrete-current service controls, and explicit
+- schema 4 with optional solar/battery/device capabilities, fixed-power,
+  discrete-current and empirical duty-cycle controls, and explicit
   `live`/`demo` mode;
 - automatic aggregate-meter discovery from the Energy Dashboard, plus a short
   multi-step advanced flow and validated AI/MCP actions;
@@ -264,13 +262,15 @@ The implementation in this change adds:
   and export forecasts;
 - explicit market area, PV coordinates, source units, freshness, battery/grid
   capabilities, service deadlines, whole-slot minimum runs, and EV state;
-- complete 15-minute recorder bins, a weekday/weekend median baseload profile,
-  daily remaining-service estimates, and conservative lead-day PV calibration;
+- complete aggregate and per-device 15-minute recorder bins, weekday/weekend
+  baseload and per-device profiles, daily remaining-service estimates, and
+  conservative lead-day PV calibration;
 - an hourly 72-hour plan request plus quarter-hour actual upload, with
   whole-home consumption derived from the grid/solar/battery energy balance
   when no separate total meter is configured;
-- local cached plan/status, bounded boiler/pool/EV power requests, a dedicated
-  EV current target/envelope sensor; and
+- local cached plan/status, a boiler permit/inhibit request with separate
+  expected draw, bounded pool/EV power requests, a dedicated EV current
+  target/envelope sensor; and
 - a live measured-export signal for a single reactive executor.
 
 It still does not own device actuators, confirmation, thermal state models,
@@ -278,10 +278,12 @@ weather-conditioned load, or the central reactive allocator. Those remain
 commissioning/product work. The existing daily energy, supplier-cost and tariff
 history tables also remain customer-scoped until that older feature is made
 multi-home; the new optimisation path itself is home-scoped end to end.
-Energy Dashboard device statistics are currently collapsed into the three
-planning categories (`hot_water`, `pool_heating`, and `ev_charging`) before
-upload; individual device profiles and plan series are not yet part of the
-exchange.
+Energy Dashboard devices now retain stable home-local identities, suggested
+four-class load characteristics, editable customer/staff overrides, compact
+15-minute history, and individual forecast/actual graph series. The first
+profile is a recent weekday/weekend trimmed mean. Temperature bins and
+time-since-start startup fitting for material inverter loads remain the next
+accuracy increment; the current implementation does not claim those inputs yet.
 
 ### 3.3 Existing local control
 
@@ -406,7 +408,9 @@ The integration owns:
   price series regardless of whether the source uses attributes or service
   responses;
 - live measurements and state required to seed every stateful device;
-- calculation of base load excluding separately modelled variable loads;
+- calculation of residual base load after subtracting every complete empirical
+  Energy Dashboard device series, with those device profiles added back exactly
+  once by the planner;
 - contract validation, units, UTC timestamp conversion, and source freshness;
 - request idempotency, plan polling/refresh, local storage, expiry, and model
   version compatibility;

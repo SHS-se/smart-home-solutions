@@ -1927,6 +1927,133 @@ export type Database = {
           },
         ]
       }
+      energy_optimisation_device_slots: {
+        Row: {
+          customer_id: string
+          device_id: string
+          device_token_id: string | null
+          energy_kwh: number
+          home_id: string
+          id: string
+          quality: Json
+          received_at: string
+          start_ts: string
+        }
+        Insert: {
+          customer_id: string
+          device_id: string
+          device_token_id?: string | null
+          energy_kwh: number
+          home_id: string
+          id?: string
+          quality?: Json
+          received_at?: string
+          start_ts: string
+        }
+        Update: {
+          customer_id?: string
+          device_id?: string
+          device_token_id?: string | null
+          energy_kwh?: number
+          home_id?: string
+          id?: string
+          quality?: Json
+          received_at?: string
+          start_ts?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "energy_optimisation_device_slots_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_optimisation_device_slots_device_id_fkey"
+            columns: ["device_id"]
+            isOneToOne: false
+            referencedRelation: "energy_optimisation_devices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_optimisation_device_slots_home_id_fkey"
+            columns: ["home_id"]
+            isOneToOne: false
+            referencedRelation: "homes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      energy_optimisation_devices: {
+        Row: {
+          active_power_w: number | null
+          category: string
+          customer_id: string
+          device_key: string
+          device_token_id: string | null
+          first_seen_at: string
+          home_id: string
+          id: string
+          inference: Json
+          last_seen_at: string
+          load_type_override: string | null
+          name: string
+          profile_sample_count: number
+          statistic_id: string
+          suggested_load_type: string
+        }
+        Insert: {
+          active_power_w?: number | null
+          category: string
+          customer_id: string
+          device_key: string
+          device_token_id?: string | null
+          first_seen_at?: string
+          home_id: string
+          id?: string
+          inference?: Json
+          last_seen_at?: string
+          load_type_override?: string | null
+          name: string
+          profile_sample_count?: number
+          statistic_id: string
+          suggested_load_type: string
+        }
+        Update: {
+          active_power_w?: number | null
+          category?: string
+          customer_id?: string
+          device_key?: string
+          device_token_id?: string | null
+          first_seen_at?: string
+          home_id?: string
+          id?: string
+          inference?: Json
+          last_seen_at?: string
+          load_type_override?: string | null
+          name?: string
+          profile_sample_count?: number
+          statistic_id?: string
+          suggested_load_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "energy_optimisation_devices_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_optimisation_devices_home_id_fkey"
+            columns: ["home_id"]
+            isOneToOne: false
+            referencedRelation: "homes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       energy_optimisation_current: {
         Row: {
           binding_until: string
@@ -4393,6 +4520,18 @@ export type Database = {
         Args: { p_customer_id: string; p_home_id: string }
         Returns: boolean
       }
+      get_energy_optimisation_device_slots: {
+        Args: {
+          p_customer_id: string
+          p_from: string
+          p_home_id: string
+          p_to: string
+        }
+        Returns: {
+          device_energy_kwh: Json
+          start_ts: string
+        }[]
+      }
       import_energy_usage_readings: {
         Args: {
           p_customer_id: string
@@ -4428,6 +4567,10 @@ export type Database = {
           p_valid_from: string
         }
         Returns: string
+      }
+      set_energy_device_load_type: {
+        Args: { p_device_id: string; p_load_type: string | null }
+        Returns: Database["public"]["Tables"]["energy_optimisation_devices"]["Row"]
       }
       set_energy_tariff_settings: {
         Args: {

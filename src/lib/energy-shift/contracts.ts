@@ -1,6 +1,8 @@
 import type {
   GeneratedPlan,
-  OptimisationPlanV3,
+  DeviceLoadType,
+  EmpiricalDeviceModelInput,
+  OptimisationPlanV4,
   PlanKey,
   PlanSummary,
   PlannedSlot,
@@ -8,7 +10,9 @@ import type {
 
 export type {
   GeneratedPlan,
-  OptimisationPlanV3,
+  DeviceLoadType,
+  EmpiricalDeviceModelInput,
+  OptimisationPlanV4,
   PlanKey,
   PlanSummary,
   PlannedSlot,
@@ -24,10 +28,10 @@ export interface ActualEnergySlot {
   battery_discharge_kwh: number | null;
 }
 
-export function isOptimisationPlan(value: unknown): value is OptimisationPlanV3 {
+export function isOptimisationPlan(value: unknown): value is OptimisationPlanV4 {
   if (!value || typeof value !== 'object') return false;
-  const plan = value as Partial<OptimisationPlanV3>;
-  return plan.schema_version === 3
+  const plan = value as Partial<OptimisationPlanV4>;
+  return plan.schema_version === 4
     && plan.mode === 'live'
     && plan.slot_minutes === 15
     && typeof plan.issued_at === 'string'

@@ -1,6 +1,6 @@
 import {
   generateOptimisationPlan,
-  type OptimisationSnapshotV3,
+  type OptimisationSnapshotV4,
   validateSnapshot,
 } from "./energy-optimisation.ts";
 
@@ -12,8 +12,8 @@ const assert: (condition: boolean, message: string) => asserts condition = (
 };
 
 const input = (
-  overrides: Partial<OptimisationSnapshotV3> = {},
-): OptimisationSnapshotV3 => {
+  overrides: Partial<OptimisationSnapshotV4> = {},
+): OptimisationSnapshotV4 => {
   const start = Date.parse("2026-08-10T08:00:00.000Z");
   const slots = Array.from({ length: 64 }, (_, index) => ({
     start: new Date(start + index * 15 * 60_000).toISOString(),
@@ -25,7 +25,7 @@ const input = (
     export_price_sek_per_kwh: index < 20 ? 0.2 + index / 200 : null,
   }));
   return {
-    schema_version: 3,
+    schema_version: 4,
     mode: "live",
     capabilities: {
       pv: true,
@@ -103,17 +103,21 @@ const input = (
       terminal_soc_min: 0.05,
       terminal_energy_value_sek_per_kwh: 1,
     },
+    device_models: [],
     services: [
       {
         id: "boiler:2026-08-10",
         device: "boiler",
         earliest_start: slots[0].start,
         deadline: new Date(start + 8 * 60 * 60_000).toISOString(),
-        required_kwh: 1.5,
-        control: { type: "fixed_power", power_w: 3_000 },
-        min_run_slots: 2,
+        required_kwh: 2.8,
+        control: {
+          type: "duty_cycle",
+          rated_power_w: 3_000,
+          expected_power_w_by_slot: slots.map(() => 350),
+          max_consecutive_inhibit_slots: 4,
+        },
         priority: 1,
-        baseline_preferred_start: slots[0].start,
       },
       {
         id: "pool:2026-08-10",
@@ -154,9 +158,14 @@ Deno.test("all scenarios use equal discrete contiguous service workloads", () =>
   for (const plan of Object.values(result.plans)) {
     for (const slot of plan.slots) {
       assert([0, 2_000].includes(slot.pool_w), "pool power is fractional");
-      assert([0, 3_000].includes(slot.boiler_w), "boiler power is fractional");
+      assert(slot.boiler_expected_w >= 0, "boiler expectation is negative");
+      assert(
+        slot.boiler_permitted || slot.boiler_expected_w === 0,
+        "inhibited boiler still has expected draw",
+      );
     }
-    for (const indices of Object.values(plan.service_slots)) {
+    for (const [serviceId, indices] of Object.entries(plan.service_slots)) {
+      if (serviceId.startsWith("boiler:")) continue;
       assert(
         indices.every((value, index) =>
           index === 0 || value === indices[index - 1] + 1
@@ -164,6 +173,127 @@ Deno.test("all scenarios use equal discrete contiguous service workloads", () =>
         "service is fragmented",
       );
     }
+  }
+});
+
+Deno.test("duty-cycle boiler is inhibited around planned loads without invented on blocks", () => {
+  const result = generateOptimisationPlan(
+    input(),
+    new Date("2026-08-10T07:55:00Z"),
+  );
+  const baseline = result.plans.baseline;
+  const planned = result.plans.priority;
+  const inhibited = planned.service_inhibited_slots["boiler:2026-08-10"];
+  assert(
+    inhibited.length > 0,
+    "boiler was never inhibited around a planned load",
+  );
+  assert(
+    baseline.service_inhibited_slots["boiler:2026-08-10"].length === 0,
+    "unplanned boiler was inhibited",
+  );
+  let consecutive = 0;
+  for (const [index, slot] of planned.slots.entries()) {
+    if (inhibited.includes(index)) {
+      consecutive += 1;
+      assert(!slot.boiler_permitted, "inhibit slot remained permitted");
+      assert(
+        slot.boiler_expected_w === 0,
+        "inhibit slot retained expected draw",
+      );
+    } else {
+      consecutive = 0;
+    }
+    assert(consecutive <= 4, "maximum safe inhibit interval was exceeded");
+    assert(slot.boiler_expected_w <= 3_000, "expected draw exceeded rating");
+  }
+  assert(
+    baseline.slots.some((slot) =>
+      slot.boiler_expected_w > 0 && slot.boiler_expected_w < 3_000
+    ),
+    "baseline still models the thermostat as exact full-power blocks",
+  );
+});
+
+Deno.test("empirical device forecasts participate in the energy balance", () => {
+  const snapshot = input();
+  snapshot.capabilities = {
+    pv: false,
+    battery: false,
+    pool: false,
+    boiler: false,
+    ev: false,
+  };
+  snapshot.battery = null;
+  snapshot.sources = { ...snapshot.sources, pv: null, battery: null };
+  snapshot.policy = {
+    battery_end_of_solar_target_soc: 0,
+    battery_target_is_hard: false,
+    terminal_soc_min: 0,
+    terminal_energy_value_sek_per_kwh: 0,
+  };
+  snapshot.slots = snapshot.slots.map((slot) => ({
+    ...slot,
+    pv_forecast_w: 0,
+  }));
+  snapshot.services = [];
+  snapshot.service_requirement_sample_days = {};
+  snapshot.device_models = [{
+    key: "sensor-fridge-energy",
+    name: "Fridge",
+    statistic_id: "sensor.fridge_energy",
+    category: "appliances",
+    suggested_load_type: "duty_cycle",
+    load_type: "duty_cycle",
+    active_power_w: 120,
+    profile_sample_count: 960,
+    forecast_w_by_slot: snapshot.slots.map(() => 800),
+  }];
+
+  const result = generateOptimisationPlan(
+    snapshot,
+    new Date("2026-08-10T07:55:00Z"),
+  );
+  const slot = result.plans.cost.slots[0];
+  assert(slot.base_w === 500, "residual base load changed");
+  assert(
+    slot.device_loads_w["sensor-fridge-energy"] === 800,
+    "empirical device forecast was not published in the plan",
+  );
+  assert(slot.load_w === 1_300, "empirical device load was not simulated");
+  assert(
+    slot.grid_import_w === 1_300,
+    "grid balance ignored the empirical device load",
+  );
+});
+
+Deno.test("a controlled empirical device is replaced rather than double counted", () => {
+  const snapshot = input();
+  snapshot.device_models = [{
+    key: "water-boiler",
+    name: "Water boiler",
+    statistic_id: "sensor.water_boiler_energy",
+    category: "hot_water",
+    suggested_load_type: "duty_cycle",
+    load_type: "duty_cycle",
+    active_power_w: 3_100,
+    profile_sample_count: 1_920,
+    forecast_w_by_slot: snapshot.slots.map(() => 350),
+  }];
+
+  const result = generateOptimisationPlan(
+    snapshot,
+    new Date("2026-08-10T07:55:00Z"),
+  );
+  for (const slot of result.plans.baseline.slots) {
+    assert(
+      slot.device_loads_w["water-boiler"] === slot.boiler_expected_w,
+      "controlled boiler was not represented by its empirical device series",
+    );
+    assert(
+      slot.load_w === slot.base_w + slot.pool_w + slot.boiler_expected_w,
+      "controlled empirical device was counted twice",
+    );
   }
 });
 
@@ -210,7 +340,7 @@ Deno.test("EV charging is planned as valid discrete current setpoints", () => {
     snapshot,
     new Date("2026-08-10T07:55:00Z"),
   );
-  assert(result.schema_version === 3, "wrong plan schema");
+  assert(result.schema_version === 4, "wrong plan schema");
   assert(result.status === "ready", "feasible EV plan was rejected");
   for (const plan of Object.values(result.plans)) {
     const positive = plan.slots.filter((slot) => slot.ev_target_current_a > 0);
@@ -346,7 +476,10 @@ Deno.test("homes without PV or a battery still receive a valid price-led plan", 
     },
   });
 
-  assert(validateSnapshot(snapshot).length === 0, "optional capabilities rejected");
+  assert(
+    validateSnapshot(snapshot).length === 0,
+    "optional capabilities rejected",
+  );
   const result = generateOptimisationPlan(
     snapshot,
     new Date("2026-08-10T07:55:00Z"),
@@ -430,12 +563,12 @@ Deno.test("stale snapshots and unpriced first slots fail closed", () => {
 Deno.test("ingestion snapshots are live and never synthetic", () => {
   const demo = input() as unknown as {
     mode: string;
-    sources: OptimisationSnapshotV3["sources"];
+    sources: OptimisationSnapshotV4["sources"];
   };
   demo.mode = "demo";
   demo.sources.base_load.quality = "synthetic";
 
-  const errors = validateSnapshot(demo as OptimisationSnapshotV3);
+  const errors = validateSnapshot(demo as OptimisationSnapshotV4);
   assert(errors.includes("mode must be live"), "demo snapshot was accepted");
   assert(
     errors.some((error) => error.includes("sources.base_load is incomplete")),
@@ -449,6 +582,12 @@ Deno.test("a truncated final local day is not labelled end-of-solar", () => {
     ...slot,
     pv_forecast_w: 0,
   }));
+  snapshot.services = [];
+  snapshot.capabilities = {
+    ...snapshot.capabilities,
+    pool: false,
+    boiler: false,
+  };
   const result = generateOptimisationPlan(
     snapshot,
     new Date("2026-08-10T07:55:00Z"),
@@ -471,8 +610,8 @@ Deno.test("overlapping commitments cannot double-book one physical device", () =
   const deadline = snapshot.slots[2].start;
   snapshot.services = [
     {
-      id: "boiler:first",
-      device: "boiler",
+      id: "pool:first",
+      device: "pool",
       earliest_start: snapshot.slots[0].start,
       deadline,
       required_kwh: 1.5,
@@ -481,8 +620,8 @@ Deno.test("overlapping commitments cannot double-book one physical device", () =
       priority: 1,
     },
     {
-      id: "boiler:second",
-      device: "boiler",
+      id: "pool:second",
+      device: "pool",
       earliest_start: snapshot.slots[0].start,
       deadline,
       required_kwh: 1.5,
@@ -499,8 +638,8 @@ Deno.test("overlapping commitments cannot double-book one physical device", () =
 
   assert(result.status === "infeasible", "double booking was accepted");
   assert(
-    result.plans.priority.slots.every((slot) => slot.boiler_w <= 3_000),
-    "one boiler was scheduled at two simultaneous power levels",
+    result.plans.priority.slots.every((slot) => slot.pool_w <= 3_000),
+    "one pool load was scheduled at two simultaneous power levels",
   );
   assert(
     result.plans.priority.validation_errors.some((error) =>

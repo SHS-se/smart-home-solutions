@@ -1,8 +1,8 @@
 import {
   generateOptimisationPlan,
-  type OptimisationSnapshotV3,
+  type OptimisationSnapshotV4,
 } from '../../../supabase/functions/_shared/energy-optimisation';
-import type { ActualEnergySlot, OptimisationPlanV3 } from './contracts';
+import type { ActualEnergySlot, OptimisationPlanV4 } from './contracts';
 
 const SLOT_MS = 15 * 60_000;
 const SLOT_HOURS = 0.25;
@@ -45,7 +45,7 @@ const demoShape = (start: Date, index: number) => {
  * Build the promotional scenario entirely in the browser. It is never sent to
  * Supabase and deliberately has no customer, home, or Home Assistant identity.
  */
-export function createWebsiteDemoPlan(now = Date.now()): OptimisationPlanV3 {
+export function createWebsiteDemoPlan(now = Date.now()): OptimisationPlanV4 {
   const captured = new Date(now);
   const firstStart = quarterStart(now);
   const slots = Array.from({ length: DEMO_SLOT_COUNT }, (_, index) => {
@@ -63,19 +63,40 @@ export function createWebsiteDemoPlan(now = Date.now()): OptimisationPlanV3 {
   });
   const horizonEnd = new Date(firstStart + DEMO_SLOT_COUNT * SLOT_MS).toISOString();
   const at = (index: number) => slots[index].start;
-  const services: OptimisationSnapshotV3['services'] = [];
+  const boilerForecastW = slots.map((slot, index) => {
+    const hour = localHour(new Date(slot.start));
+    const expected = hour >= 5 && hour < 9
+      ? 620
+      : hour >= 16 && hour < 22
+        ? 480
+        : 75;
+    return Math.round(expected * (0.88 + 0.12 * Math.sin(index * 0.41) ** 2));
+  });
+  const airconForecastW = slots.map((slot, index) => {
+    const hour = localHour(new Date(slot.start));
+    return hour >= 6 && hour < 18
+      ? Math.round(610 + 260 * Math.sin(index * 0.27) ** 2)
+      : 8;
+  });
+  const services: OptimisationSnapshotV4['services'] = [];
   for (const dayStart of [0, 96, 192]) {
+    const dayEnd = Math.min(dayStart + 96, slots.length);
     services.push(
       {
         id: `website-demo-boiler-${dayStart / 96 + 1}`,
         device: 'boiler',
         earliest_start: at(dayStart),
-        deadline: at(dayStart + 72),
-        required_kwh: 4.5,
-        control: { type: 'fixed_power', power_w: 3_000 },
-        min_run_slots: 2,
+        deadline: new Date(firstStart + dayEnd * SLOT_MS).toISOString(),
+        required_kwh: Number((boilerForecastW
+          .slice(dayStart, dayEnd)
+          .reduce((sum, power) => sum + power, 0) / 4_000).toFixed(5)),
+        control: {
+          type: 'duty_cycle',
+          rated_power_w: 3_000,
+          expected_power_w_by_slot: boilerForecastW,
+          max_consecutive_inhibit_slots: 4,
+        },
         priority: 1,
-        baseline_preferred_start: at(dayStart + 24),
       },
       {
         id: `website-demo-pool-${dayStart / 96 + 1}`,
@@ -122,8 +143,8 @@ export function createWebsiteDemoPlan(now = Date.now()): OptimisationPlanV3 {
     quality,
     ...(location ? { location } : {}),
   });
-  const snapshot: OptimisationSnapshotV3 = {
-    schema_version: 3,
+  const snapshot: OptimisationSnapshotV4 = {
+    schema_version: 4,
     mode: 'live',
     capabilities: { pv: true, battery: true, pool: true, boiler: true, ev: true },
     snapshot_id: '00000000-0000-4000-8000-000000000099',
@@ -166,6 +187,30 @@ export function createWebsiteDemoPlan(now = Date.now()): OptimisationPlanV3 {
       terminal_soc_min: 0.2,
       terminal_energy_value_sek_per_kwh: 1.1,
     },
+    device_models: [
+      {
+        key: 'sensor.demo_water_boiler_energy',
+        name: 'Water boiler',
+        statistic_id: 'sensor.demo_water_boiler_energy',
+        category: 'hot_water',
+        suggested_load_type: 'duty_cycle',
+        load_type: 'duty_cycle',
+        active_power_w: 3_050,
+        profile_sample_count: 1_920,
+        forecast_w_by_slot: boilerForecastW,
+      },
+      {
+        key: 'sensor.demo_living_room_aircon_energy',
+        name: 'Living room aircon',
+        statistic_id: 'sensor.demo_living_room_aircon_energy',
+        category: 'cooling',
+        suggested_load_type: 'inverter',
+        load_type: 'inverter',
+        active_power_w: 910,
+        profile_sample_count: 1_920,
+        forecast_w_by_slot: airconForecastW,
+      },
+    ],
     services,
     service_requirement_sample_days: {
       hot_water: 21,
@@ -181,7 +226,7 @@ export function createWebsiteDemoPlan(now = Date.now()): OptimisationPlanV3 {
         ? null
         : { ...value, provider: 'Built-in website example', quality: 'synthetic' as const },
     ]),
-  ) as OptimisationPlanV3['sources'];
+  ) as OptimisationPlanV4['sources'];
   return {
     ...generated,
     mode: 'demo',
