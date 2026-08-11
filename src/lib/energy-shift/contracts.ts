@@ -1,8 +1,10 @@
 import type {
   GeneratedPlan,
+  DeviceControlType,
   DeviceLoadType,
+  DevicePlanningRole,
   EmpiricalDeviceModelInput,
-  OptimisationPlanV4,
+  OptimisationPlanV5,
   PlanKey,
   PlanSummary,
   PlannedSlot,
@@ -10,9 +12,11 @@ import type {
 
 export type {
   GeneratedPlan,
+  DeviceControlType,
   DeviceLoadType,
+  DevicePlanningRole,
   EmpiricalDeviceModelInput,
-  OptimisationPlanV4,
+  OptimisationPlanV5,
   PlanKey,
   PlanSummary,
   PlannedSlot,
@@ -28,10 +32,27 @@ export interface ActualEnergySlot {
   battery_discharge_kwh: number | null;
 }
 
-export function isOptimisationPlan(value: unknown): value is OptimisationPlanV4 {
+export interface DevicePlanningConfiguration {
+  suggested_planning_role: DevicePlanningRole;
+  planning_role_override: DevicePlanningRole | null;
+  suggested_control_type: DeviceControlType | null;
+  control_type_override: DeviceControlType | null;
+}
+
+export const effectivePlanningRole = (
+  device: DevicePlanningConfiguration,
+): DevicePlanningRole => device.planning_role_override ?? device.suggested_planning_role;
+
+export const effectiveControlType = (
+  device: DevicePlanningConfiguration,
+): DeviceControlType | null => device.planning_role_override === null
+  ? device.suggested_control_type
+  : device.control_type_override;
+
+export function isOptimisationPlan(value: unknown): value is OptimisationPlanV5 {
   if (!value || typeof value !== 'object') return false;
-  const plan = value as Partial<OptimisationPlanV4>;
-  return plan.schema_version === 4
+  const plan = value as Partial<OptimisationPlanV5>;
+  return plan.schema_version === 5
     && plan.mode === 'live'
     && plan.slot_minutes === 15
     && typeof plan.issued_at === 'string'

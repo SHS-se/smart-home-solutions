@@ -8,8 +8,8 @@
  * verified before it may be published as `ready`.
  */
 
-export const OPTIMISATION_SCHEMA_VERSION = 4;
-export const OPTIMISATION_MODEL_VERSION = "empirical-device-planner-v4";
+export const OPTIMISATION_SCHEMA_VERSION = 5;
+export const OPTIMISATION_MODEL_VERSION = "controllable-device-planner-v5";
 export const SLOT_MINUTES = 15;
 export const SLOT_HOURS = SLOT_MINUTES / 60;
 export const MAX_FORECAST_SLOTS = 72 * 4;
@@ -34,6 +34,13 @@ export type DeviceLoadType =
   | "variable_full_load"
   | "duty_cycle"
   | "inverter";
+export type DevicePlanningRole = "base_load" | "controllable";
+export type DeviceControlType =
+  | "switch_schedule"
+  | "variable_power"
+  | "permit_inhibit"
+  | "setpoint"
+  | "current_limit";
 
 export interface OptimisationCapabilities {
   pv: boolean;
@@ -148,13 +155,15 @@ export interface EmpiricalDeviceModelInput {
   category: string;
   suggested_load_type: DeviceLoadType;
   load_type: DeviceLoadType;
+  planning_role: "controllable";
+  control_type: DeviceControlType;
   active_power_w: number | null;
   profile_sample_count: number;
   forecast_w_by_slot: number[];
 }
 
-export interface OptimisationSnapshotV4 {
-  schema_version: 4;
+export interface OptimisationSnapshotV5 {
+  schema_version: 5;
   // Only Home Assistant live snapshots cross the ingestion boundary. The
   // website's promotional demo is a client-side plan fixture, not a snapshot.
   mode: "live";
@@ -253,8 +262,8 @@ export interface GeneratedPlan {
   service_inhibited_slots: Record<string, number[]>;
 }
 
-export interface OptimisationPlanV4 {
-  schema_version: 4;
+export interface OptimisationPlanV5 {
+  schema_version: 5;
   mode: PlanMode;
   capabilities: OptimisationCapabilities;
   model_version: string;
@@ -267,11 +276,11 @@ export interface OptimisationPlanV4 {
   slot_minutes: 15;
   status: "ready" | "incomplete" | "infeasible";
   validation_errors: string[];
-  sources: OptimisationSnapshotV4["sources"];
-  pv_calibration: OptimisationSnapshotV4["pv_calibration"];
-  policy: OptimisationSnapshotV4["policy"];
+  sources: OptimisationSnapshotV5["sources"];
+  pv_calibration: OptimisationSnapshotV5["pv_calibration"];
+  policy: OptimisationSnapshotV5["policy"];
   battery: BatteryInput | null;
-  grid: OptimisationSnapshotV4["grid"];
+  grid: OptimisationSnapshotV5["grid"];
   device_models: EmpiricalDeviceModelInput[];
   services: ServiceInput[];
   service_requirement_sample_days: Record<string, number>;
@@ -368,10 +377,10 @@ function completedLocalDays(
   );
 }
 
-export function validateSnapshot(snapshot: OptimisationSnapshotV4): string[] {
+export function validateSnapshot(snapshot: OptimisationSnapshotV5): string[] {
   const errors: string[] = [];
   if (snapshot?.schema_version !== OPTIMISATION_SCHEMA_VERSION) {
-    errors.push("schema_version must be 4");
+    errors.push("schema_version must be 5");
   }
   if (snapshot?.mode !== "live") {
     errors.push("mode must be live");
@@ -554,6 +563,13 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV4): string[] {
     "duty_cycle",
     "inverter",
   ]);
+  const controlTypes = new Set<DeviceControlType>([
+    "switch_schedule",
+    "variable_power",
+    "permit_inhibit",
+    "setpoint",
+    "current_limit",
+  ]);
   for (const [index, model] of (snapshot?.device_models ?? []).entries()) {
     if (!model?.key || deviceModelKeys.has(model.key)) {
       errors.push(`device_models[${index}].key is missing or duplicated`);
@@ -563,6 +579,8 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV4): string[] {
       !model?.name || !model?.statistic_id || !model?.category ||
       !loadTypes.has(model?.suggested_load_type) ||
       !loadTypes.has(model?.load_type) ||
+      model?.planning_role !== "controllable" ||
+      !controlTypes.has(model?.control_type) ||
       (model.active_power_w !== null &&
         !inRange(model.active_power_w, 0, 100_000)) ||
       !Number.isInteger(model?.profile_sample_count) ||
@@ -775,7 +793,7 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV4): string[] {
   return [...new Set(errors)];
 }
 
-function preparedSlots(snapshot: OptimisationSnapshotV4): PreparedSlot[] {
+function preparedSlots(snapshot: OptimisationSnapshotV5): PreparedSlot[] {
   const captured = isoMs(snapshot.captured_at);
   const controlledCategories = new Set<string>();
   if (snapshot.capabilities.boiler) controlledCategories.add("hot_water");
@@ -960,7 +978,7 @@ function serviceCost(
 function discreteCurrentCandidate(
   key: PlanKey,
   slots: PreparedSlot[],
-  snapshot: OptimisationSnapshotV4,
+  snapshot: OptimisationSnapshotV5,
   service: DiscreteCurrentServiceInput,
   shape: ServiceShape,
   start: number,
@@ -1126,7 +1144,7 @@ function wouldExceedInhibitLimit(
 function applyDutyCycleServices(
   key: PlanKey,
   slots: PreparedSlot[],
-  snapshot: OptimisationSnapshotV4,
+  snapshot: OptimisationSnapshotV5,
   services: DutyCycleServiceInput[],
   occupiedW: number[],
   schedule: Schedule,
@@ -1202,7 +1220,7 @@ function applyDutyCycleServices(
 function scheduleServices(
   key: PlanKey,
   slots: PreparedSlot[],
-  snapshot: OptimisationSnapshotV4,
+  snapshot: OptimisationSnapshotV5,
   reservedW: number[],
 ): { schedule: Schedule; errors: string[] } {
   const schedule = emptySchedule(slots.length);
@@ -1313,7 +1331,7 @@ function scheduleServices(
 
 function batteryReservation(
   slots: PreparedSlot[],
-  snapshot: OptimisationSnapshotV4,
+  snapshot: OptimisationSnapshotV5,
 ): { reservedW: number[]; protectedSoc: (number | null)[] } {
   const reservedW = new Array(slots.length).fill(0);
   const protectedSoc: (number | null)[] = new Array(slots.length).fill(null);
@@ -1401,7 +1419,7 @@ function batteryReservation(
 }
 
 function empiricalDeviceLoads(
-  snapshot: OptimisationSnapshotV4,
+  snapshot: OptimisationSnapshotV5,
   index: number,
   controlled: Record<string, number>,
 ): Record<string, number> {
@@ -1447,7 +1465,7 @@ function empiricalDeviceLoads(
 
 function simulate(
   slots: PreparedSlot[],
-  snapshot: OptimisationSnapshotV4,
+  snapshot: OptimisationSnapshotV5,
   schedule: Schedule,
   protectedSoc: (number | null)[],
 ): { slots: PlannedSlot[]; summary: PlanSummary; errors: string[] } {
@@ -1805,7 +1823,7 @@ function simulate(
 function buildPlan(
   key: PlanKey,
   slots: PreparedSlot[],
-  snapshot: OptimisationSnapshotV4,
+  snapshot: OptimisationSnapshotV5,
   reservedW: number[],
   protectedSoc: (number | null)[],
 ): GeneratedPlan {
@@ -1840,9 +1858,9 @@ function buildPlan(
 }
 
 export function generateOptimisationPlan(
-  snapshot: OptimisationSnapshotV4,
+  snapshot: OptimisationSnapshotV5,
   now = new Date(),
-): OptimisationPlanV4 {
+): OptimisationPlanV5 {
   const validationErrors = validateSnapshot(snapshot);
   const snapshotAge = now.getTime() - isoMs(snapshot.captured_at);
   if (
@@ -1903,7 +1921,7 @@ export function generateOptimisationPlan(
     : "ready";
 
   return {
-    schema_version: 4,
+    schema_version: 5,
     mode: snapshot.mode,
     capabilities: snapshot.capabilities,
     model_version: OPTIMISATION_MODEL_VERSION,

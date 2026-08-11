@@ -1,6 +1,6 @@
 # Energy optimisation architecture
 
-Status: **schema-v4 empirical device history and duty-cycle permit path implemented; deployment, live commissioning and device executors remain**
+Status: **schema-v5 controllable-device selection, empirical history and duty-cycle permit path implemented; deployment, live commissioning and device executors remain**
 
 Date: **2026-08-11**
 
@@ -60,7 +60,7 @@ static portal prototype:
 | Pool, boiler and EV used fractional/chattering power and an invented 11 kW EV rate | Pool remains a contiguous whole-slot service. The boiler is now a probability-weighted empirical duty forecast with a separate bounded permit/inhibit control. An EV current controller declares its minimum, maximum, step, phases and voltage; the planner chooses a supported current per 15-minute slot. Phil's 5–16 A three-phase range therefore models 3.45–11.04 kW rather than freezing the plan at the entity's instantaneous state. |
 | The 80% battery claim was not verified | End-of-solar and terminal SOC are simulation invariants. The 80% target is soft by default so it cannot silently reserve solar and force pool/hot-water work onto night import; explicitly making it hard retains fail-closed infeasibility checks. |
 | Export was valued with the import supplier price | Import and export are separate required timestamped entities, each combined with the correct grid direction. The integration rejects using the same entity for both. |
-| One August day was repeated as baseload | Baseload is a weekday/weekend per-local-quarter median of recorder history after subtracting every complete Energy Dashboard device series. Each empirical device profile is then added explicitly to scheduling headroom, battery simulation and grid balance; p10/p90 and sample counts remain diagnostic data rather than graph noise. |
+| One August day was repeated as baseload | Baseload is a weekday/weekend per-local-quarter median of recorder history. Only devices explicitly classified as controllable are subtracted and then added back as individual planner series; every other Energy Dashboard device remains represented by its real use inside baseload. p10/p90 and sample counts remain diagnostic data rather than graph noise. |
 | Raw PV forecasts were treated as truth | HA keeps a compact forecast ledger, matches completed slots to actual solar, and publishes lead-day correction factors, sample counts, MAPE and bias. Raw and calibrated curves are both visible. |
 
 This is deliberately a **shadow/advisory release**. The integration exposes
@@ -82,7 +82,7 @@ configuration:
   to expose demo plan slots to executor automations.
 
 Solar, battery, pool, water heating and EV are independent optional
-capabilities in snapshot schema 4. A category mapped for reporting is not
+capabilities in snapshot schema 5. A category mapped for reporting is not
 assumed controllable. Installation ratings still require measured or explicitly
 commissioned values; product defaults are limited to policy/orchestration facts
 such as 15-minute slots, efficiency starting values, and default time windows.
@@ -194,7 +194,17 @@ empirical baseload unless their power is material to the connection limit. The
 five simulator implementations remain useful ways to simulate the four shapes;
 they are not five production scheduling contracts.
 
-The schema-4 boiler representation corrects the old contiguous fixed-power job.
+Electrical shape and planning authority are independent configuration axes.
+Each home-local Energy Dashboard device has a planning role of `base_load` or
+`controllable`. Base-load devices still use measured Home Assistant history but
+are merged into the aggregate curve and omitted from device legends. A
+controllable device is removed from that aggregate and carries one reviewed
+control type: on/off schedule, variable power, permit/inhibit, setpoint or
+current limit. Automatic classification is deliberately conservative: hot
+water, pool heating and EV charging use their supported controls; ordinary
+household, heating and cooling meters stay in base load until reviewed.
+
+The schema-5 boiler representation corrects the old contiguous fixed-power job.
 The controller cannot demand heat and does not know when hot water will be used,
 so the boiler contract now:
 
@@ -238,7 +248,7 @@ run time. Manufacturer COP/capacity data may constrain the fit, but measured
 electrical power is the source for the plan graph.
 
 This was delivered as one coordinated, fail-fast schema increment across the
-edge planner and `shs_energy`. Schema 4 uses `boiler_expected_w` for the energy
+edge planner and `shs_energy`. Schema 5 uses `boiler_expected_w` for the energy
 balance and `boiler_permitted` for authority. The Home Assistant request sensor
 returns the reviewed rating only while permission is true and reports expected
 power separately in its attributes.
@@ -253,7 +263,7 @@ prices and subscription status.
 The implementation in this change adds:
 
 - one-home pairing and token binding, including home-scoped tariff lookup;
-- schema 4 with optional solar/battery/device capabilities, fixed-power,
+- schema 5 with optional solar/battery/device capabilities, fixed-power,
   discrete-current and empirical duty-cycle controls, and explicit
   `live`/`demo` mode;
 - automatic aggregate-meter discovery from the Energy Dashboard, plus a short
@@ -279,9 +289,10 @@ commissioning/product work. The existing daily energy, supplier-cost and tariff
 history tables also remain customer-scoped until that older feature is made
 multi-home; the new optimisation path itself is home-scoped end to end.
 Energy Dashboard devices now retain stable home-local identities, suggested
-four-class load characteristics, editable customer/staff overrides, compact
-15-minute history, and individual forecast/actual graph series. The first
-profile is a recent weekday/weekend trimmed mean. Temperature bins and
+four-class load characteristics, editable customer/staff planning roles and
+control types, and compact 15-minute history. Only controllable devices appear
+as individual forecast/actual graph series; all others remain in measured base
+load. The first profile is a recent weekday/weekend trimmed mean. Temperature bins and
 time-since-start startup fitting for material inverter loads remain the next
 accuracy increment; the current implementation does not claim those inputs yet.
 
@@ -408,9 +419,9 @@ The integration owns:
   price series regardless of whether the source uses attributes or service
   responses;
 - live measurements and state required to seed every stateful device;
-- calculation of residual base load after subtracting every complete empirical
-  Energy Dashboard device series, with those device profiles added back exactly
-  once by the planner;
+- calculation of empirical base load after subtracting only complete device
+  series classified as controllable, with those profiles added back exactly
+  once by the planner and all non-controllable device use left in base load;
 - contract validation, units, UTC timestamp conversion, and source freshness;
 - request idempotency, plan polling/refresh, local storage, expiry, and model
   version compatibility;

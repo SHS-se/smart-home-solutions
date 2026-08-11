@@ -20,9 +20,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
 import {
+  effectiveControlType,
+  effectivePlanningRole,
   isOptimisationPlan,
   type ActualEnergySlot,
-  type OptimisationPlanV4,
+  type OptimisationPlanV5,
 } from '@/lib/energy-shift/contracts';
 import { createWebsiteDemoActuals, createWebsiteDemoPlan } from '@/lib/energy-shift/demo';
 import { comparePlans, formatSigned } from '@/lib/energy-shift/plan-comparison';
@@ -37,7 +39,7 @@ interface LoadShiftTabProps {
 }
 
 interface CurrentRow {
-  plan: OptimisationPlanV4;
+  plan: OptimisationPlanV5;
   captured_at: string;
   updated_at: string;
 }
@@ -143,7 +145,7 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, account
           .order('created_at', { ascending: false }),
         supabase
           .from('energy_optimisation_devices')
-          .select('id, device_key, statistic_id, name, category, suggested_load_type, load_type_override, active_power_w, profile_sample_count, last_seen_at')
+          .select('id, device_key, statistic_id, name, category, suggested_load_type, load_type_override, suggested_planning_role, planning_role_override, suggested_control_type, control_type_override, active_power_w, profile_sample_count, last_seen_at')
           .eq('customer_id', customerId)
           .eq('home_id', homeId)
           .order('name'),
@@ -397,7 +399,7 @@ const PlanView: React.FC<{
   const seriesByKey: Record<Exclude<PlanChartSeriesKey, `device:${string}`>, PlanChartSeries> = {
     pv: { key: 'pv', label: t('Kalibrerad solprognos', 'Calibrated PV'), color: COLORS.pv },
     pvRaw: { key: 'pvRaw', label: t('Rå solprognos', 'Raw PV'), color: COLORS.pvRaw },
-    base: { key: 'base', label: t('Återstående baslast', 'Residual base load'), color: COLORS.base },
+    base: { key: 'base', label: t('Baslast', 'Base load'), color: COLORS.base },
     boiler: { key: 'boiler', label: t('Förväntat varmvatten', 'Expected hot water'), color: COLORS.boiler },
     pool: { key: 'pool', label: t('Pool', 'Pool'), color: COLORS.pool },
     ev: { key: 'ev', label: t('Bil', 'EV'), color: COLORS.ev },
@@ -409,20 +411,24 @@ const PlanView: React.FC<{
   const deviceSeries: PlanChartSeries[] = plan.device_models.map((model, index) => ({
     key: `device:${model.key}`,
     dataKey: `device${index}`,
-    label: `${model.name} · ${model.load_type.replace(/_/g, ' ')}`,
+    label: `${model.name} · ${model.control_type.replace(/_/g, ' ')}`,
     color: DEVICE_COLORS[index % DEVICE_COLORS.length],
   }));
+  const representedCategories = new Set(plan.device_models.map(model => model.category));
+  const showBoilerAggregate = plan.capabilities.boiler && !representedCategories.has('hot_water');
+  const showPoolAggregate = plan.capabilities.pool && !representedCategories.has('pool_heating');
+  const showEvAggregate = plan.capabilities.ev && !representedCategories.has('ev_charging');
   const planChartSeries: PlanChartSeries[] = [
     ...(hasPv ? [seriesByKey.pv, seriesByKey.pvRaw] : []),
     seriesByKey.base,
-    ...(plan.capabilities.boiler ? [seriesByKey.boiler] : []),
-    ...(plan.capabilities.pool ? [seriesByKey.pool] : []),
-    ...(plan.capabilities.ev ? [seriesByKey.ev] : []),
+    ...(showBoilerAggregate ? [seriesByKey.boiler] : []),
+    ...(showPoolAggregate ? [seriesByKey.pool] : []),
+    ...(showEvAggregate ? [seriesByKey.ev] : []),
+    ...deviceSeries,
     ...(hasVariableEv ? [seriesByKey.evCurrent] : []),
     seriesByKey.gridImport,
     seriesByKey.gridExport,
     ...(hasBattery ? [seriesByKey.soc] : []),
-    ...deviceSeries,
   ];
   const seriesVisible = (key: PlanChartSeriesKey) => !hiddenSeries.has(key);
   const toggleSeries = (key: PlanChartSeriesKey) => {
@@ -578,11 +584,11 @@ const PlanView: React.FC<{
               {hasPv && seriesVisible('pv') && <Area yAxisId="power" type="monotone" dataKey="pv" name={seriesByKey.pv.label} stroke={COLORS.pv} fill={COLORS.pv} fillOpacity={0.14} dot={false} />}
               {hasPv && seriesVisible('pvRaw') && <Line yAxisId="power" type="monotone" dataKey="pvRaw" name={seriesByKey.pvRaw.label} stroke={COLORS.pvRaw} strokeDasharray="4 3" dot={false} />}
               {seriesVisible('base') && <Area yAxisId="power" type="step" dataKey="base" stackId="load" name={seriesByKey.base.label} fill={COLORS.base} strokeWidth={0} />}
-              {plan.capabilities.boiler && seriesVisible('boiler') && <Area yAxisId="power" type="step" dataKey="boiler" stackId="load" name={seriesByKey.boiler.label} fill={COLORS.boiler} strokeWidth={0} />}
-              {plan.capabilities.pool && seriesVisible('pool') && <Area yAxisId="power" type="step" dataKey="pool" stackId="load" name={seriesByKey.pool.label} fill={COLORS.pool} strokeWidth={0} />}
-              {plan.capabilities.ev && seriesVisible('ev') && <Area yAxisId="power" type="step" dataKey="ev" stackId="load" name={seriesByKey.ev.label} fill={COLORS.ev} strokeWidth={0} />}
+              {showBoilerAggregate && seriesVisible('boiler') && <Area yAxisId="power" type="step" dataKey="boiler" stackId="load" name={seriesByKey.boiler.label} fill={COLORS.boiler} strokeWidth={0} />}
+              {showPoolAggregate && seriesVisible('pool') && <Area yAxisId="power" type="step" dataKey="pool" stackId="load" name={seriesByKey.pool.label} fill={COLORS.pool} strokeWidth={0} />}
+              {showEvAggregate && seriesVisible('ev') && <Area yAxisId="power" type="step" dataKey="ev" stackId="load" name={seriesByKey.ev.label} fill={COLORS.ev} strokeWidth={0} />}
               {deviceSeries.map(series => seriesVisible(series.key) && (
-                <Line key={series.key} yAxisId="power" type="stepAfter" dataKey={series.dataKey} name={series.label} stroke={series.color} strokeWidth={1.5} strokeDasharray="3 2" dot={false} connectNulls={false} />
+                <Area key={series.key} yAxisId="power" type="step" dataKey={series.dataKey} stackId="load" name={series.label} fill={series.color} stroke={series.color} fillOpacity={0.65} strokeWidth={1} />
               ))}
               {hasVariableEv && seriesVisible('evCurrent') && <Line yAxisId="current" type="stepAfter" dataKey="evCurrent" name={seriesByKey.evCurrent.label} stroke={COLORS.evCurrent} strokeWidth={2} dot={false} />}
               {seriesVisible('gridImport') && <Line yAxisId="power" type="step" dataKey="gridImport" name={seriesByKey.gridImport.label} stroke={COLORS.import} dot={false} />}
@@ -598,7 +604,7 @@ const PlanView: React.FC<{
             ariaLabel={t('Diagramserier', 'Chart series')}
           />
           <p className="mt-2 text-xs text-muted-foreground">
-            {t('Välj en serie i teckenförklaringen för att visa eller dölja den. Streckade enhetslinjer är empiriska delserier som räknas separat från den återstående baslasten. Skuggat område är rådgivande eftersom båda prisserierna inte längre är publicerade.', 'Select any legend series to show or hide it. Dashed device lines are empirical components counted separately from the residual base load. The shaded interval is advisory because both price series are no longer published.')}
+            {t('Välj en serie i teckenförklaringen för att visa eller dölja den. Baslasten innehåller alla enheter som inte är markerade som styrbara. Styrbara enheter visas separat och räknas inte en gång till i baslasten. Skuggat område är rådgivande eftersom båda prisserierna inte längre är publicerade.', 'Select any legend series to show or hide it. Base load contains every device not marked controllable. Controllable devices are shown separately and are not counted again in base load. The shaded interval is advisory because both price series are no longer published.')}
           </p>
         </CardContent>
       </Card>
@@ -688,6 +694,10 @@ const ActualPerformance: React.FC<{
 }> = ({ actuals, devices, deviceActuals }) => {
   const { t } = useLanguage();
   const [hidden, setHidden] = useState<Set<ActualSeriesKey>>(() => new Set());
+  const controllableDevices = useMemo(
+    () => devices.filter(device => effectivePlanningRole(device) === 'controllable'),
+    [devices],
+  );
   const actualByDeviceAndStart = useMemo(() => {
     const rows = new Map<string, number>();
     for (const slot of deviceActuals) {
@@ -706,11 +716,11 @@ const ActualPerformance: React.FC<{
     gridExport: slot.grid_export_kwh == null ? null : slot.grid_export_kwh * 4_000,
     batteryCharge: slot.battery_charge_kwh == null ? null : slot.battery_charge_kwh * 4_000,
     batteryDischarge: slot.battery_discharge_kwh == null ? null : slot.battery_discharge_kwh * 4_000,
-    ...Object.fromEntries(devices.map((device, deviceIndex) => [
+    ...Object.fromEntries(controllableDevices.map((device, deviceIndex) => [
       `device${deviceIndex}`,
       actualByDeviceAndStart.get(`${device.id}:${slot.start_ts}`) ?? null,
     ])),
-  })), [actualByDeviceAndStart, actuals, devices]);
+  })), [actualByDeviceAndStart, actuals, controllableDevices]);
   const ticks = data.filter((_, index) => index % 12 === 0).map(value => value.i);
   const series = [
     { key: 'load' as const, label: t('Faktisk last', 'Actual load'), color: COLORS.actual },
@@ -719,10 +729,10 @@ const ActualPerformance: React.FC<{
     { key: 'gridExport' as const, label: t('Faktisk export', 'Actual export'), color: COLORS.export },
     { key: 'batteryCharge' as const, label: t('Faktisk batteriladdning', 'Actual battery charge'), color: COLORS.batteryCharge },
     { key: 'batteryDischarge' as const, label: t('Faktisk batteriurladdning', 'Actual battery discharge'), color: COLORS.batteryDischarge },
-    ...devices.map((device, index) => ({
+    ...controllableDevices.map((device, index) => ({
       key: `device:${device.id}` as const,
       dataKey: `device${index}`,
-      label: device.name,
+      label: `${device.name} · ${effectiveControlType(device)?.replace(/_/g, ' ')}`,
       color: DEVICE_COLORS[index % DEVICE_COLORS.length],
     })),
   ];
@@ -783,7 +793,7 @@ const ActualPerformance: React.FC<{
 
 const SourceRow: React.FC<{
   name: string;
-  source: NonNullable<OptimisationPlanV4['sources'][keyof OptimisationPlanV4['sources']]>;
+  source: NonNullable<OptimisationPlanV5['sources'][keyof OptimisationPlanV5['sources']]>;
 }> = ({ name, source }) => (
   <div className="grid grid-cols-1 gap-x-4 gap-y-0.5 md:grid-cols-[140px_180px_1fr]">
     <div className="font-medium capitalize">{name}</div>

@@ -1,8 +1,8 @@
 import {
   generateOptimisationPlan,
-  type OptimisationSnapshotV4,
+  type OptimisationSnapshotV5,
 } from '../../../supabase/functions/_shared/energy-optimisation';
-import type { ActualEnergySlot, OptimisationPlanV4 } from './contracts';
+import type { ActualEnergySlot, OptimisationPlanV5 } from './contracts';
 
 const SLOT_MS = 15 * 60_000;
 const SLOT_HOURS = 0.25;
@@ -45,7 +45,7 @@ const demoShape = (start: Date, index: number) => {
  * Build the promotional scenario entirely in the browser. It is never sent to
  * Supabase and deliberately has no customer, home, or Home Assistant identity.
  */
-export function createWebsiteDemoPlan(now = Date.now()): OptimisationPlanV4 {
+export function createWebsiteDemoPlan(now = Date.now()): OptimisationPlanV5 {
   const captured = new Date(now);
   const firstStart = quarterStart(now);
   const slots = Array.from({ length: DEMO_SLOT_COUNT }, (_, index) => {
@@ -78,7 +78,7 @@ export function createWebsiteDemoPlan(now = Date.now()): OptimisationPlanV4 {
       ? Math.round(610 + 260 * Math.sin(index * 0.27) ** 2)
       : 8;
   });
-  const services: OptimisationSnapshotV4['services'] = [];
+  const services: OptimisationSnapshotV5['services'] = [];
   for (const dayStart of [0, 96, 192]) {
     const dayEnd = Math.min(dayStart + 96, slots.length);
     services.push(
@@ -143,8 +143,8 @@ export function createWebsiteDemoPlan(now = Date.now()): OptimisationPlanV4 {
     quality,
     ...(location ? { location } : {}),
   });
-  const snapshot: OptimisationSnapshotV4 = {
-    schema_version: 4,
+  const snapshot: OptimisationSnapshotV5 = {
+    schema_version: 5,
     mode: 'live',
     capabilities: { pv: true, battery: true, pool: true, boiler: true, ev: true },
     snapshot_id: '00000000-0000-4000-8000-000000000099',
@@ -195,6 +195,8 @@ export function createWebsiteDemoPlan(now = Date.now()): OptimisationPlanV4 {
         category: 'hot_water',
         suggested_load_type: 'duty_cycle',
         load_type: 'duty_cycle',
+        planning_role: 'controllable',
+        control_type: 'permit_inhibit',
         active_power_w: 3_050,
         profile_sample_count: 1_920,
         forecast_w_by_slot: boilerForecastW,
@@ -206,6 +208,8 @@ export function createWebsiteDemoPlan(now = Date.now()): OptimisationPlanV4 {
         category: 'cooling',
         suggested_load_type: 'inverter',
         load_type: 'inverter',
+        planning_role: 'controllable',
+        control_type: 'variable_power',
         active_power_w: 910,
         profile_sample_count: 1_920,
         forecast_w_by_slot: airconForecastW,
@@ -226,7 +230,7 @@ export function createWebsiteDemoPlan(now = Date.now()): OptimisationPlanV4 {
         ? null
         : { ...value, provider: 'Built-in website example', quality: 'synthetic' as const },
     ]),
-  ) as OptimisationPlanV4['sources'];
+  ) as OptimisationPlanV5['sources'];
   return {
     ...generated,
     mode: 'demo',

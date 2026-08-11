@@ -1989,6 +1989,7 @@ export type Database = {
         Row: {
           active_power_w: number | null
           category: string
+          control_type_override: string | null
           customer_id: string
           device_key: string
           device_token_id: string | null
@@ -1999,13 +2000,17 @@ export type Database = {
           last_seen_at: string
           load_type_override: string | null
           name: string
+          planning_role_override: string | null
           profile_sample_count: number
           statistic_id: string
+          suggested_control_type: string | null
           suggested_load_type: string
+          suggested_planning_role: string
         }
         Insert: {
           active_power_w?: number | null
           category: string
+          control_type_override?: string | null
           customer_id: string
           device_key: string
           device_token_id?: string | null
@@ -2016,13 +2021,17 @@ export type Database = {
           last_seen_at?: string
           load_type_override?: string | null
           name: string
+          planning_role_override?: string | null
           profile_sample_count?: number
           statistic_id: string
+          suggested_control_type?: string | null
           suggested_load_type: string
+          suggested_planning_role?: string
         }
         Update: {
           active_power_w?: number | null
           category?: string
+          control_type_override?: string | null
           customer_id?: string
           device_key?: string
           device_token_id?: string | null
@@ -2033,9 +2042,12 @@ export type Database = {
           last_seen_at?: string
           load_type_override?: string | null
           name?: string
+          planning_role_override?: string | null
           profile_sample_count?: number
           statistic_id?: string
+          suggested_control_type?: string | null
           suggested_load_type?: string
+          suggested_planning_role?: string
         }
         Relationships: [
           {
@@ -4570,6 +4582,14 @@ export type Database = {
       }
       set_energy_device_load_type: {
         Args: { p_device_id: string; p_load_type: string | null }
+        Returns: Database["public"]["Tables"]["energy_optimisation_devices"]["Row"]
+      }
+      set_energy_device_planning: {
+        Args: {
+          p_control_type: string | null
+          p_device_id: string
+          p_planning_role: string | null
+        }
         Returns: Database["public"]["Tables"]["energy_optimisation_devices"]["Row"]
       }
       set_energy_tariff_settings: {

@@ -1,6 +1,6 @@
 import {
   generateOptimisationPlan,
-  type OptimisationSnapshotV4,
+  type OptimisationSnapshotV5,
   validateSnapshot,
 } from "./energy-optimisation.ts";
 
@@ -12,8 +12,8 @@ const assert: (condition: boolean, message: string) => asserts condition = (
 };
 
 const input = (
-  overrides: Partial<OptimisationSnapshotV4> = {},
-): OptimisationSnapshotV4 => {
+  overrides: Partial<OptimisationSnapshotV5> = {},
+): OptimisationSnapshotV5 => {
   const start = Date.parse("2026-08-10T08:00:00.000Z");
   const slots = Array.from({ length: 64 }, (_, index) => ({
     start: new Date(start + index * 15 * 60_000).toISOString(),
@@ -25,7 +25,7 @@ const input = (
     export_price_sek_per_kwh: index < 20 ? 0.2 + index / 200 : null,
   }));
   return {
-    schema_version: 4,
+    schema_version: 5,
     mode: "live",
     capabilities: {
       pv: true,
@@ -245,6 +245,8 @@ Deno.test("empirical device forecasts participate in the energy balance", () => 
     category: "appliances",
     suggested_load_type: "duty_cycle",
     load_type: "duty_cycle",
+    planning_role: "controllable",
+    control_type: "permit_inhibit",
     active_power_w: 120,
     profile_sample_count: 960,
     forecast_w_by_slot: snapshot.slots.map(() => 800),
@@ -276,6 +278,8 @@ Deno.test("a controlled empirical device is replaced rather than double counted"
     category: "hot_water",
     suggested_load_type: "duty_cycle",
     load_type: "duty_cycle",
+    planning_role: "controllable",
+    control_type: "permit_inhibit",
     active_power_w: 3_100,
     profile_sample_count: 1_920,
     forecast_w_by_slot: snapshot.slots.map(() => 350),
@@ -295,6 +299,31 @@ Deno.test("a controlled empirical device is replaced rather than double counted"
       "controlled empirical device was counted twice",
     );
   }
+});
+
+Deno.test("snapshot device series must be explicitly controllable", () => {
+  const snapshot = input();
+  snapshot.device_models = [{
+    key: "reviewed-load",
+    name: "Reviewed load",
+    statistic_id: "sensor.reviewed_load_energy",
+    category: "household",
+    suggested_load_type: "variable_full_load",
+    load_type: "variable_full_load",
+    planning_role: "controllable",
+    control_type: "switch_schedule",
+    active_power_w: 1_000,
+    profile_sample_count: 960,
+    forecast_w_by_slot: snapshot.slots.map(() => 250),
+  }];
+  assert(validateSnapshot(snapshot).length === 0, "controllable model was rejected");
+
+  (snapshot.device_models[0] as unknown as { planning_role: string })
+    .planning_role = "base_load";
+  assert(
+    validateSnapshot(snapshot).some((error) => error.includes("device_models[0]")),
+    "base-load device leaked into the explicit model list",
+  );
 });
 
 Deno.test("EV charging is planned as valid discrete current setpoints", () => {
@@ -340,7 +369,7 @@ Deno.test("EV charging is planned as valid discrete current setpoints", () => {
     snapshot,
     new Date("2026-08-10T07:55:00Z"),
   );
-  assert(result.schema_version === 4, "wrong plan schema");
+  assert(result.schema_version === 5, "wrong plan schema");
   assert(result.status === "ready", "feasible EV plan was rejected");
   for (const plan of Object.values(result.plans)) {
     const positive = plan.slots.filter((slot) => slot.ev_target_current_a > 0);
@@ -563,12 +592,12 @@ Deno.test("stale snapshots and unpriced first slots fail closed", () => {
 Deno.test("ingestion snapshots are live and never synthetic", () => {
   const demo = input() as unknown as {
     mode: string;
-    sources: OptimisationSnapshotV4["sources"];
+    sources: OptimisationSnapshotV5["sources"];
   };
   demo.mode = "demo";
   demo.sources.base_load.quality = "synthetic";
 
-  const errors = validateSnapshot(demo as OptimisationSnapshotV4);
+  const errors = validateSnapshot(demo as OptimisationSnapshotV5);
   assert(errors.includes("mode must be live"), "demo snapshot was accepted");
   assert(
     errors.some((error) => error.includes("sources.base_load is incomplete")),

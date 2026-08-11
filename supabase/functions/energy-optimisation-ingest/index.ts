@@ -9,9 +9,11 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { authenticateDevice, sha256Hex } from "../_shared/ha-device-auth.ts";
 import {
+  type DeviceControlType,
   type DeviceLoadType,
+  type DevicePlanningRole,
   generateOptimisationPlan,
-  type OptimisationSnapshotV4,
+  type OptimisationSnapshotV5,
 } from "../_shared/energy-optimisation.ts";
 
 const corsHeaders = {
@@ -48,6 +50,8 @@ interface IncomingDevice {
   name: string;
   category: string;
   suggested_load_type: DeviceLoadType;
+  suggested_planning_role: DevicePlanningRole;
+  suggested_control_type: DeviceControlType | null;
   active_power_w: number | null;
   profile_sample_count: number;
   inference: Record<string, unknown>;
@@ -56,7 +60,16 @@ interface IncomingDevice {
 interface StoredDevice extends IncomingDevice {
   id: string;
   load_type_override: DeviceLoadType | null;
+  planning_role_override: DevicePlanningRole | null;
+  control_type_override: DeviceControlType | null;
 }
+
+const effectivePlanning = (device: StoredDevice) => ({
+  planning_role: device.planning_role_override ?? device.suggested_planning_role,
+  control_type: device.planning_role_override === null
+    ? device.suggested_control_type
+    : device.control_type_override,
+});
 
 const ENERGY_FIELDS = [
   "total_load_kwh",
@@ -99,6 +112,8 @@ const compactPlanSummary = (
     category: model.category,
     suggested_load_type: model.suggested_load_type,
     load_type: model.load_type,
+    planning_role: model.planning_role,
+    control_type: model.control_type,
     active_power_w: model.active_power_w,
     profile_sample_count: model.profile_sample_count,
   })),
@@ -136,7 +151,7 @@ serve(async (req) => {
 
     let actuals: IncomingActualSlot[] = [];
     let devices: IncomingDevice[] = [];
-    let snapshot: OptimisationSnapshotV4 | null = null;
+    let snapshot: OptimisationSnapshotV5 | null = null;
     try {
       const declaredLength = Number(req.headers.get("content-length") ?? 0);
       if (declaredLength > MAX_REQUEST_BYTES) {
@@ -184,6 +199,17 @@ serve(async (req) => {
       "duty_cycle",
       "inverter",
     ]);
+    const planningRoles = new Set<DevicePlanningRole>([
+      "base_load",
+      "controllable",
+    ]);
+    const controlTypes = new Set<DeviceControlType>([
+      "switch_schedule",
+      "variable_power",
+      "permit_inhibit",
+      "setpoint",
+      "current_limit",
+    ]);
     const deviceCategories = new Set([
       "heating",
       "hot_water",
@@ -204,6 +230,10 @@ serve(async (req) => {
         typeof device.name !== "string" || device.name.length < 1 ||
         device.name.length > 255 || !deviceCategories.has(device.category) ||
         !loadTypes.has(device.suggested_load_type) ||
+        !planningRoles.has(device.suggested_planning_role) ||
+        (device.suggested_planning_role === "base_load"
+          ? device.suggested_control_type !== null
+          : !controlTypes.has(device.suggested_control_type as DeviceControlType)) ||
         (device.active_power_w !== null &&
           (typeof device.active_power_w !== "number" ||
             !Number.isFinite(device.active_power_w) ||
@@ -227,6 +257,8 @@ serve(async (req) => {
         name: device.name,
         category: device.category,
         suggested_load_type: device.suggested_load_type,
+        suggested_planning_role: device.suggested_planning_role,
+        suggested_control_type: device.suggested_control_type,
         active_power_w: device.active_power_w,
         profile_sample_count: device.profile_sample_count,
         inference: device.inference,
@@ -241,7 +273,7 @@ serve(async (req) => {
         .from("energy_optimisation_devices")
         .upsert(deviceRows, { onConflict: "home_id,device_key" })
         .select(
-          "id, device_key, statistic_id, name, category, suggested_load_type, load_type_override, active_power_w, profile_sample_count, inference",
+          "id, device_key, statistic_id, name, category, suggested_load_type, load_type_override, suggested_planning_role, planning_role_override, suggested_control_type, control_type_override, active_power_w, profile_sample_count, inference",
         );
       if (error) {
         console.error("[ENERGY-OPTIMISATION] device upsert failed", error);
@@ -255,6 +287,10 @@ serve(async (req) => {
         category: row.category,
         suggested_load_type: row.suggested_load_type,
         load_type_override: row.load_type_override,
+        suggested_planning_role: row.suggested_planning_role,
+        planning_role_override: row.planning_role_override,
+        suggested_control_type: row.suggested_control_type,
+        control_type_override: row.control_type_override,
         active_power_w: row.active_power_w === null
           ? null
           : Number(row.active_power_w),
@@ -488,10 +524,11 @@ serve(async (req) => {
         ? actualRows[actualRows.length - 1].start_ts
         : null,
       plan: generated,
-      device_models: storedDevices.map((device) => ({
+      device_configuration: storedDevices.map((device) => ({
         key: device.key,
         suggested_load_type: device.suggested_load_type,
         load_type: device.load_type_override ?? device.suggested_load_type,
+        ...effectivePlanning(device),
       })),
     });
   } catch (error) {
