@@ -23,11 +23,10 @@ import { supabase } from '@/integrations/supabase/client';
 import {
   isOptimisationPlan,
   type ActualEnergySlot,
-  type GeneratedPlan,
   type OptimisationPlanV3,
-  type PlanKey,
 } from '@/lib/energy-shift/contracts';
 import { createWebsiteDemoActuals, createWebsiteDemoPlan } from '@/lib/energy-shift/demo';
+import { comparePlans, formatSigned } from '@/lib/energy-shift/plan-comparison';
 
 interface LoadShiftTabProps {
   customerId?: string;
@@ -63,23 +62,24 @@ const COLORS = {
   batteryDischarge: '#7c3aed',
 };
 
-const PLAN_KEYS: PlanKey[] = ['baseline', 'priority', 'cost'];
+type PlanViewMode = 'planned' | 'unplanned';
+type PlanChartSeriesKey =
+  | 'pv'
+  | 'pvRaw'
+  | 'base'
+  | 'boiler'
+  | 'pool'
+  | 'ev'
+  | 'evCurrent'
+  | 'gridImport'
+  | 'gridExport'
+  | 'soc';
 
-const scenarioFingerprint = (plan: GeneratedPlan) => JSON.stringify({
-  status: plan.status,
-  validationErrors: plan.validation_errors,
-  serviceSlots: plan.service_slots,
-  serviceCurrents: plan.service_currents_a,
-  slots: plan.slots.map(slot => [
-    slot.boiler_w,
-    slot.pool_w,
-    slot.ev_w,
-    slot.ev_target_current_a,
-    slot.battery_soc,
-    slot.grid_import_w,
-    slot.grid_export_w,
-  ]),
-});
+interface PlanChartSeries {
+  key: PlanChartSeriesKey;
+  label: string;
+  color: string;
+}
 
 const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, accountPath }) => {
   const { t } = useLanguage();
@@ -295,11 +295,16 @@ const PlanView: React.FC<{
 }> = ({ current, actuals, stale, isDemo, lastCheckedAt }) => {
   const { t } = useLanguage();
   const { plan } = current;
-  // Home Assistant deliberately executes the priority scenario. Baseline and
-  // cost-led remain read-only comparisons, never website control choices.
-  const active = plan.plans.priority;
-  const scenariosDiffer = useMemo(
-    () => new Set(PLAN_KEYS.map(key => scenarioFingerprint(plan.plans[key]))).size > 1,
+  const [planView, setPlanView] = useState<PlanViewMode>('planned');
+  const [hiddenSeries, setHiddenSeries] = useState<Set<PlanChartSeriesKey>>(
+    () => new Set(),
+  );
+  // Home Assistant executes the priority scenario. Baseline is exposed only
+  // as a counterfactual chart and cannot change local control.
+  const executed = plan.plans.priority;
+  const active = planView === 'planned' ? plan.plans.priority : plan.plans.baseline;
+  const comparison = useMemo(
+    () => comparePlans(plan.plans.priority, plan.plans.baseline),
     [plan],
   );
   const chartData = useMemo(() => active.slots.map((slot, index) => {
@@ -310,8 +315,6 @@ const PlanView: React.FC<{
       pv: slot.pv_w,
       pvRaw: slot.pv_raw_w,
       base: slot.base_w,
-      baseP10: slot.base_p10_w,
-      baseP90: slot.base_p90_w,
       boiler: slot.boiler_w,
       pool: slot.pool_w,
       ev: slot.ev_w,
@@ -331,15 +334,53 @@ const PlanView: React.FC<{
   const hasBattery = plan.capabilities.battery && plan.battery !== null;
   const hasPv = plan.capabilities.pv;
   const hasVariableEv = plan.services.some(service => service.control.type === 'discrete_current');
-  const solarDays = hasBattery ? Object.keys(active.summary.battery_end_of_solar_soc) : [];
   const sourceStale = Object.entries(plan.sources)
     .filter(([, source]) => source !== null && Date.parse(source.valid_until) < Date.now())
     .map(([name]) => name);
   const bindingExpired = Date.now() >= Date.parse(plan.binding_until);
-  const ready = !stale && !bindingExpired && plan.status === 'ready' && active.status === 'ready' && sourceStale.length === 0;
+  const ready = !stale && !bindingExpired && plan.status === 'ready' && executed.status === 'ready' && sourceStale.length === 0;
   const pct = (value: number) => `${(value * 100).toFixed(0)}%`;
   const batterySocLabel = t('Batteri SOC', 'Battery SOC');
   const evCurrentLabel = t('Bilens målström', 'EV target current');
+  const seriesByKey: Record<PlanChartSeriesKey, PlanChartSeries> = {
+    pv: { key: 'pv', label: t('Kalibrerad solprognos', 'Calibrated PV'), color: COLORS.pv },
+    pvRaw: { key: 'pvRaw', label: t('Rå solprognos', 'Raw PV'), color: COLORS.pvRaw },
+    base: { key: 'base', label: t('Baslast', 'Base load'), color: COLORS.base },
+    boiler: { key: 'boiler', label: t('Varmvatten', 'Hot water'), color: COLORS.boiler },
+    pool: { key: 'pool', label: t('Pool', 'Pool'), color: COLORS.pool },
+    ev: { key: 'ev', label: t('Bil', 'EV'), color: COLORS.ev },
+    evCurrent: { key: 'evCurrent', label: evCurrentLabel, color: COLORS.evCurrent },
+    gridImport: { key: 'gridImport', label: t('Importeffekt', 'Grid import'), color: COLORS.import },
+    gridExport: { key: 'gridExport', label: t('Exporteffekt', 'Grid export'), color: COLORS.export },
+    soc: { key: 'soc', label: batterySocLabel, color: COLORS.soc },
+  };
+  const planChartSeries: PlanChartSeries[] = [
+    ...(hasPv ? [seriesByKey.pv, seriesByKey.pvRaw] : []),
+    seriesByKey.base,
+    ...(plan.capabilities.boiler ? [seriesByKey.boiler] : []),
+    ...(plan.capabilities.pool ? [seriesByKey.pool] : []),
+    ...(plan.capabilities.ev ? [seriesByKey.ev] : []),
+    ...(hasVariableEv ? [seriesByKey.evCurrent] : []),
+    seriesByKey.gridImport,
+    seriesByKey.gridExport,
+    ...(hasBattery ? [seriesByKey.soc] : []),
+  ];
+  const seriesVisible = (key: PlanChartSeriesKey) => !hiddenSeries.has(key);
+  const toggleSeries = (key: PlanChartSeriesKey) => {
+    setHiddenSeries(currentHidden => {
+      const next = new Set(currentHidden);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+  const costDelta = comparison.terminalAdjustedCostSekDelta;
+  const costTone = costDelta < -0.005 ? 'good' : costDelta > 0.005 ? 'bad' : undefined;
+  const costMeaning = costDelta < -0.005
+    ? t('uppskattad besparing', 'estimated saving')
+    : costDelta > 0.005
+      ? t('uppskattad merkostnad', 'estimated added cost')
+      : t('ingen uppskattad förändring', 'no estimated change');
 
   return (
     <div className="space-y-6">
@@ -351,7 +392,7 @@ const PlanView: React.FC<{
           </AlertDescription>
         </Alert>
       )}
-      {(!ready || plan.validation_errors.length > 0 || active.validation_errors.length > 0) && (
+      {(!ready || plan.validation_errors.length > 0 || executed.validation_errors.length > 0) && (
         <Alert variant={stale || bindingExpired || sourceStale.length > 0 ? 'destructive' : 'default'}>
           <AlertTriangle className="h-4 w-4" />
           <AlertTitle>
@@ -372,7 +413,7 @@ const PlanView: React.FC<{
               ...(bindingExpired ? [t('Home Assistant utför inte rådgivande, oprissatta pass.', 'Home Assistant does not execute advisory, unpriced slots.')] : []),
               ...sourceStale.map(source => `${source}: valid_until passed`),
               ...plan.validation_errors,
-              ...active.validation_errors,
+              ...executed.validation_errors,
             ].slice(0, 8).join(' · ') || t('Home Assistant använder baskontrollerna tills en giltig plan finns.', 'Home Assistant uses its baseline controllers until a valid plan is available.')}
           </AlertDescription>
         </Alert>
@@ -393,13 +434,56 @@ const PlanView: React.FC<{
               </p>
               {!isDemo && lastCheckedAt && (
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {t('Portalen kontrollerade senast', 'Portal last checked')} {new Date(lastCheckedAt).toLocaleTimeString()} · {t('Home Assistant använder B · Prioritetsordning för styrning', 'Home Assistant uses B · Priority stack for control')}
+                  {t('Portalen kontrollerade senast', 'Portal last checked')} {new Date(lastCheckedAt).toLocaleTimeString()} · {t('Home Assistant använder vyn Med plan för styrning', 'Home Assistant executes the With plan schedule')}
                 </p>
               )}
+            </div>
+            <div className="space-y-1.5 text-right">
+              <div className="flex gap-1" role="group" aria-label={t('Jämför planvyer', 'Compare plan views')}>
+                <Button
+                  size="sm"
+                  variant={planView === 'planned' ? 'default' : 'outline'}
+                  aria-pressed={planView === 'planned'}
+                  onClick={() => setPlanView('planned')}
+                >
+                  {t('Med plan', 'With plan')}
+                </Button>
+                <Button
+                  size="sm"
+                  variant={planView === 'unplanned' ? 'default' : 'outline'}
+                  aria-pressed={planView === 'unplanned'}
+                  onClick={() => setPlanView('unplanned')}
+                >
+                  {t('Utan plan', 'Without plan')}
+                </Button>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                {t('Ändrar bara jämförelsevyn', 'Changes only the comparison view')}
+              </p>
             </div>
           </div>
         </CardHeader>
         <CardContent>
+          <div className="mb-6 grid gap-3 md:grid-cols-3">
+            <DeltaKpi
+              label={t('Förbrukningsskillnad', 'Consumption difference')}
+              value={`${formatSigned(comparison.loadKwhDelta, 1)} kWh`}
+              detail={`${t('Med plan', 'With plan')} ${plan.plans.priority.summary.load_kwh.toFixed(1)} · ${t('utan plan', 'without plan')} ${plan.plans.baseline.summary.load_kwh.toFixed(1)} kWh`}
+            />
+            <DeltaKpi
+              label={t('Skillnad i nätenergi', 'Grid energy difference')}
+              value={`${formatSigned(comparison.gridImportKwhDelta, 1)} kWh`}
+              detail={t('import med plan minus utan plan', 'import with plan minus without plan')}
+              tone={comparison.gridImportKwhDelta < -0.05 ? 'good' : comparison.gridImportKwhDelta > 0.05 ? 'bad' : undefined}
+            />
+            <DeltaKpi
+              label={t('Uppskattad kostnadsskillnad', 'Estimated cost difference')}
+              value={`${formatSigned(costDelta, 2)} SEK`}
+              detail={`${costMeaning} · ${t('inklusive värdet på kvarvarande batteri', 'including remaining battery value')}`}
+              tone={costTone}
+              emphasized
+            />
+          </div>
           <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-6">
             <Kpi label={t('Samma arbetsmängd', 'Equal workload')} value={`${active.summary.flexible_load_kwh.toFixed(1)} kWh`} detail={`${active.summary.service_delivered_kwh.toFixed(1)} / ${active.summary.service_required_kwh.toFixed(1)} kWh`} tone={active.summary.service_delivered_kwh >= active.summary.service_required_kwh ? 'good' : 'bad'} />
             {hasBattery
@@ -416,28 +500,31 @@ const PlanView: React.FC<{
               <CartesianGrid strokeDasharray="3 3" className="stroke-muted" vertical={false} />
               <XAxis dataKey="i" type="number" domain={[0, chartData.length - 1]} ticks={ticks} tickFormatter={index => chartData[index]?.label ?? ''} tick={{ fontSize: 11 }} interval={0} />
               <YAxis yAxisId="power" tick={{ fontSize: 11 }} tickFormatter={watts => `${(watts / 1_000).toFixed(0)}`} label={{ value: 'kW', angle: -90, position: 'insideLeft', fontSize: 11 }} />
-              <YAxis yAxisId="soc" orientation="right" domain={[0, 100]} tick={{ fontSize: 11 }} tickFormatter={value => `${value}%`} />
+              {hasBattery && seriesVisible('soc') && <YAxis yAxisId="soc" orientation="right" domain={[0, 100]} tick={{ fontSize: 11 }} tickFormatter={value => `${value}%`} />}
               <YAxis yAxisId="current" hide domain={[0, 'dataMax + 1']} />
               {bindingIndex < chartData.length && <ReferenceArea yAxisId="power" x1={bindingIndex} x2={chartData.length - 1} fill="currentColor" className="text-muted" fillOpacity={0.24} />}
-              {hasBattery && <ReferenceLine yAxisId="soc" y={plan.policy.battery_end_of_solar_target_soc * 100} stroke={COLORS.soc} strokeDasharray="3 3" strokeOpacity={0.45} />}
-              {hasPv && <Area yAxisId="power" type="monotone" dataKey="pv" name={t('Kalibrerad solprognos', 'Calibrated PV')} stroke={COLORS.pv} fill={COLORS.pv} fillOpacity={0.14} dot={false} />}
-              {hasPv && <Line yAxisId="power" type="monotone" dataKey="pvRaw" name={t('Rå solprognos', 'Raw PV')} stroke={COLORS.pvRaw} strokeDasharray="4 3" dot={false} />}
-              <Area yAxisId="power" type="step" dataKey="base" stackId="load" name={t('Baslast', 'Base load')} fill={COLORS.base} strokeWidth={0} />
-              <Line yAxisId="power" type="step" dataKey="baseP10" name={t('Baslast p10', 'Base load p10')} stroke={COLORS.base} strokeOpacity={0.45} strokeDasharray="2 3" dot={false} />
-              <Line yAxisId="power" type="step" dataKey="baseP90" name={t('Baslast p90', 'Base load p90')} stroke={COLORS.base} strokeOpacity={0.65} strokeDasharray="5 3" dot={false} />
-              <Area yAxisId="power" type="step" dataKey="boiler" stackId="load" name={t('Varmvatten', 'Hot water')} fill={COLORS.boiler} strokeWidth={0} />
-              <Area yAxisId="power" type="step" dataKey="pool" stackId="load" name={t('Pool', 'Pool')} fill={COLORS.pool} strokeWidth={0} />
-              <Area yAxisId="power" type="step" dataKey="ev" stackId="load" name={t('Bil', 'EV')} fill={COLORS.ev} strokeWidth={0} />
-              {hasVariableEv && <Line yAxisId="current" type="stepAfter" dataKey="evCurrent" name={evCurrentLabel} stroke={COLORS.evCurrent} strokeWidth={2} dot={false} />}
-              <Line yAxisId="power" type="step" dataKey="gridImport" name={t('Importeffekt', 'Grid import')} stroke={COLORS.import} dot={false} />
-              <Line yAxisId="power" type="step" dataKey="gridExport" name={t('Exporteffekt', 'Grid export')} stroke={COLORS.export} dot={false} />
-              {hasBattery && <Line yAxisId="soc" type="monotone" dataKey="soc" name={batterySocLabel} stroke={COLORS.soc} strokeWidth={2} dot={false} />}
+              {hasBattery && seriesVisible('soc') && <ReferenceLine yAxisId="soc" y={plan.policy.battery_end_of_solar_target_soc * 100} stroke={COLORS.soc} strokeDasharray="3 3" strokeOpacity={0.45} />}
+              {hasPv && seriesVisible('pv') && <Area yAxisId="power" type="monotone" dataKey="pv" name={seriesByKey.pv.label} stroke={COLORS.pv} fill={COLORS.pv} fillOpacity={0.14} dot={false} />}
+              {hasPv && seriesVisible('pvRaw') && <Line yAxisId="power" type="monotone" dataKey="pvRaw" name={seriesByKey.pvRaw.label} stroke={COLORS.pvRaw} strokeDasharray="4 3" dot={false} />}
+              {seriesVisible('base') && <Area yAxisId="power" type="step" dataKey="base" stackId="load" name={seriesByKey.base.label} fill={COLORS.base} strokeWidth={0} />}
+              {plan.capabilities.boiler && seriesVisible('boiler') && <Area yAxisId="power" type="step" dataKey="boiler" stackId="load" name={seriesByKey.boiler.label} fill={COLORS.boiler} strokeWidth={0} />}
+              {plan.capabilities.pool && seriesVisible('pool') && <Area yAxisId="power" type="step" dataKey="pool" stackId="load" name={seriesByKey.pool.label} fill={COLORS.pool} strokeWidth={0} />}
+              {plan.capabilities.ev && seriesVisible('ev') && <Area yAxisId="power" type="step" dataKey="ev" stackId="load" name={seriesByKey.ev.label} fill={COLORS.ev} strokeWidth={0} />}
+              {hasVariableEv && seriesVisible('evCurrent') && <Line yAxisId="current" type="stepAfter" dataKey="evCurrent" name={seriesByKey.evCurrent.label} stroke={COLORS.evCurrent} strokeWidth={2} dot={false} />}
+              {seriesVisible('gridImport') && <Line yAxisId="power" type="step" dataKey="gridImport" name={seriesByKey.gridImport.label} stroke={COLORS.import} dot={false} />}
+              {seriesVisible('gridExport') && <Line yAxisId="power" type="step" dataKey="gridExport" name={seriesByKey.gridExport.label} stroke={COLORS.export} dot={false} />}
+              {hasBattery && seriesVisible('soc') && <Line yAxisId="soc" type="monotone" dataKey="soc" name={seriesByKey.soc.label} stroke={COLORS.soc} strokeWidth={2} dot={false} />}
               <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} labelFormatter={index => chartData[index as number]?.label ?? ''} formatter={(value, name) => [name === evCurrentLabel ? `${Number(value).toFixed(0)} A` : name === batterySocLabel ? `${Number(value).toFixed(1)}%` : `${(Number(value) / 1_000).toFixed(2)} kW`, name]} />
-              <Legend wrapperStyle={{ fontSize: 12 }} />
             </ComposedChart>
           </ResponsiveContainer>
+          <SeriesToggleLegend
+            series={planChartSeries}
+            hidden={hiddenSeries}
+            onToggle={toggleSeries}
+            ariaLabel={t('Diagramserier', 'Chart series')}
+          />
           <p className="mt-2 text-xs text-muted-foreground">
-            {t('Skuggat område är rådgivande eftersom båda prisserierna inte längre är publicerade.', 'The shaded interval is advisory because both price series are no longer published.')}
+            {t('Välj en serie i teckenförklaringen för att visa eller dölja den. Skuggat område är rådgivande eftersom båda prisserierna inte längre är publicerade.', 'Select any legend series to show or hide it. The shaded interval is advisory because both price series are no longer published.')}
           </p>
         </CardContent>
       </Card>
@@ -460,28 +547,6 @@ const PlanView: React.FC<{
           </ResponsiveContainer>
         </CardContent>
       </Card>
-
-      {scenariosDiffer && <Card>
-        <CardHeader className="pb-3"><CardTitle className="text-base">{t('Jämförbara scenarier', 'Comparable scenarios')}</CardTitle></CardHeader>
-        <CardContent className="space-y-4">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead><tr className="text-xs uppercase tracking-wide text-muted-foreground">
-                <th className="py-2 text-left font-medium">{t('Plan', 'Plan')}</th>
-                <th className="py-2 text-right font-medium">{t('Flexibel last', 'Flexible load')}</th>
-                <th className="py-2 text-right font-medium">{t('Import', 'Import')}</th>
-                <th className="py-2 text-right font-medium">{t('Export', 'Export')}</th>
-                <th className="py-2 text-right font-medium">{t('Terminaljusterad', 'Terminal-adjusted')}</th>
-                {solarDays.map(day => <th key={day} className="py-2 text-right font-medium">SOC {day.slice(5)}</th>)}
-              </tr></thead>
-              <tbody>{PLAN_KEYS.map(key => <PlanRow key={key} plan={plan.plans[key]} selected={key === 'priority'} solarDays={solarDays} />)}</tbody>
-            </table>
-          </div>
-          <p className="text-sm text-muted-foreground">
-            {t('Scenarierna är endast en analysjämförelse. Home Assistant styr alltid enligt B · Prioritetsordning. Alla alternativ levererar samma flexibla energimängd med hela 15-minuterspass och giltiga laddströmssteg.', 'The scenarios are a read-only analysis comparison. Home Assistant always controls according to B · Priority stack. Every alternative delivers the same flexible energy using whole 15-minute slots and valid charger-current steps.')}
-          </p>
-        </CardContent>
-      </Card>}
 
       <Card>
         <CardHeader className="pb-3"><CardTitle className="text-base">{t('Datakällor och kvalitet', 'Data sources and quality')}</CardTitle></CardHeader>
@@ -576,17 +641,6 @@ const ActualPerformance: React.FC<{ actuals: ActualEnergySlot[] }> = ({ actuals 
   );
 };
 
-const PlanRow: React.FC<{ plan: GeneratedPlan; selected: boolean; solarDays: string[] }> = ({ plan, selected, solarDays }) => (
-  <tr className={`border-t ${selected ? 'bg-muted/40' : ''}`}>
-    <td className="py-2">{plan.label} {plan.status !== 'ready' && <Badge variant="destructive" className="ml-1">{plan.status}</Badge>}</td>
-    <td className="text-right tabular-nums">{plan.summary.flexible_load_kwh.toFixed(1)} kWh</td>
-    <td className="text-right tabular-nums">{plan.summary.grid_import_kwh.toFixed(1)}</td>
-    <td className="text-right tabular-nums">{plan.summary.grid_export_kwh.toFixed(1)}</td>
-    <td className="text-right tabular-nums">{plan.summary.terminal_adjusted_cost_sek.toFixed(2)} SEK</td>
-    {solarDays.map(day => <td key={day} className="text-right tabular-nums">{plan.summary.battery_end_of_solar_soc[day] == null ? '—' : `${(plan.summary.battery_end_of_solar_soc[day] * 100).toFixed(0)}%`}</td>)}
-  </tr>
-);
-
 const SourceRow: React.FC<{
   name: string;
   source: NonNullable<OptimisationPlanV3['sources'][keyof OptimisationPlanV3['sources']]>;
@@ -612,6 +666,61 @@ const Kpi: React.FC<{ label: string; value: string; detail: string; tone?: 'good
     <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
     <div className={`mt-1 text-xl font-medium tabular-nums ${tone === 'good' ? 'text-emerald-600 dark:text-emerald-400' : tone === 'bad' ? 'text-rose-600 dark:text-rose-400' : ''}`}>{value}</div>
     <div className="mt-0.5 text-[11px] text-muted-foreground">{detail}</div>
+  </div>
+);
+
+const DeltaKpi: React.FC<{
+  label: string;
+  value: string;
+  detail: string;
+  tone?: 'good' | 'bad';
+  emphasized?: boolean;
+}> = ({ label, value, detail, tone, emphasized = false }) => (
+  <div className={`rounded-lg border p-3 ${
+    tone === 'good'
+      ? 'border-emerald-300 bg-emerald-50/70 dark:border-emerald-800 dark:bg-emerald-950/25'
+      : tone === 'bad'
+        ? 'border-rose-300 bg-rose-50/70 dark:border-rose-800 dark:bg-rose-950/25'
+        : 'bg-muted/20'
+  } ${emphasized ? 'md:ring-1 md:ring-current/10' : ''}`}>
+    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
+    <div className={`mt-1 font-semibold tabular-nums ${emphasized ? 'text-2xl' : 'text-xl'} ${
+      tone === 'good'
+        ? 'text-emerald-700 dark:text-emerald-400'
+        : tone === 'bad'
+          ? 'text-rose-700 dark:text-rose-400'
+          : ''
+    }`}>{value}</div>
+    <div className="mt-0.5 text-[11px] text-muted-foreground">{detail}</div>
+  </div>
+);
+
+const SeriesToggleLegend: React.FC<{
+  series: PlanChartSeries[];
+  hidden: Set<PlanChartSeriesKey>;
+  onToggle: (key: PlanChartSeriesKey) => void;
+  ariaLabel: string;
+}> = ({ series, hidden, onToggle, ariaLabel }) => (
+  <div className="mt-3 flex flex-wrap justify-center gap-x-3 gap-y-2" role="group" aria-label={ariaLabel}>
+    {series.map(item => {
+      const visible = !hidden.has(item.key);
+      return (
+        <button
+          key={item.key}
+          type="button"
+          aria-pressed={visible}
+          onClick={() => onToggle(item.key)}
+          className={`inline-flex items-center gap-1.5 rounded px-1 py-0.5 text-xs transition-opacity hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${visible ? '' : 'opacity-40'}`}
+        >
+          <span
+            className="h-0.5 w-4 rounded-full"
+            style={{ backgroundColor: item.color }}
+            aria-hidden="true"
+          />
+          <span className={visible ? '' : 'line-through'}>{item.label}</span>
+        </button>
+      );
+    })}
   </div>
 );
 

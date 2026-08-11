@@ -175,6 +175,76 @@ The current models should be retained for device physics, scenario replay, and
 counterfactual simulation. They should not be extended into a browser-based
 production scheduler.
 
+### 3.1.1 Plan-facing load model correction
+
+The production planner needs fewer load shapes than the legacy simulator. A
+device's electrical shape is one of four plan-facing classes; thermostat,
+comfort, storage and deadline state remain separate constraints rather than new
+electrical classes.
+
+| Load shape | Electrical forecast while enabled | Typical devices | Initial planner output |
+|---|---|---|---|
+| Fixed full load | One measured active power for 100% of the requested on-time | Resistive element, fixed-speed pump, simple charger | Run/stop window |
+| Variable full load | A measured multi-stage or time-since-start power profile for 100% of the on-time | Dishwasher, washing machine, staged appliance | Start window; local controller owns the non-interruptible cycle |
+| Duty cycle | Rated active power multiplied by an empirical probability/duty profile; an enabled device may draw zero | Water boiler, electric radiator, floor heating | Permit/inhibit window; never a forced-on prediction |
+| Inverter load | Temperature- and time-since-start-conditioned variable power | High-power heat pump or air conditioner | Bounded setpoint/mode advice plus an expected-power profile |
+
+Low-power refrigerators, freezers and similar compressor loads stay in the
+empirical baseload unless their power is material to the connection limit. The
+five simulator implementations remain useful ways to simulate the four shapes;
+they are not five production scheduling contracts.
+
+The current schema-3 boiler representation is incorrect for a
+thermostat-controlled tank. It converts median daily energy into one contiguous
+full-power run, even though the controller cannot demand heat and does not know
+when hot water will be used. The boiler contract must instead:
+
+- remain permitted by default so its own thermostat can maintain service;
+- publish explicit inhibit slots around higher-priority pool, EV or unexpected
+  high-load periods;
+- forecast **expected** electrical power from measured duty behaviour without
+  presenting that estimate as a command;
+- bound consecutive inhibit time and preserve hygiene/manual overrides locally;
+  and
+- expose permit/inhibit separately from expected power so zero predicted watts
+  can never be confused with loss of planner authority.
+
+The same separation is required for every device: `expected_power_w` describes
+the energy balance, while a typed control request describes authority (`run`,
+`permit`, `inhibit`, current, or bounded setpoint). A single `boiler_w` field
+cannot safely carry both meanings.
+
+Home Assistant already has the authoritative device inventory: the Energy
+Dashboard's `device_consumption` entries identify the curated energy statistics.
+The integration should learn compact empirical models from recorder data and
+publish model evidence, not raw state changes:
+
+1. Resolve each Energy Dashboard device to a stable, home-scoped device key and
+   an explicitly reviewed load shape.
+2. Aggregate its recorder energy locally into complete 15-minute device slots.
+   Retain short transition windows locally when fitting startup behaviour.
+3. Fit robust active power, duty probability, time-since-start profile and, for
+   material inverter loads, outdoor-temperature bins. Record sample counts,
+   quantiles, error and the covered date/temperature range.
+4. Upload the compact fitted profile plus recent 15-minute actuals needed for
+   drift and plan-versus-actual reporting. Do not upload per-second samples.
+5. Persist the fitted profile independently of the simulator UI so an imported
+   or integration-learned air-conditioner model cannot disappear when a browser
+   session or preview state is reset.
+
+For the observed inverter air-conditioner shape, the first empirical profile
+should represent the approximately 2.1 kW startup transient separately from the
+roughly 0.6–1.0 kW modulating region, indexed by outdoor temperature and elapsed
+run time. Manufacturer COP/capacity data may constrain the fit, but measured
+electrical power is the source for the plan graph.
+
+This requires one coordinated, fail-fast schema increment across the edge
+planner and `shs_energy`. Schema 3 must not be partially reinterpreted: the
+integration currently validates fixed-power service slots and exposes
+`boiler_w` as a power request. Until both sides support separate forecast and
+control fields, the existing boiler schedule remains shadow-only and must not
+be treated as an accurate duty-cycle command.
+
 ### 3.2 Current `shs_energy` integration
 
 The pre-change integration already mapped `total_increasing` energy sensors to
@@ -208,6 +278,10 @@ weather-conditioned load, or the central reactive allocator. Those remain
 commissioning/product work. The existing daily energy, supplier-cost and tariff
 history tables also remain customer-scoped until that older feature is made
 multi-home; the new optimisation path itself is home-scoped end to end.
+Energy Dashboard device statistics are currently collapsed into the three
+planning categories (`hot_water`, `pool_heating`, and `ev_charging`) before
+upload; individual device profiles and plan series are not yet part of the
+exchange.
 
 ### 3.3 Existing local control
 

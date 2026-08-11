@@ -2,10 +2,17 @@ import type {
   GeneratedPlan,
   OptimisationPlanV3,
   PlanKey,
+  PlanSummary,
   PlannedSlot,
 } from '../../../supabase/functions/_shared/energy-optimisation';
 
-export type { GeneratedPlan, OptimisationPlanV3, PlanKey, PlannedSlot };
+export type {
+  GeneratedPlan,
+  OptimisationPlanV3,
+  PlanKey,
+  PlanSummary,
+  PlannedSlot,
+};
 
 export interface ActualEnergySlot {
   start_ts: string;
