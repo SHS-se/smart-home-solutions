@@ -41,6 +41,21 @@ Deno.test('website example actuals stay bounded to 96 complete quarters', () => 
   );
 });
 
+Deno.test('simple EV customer has only the EV as flexible storage', () => {
+  const plan = createWebsiteDemoPlan(NOW, 'ev_only');
+
+  assertEquals(plan.capabilities.battery, false);
+  assertEquals(plan.battery, null);
+  assertEquals(plan.sources.battery, null);
+  assertEquals(plan.capabilities.boiler, false);
+  assertEquals(plan.capabilities.pool, false);
+  assertEquals(plan.device_models.length, 0);
+  assertEquals(plan.services.length, 1);
+  assertEquals(plan.services[0].device, 'ev');
+  assert(plan.ev_battery !== null, 'EV battery telemetry is missing');
+  assertEquals(plan.thermal_projection?.zones.length, 0);
+});
+
 Deno.test('website example module has no storage client dependency', async () => {
   const source = await Deno.readTextFile(new URL('./demo.ts', import.meta.url));
 

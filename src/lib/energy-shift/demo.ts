@@ -2,7 +2,13 @@ import {
   generateOptimisationPlan,
   type OptimisationSnapshotV5,
 } from '../../../supabase/functions/_shared/energy-optimisation';
-import type { ActualEnergySlot, OptimisationPlanV5 } from './contracts';
+import type {
+  ActualEnergySlot,
+  OptimisationPlanV5,
+  PortalOptimisationPlan,
+  ThermalFixtureSeason,
+} from './contracts';
+import { createSeasonalThermalProjection } from './thermal-fixtures';
 
 const SLOT_MS = 15 * 60_000;
 const SLOT_HOURS = 0.25;
@@ -23,10 +29,24 @@ const localHour = (value: Date) => {
   return hour + minute / 60;
 };
 
-const demoShape = (start: Date, index: number) => {
+const demoShape = (
+  start: Date,
+  index: number,
+  season: ThermalFixtureSeason = 'summer',
+) => {
   const hour = localHour(start);
-  const daylight = Math.max(0, Math.sin(Math.PI * (hour - 5.5) / 15));
-  const pvW = 7_600 * daylight ** 1.75;
+  const solarShape = season === 'winter'
+    ? { dawn: 8, daylightHours: 8, peakW: 2_400 }
+    : season === 'spring' || season === 'ev_only'
+      ? { dawn: 6, daylightHours: 13, peakW: 6_100 }
+      : season === 'autumn'
+        ? { dawn: 7, daylightHours: 11, peakW: 4_400 }
+        : { dawn: 4.5, daylightHours: 17, peakW: 7_900 };
+  const daylight = Math.max(
+    0,
+    Math.sin(Math.PI * (hour - solarShape.dawn) / solarShape.daylightHours),
+  );
+  const pvW = solarShape.peakW * daylight ** 1.75;
   const breakfast = hour >= 6.5 && hour < 9 ? 650 : 0;
   const evening = hour >= 17 && hour < 22 ? 1_050 : 0;
   const texture = 90 * (1 + Math.sin(index * 1.7));
@@ -45,12 +65,15 @@ const demoShape = (start: Date, index: number) => {
  * Build the promotional scenario entirely in the browser. It is never sent to
  * Supabase and deliberately has no customer, home, or Home Assistant identity.
  */
-export function createWebsiteDemoPlan(now = Date.now()): OptimisationPlanV5 {
+export function createWebsiteDemoPlan(
+  now = Date.now(),
+  season: ThermalFixtureSeason = 'winter',
+): PortalOptimisationPlan {
   const captured = new Date(now);
   const firstStart = quarterStart(now);
   const slots = Array.from({ length: DEMO_SLOT_COUNT }, (_, index) => {
     const start = new Date(firstStart + index * SLOT_MS);
-    const shape = demoShape(start, index);
+    const shape = demoShape(start, index, season);
     return {
       start: start.toISOString(),
       pv_forecast_w: Math.round(shape.pvW),
@@ -78,8 +101,9 @@ export function createWebsiteDemoPlan(now = Date.now()): OptimisationPlanV5 {
       ? Math.round(610 + 260 * Math.sin(index * 0.27) ** 2)
       : 8;
   });
+  const advancedHome = season !== 'ev_only';
   const services: OptimisationSnapshotV5['services'] = [];
-  for (const dayStart of [0, 96, 192]) {
+  for (const dayStart of advancedHome ? [0, 96, 192] : []) {
     const dayEnd = Math.min(dayStart + 96, slots.length);
     services.push(
       {
@@ -116,7 +140,7 @@ export function createWebsiteDemoPlan(now = Date.now()): OptimisationPlanV5 {
     device: 'ev',
     earliest_start: at(0),
     deadline: at(64),
-    required_kwh: 12,
+    required_kwh: Number((((0.8 - 0.64) * 75) / 0.94).toFixed(3)),
     control: {
       type: 'discrete_current',
       min_current_a: 5,
@@ -146,7 +170,13 @@ export function createWebsiteDemoPlan(now = Date.now()): OptimisationPlanV5 {
   const snapshot: OptimisationSnapshotV5 = {
     schema_version: 5,
     mode: 'live',
-    capabilities: { pv: true, battery: true, pool: true, boiler: true, ev: true },
+    capabilities: {
+      pv: true,
+      battery: advancedHome,
+      pool: advancedHome,
+      boiler: advancedHome,
+      ev: true,
+    },
     snapshot_id: '00000000-0000-4000-8000-000000000099',
     captured_at: captured.toISOString(),
     timezone: TIMEZONE,
@@ -164,30 +194,52 @@ export function createWebsiteDemoPlan(now = Date.now()): OptimisationPlanV5 {
       export_price: source('Website example', 'demo.export_price', 'provider_raw', {
         market_area: 'SE3',
       }),
-      battery: source('Website example', 'demo.battery', 'measured'),
+      battery: advancedHome
+        ? source('Website example', 'demo.battery', 'measured')
+        : null,
     },
     pv_calibration: {
       correction_factor_by_lead_day: [0.96, 0.93, 0.91, 0.9],
       sample_count_by_lead_day: [42, 38, 31, 24],
     },
-    battery: {
-      capacity_kwh: 13.5,
-      soc: 0.43,
-      min_soc: 0.1,
-      max_soc: 1,
-      charge_max_w: 5_000,
-      discharge_max_w: 5_000,
-      charge_efficiency: 0.95,
-      discharge_efficiency: 0.95,
+    battery: advancedHome
+      ? {
+        capacity_kwh: 13.5,
+        soc: 0.43,
+        min_soc: 0.1,
+        max_soc: 1,
+        charge_max_w: 5_000,
+        discharge_max_w: 5_000,
+        charge_efficiency: 0.95,
+        discharge_efficiency: 0.95,
+      }
+      : null,
+    ev_battery: {
+      name: 'Example EV',
+      connected: true,
+      capacity_kwh: 75,
+      soc: 0.64,
+      departure_target_soc: 0.8,
+      charge_efficiency: 0.94,
+      available_from: at(0),
+      departure: at(64),
+      priority: 3,
+      source_entity_ids: {
+        connected: 'binary_sensor.demo_ev_connected',
+        soc: 'sensor.demo_ev_soc',
+        target_soc: 'number.demo_ev_target_soc',
+        energy_remaining: 'sensor.demo_ev_energy_remaining',
+        charge_current: 'number.demo_ev_charge_current',
+      },
     },
     grid: { import_limit_w: 17_000, export_limit_w: 17_000 },
     policy: {
-      battery_end_of_solar_target_soc: 0.75,
+      battery_end_of_solar_target_soc: advancedHome ? 0.75 : 0,
       battery_target_is_hard: false,
-      terminal_soc_min: 0.2,
-      terminal_energy_value_sek_per_kwh: 1.1,
+      terminal_soc_min: advancedHome ? 0.1 : 0,
+      terminal_energy_value_sek_per_kwh: advancedHome ? 1.1 : 0,
     },
-    device_models: [
+    device_models: advancedHome ? [
       {
         key: 'sensor.demo_water_boiler_energy',
         name: 'Water boiler',
@@ -214,7 +266,7 @@ export function createWebsiteDemoPlan(now = Date.now()): OptimisationPlanV5 {
         profile_sample_count: 1_920,
         forecast_w_by_slot: airconForecastW,
       },
-    ],
+    ] : [],
     services,
     service_requirement_sample_days: {
       hot_water: 21,
@@ -237,6 +289,10 @@ export function createWebsiteDemoPlan(now = Date.now()): OptimisationPlanV5 {
     plan_id: 'website-demo',
     snapshot_id: 'website-demo',
     sources,
+    thermal_projection: createSeasonalThermalProjection(
+      season,
+      firstStart,
+    ),
   };
 }
 

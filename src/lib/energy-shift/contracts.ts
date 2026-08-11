@@ -32,6 +32,44 @@ export interface ActualEnergySlot {
   battery_discharge_kwh: number | null;
 }
 
+export type ThermalFixtureSeason = 'winter' | 'spring' | 'summer' | 'autumn' | 'ev_only';
+
+export interface ThermalZoneProjection {
+  key: string;
+  name: string;
+  control_type: 'switch_schedule' | 'setpoint';
+  load_type: 'duty_cycle' | 'inverter';
+  priority: number;
+  rated_power_w: number;
+  comfort_min_c: number[];
+  target_c: number[];
+  comfort_max_c: number[];
+  planned_temperature_c: number[];
+  unplanned_temperature_c: number[];
+  planned_power_w: number[];
+  unplanned_power_w: number[];
+}
+
+/**
+ * A read-only projection shown beside the electrical plan. It is deliberately
+ * not part of the executable v5 control contract; confirmed models can be
+ * promoted into optimisation only after the visual result has been reviewed.
+ */
+export interface ThermalProjection {
+  source: 'synthetic_season_fixture' | 'home_assistant_history';
+  season: ThermalFixtureSeason | null;
+  slot_minutes: 15;
+  starts: string[];
+  outdoor_temperature_c: number[];
+  planned_total_power_w: number[];
+  unplanned_total_power_w: number[];
+  zones: ThermalZoneProjection[];
+}
+
+export type PortalOptimisationPlan = OptimisationPlanV5 & {
+  thermal_projection?: ThermalProjection;
+};
+
 export interface DevicePlanningConfiguration {
   planning_role_override: DevicePlanningRole;
   control_type_override: DeviceControlType | null;
@@ -45,7 +83,7 @@ export const effectiveControlType = (
   device: DevicePlanningConfiguration,
 ): DeviceControlType | null => device.control_type_override;
 
-export function isOptimisationPlan(value: unknown): value is OptimisationPlanV5 {
+export function isOptimisationPlan(value: unknown): value is PortalOptimisationPlan {
   if (!value || typeof value !== 'object') return false;
   const plan = value as Partial<OptimisationPlanV5>;
   return plan.schema_version === 5

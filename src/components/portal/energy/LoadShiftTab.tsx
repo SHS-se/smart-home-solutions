@@ -25,6 +25,8 @@ import {
   isOptimisationPlan,
   type ActualEnergySlot,
   type OptimisationPlanV5,
+  type PortalOptimisationPlan,
+  type ThermalFixtureSeason,
 } from '@/lib/energy-shift/contracts';
 import { createWebsiteDemoActuals, createWebsiteDemoPlan } from '@/lib/energy-shift/demo';
 import { comparePlans, formatSigned } from '@/lib/energy-shift/plan-comparison';
@@ -43,7 +45,7 @@ interface LoadShiftTabProps {
 }
 
 interface CurrentRow {
-  plan: OptimisationPlanV5;
+  plan: PortalOptimisationPlan;
   captured_at: string;
   updated_at: string;
 }
@@ -74,6 +76,7 @@ const COLORS = {
 };
 
 type PlanViewMode = 'planned' | 'unplanned';
+type PlanningDimension = 'power' | 'thermal' | 'economics' | 'storage';
 type PlanChartSeriesKey =
   | 'pv'
   | 'base'
@@ -82,8 +85,26 @@ type PlanChartSeriesKey =
   | 'ev'
   | 'gridImport'
   | 'gridExport'
-  | 'soc'
   | `device:${string}`;
+type ThermalSeriesKey =
+  | 'outdoor'
+  | 'thermalPower'
+  | `zoneTemperature:${string}`
+  | `zoneTarget:${string}`;
+type EconomicsSeriesKey =
+  | 'importPrice'
+  | 'exportPrice'
+  | 'plannedCost'
+  | 'unplannedCost'
+  | 'costDifference';
+type StorageSeriesKey =
+  | 'homeSoc'
+  | 'homeTarget'
+  | 'homeCharge'
+  | 'homeDischarge'
+  | 'evSoc'
+  | 'evTarget'
+  | 'evCharge';
 
 interface PlanChartSeries {
   key: PlanChartSeriesKey;
@@ -93,6 +114,19 @@ interface PlanChartSeries {
 }
 
 const DEVICE_COLORS = ['#0ea5e9', '#8b5cf6', '#22c55e', '#eab308', '#f97316', '#ec4899', '#06b6d4', '#84cc16'];
+
+const useSeriesVisibility = <T extends string>() => {
+  const [hidden, setHidden] = useState<Set<T>>(() => new Set());
+  const toggle = useCallback((key: T) => {
+    setHidden(current => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+  return { hidden, toggle, visible: (key: T) => !hidden.has(key) };
+};
 
 const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, accountPath }) => {
   const { t } = useLanguage();
@@ -104,6 +138,7 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, account
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<'live' | 'demo'>('live');
+  const [demoSeason, setDemoSeason] = useState<ThermalFixtureSeason>('winter');
   const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
   const [clock, setClock] = useState(Date.now());
 
@@ -199,9 +234,9 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, account
   const demoBucket = Math.floor(clock / (15 * 60_000));
   const demoReferenceTime = demoBucket * 15 * 60_000 + 1;
   const demoCurrent = useMemo<CurrentRow>(() => {
-    const plan = createWebsiteDemoPlan(demoReferenceTime);
+    const plan = createWebsiteDemoPlan(demoReferenceTime, demoSeason);
     return { plan, captured_at: plan.issued_at, updated_at: plan.issued_at };
-  }, [demoReferenceTime]);
+  }, [demoReferenceTime, demoSeason]);
   const demoActuals = useMemo(
     () => createWebsiteDemoActuals(demoReferenceTime),
     [demoReferenceTime],
@@ -320,6 +355,27 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, account
           {t('Exempel', 'Example')}
         </Button>
       </div>
+      {view === 'demo' && (
+        <div className="flex flex-wrap justify-end gap-1" role="group" aria-label={t('Demoperiod', 'Demo season')}>
+          {([
+            ['winter', t('Vinter', 'Winter')],
+            ['spring', t('Vår', 'Spring')],
+            ['summer', t('Sommar', 'Summer')],
+            ['autumn', t('Höst', 'Autumn')],
+            ['ev_only', t('Enkel EV-kund', 'Simple EV customer')],
+          ] as const).map(([season, label]) => (
+            <Button
+              key={season}
+              size="sm"
+              variant={demoSeason === season ? 'secondary' : 'ghost'}
+              aria-pressed={demoSeason === season}
+              onClick={() => setDemoSeason(season)}
+            >
+              {label}
+            </Button>
+          ))}
+        </div>
+      )}
       {content}
       {view === 'live' && customerId && homeId && (
         <EmpiricalDeviceModelsCard
@@ -343,12 +399,11 @@ const PlanView: React.FC<{
   const { t } = useLanguage();
   const { plan } = current;
   const [planView, setPlanView] = useState<PlanViewMode>('planned');
-  const [hiddenSeries, setHiddenSeries] = useState<Set<PlanChartSeriesKey>>(
-    () => new Set(),
-  );
-  const [hiddenPriceSeries, setHiddenPriceSeries] = useState<Set<'importPrice' | 'exportPrice'>>(
-    () => new Set(),
-  );
+  const [dimension, setDimension] = useState<PlanningDimension>('power');
+  const powerVisibility = useSeriesVisibility<PlanChartSeriesKey>();
+  const thermalVisibility = useSeriesVisibility<ThermalSeriesKey>();
+  const economicsVisibility = useSeriesVisibility<EconomicsSeriesKey>();
+  const storageVisibility = useSeriesVisibility<StorageSeriesKey>();
   // Home Assistant executes the priority scenario. Baseline is exposed only
   // as a counterfactual chart and cannot change local control.
   const executed = plan.plans.priority;
@@ -375,7 +430,16 @@ const PlanView: React.FC<{
       boiler: slot.boiler_expected_w,
       pool: slot.pool_w,
       ev: slot.ev_w,
-      soc: slot.battery_soc * 100,
+      homeSoc: slot.battery_soc * 100,
+      homeTarget: plan.policy.battery_end_of_solar_target_soc * 100,
+      evSoc: slot.ev_soc === null ? null : slot.ev_soc * 100,
+      evTarget: plan.ev_battery?.departure_target_soc == null
+        ? null
+        : plan.ev_battery.departure_target_soc * 100,
+      evConnected: slot.ev_connected,
+      homeCharge: slot.battery_charge_w,
+      homeDischarge: slot.battery_discharge_w,
+      evCharge: slot.ev_w,
       gridImport: slot.grid_import_w,
       gridExport: slot.grid_export_w,
       importPrice: slot.import_price_sek_per_kwh,
@@ -385,13 +449,62 @@ const PlanView: React.FC<{
         slot.device_loads_w[model.key] ?? 0,
       ])),
     };
-  }), [active, deviceRoleView]);
+  }), [active, deviceRoleView, plan.ev_battery, plan.policy.battery_end_of_solar_target_soc]);
+  const economicsData = useMemo(() => {
+    let plannedCost = 0;
+    let unplannedCost = 0;
+    let plannedPriced = true;
+    let unplannedPriced = true;
+    return plan.plans.priority.slots.map((slot, index) => {
+      const baseline = plan.plans.baseline.slots[index];
+      if (slot.import_cost_sek === null || slot.export_revenue_sek === null) {
+        plannedPriced = false;
+      } else if (plannedPriced) {
+        plannedCost += slot.import_cost_sek - slot.export_revenue_sek;
+      }
+      if (baseline.import_cost_sek === null || baseline.export_revenue_sek === null) {
+        unplannedPriced = false;
+      } else if (unplannedPriced) {
+        unplannedCost += baseline.import_cost_sek - baseline.export_revenue_sek;
+      }
+      return {
+        i: index,
+        label: new Date(slot.start).toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
+        importPrice: slot.import_price_sek_per_kwh,
+        exportPrice: slot.export_price_sek_per_kwh,
+        plannedCost: plannedPriced ? plannedCost : null,
+        unplannedCost: unplannedPriced ? unplannedCost : null,
+        costDifference: plannedPriced && unplannedPriced
+          ? plannedCost - unplannedCost
+          : null,
+      };
+    });
+  }, [plan]);
+  const thermalProjection = plan.thermal_projection;
+  const thermalData = useMemo(() => thermalProjection?.starts.map((start, index) => ({
+    i: index,
+    label: new Date(start).toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
+    outdoor: thermalProjection.outdoor_temperature_c[index],
+    thermalPower: planView === 'planned'
+      ? thermalProjection.planned_total_power_w[index]
+      : thermalProjection.unplanned_total_power_w[index],
+    ...Object.fromEntries(thermalProjection.zones.flatMap((zone, zoneIndex) => [
+      [
+        `zoneTemperature${zoneIndex}`,
+        planView === 'planned'
+          ? zone.planned_temperature_c[index]
+          : zone.unplanned_temperature_c[index],
+      ],
+      [`zoneTarget${zoneIndex}`, zone.target_c[index]],
+    ])),
+  })) ?? [], [planView, thermalProjection]);
   const firstAdvisory = active.slots.findIndex(slot => !slot.binding);
   const bindingIndex = firstAdvisory < 0 ? active.slots.length : firstAdvisory;
   const ticks = active.slots.map((slot, index) => ({ slot, index }))
     .filter(({ slot }) => new Date(slot.start).getMinutes() === 0 && new Date(slot.start).getHours() % 6 === 0)
     .map(({ index }) => index);
   const hasBattery = plan.capabilities.battery && plan.battery !== null;
+  const hasEvBattery = plan.capabilities.ev && plan.ev_battery != null;
   const hasPv = plan.capabilities.pv;
   const sourceStale = Object.entries(plan.sources)
     .filter(([, source]) => source !== null && Date.parse(source.valid_until) < Date.now())
@@ -399,7 +512,6 @@ const PlanView: React.FC<{
   const bindingExpired = Date.now() >= Date.parse(plan.binding_until);
   const ready = !stale && !bindingExpired && plan.status === 'ready' && executed.status === 'ready' && sourceStale.length === 0;
   const pct = (value: number) => `${(value * 100).toFixed(0)}%`;
-  const batterySocLabel = t('Batteri SOC', 'Battery SOC');
   const seriesByKey: Record<Exclude<PlanChartSeriesKey, `device:${string}`>, PlanChartSeries> = {
     pv: { key: 'pv', label: t('Solprognos', 'Solar forecast'), color: COLORS.pv },
     base: { key: 'base', label: t('Baslast', 'Base load'), color: COLORS.base },
@@ -408,7 +520,6 @@ const PlanView: React.FC<{
     ev: { key: 'ev', label: t('Bil', 'EV'), color: COLORS.ev },
     gridImport: { key: 'gridImport', label: t('Importeffekt', 'Grid import'), color: COLORS.import },
     gridExport: { key: 'gridExport', label: t('Exporteffekt', 'Grid export'), color: COLORS.export },
-    soc: { key: 'soc', label: batterySocLabel, color: COLORS.soc },
   };
   const deviceSeries: PlanChartSeries[] = deviceRoleView.visibleModels.map((model, index) => ({
     key: `device:${model.key}`,
@@ -429,29 +540,56 @@ const PlanView: React.FC<{
     ...deviceSeries,
     seriesByKey.gridImport,
     seriesByKey.gridExport,
-    ...(hasBattery ? [seriesByKey.soc] : []),
   ];
-  const seriesVisible = (key: PlanChartSeriesKey) => !hiddenSeries.has(key);
-  const toggleSeries = (key: PlanChartSeriesKey) => {
-    setHiddenSeries(currentHidden => {
-      const next = new Set(currentHidden);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  };
-  const priceSeries = [
-    { key: 'importPrice' as const, label: t('Köpa', 'Import'), color: COLORS.import },
-    { key: 'exportPrice' as const, label: t('Sälja', 'Export'), color: COLORS.export },
+  const thermalSeries = [
+    { key: 'outdoor' as const, label: t('Utomhus', 'Outdoor'), color: '#475569' },
+    { key: 'thermalPower' as const, label: t('Samordnad värmeeffekt', 'Coordinated heat power'), color: '#f97316' },
+    ...(thermalProjection?.zones.flatMap((zone, index) => [
+      {
+        key: `zoneTemperature:${zone.key}` as const,
+        dataKey: `zoneTemperature${index}`,
+        label: `${zone.name} · ${t('temperatur', 'temperature')}`,
+        color: DEVICE_COLORS[index % DEVICE_COLORS.length],
+      },
+      {
+        key: `zoneTarget:${zone.key}` as const,
+        dataKey: `zoneTarget${index}`,
+        label: `${zone.name} · ${t('börvärde', 'target')}`,
+        color: DEVICE_COLORS[index % DEVICE_COLORS.length],
+      },
+    ]) ?? []),
   ];
-  const togglePriceSeries = (key: 'importPrice' | 'exportPrice') => {
-    setHiddenPriceSeries(currentHidden => {
-      const next = new Set(currentHidden);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  };
+  const economicsSeries = [
+    { key: 'importPrice' as const, label: t('Köppris', 'Import price'), color: COLORS.import },
+    { key: 'exportPrice' as const, label: t('Säljpris', 'Export price'), color: COLORS.export },
+    { key: 'plannedCost' as const, label: t('Kumulativ kostnad med plan', 'Cumulative cost with plan'), color: '#2563eb' },
+    { key: 'unplannedCost' as const, label: t('Kumulativ kostnad utan plan', 'Cumulative cost without plan'), color: '#64748b' },
+    { key: 'costDifference' as const, label: t('Kostnadsskillnad', 'Cost difference'), color: '#a855f7' },
+  ];
+  const storageSeries = [
+    ...(hasBattery ? [
+      { key: 'homeSoc' as const, label: t('Hembatteri SOC', 'Home battery SOC'), color: COLORS.soc },
+      { key: 'homeTarget' as const, label: t('Hembatteriets mål', 'Home battery target'), color: '#fb7185' },
+      { key: 'homeCharge' as const, label: t('Batteriladdning', 'Battery charge'), color: COLORS.batteryCharge },
+      { key: 'homeDischarge' as const, label: t('Batteriurladdning', 'Battery discharge'), color: COLORS.batteryDischarge },
+    ] : []),
+    ...(hasEvBattery ? [
+      { key: 'evSoc' as const, label: t('Bilbatteri SOC', 'EV battery SOC'), color: COLORS.ev },
+      { key: 'evTarget' as const, label: t('Bilens avgångsmål', 'EV departure target'), color: '#c084fc' },
+      { key: 'evCharge' as const, label: t('Billaddning', 'EV charge'), color: '#7c3aed' },
+    ] : []),
+  ];
+  const dimensionLabels: Array<{ key: PlanningDimension; label: string }> = [
+    { key: 'power', label: t('Effekt', 'Power') },
+    { key: 'thermal', label: t('Termik', 'Thermal') },
+    { key: 'economics', label: t('Ekonomi', 'Economics') },
+    { key: 'storage', label: t('Lagring', 'Storage') },
+  ];
+  const connectedIndices = chartData
+    .filter(row => row.evConnected)
+    .map(row => row.i);
+  const evConnectedStart = connectedIndices.at(0);
+  const evConnectedEnd = connectedIndices.at(-1);
   const costDelta = comparison.terminalAdjustedCostSekDelta;
   const costTone = costDelta < -0.005 ? 'good' : costDelta > 0.005 ? 'bad' : undefined;
   const costMeaning = costDelta < -0.005
@@ -573,67 +711,164 @@ const PlanView: React.FC<{
             <Kpi label={t('Terminaljusterad', 'Terminal-adjusted')} value={`${active.summary.terminal_adjusted_cost_sek.toFixed(2)} SEK`} detail={t('värderar kvarvarande batteri', 'values remaining battery')} />
           </div>
 
-          <ResponsiveContainer width="100%" height={360}>
-            <ComposedChart data={chartData} margin={{ top: 8, right: 10, left: 0, bottom: 4 }}>
-              <CartesianGrid strokeDasharray="3 3" className="stroke-muted" vertical={false} />
-              <XAxis dataKey="i" type="number" domain={[0, chartData.length - 1]} ticks={ticks} tickFormatter={index => chartData[index]?.label ?? ''} tick={{ fontSize: 11 }} interval={0} />
-              <YAxis yAxisId="power" tick={{ fontSize: 11 }} tickFormatter={watts => `${(watts / 1_000).toFixed(0)}`} label={{ value: 'kW', angle: -90, position: 'insideLeft', fontSize: 11 }} />
-              {hasBattery && seriesVisible('soc') && <YAxis yAxisId="soc" orientation="right" domain={[0, 100]} tick={{ fontSize: 11 }} tickFormatter={value => `${value}%`} />}
-              {bindingIndex < chartData.length && <ReferenceArea yAxisId="power" x1={bindingIndex} x2={chartData.length - 1} fill="currentColor" className="text-muted" fillOpacity={0.24} />}
-              {hasBattery && seriesVisible('soc') && <ReferenceLine yAxisId="soc" y={plan.policy.battery_end_of_solar_target_soc * 100} stroke={COLORS.soc} strokeDasharray="3 3" strokeOpacity={0.45} />}
-              {hasPv && seriesVisible('pv') && <Area yAxisId="power" type="monotone" dataKey="pv" name={seriesByKey.pv.label} stroke={COLORS.pv} fill={COLORS.pv} fillOpacity={0.14} dot={false} />}
-              {seriesVisible('base') && <Area yAxisId="power" type="step" dataKey="base" stackId="load" name={seriesByKey.base.label} fill={COLORS.base} strokeWidth={0} />}
-              {showBoilerAggregate && seriesVisible('boiler') && <Area yAxisId="power" type="step" dataKey="boiler" stackId="load" name={seriesByKey.boiler.label} fill={COLORS.boiler} strokeWidth={0} />}
-              {showPoolAggregate && seriesVisible('pool') && <Area yAxisId="power" type="step" dataKey="pool" stackId="load" name={seriesByKey.pool.label} fill={COLORS.pool} strokeWidth={0} />}
-              {showEvAggregate && seriesVisible('ev') && <Area yAxisId="power" type="step" dataKey="ev" stackId="load" name={seriesByKey.ev.label} fill={COLORS.ev} strokeWidth={0} />}
-              {deviceSeries.map(series => seriesVisible(series.key) && (
-                <Area key={series.key} yAxisId="power" type="step" dataKey={series.dataKey} stackId="load" name={series.label} fill={series.color} stroke={series.color} fillOpacity={0.65} strokeWidth={1} />
-              ))}
-              {seriesVisible('gridImport') && <Line yAxisId="power" type="step" dataKey="gridImport" name={seriesByKey.gridImport.label} stroke={COLORS.import} dot={false} />}
-              {seriesVisible('gridExport') && <Line yAxisId="power" type="step" dataKey="gridExport" name={seriesByKey.gridExport.label} stroke={COLORS.export} dot={false} />}
-              {hasBattery && seriesVisible('soc') && <Line yAxisId="soc" type="monotone" dataKey="soc" name={seriesByKey.soc.label} stroke={COLORS.soc} strokeWidth={2} dot={false} />}
-              <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} labelFormatter={index => chartData[index as number]?.label ?? ''} formatter={(value, name) => [name === batterySocLabel ? `${Number(value).toFixed(1)}%` : `${(Number(value) / 1_000).toFixed(2)} kW`, name]} />
-            </ComposedChart>
-          </ResponsiveContainer>
-          <SeriesToggleLegend
-            series={planChartSeries}
-            hidden={hiddenSeries}
-            onToggle={toggleSeries}
-            ariaLabel={t('Diagramserier', 'Chart series')}
-          />
-          <p className="mt-2 text-xs text-muted-foreground">
-            {t('Välj en serie i teckenförklaringen för att visa eller dölja den. Baslasten innehåller alla enheter som inte är markerade som styrbara. Styrbara enheter visas separat och räknas inte en gång till i baslasten. Skuggat område är rådgivande eftersom båda prisserierna inte längre är publicerade.', 'Select any legend series to show or hide it. Base load contains every device not marked controllable. Controllable devices are shown separately and are not counted again in base load. The shaded interval is advisory because both price series are no longer published.')}
-            {deviceRoleView.requiresPlanRefresh && ` ${t(
-              'Den ändrade enhetsrollen visas direkt; schema- och kostnadsberäkningarna uppdateras vid nästa Home Assistant-plan.',
-              'The changed device role is shown immediately; schedule and cost calculations update with the next Home Assistant plan.',
-            )}`}
-          </p>
+          <div className="mb-3 flex flex-wrap gap-1" role="group" aria-label={t('Planens dimension', 'Plan dimension')}>
+            {dimensionLabels.map(item => (
+              <Button
+                key={item.key}
+                size="sm"
+                variant={dimension === item.key ? 'secondary' : 'ghost'}
+                aria-pressed={dimension === item.key}
+                onClick={() => setDimension(item.key)}
+              >
+                {item.label}
+              </Button>
+            ))}
+          </div>
+
+          {dimension === 'power' && (
+            <>
+              <ResponsiveContainer width="100%" height={360}>
+                <ComposedChart data={chartData} margin={{ top: 8, right: 10, left: 0, bottom: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" vertical={false} />
+                  <XAxis dataKey="i" type="number" domain={[0, chartData.length - 1]} ticks={ticks} tickFormatter={index => chartData[index]?.label ?? ''} tick={{ fontSize: 11 }} interval={0} />
+                  <YAxis yAxisId="power" tick={{ fontSize: 11 }} tickFormatter={watts => `${(Number(watts) / 1_000).toFixed(0)}`} label={{ value: 'kW', angle: -90, position: 'insideLeft', fontSize: 11 }} />
+                  {bindingIndex < chartData.length && <ReferenceArea yAxisId="power" x1={bindingIndex} x2={chartData.length - 1} fill="currentColor" className="text-muted" fillOpacity={0.24} />}
+                  {hasPv && powerVisibility.visible('pv') && <Area yAxisId="power" type="monotone" dataKey="pv" name={seriesByKey.pv.label} stroke={COLORS.pv} fill={COLORS.pv} fillOpacity={0.14} dot={false} />}
+                  {powerVisibility.visible('base') && <Area yAxisId="power" type="step" dataKey="base" stackId="load" name={seriesByKey.base.label} fill={COLORS.base} strokeWidth={0} />}
+                  {showBoilerAggregate && powerVisibility.visible('boiler') && <Area yAxisId="power" type="step" dataKey="boiler" stackId="load" name={seriesByKey.boiler.label} fill={COLORS.boiler} strokeWidth={0} />}
+                  {showPoolAggregate && powerVisibility.visible('pool') && <Area yAxisId="power" type="step" dataKey="pool" stackId="load" name={seriesByKey.pool.label} fill={COLORS.pool} strokeWidth={0} />}
+                  {showEvAggregate && powerVisibility.visible('ev') && <Area yAxisId="power" type="step" dataKey="ev" stackId="load" name={seriesByKey.ev.label} fill={COLORS.ev} strokeWidth={0} />}
+                  {deviceSeries.map(series => powerVisibility.visible(series.key) && (
+                    <Area key={series.key} yAxisId="power" type="step" dataKey={series.dataKey} stackId="load" name={series.label} fill={series.color} stroke={series.color} fillOpacity={0.65} strokeWidth={1} />
+                  ))}
+                  {powerVisibility.visible('gridImport') && <Line yAxisId="power" type="step" dataKey="gridImport" name={seriesByKey.gridImport.label} stroke={COLORS.import} dot={false} />}
+                  {powerVisibility.visible('gridExport') && <Line yAxisId="power" type="step" dataKey="gridExport" name={seriesByKey.gridExport.label} stroke={COLORS.export} dot={false} />}
+                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} labelFormatter={index => chartData[index as number]?.label ?? ''} formatter={(value, name) => [`${(Number(value) / 1_000).toFixed(2)} kW`, name]} />
+                </ComposedChart>
+              </ResponsiveContainer>
+              <SeriesToggleLegend
+                series={planChartSeries}
+                hidden={powerVisibility.hidden}
+                onToggle={powerVisibility.toggle}
+                ariaLabel={t('Effektserier', 'Power series')}
+              />
+              <p className="mt-2 text-xs text-muted-foreground">
+                {t('Baslasten innehåller varje enhet som inte är markerad som styrbar. Styrbara enheter visas separat och räknas inte dubbelt.', 'Base load contains every device not marked controllable. Controllable devices are shown separately and are not double-counted.')}
+                {deviceRoleView.requiresPlanRefresh && ` ${t(
+                  'Den ändrade enhetsrollen visas direkt; schema- och kostnadsberäkningarna uppdateras vid nästa Home Assistant-plan.',
+                  'The changed device role is shown immediately; schedule and cost calculations update with the next Home Assistant plan.',
+                )}`}
+              </p>
+            </>
+          )}
+
+          {dimension === 'thermal' && (thermalProjection && thermalProjection.zones.length > 0 && thermalData.length > 0 ? (
+            <>
+              <ResponsiveContainer width="100%" height={360}>
+                <ComposedChart data={thermalData} margin={{ top: 8, right: 10, left: 0, bottom: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" vertical={false} />
+                  <XAxis dataKey="i" type="number" domain={[0, thermalData.length - 1]} ticks={ticks} tickFormatter={index => thermalData[index]?.label ?? ''} tick={{ fontSize: 11 }} interval={0} />
+                  <YAxis yAxisId="temperature" tick={{ fontSize: 11 }} tickFormatter={value => `${Number(value).toFixed(0)}°`} label={{ value: '°C', angle: -90, position: 'insideLeft', fontSize: 11 }} />
+                  <YAxis yAxisId="power" orientation="right" tick={{ fontSize: 11 }} tickFormatter={value => `${(Number(value) / 1_000).toFixed(1)}`} label={{ value: 'kW', angle: 90, position: 'insideRight', fontSize: 11 }} />
+                  {thermalVisibility.visible('thermalPower') && <Area yAxisId="power" type="step" dataKey="thermalPower" name={thermalSeries[1].label} stroke="#f97316" fill="#f97316" fillOpacity={0.16} dot={false} />}
+                  {thermalVisibility.visible('outdoor') && <Line yAxisId="temperature" type="monotone" dataKey="outdoor" name={thermalSeries[0].label} stroke="#475569" strokeWidth={2} dot={false} />}
+                  {thermalProjection.zones.map((zone, index) => (
+                    <React.Fragment key={zone.key}>
+                      {thermalVisibility.visible(`zoneTemperature:${zone.key}`) && <Line yAxisId="temperature" type="monotone" dataKey={`zoneTemperature${index}`} name={thermalSeries[2 + index * 2].label} stroke={DEVICE_COLORS[index % DEVICE_COLORS.length]} strokeWidth={2} dot={false} />}
+                      {thermalVisibility.visible(`zoneTarget:${zone.key}`) && <Line yAxisId="temperature" type="stepAfter" dataKey={`zoneTarget${index}`} name={thermalSeries[3 + index * 2].label} stroke={DEVICE_COLORS[index % DEVICE_COLORS.length]} strokeDasharray="4 3" strokeOpacity={0.65} dot={false} />}
+                    </React.Fragment>
+                  ))}
+                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} labelFormatter={index => thermalData[index as number]?.label ?? ''} formatter={(value, name) => [name === thermalSeries[1].label ? `${(Number(value) / 1_000).toFixed(2)} kW` : `${Number(value).toFixed(1)} °C`, name]} />
+                </ComposedChart>
+              </ResponsiveContainer>
+              <SeriesToggleLegend
+                series={thermalSeries}
+                hidden={thermalVisibility.hidden}
+                onToggle={thermalVisibility.toggle}
+                ariaLabel={t('Termiska serier', 'Thermal series')}
+              />
+              <p className="mt-2 text-xs text-muted-foreground">
+                {thermalProjection.source === 'synthetic_season_fixture'
+                  ? t('Detta är en 72-timmars skuggprojektion för säsongstest. Den visar samordning och komfort men ingår ännu inte i den körbara planen.', 'This is a 72-hour shadow projection for seasonal testing. It shows coordination and comfort but is not yet part of the executable plan.')
+                  : t('Temperaturprojektionen bygger på bekräftade Home Assistant-bindningar och historik.', 'The temperature projection uses confirmed Home Assistant bindings and history.')}
+              </p>
+            </>
+          ) : (
+            <p className="py-16 text-center text-sm text-muted-foreground">
+              {t('Ingen bekräftad termisk modell har publicerats för detta hem ännu. Effektplanen fortsätter att fungera oförändrad.', 'No confirmed thermal model has been published for this home yet. The electrical plan continues unchanged.')}
+            </p>
+          ))}
+
+          {dimension === 'economics' && (
+            <>
+              <ResponsiveContainer width="100%" height={360}>
+                <ComposedChart data={economicsData} margin={{ top: 8, right: 10, left: 0, bottom: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" vertical={false} />
+                  <XAxis dataKey="i" type="number" domain={[0, economicsData.length - 1]} ticks={ticks} tickFormatter={index => economicsData[index]?.label ?? ''} tick={{ fontSize: 11 }} interval={0} />
+                  <YAxis yAxisId="price" tick={{ fontSize: 11 }} tickFormatter={value => Number(value).toFixed(2)} label={{ value: 'SEK/kWh', angle: -90, position: 'insideLeft', fontSize: 11 }} />
+                  <YAxis yAxisId="cost" orientation="right" tick={{ fontSize: 11 }} tickFormatter={value => Number(value).toFixed(0)} label={{ value: 'SEK', angle: 90, position: 'insideRight', fontSize: 11 }} />
+                  {bindingIndex < economicsData.length && <ReferenceArea yAxisId="price" x1={bindingIndex} x2={economicsData.length - 1} fill="currentColor" className="text-muted" fillOpacity={0.24} />}
+                  {economicsVisibility.visible('importPrice') && <Line yAxisId="price" type="stepAfter" dataKey="importPrice" name={economicsSeries[0].label} stroke={COLORS.import} dot={false} connectNulls={false} />}
+                  {economicsVisibility.visible('exportPrice') && <Line yAxisId="price" type="stepAfter" dataKey="exportPrice" name={economicsSeries[1].label} stroke={COLORS.export} dot={false} connectNulls={false} />}
+                  {economicsVisibility.visible('plannedCost') && <Line yAxisId="cost" type="monotone" dataKey="plannedCost" name={economicsSeries[2].label} stroke="#2563eb" strokeWidth={2} dot={false} connectNulls={false} />}
+                  {economicsVisibility.visible('unplannedCost') && <Line yAxisId="cost" type="monotone" dataKey="unplannedCost" name={economicsSeries[3].label} stroke="#64748b" strokeWidth={2} dot={false} connectNulls={false} />}
+                  {economicsVisibility.visible('costDifference') && <Line yAxisId="cost" type="monotone" dataKey="costDifference" name={economicsSeries[4].label} stroke="#a855f7" strokeDasharray="4 3" dot={false} connectNulls={false} />}
+                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} labelFormatter={index => economicsData[index as number]?.label ?? ''} formatter={(value, name) => [name === economicsSeries[0].label || name === economicsSeries[1].label ? `${Number(value).toFixed(3)} SEK/kWh` : `${Number(value).toFixed(2)} SEK`, name]} />
+                </ComposedChart>
+              </ResponsiveContainer>
+              <SeriesToggleLegend
+                series={economicsSeries}
+                hidden={economicsVisibility.hidden}
+                onToggle={economicsVisibility.toggle}
+                ariaLabel={t('Ekonomiserier', 'Economics series')}
+              />
+              <p className="mt-2 text-xs text-muted-foreground">
+                {t('Priset visas tillsammans med den kostnad det faktiskt skapar i planen. Positiv kostnadsskillnad betyder merkostnad; negativ betyder uppskattad besparing.', 'Price is shown with the cost it actually creates in the plan. A positive cost difference means added cost; a negative value means estimated savings.')}
+              </p>
+            </>
+          )}
+
+          {dimension === 'storage' && (hasBattery || hasEvBattery ? (
+            <>
+              <ResponsiveContainer width="100%" height={360}>
+                <ComposedChart data={chartData} margin={{ top: 8, right: 10, left: 0, bottom: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" vertical={false} />
+                  <XAxis dataKey="i" type="number" domain={[0, chartData.length - 1]} ticks={ticks} tickFormatter={index => chartData[index]?.label ?? ''} tick={{ fontSize: 11 }} interval={0} />
+                  <YAxis yAxisId="power" tick={{ fontSize: 11 }} tickFormatter={value => `${(Number(value) / 1_000).toFixed(1)}`} label={{ value: 'kW', angle: -90, position: 'insideLeft', fontSize: 11 }} />
+                  <YAxis yAxisId="soc" orientation="right" domain={[0, 100]} tick={{ fontSize: 11 }} tickFormatter={value => `${value}%`} />
+                  {evConnectedStart !== undefined && evConnectedEnd !== undefined && <ReferenceArea yAxisId="soc" x1={evConnectedStart} x2={evConnectedEnd + 1} y1={0} y2={100} fill={COLORS.ev} fillOpacity={0.06} />}
+                  {storageVisibility.visible('homeCharge') && <Area yAxisId="power" type="step" dataKey="homeCharge" name={storageSeries.find(item => item.key === 'homeCharge')?.label} fill={COLORS.batteryCharge} stroke={COLORS.batteryCharge} fillOpacity={0.18} dot={false} />}
+                  {storageVisibility.visible('homeDischarge') && <Area yAxisId="power" type="step" dataKey="homeDischarge" name={storageSeries.find(item => item.key === 'homeDischarge')?.label} fill={COLORS.batteryDischarge} stroke={COLORS.batteryDischarge} fillOpacity={0.18} dot={false} />}
+                  {storageVisibility.visible('evCharge') && <Area yAxisId="power" type="step" dataKey="evCharge" name={storageSeries.find(item => item.key === 'evCharge')?.label} fill="#7c3aed" stroke="#7c3aed" fillOpacity={0.12} dot={false} />}
+                  {storageVisibility.visible('homeSoc') && <Line yAxisId="soc" type="monotone" dataKey="homeSoc" name={storageSeries.find(item => item.key === 'homeSoc')?.label} stroke={COLORS.soc} strokeWidth={2} dot={false} />}
+                  {storageVisibility.visible('homeTarget') && <Line yAxisId="soc" type="stepAfter" dataKey="homeTarget" name={storageSeries.find(item => item.key === 'homeTarget')?.label} stroke="#fb7185" strokeDasharray="4 3" dot={false} />}
+                  {storageVisibility.visible('evSoc') && <Line yAxisId="soc" type="monotone" dataKey="evSoc" name={storageSeries.find(item => item.key === 'evSoc')?.label} stroke={COLORS.ev} strokeWidth={2} dot={false} connectNulls={false} />}
+                  {storageVisibility.visible('evTarget') && <Line yAxisId="soc" type="stepAfter" dataKey="evTarget" name={storageSeries.find(item => item.key === 'evTarget')?.label} stroke="#c084fc" strokeDasharray="4 3" dot={false} connectNulls={false} />}
+                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} labelFormatter={index => chartData[index as number]?.label ?? ''} formatter={(value, name) => [String(name).includes('SOC') || String(name).includes(t('mål', 'target')) ? `${Number(value).toFixed(1)}%` : `${(Number(value) / 1_000).toFixed(2)} kW`, name]} />
+                </ComposedChart>
+              </ResponsiveContainer>
+              <SeriesToggleLegend
+                series={storageSeries}
+                hidden={storageVisibility.hidden}
+                onToggle={storageVisibility.toggle}
+                ariaLabel={t('Lagringsserier', 'Storage series')}
+              />
+              <p className="mt-2 text-xs text-muted-foreground">
+                {plan.ev_battery
+                  ? `${plan.ev_battery.name}: ${pct(plan.ev_battery.soc)} → ${pct(plan.ev_battery.departure_target_soc)} · ${plan.ev_battery.capacity_kwh.toFixed(1)} kWh · ${t('prioritet', 'priority')} ${plan.ev_battery.priority} (${t('1 är högst', '1 is highest')})${plan.ev_battery.departure ? ` · ${t('avgång', 'departure')} ${new Date(plan.ev_battery.departure).toLocaleString()}` : ''}. `
+                  : ''}
+                {t('Det skuggade intervallet visar när bilen är ansluten och tillgänglig för planerad laddning.', 'The shaded interval shows when the EV is connected and available for planned charging.')}
+              </p>
+            </>
+          ) : (
+            <p className="py-16 text-center text-sm text-muted-foreground">
+              {t('Detta hem har ingen publicerad batteri- eller EV-modell.', 'This home has no published battery or EV model.')}
+            </p>
+          ))}
         </CardContent>
       </Card>
 
       <ActualPerformance actuals={actuals} devices={empiricalDevices} deviceActuals={deviceActuals} />
-
-      <Card>
-        <CardHeader className="pb-3"><CardTitle className="text-base">{t('Import- och exportpris', 'Import and export prices')}</CardTitle></CardHeader>
-        <CardContent>
-          <ResponsiveContainer width="100%" height={190}>
-            <ComposedChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
-              <CartesianGrid strokeDasharray="3 3" className="stroke-muted" vertical={false} />
-              <XAxis dataKey="i" type="number" domain={[0, chartData.length - 1]} ticks={ticks} tickFormatter={index => chartData[index]?.label ?? ''} tick={{ fontSize: 11 }} interval={0} />
-              <YAxis tick={{ fontSize: 11 }} tickFormatter={value => `${Number(value).toFixed(2)}`} label={{ value: 'SEK/kWh', angle: -90, position: 'insideLeft', fontSize: 11 }} />
-              {!hiddenPriceSeries.has('importPrice') && <Line type="stepAfter" dataKey="importPrice" name={priceSeries[0].label} stroke={COLORS.import} dot={false} connectNulls={false} />}
-              {!hiddenPriceSeries.has('exportPrice') && <Line type="stepAfter" dataKey="exportPrice" name={priceSeries[1].label} stroke={COLORS.export} dot={false} connectNulls={false} />}
-              <Tooltip labelFormatter={index => chartData[index as number]?.label ?? ''} formatter={value => [`${Number(value).toFixed(3)} SEK/kWh`, '']} />
-            </ComposedChart>
-          </ResponsiveContainer>
-          <SeriesToggleLegend
-            series={priceSeries}
-            hidden={hiddenPriceSeries}
-            onToggle={togglePriceSeries}
-            ariaLabel={t('Prisserier', 'Price series')}
-          />
-        </CardContent>
-      </Card>
 
       <Card>
         <CardHeader className="pb-3"><CardTitle className="text-base">{t('Datakällor och kvalitet', 'Data sources and quality')}</CardTitle></CardHeader>
@@ -652,6 +887,11 @@ const PlanView: React.FC<{
               {plan.battery ? <>{t('Batteri', 'Battery')} {plan.battery.capacity_kwh.toFixed(2)} kWh · SOC {pct(plan.battery.soc)} · {t('ladda/urladda', 'charge/discharge')} {(plan.battery.charge_max_w / 1_000).toFixed(1)}/{(plan.battery.discharge_max_w / 1_000).toFixed(1)} kW · η {(plan.battery.charge_efficiency * 100).toFixed(0)}/{(plan.battery.discharge_efficiency * 100).toFixed(0)}% · </> : null}
               {t('Nätgräns in/ut', 'Grid limit in/out')} {(plan.grid.import_limit_w / 1_000).toFixed(1)}/{(plan.grid.export_limit_w / 1_000).toFixed(1)} kW
             </div>
+            {plan.ev_battery && (
+              <div className="mt-1 text-xs text-muted-foreground">
+                {plan.ev_battery.name} · SOC {pct(plan.ev_battery.soc)} → {pct(plan.ev_battery.departure_target_soc)} · {plan.ev_battery.capacity_kwh.toFixed(2)} kWh · η {(plan.ev_battery.charge_efficiency * 100).toFixed(0)}% · {t('prioritet', 'priority')} {plan.ev_battery.priority} ({t('1 är högst', '1 is highest')}) · {plan.ev_battery.connected ? t('ansluten', 'connected') : t('inte ansluten', 'not connected')}
+              </div>
+            )}
             {plan.services.length > 0 && (
               <div className="mt-2 space-y-1 text-xs text-muted-foreground">
                 {plan.services.map(service => {
@@ -664,7 +904,7 @@ const PlanView: React.FC<{
                         ? `${(service.control.power_w / 1_000).toFixed(1)} kW · ${t('minsta körning', 'minimum run')} ${minimumRunMinutes} min`
                         : service.control.type === 'discrete_current'
                           ? `${service.control.min_current_a}–${service.control.max_current_a} A (${service.control.current_step_a} A ${t('steg', 'steps')}, ${service.control.phase_count}×${service.control.voltage_v} V) · ${t('minsta körning', 'minimum run')} ${minimumRunMinutes} min`
-                          : `${t('empirisk förväntan', 'empirical expectation')} · ${(service.control.rated_power_w / 1_000).toFixed(1)} kW ${t('märkeffekt', 'rated')} · ${t('högst avstängd', 'maximum inhibit')} ${service.control.max_consecutive_inhibit_slots * 15} min`} · {t('fönster slutar', 'window ends')} {new Date(service.deadline).toLocaleString()}{samples != null ? ` · n=${samples} ${service.control.type === 'duty_cycle' ? t('kvartsvärden', 'quarter samples') : t('aktiva dagar', 'active days')}` : ''}
+                          : `${t('empirisk förväntan', 'empirical expectation')} · ${(service.control.rated_power_w / 1_000).toFixed(1)} kW ${t('märkeffekt', 'rated')} · ${t('högst avstängd', 'maximum inhibit')} ${service.control.max_consecutive_inhibit_slots * 15} min`} · {t('prioritet', 'priority')} {service.priority} · {t('fönster slutar', 'window ends')} {new Date(service.deadline).toLocaleString()}{samples != null ? ` · n=${samples} ${service.control.type === 'duty_cycle' ? t('kvartsvärden', 'quarter samples') : t('aktiva dagar', 'active days')}` : ''}
                     </div>
                   );
                 })}

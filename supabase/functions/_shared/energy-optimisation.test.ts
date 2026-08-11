@@ -96,6 +96,7 @@ const input = (
       charge_efficiency: 0.95,
       discharge_efficiency: 0.95,
     },
+    ev_battery: null,
     grid: { import_limit_w: 10_000, export_limit_w: 10_000 },
     policy: {
       battery_end_of_solar_target_soc: 0.65,
@@ -337,6 +338,24 @@ Deno.test("EV charging is planned as valid discrete current setpoints", () => {
       ev: true,
     },
     battery: null,
+    ev_battery: {
+      name: "Test EV",
+      connected: true,
+      capacity_kwh: 75,
+      soc: 0.6,
+      departure_target_soc: 0.7,
+      charge_efficiency: 0.94,
+      available_from: base.slots[0].start,
+      departure: base.slots[48].start,
+      priority: 3,
+      source_entity_ids: {
+        connected: "binary_sensor.ev_connected",
+        soc: "sensor.ev_soc",
+        target_soc: "number.ev_target_soc",
+        energy_remaining: "sensor.ev_energy_remaining",
+        charge_current: "number.ev_charge_current",
+      },
+    },
     sources: { ...base.sources, battery: null },
     policy: {
       battery_end_of_solar_target_soc: 0,
@@ -371,6 +390,7 @@ Deno.test("EV charging is planned as valid discrete current setpoints", () => {
   );
   assert(result.schema_version === 5, "wrong plan schema");
   assert(result.status === "ready", "feasible EV plan was rejected");
+  assert(result.ev_battery?.soc === 0.6, "vehicle state was not retained");
   for (const plan of Object.values(result.plans)) {
     const positive = plan.slots.filter((slot) => slot.ev_target_current_a > 0);
     assert(positive.length === 9, "EV was not spread across the expected run");
@@ -393,6 +413,7 @@ Deno.test("EV charging is planned as valid discrete current setpoints", () => {
         slot.ev_min_current_a <= current && current <= slot.ev_max_current_a,
         "EV target is outside its reactive envelope",
       );
+      assert(slot.ev_soc !== null, "EV SOC projection is missing");
     }
     const delivered = plan.slots.reduce(
       (sum, slot) => sum + slot.ev_w / 1_000 * 0.25,
@@ -407,6 +428,10 @@ Deno.test("EV charging is planned as valid discrete current setpoints", () => {
     assert(
       plan.slots.slice(0, 48).every((slot) => slot.ev_max_current_a === 16),
       "the reactive controller lost recovery headroom before departure",
+    );
+    assert(
+      (plan.slots.at(-1)?.ev_soc ?? 0) >= 0.7,
+      "EV SOC did not reach the requested departure target",
     );
   }
 
@@ -443,6 +468,61 @@ Deno.test("EV charging is planned as valid discrete current setpoints", () => {
       error.includes("discrete current control")
     ),
     "misaligned charger current range was accepted",
+  );
+});
+
+Deno.test("existing EV snapshots remain executable while telemetry rolls forward", () => {
+  const base = input();
+  const snapshot = input({
+    capabilities: {
+      pv: true,
+      battery: false,
+      pool: false,
+      boiler: false,
+      ev: true,
+    },
+    battery: null,
+    sources: { ...base.sources, battery: null },
+    policy: {
+      battery_end_of_solar_target_soc: 0,
+      battery_target_is_hard: false,
+      terminal_soc_min: 0,
+      terminal_energy_value_sek_per_kwh: 0,
+    },
+    services: [{
+      id: "ev:legacy",
+      device: "ev",
+      earliest_start: base.slots[0].start,
+      deadline: base.slots[24].start,
+      required_kwh: 2,
+      control: {
+        type: "discrete_current",
+        min_current_a: 5,
+        max_current_a: 16,
+        current_step_a: 1,
+        phase_count: 3,
+        voltage_v: 230,
+      },
+      min_run_slots: 2,
+      priority: 3,
+      baseline_preferred_start: base.slots[0].start,
+    }],
+    service_requirement_sample_days: { ev_charging: 1 },
+  });
+  delete snapshot.ev_battery;
+
+  assert(validateSnapshot(snapshot).length === 0, "legacy EV snapshot was rejected");
+  const result = generateOptimisationPlan(
+    snapshot,
+    new Date("2026-08-10T07:55:00Z"),
+  );
+  assert(result.status === "ready", "legacy EV service stopped planning");
+  assert(result.ev_battery === null, "missing telemetry was not normalized");
+  assert(
+    Object.values(result.plans).every((plan) =>
+      plan.slots.every((slot) => slot.ev_soc === null)
+    ),
+    "legacy EV plan invented battery SOC",
   );
 });
 

@@ -87,6 +87,30 @@ export interface BatteryInput {
   discharge_efficiency: number;
 }
 
+/**
+ * Read-only vehicle state used to explain the EV energy requirement and to
+ * project SOC. The executable charging envelope still comes exclusively from
+ * the EV service below, so adding this metadata cannot actuate the vehicle.
+ */
+export interface EvBatteryInput {
+  name: string;
+  connected: boolean;
+  capacity_kwh: number;
+  soc: number;
+  departure_target_soc: number;
+  charge_efficiency: number;
+  available_from: string | null;
+  departure: string | null;
+  priority: number;
+  source_entity_ids: {
+    connected: string;
+    soc: string;
+    target_soc: string;
+    energy_remaining: string | null;
+    charge_current: string | null;
+  };
+}
+
 interface ServiceWindowInput {
   id: string;
   device: DeviceKey;
@@ -185,6 +209,10 @@ export interface OptimisationSnapshotV5 {
     sample_count_by_lead_day: number[];
   };
   battery: BatteryInput | null;
+  // Optional while existing Home Assistant installations roll forward to the
+  // EV telemetry publisher. Missing metadata must not stop their established
+  // charging service from being planned.
+  ev_battery?: EvBatteryInput | null;
   grid: {
     import_limit_w: number;
     export_limit_w: number;
@@ -218,6 +246,8 @@ export interface PlannedSlot {
   ev_target_current_a: number;
   ev_min_current_a: number;
   ev_max_current_a: number;
+  ev_soc: number | null;
+  ev_connected: boolean;
   load_w: number;
   battery_charge_w: number;
   battery_discharge_w: number;
@@ -280,6 +310,7 @@ export interface OptimisationPlanV5 {
   pv_calibration: OptimisationSnapshotV5["pv_calibration"];
   policy: OptimisationSnapshotV5["policy"];
   battery: BatteryInput | null;
+  ev_battery: EvBatteryInput | null;
   grid: OptimisationSnapshotV5["grid"];
   device_models: EmpiricalDeviceModelInput[];
   services: ServiceInput[];
@@ -494,6 +525,47 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV5): string[] {
       !inRange(battery.discharge_max_w, 0, 100_000)
     ) {
       errors.push("battery power limits are invalid");
+    }
+  }
+  const evBattery = snapshot?.ev_battery;
+  if (!snapshot?.capabilities?.ev && evBattery != null) {
+    errors.push("ev_battery must be null when the EV capability is disabled");
+  } else if (evBattery) {
+    const sourceIds = evBattery.source_entity_ids;
+    if (
+      !evBattery.name || !inRange(evBattery.capacity_kwh, 1, 500) ||
+      !inRange(evBattery.soc, 0, 1) ||
+      !inRange(evBattery.departure_target_soc, 0, 1) ||
+      !inRange(evBattery.charge_efficiency, 0.5, 1) ||
+      !Number.isInteger(evBattery.priority) || evBattery.priority < 1 ||
+      !sourceIds ||
+      [sourceIds.connected, sourceIds.soc, sourceIds.target_soc].some((value) =>
+        typeof value !== "string" || value.length === 0
+      ) ||
+      [sourceIds.energy_remaining, sourceIds.charge_current].some((value) =>
+        value !== null && (typeof value !== "string" || value.length === 0)
+      )
+    ) {
+      errors.push("ev_battery is invalid");
+    }
+    const availableFrom = evBattery.available_from === null
+      ? Number.NaN
+      : isoMs(evBattery.available_from);
+    const departure = evBattery.departure === null
+      ? Number.NaN
+      : isoMs(evBattery.departure);
+    if (
+      evBattery.connected &&
+      (!Number.isFinite(availableFrom) || !Number.isFinite(departure) ||
+        availableFrom >= departure)
+    ) {
+      errors.push("connected ev_battery requires a valid availability window");
+    }
+    if (
+      !evBattery.connected &&
+      (evBattery.available_from !== null || evBattery.departure !== null)
+    ) {
+      errors.push("disconnected ev_battery must not declare an availability window");
     }
   }
   if (
@@ -1481,6 +1553,7 @@ function simulate(
   };
   let soc = battery.soc;
   let socLow = soc;
+  let evSoc = snapshot.ev_battery?.soc ?? null;
   const output: PlannedSlot[] = [];
   const errors: string[] = [];
   const endOfSolar: Record<string, number> = {};
@@ -1511,11 +1584,19 @@ function simulate(
   const representedCategories = new Set(
     snapshot.device_models.map((model) => model.category),
   );
+  const evAvailableFrom = snapshot.ev_battery?.available_from == null
+    ? Number.NaN
+    : isoMs(snapshot.ev_battery.available_from);
+  const evDeparture = snapshot.ev_battery?.departure == null
+    ? Number.NaN
+    : isoMs(snapshot.ev_battery.departure);
 
   for (const slot of slots) {
     const poolW = schedule.pool[slot.index];
     const boilerW = schedule.boiler[slot.index];
     const evW = schedule.ev[slot.index];
+    const evConnected = snapshot.ev_battery?.connected === true &&
+      slot.epoch_ms >= evAvailableFrom && slot.epoch_ms < evDeparture;
     const flexibleW = poolW + boilerW + evW;
     const deviceLoads = empiricalDeviceLoads(snapshot, slot.index, {
       boiler: boilerW,
@@ -1576,6 +1657,13 @@ function simulate(
     ) / 1_000 * SLOT_HOURS / battery.capacity_kwh;
     soc = Math.max(battery.min_soc, Math.min(battery.max_soc, soc));
     socLow = Math.min(socLow, soc);
+    if (evSoc !== null && snapshot.ev_battery) {
+      evSoc = Math.min(
+        1,
+        evSoc + evW * snapshot.ev_battery.charge_efficiency / 1_000 *
+          SLOT_HOURS / snapshot.ev_battery.capacity_kwh,
+      );
+    }
 
     const slotImportKwh = gridImportW / 1_000 * SLOT_HOURS;
     const slotExportKwh = gridExportW / 1_000 * SLOT_HOURS;
@@ -1604,6 +1692,8 @@ function simulate(
       ev_target_current_a: schedule.evTargetCurrentA[slot.index],
       ev_min_current_a: schedule.evMinCurrentA[slot.index],
       ev_max_current_a: schedule.evMaxCurrentA[slot.index],
+      ev_soc: evSoc === null ? null : round(evSoc, 6),
+      ev_connected: evConnected,
       load_w: round(loadW, 2),
       battery_charge_w: round(batteryChargeW, 2),
       battery_discharge_w: round(batteryDischargeW, 2),
@@ -1940,6 +2030,7 @@ export function generateOptimisationPlan(
     pv_calibration: snapshot.pv_calibration,
     policy: snapshot.policy,
     battery: snapshot.battery,
+    ev_battery: snapshot.ev_battery ?? null,
     grid: snapshot.grid,
     device_models: snapshot.device_models,
     services: snapshot.services,
