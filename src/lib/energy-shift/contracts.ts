@@ -33,21 +33,17 @@ export interface ActualEnergySlot {
 }
 
 export interface DevicePlanningConfiguration {
-  suggested_planning_role: DevicePlanningRole;
-  planning_role_override: DevicePlanningRole | null;
-  suggested_control_type: DeviceControlType | null;
+  planning_role_override: DevicePlanningRole;
   control_type_override: DeviceControlType | null;
 }
 
 export const effectivePlanningRole = (
   device: DevicePlanningConfiguration,
-): DevicePlanningRole => device.planning_role_override ?? device.suggested_planning_role;
+): DevicePlanningRole => device.planning_role_override;
 
 export const effectiveControlType = (
   device: DevicePlanningConfiguration,
-): DeviceControlType | null => device.planning_role_override === null
-  ? device.suggested_control_type
-  : device.control_type_override;
+): DeviceControlType | null => device.control_type_override;
 
 export function isOptimisationPlan(value: unknown): value is OptimisationPlanV5 {
   if (!value || typeof value !== 'object') return false;

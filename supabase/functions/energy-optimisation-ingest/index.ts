@@ -59,16 +59,14 @@ interface IncomingDevice {
 
 interface StoredDevice extends IncomingDevice {
   id: string;
-  load_type_override: DeviceLoadType | null;
-  planning_role_override: DevicePlanningRole | null;
+  load_type_override: DeviceLoadType;
+  planning_role_override: DevicePlanningRole;
   control_type_override: DeviceControlType | null;
 }
 
 const effectivePlanning = (device: StoredDevice) => ({
-  planning_role: device.planning_role_override ?? device.suggested_planning_role,
-  control_type: device.planning_role_override === null
-    ? device.suggested_control_type
-    : device.control_type_override,
+  planning_role: device.planning_role_override,
+  control_type: device.control_type_override,
 });
 
 const ENERGY_FIELDS = [
@@ -447,7 +445,7 @@ serve(async (req) => {
           return {
             ...model,
             suggested_load_type: stored.suggested_load_type,
-            load_type: stored.load_type_override ?? stored.suggested_load_type,
+            load_type: stored.load_type_override,
           };
         }),
       };
@@ -527,7 +525,7 @@ serve(async (req) => {
       device_configuration: storedDevices.map((device) => ({
         key: device.key,
         suggested_load_type: device.suggested_load_type,
-        load_type: device.load_type_override ?? device.suggested_load_type,
+        load_type: device.load_type_override,
         ...effectivePlanning(device),
       })),
     });

@@ -19,11 +19,8 @@ export interface EmpiricalEnergyDevice {
   statistic_id: string;
   name: string;
   category: string;
-  suggested_load_type: DeviceLoadType;
-  load_type_override: DeviceLoadType | null;
-  suggested_planning_role: DevicePlanningRole;
-  planning_role_override: DevicePlanningRole | null;
-  suggested_control_type: DeviceControlType | null;
+  load_type_override: DeviceLoadType;
+  planning_role_override: DevicePlanningRole;
   control_type_override: DeviceControlType | null;
   active_power_w: number | null;
   profile_sample_count: number;
@@ -89,15 +86,13 @@ const EmpiricalDeviceModelsCard: React.FC<{
     device,
     supabase.rpc('set_energy_device_load_type', {
       p_device_id: device.id,
-      p_load_type: value === 'automatic' ? null : value as DeviceLoadType,
+      p_load_type: value as DeviceLoadType,
     }),
     t('Kunde inte spara lasttypen', 'Could not save load type'),
   );
 
   const updatePlanning = (device: EmpiricalEnergyDevice, value: string) => {
-    const [role, control] = value === 'automatic'
-      ? [null, null]
-      : value.split(':') as [DevicePlanningRole, DeviceControlType | undefined];
+    const [role, control] = value.split(':') as [DevicePlanningRole, DeviceControlType | undefined];
     return persist(
       device,
       supabase.rpc('set_energy_device_planning', {
@@ -107,12 +102,6 @@ const EmpiricalDeviceModelsCard: React.FC<{
       }),
       t('Kunde inte spara planeringsrollen', 'Could not save planning role'),
     );
-  };
-
-  const automaticPlanningLabel = (device: EmpiricalEnergyDevice) => {
-    const role = device.suggested_planning_role;
-    const control = device.suggested_control_type;
-    return `${t('Automatisk', 'Automatic')} · ${roleLabel[role]}${control ? ` · ${controlLabel[control]}` : ''}`;
   };
 
   return (
@@ -126,8 +115,8 @@ const EmpiricalDeviceModelsCard: React.FC<{
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">
           {t(
-            'Alla enheter lärs från verkliga 15-minutersvärden. Baslastenheter slås ihop med hemmets empiriska baslast och visas inte separat. Bara styrbara enheter tas ut ur baslasten och visas som egna serier. Klassificeringen är lokal för hemmet och kan ändras av kunden eller personal; globala personalmallar finns kvar i Enhetskatalogen.',
-            'Every device is learned from real 15-minute values. Base-load devices are merged into the home’s empirical base load and are not shown separately. Only controllable devices are removed from base load and shown as individual series. This classification is local to the home and can be changed by the customer or staff; staff-owned global templates remain in the Device Catalog.',
+            'Alla enheter lärs från verkliga 15-minutersvärden. Home Assistant-analysen väljer startvärdena när en enhet upptäcks; därefter behålls valen tills kunden eller personal ändrar dem. Baslastenheter slås ihop med hemmets empiriska baslast och visas inte separat. Bara styrbara enheter tas ut ur baslasten och visas som egna serier. Klassificeringen är lokal för hemmet; globala personalmallar finns kvar i Enhetskatalogen.',
+            'Every device is learned from real 15-minute values. Home Assistant inference chooses the initial values when a device is discovered; the selections then persist until the customer or staff changes them. Base-load devices are merged into the home’s empirical base load and are not shown separately. Only controllable devices are removed from base load and shown as individual series. Classification is local to the home; staff-owned global templates remain in the Device Catalog.',
           )}
         </p>
         {devices.length === 0 ? (
@@ -157,17 +146,14 @@ const EmpiricalDeviceModelsCard: React.FC<{
                     <TableCell><Badge variant="outline">{device.category.replace(/_/g, ' ')}</Badge></TableCell>
                     <TableCell className="min-w-[250px]">
                       <Select
-                        value={device.planning_role_override === null
-                          ? 'automatic'
-                          : device.planning_role_override === 'base_load'
-                            ? 'base_load'
-                            : `controllable:${device.control_type_override}`}
+                        value={device.planning_role_override === 'base_load'
+                          ? 'base_load'
+                          : `controllable:${device.control_type_override}`}
                         onValueChange={value => void updatePlanning(device, value)}
                         disabled={savingId === device.id}
                       >
                         <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="automatic">{automaticPlanningLabel(device)}</SelectItem>
                           <SelectItem value="base_load">{roleLabel.base_load}</SelectItem>
                           {CONTROL_TYPES.map(type => (
                             <SelectItem key={type} value={`controllable:${type}`}>
@@ -180,7 +166,7 @@ const EmpiricalDeviceModelsCard: React.FC<{
                     <TableCell className="min-w-[230px]">
                       <div className="flex items-center gap-2">
                         <Select
-                          value={device.load_type_override ?? 'automatic'}
+                          value={device.load_type_override}
                           onValueChange={value => void updateLoadType(device, value)}
                           disabled={savingId === device.id}
                         >
@@ -188,9 +174,6 @@ const EmpiricalDeviceModelsCard: React.FC<{
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="automatic">
-                              {t('Automatisk', 'Automatic')} · {loadLabel[device.suggested_load_type]}
-                            </SelectItem>
                             {LOAD_TYPES.map(type => <SelectItem key={type} value={type}>{loadLabel[type]}</SelectItem>)}
                           </SelectContent>
                         </Select>

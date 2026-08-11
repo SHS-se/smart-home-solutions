@@ -1998,9 +1998,9 @@ export type Database = {
           id: string
           inference: Json
           last_seen_at: string
-          load_type_override: string | null
+          load_type_override: string
           name: string
-          planning_role_override: string | null
+          planning_role_override: string
           profile_sample_count: number
           statistic_id: string
           suggested_control_type: string | null
@@ -2019,9 +2019,9 @@ export type Database = {
           id?: string
           inference?: Json
           last_seen_at?: string
-          load_type_override?: string | null
+          load_type_override: string
           name: string
-          planning_role_override?: string | null
+          planning_role_override: string
           profile_sample_count?: number
           statistic_id: string
           suggested_control_type?: string | null
@@ -2040,9 +2040,9 @@ export type Database = {
           id?: string
           inference?: Json
           last_seen_at?: string
-          load_type_override?: string | null
+          load_type_override?: string
           name?: string
-          planning_role_override?: string | null
+          planning_role_override?: string
           profile_sample_count?: number
           statistic_id?: string
           suggested_control_type?: string | null
@@ -4581,14 +4581,14 @@ export type Database = {
         Returns: string
       }
       set_energy_device_load_type: {
-        Args: { p_device_id: string; p_load_type: string | null }
+        Args: { p_device_id: string; p_load_type: string }
         Returns: Database["public"]["Tables"]["energy_optimisation_devices"]["Row"]
       }
       set_energy_device_planning: {
         Args: {
           p_control_type: string | null
           p_device_id: string
-          p_planning_role: string | null
+          p_planning_role: string
         }
         Returns: Database["public"]["Tables"]["energy_optimisation_devices"]["Row"]
       }

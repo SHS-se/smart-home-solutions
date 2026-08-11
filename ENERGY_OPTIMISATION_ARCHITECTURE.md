@@ -200,9 +200,11 @@ Each home-local Energy Dashboard device has a planning role of `base_load` or
 are merged into the aggregate curve and omitted from device legends. A
 controllable device is removed from that aggregate and carries one reviewed
 control type: on/off schedule, variable power, permit/inhibit, setpoint or
-current limit. Automatic classification is deliberately conservative: hot
-water, pool heating and EV charging use their supported controls; ordinary
-household, heating and cooling meters stay in base load until reviewed.
+current limit. Initial classification is deliberately conservative: hot water,
+pool heating and EV charging start with their supported controls; ordinary
+household, heating and cooling meters start in base load. The inferred values
+are persisted on first discovery and only change when a customer or staff member
+selects a different value.
 
 The schema-5 boiler representation corrects the old contiguous fixed-power job.
 The controller cannot demand heat and does not know when hot water will be used,
