@@ -61,7 +61,7 @@ static portal prototype:
 | The 80% battery claim was not verified | End-of-solar and terminal SOC are simulation invariants. The 80% target is soft by default so it cannot silently reserve solar and force pool/hot-water work onto night import; explicitly making it hard retains fail-closed infeasibility checks. |
 | Export was valued with the import supplier price | Import and export are separate required timestamped entities, each combined with the correct grid direction. The integration rejects using the same entity for both. |
 | One August day was repeated as baseload | Baseload is a weekday/weekend per-local-quarter median of recorder history. Only devices explicitly classified as controllable are subtracted and then added back as individual planner series; every other Energy Dashboard device remains represented by its real use inside baseload. p10/p90 and sample counts remain diagnostic data rather than graph noise. |
-| Raw PV forecasts were treated as truth | HA keeps a compact forecast ledger, matches completed slots to actual solar, and publishes lead-day correction factors, sample counts, MAPE and bias. Raw and calibrated curves are both visible. |
+| Raw PV forecasts were treated as truth | HA keeps a compact forecast ledger, matches completed slots to actual solar, and publishes lead-day correction factors, sample counts, MAPE and bias. The planner and main graph use one corrected solar forecast; raw provider values remain quality diagnostics only. |
 
 This is deliberately a **shadow/advisory release**. The integration exposes
 verified planned-power requests and measured reactive surplus, but it does not
@@ -792,11 +792,13 @@ is a stable material change in grid flow, state, or eligibility. Both update the
 same effective request entity; they do not call the physical device in parallel.
 The executor alone performs service calls.
 
-For Phil's current Node-RED setup, insert the SHS request before the existing
-mode/override/thermostat gate and report the resulting state after that gate.
-Do not replace the gate. For a product installation, instantiate the matching
-native HA executor blueprint during an explicit commissioning step and leave it
-visible and editable in the HA automation UI.
+During shadow commissioning, Phil's current Node-RED setup remains the reference
+controller and receives no actuator request. The target product replaces it
+room by room with the integration-owned coordinator and native HA executor only
+after temperature demand, overrides, hysteresis, minimum on/off time, relay
+confirmation and failure behaviour have equivalent tests. Disable the matching
+Node-RED room group before enabling its new executor so two systems can never
+command the same relay. The end state has no Node-RED runtime dependency.
 
 For `number.tesla_model_y_charge_current`, the planned automation consumes the
 quarter's target amperes. The existing one-minute reactive loop may then raise
@@ -851,9 +853,11 @@ Ellevio rule change therefore changes planner inputs, not every room flow.
 
 ### 7.6 One plan, synchronized explanatory views
 
-Do not put power, SOC, temperature and price on additional axes in one crowded
-chart. They are projections of one plan and should share the same time range,
-cursor, selection and slot tooltip:
+Use one **Plan explorer** card with four tabs—Power, Thermal, Economics and
+Storage—rather than four unrelated cards or four axes in one crowded plot. The
+tabs replace only the chart body; plan selection, With/Without plan scenario,
+time range, cursor, selected slot and device selection remain shared. They are
+projections of one plan, not separate forecasts:
 
 | View | Default content | Question it answers |
 |---|---|---|
@@ -861,6 +865,13 @@ cursor, selection and slot tooltip:
 | Thermal | Outdoor forecast, aggregate worst-room comfort margin and the selected room's forecast temperature/comfort band; other rooms appear only on selection | Is heating being delayed safely, and which room needs attention? |
 | Economics | All-in import and export prices, incremental peak price when applicable, and shaded planned-action windows | Why is energy being moved to this slot? |
 | Storage | Battery SOC, reserve/target band and optionally thermal-service state | What flexibility is being stored or consumed? |
+
+The Power tab is the authoritative electrical balance. Every electrical device
+still contributes exactly once to the same load forecast there; changing tabs
+does not remove it from the plan. The other tabs expose inputs, constraints and
+state trajectories that explain why that electrical load was placed in a slot.
+Device visibility remains a Power-tab concern, while selecting a room/device is
+carried into the explanatory tabs.
 
 Energy belongs in summary totals and selected-window integrals; instantaneous
 series stay in kW. Each slot carries compact reason codes such as `comfort
@@ -987,6 +998,44 @@ effektavgift.
 - metering boundaries that prevent aggregate plus child double counting.
 
 ## 10. Seasonal and condition scenario matrix
+
+### 10.1 Canonical 72-hour seasonal fixtures
+
+Maintain four deterministic mock snapshots of exactly 288 quarter-hours. Each
+uses the same home/device capabilities and initial-state contract so changes in
+planner output are attributable to the seasonal inputs rather than a different
+inventory.
+
+| Fixture | Forecast character | Primary behaviour under test |
+|---|---|---|
+| Winter | Little PV, sustained cold, high room-heat demand, coincident thermostat requests and volatile prices | Comfort preservation, fair heating allocation, peak limiting and recovery |
+| Spring | A cold first day followed by a 10–20 °C warm-up, increasing PV and moderate prices | Avoid unnecessary reheating before forecast warmth without violating comfort |
+| Summer | High/uncertain PV, pool and EV demand, hot-water duty cycles, no comfort heating | Surplus allocation, battery headroom, pool/EV deadlines and boiler inhibition |
+| Autumn | Falling temperature, cloud fronts, intermittent heating restart and evening price peaks | Stable seasonal restart, preheating and forecast-error recovery |
+
+The current schema can already mock PV, empirical base load, import/export
+prices, battery/grid state, EV, pool, hot-water services and fixed empirical
+device forecasts over those 288 slots. It cannot yet evaluate coordinated room
+heating: a generic controllable `device_model` is currently an exogenous
+`forecast_w_by_slot`, not a scheduling decision. Marking a heater controllable
+therefore exposes its series but does not optimize its thermostat or timing.
+
+Before the fixtures can make honest room-heating claims, add a thermal-zone
+contract containing, per zone:
+
+- current indoor temperature and timestamped outdoor-temperature forecast;
+- occupancy-dependent preferred, soft and hard comfort bands by slot;
+- heater rated power, actuator/confirmation identity and minimum on/off time;
+- either calibrated heat-loss/thermal-capacity parameters or a versioned
+  empirical temperature-response model with confidence; and
+- room priority plus the whole-home heating/grid power envelope.
+
+The planner output then includes aggregate heating power, per-zone expected
+temperature/heat energy, comfort margin and reason codes. Seasonal fixtures can
+be built concurrently with that contract and must be run in shadow/historical
+replay before any relay executor is enabled.
+
+### 10.2 Condition scenario matrix
 
 Yes: more scenarios are required before parameters or control policy can be
 considered complete. Tests should assert invariants and direction of behaviour,

@@ -64,9 +64,7 @@ const COLORS = {
   boiler: '#38bdf8',
   pool: '#14b8a6',
   ev: '#a78bfa',
-  evCurrent: '#6d28d9',
   pv: '#f59e0b',
-  pvRaw: '#fbbf24',
   soc: '#f43f5e',
   import: '#dc2626',
   export: '#0f766e',
@@ -78,12 +76,10 @@ const COLORS = {
 type PlanViewMode = 'planned' | 'unplanned';
 type PlanChartSeriesKey =
   | 'pv'
-  | 'pvRaw'
   | 'base'
   | 'boiler'
   | 'pool'
   | 'ev'
-  | 'evCurrent'
   | 'gridImport'
   | 'gridExport'
   | 'soc'
@@ -371,7 +367,6 @@ const PlanView: React.FC<{
       start: slot.start,
       label: new Date(slot.start).toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
       pv: slot.pv_w,
-      pvRaw: slot.pv_raw_w,
       base: foldDevicePowerIntoBase(
         slot.base_w,
         slot.device_loads_w,
@@ -380,7 +375,6 @@ const PlanView: React.FC<{
       boiler: slot.boiler_expected_w,
       pool: slot.pool_w,
       ev: slot.ev_w,
-      evCurrent: slot.ev_target_current_a,
       soc: slot.battery_soc * 100,
       gridImport: slot.grid_import_w,
       gridExport: slot.grid_export_w,
@@ -399,7 +393,6 @@ const PlanView: React.FC<{
     .map(({ index }) => index);
   const hasBattery = plan.capabilities.battery && plan.battery !== null;
   const hasPv = plan.capabilities.pv;
-  const hasVariableEv = plan.services.some(service => service.control.type === 'discrete_current');
   const sourceStale = Object.entries(plan.sources)
     .filter(([, source]) => source !== null && Date.parse(source.valid_until) < Date.now())
     .map(([name]) => name);
@@ -407,15 +400,12 @@ const PlanView: React.FC<{
   const ready = !stale && !bindingExpired && plan.status === 'ready' && executed.status === 'ready' && sourceStale.length === 0;
   const pct = (value: number) => `${(value * 100).toFixed(0)}%`;
   const batterySocLabel = t('Batteri SOC', 'Battery SOC');
-  const evCurrentLabel = t('Bilens målström', 'EV target current');
   const seriesByKey: Record<Exclude<PlanChartSeriesKey, `device:${string}`>, PlanChartSeries> = {
-    pv: { key: 'pv', label: t('Kalibrerad solprognos', 'Calibrated PV'), color: COLORS.pv },
-    pvRaw: { key: 'pvRaw', label: t('Rå solprognos', 'Raw PV'), color: COLORS.pvRaw },
+    pv: { key: 'pv', label: t('Solprognos', 'Solar forecast'), color: COLORS.pv },
     base: { key: 'base', label: t('Baslast', 'Base load'), color: COLORS.base },
     boiler: { key: 'boiler', label: t('Förväntat varmvatten', 'Expected hot water'), color: COLORS.boiler },
     pool: { key: 'pool', label: t('Pool', 'Pool'), color: COLORS.pool },
     ev: { key: 'ev', label: t('Bil', 'EV'), color: COLORS.ev },
-    evCurrent: { key: 'evCurrent', label: evCurrentLabel, color: COLORS.evCurrent },
     gridImport: { key: 'gridImport', label: t('Importeffekt', 'Grid import'), color: COLORS.import },
     gridExport: { key: 'gridExport', label: t('Exporteffekt', 'Grid export'), color: COLORS.export },
     soc: { key: 'soc', label: batterySocLabel, color: COLORS.soc },
@@ -431,13 +421,12 @@ const PlanView: React.FC<{
   const showPoolAggregate = plan.capabilities.pool && !representedCategories.has('pool_heating');
   const showEvAggregate = plan.capabilities.ev && !representedCategories.has('ev_charging');
   const planChartSeries: PlanChartSeries[] = [
-    ...(hasPv ? [seriesByKey.pv, seriesByKey.pvRaw] : []),
+    ...(hasPv ? [seriesByKey.pv] : []),
     seriesByKey.base,
     ...(showBoilerAggregate ? [seriesByKey.boiler] : []),
     ...(showPoolAggregate ? [seriesByKey.pool] : []),
     ...(showEvAggregate ? [seriesByKey.ev] : []),
     ...deviceSeries,
-    ...(hasVariableEv ? [seriesByKey.evCurrent] : []),
     seriesByKey.gridImport,
     seriesByKey.gridExport,
     ...(hasBattery ? [seriesByKey.soc] : []),
@@ -590,11 +579,9 @@ const PlanView: React.FC<{
               <XAxis dataKey="i" type="number" domain={[0, chartData.length - 1]} ticks={ticks} tickFormatter={index => chartData[index]?.label ?? ''} tick={{ fontSize: 11 }} interval={0} />
               <YAxis yAxisId="power" tick={{ fontSize: 11 }} tickFormatter={watts => `${(watts / 1_000).toFixed(0)}`} label={{ value: 'kW', angle: -90, position: 'insideLeft', fontSize: 11 }} />
               {hasBattery && seriesVisible('soc') && <YAxis yAxisId="soc" orientation="right" domain={[0, 100]} tick={{ fontSize: 11 }} tickFormatter={value => `${value}%`} />}
-              <YAxis yAxisId="current" hide domain={[0, 'dataMax + 1']} />
               {bindingIndex < chartData.length && <ReferenceArea yAxisId="power" x1={bindingIndex} x2={chartData.length - 1} fill="currentColor" className="text-muted" fillOpacity={0.24} />}
               {hasBattery && seriesVisible('soc') && <ReferenceLine yAxisId="soc" y={plan.policy.battery_end_of_solar_target_soc * 100} stroke={COLORS.soc} strokeDasharray="3 3" strokeOpacity={0.45} />}
               {hasPv && seriesVisible('pv') && <Area yAxisId="power" type="monotone" dataKey="pv" name={seriesByKey.pv.label} stroke={COLORS.pv} fill={COLORS.pv} fillOpacity={0.14} dot={false} />}
-              {hasPv && seriesVisible('pvRaw') && <Line yAxisId="power" type="monotone" dataKey="pvRaw" name={seriesByKey.pvRaw.label} stroke={COLORS.pvRaw} strokeDasharray="4 3" dot={false} />}
               {seriesVisible('base') && <Area yAxisId="power" type="step" dataKey="base" stackId="load" name={seriesByKey.base.label} fill={COLORS.base} strokeWidth={0} />}
               {showBoilerAggregate && seriesVisible('boiler') && <Area yAxisId="power" type="step" dataKey="boiler" stackId="load" name={seriesByKey.boiler.label} fill={COLORS.boiler} strokeWidth={0} />}
               {showPoolAggregate && seriesVisible('pool') && <Area yAxisId="power" type="step" dataKey="pool" stackId="load" name={seriesByKey.pool.label} fill={COLORS.pool} strokeWidth={0} />}
@@ -602,11 +589,10 @@ const PlanView: React.FC<{
               {deviceSeries.map(series => seriesVisible(series.key) && (
                 <Area key={series.key} yAxisId="power" type="step" dataKey={series.dataKey} stackId="load" name={series.label} fill={series.color} stroke={series.color} fillOpacity={0.65} strokeWidth={1} />
               ))}
-              {hasVariableEv && seriesVisible('evCurrent') && <Line yAxisId="current" type="stepAfter" dataKey="evCurrent" name={seriesByKey.evCurrent.label} stroke={COLORS.evCurrent} strokeWidth={2} dot={false} />}
               {seriesVisible('gridImport') && <Line yAxisId="power" type="step" dataKey="gridImport" name={seriesByKey.gridImport.label} stroke={COLORS.import} dot={false} />}
               {seriesVisible('gridExport') && <Line yAxisId="power" type="step" dataKey="gridExport" name={seriesByKey.gridExport.label} stroke={COLORS.export} dot={false} />}
               {hasBattery && seriesVisible('soc') && <Line yAxisId="soc" type="monotone" dataKey="soc" name={seriesByKey.soc.label} stroke={COLORS.soc} strokeWidth={2} dot={false} />}
-              <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} labelFormatter={index => chartData[index as number]?.label ?? ''} formatter={(value, name) => [name === evCurrentLabel ? `${Number(value).toFixed(0)} A` : name === batterySocLabel ? `${Number(value).toFixed(1)}%` : `${(Number(value) / 1_000).toFixed(2)} kW`, name]} />
+              <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} labelFormatter={index => chartData[index as number]?.label ?? ''} formatter={(value, name) => [name === batterySocLabel ? `${Number(value).toFixed(1)}%` : `${(Number(value) / 1_000).toFixed(2)} kW`, name]} />
             </ComposedChart>
           </ResponsiveContainer>
           <SeriesToggleLegend
