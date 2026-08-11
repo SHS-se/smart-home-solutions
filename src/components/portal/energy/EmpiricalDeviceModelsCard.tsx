@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Database, Loader2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Clock3, Database, Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -22,6 +22,10 @@ export interface EmpiricalEnergyDevice {
   load_type_override: DeviceLoadType;
   planning_role_override: DevicePlanningRole;
   control_type_override: DeviceControlType | null;
+  mapping_status: 'not_configured' | 'ready' | 'invalid';
+  mapped_control_type: DeviceControlType | null;
+  mapping_error: string | null;
+  mapping_reported_at: string | null;
   active_power_w: number | null;
   profile_sample_count: number;
   last_seen_at: string;
@@ -66,6 +70,20 @@ const EmpiricalDeviceModelsCard: React.FC<{
     setpoint: t('Börvärde', 'Setpoint'),
     current_limit: t('Strömgräns', 'Current limit'),
   };
+  const mappingState = (device: EmpiricalEnergyDevice) => {
+    if (device.planning_role_override === 'base_load') return 'base_load' as const;
+    if (
+      device.mapping_status === 'ready'
+      && device.mapped_control_type === device.control_type_override
+    ) return 'ready' as const;
+    if (
+      device.mapping_status === 'invalid'
+      && device.mapped_control_type === device.control_type_override
+    ) return 'invalid' as const;
+    return 'pending' as const;
+  };
+  const pendingCount = devices.filter(device => mappingState(device) === 'pending').length;
+  const invalidCount = devices.filter(device => mappingState(device) === 'invalid').length;
 
   const persist = async (
     device: EmpiricalEnergyDevice,
@@ -115,10 +133,29 @@ const EmpiricalDeviceModelsCard: React.FC<{
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">
           {t(
-            'Alla enheter lärs från verkliga 15-minutersvärden. Home Assistant-analysen väljer startvärdena när en enhet upptäcks; därefter behålls valen tills kunden eller personal ändrar dem. Baslastenheter slås ihop med hemmets empiriska baslast och visas inte separat. Bara styrbara enheter tas ut ur baslasten och visas som egna serier. Klassificeringen är lokal för hemmet; globala personalmallar finns kvar i Enhetskatalogen.',
-            'Every device is learned from real 15-minute values. Home Assistant inference chooses the initial values when a device is discovered; the selections then persist until the customer or staff changes them. Base-load devices are merged into the home’s empirical base load and are not shown separately. Only controllable devices are removed from base load and shown as individual series. Classification is local to the home; staff-owned global templates remain in the Device Catalog.',
+            'Alla nya enheter börjar som baslast och lärs från verkliga 15-minutersvärden. När du väljer en styrtyp här blir den en begäran till Home Assistant. Enheten stannar i baslasten tills en matchande lokal entitetsmappning har bekräftats; först då visas den som en egen planserie.',
+            'Every new device starts in base load and is learned from real 15-minute values. Selecting a control type here creates a request for Home Assistant. The device stays in base load until a matching local entity mapping is confirmed; only then does it become a separate plan series.',
           )}
         </p>
+        {(pendingCount > 0 || invalidCount > 0) && (
+          <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <div className="font-medium">
+                {t(
+                  `${pendingCount + invalidCount} styrbara enheter behöver konfigureras i Home Assistant`,
+                  `${pendingCount + invalidCount} controllable devices need Home Assistant configuration`,
+                )}
+              </div>
+              <div className="text-xs opacity-80">
+                {t(
+                  'Öppna Konfigurera på SHS-integrationen. Den hämtar dessa val direkt—ingen omstart av Home Assistant krävs.',
+                  'Open Configure on the SHS integration. It fetches these selections immediately—no Home Assistant restart is required.',
+                )}
+              </div>
+            </div>
+          </div>
+        )}
         {devices.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             {t('Väntar på en enhetsinventering från Home Assistant.', 'Waiting for a device inventory from Home Assistant.')}
@@ -162,6 +199,17 @@ const EmpiricalDeviceModelsCard: React.FC<{
                           ))}
                         </SelectContent>
                       </Select>
+                      <div className="mt-1.5 flex items-center gap-1 text-xs text-muted-foreground">
+                        {mappingState(device) === 'ready' ? (
+                          <><CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />{t('Klar i Home Assistant', 'Ready in Home Assistant')}</>
+                        ) : mappingState(device) === 'invalid' ? (
+                          <><AlertTriangle className="h-3.5 w-3.5 text-destructive" /><span title={device.mapping_error ?? undefined}>{t('Behöver åtgärdas', 'Needs attention')}</span></>
+                        ) : mappingState(device) === 'pending' ? (
+                          <><Clock3 className="h-3.5 w-3.5 text-amber-600" />{t('Konfigurera i Home Assistant', 'Set up in Home Assistant')}</>
+                        ) : (
+                          <>{t('Ingår i empirisk baslast', 'Included in empirical base load')}</>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="min-w-[230px]">
                       <div className="flex items-center gap-2">
@@ -202,8 +250,8 @@ const EmpiricalDeviceModelsCard: React.FC<{
         </div>
         <div className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">
           {t(
-            'Styrtypen beskriver den verkliga kontrollmöjligheten och gör inte automatiskt en enhet styrbar i Home Assistant. En matchande lokal styrning måste vara konfigurerad. Ändringar används efter nästa Home Assistant-utbyte och omplanering. Varmvattenberedaren föreslås som Tillåt/blockera: dess egen termostat bestämmer när den drar effekt, och planen får bara blockera olämpliga kvartar — aldrig tvinga den att slå på.',
-            'The control type describes the real control capability; it does not automatically make a device controllable in Home Assistant. A matching local controller must be configured. Changes take effect after the next Home Assistant exchange and replan. The water boiler is suggested as Permit/inhibit: its own thermostat decides when it draws power, and the plan may only block unsuitable quarters—never force it on.',
+            'Styrtypen beskriver den verkliga kontrollmöjligheten. Integrationen hämtar ändringar automatiskt vid nästa 15-minutersutbyte eller direkt när Konfigurera öppnas. Ofullständiga eller felaktiga mappningar stannar säkert i baslasten. Varmvatten med Tillåt/blockera låter fortfarande den egna termostaten bestämma driftcykeln; planen kan bara blockera olämpliga kvartar, aldrig tvinga enheten att slå på.',
+            'The control type describes the real control capability. The integration fetches changes automatically on the next 15-minute exchange, or immediately when Configure is opened. Incomplete or invalid mappings safely remain in base load. Permit/inhibit hot water still leaves the duty cycle to its own thermostat; the plan can only block unsuitable quarters, never force the device on.',
           )}
         </div>
       </CardContent>

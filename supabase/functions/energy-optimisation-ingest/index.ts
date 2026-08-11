@@ -28,6 +28,7 @@ const MAX_QUARTER_KWH = 100;
 const MAX_REQUEST_BYTES = 2_000_000;
 const SLOT_MS = 15 * 60_000;
 const ACTUAL_AGGREGATION = "sum_of_recorder_5minute_changes";
+type DeviceMappingStatus = "not_configured" | "ready" | "invalid";
 
 interface IncomingActualSlot {
   start: string;
@@ -55,6 +56,10 @@ interface IncomingDevice {
   active_power_w: number | null;
   profile_sample_count: number;
   inference: Record<string, unknown>;
+  mapping_status: DeviceMappingStatus;
+  mapped_control_type: DeviceControlType | null;
+  mapping_error: string | null;
+  mapping_summary: Record<string, unknown>;
 }
 
 interface StoredDevice extends IncomingDevice {
@@ -181,7 +186,7 @@ serve(async (req) => {
     } catch {
       return json({ error: "invalid_body" }, 400);
     }
-    if (actuals.length === 0 && snapshot === null) {
+    if (actuals.length === 0 && snapshot === null && devices.length === 0) {
       return json({ error: "empty_body" }, 400);
     }
     if (actuals.length > MAX_ACTUAL_SLOTS_PER_PUSH) {
@@ -208,6 +213,11 @@ serve(async (req) => {
       "setpoint",
       "current_limit",
     ]);
+    const mappingStatuses = new Set<DeviceMappingStatus>([
+      "not_configured",
+      "ready",
+      "invalid",
+    ]);
     const deviceCategories = new Set([
       "heating",
       "hot_water",
@@ -231,7 +241,9 @@ serve(async (req) => {
         !planningRoles.has(device.suggested_planning_role) ||
         (device.suggested_planning_role === "base_load"
           ? device.suggested_control_type !== null
-          : !controlTypes.has(device.suggested_control_type as DeviceControlType)) ||
+          : !controlTypes.has(
+            device.suggested_control_type as DeviceControlType,
+          )) ||
         (device.active_power_w !== null &&
           (typeof device.active_power_w !== "number" ||
             !Number.isFinite(device.active_power_w) ||
@@ -239,7 +251,21 @@ serve(async (req) => {
         !Number.isInteger(device.profile_sample_count) ||
         device.profile_sample_count < 0 ||
         !device.inference || typeof device.inference !== "object" ||
-        Array.isArray(device.inference)
+        Array.isArray(device.inference) ||
+        !mappingStatuses.has(device.mapping_status) ||
+        (device.mapping_status === "not_configured" &&
+          (device.mapped_control_type !== null ||
+            device.mapping_error !== null)) ||
+        (device.mapping_status === "ready" &&
+          (!controlTypes.has(device.mapped_control_type as DeviceControlType) ||
+            device.mapping_error !== null)) ||
+        (device.mapping_status === "invalid" &&
+          (!controlTypes.has(device.mapped_control_type as DeviceControlType) ||
+            typeof device.mapping_error !== "string" ||
+            device.mapping_error.length < 1 ||
+            device.mapping_error.length > 1000)) ||
+        !device.mapping_summary || typeof device.mapping_summary !== "object" ||
+        Array.isArray(device.mapping_summary)
       ) {
         return json(
           { error: "invalid_device", detail: `devices[${index}]` },
@@ -260,6 +286,11 @@ serve(async (req) => {
         active_power_w: device.active_power_w,
         profile_sample_count: device.profile_sample_count,
         inference: device.inference,
+        mapping_status: device.mapping_status,
+        mapped_control_type: device.mapped_control_type,
+        mapping_error: device.mapping_error,
+        mapping_summary: device.mapping_summary,
+        mapping_reported_at: new Date().toISOString(),
         device_token_id: auth.tokenId,
         last_seen_at: new Date().toISOString(),
       });
@@ -271,7 +302,7 @@ serve(async (req) => {
         .from("energy_optimisation_devices")
         .upsert(deviceRows, { onConflict: "home_id,device_key" })
         .select(
-          "id, device_key, statistic_id, name, category, suggested_load_type, load_type_override, suggested_planning_role, planning_role_override, suggested_control_type, control_type_override, active_power_w, profile_sample_count, inference",
+          "id, device_key, statistic_id, name, category, suggested_load_type, load_type_override, suggested_planning_role, planning_role_override, suggested_control_type, control_type_override, active_power_w, profile_sample_count, inference, mapping_status, mapped_control_type, mapping_error, mapping_summary",
         );
       if (error) {
         console.error("[ENERGY-OPTIMISATION] device upsert failed", error);
@@ -294,6 +325,10 @@ serve(async (req) => {
           : Number(row.active_power_w),
         profile_sample_count: row.profile_sample_count,
         inference: row.inference,
+        mapping_status: row.mapping_status,
+        mapped_control_type: row.mapped_control_type,
+        mapping_error: row.mapping_error,
+        mapping_summary: row.mapping_summary,
       })) as StoredDevice[];
     }
     const storedDeviceByKey = new Map(
@@ -524,9 +559,14 @@ serve(async (req) => {
       plan: generated,
       device_configuration: storedDevices.map((device) => ({
         key: device.key,
+        statistic_id: device.statistic_id,
+        name: device.name,
+        category: device.category,
         suggested_load_type: device.suggested_load_type,
         load_type: device.load_type_override,
         ...effectivePlanning(device),
+        mapping_status: device.mapping_status,
+        mapped_control_type: device.mapped_control_type,
       })),
     });
   } catch (error) {

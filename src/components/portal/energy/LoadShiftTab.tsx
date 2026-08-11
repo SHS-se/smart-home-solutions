@@ -182,7 +182,7 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, account
           .order('created_at', { ascending: false }),
         supabase
           .from('energy_optimisation_devices')
-          .select('id, device_key, statistic_id, name, category, load_type_override, planning_role_override, control_type_override, active_power_w, profile_sample_count, last_seen_at')
+          .select('id, device_key, statistic_id, name, category, load_type_override, planning_role_override, control_type_override, mapping_status, mapped_control_type, mapping_error, mapping_reported_at, active_power_w, profile_sample_count, last_seen_at')
           .eq('customer_id', customerId)
           .eq('home_id', homeId)
           .order('name'),

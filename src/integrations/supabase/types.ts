@@ -1999,6 +1999,11 @@ export type Database = {
           inference: Json
           last_seen_at: string
           load_type_override: string
+          mapped_control_type: string | null
+          mapping_error: string | null
+          mapping_reported_at: string | null
+          mapping_status: string
+          mapping_summary: Json
           name: string
           planning_role_override: string
           profile_sample_count: number
@@ -2020,6 +2025,11 @@ export type Database = {
           inference?: Json
           last_seen_at?: string
           load_type_override: string
+          mapped_control_type?: string | null
+          mapping_error?: string | null
+          mapping_reported_at?: string | null
+          mapping_status?: string
+          mapping_summary?: Json
           name: string
           planning_role_override: string
           profile_sample_count?: number
@@ -2041,6 +2051,11 @@ export type Database = {
           inference?: Json
           last_seen_at?: string
           load_type_override?: string
+          mapped_control_type?: string | null
+          mapping_error?: string | null
+          mapping_reported_at?: string | null
+          mapping_status?: string
+          mapping_summary?: Json
           name?: string
           planning_role_override?: string
           profile_sample_count?: number
