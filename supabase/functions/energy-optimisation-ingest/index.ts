@@ -47,6 +47,7 @@ type DeviceMappingStatus = "not_configured" | "ready" | "invalid";
 interface IncomingZoneObservation {
   room_temperature_c: number;
   actuator_duty: number;
+  cooling_duty?: number | null;
   comfort_min_c?: number | null;
   comfort_max_c?: number | null;
   setpoint_c?: number | null;
@@ -719,6 +720,14 @@ serve(async (req) => {
         ) {
           return json({ error: "invalid_zone_observations", detail }, 400);
         }
+        // Absent means no cooling, which is the case in almost every home.
+        const cooling = observation.cooling_duty ?? 0;
+        if (
+          typeof cooling !== "number" || !Number.isFinite(cooling) ||
+          cooling < 0 || cooling > 1
+        ) {
+          return json({ error: "invalid_zone_observations", detail }, 400);
+        }
         const comfortMin = temperature(observation.comfort_min_c);
         const comfortMax = temperature(observation.comfort_max_c);
         const setpoint = temperature(observation.setpoint_c);
@@ -742,6 +751,7 @@ serve(async (req) => {
           start_ts: new Date(start).toISOString(),
           room_temperature_c: room,
           actuator_duty: round(duty, 4),
+          cooling_duty: round(cooling, 4),
           comfort_min_c: comfortMin,
           comfort_max_c: comfortMax,
           setpoint_c: setpoint,

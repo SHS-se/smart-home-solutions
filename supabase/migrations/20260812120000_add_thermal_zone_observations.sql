@@ -42,6 +42,11 @@ CREATE TABLE public.energy_optimisation_thermal_slots (
   start_ts timestamptz NOT NULL,
   room_temperature_c numeric NOT NULL CHECK (room_temperature_c BETWEEN -50 AND 80),
   actuator_duty numeric NOT NULL CHECK (actuator_duty BETWEEN 0 AND 1),
+  -- Cooling is measured but never modelled. A reversible aircon running in
+  -- summer puts energy into the meter while the room gets colder, which
+  -- would ask the heating fit to explain an impossibility. Recording it
+  -- lets those quarters be excluded rather than misread as heating.
+  cooling_duty numeric NOT NULL DEFAULT 0 CHECK (cooling_duty BETWEEN 0 AND 1),
   comfort_min_c numeric CHECK (comfort_min_c IS NULL OR comfort_min_c BETWEEN -50 AND 80),
   comfort_max_c numeric CHECK (comfort_max_c IS NULL OR comfort_max_c BETWEEN -50 AND 80),
   setpoint_c numeric CHECK (setpoint_c IS NULL OR setpoint_c BETWEEN -50 AND 80),
@@ -122,6 +127,7 @@ BEGIN
       jsonb_strip_nulls(jsonb_build_object(
         'room_temperature_c', slot.room_temperature_c,
         'actuator_duty', slot.actuator_duty,
+        'cooling_duty', NULLIF(slot.cooling_duty, 0),
         'comfort_min_c', slot.comfort_min_c,
         'comfort_max_c', slot.comfort_max_c,
         'setpoint_c', slot.setpoint_c

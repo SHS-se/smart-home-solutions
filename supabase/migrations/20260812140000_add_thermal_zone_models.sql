@@ -71,6 +71,9 @@ GRANT SELECT ON public.energy_optimisation_zone_models TO authenticated;
 -- Heat input comes from the metered per-device energy rather than from
 -- actuator duty, because metered energy sees an inverter's modulation.
 --
+-- Quarters spent cooling are excluded entirely: cooling is out of scope
+-- for the model, and including them would drag the heating gain negative.
+--
 -- Only consecutive quarters contribute. A sample needs the temperature at the
 -- start of the *next* quarter, so a gap in the series must break the pair
 -- rather than silently span it and report a fifteen-minute change that
@@ -123,6 +126,7 @@ BEGIN
       outdoor.temperature_c AS t_out,
       -- A quarter's metered energy is its mean power over 0.25 h.
       COALESCE(energy.energy_kwh, 0) * 4000.0 AS p_w,
+      slot.cooling_duty,
       LEAD(slot.room_temperature_c) OVER w AS t_next,
       LEAD(slot.start_ts) OVER w AS next_start,
       slot.start_ts
@@ -150,6 +154,10 @@ BEGIN
     FROM paired
     WHERE paired.t_next IS NOT NULL
       AND paired.next_start = paired.start_ts + interval '15 minutes'
+      -- Cooling is not modelled. A quarter where a reversible unit removed
+      -- heat cannot inform a heating fit, so it is dropped outright rather
+      -- than contributing an inverted sample.
+      AND paired.cooling_duty = 0
   )
   SELECT
     usable.device_id,

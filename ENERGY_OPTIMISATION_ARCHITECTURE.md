@@ -702,6 +702,13 @@ available but are **context, not fit inputs** — they constrain planning and
 draw the chart's band; the physics does not need them, and a row is never
 dropped for lacking them.
 
+Cooling is measured but never modelled. A reversible aircon in summer pushes
+energy through its meter while the room gets colder, which counted as heating
+would ask the fit to explain an impossibility. `hvac_action` is therefore read
+for *direction* rather than mere activity, a separate `cooling_duty` is
+recorded, and those quarters are dropped from training. Modelling cooling is
+out of scope; distinguishing it is not optional.
+
 Heat input is deliberately *not* re-sent. Per-device `device_energy_kwh`
 already crosses on the electrical slots and is strictly better than any
 state-derived estimate, because it sees an inverter's modulation. `actuator_duty`
@@ -1158,8 +1165,24 @@ identifiable across many, because air temperature swings while ground
 temperature barely moves. Independent variation is what separates the
 coefficients, and only a multi-day fit can exploit it.
 
+Seasonality is a permanent property of the fit, not a bootstrap problem. The
+rolling window drains of heated quarters every spring and refills every autumn,
+and in between it holds enough samples to solve while carrying almost no
+heating information. Such a window is not rank-deficient, so it produces a
+heating gain resting on a handful of quarters, usually alongside a healthy R²
+because the loss term explains most of the variance unaided. A minimum count of
+genuinely heated quarters is therefore required in addition to a minimum sample
+count.
+
+Rejections are ordered so configuration faults are diagnosed before data
+sufficiency: a room sensor tracking outdoor air is wrong no matter what the
+season is doing, and reporting "not enough heating" would send someone looking
+in the wrong place. Only a configuration fault is surfaced as blocked; waiting
+for the heating season is surfaced as waiting, because it needs no action.
+
 **A fit is refused rather than published with a caveat** when there is too
-little history, when the design is rank-deficient (a zone whose heater never
+little history, when too little of it was heated, when the design is
+rank-deficient (a zone whose heater never
 ran cannot identify a heating gain), when the fit is poor, when a coefficient
 is non-physical, or when the room sensor tracks outdoor air closely enough that
 it is evidently not measuring a room. A refused zone reports why.
