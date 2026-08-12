@@ -67,6 +67,28 @@ This is deliberately a **shadow/advisory release**. The integration exposes
 verified planned-power requests and measured reactive surplus, but it does not
 bypass existing thermostats, completion logic, manual overrides or interlocks.
 
+### 1.1.1 Thermal checkpoint (2026-08-12)
+
+The Thermal tab previously reported three rows as permanently blocked, and they
+were hardcoded that way: no room temperature, actuator state or outdoor
+temperature crossed the integration boundary, so no zone model could exist.
+That pipeline now exists end to end — collection (§5.6), storage, and an
+empirical per-zone fit (§9.3).
+
+Two decisions were settled in the process and are load-bearing for everything
+that follows:
+
+- **The portal owns the comfort band, not Home Assistant** (§5.5). Reading
+  scheduled levels out of local helpers would bind the contract to one home's
+  automation conventions and could not be offered to other customers.
+- **The band is time-varying, not a target.** A single scheduled setpoint per
+  period leaves the planner no freedom; a min/max band per period is what makes
+  load shifting possible at all.
+
+Still outstanding before any thermal control is advisory-safe: the comfort-band
+schedule editor and its data model, the planner constraint that consumes it,
+and the setpoint-trajectory executor described in §7.5.
+
 ### 1.2 Configuration and customer capability decision
 
 Planning configuration is now deliberately smaller than reporting
@@ -627,6 +649,78 @@ A plan contains:
 
 The plan is not a list of unconditional on/off commands.
 
+### 5.5 Comfort band schedule
+
+A heating schedule that names one target temperature per period leaves the
+planner nothing to optimise. If a room must be at 21.0 °C at 06:00, there is
+exactly one correct answer and load shifting is impossible. The constraint the
+portal owns is therefore a **time-varying band**, not a target:
+
+- per zone, a repeating weekly schedule of segments;
+- each segment carries `comfort_min_c` and `comfort_max_c`;
+- an unoccupied/away profile overrides the weekly schedule;
+- a frost floor applies unconditionally and cannot be scheduled away.
+
+The planner may put the zone anywhere inside the band. Everything between the
+edges is flexibility it can spend on cheap import, solar surplus or peak
+avoidance. Nothing about the band tells it *when* to heat.
+
+This is also where the ecosystem has converged. EMHASS supports both a
+per-timestep target (`desired_temperatures`) and a per-timestep `min`/`max`
+pair, and has marked the target form legacy, recommending the range precisely
+because it "allows the optimizer to float the temperature within this range to
+find the cheapest time to operate".
+
+The band belongs to the portal, not to Home Assistant. Reading it from local
+helpers would tie the contract to one home's automation conventions —
+`input_number` levels selected by a mode string, sleep levels the mapping does
+not know about, cold-weather offsets applied in a function node. A portal-owned
+band asks Home Assistant only for a room temperature sensor and an actuator,
+which every customer with a thermostat can satisfy. Existing local helper
+values may be read **once** to seed a zone's initial band so a customer with
+many zones does not hand-enter them, but they are not a live input.
+
+Two zone properties travel with the band because they change what a legal
+schedule means:
+
+- `sense`: whether the zone can heat, cool, or both. A zone that can only heat
+  defends `comfort_min_c` and treats `comfort_max_c` as an overshoot limit; a
+  reversible aircon defends both edges actively.
+- `recovery_lead_slots`: derived, not entered. A high-mass zone must begin
+  recovery well before the band tightens, so its usable shifting window is
+  shorter than a low-mass zone's even when the bands are identical.
+
+### 5.6 Thermal observation series
+
+Zone learning consumes a separate quarter-hour series from the electrical
+actuals, because a zone sensor can settle after its energy meter and a quarter
+that is complete electrically may only later become describable thermally.
+
+Per zone, per quarter: `room_temperature_c` and `actuator_duty`. Per home, per
+quarter: `outdoor_temperature_c`. Comfort levels and setpoints are carried when
+available but are **context, not fit inputs** — they constrain planning and
+draw the chart's band; the physics does not need them, and a row is never
+dropped for lacking them.
+
+Heat input is deliberately *not* re-sent. Per-device `device_energy_kwh`
+already crosses on the electrical slots and is strictly better than any
+state-derived estimate, because it sees an inverter's modulation. `actuator_duty`
+corroborates it: it separates "ran briefly at full power" from "ran all quarter
+at low output" for zones whose meter is coarse, and marks quarters where the
+zone was never called.
+
+Three recorder shapes have to become one grid, and they are not
+interchangeable. Room and outdoor temperature are `measurement` sensors with
+five-minute `mean` statistics that survive as long as `purge_keep_days`.
+Comfort helpers are `input_number`s with no `state_class`, so no statistics
+exist for them at all and they must come from state history. Actuator state is
+not a number in any form; the useful quantity is the share of the quarter spent
+actually running. Both step-function sources are time-weighted rather than
+averaged over recorded points, so five `on` rows in one minute cannot outweigh
+an `off` that held for the remaining fourteen. A climate entity's `hvac_action`
+is authoritative over its mode: a thermostat left in `heat` all night is not a
+heater that ran all night.
+
 ## 6. Planned-control scenario
 
 ### 6.1 Cadence
@@ -831,6 +925,16 @@ schedule and a thermostat:
    stay local. A grant only permits heat while the thermostat is requesting it;
    it never forces a warm room's relay on.
 
+**Prefer commanding a setpoint trajectory over commanding relays.** Once a zone
+has a fitted model, the planner can publish the indoor temperature trajectory
+it intends and let the existing thermostat track it, rather than issuing on/off
+grants. This is how EMHASS executes its thermal loads, and it has a property
+worth more than the extra precision of direct control: a stale plan, an expired
+token or a dropped connection degrades to the thermostat holding its last
+setpoint, not to a cold house. Direct relay control fails unsafe by default and
+needs a watchdog to become safe; setpoint control is safe by construction, and
+keeps the local flows as the fallback layer rather than replacing them.
+
 The coordinator should rank requests by a transparent thermal-debt metric such
 as temperature deficit relative to the active comfort band, time waiting,
 forecast heat loss and room priority. Minimum on/off times and fairness prevent
@@ -997,6 +1101,103 @@ effektavgift.
   intent; and
 - metering boundaries that prevent aggregate plus child double counting.
 
+### 9.3 Empirical thermal zone model
+
+Zone thermal properties are **derived from history, not entered**. This is the
+main reason to build this rather than deploy an existing optimiser: EMHASS
+requires `heating_rate` and `cooling_constant` to be hand-tuned per zone and
+suggests 5.0 and 0.1 as starting points. A portal that already stores
+per-device quarter-hour energy and room temperature can fit them, and re-fit as
+the house changes.
+
+Empirically estimating heat loss is also the right way to size heating cycles.
+"How much energy does this room need to reach 21 °C by 06:30, and when must
+that start?" is answerable from a fitted zone and unanswerable from a rated
+wattage.
+
+The model is the standard first-order (1R1C) lumped-capacitance zone, written
+in EMHASS's parameterisation so a fitted zone stays portable:
+
+```
+T[k+1] = T[k] + a·P[k]·Δt − γ·Δt·(T[k] − T_out[k]) + g·Δt
+```
+
+`a` is temperature rise per watt-hour, `γ` the cooling constant per hour per °C
+of difference, `g` a background gain. EMHASS's `heating_rate` is `a·P_nom` and
+its `cooling_constant` is `γ`. Physical quantities follow: `C = 1/a` is the
+lumped heat capacity, `UA = γ·C` the envelope loss coefficient, and `1/γ` the
+time constant.
+
+Fitting is ordinary least squares on the difference equation, regressing the
+observed rate of change on heat input, outdoor difference and a constant.
+
+**Two failure modes make the naive form wrong, and both are systematic.**
+
+The first is omitting `g`. A house is heated by far more than its heaters —
+appliances, lighting, cooking, refrigeration, occupants at roughly 100 W each,
+and window solar gain. Computing `UA = Q/ΔT` from heating energy alone
+attributes the whole indoor-outdoor difference to the heaters, when the
+envelope was really losing heater output *plus* all of that. The result is a
+heat loss coefficient that is too low, every time. Carrying `g` as a free
+parameter lets the regression discover those gains instead of folding them into
+the loss term.
+
+The second is the steady-state assumption. `UA = Q/ΔT` holds only when the zone
+is neither warming nor cooling. On any real day some energy goes into the
+structure rather than through the walls, so a warming day overstates `UA` and a
+cooling day understates it. This bites hardest exactly where deep setback is
+used, because that is when storage does the most work. Regressing the rate of
+change keeps that term in `a`, where it belongs.
+
+A related trap appears when splitting envelope loss between air-exposed and
+ground-coupled surfaces. Apportioning measured heat by *area* fraction and then
+dividing by each path's ΔT is circular: how heat divides depends on each path's
+`U×A`, which is the unknown. The honest form,
+`Q = UA_air·ΔT_air + UA_ground·ΔT_ground`, is unidentifiable from one day but
+identifiable across many, because air temperature swings while ground
+temperature barely moves. Independent variation is what separates the
+coefficients, and only a multi-day fit can exploit it.
+
+**A fit is refused rather than published with a caveat** when there is too
+little history, when the design is rank-deficient (a zone whose heater never
+ran cannot identify a heating gain), when the fit is poor, when a coefficient
+is non-physical, or when the room sensor tracks outdoor air closely enough that
+it is evidently not measuring a room. A refused zone reports why.
+
+Fixed COP values deserve specific care. Heat-pump COP falls as it gets colder,
+so a constant assumption biases in a way that *correlates with the regressor*,
+which is systematic error rather than scatter. Reversible units also record
+cooling energy through the same meter, which must not be added as heat.
+
+Scheduled band control produces unusually good identification data. A zone held
+flat by a thermostat deadband barely moves, and small excursions buried in
+sensor noise identify the parameters poorly. Long free-cooling coasts give a
+clean read on `γ`; hard full-duty recoveries give a clean read on `a`.
+
+### 9.4 Per-zone mass and why one strategy does not fit a house
+
+Setback saves energy because it lowers the *average* indoor temperature, and
+loss is `UA·(T_in − T_out)` integrated over time. It is not because a heater
+running at 100% for a short block is more efficient than one cycling at partial
+duty — a resistive element is 100% efficient either way, and the same delivered
+heat costs the same. Getting the mechanism right matters, because it predicts
+where the strategy stops working:
+
+- **Low-mass zones** (wall panel convectors) recover fast, so deep setback is
+  nearly free and the shifting window is wide.
+- **High-mass zones** (concrete floor heating) recover slowly. Recovery must
+  start long before the band tightens, which shrinks the window the planner can
+  shift within and can make a shallower band cheaper overall.
+- **Inverter heat pumps and aircon** break the resistive intuition entirely.
+  COP varies with load and outdoor temperature, and many units are *more*
+  efficient at partial load. Deep setback followed by hard recovery delivers
+  the most heat at high output, possibly at a colder hour, and can lose to a
+  shallower band.
+
+The same house therefore wants opposite strategies in different rooms, which is
+why per-zone `a`, `γ` and recovery lead are fitted individually rather than one
+whole-house figure being applied everywhere.
+
 ## 10. Seasonal and condition scenario matrix
 
 ### 10.1 Canonical 72-hour seasonal fixtures
@@ -1116,7 +1317,10 @@ states, and all reason codes.
 - boiler tank state, hard temperature bounds, losses, and hygiene policy;
 - pool water state, cover/season policy, loss model, filtration requirement,
   and hard bounds;
-- zone-specific heat loss and thermal capacity rather than equal UA splitting;
+- zone-specific heat loss and thermal capacity are now fitted per zone from
+  collected history rather than split equally (§9.3); what remains is enough
+  accumulated observation for each zone to pass the fit's acceptance checks,
+  and a comfort band per zone to constrain planning;
 - heat-pump/aircon measured input curves, mode, defrost/startup behaviour, and
   consistent IR power thresholds;
 - at least a full heating season of base-load and zone response history, or an
@@ -1238,8 +1442,15 @@ hard-limit violation in replay and live commissioning.
 
 ### Phase 5 — heating-season models and calibration
 
-- Fit zone UA/thermal capacity, base-load forecasts, HP/COP behaviour, and device
-  completion/loss models from actuals.
+- Collect quarter-hour thermal observations and fit zone `a`/`γ` from them
+  (§5.6, §9.3). **Done**; zones accumulate history until they pass the fit's
+  acceptance checks.
+- Build the comfort-band schedule editor and data model (§5.5), seeded once
+  from existing local helper values. **Next.**
+- Consume the band as a planner constraint, and publish a setpoint trajectory
+  rather than relay grants (§7.5).
+- Fit base-load forecasts, HP/COP behaviour, and device completion/loss models
+  from actuals.
 - Add winter, shoulder-season, cooling, and DST scenario fixtures.
 - Replace one-house Node-RED assumptions with versioned product parameters and
   native HA controller templates.
