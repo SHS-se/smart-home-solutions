@@ -19,8 +19,8 @@ CREATE TABLE public.energy_optimisation_zone_models (
   -- silence would be indistinguishable from never having tried.
   trained boolean NOT NULL,
   rejection_reason text CHECK (rejection_reason IS NULL OR rejection_reason IN (
-    'insufficient_samples', 'singular', 'poor_fit', 'non_physical',
-    'sensor_tracks_outdoor'
+    'insufficient_samples', 'insufficient_heating', 'singular', 'poor_fit',
+    'non_physical', 'sensor_tracks_outdoor'
   )),
   gain_c_per_wh numeric,
   cooling_constant_per_h numeric,
@@ -86,6 +86,7 @@ RETURNS TABLE (
   device_key text,
   active_power_w numeric,
   n bigint,
+  n_heated bigint,
   s_pp double precision,
   s_pd double precision,
   s_p double precision,
@@ -155,6 +156,10 @@ BEGIN
     device.device_key,
     device.active_power_w,
     COUNT(*) AS n,
+    -- Quarters where the zone was genuinely heated. Without enough of
+    -- these the heating gain is estimated from almost nothing, which
+    -- happens every autumn as the window refills with summer quarters.
+    COUNT(*) FILTER (WHERE usable.p > 50) AS n_heated,
     SUM(usable.p * usable.p), SUM(usable.p * usable.d), SUM(usable.p),
     SUM(usable.d * usable.d), SUM(usable.d),
     SUM(usable.p * usable.y), SUM(usable.d * usable.y), SUM(usable.y),

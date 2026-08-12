@@ -139,13 +139,34 @@ Deno.test('fitThermalZone refuses a zone with too little history', () => {
   assertEquals(result.reason, 'insufficient_samples', 'rejection reason');
 });
 
+Deno.test('fitThermalZone refuses a barely-heated autumn window', () => {
+  // Three weeks of history with a single heated day. Not rank-deficient, so
+  // it solves - but the heating gain rests on almost nothing. This is the
+  // shape every autumn takes as the window drains of summer quarters.
+  const samples = syntheticSamples(
+    2016,
+    index => (index < 40 ? 1 : 0),
+  );
+  const result = fitThermalZone(samples, 1000);
+  assert(!result.ok, 'a barely-heated window must not produce a model');
+  if (result.ok) return;
+  assertEquals(result.reason, 'insufficient_heating', 'rejection reason');
+});
+
+Deno.test('fitThermalZone accepts a window once the season is under way', () => {
+  // The same window with heating on most days clears the threshold.
+  const result = fitThermalZone(syntheticSamples(2016, bandedDuty), 1000);
+  assert(result.ok, 'a properly heated window must fit');
+});
+
 Deno.test('fitThermalZone refuses a zone whose heater never ran', () => {
-  // With no heat input the gain column is all zeros, so the parameter is
-  // unidentifiable rather than merely uncertain.
+  // A summer window: the gain column is all zeros, so the parameter is
+  // unidentifiable rather than merely uncertain. Reported as insufficient
+  // heating rather than as a bare singularity, because that names the cause.
   const result = fitThermalZone(syntheticSamples(1000, () => 0), 1000);
   assert(!result.ok, 'an unheated zone cannot identify a heating gain');
   if (result.ok) return;
-  assertEquals(result.reason, 'singular', 'rejection reason');
+  assertEquals(result.reason, 'insufficient_heating', 'rejection reason');
 });
 
 Deno.test('projectZoneTemperature cools a zone with no heat input', () => {

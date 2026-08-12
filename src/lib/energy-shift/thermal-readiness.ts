@@ -55,6 +55,12 @@ export interface ThermalReadinessAssessment {
   outdoorState: ThermalReadinessState;
   trainedZoneCount: number;
   modelState: ThermalReadinessState;
+  /**
+   * Why the most zones could not be fitted, when none were. Out of season
+   * this is normally `insufficient_heating`, which is an explanation rather
+   * than a fault and must not be presented as one.
+   */
+  dominantRejection: string | null;
   /** True only when nothing further is needed from Home Assistant. */
   pipelineComplete: boolean;
 }
@@ -106,9 +112,24 @@ export const assessThermalReadiness = (
     : observations.outdoorSlotCount < observations.slotCount
       ? 'waiting'
       : 'ready';
+  const rejectionCounts = new Map<string, number>();
+  for (const model of zoneModels) {
+    if (model.trained || !model.rejection_reason) continue;
+    rejectionCounts.set(
+      model.rejection_reason,
+      (rejectionCounts.get(model.rejection_reason) ?? 0) + 1,
+    );
+  }
+  const dominantRejection = trainedZoneCount > 0 || rejectionCounts.size === 0
+    ? null
+    : [...rejectionCounts.entries()].sort((a, b) => b[1] - a[1])[0][0];
+
+  // A zone that cannot be fitted because its sensor is mis-mapped needs
+  // attention; one that cannot be fitted because it is August does not.
+  const misconfigured = dominantRejection === 'sensor_tracks_outdoor';
   const modelState: ThermalReadinessState = trainedZoneCount > 0
     ? 'ready'
-    : thermalState === 'blocked' || outdoorState === 'blocked'
+    : misconfigured || thermalState === 'blocked' || outdoorState === 'blocked'
       ? 'blocked'
       : 'waiting';
 
@@ -131,6 +152,7 @@ export const assessThermalReadiness = (
     outdoorState,
     trainedZoneCount,
     modelState,
+    dominantRejection,
     pipelineComplete: thermalState === 'ready' && outdoorState !== 'blocked',
   };
 };

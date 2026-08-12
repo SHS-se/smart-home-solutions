@@ -31,6 +31,22 @@ export const SLOT_HOURS = 0.25;
 
 /** Minimum quarters before a fit is offered at all. */
 export const MIN_TRAINING_SAMPLES = 480; // five days of quarters
+/**
+ * Minimum quarters in which the zone was actually heated.
+ *
+ * Rank deficiency is only the extreme case. A window holding one heated day
+ * against twenty unheated ones is not singular, so it solves — and returns a
+ * heating gain estimated from almost nothing, usually alongside a healthy R²,
+ * because the cooling term explains most of the variance without help. That
+ * is worse than a refusal, because it looks like an answer.
+ *
+ * This matters every autumn, not just at first install: the window refills
+ * with unheated summer quarters and the heating gain becomes unidentifiable
+ * again until the season is properly under way.
+ */
+export const MIN_HEATED_SAMPLES = 96; // a day's worth of heated quarters
+/** Heat input below this is standby draw, not heating. */
+export const HEATED_SAMPLE_MIN_W = 50;
 /** Minimum share of variance explained before a fit is published. */
 export const MIN_FIT_R2 = 0.5;
 /**
@@ -53,6 +69,8 @@ export const MAX_OUTDOOR_CORRELATION = 0.95;
  */
 export interface ThermalMoments {
   n: number;
+  /** Quarters whose heat input exceeded HEATED_SAMPLE_MIN_W. */
+  n_heated: number;
   s_pp: number;
   s_pd: number;
   s_p: number;
@@ -103,6 +121,7 @@ export interface ThermalZoneModel {
 
 export type ThermalFitRejection =
   | "insufficient_samples"
+  | "insufficient_heating"
   | "singular"
   | "poor_fit"
   | "non_physical"
@@ -192,6 +211,7 @@ export function accumulateMoments(
 ): ThermalMoments {
   const moments: ThermalMoments = {
     n: 0,
+    n_heated: 0,
     s_pp: 0,
     s_pd: 0,
     s_p: 0,
@@ -219,6 +239,7 @@ export function accumulateMoments(
     const y =
       (sample.next_room_temperature_c - sample.room_temperature_c) / SLOT_HOURS;
     moments.n += 1;
+    if (p > HEATED_SAMPLE_MIN_W) moments.n_heated += 1;
     moments.s_pp += p * p;
     moments.s_pd += p * d;
     moments.s_p += p;
@@ -272,6 +293,14 @@ export function fitThermalZoneFromMoments(
     return {
       ok: false,
       reason: "sensor_tracks_outdoor",
+      sample_count: sampleCount,
+    };
+  }
+
+  if ((moments.n_heated ?? 0) < MIN_HEATED_SAMPLES) {
+    return {
+      ok: false,
+      reason: "insufficient_heating",
       sample_count: sampleCount,
     };
   }

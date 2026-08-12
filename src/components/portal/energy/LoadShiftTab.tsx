@@ -57,6 +57,30 @@ interface CurrentRow {
   updated_at: string;
 }
 
+// A refused fit is usually seasonal rather than faulty, so each reason gets
+// wording that says whether anything needs doing.
+const THERMAL_REJECTION_EN: Record<string, string> = {
+  insufficient_samples: 'Not enough history yet. Observations are still accumulating.',
+  insufficient_heating:
+    'The heaters have not run enough for the model to learn how fast each room warms. This resolves once the heating season starts; nothing needs changing.',
+  singular: 'The observations so far cannot separate heating from heat loss.',
+  poor_fit: 'The fitted model did not explain the measured temperatures well enough to publish.',
+  non_physical: 'The fit produced a physically impossible result and was refused.',
+  sensor_tracks_outdoor:
+    'A zone temperature sensor follows outdoor air too closely to be measuring a room. Check the room sensor mapping.',
+};
+
+const THERMAL_REJECTION_SV: Record<string, string> = {
+  insufficient_samples: 'Ännu inte tillräckligt med historik. Observationer samlas fortfarande in.',
+  insufficient_heating:
+    'Värmeenheterna har inte gått tillräckligt för att modellen ska lära sig hur snabbt rummen värms upp. Detta löser sig när uppvärmningssäsongen börjar; inget behöver ändras.',
+  singular: 'Observationerna hittills kan inte skilja uppvärmning från värmeförlust.',
+  poor_fit: 'Den anpassade modellen förklarade inte de uppmätta temperaturerna tillräckligt väl.',
+  non_physical: 'Anpassningen gav ett fysiskt omöjligt resultat och avvisades.',
+  sensor_tracks_outdoor:
+    'En zongivare följer utomhusluften för nära för att mäta ett rum. Kontrollera mappningen av rumsgivaren.',
+};
+
 const EMPTY_THERMAL_OBSERVATIONS: ThermalObservationSummary = {
   slotCount: 0,
   outdoorSlotCount: 0,
@@ -1208,10 +1232,17 @@ const ThermalReadinessPanel: React.FC<{
               `${readiness.trainedZoneCount} av ${selectedCount} zoner har en anpassad värmemodell.`,
               `${readiness.trainedZoneCount} of ${selectedCount} zones have a fitted thermal model.`,
             )
-            : t(
-              `Träning startar när en zon har ${THERMAL_TRAINING_SLOTS.toLocaleString()} kvartar med både rums- och utomhustemperatur.`,
-              `Training starts once a zone has ${THERMAL_TRAINING_SLOTS.toLocaleString()} quarters of both room and outdoor temperature.`,
-            )}
+            : readiness.dominantRejection
+              ? t(
+                THERMAL_REJECTION_SV[readiness.dominantRejection]
+                  ?? 'Ingen zon kunde anpassas ännu.',
+                THERMAL_REJECTION_EN[readiness.dominantRejection]
+                  ?? 'No zone could be fitted yet.',
+              )
+              : t(
+                `Träning startar när en zon har ${THERMAL_TRAINING_SLOTS.toLocaleString()} kvartar med både rums- och utomhustemperatur.`,
+                `Training starts once a zone has ${THERMAL_TRAINING_SLOTS.toLocaleString()} quarters of both room and outdoor temperature.`,
+              )}
           state={readiness.modelState}
           stateLabel={stateLabels[readiness.modelState]}
         />
