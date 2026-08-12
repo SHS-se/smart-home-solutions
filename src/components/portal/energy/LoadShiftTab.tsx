@@ -12,7 +12,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { AlertTriangle, Loader2, Sparkles } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Clock3, Loader2, Sparkles } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -34,6 +34,7 @@ import {
   foldDevicePowerIntoBase,
   reconcilePlanDeviceRoles,
 } from '@/lib/energy-shift/plan-device-roles';
+import { assessThermalReadiness } from '@/lib/energy-shift/thermal-readiness';
 import EmpiricalDeviceModelsCard, {
   type EmpiricalEnergyDevice,
 } from './EmpiricalDeviceModelsCard';
@@ -601,6 +602,11 @@ const PlanView: React.FC<{
     : costDelta > 0.005
       ? t('uppskattad merkostnad', 'estimated added cost')
       : t('ingen uppskattad förändring', 'no estimated change');
+  const validationMessages = [...new Set(
+    plan.validation_errors.length > 0
+      ? plan.validation_errors
+      : executed.validation_errors,
+  )];
 
   return (
     <div className="space-y-6">
@@ -612,7 +618,7 @@ const PlanView: React.FC<{
           </AlertDescription>
         </Alert>
       )}
-      {(!ready || plan.validation_errors.length > 0 || executed.validation_errors.length > 0) && (
+      {(!ready || validationMessages.length > 0) && (
         <Alert variant={stale || bindingExpired || sourceStale.length > 0 ? 'destructive' : 'default'}>
           <AlertTriangle className="h-4 w-4" />
           <AlertTitle>
@@ -632,8 +638,7 @@ const PlanView: React.FC<{
               )] : []),
               ...(bindingExpired ? [t('Home Assistant utför inte rådgivande, oprissatta pass.', 'Home Assistant does not execute advisory, unpriced slots.')] : []),
               ...sourceStale.map(source => `${source}: valid_until passed`),
-              ...plan.validation_errors,
-              ...executed.validation_errors,
+              ...validationMessages,
             ].slice(0, 8).join(' · ') || t('Home Assistant använder baskontrollerna tills en giltig plan finns.', 'Home Assistant uses its baseline controllers until a valid plan is available.')}
           </AlertDescription>
         </Alert>
@@ -798,17 +803,10 @@ const PlanView: React.FC<{
               </p>
             </>
           ) : (
-            <div className="mx-auto max-w-3xl py-14 text-center text-sm text-muted-foreground">
-              <p className="font-medium text-foreground">
-                {t('Ingen termisk modell har publicerats för detta hem ännu.', 'No thermal model has been published for this home yet.')}
-              </p>
-              <p className="mt-2">
-                {t(
-                  'För att schemalägga ett värmeelement måste det markeras som styrbart och kopplas till bekräftade rumstemperatur-, börvärdes/överstyrnings-, aktuator- och effekt/energientiteter samt utomhusprognosen. Historik används sedan för att lära byggnadens respons; enbart energihistorik räcker inte. Effektplanen fortsätter oförändrad.',
-                  'To schedule a heater it must be marked controllable and mapped to confirmed room-temperature, setpoint/override, actuator, and power/energy entities plus the outdoor forecast. History is then used to learn the building response; energy history alone is not enough. The electrical plan continues unchanged.',
-                )}
-              </p>
-            </div>
+            <ThermalReadinessPanel
+              devices={empiricalDevices}
+              planDevices={plan.device_models}
+            />
           ))}
 
           {dimension === 'economics' && (
@@ -934,6 +932,159 @@ const PlanView: React.FC<{
           </div>
         </CardContent>
       </Card>
+    </div>
+  );
+};
+
+type ReadinessState = 'ready' | 'blocked' | 'waiting';
+
+const ThermalReadinessRow: React.FC<{
+  label: string;
+  detail: string;
+  state: ReadinessState;
+  stateLabel: string;
+}> = ({ label, detail, state, stateLabel }) => {
+  const Icon = state === 'ready' ? CheckCircle2 : state === 'blocked' ? AlertTriangle : Clock3;
+  const tone = state === 'ready'
+    ? 'text-emerald-700 dark:text-emerald-400'
+    : state === 'blocked'
+      ? 'text-amber-700 dark:text-amber-400'
+      : 'text-muted-foreground';
+  return (
+    <div className="flex items-start justify-between gap-4 border-b py-3 last:border-b-0">
+      <div className="flex min-w-0 items-start gap-2.5">
+        <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${tone}`} />
+        <div>
+          <p className="text-sm font-medium text-foreground">{label}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">{detail}</p>
+        </div>
+      </div>
+      <Badge variant="outline" className={`shrink-0 ${tone}`}>{stateLabel}</Badge>
+    </div>
+  );
+};
+
+const ThermalReadinessPanel: React.FC<{
+  devices: EmpiricalEnergyDevice[];
+  planDevices: OptimisationPlanV5['device_models'];
+}> = ({ devices, planDevices }) => {
+  const { t } = useLanguage();
+  const readiness = useMemo(
+    () => assessThermalReadiness(devices, planDevices),
+    [devices, planDevices],
+  );
+  const selectedCount = readiness.selectedDevices.length;
+  const allMappingsReady = selectedCount > 0
+    && readiness.mappingReadyCount === selectedCount;
+  const allHistoryReady = selectedCount > 0
+    && readiness.electricalHistoryReadyCount === selectedCount;
+  const allForecastsReady = selectedCount > 0
+    && readiness.electricalForecastReadyCount === selectedCount;
+  const readyLabel = t('Klar', 'Ready');
+  const blockedLabel = t('Blockerad', 'Blocked');
+  const waitingLabel = t('Väntar', 'Waiting');
+
+  return (
+    <div className="mx-auto max-w-4xl space-y-4 py-5 text-left">
+      <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+        <div className="flex items-start gap-2.5">
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+          <div>
+            <p className="font-medium">
+              {t(
+                'Den termiska modellen blockeras av en saknad datapipeline',
+                'The thermal model is blocked by a missing data pipeline',
+              )}
+            </p>
+            <p className="mt-1 text-sm opacity-90">
+              {t(
+                'Den nuvarande integrationen skickar enhetsmappningar och elektriska energiprofiler, men ännu inga kvartsvärden för rumstemperatur, börvärde, aktuatorstatus eller utomhustemperatur. Därför kan webbplatsen inte träna eller publicera en termisk modell. Detta är ett programvarugap, inte ett dolt konfigurationsfel i ditt hem.',
+                'The current integration sends device mappings and electrical energy profiles, but it does not yet send quarter-hour room temperature, setpoint, actuator-state, or outdoor-temperature observations. The website therefore cannot train or publish a thermal model. This is a software gap, not a hidden configuration error in your home.',
+              )}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-lg border px-4">
+        <ThermalReadinessRow
+          label={t('Värmeenheter valda för börvärdesstyrning', 'Heaters selected for setpoint control')}
+          detail={selectedCount > 0
+            ? t(`${selectedCount} enheter är valda på webbplatsen.`, `${selectedCount} devices are selected on the website.`)
+            : t('Välj Styrbar · Börvärde för minst en värmeenhet.', 'Select Controllable · Setpoint for at least one heater.')}
+          state={selectedCount > 0 ? 'ready' : 'blocked'}
+          stateLabel={selectedCount > 0 ? readyLabel : blockedLabel}
+        />
+        <ThermalReadinessRow
+          label={t('Lokala Home Assistant-mappningar', 'Local Home Assistant mappings')}
+          detail={t(
+            `${readiness.mappingReadyCount} av ${selectedCount} valda enheter har en bekräftad mappning.`,
+            `${readiness.mappingReadyCount} of ${selectedCount} selected devices have a confirmed mapping.`,
+          )}
+          state={allMappingsReady ? 'ready' : 'blocked'}
+          stateLabel={allMappingsReady ? readyLabel : blockedLabel}
+        />
+        <ThermalReadinessRow
+          label={t('Elektrisk energihistorik', 'Electrical energy history')}
+          detail={t(
+            `${readiness.electricalHistoryReadyCount} av ${selectedCount} enheter har ${readiness.electricalHistorySampleCount.toLocaleString()} kompletta 15-minutersprover totalt. Detta driver serierna i effektgrafen men beskriver inte rumstemperaturen.`,
+            `${readiness.electricalHistoryReadyCount} of ${selectedCount} devices have ${readiness.electricalHistorySampleCount.toLocaleString()} complete 15-minute samples in total. This drives the Power-series forecasts but does not describe room temperature.`,
+          )}
+          state={allHistoryReady ? 'ready' : 'waiting'}
+          stateLabel={allHistoryReady ? readyLabel : waitingLabel}
+        />
+        <ThermalReadinessRow
+          label={t('Elektrisk enhetsprognos i aktuell plan', 'Electrical device forecast in current plan')}
+          detail={t(
+            `${readiness.electricalForecastReadyCount} av ${selectedCount} värmeenheter finns i den aktuella effektplanen.`,
+            `${readiness.electricalForecastReadyCount} of ${selectedCount} heaters are present in the current power plan.`,
+          )}
+          state={allForecastsReady ? 'ready' : 'waiting'}
+          stateLabel={allForecastsReady ? readyLabel : waitingLabel}
+        />
+        <ThermalReadinessRow
+          label={t('Termiska historikvärden', 'Thermal history observations')}
+          detail={t(
+            'Rumstemperatur, börvärde och aktuatorstatus överförs ännu inte från Home Assistant.',
+            'Room temperature, setpoint, and actuator state are not yet transferred from Home Assistant.',
+          )}
+          state="blocked"
+          stateLabel={blockedLabel}
+        />
+        <ThermalReadinessRow
+          label={t('Utomhustemperatur och prognos', 'Outdoor temperature and forecast')}
+          detail={t(
+            'Ingen utomhustemperaturkälla ingår ännu i den levande planens datakontrakt.',
+            'No outdoor-temperature source is included in the live-plan data contract yet.',
+          )}
+          state="blocked"
+          stateLabel={blockedLabel}
+        />
+        <ThermalReadinessRow
+          label={t('Inlärd termisk zonmodell', 'Learned thermal zone model')}
+          detail={t(
+            'Träning kan börja först när både termiska historikvärden och väderdata publiceras.',
+            'Training can start only after both thermal history observations and weather data are published.',
+          )}
+          state="waiting"
+          stateLabel={waitingLabel}
+        />
+      </div>
+
+      {readiness.mappingBlockers.length > 0 && (
+        <div className="rounded-lg border p-4 text-sm">
+          <p className="font-medium">
+            {t('Enheter som fortfarande behöver mappas', 'Devices that still need mapping')}
+          </p>
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-muted-foreground">
+            {readiness.mappingBlockers.map(device => (
+              <li key={device.device_key}>
+                {device.name}{device.mapping_error ? ` — ${device.mapping_error}` : ''}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 };
