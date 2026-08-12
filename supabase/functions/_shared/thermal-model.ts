@@ -40,6 +40,36 @@ export const MIN_FIT_R2 = 0.5;
  */
 export const MAX_OUTDOOR_CORRELATION = 0.95;
 
+/**
+ * Accumulated regression sums for one zone.
+ *
+ * A month of quarters for a whole house is tens of thousands of rows, and
+ * shipping them into a function only to reduce them to fourteen numbers is
+ * pure waste. The database accumulates these directly, so the fit stays a
+ * 3x3 solve regardless of how much history a home has.
+ *
+ * The design columns are heat input `P`, outdoor difference `D = T_out - T_in`
+ * and a constant; the target `y` is the observed rate of change in °C/h.
+ */
+export interface ThermalMoments {
+  n: number;
+  s_pp: number;
+  s_pd: number;
+  s_p: number;
+  s_dd: number;
+  s_d: number;
+  s_py: number;
+  s_dy: number;
+  s_y: number;
+  s_yy: number;
+  // Retained so the outdoor-tracking guard survives the move into SQL.
+  s_in: number;
+  s_out: number;
+  s_inin: number;
+  s_outout: number;
+  s_inout: number;
+}
+
 export interface ThermalTrainingSample {
   /** Indoor temperature at the start of the quarter. */
   room_temperature_c: number;
@@ -157,57 +187,105 @@ export function solveLinearSystem(
  * residual in physical units (°C/h) so `residual_std_c` is directly readable
  * as how far the model is typically wrong over a quarter.
  */
+export function accumulateMoments(
+  samples: ThermalTrainingSample[],
+): ThermalMoments {
+  const moments: ThermalMoments = {
+    n: 0,
+    s_pp: 0,
+    s_pd: 0,
+    s_p: 0,
+    s_dd: 0,
+    s_d: 0,
+    s_py: 0,
+    s_dy: 0,
+    s_y: 0,
+    s_yy: 0,
+    s_in: 0,
+    s_out: 0,
+    s_inin: 0,
+    s_outout: 0,
+    s_inout: 0,
+  };
+  for (const sample of samples) {
+    if (
+      !Number.isFinite(sample.room_temperature_c) ||
+      !Number.isFinite(sample.next_room_temperature_c) ||
+      !Number.isFinite(sample.outdoor_temperature_c) ||
+      !Number.isFinite(sample.heat_input_w)
+    ) continue;
+    const p = sample.heat_input_w;
+    const d = sample.outdoor_temperature_c - sample.room_temperature_c;
+    const y =
+      (sample.next_room_temperature_c - sample.room_temperature_c) / SLOT_HOURS;
+    moments.n += 1;
+    moments.s_pp += p * p;
+    moments.s_pd += p * d;
+    moments.s_p += p;
+    moments.s_dd += d * d;
+    moments.s_d += d;
+    moments.s_py += p * y;
+    moments.s_dy += d * y;
+    moments.s_y += y;
+    moments.s_yy += y * y;
+    moments.s_in += sample.room_temperature_c;
+    moments.s_out += sample.outdoor_temperature_c;
+    moments.s_inin += sample.room_temperature_c ** 2;
+    moments.s_outout += sample.outdoor_temperature_c ** 2;
+    moments.s_inout += sample.room_temperature_c * sample.outdoor_temperature_c;
+  }
+  return moments;
+}
+
+/** Pearson correlation reconstructed from accumulated sums. */
+export function correlationFromMoments(moments: ThermalMoments): number {
+  const { n, s_in, s_out, s_inin, s_outout, s_inout } = moments;
+  if (n < 2) return 0;
+  const covariance = s_inout - (s_in * s_out) / n;
+  const indoorVariance = s_inin - (s_in * s_in) / n;
+  const outdoorVariance = s_outout - (s_out * s_out) / n;
+  if (indoorVariance <= 0 || outdoorVariance <= 0) return 0;
+  return covariance / Math.sqrt(indoorVariance * outdoorVariance);
+}
+
 export function fitThermalZone(
   samples: ThermalTrainingSample[],
   ratedPowerW: number | null = null,
 ): ThermalFitResult {
-  const usable = samples.filter((sample) =>
-    Number.isFinite(sample.room_temperature_c) &&
-    Number.isFinite(sample.next_room_temperature_c) &&
-    Number.isFinite(sample.outdoor_temperature_c) &&
-    Number.isFinite(sample.heat_input_w)
-  );
-  if (usable.length < MIN_TRAINING_SAMPLES) {
+  return fitThermalZoneFromMoments(accumulateMoments(samples), ratedPowerW);
+}
+
+export function fitThermalZoneFromMoments(
+  moments: ThermalMoments,
+  ratedPowerW: number | null = null,
+): ThermalFitResult {
+  const sampleCount = moments.n;
+  if (sampleCount < MIN_TRAINING_SAMPLES) {
     return {
       ok: false,
       reason: "insufficient_samples",
-      sample_count: usable.length,
+      sample_count: sampleCount,
     };
   }
 
-  const indoor = usable.map((sample) => sample.room_temperature_c);
-  const outdoor = usable.map((sample) => sample.outdoor_temperature_c);
-  if (Math.abs(correlation(indoor, outdoor)) > MAX_OUTDOOR_CORRELATION) {
+  if (Math.abs(correlationFromMoments(moments)) > MAX_OUTDOOR_CORRELATION) {
     return {
       ok: false,
       reason: "sensor_tracks_outdoor",
-      sample_count: usable.length,
+      sample_count: sampleCount,
     };
   }
 
-  // Design columns: heat input (W), outdoor difference (°C), constant.
-  const rows = usable.map((sample) => [
-    sample.heat_input_w,
-    sample.outdoor_temperature_c - sample.room_temperature_c,
-    1,
-  ]);
-  const targets = usable.map((sample) =>
-    (sample.next_room_temperature_c - sample.room_temperature_c) / SLOT_HOURS
+  const solution = solveLinearSystem(
+    [
+      [moments.s_pp, moments.s_pd, moments.s_p],
+      [moments.s_pd, moments.s_dd, moments.s_d],
+      [moments.s_p, moments.s_d, sampleCount],
+    ],
+    [moments.s_py, moments.s_dy, moments.s_y],
   );
-
-  const normal = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
-  const moment = [0, 0, 0];
-  for (let index = 0; index < rows.length; index += 1) {
-    const row = rows[index];
-    for (let i = 0; i < 3; i += 1) {
-      moment[i] += row[i] * targets[index];
-      for (let j = 0; j < 3; j += 1) normal[i][j] += row[i] * row[j];
-    }
-  }
-
-  const solution = solveLinearSystem(normal, moment);
   if (solution === null) {
-    return { ok: false, reason: "singular", sample_count: usable.length };
+    return { ok: false, reason: "singular", sample_count: sampleCount };
   }
   const [gain, cooling, background] = solution;
 
@@ -219,21 +297,23 @@ export function fitThermalZone(
     !(gain > 0) || !(cooling > 0) || !Number.isFinite(background) ||
     !Number.isFinite(gain) || !Number.isFinite(cooling)
   ) {
-    return { ok: false, reason: "non_physical", sample_count: usable.length };
+    return { ok: false, reason: "non_physical", sample_count: sampleCount };
   }
 
-  const targetMean = mean(targets);
-  let residualSum = 0;
-  let totalSum = 0;
-  for (let index = 0; index < rows.length; index += 1) {
-    const predicted = rows[index][0] * gain + rows[index][1] * cooling +
-      background;
-    residualSum += (targets[index] - predicted) ** 2;
-    totalSum += (targets[index] - targetMean) ** 2;
-  }
+  // Residual and total sums expand directly from the accumulated moments, so
+  // the goodness-of-fit check never needs the original rows either.
+  const residualSum = moments.s_yy -
+    2 * (gain * moments.s_py + cooling * moments.s_dy + background * moments.s_y) +
+    (gain * gain * moments.s_pp +
+      cooling * cooling * moments.s_dd +
+      background * background * sampleCount +
+      2 * gain * cooling * moments.s_pd +
+      2 * gain * background * moments.s_p +
+      2 * cooling * background * moments.s_d);
+  const totalSum = moments.s_yy - (moments.s_y * moments.s_y) / sampleCount;
   const r2 = totalSum > 0 ? 1 - residualSum / totalSum : 0;
   if (!(r2 >= MIN_FIT_R2)) {
-    return { ok: false, reason: "poor_fit", sample_count: usable.length };
+    return { ok: false, reason: "poor_fit", sample_count: sampleCount };
   }
 
   // a = 1/C gives the lumped capacity directly, and UA follows from the time
@@ -253,8 +333,9 @@ export function fitThermalZone(
         ? gain * ratedPowerW
         : null,
       r2,
-      sample_count: usable.length,
-      residual_std_c: Math.sqrt(residualSum / usable.length) * SLOT_HOURS,
+      sample_count: sampleCount,
+      residual_std_c: Math.sqrt(Math.max(residualSum, 0) / sampleCount) *
+        SLOT_HOURS,
     },
   };
 }

@@ -39,6 +39,7 @@ import {
   THERMAL_TRAINING_SLOTS,
   type ThermalObservationSummary,
   type ThermalReadinessState,
+  type ThermalZoneModelSummary,
 } from '@/lib/energy-shift/thermal-readiness';
 import EmpiricalDeviceModelsCard, {
   type EmpiricalEnergyDevice,
@@ -63,6 +64,13 @@ const EMPTY_THERMAL_OBSERVATIONS: ThermalObservationSummary = {
   firstObservedAt: null,
   lastObservedAt: null,
 };
+
+interface ZoneModelRow {
+  device_id: string;
+  trained: boolean;
+  rejection_reason: string | null;
+  sample_count: number;
+}
 
 interface ThermalSlotRow {
   start_ts: string;
@@ -184,6 +192,7 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, account
   const [thermalObservations, setThermalObservations] = useState<ThermalObservationSummary>(
     EMPTY_THERMAL_OBSERVATIONS,
   );
+  const [zoneModels, setZoneModels] = useState<ThermalZoneModelSummary[]>([]);
   const [connections, setConnections] = useState<HomeAssistantConnection[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -199,6 +208,7 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, account
       setEmpiricalDevices([]);
       setDeviceActuals([]);
       setThermalObservations(EMPTY_THERMAL_OBSERVATIONS);
+      setZoneModels([]);
       setConnections([]);
       return;
     }
@@ -215,6 +225,7 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, account
         deviceResult,
         deviceActualResult,
         thermalResult,
+        zoneModelResult,
       ] = await Promise.all([
         supabase
           .from('energy_optimisation_current')
@@ -257,6 +268,11 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, account
           p_from: new Date(toMs - 30 * 24 * 60 * 60_000).toISOString(),
           p_to: to,
         }),
+        supabase
+          .from('energy_optimisation_zone_models')
+          .select('device_id, trained, rejection_reason, sample_count')
+          .eq('customer_id', customerId)
+          .eq('home_id', homeId),
       ]);
       const { data, error: planError } = planResult;
       if (planError) throw planError;
@@ -270,6 +286,9 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, account
       if (deviceActualError) throw deviceActualError;
       setActuals(actualRows ?? []);
       setEmpiricalDevices((deviceRows ?? []) as EmpiricalEnergyDevice[]);
+      const deviceKeyById = new Map(
+        (deviceRows ?? []).map(row => [row.id as string, row.device_key as string]),
+      );
       setDeviceActuals((deviceActualRows ?? []) as EmpiricalDeviceSlotMatrix[]);
       // A thermal read failure must not blank the electrical plan; the panel
       // simply reports nothing received.
@@ -279,6 +298,18 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, account
           : summariseThermalSlots(
             thermalResult.data as unknown as ThermalSlotRow[] | null,
           ),
+      );
+      setZoneModels(
+        zoneModelResult.error
+          ? []
+          : ((zoneModelResult.data ?? []) as ZoneModelRow[]).map(row => ({
+            // The panel counts zones, not parameters, so the device key is
+            // only needed to line a model up with its device.
+            device_key: deviceKeyById.get(row.device_id) ?? row.device_id,
+            trained: row.trained,
+            rejection_reason: row.rejection_reason,
+            sample_count: row.sample_count,
+          })),
       );
       setConnections((connectionRows ?? []) as HomeAssistantConnection[]);
       if (!data) {
@@ -327,6 +358,7 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, account
         actuals={demoActuals}
         empiricalDevices={[]}
         thermalObservations={EMPTY_THERMAL_OBSERVATIONS}
+        zoneModels={[]}
         deviceActuals={[]}
         stale={false}
         isDemo
@@ -413,6 +445,7 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, account
           actuals={actuals}
           empiricalDevices={empiricalDevices}
           thermalObservations={thermalObservations}
+          zoneModels={zoneModels}
           deviceActuals={deviceActuals}
           stale={clock > Date.parse(current.plan.valid_until)}
           isDemo={false}
@@ -470,6 +503,7 @@ const PlanView: React.FC<{
   actuals: ActualEnergySlot[];
   empiricalDevices: EmpiricalEnergyDevice[];
   thermalObservations: ThermalObservationSummary;
+  zoneModels: ThermalZoneModelSummary[];
   deviceActuals: EmpiricalDeviceSlotMatrix[];
   stale: boolean;
   isDemo: boolean;
@@ -480,6 +514,7 @@ const PlanView: React.FC<{
   empiricalDevices,
   deviceActuals,
   thermalObservations,
+  zoneModels,
   stale,
   isDemo,
   lastCheckedAt,
@@ -892,6 +927,7 @@ const PlanView: React.FC<{
               devices={empiricalDevices}
               planDevices={plan.device_models}
               observations={thermalObservations}
+              zoneModels={zoneModels}
             />
           ))}
 
@@ -1054,11 +1090,12 @@ const ThermalReadinessPanel: React.FC<{
   devices: EmpiricalEnergyDevice[];
   planDevices: OptimisationPlanV5['device_models'];
   observations: ThermalObservationSummary;
-}> = ({ devices, planDevices, observations }) => {
+  zoneModels: ThermalZoneModelSummary[];
+}> = ({ devices, planDevices, observations, zoneModels }) => {
   const { t } = useLanguage();
   const readiness = useMemo(
-    () => assessThermalReadiness(devices, planDevices, observations),
-    [devices, planDevices, observations],
+    () => assessThermalReadiness(devices, planDevices, observations, zoneModels),
+    [devices, planDevices, observations, zoneModels],
   );
   const selectedCount = readiness.selectedDevices.length;
   const allMappingsReady = selectedCount > 0

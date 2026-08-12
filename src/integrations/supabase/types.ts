@@ -1985,6 +1985,94 @@ export type Database = {
           },
         ]
       }
+      energy_optimisation_zone_models: {
+        Row: {
+          background_gain_c_per_h: number | null
+          cooling_constant_per_h: number | null
+          customer_id: string
+          device_id: string
+          fitted_at: string
+          gain_c_per_wh: number | null
+          heat_loss_w_per_c: number | null
+          heating_rate_c_per_h: number | null
+          home_id: string
+          id: string
+          r2: number | null
+          rejection_reason: string | null
+          residual_std_c: number | null
+          sample_count: number
+          thermal_capacity_wh_per_c: number | null
+          time_constant_h: number | null
+          trained: boolean
+          training_from: string
+          training_to: string
+        }
+        Insert: {
+          background_gain_c_per_h?: number | null
+          cooling_constant_per_h?: number | null
+          customer_id: string
+          device_id: string
+          fitted_at?: string
+          gain_c_per_wh?: number | null
+          heat_loss_w_per_c?: number | null
+          heating_rate_c_per_h?: number | null
+          home_id: string
+          id?: string
+          r2?: number | null
+          rejection_reason?: string | null
+          residual_std_c?: number | null
+          sample_count: number
+          thermal_capacity_wh_per_c?: number | null
+          time_constant_h?: number | null
+          trained: boolean
+          training_from: string
+          training_to: string
+        }
+        Update: {
+          background_gain_c_per_h?: number | null
+          cooling_constant_per_h?: number | null
+          customer_id?: string
+          device_id?: string
+          fitted_at?: string
+          gain_c_per_wh?: number | null
+          heat_loss_w_per_c?: number | null
+          heating_rate_c_per_h?: number | null
+          home_id?: string
+          id?: string
+          r2?: number | null
+          rejection_reason?: string | null
+          residual_std_c?: number | null
+          sample_count?: number
+          thermal_capacity_wh_per_c?: number | null
+          time_constant_h?: number | null
+          trained?: boolean
+          training_from?: string
+          training_to?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "energy_optimisation_zone_models_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_optimisation_zone_models_device_id_fkey"
+            columns: ["device_id"]
+            isOneToOne: true
+            referencedRelation: "energy_optimisation_devices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_optimisation_zone_models_home_id_fkey"
+            columns: ["home_id"]
+            isOneToOne: false
+            referencedRelation: "homes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       energy_optimisation_devices: {
         Row: {
           active_power_w: number | null
