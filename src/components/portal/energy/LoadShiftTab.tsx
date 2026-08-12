@@ -34,7 +34,12 @@ import {
   foldDevicePowerIntoBase,
   reconcilePlanDeviceRoles,
 } from '@/lib/energy-shift/plan-device-roles';
-import { assessThermalReadiness } from '@/lib/energy-shift/thermal-readiness';
+import {
+  assessThermalReadiness,
+  THERMAL_TRAINING_SLOTS,
+  type ThermalObservationSummary,
+  type ThermalReadinessState,
+} from '@/lib/energy-shift/thermal-readiness';
 import EmpiricalDeviceModelsCard, {
   type EmpiricalEnergyDevice,
 } from './EmpiricalDeviceModelsCard';
@@ -50,6 +55,45 @@ interface CurrentRow {
   captured_at: string;
   updated_at: string;
 }
+
+const EMPTY_THERMAL_OBSERVATIONS: ThermalObservationSummary = {
+  slotCount: 0,
+  outdoorSlotCount: 0,
+  observedDeviceKeys: [],
+  firstObservedAt: null,
+  lastObservedAt: null,
+};
+
+interface ThermalSlotRow {
+  start_ts: string;
+  outdoor_temperature_c: number | null;
+  zone_observations: Record<string, unknown> | null;
+}
+
+/**
+ * Reduce the stored thermal rows to the counts the readiness panel needs.
+ * Rows are already one per quarter, so this stays cheap over a 30-day window.
+ */
+const summariseThermalSlots = (
+  rows: ThermalSlotRow[] | null,
+): ThermalObservationSummary => {
+  if (!rows || rows.length === 0) return EMPTY_THERMAL_OBSERVATIONS;
+  const observedDeviceKeys = new Set<string>();
+  let outdoorSlotCount = 0;
+  for (const row of rows) {
+    if (row.outdoor_temperature_c !== null) outdoorSlotCount += 1;
+    for (const key of Object.keys(row.zone_observations ?? {})) {
+      observedDeviceKeys.add(key);
+    }
+  }
+  return {
+    slotCount: rows.length,
+    outdoorSlotCount,
+    observedDeviceKeys: [...observedDeviceKeys],
+    firstObservedAt: rows[0]?.start_ts ?? null,
+    lastObservedAt: rows[rows.length - 1]?.start_ts ?? null,
+  };
+};
 
 interface EmpiricalDeviceSlotMatrix {
   start_ts: string;
@@ -137,6 +181,9 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, account
   const [actuals, setActuals] = useState<ActualEnergySlot[]>([]);
   const [empiricalDevices, setEmpiricalDevices] = useState<EmpiricalEnergyDevice[]>([]);
   const [deviceActuals, setDeviceActuals] = useState<EmpiricalDeviceSlotMatrix[]>([]);
+  const [thermalObservations, setThermalObservations] = useState<ThermalObservationSummary>(
+    EMPTY_THERMAL_OBSERVATIONS,
+  );
   const [connections, setConnections] = useState<HomeAssistantConnection[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -151,6 +198,7 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, account
       setActuals([]);
       setEmpiricalDevices([]);
       setDeviceActuals([]);
+      setThermalObservations(EMPTY_THERMAL_OBSERVATIONS);
       setConnections([]);
       return;
     }
@@ -160,7 +208,14 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, account
       const toMs = Math.floor(Date.now() / (15 * 60_000)) * 15 * 60_000;
       const from = new Date(toMs - 72 * 60 * 60_000).toISOString();
       const to = new Date(toMs).toISOString();
-      const [planResult, actualResult, connectionResult, deviceResult, deviceActualResult] = await Promise.all([
+      const [
+        planResult,
+        actualResult,
+        connectionResult,
+        deviceResult,
+        deviceActualResult,
+        thermalResult,
+      ] = await Promise.all([
         supabase
           .from('energy_optimisation_current')
           .select('plan, captured_at, updated_at')
@@ -193,6 +248,15 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, account
           p_from: from,
           p_to: to,
         }),
+        // The readiness panel reports on the whole training window, not the
+        // 72 hours the charts draw, so a zone that stopped reporting
+        // yesterday still shows the history it did deliver.
+        supabase.rpc('get_energy_optimisation_thermal_slots', {
+          p_customer_id: customerId,
+          p_home_id: homeId,
+          p_from: new Date(toMs - 30 * 24 * 60 * 60_000).toISOString(),
+          p_to: to,
+        }),
       ]);
       const { data, error: planError } = planResult;
       if (planError) throw planError;
@@ -207,6 +271,15 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, account
       setActuals(actualRows ?? []);
       setEmpiricalDevices((deviceRows ?? []) as EmpiricalEnergyDevice[]);
       setDeviceActuals((deviceActualRows ?? []) as EmpiricalDeviceSlotMatrix[]);
+      // A thermal read failure must not blank the electrical plan; the panel
+      // simply reports nothing received.
+      setThermalObservations(
+        thermalResult.error
+          ? EMPTY_THERMAL_OBSERVATIONS
+          : summariseThermalSlots(
+            thermalResult.data as unknown as ThermalSlotRow[] | null,
+          ),
+      );
       setConnections((connectionRows ?? []) as HomeAssistantConnection[]);
       if (!data) {
         setCurrent(null);
@@ -253,6 +326,7 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, account
         current={demoCurrent}
         actuals={demoActuals}
         empiricalDevices={[]}
+        thermalObservations={EMPTY_THERMAL_OBSERVATIONS}
         deviceActuals={[]}
         stale={false}
         isDemo
@@ -338,6 +412,7 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, account
           current={current}
           actuals={actuals}
           empiricalDevices={empiricalDevices}
+          thermalObservations={thermalObservations}
           deviceActuals={deviceActuals}
           stale={clock > Date.parse(current.plan.valid_until)}
           isDemo={false}
@@ -394,11 +469,21 @@ const PlanView: React.FC<{
   current: CurrentRow;
   actuals: ActualEnergySlot[];
   empiricalDevices: EmpiricalEnergyDevice[];
+  thermalObservations: ThermalObservationSummary;
   deviceActuals: EmpiricalDeviceSlotMatrix[];
   stale: boolean;
   isDemo: boolean;
   lastCheckedAt?: number | null;
-}> = ({ current, actuals, empiricalDevices, deviceActuals, stale, isDemo, lastCheckedAt }) => {
+}> = ({
+  current,
+  actuals,
+  empiricalDevices,
+  deviceActuals,
+  thermalObservations,
+  stale,
+  isDemo,
+  lastCheckedAt,
+}) => {
   const { t } = useLanguage();
   const { plan } = current;
   const [planView, setPlanView] = useState<PlanViewMode>('planned');
@@ -806,6 +891,7 @@ const PlanView: React.FC<{
             <ThermalReadinessPanel
               devices={empiricalDevices}
               planDevices={plan.device_models}
+              observations={thermalObservations}
             />
           ))}
 
@@ -967,11 +1053,12 @@ const ThermalReadinessRow: React.FC<{
 const ThermalReadinessPanel: React.FC<{
   devices: EmpiricalEnergyDevice[];
   planDevices: OptimisationPlanV5['device_models'];
-}> = ({ devices, planDevices }) => {
+  observations: ThermalObservationSummary;
+}> = ({ devices, planDevices, observations }) => {
   const { t } = useLanguage();
   const readiness = useMemo(
-    () => assessThermalReadiness(devices, planDevices),
-    [devices, planDevices],
+    () => assessThermalReadiness(devices, planDevices, observations),
+    [devices, planDevices, observations],
   );
   const selectedCount = readiness.selectedDevices.length;
   const allMappingsReady = selectedCount > 0
@@ -983,28 +1070,35 @@ const ThermalReadinessPanel: React.FC<{
   const readyLabel = t('Klar', 'Ready');
   const blockedLabel = t('Blockerad', 'Blocked');
   const waitingLabel = t('Väntar', 'Waiting');
+  const stateLabels: Record<ThermalReadinessState, string> = {
+    ready: readyLabel,
+    blocked: blockedLabel,
+    waiting: waitingLabel,
+  };
 
   return (
     <div className="mx-auto max-w-4xl space-y-4 py-5 text-left">
-      <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
-        <div className="flex items-start gap-2.5">
-          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
-          <div>
-            <p className="font-medium">
-              {t(
-                'Den termiska modellen blockeras av en saknad datapipeline',
-                'The thermal model is blocked by a missing data pipeline',
-              )}
-            </p>
-            <p className="mt-1 text-sm opacity-90">
-              {t(
-                'Den nuvarande integrationen skickar enhetsmappningar och elektriska energiprofiler, men ännu inga kvartsvärden för rumstemperatur, börvärde, aktuatorstatus eller utomhustemperatur. Därför kan webbplatsen inte träna eller publicera en termisk modell. Detta är ett programvarugap, inte ett dolt konfigurationsfel i ditt hem.',
-                'The current integration sends device mappings and electrical energy profiles, but it does not yet send quarter-hour room temperature, setpoint, actuator-state, or outdoor-temperature observations. The website therefore cannot train or publish a thermal model. This is a software gap, not a hidden configuration error in your home.',
-              )}
-            </p>
+      {!readiness.pipelineComplete && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+            <div>
+              <p className="font-medium">
+                {t(
+                  'Den termiska modellen väntar på observationer',
+                  'The thermal model is waiting on observations',
+                )}
+              </p>
+              <p className="mt-1 text-sm opacity-90">
+                {t(
+                  'Rumstemperatur, aktuatorstatus och utomhustemperatur samlas in per kvart av integrationen. Raderna nedan visar vad som redan tas emot och vad som saknas.',
+                  'Room temperature, actuator state, and outdoor temperature are collected per quarter by the integration. The rows below show what is already arriving and what is still missing.',
+                )}
+              </p>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       <div className="rounded-lg border px-4">
         <ThermalReadinessRow
@@ -1044,30 +1138,45 @@ const ThermalReadinessPanel: React.FC<{
         />
         <ThermalReadinessRow
           label={t('Termiska historikvärden', 'Thermal history observations')}
-          detail={t(
-            'Rumstemperatur, börvärde och aktuatorstatus överförs ännu inte från Home Assistant.',
-            'Room temperature, setpoint, and actuator state are not yet transferred from Home Assistant.',
-          )}
-          state="blocked"
-          stateLabel={blockedLabel}
+          detail={readiness.thermalState === 'blocked'
+            ? t(
+              'Rumstemperatur och aktuatorstatus har inte tagits emot från Home Assistant. Uppdatera integrationen och kontrollera att varje zon har en rumsgivare.',
+              'No room temperature or actuator state has been received from Home Assistant. Update the integration and check that every zone has a room sensor.',
+            )
+            : t(
+              `${readiness.thermalObservedCount} av ${selectedCount} zoner rapporterar, ${readiness.thermalSlotCount.toLocaleString()} kvartar lagrade.`,
+              `${readiness.thermalObservedCount} of ${selectedCount} zones are reporting, ${readiness.thermalSlotCount.toLocaleString()} quarters stored.`,
+            )}
+          state={readiness.thermalState}
+          stateLabel={stateLabels[readiness.thermalState]}
         />
         <ThermalReadinessRow
           label={t('Utomhustemperatur och prognos', 'Outdoor temperature and forecast')}
-          detail={t(
-            'Ingen utomhustemperaturkälla ingår ännu i den levande planens datakontrakt.',
-            'No outdoor-temperature source is included in the live-plan data contract yet.',
-          )}
-          state="blocked"
-          stateLabel={blockedLabel}
+          detail={readiness.outdoorState === 'blocked'
+            ? t(
+              'Ingen utomhusgivare är vald i integrationen. Välj en under Prognoser.',
+              'No outdoor sensor is selected in the integration. Choose one under Forecasts.',
+            )
+            : t(
+              `${readiness.outdoorSlotCount.toLocaleString()} kvartar med uppmätt utomhustemperatur.`,
+              `${readiness.outdoorSlotCount.toLocaleString()} quarters carry a measured outdoor temperature.`,
+            )}
+          state={readiness.outdoorState}
+          stateLabel={stateLabels[readiness.outdoorState]}
         />
         <ThermalReadinessRow
           label={t('Inlärd termisk zonmodell', 'Learned thermal zone model')}
-          detail={t(
-            'Träning kan börja först när både termiska historikvärden och väderdata publiceras.',
-            'Training can start only after both thermal history observations and weather data are published.',
-          )}
-          state="waiting"
-          stateLabel={waitingLabel}
+          detail={readiness.trainedZoneCount > 0
+            ? t(
+              `${readiness.trainedZoneCount} av ${selectedCount} zoner har en anpassad värmemodell.`,
+              `${readiness.trainedZoneCount} of ${selectedCount} zones have a fitted thermal model.`,
+            )
+            : t(
+              `Träning startar när en zon har ${THERMAL_TRAINING_SLOTS.toLocaleString()} kvartar med både rums- och utomhustemperatur.`,
+              `Training starts once a zone has ${THERMAL_TRAINING_SLOTS.toLocaleString()} quarters of both room and outdoor temperature.`,
+            )}
+          state={readiness.modelState}
+          stateLabel={stateLabels[readiness.modelState]}
         />
       </div>
 

@@ -23,12 +23,32 @@ const corsHeaders = {
 };
 
 const MAX_ACTUAL_SLOTS_PER_PUSH = 288;
+const MAX_THERMAL_SLOTS_PER_PUSH = 288;
 const MAX_DEVICES_PER_PUSH = 100;
 const MAX_QUARTER_KWH = 100;
 const MAX_REQUEST_BYTES = 2_000_000;
 const SLOT_MS = 15 * 60_000;
 const ACTUAL_AGGREGATION = "sum_of_recorder_5minute_changes";
+// Physically possible room and outdoor extremes. These reject a sensor
+// reporting in Fahrenheit or a unit-less counter, not merely odd weather.
+const MIN_ROOM_C = -50;
+const MAX_ROOM_C = 80;
 type DeviceMappingStatus = "not_configured" | "ready" | "invalid";
+
+interface IncomingZoneObservation {
+  room_temperature_c: number;
+  actuator_duty: number;
+  comfort_min_c?: number | null;
+  comfort_max_c?: number | null;
+  setpoint_c?: number | null;
+}
+
+interface IncomingThermalSlot {
+  start: string;
+  outdoor_temperature_c?: number | null;
+  zone_observations: Record<string, IncomingZoneObservation>;
+  quality?: Record<string, unknown>;
+}
 
 interface IncomingActualSlot {
   start: string;
@@ -154,6 +174,7 @@ serve(async (req) => {
 
     let actuals: IncomingActualSlot[] = [];
     let devices: IncomingDevice[] = [];
+    let thermals: IncomingThermalSlot[] = [];
     let snapshot: OptimisationSnapshotV5 | null = null;
     try {
       const declaredLength = Number(req.headers.get("content-length") ?? 0);
@@ -180,14 +201,26 @@ serve(async (req) => {
       if (body.devices !== undefined && !Array.isArray(body.devices)) {
         throw new Error("devices");
       }
+      if (
+        body.thermal_slots !== undefined && !Array.isArray(body.thermal_slots)
+      ) {
+        throw new Error("thermal_slots");
+      }
       actuals = body.actual_slots ?? [];
       devices = body.devices ?? [];
+      thermals = body.thermal_slots ?? [];
       snapshot = body.snapshot ?? null;
     } catch {
       return json({ error: "invalid_body" }, 400);
     }
-    if (actuals.length === 0 && snapshot === null && devices.length === 0) {
+    if (
+      actuals.length === 0 && snapshot === null && devices.length === 0 &&
+      thermals.length === 0
+    ) {
       return json({ error: "empty_body" }, 400);
+    }
+    if (thermals.length > MAX_THERMAL_SLOTS_PER_PUSH) {
+      return json({ error: "too_many_thermal_slots" }, 400);
     }
     if (actuals.length > MAX_ACTUAL_SLOTS_PER_PUSH) {
       return json({ error: "too_many_actual_slots" }, 400);
@@ -462,6 +495,135 @@ serve(async (req) => {
       }
     }
 
+    // Thermal observations arrive on their own window: a zone sensor can
+    // settle after its energy meter, so a quarter already accepted
+    // electrically may only now become describable thermally.
+    const thermalRows: Record<string, unknown>[] = [];
+    const outdoorRows: Record<string, unknown>[] = [];
+    const thermalStarts = new Set<number>();
+    const temperature = (value: unknown): number | null => {
+      if (value === undefined || value === null) return null;
+      if (
+        typeof value !== "number" || !Number.isFinite(value) ||
+        value < MIN_ROOM_C || value > MAX_ROOM_C
+      ) return NaN;
+      return round(value, 4);
+    };
+    for (const [index, thermal] of thermals.entries()) {
+      const start = Date.parse(String(thermal?.start ?? ""));
+      if (
+        !Number.isFinite(start) || start % SLOT_MS !== 0 ||
+        start < earliestAcceptedStart || start > latestCompleteStart
+      ) {
+        return json({
+          error: "invalid_thermal_start",
+          detail: `thermal_slots[${index}]`,
+        }, 400);
+      }
+      if (thermalStarts.has(start)) {
+        return json(
+          { error: "duplicate_thermal_start", detail: thermal.start },
+          400,
+        );
+      }
+      thermalStarts.add(start);
+
+      const outdoor = temperature(thermal.outdoor_temperature_c);
+      if (Number.isNaN(outdoor)) {
+        return json({
+          error: "invalid_outdoor_temperature",
+          detail: `thermal_slots[${index}].outdoor_temperature_c`,
+        }, 400);
+      }
+      if (outdoor !== null) {
+        outdoorRows.push({
+          customer_id: auth.customerId,
+          home_id: auth.homeId,
+          start_ts: new Date(start).toISOString(),
+          temperature_c: outdoor,
+          device_token_id: auth.tokenId,
+        });
+      }
+
+      const observations = thermal.zone_observations;
+      if (
+        !observations || typeof observations !== "object" ||
+        Array.isArray(observations) || Object.keys(observations).length === 0
+      ) {
+        return json({
+          error: "invalid_zone_observations",
+          detail: `thermal_slots[${index}].zone_observations`,
+        }, 400);
+      }
+      for (const [deviceKey, observation] of Object.entries(observations)) {
+        const storedDevice = storedDeviceByKey.get(deviceKey);
+        const detail =
+          `thermal_slots[${index}].zone_observations.${deviceKey}`;
+        if (!storedDevice || !observation || typeof observation !== "object") {
+          return json({ error: "invalid_zone_observations", detail }, 400);
+        }
+        const room = temperature(observation.room_temperature_c);
+        const duty = observation.actuator_duty;
+        if (
+          room === null || Number.isNaN(room) || typeof duty !== "number" ||
+          !Number.isFinite(duty) || duty < 0 || duty > 1
+        ) {
+          return json({ error: "invalid_zone_observations", detail }, 400);
+        }
+        const comfortMin = temperature(observation.comfort_min_c);
+        const comfortMax = temperature(observation.comfort_max_c);
+        const setpoint = temperature(observation.setpoint_c);
+        if (
+          Number.isNaN(comfortMin) || Number.isNaN(comfortMax) ||
+          Number.isNaN(setpoint)
+        ) {
+          return json({ error: "invalid_zone_observations", detail }, 400);
+        }
+        // A band whose floor sits above its ceiling is a mapping error, not a
+        // reading. Storing it would make every later constraint infeasible.
+        if (
+          comfortMin !== null && comfortMax !== null && comfortMin > comfortMax
+        ) {
+          return json({ error: "invalid_comfort_band", detail }, 400);
+        }
+        thermalRows.push({
+          customer_id: auth.customerId,
+          home_id: auth.homeId,
+          device_id: storedDevice.id,
+          start_ts: new Date(start).toISOString(),
+          room_temperature_c: room,
+          actuator_duty: round(duty, 4),
+          comfort_min_c: comfortMin,
+          comfort_max_c: comfortMax,
+          setpoint_c: setpoint,
+          quality: thermal.quality ?? {},
+          device_token_id: auth.tokenId,
+        });
+      }
+    }
+
+    if (outdoorRows.length > 0) {
+      const { error } = await supabase
+        .from("energy_optimisation_outdoor_slots")
+        .upsert(outdoorRows, { onConflict: "home_id,start_ts" });
+      if (error) {
+        console.error("[ENERGY-OPTIMISATION] outdoor upsert failed", error);
+        return json({ error: "storage_failed" }, 500);
+      }
+    }
+    if (thermalRows.length > 0) {
+      const { error } = await supabase
+        .from("energy_optimisation_thermal_slots")
+        .upsert(thermalRows, { onConflict: "device_id,start_ts" });
+      if (error) {
+        console.error("[ENERGY-OPTIMISATION] thermal upsert failed", error);
+        return json({ error: "storage_failed" }, 500);
+      }
+    }
+    const thermalAcceptedUntil = thermalStarts.size > 0
+      ? new Date(Math.max(...thermalStarts) + SLOT_MS).toISOString()
+      : null;
+
     let generated: ReturnType<typeof generateOptimisationPlan> | null = null;
     if (snapshot !== null) {
       const models = new Map(
@@ -556,6 +718,8 @@ serve(async (req) => {
       actuals_accepted_until: actualRows.length > 0
         ? actualRows[actualRows.length - 1].start_ts
         : null,
+      thermal_slots_accepted: thermalRows.length,
+      thermal_slots_accepted_until: thermalAcceptedUntil,
       plan: generated,
       device_configuration: storedDevices.map((device) => ({
         key: device.key,

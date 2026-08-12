@@ -4559,6 +4559,19 @@ export type Database = {
           start_ts: string
         }[]
       }
+      get_energy_optimisation_thermal_slots: {
+        Args: {
+          p_customer_id: string
+          p_from: string
+          p_home_id: string
+          p_to: string
+        }
+        Returns: {
+          outdoor_temperature_c: number | null
+          start_ts: string
+          zone_observations: Json
+        }[]
+      }
       import_energy_usage_readings: {
         Args: {
           p_customer_id: string

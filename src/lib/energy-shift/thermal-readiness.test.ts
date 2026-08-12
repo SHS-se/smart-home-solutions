@@ -52,4 +52,81 @@ Deno.test('thermal readiness distinguishes electrical data from missing thermal 
     ['kitchen-heater'],
     'mapping blockers',
   );
+  assertEquals(assessment.thermalState, 'blocked', 'no observations yet');
+  assertEquals(assessment.outdoorState, 'blocked', 'no outdoor source yet');
+  assertEquals(assessment.modelState, 'blocked', 'training cannot start');
+  assertEquals(assessment.pipelineComplete, false, 'pipeline incomplete');
+});
+
+const heater = (device_key: string) => ({
+  device_key,
+  name: device_key,
+  planning_role_override: 'controllable' as const,
+  control_type_override: 'setpoint',
+  mapping_status: 'ready' as const,
+  mapped_control_type: 'setpoint',
+  mapping_error: null,
+  profile_sample_count: 960,
+});
+
+Deno.test('a partially reporting home is waiting, not blocked', () => {
+  // One zone arriving proves the pipeline works, so the remaining zones are
+  // a matter of time rather than a configuration fault.
+  const assessment = assessThermalReadiness(
+    [heater('office-heater'), heater('kitchen-heater')],
+    [],
+    {
+      slotCount: 200,
+      outdoorSlotCount: 200,
+      observedDeviceKeys: ['office-heater'],
+      firstObservedAt: '2026-08-10T00:00:00Z',
+      lastObservedAt: '2026-08-12T00:00:00Z',
+    },
+  );
+  assertEquals(assessment.thermalObservedCount, 1, 'observed zone count');
+  assertEquals(assessment.thermalState, 'waiting', 'partial reporting waits');
+  assertEquals(assessment.outdoorState, 'ready', 'outdoor covers every slot');
+  assertEquals(assessment.modelState, 'waiting', 'training still accruing');
+  assertEquals(assessment.pipelineComplete, false, 'not every zone reports');
+});
+
+Deno.test('a fully reporting home with a fitted zone is ready', () => {
+  const assessment = assessThermalReadiness(
+    [heater('office-heater')],
+    [],
+    {
+      slotCount: 2880,
+      outdoorSlotCount: 2880,
+      observedDeviceKeys: ['office-heater'],
+      firstObservedAt: '2026-07-13T00:00:00Z',
+      lastObservedAt: '2026-08-12T00:00:00Z',
+    },
+    [{
+      device_key: 'office-heater',
+      trained: true,
+      rejection_reason: null,
+      sample_count: 2880,
+    }],
+  );
+  assertEquals(assessment.thermalState, 'ready', 'every zone reports');
+  assertEquals(assessment.trainedZoneCount, 1, 'fitted zone count');
+  assertEquals(assessment.modelState, 'ready', 'a fitted model is ready');
+  assertEquals(assessment.pipelineComplete, true, 'nothing left to deliver');
+});
+
+Deno.test('zones reporting without an outdoor source cannot train', () => {
+  const assessment = assessThermalReadiness(
+    [heater('office-heater')],
+    [],
+    {
+      slotCount: 2880,
+      outdoorSlotCount: 0,
+      observedDeviceKeys: ['office-heater'],
+      firstObservedAt: '2026-07-13T00:00:00Z',
+      lastObservedAt: '2026-08-12T00:00:00Z',
+    },
+  );
+  assertEquals(assessment.thermalState, 'ready', 'zones are reporting');
+  assertEquals(assessment.outdoorState, 'blocked', 'no outdoor temperature');
+  assertEquals(assessment.modelState, 'blocked', 'heat loss is unidentifiable');
 });

@@ -203,6 +203,9 @@ export interface OptimisationSnapshotV5 {
     import_price: SourceProvenance;
     export_price: SourceProvenance;
     battery: SourceProvenance | null;
+    // Present only once a home has named a weather entity. Thermal planning
+    // is optional, so its absence must not invalidate an electrical snapshot.
+    outdoor_temperature?: SourceProvenance | null;
   };
   pv_calibration: {
     correction_factor_by_lead_day: number[];
@@ -229,6 +232,13 @@ export interface OptimisationSnapshotV5 {
   device_models: EmpiricalDeviceModelInput[];
   services: ServiceInput[];
   service_requirement_sample_days: Record<string, number>;
+  /**
+   * Forecast outdoor temperature per slot, aligned to `slots`. A null entry
+   * is a quarter the weather provider did not cover; the series is absent
+   * entirely when no weather entity is configured. Thermal projection needs
+   * this, electrical planning does not.
+   */
+  outdoor_temperature_c?: (number | null)[];
 }
 
 export interface PlannedSlot {
