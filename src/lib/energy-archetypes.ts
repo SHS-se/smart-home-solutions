@@ -14,28 +14,38 @@
 // `modelled` values are our own physical assumptions. Nothing here is allowed
 // to be an unattributed guess.
 //
-// PRIMARY SOURCE — Energimyndigheten, "Energistatistik för småhus 2024"
-// (published 2025-06-10). Averages for *heating and hot water only*, excluding
-// household electricity, and excluding heat absorbed from the ground/air by
-// heat pumps. That basis is exactly the delivered ("köpt") energy the BBR
-// primary-energy number is built from, which is why it is usable here.
-//   - all småhus:            90.5 kWh/m²
-//   - built 1940 or earlier: 110  kWh/m²
-//   - built 2011 or later:    53.4 kWh/m²
-//   - built 2021 or later:    39  kWh/m²
-// https://www.energimyndigheten.se/nyhetsarkiv/2025/ny-energistatistik-for-smahus/
+// PRIMARY SOURCE — Energimyndigheten, "Energistatistik för småhus 2024",
+// table workbook `smh_2024_tabellverk_v2.xlsx` (published 2025-06-10):
+//   - Table 2.14, temperature-corrected, kWh/m² by build year
+//   - Table 2.15, temperature-corrected, kWh/m² by heating system
+// https://www.energimyndigheten.se/statistik/officiell-energistatistik/tillforsel-och-anvandning/energistatistik-for-smahus/
 //
-// The intermediate bands below are interpolated monotonically between those
-// anchors and constrained so that the stock-weighted mean reproduces the
-// published 90.5 and the published 53.4 for 2011+. The full official table
-// (`smh_2024_tabellverk_v2.xlsx`, linked from the statistics page) breaks this
-// down further by build year and heating system; replacing the interpolated
-// rows with it is a known follow-up and the only change needed here.
+// Both are *heating and hot water only*, excluding household electricity, and
+// excluding heat absorbed from the ground or air by heat pumps. That is exactly
+// the delivered ("köpt") energy the BBR primary-energy number is built from.
+// The temperature-corrected series is used throughout because a prior should
+// describe a normal year, which is the same basis the degree-day normalization
+// in `energiprestanda.ts` targets.
 //
-// Note on area basis: Energimyndigheten's kWh/m² uses heated area, which is
-// the same boarea + biarea basis the portal uses to estimate Atemp. The two
-// are therefore consistent with each other, and both differ from a surveyed
-// Atemp. That caveat belongs in the UI, not in a fudge factor here.
+// TWO ASSUMPTIONS WERE WRONG BEFORE THE REAL TABLE ARRIVED, and both are worth
+// remembering because they were confident and plausible:
+//
+//  1. **Energy use does not fall monotonically with build year.** It drops to
+//     81.1 kWh/m² for 1971–1980, then rises again to 94.7 and 98.4 for
+//     1981–1990 and 1991–2000, before falling away after 2010. Interpolating a
+//     smooth decline put 1991–2000 at 72 against a published 98.4 — a 26
+//     kWh/m² error, more than a whole class boundary for a large house.
+//  2. **Direct electric heating is below the stock average, not above it.**
+//     The modelled factor here was 1.35 on the reasoning that a resistive house
+//     buys every kWh of heat it uses. Published: 74.0 against 93.3, a factor of
+//     0.79. The stock average is dragged *up* by oil (176.7) and biomass
+//     (167.9) houses, and electrically heated houses skew newer and better
+//     insulated. The physical reasoning was sound and the baseline was wrong.
+//
+// Note on area basis: Energimyndigheten's kWh/m² uses heated area including
+// biarea, which is the same basis the portal uses to estimate Atemp. The two
+// are consistent with each other, and both differ from a surveyed Atemp. That
+// caveat belongs in the UI, not in a fudge factor here.
 
 export type ArchetypeProvenance = 'published' | 'interpolated' | 'modelled';
 
@@ -71,74 +81,54 @@ export interface BuildYearBand {
   heatingAndHotWater: ProvenancedValue;
 }
 
-const ENERGIMYNDIGHETEN_2024 =
-  'Energimyndigheten, Energistatistik för småhus 2024 (2025-06-10)';
-const INTERPOLATED =
-  'Interpolated between Energimyndigheten 2024 anchors; stock-weighted mean reproduces the published 90.5 kWh/m²';
+const T214 =
+  'Energimyndigheten, Energistatistik för småhus 2024, table 2.14 (temperature-corrected)';
+const T215 =
+  'Energimyndigheten, Energistatistik för småhus 2024, table 2.15 (temperature-corrected)';
+
+const band = (
+  key: string,
+  minYear: number | null,
+  maxYear: number | null,
+  kwhPerM2: number,
+): BuildYearBand => ({
+  key,
+  minYear,
+  maxYear,
+  heatingAndHotWater: { kwhPerM2, provenance: 'published', source: T214 },
+});
 
 /**
- * Delivered heating + hot water by build year, kWh per m² heated area.
- * Monotonically decreasing, as the published series is.
+ * Delivered heating + hot water by build year, kWh per m² heated area,
+ * temperature-corrected to a normal year. Every row is published.
+ *
+ * Not monotonic: the 1980s and 1990s bands sit above 1971–1980. See the note
+ * at the top of this file.
  */
 export const BUILD_YEAR_BANDS: readonly BuildYearBand[] = [
-  {
-    key: '<=1940',
-    minYear: null,
-    maxYear: 1940,
-    heatingAndHotWater: { kwhPerM2: 110, provenance: 'published', source: ENERGIMYNDIGHETEN_2024 },
-  },
-  {
-    key: '1941-1960',
-    minYear: 1941,
-    maxYear: 1960,
-    heatingAndHotWater: { kwhPerM2: 105, provenance: 'interpolated', source: INTERPOLATED },
-  },
-  {
-    key: '1961-1970',
-    minYear: 1961,
-    maxYear: 1970,
-    heatingAndHotWater: { kwhPerM2: 99, provenance: 'interpolated', source: INTERPOLATED },
-  },
-  {
-    key: '1971-1980',
-    minYear: 1971,
-    maxYear: 1980,
-    heatingAndHotWater: { kwhPerM2: 92, provenance: 'interpolated', source: INTERPOLATED },
-  },
-  {
-    key: '1981-1990',
-    minYear: 1981,
-    maxYear: 1990,
-    heatingAndHotWater: { kwhPerM2: 82, provenance: 'interpolated', source: INTERPOLATED },
-  },
-  {
-    key: '1991-2000',
-    minYear: 1991,
-    maxYear: 2000,
-    heatingAndHotWater: { kwhPerM2: 72, provenance: 'interpolated', source: INTERPOLATED },
-  },
-  {
-    key: '2001-2010',
-    minYear: 2001,
-    maxYear: 2010,
-    heatingAndHotWater: { kwhPerM2: 62, provenance: 'interpolated', source: INTERPOLATED },
-  },
-  {
-    key: '2011-2020',
-    minYear: 2011,
-    maxYear: 2020,
-    heatingAndHotWater: { kwhPerM2: 58.2, provenance: 'interpolated', source: INTERPOLATED },
-  },
-  {
-    key: '2021-',
-    minYear: 2021,
-    maxYear: null,
-    heatingAndHotWater: { kwhPerM2: 39, provenance: 'published', source: ENERGIMYNDIGHETEN_2024 },
-  },
+  band('<=1940', null, 1940, 113.6),
+  band('1941-1960', 1941, 1960, 93.9),
+  band('1961-1970', 1961, 1970, 89.4),
+  band('1971-1980', 1971, 1980, 81.1),
+  band('1981-1990', 1981, 1990, 94.7),
+  band('1991-2000', 1991, 2000, 98.4),
+  band('2001-2010', 2001, 2010, 82.3),
+  band('2011-2020', 2011, 2020, 55.5),
+  band('2021-', 2021, null, 40.2),
 ];
 
-/** Published all-stock mean, used as the fallback when build year is unknown. */
-export const ALL_STOCK_HEATING_AND_HOT_WATER_KWH_M2 = 90.5;
+/**
+ * Published all-stock mean (SAMTLIGA, temperature-corrected), used when the
+ * build year is unknown.
+ *
+ * Energimyndigheten publishes a separate "uppgift saknas" row at 108.8, i.e.
+ * homes with no recorded build year use materially more than average — they
+ * skew old. We deliberately do not use it: a missing answer in our
+ * questionnaire is not the same population as a missing entry in the property
+ * register, and assuming the worst about a prospect's house is not a neutral
+ * default.
+ */
+export const ALL_STOCK_HEATING_AND_HOT_WATER_KWH_M2 = 93.3;
 
 /**
  * BEN (BFS 2016:12 with BFS 2017:6) normalised hot-water use for småhus:
@@ -172,27 +162,80 @@ export const PROPERTY_ENERGY_KWH_M2: ProvenancedValue = {
 };
 
 /**
- * Delivered-energy multiplier by heating system, relative to the mixed stock
- * the published averages describe.
+ * Published kWh/m² by heating system, temperature-corrected (table 2.15),
+ * against the SAMTLIGA average of 93.3. Used as a ratio, so the build-year and
+ * heating-system marginals combine multiplicatively.
  *
- * Modelled, not published. The published averages are a blend of resistive,
- * heat-pump, biomass and district-heated homes, so a home with a known system
- * should not sit on the blended average. These factors are seasonal-performance
- * ratios: a resistive house buys every kWh of heat it uses, a ground-source
- * heat pump buys roughly a third of it. They apply to the *heating* term only —
- * hot water is normalised separately by BEN.
+ * That combination assumes the two are independent, which they are not exactly
+ * — newer houses are more likely to have heat pumps, so some of the effect is
+ * counted in both marginals. It is a standard marginal-adjustment assumption
+ * and it is stated here rather than hidden. The published joint tables (2.18
+ * to 2.20) cover only bergvärme and the two electric categories, and are
+ * "inklusive hushållsel", so they are not a drop-in replacement.
+ */
+const SYSTEM_KWH_M2: Record<string, number> = {
+  el_direct: 74.0, // Enbart elvärme (d)
+  el_hydronic: 64.8, // Enbart elvärme (v)
+  ground_source: 50.2, // Enbart berg/jord/sjövärmepump
+  district: 122.4, // Enbart fjärrvärme
+  biomass: 167.9, // Enbart biobränsle
+};
+
+const systemFactor = (kwhM2: number): number =>
+  kwhM2 / ALL_STOCK_HEATING_AND_HOT_WATER_KWH_M2;
+
+/**
+ * Delivered-energy multiplier by heating system, relative to the whole småhus
+ * stock. Applies to the *heating* term only — hot water is normalised
+ * separately by BEN.
  *
- * Replace with the per-system rows of the official tabellverk when parsed.
+ * Air-air and exhaust-air heat pumps are not separate categories in table 2.15:
+ * they are electric heating and sit inside the "enbart elvärme" rows, which
+ * therefore already blend homes with and without them. Assigning them the
+ * electric figure is our decision, not a published one, so those entries are
+ * marked `modelled` even though the number underneath is published.
  */
 export const HEATING_SYSTEM_FACTORS: Readonly<Record<HeatingArchetype, ProvenancedValue>> = {
-  resistive: { kwhPerM2: 1.35, provenance: 'modelled', source: 'SPF 1.0 against a stock blend that includes heat pumps' },
-  air_air_heat_pump: { kwhPerM2: 0.75, provenance: 'modelled', source: 'Seasonal COP ~2.5 over the heated fraction of the house' },
-  exhaust_air_heat_pump: { kwhPerM2: 0.8, provenance: 'modelled', source: 'Seasonal COP ~2.3, limited capacity' },
-  air_water_heat_pump: { kwhPerM2: 0.6, provenance: 'modelled', source: 'Seasonal COP ~2.9, whole-house hydronic' },
-  ground_source_heat_pump: { kwhPerM2: 0.5, provenance: 'modelled', source: 'Seasonal COP ~3.3, whole-house hydronic' },
-  district_heating: { kwhPerM2: 1.0, provenance: 'modelled', source: 'Delivered heat, close to the stock blend' },
-  biomass: { kwhPerM2: 1.1, provenance: 'modelled', source: 'Boiler/stove losses above the stock blend' },
-  unknown: { kwhPerM2: 1.0, provenance: 'modelled', source: 'Stock blend, no system information' },
+  resistive: {
+    kwhPerM2: systemFactor(SYSTEM_KWH_M2.el_direct),
+    provenance: 'published',
+    source: `${T215}: enbart elvärme (d) 74.0 vs 93.3`,
+  },
+  air_air_heat_pump: {
+    kwhPerM2: systemFactor(SYSTEM_KWH_M2.el_direct),
+    provenance: 'modelled',
+    source: `${T215}: not a separate category; assigned enbart elvärme (d), which already includes homes with air-air pumps`,
+  },
+  exhaust_air_heat_pump: {
+    kwhPerM2: systemFactor(SYSTEM_KWH_M2.el_hydronic),
+    provenance: 'modelled',
+    source: `${T215}: not a separate category; assigned enbart elvärme (v)`,
+  },
+  air_water_heat_pump: {
+    kwhPerM2: (systemFactor(SYSTEM_KWH_M2.el_hydronic) + systemFactor(SYSTEM_KWH_M2.ground_source)) / 2,
+    provenance: 'modelled',
+    source: `${T215}: not a separate category; midpoint of enbart elvärme (v) and berg/jord/sjövärmepump`,
+  },
+  ground_source_heat_pump: {
+    kwhPerM2: systemFactor(SYSTEM_KWH_M2.ground_source),
+    provenance: 'published',
+    source: `${T215}: enbart berg/jord/sjövärmepump 50.2 vs 93.3`,
+  },
+  district_heating: {
+    kwhPerM2: systemFactor(SYSTEM_KWH_M2.district),
+    provenance: 'published',
+    source: `${T215}: enbart fjärrvärme 122.4 vs 93.3`,
+  },
+  biomass: {
+    kwhPerM2: systemFactor(SYSTEM_KWH_M2.biomass),
+    provenance: 'published',
+    source: `${T215}: enbart biobränsle 167.9 vs 93.3`,
+  },
+  unknown: {
+    kwhPerM2: 1,
+    provenance: 'published',
+    source: `${T215}: SAMTLIGA, no system information`,
+  },
 };
 
 /**

@@ -238,40 +238,66 @@ Implemented in `src/lib/energy-archetypes.ts`. Every number carries a
 `provenance` of `published`, `interpolated` or `modelled` and a source string;
 nothing in the table is an unattributed guess.
 
-**Published anchors** — Energimyndigheten, *Energistatistik för småhus 2024*
-(2025-06-10). Heating and hot water only, excluding household electricity, and
-excluding heat absorbed from ground/air by heat pumps. That basis is the
-delivered ("köpt") energy the BBR primary-energy number is built from, which is
-why it is directly usable:
+**Source** — Energimyndigheten, *Energistatistik för småhus 2024*, workbook
+`smh_2024_tabellverk_v2.xlsx` (2025-06-10), committed to the repository so the
+constants can be re-derived. Tables 2.14 (by build year) and 2.15 (by heating
+system), both **temperature-corrected**, both heating and hot water only,
+excluding household electricity and excluding heat absorbed from ground/air by
+heat pumps. That basis is the delivered ("köpt") energy the BBR primary-energy
+number is built from. Temperature-corrected is used throughout because a prior
+should describe a normal year — the same basis the degree-day normalization
+targets.
 
-| Segment | kWh/m² |
-|---|---|
-| All småhus | 90.5 |
-| Built ≤ 1940 | 110 |
-| Built ≥ 2011 | 53.4 |
-| Built ≥ 2021 | 39 |
+| Build year | kWh/m² | | Heating system | kWh/m² | ÷ 93.3 |
+|---|---|---|---|---|---|
+| ≤1940 | 113.6 | | Enbart elvärme (d) | 74.0 | 0.793 |
+| 1941–1960 | 93.9 | | Enbart elvärme (v) | 64.8 | 0.695 |
+| 1961–1970 | 89.4 | | Berg/jord/sjövärmepump | 50.2 | 0.538 |
+| 1971–1980 | 81.1 | | Enbart fjärrvärme | 122.4 | 1.312 |
+| 1981–1990 | 94.7 | | Enbart biobränsle | 167.9 | 1.800 |
+| 1991–2000 | 98.4 | | Olja | 176.7 | 1.894 |
+| 2001–2010 | 82.3 | | **SAMTLIGA** | **93.3** | 1.000 |
+| 2011–2020 | 55.5 | | | | |
+| 2021– | 40.2 | | | | |
 
-**Interpolated bands** — the intermediate build-year rows are fitted
-monotonically between those anchors, constrained so the stock-weighted mean
-reproduces 90.5 and the 2011+ subset reproduces 53.4. Verified numerically:
-90.47 and 53.40. The official per-band, per-heating-system table exists as
-`smh_2024_tabellverk_v2.xlsx` on the statistics page; `web_fetch` returns it as
-binary and cannot parse it. **Replacing the interpolated rows from that
-workbook is the one outstanding data task**, and it is isolated to one constant.
+**Two confident assumptions were wrong**, and both are recorded in the module
+and pinned by tests so they cannot quietly return:
 
-**Modelled factors** — heating-system multipliers (SPF ratios against the mixed
-stock the published averages describe) and dwelling-form multipliers are ours,
-marked `modelled`. Hot water is held at BEN's normalised 20 kWh/m² and is
-deliberately *not* scaled by heating system or envelope.
+1. **Energy use is not monotonic in build year.** It falls to 81.1 for
+   1971–1980, then *rises* to 94.7 and 98.4 for the 1980s and 1990s. The
+   interpolation put 1991–2000 at 72 against a published 98.4 — a 26 kWh/m²
+   error, more than a class boundary for a large house. A 1990 house now scores
+   worse than a 1975 one, which is counterintuitive and published.
+2. **Direct electric heating is *below* the stock average.** The modelled factor
+   was 1.35, reasoning that a resistive house buys every kWh of heat it uses.
+   Published: 0.793. The physics was right and the baseline was wrong — the
+   stock average is dragged up by oil (1.894) and biomass (1.800) homes, and
+   electrically heated houses skew newer and better insulated.
 
-Sanity check on the reference home (424 m², 1975, air-air heat pump, no
-upgrades assumed): prior gives 22,896 kWh heating and **EP 138.6 kWh/m² → class
-E**, against the 648 kWh and class A the old page produced. Truth for that house
-sits between the two, because the prior cannot see the upgrades that have been
-made. **`home_questions` has no renovation/upgrade input**, so the prior is
-structurally pessimistic for an improved older house; that is the correct
-direction for a prior and is what blending with measured data exists to fix, but
-a renovation-year question would materially sharpen the cold start.
+**Remaining modelled values**: dwelling-form multipliers; air-air, exhaust-air
+and air-water heat pumps, which table 2.15 does not separate (they are electric
+heating and sit inside the "enbart elvärme" rows, which already blend homes with
+and without them); property energy at 3 kWh/m². The build-year × heating-system
+combination is multiplicative, which assumes independence they do not exactly
+have — newer homes are likelier to have heat pumps, so some effect is counted
+twice. Tables 2.18–2.20 give published joint values but only for bergvärme and
+the two electric categories, and are *inklusive hushållsel*, so they are not a
+drop-in replacement.
+
+Energimyndigheten also publishes an "uppgift saknas" row at 108.8 — homes with
+no recorded build year use well above average. We deliberately use SAMTLIGA
+(93.3) instead when build year is unknown: a blank in our questionnaire is not
+the same population as a blank in the property register, and assuming the worst
+about a prospect's house is not a neutral default.
+
+Reference home (424 m², 43 summer days of category data, prior only): **EP 128.6
+→ class E** for a 1975 air-air-heated build, against the 648 kWh of heating and
+class A the old page produced. The E is **not a claim about that house** — it is
+the prior for an un-upgraded build of that age and size, and **`home_questions`
+has no renovation input**, so the prior is structurally pessimistic for an
+improved older house. That is the right direction for a prior and is what
+blending with measured data exists to correct, but a renovation-year question
+would materially sharpen the cold start.
 
 #### 1.3.4b The staff Device Catalog is removed too
 
@@ -315,8 +341,8 @@ heating degree days, stands alone at **90%**, and is blended linearly between.
 
 Verified by compiling the modules with `tsc` and running the assertions under
 Node (Deno is not installable in the agent sandbox; `deno task test` remains the
-project runner and the suite is written for it). 28/28 pass. `tsc --noEmit` and
-`eslint` are clean.
+project runner and both suites are written for it). 28/28 on the performance
+pipeline, 17/17 on the archetype table. `tsc --noEmit` and `eslint` are clean.
 
 Effect on the reference home's 43-day summer window:
 
@@ -324,13 +350,13 @@ Effect on the reference home's 43-day summer window:
 |---|---|---|
 | Heating-season coverage | not measured (43/365 = 11.8% of *days*) | **0.97%** of a normal year's degree days |
 | Method | `measured_categories` | `insufficient_heating_season` → falls through |
-| EP | 43.9 kWh/m² | 138.6 kWh/m² from the prior |
+| EP | 43.9 kWh/m² | 128.6 kWh/m² from the prior |
 | Class | **A**, "medium confidence" | **E**, "low confidence, modelled not measured" |
 
-The E is **not a claim about that house** — it is the prior for an un-upgraded
-1975 build of that size, and the prior cannot see the upgrades (§1.3.4a). With
-Ellevio history present the live page will resolve to `estimated_from_grid`
-rather than the prior. The true answer arrives after a winter of category data.
+With Ellevio history present the live page will resolve to
+`estimated_from_grid` rather than the prior. The true answer arrives after a
+winter of category data. See §1.3.4a on why the prior reads pessimistically for
+this house.
 
 #### 1.3.5 Portal navigation
 
