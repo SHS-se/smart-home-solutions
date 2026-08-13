@@ -112,3 +112,6 @@ verify_jwt = false
 
 [functions.integration-tariff]
 verify_jwt = false
+
+[functions.integration-prices]
+verify_jwt = false

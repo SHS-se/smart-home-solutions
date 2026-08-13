@@ -31,8 +31,8 @@ using now; §8 covers replacing it.
 | Plant max active power | 13.2 kW | `sensor.sigen_plant_max_active_power` |
 | PV | 3 strings (PV1/PV2 active, PV3 idle) | `sensor.sigen_inverter_pv{1,2,3}_power` |
 | Grid operator | Ellevio, low-voltage tariff | `sensor.smart_home_solutions_grid_operator` |
-| Supplier | Tibber | `tibber` integration |
-| Bidding zone | SE3 | Nord Pool integration also present |
+| Supplier | Tibber | SHS home profile |
+| Bidding zone | SE3 | SHS home profile |
 
 Key live sensors (all **kW**, note the unit — see §6.1):
 
@@ -126,43 +126,24 @@ signal comes from spot. It will vary in high season.
 `OPT_FORECAST_RESOLUTION_MINUTES` supports quarter-hours but is **not exposed in the
 options flow**, so it is effectively pinned at 60.
 
-### 3.2 Spot price — Tibber
+### 3.2 Spot and supplier prices
 
-**Tibber and Nord Pool both expose forecasts as service calls, not attributes.** The
-official Nord Pool integration has no `raw_today`/`raw_tomorrow` — that was the old
-custom component.
-
-```yaml
-action: tibber.get_prices
-data: {start: "...", end: "..."}
-response_variable: tibber
-```
-
-Returns **15-minute** resolution for today and tomorrow. Two traps:
-
-- The home key has a **trailing space** (`"Porphyry "`). Index by
-  `prices.values() | list | first`, never by literal key.
-- Resolution is 15 min while the grid forecast is hourly. We aggregate spot to hourly.
-
-`sensor.porphyry_electricity_price` is the live Tibber price and is what `shs_energy` is
-configured to use as its supplier price entity.
+Smart Home Solutions owns the price source. `integration-prices` fetches native
+15-minute Swedish spot intervals from `elprisetjustnu.se`, selects the home's
+effective-dated supplier terms, and returns distinct supplier import and export
+prices. The home profile supplies only the electricity supplier and bidding area.
+No Tibber or Nord Pool Home Assistant integration is required.
 
 ### 3.3 The all-in price
 
 ```
-import = grid_import_price.forecast[slot] + tibber_spot[hour]
-export = grid_export_price.forecast[slot] + tibber_spot[hour]
+import = grid_import_price.forecast[slot] + supplier_import[slot]
+export = grid_export_price.forecast[slot] + supplier_export[slot]
 ```
 
-Currently assembled in a Home Assistant script (§6.2). **This belongs in `shs_energy`** —
-adding a `forecast` attribute to the Total import/export price sensors would give every
-customer an EMHASS-ready series without hand-written YAML. The awkward part is that
-supplier integrations disagree on how they expose forecasts (service call vs attribute,
-different shapes), so it needs a small adapter layer.
-
-Gotcha for whoever builds it: truncate to the overlap of the two series. Tibber publishes
-tomorrow around 13:00 CET; before that the spot series is shorter than the grid series,
-and blindly zipping them prices tomorrow evening at today's rate.
+The integration combines the server-owned supplier direction with the matching
+grid-tariff direction. Before tomorrow's market prices are published, the exact
+series ends instead of repeating today's price.
 
 ---
 

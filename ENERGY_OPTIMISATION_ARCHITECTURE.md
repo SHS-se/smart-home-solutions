@@ -62,7 +62,7 @@ static portal prototype:
 | A/B/C used unequal work and fabricated a final partial day | Services have explicit earliest times and deadlines. Only deadlines inside the horizon create work; all scenarios use the same rounded integer slot count, and end-of-solar metrics omit an unfinished final local day. |
 | Pool, boiler and EV used fractional/chattering power and an invented 11 kW EV rate | Pool remains a contiguous whole-slot service. The boiler is now a probability-weighted empirical duty forecast with a separate bounded permit/inhibit control. An EV current controller declares its minimum, maximum, step, phases and voltage; the planner chooses a supported current per 15-minute slot. Phil's 5–16 A three-phase range therefore models 3.45–11.04 kW rather than freezing the plan at the entity's instantaneous state. |
 | The 80% battery claim was not verified | End-of-solar and terminal SOC are simulation invariants. The 80% target is soft by default so it cannot silently reserve solar and force pool/hot-water work onto night import; explicitly making it hard retains fail-closed infeasibility checks. |
-| Export was valued with the import supplier price | Import and export are separate required timestamped entities, each combined with the correct grid direction. The integration rejects using the same entity for both. |
+| Export was valued with the import supplier price | SHS fetches spot prices and applies the selected supplier's effective-dated terms. Import and export are separate server-calculated series; Home Assistant price entities are not inputs. |
 | One August day was repeated as baseload | Baseload is a weekday/weekend per-local-quarter median of recorder history. Only devices explicitly classified as controllable are subtracted and then added back as individual planner series; every other Energy Dashboard device remains represented by its real use inside baseload. p10/p90 and sample counts remain diagnostic data rather than graph noise. |
 | Raw PV forecasts were treated as truth | HA keeps a compact forecast ledger, matches completed slots to actual solar, and publishes lead-day correction factors, sample counts, MAPE and bias. The planner and main graph use one corrected solar forecast; raw provider values remain quality diagnostics only. |
 
@@ -126,7 +126,7 @@ set:
 |---|---|
 | Whole-home energy | Energy Dashboard grid/solar/battery balance, checked against `sensor.sigen_plant_total_load_consumption` |
 | PV forecast | Eight `sensor.meteo_solar_production_forecast_estimate_*` entities, 96 timestamped quarter-hours each; home location comes from HA because the entities do not repeat coordinates |
-| Price forecasts | Tibber `get_prices` supplies import energy; Nord Pool `get_prices_for_date` supplies SE3 export spot; SHS grid tariffs are then added once per direction |
+| Price forecasts | SHS `integration-prices` fetches `elprisetjustnu.se` spot intervals and applies the home-profile supplier and bidding area; grid tariffs are then added once per direction |
 | Battery | 18.08 kWh, 8.8 kW charge, 9.6 kW discharge, live Sigen SOC, 13.2 kW plant/grid envelope |
 | Pool | `sensor.pool_heater_energy` plus `sensor.pool_pump_energy`; active measured power about 3.67 kW; `input_boolean.pool_heating` is the season gate |
 | Hot water | `sensor.hot_water_energy`; 3.0 kW installed rating remains an explicit commissioned fact |
@@ -768,8 +768,8 @@ The implementation in this change adds:
   `live`/`demo` mode;
 - automatic aggregate-meter discovery from the Energy Dashboard, plus a short
   multi-step advanced flow and validated AI/MCP actions;
-- a strict 15-minute contract for timestamped PV and separate supplier import
-  and export forecasts;
+- a strict 15-minute contract for timestamped PV and separate server-owned
+  supplier import and export forecasts;
 - explicit market area, PV coordinates, source units, freshness, battery/grid
   capabilities, service deadlines, whole-slot minimum runs, and EV state;
 - complete aggregate and per-device 15-minute recorder bins, weekday/weekend
@@ -1824,8 +1824,8 @@ states, and all reason codes.
   consistent IR power thresholds;
 - at least a full heating season of base-load and zone response history, or an
   explicit lower-confidence commissioning model until that history exists;
-- live commissioning evidence for the implemented Tibber, Nord Pool and PV
-  adapters, including source-freshness and publication-gap behaviour; and
+- live commissioning evidence for the SHS supplier-price and PV adapters,
+  including source-freshness and publication-gap behaviour; and
 - a current export of all Node-RED control, pool, EV, IR, and override flows.
 
 ### 11.3 Forecast horizon specification

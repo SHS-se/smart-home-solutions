@@ -235,6 +235,38 @@ export const HOME_QUESTION_FUNCTIONALITY: HomeQuestionFunctionality[] = [
     },
   },
   {
+    key: 'electricity_supplier',
+    type: 'single_choice',
+    importance: 'required',
+    dataUse: 'calculation',
+    features: ['energy_history', 'energy_simulator', 'energy_setup'],
+    label: { sv: 'Elhandelsbolag', en: 'Electricity supplier' },
+    purpose: {
+      sv: 'Väljer rätt påslag och villkor när spotpriset räknas om till bostadens köp- och säljpris.',
+      en: 'Selects the correct terms and markups when spot prices are converted into the home’s import and export prices.',
+    },
+    suggestedQuestion: {
+      sv: 'Vilket elhandelsbolag har bostaden?',
+      en: 'Which electricity supplier does the home use?',
+    },
+  },
+  {
+    key: 'electricity_price_area',
+    type: 'single_choice',
+    importance: 'required',
+    dataUse: 'calculation',
+    features: ['energy_history', 'energy_simulator', 'energy_setup'],
+    label: { sv: 'Elområde', en: 'Electricity price area' },
+    purpose: {
+      sv: 'Hämtar rätt svenska spotpris för bostadens plats (SE1–SE4).',
+      en: 'Fetches the Swedish spot price for the home’s bidding area (SE1–SE4).',
+    },
+    suggestedQuestion: {
+      sv: 'Vilket elområde ligger bostaden i?',
+      en: 'Which electricity price area is the home in?',
+    },
+  },
+  {
     key: 'main_fuse_a',
     type: 'single_choice',
     importance: 'required',
