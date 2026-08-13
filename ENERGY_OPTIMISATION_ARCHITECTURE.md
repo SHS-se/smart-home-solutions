@@ -847,6 +847,128 @@ is the mechanism, not an oversight.
 `snapshot` or `portal_backfill` — so if the parity check ever does fail, the
 affected quarters can be found rather than guessed at.
 
+### 1.4 The objective past the day-ahead window (2026-08-13)
+
+Decided with Phil on 2026-08-13, after the live plan came back **infeasible**
+with `priority: terminal SOC 5.0% is below 20.0%` and a schedule whose second
+and third days made no sense — pool-room floor heating in August, and loads
+piled into hours nothing justified.
+
+#### 1.4.1 The unpriced two-thirds of the horizon had no objective
+
+Nord Pool publishes day-ahead. The horizon is 72 hours. So **roughly one third of
+every plan is priced and two thirds are not**, and this is permanent, not a
+fault. Confirmed on the live plan: `binding_until` 2026-08-14T22:00Z against an
+`issued_at` of 2026-08-13T21:45Z — about 26 hours priced out of 72. The portal
+showing "39.4 kWh grid import · 0.0 priced" is therefore *correct*: the import
+all falls in the unpriced tail. That reading was initially mistaken for a
+pricing bug, and it is not one.
+
+What the unpriced tail had instead was this, at `energy-optimisation.ts:1148`:
+
+```js
+const score = slots[index].binding
+  ? solarW / 1_000 * SLOT_HOURS * slots[index].export_price_sek_per_kwh! +
+    gridW / 1_000 * SLOT_HOURS * slots[index].import_price_sek_per_kwh!
+  : gridW / 100;
+```
+
+Three defects in that one fallback:
+
+1. **No time preference.** 03:00 and 18:00 score identically, so a deferrable
+   load lands wherever the tie-break puts it.
+2. **Linear in power, so no reason to spread.** Splitting a load across four
+   slots and dumping it in one score the same. Nothing in the objective has ever
+   preferred a flat grid draw.
+3. **Not in SEK.** The priced branch is money; this is watts over an arbitrary
+   100. The two are compared against each other whenever a service can be placed
+   on either side of the day-ahead boundary, and the exchange rate between them
+   is meaningless.
+
+#### 1.4.2 One mechanism, not four patches
+
+Phil asked for four things: use solar rather than grid; prefer historically cheap
+hours when unpriced; spread grid load to limit peak demand; and export on a price
+spike when the energy can be cheaply replaced. These are not four features. They
+are four consequences of one missing quantity — **what a kWh is worth in a given
+slot** — so the planner gains exactly that:
+
+```
+shadowImport(slot) = published import price                      when binding
+                   = shapePrior(quarter-of-day) × recentLevel     otherwise
+```
+
+- **Solar** already falls out: `gridW` excludes `solarW`, so self-consumption
+  wins whenever the shadow price is positive.
+- **Time preference** is `shapePrior`.
+- **Peak** is a convex adder, below.
+- **Export** compares the export price against the *replacement* cost of the
+  energy, below.
+
+Everything stays in SEK, so the day-ahead boundary stops being a discontinuity
+in the objective.
+
+#### 1.4.3 The shape prior is measured, not assumed
+
+Phil's description — "peaks are usually early morning and late evening" — is
+correct and is exactly the kind of claim §1.3.1 exists to warn about: it must not
+be hard-coded as a constant. It is **derived from the home's own stored prices**,
+which is possible now only because §1.3.7 gave us somewhere to store them:
+`energy_optimisation_price_slots` holds real all-in per-quarter prices, and the
+backfill fills it 120 days back.
+
+So the prior is a by-quarter-of-day median over the stored archive, normalised to
+its own daily mean, computed per home and recomputed as the archive grows.
+Properties that matter:
+
+- **Normalised shape × recent level**, not an absolute historical price. Shape is
+  stable across seasons in a way that level is not, so a July prior must not
+  price a January slot.
+- **Weekday and weekend are separate**, matching how the base-load profile is
+  already built.
+- **Below a coverage floor there is no prior**, and the planner says so rather
+  than inventing one. A home with three days of archive has no business claiming
+  to know the shape of its price curve.
+
+#### 1.4.4 Peak spreading survives the effektavgift being suspended
+
+The grid tariff currently has no demand charge — `peak_demand_kw: null` on the
+live cost sensor — and Phil expects something equivalent to return. The peak term
+is therefore added now with a weight that is deliberately small: enough to break
+ties toward a flat grid draw, not enough to override a real price difference.
+Being **convex** in grid power is what does the work; the magnitude only decides
+how much price it is worth trading away. When a demand charge returns, the weight
+becomes its actual rate and the mechanism is already in place.
+
+#### 1.4.5 Export is an opportunity cost, not a threshold
+
+Battery export already exists — `battery-export-planner-v6`, gated at
+`energy-optimisation.ts:1689` on:
+
+```js
+slot.export_price_sek_per_kwh! >= policy.battery_export_min_price_sek_per_kwh
+```
+
+A fixed threshold cannot express the condition Phil actually stated, which is
+comparative: export when the spike beats **what it will cost to put that energy
+back**. That replacement cost is knowable from the plan's own horizon:
+
+```
+replacementCost = 0                             when forecast surplus PV will
+                                                refill the reserve anyway
+                = min(shadowImport over the remaining horizon)
+                  / (charge_efficiency × discharge_efficiency)   otherwise
+```
+
+Export when `exportPrice > replacementCost`, subject to the existing reserve SOC
+floor. The static threshold stays as a hard floor beneath it, because a spike
+that beats a cheap tomorrow can still be a bad trade in absolute terms.
+
+This also addresses the infeasible plan. Terminal SOC was violated because
+nothing past the priced window valued stored energy, so the battery was worth
+draining. Once `shadowImport` extends across the whole horizon, the terminal
+valuation the plan already computes has something to price against.
+
 ## 2. Terms
 
 - **Baseline controller:** the normal local schedule, thermostat, occupancy, and
