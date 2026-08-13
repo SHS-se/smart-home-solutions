@@ -264,6 +264,8 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
           prices={isDemo ? [] : prices}
           windowDays={windowDays}
           onWindowDaysChange={setWindowDays}
+          homeId={isDemo ? null : homeId}
+          onBackfilled={() => load(true)}
         />
       );
     }

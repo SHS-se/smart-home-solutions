@@ -788,6 +788,65 @@ Two properties are now pinned by test across the randomised window: the grid
 column totals the metered import, and the cost column totals
 `Σ import × price`. Both to within 0.05 kWh and 0.05 SEK over 2,000 quarters.
 
+##### 1.3.7.6 The backfill moved to the portal, which reverses §1.3.7.1
+
+§1.3.7.1 rejected pricing in the portal because it would mean a second
+implementation of the grid tariff. That reasoning was sound and the conclusion
+is now overridden, deliberately, for a reason that only appeared in use:
+**a backfill that runs in Home Assistant is not a backfill anyone will run.**
+The integration action worked, but it put a manual Developer-Tools step between
+the customer and a priced history, and it failed opaquely when the data behind
+it was missing. The portal owns the surface that shows the gap, so it should own
+the button that closes it.
+
+**What actually failed first was data, not code.** `shs_energy.backfill_prices`
+returned `502 price_lookup_failed` for every historical date. The Tibber profile
+was seeded with a single version valid from **2026-08-13**, and
+`integration-prices` resolves supplier terms per day:
+
+```js
+const version = versions.find(candidate =>
+  candidate.valid_from <= localDate && (!candidate.valid_to || ...));
+if (!version) throw new Error(`supplier terms missing for ${localDate}`);
+```
+
+so every date before today threw into the catch-all. The grid half was never the
+problem — the Ellevio catalogue is effective-dated from 2025-01-01. Three
+consequences:
+
+1. **`integration-prices` now separates the cases.** Absent terms return
+   **422 `supplier_terms_missing`** naming the date and the earliest terms on
+   file; a malformed range returns 400; only a genuine upstream failure is a
+   502. The old behaviour cost an afternoon of reading Home Assistant
+   tracebacks to learn something the server already knew.
+2. **Historical Tibber terms are an explicit assumption.** Revision
+   `tibber_se_assumed_from_2025-01-01` carries today's terms backwards, named so
+   it can never be mistaken for sourced data, and superseded automatically by
+   publishing the real terms. The spot price it multiplies is real per-quarter
+   market data, so the error is bounded by the markup — a few öre per kWh, not
+   the price itself.
+3. **`backfill-energy-prices`** prices a home's window from published spot plus
+   the tariff in force, and the History tab offers it exactly where the unpriced
+   quarters are counted. It reports which days it skipped and why, rather than
+   failing the run — the integration action aborted on its first bad chunk, and
+   since chunks ran oldest-first, the one window that would have worked was last
+   and never ran.
+
+**The duplicate implementation is answered structurally, not by argument.**
+`_shared/energy-grid-pricing.ts` ports only the marginal per-kWh path of
+`current_grid_prices` — monthly invoicing, fixed fees and demand charges stay in
+the integration alone. `grid-price-parity.fixture.json` holds 17 cases captured
+from the Python (band edges, weekends, Christmas Eve, computed Easter dates,
+reduced energy tax, VAT-registered export, per-selector transfer, outside the
+catalogue) and is **duplicated verbatim in both repositories**, because CI cannot
+reach across them. Each repo asserts its own implementation against it, so
+changing the calculation in either place fails that repo's suite. The duplication
+is the mechanism, not an oversight.
+
+`source` on a price row records which writer produced it — `integration`,
+`snapshot` or `portal_backfill` — so if the parity check ever does fail, the
+affected quarters can be found rather than guessed at.
+
 ## 2. Terms
 
 - **Baseline controller:** the normal local schedule, thermostat, occupancy, and

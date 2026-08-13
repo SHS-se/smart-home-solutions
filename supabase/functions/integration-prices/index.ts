@@ -44,6 +44,24 @@ const spotUrl = (date: Date, area: string) => {
   return `${SPOT_SOURCE}/${year}/${month}-${day}_${area}.json`;
 };
 
+/**
+ * No supplier terms cover a requested day.
+ *
+ * Distinguished from a genuine upstream failure because the two need opposite
+ * responses: this one is fixed by publishing terms, and the caller can only
+ * work that out if the reply says so. It previously fell into the catch-all and
+ * surfaced as a bare 502 price_lookup_failed, which cost an afternoon of
+ * reading Home Assistant tracebacks to identify.
+ */
+class SupplierTermsMissingError extends Error {
+  constructor(readonly localDate: string) {
+    super(`supplier terms missing for ${localDate}`);
+  }
+}
+
+/** The requested range is unusable, which is the caller's error, not ours. */
+class InvalidDateRangeError extends Error {}
+
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const isoDate = (date: Date) => {
   const { year, month, day } = dateInStockholm(date);
@@ -57,13 +75,13 @@ const requestedDates = (url: URL, now: Date) => {
   const from = url.searchParams.get("from") ?? today;
   const to = url.searchParams.get("to") ?? isoDate(addDays(today, 1));
   if (!ISO_DATE.test(from) || !ISO_DATE.test(to) || from > to) {
-    throw new Error("invalid requested date range");
+    throw new InvalidDateRangeError("invalid requested date range");
   }
   const dates: Date[] = [];
   for (let cursor = from; cursor <= to; cursor = isoDate(addDays(cursor, 1))) {
     dates.push(addDays(cursor, 0));
     if (dates.length > 62) {
-      throw new Error("requested date range exceeds 62 days");
+      throw new InvalidDateRangeError("requested date range exceeds 62 days");
     }
   }
   return { dates, today };
@@ -186,7 +204,7 @@ serve(async (req) => {
         candidate.valid_from <= localDate &&
         (!candidate.valid_to || candidate.valid_to >= localDate)
       );
-      if (!version) throw new Error(`supplier terms missing for ${localDate}`);
+      if (!version) throw new SupplierTermsMissingError(localDate);
       usedRevisions.add(version.revision);
       return calculateSupplierPrice(interval, version.definition);
     });
@@ -226,6 +244,25 @@ serve(async (req) => {
       },
     });
   } catch (error) {
+    if (error instanceof SupplierTermsMissingError) {
+      // 422, not 502: nothing upstream failed and retrying cannot help. The
+      // reply names the day and the earliest terms on file so the caller can
+      // see the gap without reading logs.
+      const { data: earliest } = await supabase
+        .from("energy_supplier_versions")
+        .select("valid_from")
+        .order("valid_from", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      return json({
+        error: "supplier_terms_missing",
+        detail: error.localDate,
+        earliest_terms_from: earliest?.valid_from ?? null,
+      }, 422);
+    }
+    if (error instanceof InvalidDateRangeError) {
+      return json({ error: "invalid_date_range", detail: error.message }, 400);
+    }
     console.error("[INTEGRATION-PRICES] unexpected", error);
     return json({ error: "price_lookup_failed" }, 502);
   }
