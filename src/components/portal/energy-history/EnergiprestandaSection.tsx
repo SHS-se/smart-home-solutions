@@ -27,6 +27,7 @@ import {
 import {
   resolveEnergyPerformance,
   type EnergyPerformanceConfidence,
+  type EnergyPerformanceHomeFacts,
   type EnergyPerformanceMethod,
   type ResolvedEnergyPerformance,
 } from '@/lib/energy-performance';
@@ -88,6 +89,8 @@ interface EnergiprestandaSectionProps {
   heatedBoareaM2?: number | null;
   heatedBiareaM2?: number | null;
   hasSolar?: boolean | null;
+  /** Build year, dwelling form and heating system, for the cold-start prior. */
+  homeFacts?: EnergyPerformanceHomeFacts;
   periodStartMonth: string | null;
   periodEndMonth: string | null;
   isLoading: boolean;
@@ -118,9 +121,47 @@ function categoryLabel(category: string, t: Translate): string {
 }
 
 function methodLabel(method: EnergyPerformanceMethod, t: Translate): string {
-  return method === 'measured_categories'
-    ? t('Uppmätt per kategori', 'Measured per category')
-    : t('Uppskattad från nätuttag', 'Estimated from grid import');
+  switch (method) {
+    case 'measured_categories':
+      return t('Uppmätt per kategori', 'Measured per category');
+    case 'estimated_from_grid':
+      return t('Uppskattad från nätuttag', 'Estimated from grid import');
+    default:
+      return t('Modellerad för hustypen', 'Modelled for this house type');
+  }
+}
+
+/**
+ * Why the figure is what it is. The old card asserted "degree-day corrected"
+ * next to "no degree-day correction"; a class is now only ever stated on a
+ * basis the card can name.
+ */
+function basisMessage(
+  performance: ResolvedEnergyPerformance,
+  t: Translate,
+): string | null {
+  const coverage = performance.measured.heatingCoverage;
+  const seasonPercent = coverage ? Math.round(coverage.fraction * 100) : 0;
+
+  if (performance.method === 'modelled_archetype') {
+    return t(
+      `Ingen mätning täcker ännu tillräckligt av en uppvärmningssäsong, så siffran är modellerad utifrån byggår, hustyp och uppvärmningssätt — inte uppmätt i just detta hus. Uppmätt hittills: ${seasonPercent} % av ett normalårs graddagar.`,
+      `No measurement yet covers enough of a heating season, so this figure is modelled from build year, dwelling type and heating system — it is not measured in this house. Measured so far: ${seasonPercent}% of a normal year’s degree days.`,
+    );
+  }
+  if (performance.method === 'measured_categories' && performance.isModelled) {
+    return t(
+      `Uppmätt data täcker ${seasonPercent} % av ett normalårs graddagar, så siffran är en blandning av mätning och modell. Andelen mätning ökar under vintern.`,
+      `Measured data covers ${seasonPercent}% of a normal year’s degree days, so this figure blends measurement with the model. The measured share grows through the winter.`,
+    );
+  }
+  if (performance.method === 'estimated_from_grid') {
+    return t(
+      'Beräknad från husets totala elförbrukning, fördelad på kategorier med en modell för hustypen. Hushållsel dras av med BEN:s schablon.',
+      'Derived from the home’s total electricity use, split into categories by a model for this house type. Household electricity is deducted using BEN’s standard value.',
+    );
+  }
+  return null;
 }
 
 function confidenceLabel(confidence: EnergyPerformanceConfidence, t: Translate): string {
@@ -159,8 +200,8 @@ function blockerMessage(
       );
     default:
       return t(
-        `Minst 300 dagar med dagligt nätuttag behövs för en uppskattning, eller 30 dagar med kategoridata från Home Assistant för en uppmätt beräkning. Just nu finns ${profile.gridImportDays} nät-dagar och ${performance.measured.coverageDays} kategoridagar.`,
-        `At least 300 days of daily grid import are needed for an estimate, or 30 days of category data from Home Assistant for a measured calculation. There are currently ${profile.gridImportDays} grid days and ${performance.measured.coverageDays} category days.`,
+        `Fyll i byggår, hustyp och uppvärmningssätt i Hemprofilen så visas åtminstone ett modellerat värde. Just nu finns ${profile.gridImportDays} nät-dagar och ${performance.measured.coverageDays} kategoridagar.`,
+        `Complete build year, dwelling type and heating system in the Home profile and at least a modelled figure can be shown. There are currently ${profile.gridImportDays} grid days and ${performance.measured.coverageDays} category days.`,
       );
   }
 }
@@ -173,6 +214,7 @@ const EnergiprestandaSection: React.FC<EnergiprestandaSectionProps> = ({
   heatedBoareaM2 = null,
   heatedBiareaM2 = null,
   hasSolar = null,
+  homeFacts = {},
   periodStartMonth,
   periodEndMonth,
   isLoading,
@@ -199,8 +241,9 @@ const EnergiprestandaSection: React.FC<EnergiprestandaSectionProps> = ({
       atempM2,
       weatherObservations,
       hasSolar,
+      homeFacts,
     ),
-    [atempM2, dailyReadings, hasSolar, readings, weatherObservations],
+    [atempM2, dailyReadings, hasSolar, homeFacts, readings, weatherObservations],
   );
 
   const visibleCategoryReadings = useMemo(() => readings.filter((reading) => {
@@ -286,6 +329,14 @@ const EnergiprestandaSection: React.FC<EnergiprestandaSectionProps> = ({
                   'An A–G indication inspired by Boverket’s energy performance certificate. The calculation uses the best evidence your home has. This is not an official certificate or authority decision.',
                 )}
               </p>
+              {basisMessage(performance, t) && (
+                <p
+                  className="mt-2 max-w-3xl text-xs text-muted-foreground"
+                  data-testid="energy-performance-basis"
+                >
+                  {basisMessage(performance, t)}
+                </p>
+              )}
             </div>
             <div className="flex flex-wrap gap-2">
               {performance.method && performance.confidence && (
@@ -301,6 +352,15 @@ const EnergiprestandaSection: React.FC<EnergiprestandaSectionProps> = ({
                     {confidenceLabel(performance.confidence, t)}
                   </Badge>
                 </>
+              )}
+              {performance.isModelled && (
+                <Badge
+                  variant="outline"
+                  className="border-sky-300 bg-sky-50 text-sky-900 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-200"
+                  data-testid="energy-performance-modelled"
+                >
+                  {t('Modellerad, ej uppmätt', 'Modelled, not measured')}
+                </Badge>
               )}
               <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
                 {t('Ej officiell', 'Not official')}
@@ -371,14 +431,18 @@ const EnergiprestandaSection: React.FC<EnergiprestandaSectionProps> = ({
                         </p>
                         <p className="mt-1 font-medium tabular-nums">
                           {t(
-                            `${measured.coverageDays} dagar med kategoridata`,
-                            `${measured.coverageDays} days of category data`,
+                            `${Math.round((measured.heatingCoverage?.fraction ?? 0) * 100)} % av uppvärmningssäsongen`,
+                            `${Math.round((measured.heatingCoverage?.fraction ?? 0) * 100)}% of the heating season`,
                           )}
                         </p>
                         <p className="mt-1 text-[11px] text-muted-foreground">
+                          {t(
+                            `${measured.coverageDays} dagar med kategoridata`,
+                            `${measured.coverageDays} days of category data`,
+                          )}
                           {measured.degreeDayFactor !== null
-                            ? `${t('Graddagsfaktor', 'Degree-day factor')} ${numberFormatter.format(round(measured.degreeDayFactor, 2))}`
-                            : t('Ingen graddagskorrigering', 'No degree-day correction')}
+                            ? ` · ${t('graddagsfaktor', 'degree-day factor')} ${numberFormatter.format(round(measured.degreeDayFactor, 2))}`
+                            : ''}
                         </p>
                       </div>
                     </>

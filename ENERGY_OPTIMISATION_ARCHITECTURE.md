@@ -1,8 +1,11 @@
 # Energy optimisation architecture
 
-Status: **schema-v5 controllable-device selection, empirical history and duty-cycle permit path implemented; deployment, live commissioning and device executors remain**
+Status: **schema-v5 controllable-device selection, empirical history and duty-cycle permit path implemented; energy-performance correction and cold-start priors in progress; deployment, live commissioning and device executors remain**
 
-Date: **2026-08-11**
+Date: **2026-08-13**
+
+Latest decisions: **§1.3** (energy-performance defects, cold-start archetype
+priors, portal surface removal, ROI rebuild).
 
 Source material: `ENERGY_OPTIMISATION_NOTES.md`, the current portal implementation in
 this repository, the current `shs_energy` Home Assistant integration in
@@ -129,6 +132,236 @@ set:
 | Hot water | `sensor.hot_water_energy`; 3.0 kW installed rating remains an explicit commissioned fact |
 | EV | `sensor.car_charging_lifetime_energy`, Tesla cable/SOC/target/energy-remaining entities, and `number.tesla_model_y_charge_current`; its 5 A minimum, 16 A maximum and 1 A step are read from entity attributes. No departure entity exists, so the next configured default departure time is used |
 
+### 1.3 Portal surface and energy-performance decisions (2026-08-13)
+
+Decisions taken with Phil on 2026-08-13. Recorded here because they change what
+the portal is *for*, not just how a screen looks.
+
+#### 1.3.1 The energy-performance page was reporting a fabricated class
+
+The Energiprestanda card showed **class A, 43.9 kWh/m²·år** for a 424 m² house in
+Täby. The figure reconciles exactly with `src/lib/energiprestanda.ts`:
+
+```
+annualize = 365 / 43 = 8.488
+heating 648 + hot water 8480 + cooling 9 + property 1204 = 10,341 kWh
+10,341 × 1.8 / 424 = 43.9 kWh/m²  →  48.8% of 90  →  A
+```
+
+Working backwards, the window held **76 kWh of heating over 43 days ending
+2026-08-11** — late June to mid-August. A pure summer sample was multiplied by
+8.5 and presented as an annual heating figure. At this Atemp the class
+boundaries sit at heating ≤ 907 kWh (A), ≤ 6,207 (B), ≤ 11,507 (C), ≤ 18,927 (D),
+against roughly 10,261 kWh lifetime on electric heaters and 11,443 kWh on
+aircon. The honest answer for this house is around C/D.
+
+Five defects, all confirmed by reading the code rather than inferred:
+
+| # | Defect | Location |
+|---|---|---|
+| 1 | `MIN_COVERAGE_DAYS = 30` plus naive linear `365/n` annualization. Heating is the most seasonal quantity in the building and is extrapolated from the least informative days of the year. | `energiprestanda.ts:36,191` |
+| 2 | Two annualization gates differing by 10×, and the weaker one wins. The grid-import estimate refuses to annualize below `MIN_ANNUAL_COVERAGE_DAYS = 300`; the measured path annualizes from 30; `resolveEnergyPerformance` gives measured unconditional precedence. 43 days of summer HA data therefore override a year-plus of Ellevio data. | `energy-usage-series.ts:187`, `energy-performance.ts:139` |
+| 3 | Two large errors partly cancelling, which is why the output looked plausible. Heating understated ~20–30×; hot water overstated ~4× (BEN's 20 × Atemp gives 8,480 kWh against ~2,000 kWh/yr measured). 82% of the total is a constant shared by every 424 m² house in Sweden, so the number barely measures the building. | `energiprestanda.ts:225` |
+| 4 | The screen contradicts itself: the row is labelled "Heating (degree-day corrected)" while the evidence card says "No degree-day correction". `degreeDayFactor` needs ≥328 days of weather *inside the window*, so it is null and silently becomes ×1. Included posts are annualized, excluded posts are measured, both shown as bare kWh in adjacent columns. | `energiprestanda.ts:199-213`, `EnergiprestandaSection.tsx:379,417` |
+| 5 | No geographic adjustment factor in the measured path at all, and Stockholm's 1.0 hardcoded in the estimate. Per BBR 31 (BFS 2024:14) Table 9:2c, F_geo applies to the heating term; the calculation is only valid where F_geo = 1.0. `energyClassForEp` also classifies against a flat 90 while the UI classifies via `smallHouseNewBuildRequirement`; they diverge below 130 m². Dead code today, wrong dead code. | `energiprestanda.ts:66`, `indicative-energy-performance.ts:28` |
+
+Defects 1 and 2 are **deliberate and tested** — `energy-performance.test.ts`
+contains `'prefers measured category data over the grid estimate'` and
+`'reports medium confidence when category data covers only part of the year'`.
+Correcting them changes tested intent; it is not a patch.
+
+#### 1.3.2 Cold start is the primary path, not the fallback
+
+Phil's house is not the normal case. Most customers will have, at best, a
+whole-home total — often from a solar inverter's load meter rather than the
+utility meter, so understated by whatever the inverter does not see. Per-category
+measurement is the exception; **disaggregating a single total against a
+reference model is the norm.**
+
+This inverts the precedence in `energy-performance.ts`. The decision:
+
+- Build an **archetype prior library**: expected annual kWh per BEN category,
+  keyed on `dwelling_type` × `year_built` band × `heating_types` × climate, from
+  published Swedish housing-stock statistics with the source and confidence
+  recorded per entry.
+- Measured per-category data wins **only at sufficient seasonal coverage**,
+  measured as captured heating degree days against the normal year — never as a
+  day count.
+- Below that, show the prior (or the grid-import estimate where whole-home
+  history exists), badged **modelled, not measured**, blending toward measured
+  as coverage grows.
+- The same layer serves the prospect pitch and the honest partial-year answer
+  for a connected customer, so it is built once.
+
+`home_questions` already carries the archetype key: `year_built`,
+`dwelling_type`, `heated_boarea_m2`/`heated_biarea_m2`, `heating_types`,
+`hot_water_type`, `occupants`, `has_solar`/`has_battery`/`has_ev`, `main_fuse_a`.
+
+#### 1.3.3 Historical backfill is an integration action, not a one-off script
+
+`recorder.purge_keep_days: 30` purges **states**; long-term statistics for
+`total_increasing` energy sensors are retained indefinitely at hourly resolution
+and are readable through `recorder/statistics_during_period`. A customer's full
+history is therefore already available locally.
+
+Decision: implement it as a `shs_energy` backfill action that walks statistics
+and posts daily category totals through the existing ingest endpoint, rather
+than a bespoke script for one house. Any customer with history benefits, and the
+houses that do have category history become the calibration set for §1.3.2's
+priors.
+
+#### 1.3.4 The legacy simulator UI is removed
+
+§3.1's limitations table stands, but the conclusion changes: the browser
+simulator is not retained as a product surface. The **library** (`simulate-device-day.ts`
+and the five device models) is kept for counterfactual and replay work; the tabs
+built on it are deleted.
+
+Verified before agreeing to the removal — none of these tables are read by the
+planner path:
+
+| Surface | Only consumers | Superseded by |
+|---|---|---|
+| `HomeDevicesTab`, `AddDeviceModal` (`home_device_assignments`) | `SimulatorTab`, `HomeDevicesTab`, `AddDeviceModal` | `energy_optimisation_devices` from Energy Dashboard discovery |
+| `HouseSetupTab` (`energy_home_settings.ua_w_per_k`, `thermal_capacity_class`, `overrides`) | `SimulatorTab`, `HouseSetupTab` | Empirical per-zone fit (§9.3) |
+| `TariffPricingTab` (`tariff_instances`, `energy_home_settings.tariff_instance_id`) | `SimulatorTab`, `TariffPricingTab` | `energy_tariff_profiles`/`_settings`/`_versions`, served by `integration-tariff` and edited at Settings → Energy Tariff |
+
+`HouseSetupTab` also edited `home_answers`, but `/portal/home-profile`
+(`HomeProfileForm`) loads **all** active `home_questions` and upserts the same
+table — a strict superset. Deleting the tab loses no archetype input. That route
+must stay reachable: `integration-tariff` reads `home_questions`/`home_answers`
+directly, so the home profile is load-bearing for the live integration.
+
+#### 1.3.4a Reference data behind the archetype priors
+
+Implemented in `src/lib/energy-archetypes.ts`. Every number carries a
+`provenance` of `published`, `interpolated` or `modelled` and a source string;
+nothing in the table is an unattributed guess.
+
+**Published anchors** — Energimyndigheten, *Energistatistik för småhus 2024*
+(2025-06-10). Heating and hot water only, excluding household electricity, and
+excluding heat absorbed from ground/air by heat pumps. That basis is the
+delivered ("köpt") energy the BBR primary-energy number is built from, which is
+why it is directly usable:
+
+| Segment | kWh/m² |
+|---|---|
+| All småhus | 90.5 |
+| Built ≤ 1940 | 110 |
+| Built ≥ 2011 | 53.4 |
+| Built ≥ 2021 | 39 |
+
+**Interpolated bands** — the intermediate build-year rows are fitted
+monotonically between those anchors, constrained so the stock-weighted mean
+reproduces 90.5 and the 2011+ subset reproduces 53.4. Verified numerically:
+90.47 and 53.40. The official per-band, per-heating-system table exists as
+`smh_2024_tabellverk_v2.xlsx` on the statistics page; `web_fetch` returns it as
+binary and cannot parse it. **Replacing the interpolated rows from that
+workbook is the one outstanding data task**, and it is isolated to one constant.
+
+**Modelled factors** — heating-system multipliers (SPF ratios against the mixed
+stock the published averages describe) and dwelling-form multipliers are ours,
+marked `modelled`. Hot water is held at BEN's normalised 20 kWh/m² and is
+deliberately *not* scaled by heating system or envelope.
+
+Sanity check on the reference home (424 m², 1975, air-air heat pump, no
+upgrades assumed): prior gives 22,896 kWh heating and **EP 138.6 kWh/m² → class
+E**, against the 648 kWh and class A the old page produced. Truth for that house
+sits between the two, because the prior cannot see the upgrades that have been
+made. **`home_questions` has no renovation/upgrade input**, so the prior is
+structurally pessimistic for an improved older house; that is the correct
+direction for a prior and is what blending with measured data exists to fix, but
+a renovation-year question would materially sharpen the cold start.
+
+#### 1.3.4b The staff Device Catalog is removed too
+
+Checked before agreeing: `device_types`, `device_instances`, `device_profiles`
+and `performance_data` are read only by the simulator/catalogue components,
+`src/lib/simulator/device-bindings.ts`, `src/lib/performance-data.ts`, and the
+`delete-customer`/`delete-contact` cleanup functions. Nothing in the planner
+path touches them.
+
+The catalogue also holds no data — the Devices list is empty, and the type
+taxonomy already contains visible duplicates (Air-Air Heat Pump, Appliance,
+Base Load, Electric Heater, EV Charger and Hot Water Heater each appear twice).
+There is nothing to preserve.
+
+It is **not** needed for cold start: the archetype layer is building-level
+(kWh/m² per BEN category by build year, dwelling form and heating system), not
+device-level, and `include_in_standard_home` carries no information while the
+device tables are empty.
+
+One caveat for the future: §9.1 assigns device dynamics to "manufacturer
+profile, then measured calibration", so a manufacturer-profile store has a
+designed role. It should be reintroduced as a fresh design against the schema-5
+device contract rather than by preserving this schema.
+
+#### 1.3.4c Implementation status (2026-08-13)
+
+Energy-performance correction and cold-start priors are **implemented**:
+
+| File | Change |
+|---|---|
+| `src/lib/energy-degree-days.ts` | New. HDD/CDD, normal-year degree days, and `seasonalCoverage()` — the fraction of a normal year's degree days that fell inside the days actually measured. |
+| `src/lib/energy-archetypes.ts` | New. Build-year bands, heating-system and dwelling factors, `archetypePrior()`, `disaggregateWholeHome()`, questionnaire normalizers. |
+| `src/lib/energiprestanda.ts` | Rewritten. Per-post normalization (heating on HDD, cooling on CDD, property linear, hot water by BEN standard), seasonal-coverage gate, F_geo on the heating term, per-category coverage days, class bands expressed as percentages of the building's own requirement. |
+| `src/lib/energy-performance.ts` | Precedence inverted: measured → grid estimate → modelled prior, with blending between the coverage thresholds. Adds `isModelled`, `measuredWeight`, `geographicFactorAssumed`. |
+| `src/lib/home-profile-functional-data.ts` | Also reads `year_built`, `dwelling_type`, `heating_types` for the prior. |
+| `EnergiprestandaSection.tsx`, `EnergyHistory.tsx` | "Modelled, not measured" badge, a basis message naming what the figure rests on, heating-season coverage replacing the day count, and the degree-day label contradiction removed. |
+
+Thresholds: heating may not be extrapolated below **60%** of a normal year's
+heating degree days, stands alone at **90%**, and is blended linearly between.
+`MIN_COVERAGE_DAYS = 30` is gone.
+
+Verified by compiling the modules with `tsc` and running the assertions under
+Node (Deno is not installable in the agent sandbox; `deno task test` remains the
+project runner and the suite is written for it). 28/28 pass. `tsc --noEmit` and
+`eslint` are clean.
+
+Effect on the reference home's 43-day summer window:
+
+| | Before | After |
+|---|---|---|
+| Heating-season coverage | not measured (43/365 = 11.8% of *days*) | **0.97%** of a normal year's degree days |
+| Method | `measured_categories` | `insufficient_heating_season` → falls through |
+| EP | 43.9 kWh/m² | 138.6 kWh/m² from the prior |
+| Class | **A**, "medium confidence" | **E**, "low confidence, modelled not measured" |
+
+The E is **not a claim about that house** — it is the prior for an un-upgraded
+1975 build of that size, and the prior cannot see the upgrades (§1.3.4a). With
+Ellevio history present the live page will resolve to `estimated_from_grid`
+rather than the prior. The true answer arrives after a winter of category data.
+
+#### 1.3.5 Portal navigation
+
+- The page is renamed **Energy Optimisation / Energioptimering**.
+- `LoadShiftTab`'s four `PlanningDimension` values are promoted to top-level
+  tabs. The resulting tab set is **ROI · Plan · Power · Thermal · Economics ·
+  Storage**, with `Plan` holding the plan header cards (issue time, source,
+  cost difference, battery low, validation errors) so the four dimensions are
+  charts only.
+- Multiple homes remain supported; `HomeSelector` stays.
+- `Home Setup`, `Home Devices`, `Tariff & Pricing` and `Simulator` are removed
+  per §1.3.4, and the staff `Device Catalog` route per §1.3.4b.
+- `/portal/home-profile` and Settings → Energy Tariff must stay reachable —
+  they are where the archetype inputs and the real tariff now live.
+
+#### 1.3.6 ROI is rebuilt on the planner
+
+`ROITab` compares `model_runs` rows by `scenario`, but `simulateDeviceDay()` has
+no `scenario` input — `SimulatorTab.tsx:477` writes it and nothing reads it. The
+dumb/smart comparison runs the same simulation twice, and ROI selects the newest
+of each independently, so the two sides need not share tariffs or model version.
+Investment costs are hardcoded (50k/15k/299) rather than drawn from SKU/quote
+data.
+
+`comparePlans()` already yields the correct deltas (`netCostSekDelta`,
+`terminalAdjustedCostSekDelta`). The gap is horizon: 72 hours is not a year.
+Annual ROI must come from the §10.1 seasonal fixtures run as weighted
+representative periods, which depends on the thermal-zone contract §10.1 records
+as outstanding. Until then ROI states a horizon-bounded figure rather than
+implying an annual one.
+
 ## 2. Terms
 
 - **Baseline controller:** the normal local schedule, thermostat, occupancy, and
@@ -196,6 +429,10 @@ Material limitations in that legacy simulator:
 The current models should be retained for device physics, scenario replay, and
 counterfactual simulation. They should not be extended into a browser-based
 production scheduler.
+
+**Superseded 2026-08-13 (§1.3.4):** the *library* is retained on those grounds;
+the simulator, house-setup, home-devices and tariff-pricing **tabs** are deleted.
+§1.3.4 records the dependency check that made this safe.
 
 ### 3.1.1 Plan-facing load model correction
 

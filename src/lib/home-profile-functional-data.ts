@@ -5,6 +5,12 @@ import {
   normalizeHomeProfileDate,
   normalizeHomeProfileNumber,
 } from './home-profile-values';
+import {
+  normalizeDwelling,
+  normalizeHeating,
+  type DwellingArchetype,
+  type HeatingArchetype,
+} from './energy-archetypes';
 
 async function fetchPrimaryHomeFunctionalAnswers(
   customerId: string,
@@ -52,6 +58,10 @@ export interface EnergyHistoryHomeProfileInputs {
   heatedBiareaM2: number | null;
   heatedAreaM2: number | null;
   hasSolar: boolean | null;
+  /** Archetype key for the cold-start prior — see energy-archetypes.ts. */
+  yearBuilt: number | null;
+  dwelling: DwellingArchetype | null;
+  heating: HeatingArchetype | null;
 }
 
 export async function fetchEnergyHistoryHomeProfileInputs(
@@ -62,6 +72,9 @@ export async function fetchEnergyHistoryHomeProfileInputs(
     'heated_boarea_m2',
     'heated_biarea_m2',
     'has_solar',
+    'year_built',
+    'dwelling_type',
+    'heating_types',
   ]);
   const heatedBoareaM2 = normalizeHomeProfileNumber(answers.heated_boarea_m2);
   const heatedBiareaM2 = normalizeHomeProfileNumber(answers.heated_biarea_m2);
@@ -71,5 +84,8 @@ export async function fetchEnergyHistoryHomeProfileInputs(
     heatedBiareaM2,
     heatedAreaM2: calculateHeatedAtempM2(heatedBoareaM2, heatedBiareaM2),
     hasSolar: normalizeHomeProfileBoolean(answers.has_solar),
+    yearBuilt: normalizeHomeProfileNumber(answers.year_built),
+    dwelling: normalizeDwelling(answers.dwelling_type),
+    heating: normalizeHeating(answers.heating_types),
   };
 }

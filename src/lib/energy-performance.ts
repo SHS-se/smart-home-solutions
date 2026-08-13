@@ -1,29 +1,45 @@
 // One energy-performance answer from whatever evidence the home actually has.
 //
-// Two calculations exist, and they need very different amounts of data:
+// REVISED 2026-08-13 — see ENERGY_OPTIMISATION_ARCHITECTURE.md §1.3.2. The
+// previous version gave measured per-category data unconditional precedence,
+// so 43 days of summer readings overrode a year of grid-import history and
+// produced a class A rating from a July heating sample.
+//
+// The ordering is now evidence-strength, not data-source:
 //
 //  1. `measured_categories` — Boverket's measurement method (BEN, BFS 2016:12)
-//     applied to daily per-category readings from Home Assistant. Heating, hot
-//     water, comfort cooling, and property energy are separated at the source,
-//     so household electricity, EV charging, and pool heating can be excluded
-//     rather than estimated away. This is the accurate path.
+//     on daily per-category readings, but only once the measured days cover
+//     enough of a normal heating season to speak for the year. Between the
+//     minimum and full coverage thresholds the measured figure is blended with
+//     the prior in proportion to how much season it covers.
+//  2. `estimated_from_grid` — a daily whole-home series from the grid operator
+//     with at least 300 days. Household electricity is removed with BEN's
+//     30 kWh/m²·år standard rather than metered.
+//  3. `modelled_archetype` — no usable measurement. The expected breakdown for
+//     this building's age, form and heating system, from published housing
+//     stock statistics. This is the normal case for a prospective customer and
+//     for any home in its first winter, and it must always be badged as
+//     modelled rather than measured.
 //
-//  2. `estimated_from_grid` — the fallback for the overwhelming majority of
-//     homes, which only have a daily grid-import series from the grid operator
-//     (Ellevio and friends) plus the heated areas from the home profile.
-//     Household electricity is removed with BEN's 30 kWh/m²·år standard value
-//     instead of being metered.
-//
-// Both produce a primary-energy number in kWh/m²·år, so they are compared with
-// the same BBR 31 small-house requirement and classified on the same A–G scale.
-// Only the confidence differs, and callers are expected to surface it.
+// All three produce a primary-energy number in kWh/m²·år, compared against the
+// same BBR 31 småhus requirement and classified on the same A–G scale. Only the
+// confidence and the badge differ, and callers must surface both.
 
 import {
   computeEnergiprestanda,
+  measuredHeatingWeight,
+  DEFAULT_GEOGRAPHIC_ADJUSTMENT_FACTOR,
+  ELECTRICITY_WEIGHTING_FACTOR,
   type DailyCategoryReading,
   type DailyTemperature,
   type EnergiprestandaResult,
 } from './energiprestanda';
+import {
+  archetypePrior,
+  type ArchetypePrior,
+  type DwellingArchetype,
+  type HeatingArchetype,
+} from './energy-archetypes';
 import {
   buildIndicativeEnergyPerformance,
   classifyEnergyPerformance,
@@ -33,7 +49,10 @@ import {
 } from './indicative-energy-performance';
 import type { DailyEnergyReading } from './energy-usage-series';
 
-export type EnergyPerformanceMethod = 'measured_categories' | 'estimated_from_grid';
+export type EnergyPerformanceMethod =
+  | 'measured_categories'
+  | 'estimated_from_grid'
+  | 'modelled_archetype';
 
 export type EnergyPerformanceConfidence = 'high' | 'medium' | 'low';
 
@@ -44,13 +63,18 @@ export type EnergyPerformanceBlocker =
   | 'solar_requires_total_consumption'
   | 'insufficient_data';
 
-/** Days of category coverage before the measured path is considered solid. */
-export const MEASURED_HIGH_CONFIDENCE_DAYS = 330;
-/** Days of real whole-home metering before the estimate stops being a guess. */
+/** Days of real whole-home metering before the grid estimate stops being a guess. */
 export const ESTIMATE_MEDIUM_CONFIDENCE_DAYS = 300;
 
+export interface EnergyPerformanceHomeFacts {
+  yearBuilt?: number | null;
+  dwelling?: DwellingArchetype | null;
+  heating?: HeatingArchetype | null;
+  /** BBR 31 Table 9:2c. Null means "unknown, assume 1.0 and say so". */
+  geographicAdjustmentFactor?: number | null;
+}
+
 export interface ResolvedEnergyPerformance {
-  /** null when neither calculation could produce a grade. */
   method: EnergyPerformanceMethod | null;
   confidence: EnergyPerformanceConfidence | null;
   grade: IndicativeEnergyGrade | null;
@@ -58,12 +82,22 @@ export interface ResolvedEnergyPerformance {
   newBuildRequirementKwhM2: number | null;
   requirementPercent: number | null;
   heatedAreaM2: number | null;
-  /** Why no grade is shown; null whenever `grade` is set. */
   blocker: EnergyPerformanceBlocker | null;
-  /** Both underlying calculations, so the UI can show method-specific detail. */
   measured: EnergiprestandaResult;
   estimated: IndicativeEnergyPerformance;
-  /** True when per-category readings exist at all, however few. */
+  /** The archetype prior, always computed when the area is known. */
+  prior: ArchetypePrior | null;
+  /** Primary energy implied by the prior alone. */
+  priorPrimaryEnergyKwhM2: number | null;
+  /**
+   * Share of the published figure that comes from measurement rather than the
+   * prior: 0 = entirely modelled, 1 = entirely measured.
+   */
+  measuredWeight: number;
+  /** True when the number leans on the prior and must be badged as modelled. */
+  isModelled: boolean;
+  /** True when F_geo was assumed rather than known. */
+  geographicFactorAssumed: boolean;
   hasCategoryReadings: boolean;
 }
 
@@ -79,11 +113,16 @@ function normalizedArea(atempM2: number | null): number | null {
   return atempM2;
 }
 
-function measuredConfidence(measured: EnergiprestandaResult): EnergyPerformanceConfidence {
-  return measured.coverageDays >= MEASURED_HIGH_CONFIDENCE_DAYS
-    && measured.degreeDayFactor !== null
-    ? 'high'
-    : 'medium';
+/** Primary energy implied by an archetype prior, with F_geo on the heating term. */
+export function priorPrimaryEnergy(
+  prior: ArchetypePrior,
+  atempM2: number,
+  geographicAdjustmentFactor: number,
+): number {
+  const fGeo = geographicAdjustmentFactor > 0 ? geographicAdjustmentFactor : 1;
+  const weighted =
+    prior.heatingKwh / fGeo + prior.hotWaterKwh + prior.propertyEnergyKwh;
+  return (weighted * ELECTRICITY_WEIGHTING_FACTOR) / atempM2;
 }
 
 function estimateConfidence(
@@ -110,55 +149,98 @@ function blockerFor(
   }
 }
 
-/**
- * Resolve the single energy-performance figure to show, preferring measured
- * per-category data and degrading to the grid-import estimate.
- */
 export function resolveEnergyPerformance(
   categoryReadings: readonly DailyCategoryReading[],
   dailyReadings: DailyEnergyReading[],
   atempM2: number | null,
   weather: readonly DailyTemperature[],
   hasSolar: boolean | null = null,
+  homeFacts: EnergyPerformanceHomeFacts = {},
 ): ResolvedEnergyPerformance {
   const area = normalizedArea(atempM2);
-  const measured = computeEnergiprestanda(categoryReadings, area, weather);
+  const geographicFactorAssumed =
+    homeFacts.geographicAdjustmentFactor === null
+    || homeFacts.geographicAdjustmentFactor === undefined;
+  const fGeo = geographicFactorAssumed
+    ? DEFAULT_GEOGRAPHIC_ADJUSTMENT_FACTOR
+    : (homeFacts.geographicAdjustmentFactor as number);
+
+  const measured = computeEnergiprestanda(categoryReadings, area, weather, {
+    geographicAdjustmentFactor: fGeo,
+  });
   const estimated = buildIndicativeEnergyPerformance(dailyReadings, area, hasSolar);
   const newBuildRequirementKwhM2 = area === null
     ? null
     : smallHouseNewBuildRequirement(area);
+
+  const prior = area === null
+    ? null
+    : archetypePrior({
+      yearBuilt: homeFacts.yearBuilt ?? null,
+      dwelling: homeFacts.dwelling ?? null,
+      heating: homeFacts.heating ?? null,
+      heatedAreaM2: area,
+    });
+  const priorEp = prior !== null && area !== null
+    ? priorPrimaryEnergy(prior, area, fGeo)
+    : null;
 
   const base = {
     heatedAreaM2: area,
     newBuildRequirementKwhM2,
     measured,
     estimated,
+    prior,
+    priorPrimaryEnergyKwhM2: priorEp,
+    geographicFactorAssumed,
     hasCategoryReadings: categoryReadings.length > 0,
   };
 
-  if (measured.reason === 'ok' && measured.ep !== null && newBuildRequirementKwhM2 !== null) {
-    const requirementPercent = (measured.ep / newBuildRequirementKwhM2) * 100;
+  const finish = (
+    method: EnergyPerformanceMethod,
+    confidence: EnergyPerformanceConfidence,
+    ep: number,
+    measuredWeight: number,
+  ): ResolvedEnergyPerformance => {
+    const requirementPercent = (ep / (newBuildRequirementKwhM2 as number)) * 100;
     return {
       ...base,
-      method: 'measured_categories',
-      confidence: measuredConfidence(measured),
+      method,
+      confidence,
       grade: classifyEnergyPerformance(requirementPercent),
-      primaryEnergyKwhM2: measured.ep,
+      primaryEnergyKwhM2: ep,
       requirementPercent,
+      measuredWeight,
+      isModelled: measuredWeight < 1,
       blocker: null,
     };
+  };
+
+  // 1. Measured categories, weighted by how much heating season they cover.
+  if (measured.reason === 'ok' && measured.ep !== null && newBuildRequirementKwhM2 !== null) {
+    const weight = measuredHeatingWeight(measured);
+    if (weight >= 1 || priorEp === null) {
+      return finish('measured_categories', 'high', measured.ep, 1);
+    }
+    const blended = measured.ep * weight + priorEp * (1 - weight);
+    return finish('measured_categories', 'medium', blended, weight);
   }
 
-  if (estimated.grade !== null) {
-    return {
-      ...base,
-      method: 'estimated_from_grid',
-      confidence: estimateConfidence(estimated),
-      grade: estimated.grade,
-      primaryEnergyKwhM2: estimated.primaryEnergyKwhM2,
-      requirementPercent: estimated.requirementPercent,
-      blocker: null,
-    };
+  // 2. Whole-home grid history. Already gated at 300 days upstream, so it
+  //    cannot repeat the summer-extrapolation failure.
+  if (estimated.grade !== null && estimated.primaryEnergyKwhM2 !== null
+    && newBuildRequirementKwhM2 !== null) {
+    return finish(
+      'estimated_from_grid',
+      estimateConfidence(estimated),
+      estimated.primaryEnergyKwhM2,
+      0,
+    );
+  }
+
+  // 3. Nothing usable measured. The prior is the answer, badged as modelled.
+  if (priorEp !== null && newBuildRequirementKwhM2 !== null) {
+    return finish('modelled_archetype', 'low', priorEp, 0);
   }
 
   return {
@@ -168,6 +250,8 @@ export function resolveEnergyPerformance(
     grade: null,
     primaryEnergyKwhM2: null,
     requirementPercent: null,
+    measuredWeight: 0,
+    isModelled: false,
     blocker: blockerFor(
       estimated,
       categoryReadings.length > 0 || dailyReadings.length > 0,

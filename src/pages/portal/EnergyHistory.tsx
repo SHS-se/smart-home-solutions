@@ -606,6 +606,13 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
               heatedBoareaM2={homeProfileQuery.data?.heatedBoareaM2 ?? null}
               heatedBiareaM2={homeProfileQuery.data?.heatedBiareaM2 ?? null}
               hasSolar={homeProfileQuery.data?.hasSolar ?? null}
+              homeFacts={{
+                yearBuilt: homeProfileQuery.data?.yearBuilt ?? null,
+                dwelling: homeProfileQuery.data?.dwelling ?? null,
+                heating: homeProfileQuery.data?.heating ?? null,
+                // BBR 31 Table 9:2c is not loaded yet; the UI says so.
+                geographicAdjustmentFactor: null,
+              }}
               periodStartMonth={displayedPeriodStart}
               periodEndMonth={latestAnalyticalMonth}
               isLoading={homeProfileQuery.isLoading || usageIsLoading || allWeatherQuery.isLoading}
