@@ -299,6 +299,85 @@ improved older house. That is the right direction for a prior and is what
 blending with measured data exists to correct, but a renovation-year question
 would materially sharpen the cold start.
 
+#### 1.3.4a-2 Ground truth: the 2020 energideklaration for the reference home
+
+An official certificate for the reference home (Porfyrvägen 10, Täby;
+Energideklarations-ID **1110952**, John Eriksson, Svensk Kvalitetssäkring,
+2020-08-27, measurement period 2019-08 → 2020-07) is the first hard validation
+of any of this. Every figure below is from that document.
+
+| Field | Value |
+|---|---|
+| Nybyggnadsår | **1970** |
+| Atemp, **measured** (excl. warm garage) | **435 m²** |
+| Heating system | Värmepump-luft/luft (el) + el (direktverkande) |
+| Ventilation | Självdrag (no heat recovery) |
+| El (direktverkande) | 2,200 kWh |
+| Värmepump-luft/luft (el) | 8,350 kWh |
+| Tappvarmvatten (el) | 6,700 kWh |
+| Fastighetsel | **0** |
+| Hushållsel (excluded) | 13,050 kWh |
+| Sum 1–17 (measured) | 17,250 kWh |
+| Byggnadens energianvändning (normal-year) | 19,567 kWh |
+| Byggnadens primärenergianvändning | 31,307 kWh |
+| **Energiprestanda** | **72 kWh/m²·år → class C** |
+| Specifik energianvändning | 45 kWh/m²·år |
+| Referensvärde 1 (nybyggnadskrav) | 90 kWh/m²·år |
+| **Referensvärde 2 (liknande byggnader)** | **148 kWh/m²·år** |
+
+**Three facts fall straight out of the arithmetic and settle open questions:**
+
+1. **F_geo for Täby is exactly 1.0.** 19,567 × 1.6 = 31,307 to the kWh, so the
+   heating term was divided by 1.0. §1.3.1 defect 5 listed F_geo as unknown;
+   for this municipality it is now known.
+2. **The electricity weighting factor was 1.6, not 1.8.** 31,307 / 19,567 =
+   1.6000. BBR 29 (BFS 2020:4) raised it to 1.8 effective 2020-09-01 — three
+   days after this certificate was issued. **Any comparison against an older
+   declaration must restate it**, or the same house appears to get worse for a
+   purely regulatory reason.
+3. **72 restated on today's factor is 81 kWh/m² — still class C** (90% of the
+   90 requirement).
+
+**Why the portal said E where the certificate said C.** They are not
+measurements of the same thing, and the prior is behaving correctly:
+
+| | kWh | vs actual |
+|---|---|---|
+| Actual heating (normal-year) | 12,867 | — |
+| Actual hot water | 6,700 (15.4 kWh/m²) | — |
+| Actual fastighetsel | 0 | — |
+| **Actual building energy** | **19,567** | — |
+| Prior heating | 23,944 | **1.86×** |
+| Prior hot water (BEN 20 × Atemp) | 8,700 | 1.30× |
+| Prior property energy | 1,305 | ∞ |
+| **Prior building energy** | **33,949** | **1.74×** |
+
+The prior gives **140.5 kWh/m²** for this house. Boverket's own *Referensvärde
+2, liknande byggnader* on the same certificate is **148**. The prior is within
+**5%** of the authority's figure for comparable buildings — it is predicting
+"a typical 1970 Täby småhus of this size" accurately. This house measured
+**81 kWh/m² restated, i.e. 55% of typical**. It was already an outlier in 2020,
+and the improvements since then move it further down, not up.
+
+So the C→E gap is almost entirely *this house being much better than its
+cohort*, plus a 1.6→1.8 accounting change. It is exactly the situation the
+"modelled, not measured" badge exists for, and it is the strongest possible
+argument for the renovation input noted in §1.3.4a.
+
+**Three corrections the certificate forces:**
+
+- **Property energy must be 0 for a detached småhus, not 3 kWh/m².**
+  Fastighetsel is common-area/plant electricity; a friliggande småhus has
+  none. Note the HA `property_energy` category is a *different* concept and
+  must not be mapped onto BBR fastighetsel without thought.
+- **BEN's 20 kWh/m² hot-water schablon overstates for large houses.** A
+  certified expert recorded 15.4 kWh/m² for this building. It is still the
+  regulation-prescribed normalisation and we keep using it, but the page must say so,
+  because for a 435 m² house it is 26% of the whole primary-energy number.
+- **A measured Atemp should beat our estimate.** Official 435 m² against our
+  boarea+biarea estimate of 424 — only 2.5% out, which is reassuring for homes
+  with no certificate, but where a certificate exists its Atemp is authoritative.
+
 #### 1.3.4b The staff Device Catalog is removed too
 
 Checked before agreeing: `device_types`, `device_instances`, `device_profiles`

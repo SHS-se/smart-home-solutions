@@ -151,14 +151,23 @@ export const BEN_HOT_WATER_KWH_M2 = 20;
 export const BEN_HOUSEHOLD_ELECTRICITY_KWH_M2 = 30;
 
 /**
- * Property energy (fastighetsenergi) for a småhus — circulation pumps, fans,
- * outdoor and common lighting. Small and rarely separately metered.
- * Modelled, not published: Phil's measured house annualises to ~2.8 kWh/m².
+ * Property energy (fastighetsenergi) for a detached småhus: **zero**.
+ *
+ * Corrected 2026-08-13 against energideklaration 1110952, where a certified
+ * expert recorded fastighetsel = 0 for a 435 m² friliggande småhus. BBR
+ * fastighetsenergi is common-area and building-plant electricity — lifts,
+ * stairwell lighting, central pumps and fans. A detached house has none of it,
+ * and the earlier 3 kWh/m² added 1,305 kWh of energy that does not exist.
+ *
+ * Do NOT map Home Assistant's `property_energy` category onto this. That
+ * category is our own bucket for whatever a customer has classified there and
+ * is a different concept; conflating them double-counts household load into the
+ * building's rating.
  */
 export const PROPERTY_ENERGY_KWH_M2: ProvenancedValue = {
-  kwhPerM2: 3,
-  provenance: 'modelled',
-  source: 'SHS assumption, consistent with ~2.8 kWh/m² measured at the reference home',
+  kwhPerM2: 0,
+  provenance: 'published',
+  source: 'Energideklaration 1110952 (2020-08-27): fastighetsel 0 kWh for a detached småhus',
 };
 
 /**

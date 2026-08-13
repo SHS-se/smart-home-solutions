@@ -612,6 +612,39 @@ const EnergiprestandaSection: React.FC<EnergiprestandaSectionProps> = ({
                   'Measured per category: daily values from Home Assistant are summed over a rolling twelve-month window per BEN (BFS 2016:12). Hot water is replaced by the 20 kWh/m² standard value, heating is degree-day corrected against a normal year, and household electricity, EV charging, and pool heating are excluded because they are metered separately.',
                 )}
               </p>
+              <p className="font-medium text-foreground">
+                {t('Varför siffran kan se konstig ut', 'Why the number can look strange')}
+              </p>
+              <p>
+                {t(
+                  'Uppvärmning räknas om med graddagar, inte med antal dagar. Ett mätfönster i juli innehåller nästan inga graddagar och säger därför nästan ingenting om årets uppvärmning – att multiplicera det med 365/antal dagar ger ett kraftigt underskattat värde. Därför visas ingen uppmätt klass förrän mätningen täcker minst 60 % av ett normalårs graddagar.',
+                  'Heating is scaled by degree days, not by day count. A window in July contains almost no degree days and therefore says almost nothing about the year’s heating — multiplying it by 365/days produces a badly understated figure. No measured class is shown until the measurement covers at least 60% of a normal year’s degree days.',
+                )}
+              </p>
+              <p>
+                {t(
+                  'Tappvarmvatten ersätts alltid med BEN:s schablon 20 kWh per m² Atemp, oavsett hur mycket varmvatten hushållet faktiskt använder. Det gör byggnader jämförbara, men för ett stort hus blir schablonen en stor del av hela talet och kan ligga klart över den faktiska användningen. I en certifierad energideklaration för ett hus på 435 m² noterades 15,4 kWh/m².',
+                  'Hot water is always replaced by BEN’s standard value of 20 kWh per m² Atemp, regardless of how much the household actually uses. That makes buildings comparable, but for a large house the standard value becomes a large share of the whole number and can sit well above actual use. A certified declaration for a 435 m² house recorded 15.4 kWh/m².',
+                )}
+              </p>
+              <p>
+                {t(
+                  'Modellerade värden beskriver ett typiskt hus av samma ålder, typ och uppvärmningssätt – inte just ditt hus. Ett hus som är bättre än genomsnittet för sin årgång får därför en sämre modellerad klass än sin verkliga. Modellen känner inte till renoveringar.',
+                  'Modelled figures describe a typical house of the same age, type and heating system — not your house. A home that is better than average for its vintage will therefore get a worse modelled class than its real one. The model cannot see renovations.',
+                )}
+              </p>
+              <p>
+                {t(
+                  'Jämför du med en äldre energideklaration: viktningsfaktorn för el höjdes från 1,6 till 1,8 den 1 september 2020 (BBR 29). Samma hus med samma energianvändning får därför ett 12,5 % högre primärenergital idag, utan att något har förändrats i byggnaden.',
+                  'If you are comparing with an older energy declaration: the weighting factor for electricity rose from 1.6 to 1.8 on 1 September 2020 (BBR 29). The same house with the same energy use therefore gets a 12.5% higher primary-energy number today, without anything about the building having changed.',
+                )}
+              </p>
+              <p>
+                {t(
+                  'Fastighetsenergi är gemensam el för byggnadens drift. Ett friliggande småhus har normalt ingen alls, och den posten sätts därför till noll i modellen även om Home Assistant har en egen kategori med liknande namn.',
+                  'Property energy is shared electricity for operating the building. A detached house normally has none, so the model sets it to zero — even though Home Assistant has a category with a similar name, which is a different thing.',
+                )}
+              </p>
               <p>
                 {t(
                   'Uppskattad från nätuttag: när kategoridata saknas används det dagliga nätuttaget från elnätsbolaget. Atemp uppskattas som uppvärmd boarea plus uppvärmd biarea, huset antas elvärmt i Stockholms län, elfaktorn 1,8 och geografifaktorn 1,0 används, BEN:s normalvärde 30 kWh/m² och år dras av för hushållsel, och nätelen fördelas proportionellt mellan hushållsel och byggnadsenergi.',

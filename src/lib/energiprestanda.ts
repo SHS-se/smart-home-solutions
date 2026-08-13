@@ -55,7 +55,34 @@ export const EP_EXCLUDED_CATEGORIES = [
   'pool_heating',
 ] as const;
 
+/**
+ * Weighting factor (viktningsfaktor) for electricity in the primary-energy
+ * number. 1.8 under BBR 29 (BFS 2020:4) onwards.
+ */
 export const ELECTRICITY_WEIGHTING_FACTOR = 1.8;
+
+/**
+ * The factor that applied before BBR 29 took effect on **2020-09-01**.
+ *
+ * Certificates issued before that date used 1.6, so the same building, with
+ * the same measured energy, scores 12.5% higher today for a purely regulatory
+ * reason. Verified against energideklaration 1110952 (issued 2020-08-27):
+ * 19,567 kWh × 1.6 = 31,307 kWh primary energy, exactly as printed.
+ *
+ * Any comparison with an older declaration must restate it, or a house appears
+ * to have got worse when nothing about it changed.
+ */
+export const ELECTRICITY_WEIGHTING_FACTOR_BEFORE_BBR29 = 1.6;
+export const BBR29_EFFECTIVE_FROM = '2020-09-01';
+
+/**
+ * Restate a primary-energy number issued under an older weighting factor onto
+ * today's, so old and new figures can be compared honestly.
+ */
+export function restatePrimaryEnergy(ep: number, issuedOn: string): number {
+  if (issuedOn >= BBR29_EFFECTIVE_FROM) return ep;
+  return (ep / ELECTRICITY_WEIGHTING_FACTOR_BEFORE_BBR29) * ELECTRICITY_WEIGHTING_FACTOR;
+}
 export const HOT_WATER_STANDARD_KWH_PER_M2 = 20; // småhus, BEN
 export const NEW_BUILD_REQUIREMENT_KWH_M2 = 90; // småhus > 130 m², BBR
 export const ROLLING_WINDOW_DAYS = 365;
