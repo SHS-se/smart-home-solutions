@@ -491,6 +491,38 @@ this house.
 - `/portal/home-profile` and Settings → Energy Tariff must stay reachable —
   they are where the archetype inputs and the real tariff now live.
 
+#### 1.3.5a Navigation restructure (implemented 2026-08-13)
+
+Delivered as decided in §1.3.5:
+
+| Change | Detail |
+|---|---|
+| Page renamed | **Energy Optimisation / Energioptimering**, in the page, sidebar and customer dashboard card |
+| Tabs | **ROI · Plan · Power · Thermal · Economics · Storage** |
+| `LoadShiftTab.tsx` → `PlanWorkspace.tsx` | Internal `PlanningDimension` state replaced by a `section: PlanSection` prop |
+| Deleted | `SimulatorTab`, `HouseSetupTab`, `HomeDevicesTab`, `TariffPricingTab`, `DeviceCatalogTab`, `DeviceModelsTab`, `DeviceTypesManager`, `HouseModelTab`, `AddDeviceModal`, `DeviceEditorForm`, `CurveUploadModal`, `PerformanceDataEditor`, `PerformanceDataStatus`, `PerformanceCurveChart`, `EnergyVsTempChart`, `LoadCurveChart`, `pages/portal/DeviceCatalog` |
+| Also removed | the `/portal/device-catalog` route, its sidebar entry and its dashboard card |
+| Retained | `src/lib/simulator/*` for counterfactual/replay work (§3.1), `HomeSelector`, `EmpiricalDeviceModelsCard`, `ROITab` |
+
+Two implementation notes worth keeping:
+
+- **The plan sections render outside `TabsContent`.** `TabsList` is used as a
+  segmented control and one `PlanWorkspace` instance is rendered below it. That
+  keeps the component mounted across the five plan sections, so switching tabs
+  changes a prop rather than remounting and refetching a 72-hour plan. Putting
+  each section in its own `TabsContent` would have refetched on every click.
+- **Content is split by section, not just the chart.** `Plan` owns the delta and
+  KPI grids, plan-versus-actual, and data-source health. Each chart tab shows
+  the plan header (status, issue time, With/Without plan toggle) plus its own
+  chart, and the thermal readiness panel now lives on `Thermal` where it
+  belongs. Validation errors show on every section because they always matter.
+
+What remains internal work: `PlanWorkspace.tsx` is still one large file. The
+derived-state computation (`chartData`, `economicsData`, `thermalData`, series
+definitions) should move to a `usePlanModel` hook with one thin component per
+section. That is a mechanical refactor with no user-visible change and is
+deliberately not bundled with this one.
+
 #### 1.3.6 ROI is rebuilt on the planner
 
 `ROITab` compares `model_runs` rows by `scenario`, but `simulateDeviceDay()` has

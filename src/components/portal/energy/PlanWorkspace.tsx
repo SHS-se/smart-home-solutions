@@ -45,7 +45,8 @@ import EmpiricalDeviceModelsCard, {
   type EmpiricalEnergyDevice,
 } from './EmpiricalDeviceModelsCard';
 
-interface LoadShiftTabProps {
+interface PlanWorkspaceProps {
+  section: PlanSection;
   customerId?: string;
   homeId: string | null;
   accountPath: string;
@@ -154,7 +155,13 @@ const COLORS = {
 };
 
 type PlanViewMode = 'planned' | 'unplanned';
-type PlanningDimension = 'power' | 'thermal' | 'economics' | 'storage';
+/**
+ * The plan is now split across top-level tabs rather than an internal segmented
+ * control. `plan` carries the headline numbers and data-source health; the
+ * other four are one chart each, so each can grow its own tab-specific tools
+ * without competing for room inside a single view.
+ */
+export type PlanSection = 'plan' | 'power' | 'thermal' | 'economics' | 'storage';
 type PlanChartSeriesKey =
   | 'pv'
   | 'base'
@@ -207,7 +214,7 @@ const useSeriesVisibility = <T extends string>() => {
   return { hidden, toggle, visible: (key: T) => !hidden.has(key) };
 };
 
-const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, accountPath }) => {
+const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, homeId, accountPath }) => {
   const { t } = useLanguage();
   const [current, setCurrent] = useState<CurrentRow | null>(null);
   const [actuals, setActuals] = useState<ActualEnergySlot[]>([]);
@@ -378,6 +385,7 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, account
   if (view === 'demo') {
     content = (
       <PlanView
+        section={section}
         current={demoCurrent}
         actuals={demoActuals}
         empiricalDevices={[]}
@@ -465,6 +473,7 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, account
           </Alert>
         )}
         <PlanView
+          section={section}
           current={current}
           actuals={actuals}
           empiricalDevices={empiricalDevices}
@@ -523,6 +532,7 @@ const LoadShiftTab: React.FC<LoadShiftTabProps> = ({ customerId, homeId, account
 };
 
 const PlanView: React.FC<{
+  section: PlanSection;
   current: CurrentRow;
   actuals: ActualEnergySlot[];
   empiricalDevices: EmpiricalEnergyDevice[];
@@ -533,6 +543,7 @@ const PlanView: React.FC<{
   isDemo: boolean;
   lastCheckedAt?: number | null;
 }> = ({
+  section,
   current,
   actuals,
   empiricalDevices,
@@ -546,7 +557,6 @@ const PlanView: React.FC<{
   const { t } = useLanguage();
   const { plan } = current;
   const [planView, setPlanView] = useState<PlanViewMode>('planned');
-  const [dimension, setDimension] = useState<PlanningDimension>('power');
   const powerVisibility = useSeriesVisibility<PlanChartSeriesKey>();
   const thermalVisibility = useSeriesVisibility<ThermalSeriesKey>();
   const economicsVisibility = useSeriesVisibility<EconomicsSeriesKey>();
@@ -728,12 +738,6 @@ const PlanView: React.FC<{
       { key: 'evCharge' as const, label: t('Billaddning', 'EV charge'), color: '#7c3aed' },
     ] : []),
   ];
-  const dimensionLabels: Array<{ key: PlanningDimension; label: string }> = [
-    { key: 'power', label: t('Effekt', 'Power') },
-    { key: 'thermal', label: t('Termik', 'Thermal') },
-    { key: 'economics', label: t('Ekonomi', 'Economics') },
-    { key: 'storage', label: t('Lagring', 'Storage') },
-  ];
   const connectedIndices = chartData
     .filter(row => row.evConnected)
     .map(row => row.i);
@@ -833,6 +837,8 @@ const PlanView: React.FC<{
           </div>
         </CardHeader>
         <CardContent>
+          {section === 'plan' && (
+          <>
           <div className="mb-6 grid gap-3 md:grid-cols-3">
             <DeltaKpi
               label={t('Förbrukningsskillnad', 'Consumption difference')}
@@ -863,22 +869,10 @@ const PlanView: React.FC<{
             <Kpi label={t('Nettokostnad', 'Net cost')} value={`${active.summary.net_cost_sek.toFixed(2)} SEK`} detail={t('endast publicerade priser', 'published prices only')} />
             <Kpi label={t('Terminaljusterad', 'Terminal-adjusted')} value={`${active.summary.terminal_adjusted_cost_sek.toFixed(2)} SEK`} detail={t('värderar kvarvarande batteri', 'values remaining battery')} />
           </div>
+          </>
+          )}
 
-          <div className="mb-3 flex flex-wrap gap-1" role="group" aria-label={t('Planens dimension', 'Plan dimension')}>
-            {dimensionLabels.map(item => (
-              <Button
-                key={item.key}
-                size="sm"
-                variant={dimension === item.key ? 'secondary' : 'ghost'}
-                aria-pressed={dimension === item.key}
-                onClick={() => setDimension(item.key)}
-              >
-                {item.label}
-              </Button>
-            ))}
-          </div>
-
-          {dimension === 'power' && (
+          {section === 'power' && (
             <>
               <ResponsiveContainer width="100%" height={360}>
                 <ComposedChart data={chartData} margin={{ top: 8, right: 10, left: 0, bottom: 4 }}>
@@ -915,7 +909,7 @@ const PlanView: React.FC<{
             </>
           )}
 
-          {dimension === 'thermal' && (thermalProjection && thermalProjection.zones.length > 0 && thermalData.length > 0 ? (
+          {section === 'thermal' && (thermalProjection && thermalProjection.zones.length > 0 && thermalData.length > 0 ? (
             <>
               <ResponsiveContainer width="100%" height={360}>
                 <ComposedChart data={thermalData} margin={{ top: 8, right: 10, left: 0, bottom: 4 }}>
@@ -955,7 +949,7 @@ const PlanView: React.FC<{
             />
           ))}
 
-          {dimension === 'economics' && (
+          {section === 'economics' && (
             <>
               <ResponsiveContainer width="100%" height={360}>
                 <ComposedChart data={economicsData} margin={{ top: 8, right: 10, left: 0, bottom: 4 }}>
@@ -984,7 +978,7 @@ const PlanView: React.FC<{
             </>
           )}
 
-          {dimension === 'storage' && (hasBattery || hasEvBattery ? (
+          {section === 'storage' && (hasBattery || hasEvBattery ? (
             <>
               <ResponsiveContainer width="100%" height={360}>
                 <ComposedChart data={chartData} margin={{ top: 8, right: 10, left: 0, bottom: 4 }}>
@@ -1030,8 +1024,11 @@ const PlanView: React.FC<{
         </CardContent>
       </Card>
 
+      {section === 'plan' && (
       <ActualPerformance actuals={actuals} devices={empiricalDevices} deviceActuals={deviceActuals} />
+      )}
 
+      {section === 'plan' && (
       <Card>
         <CardHeader className="pb-3"><CardTitle className="text-base">{t('Datakällor och kvalitet', 'Data sources and quality')}</CardTitle></CardHeader>
         <CardContent className="space-y-3 text-sm">
@@ -1078,6 +1075,7 @@ const PlanView: React.FC<{
           </div>
         </CardContent>
       </Card>
+      )}
     </div>
   );
 };
@@ -1466,4 +1464,4 @@ const EmptyState: React.FC<{ text: string }> = ({ text }) => (
   <Card><CardContent className="py-10 text-sm text-muted-foreground">{text}</CardContent></Card>
 );
 
-export default LoadShiftTab;
+export default PlanWorkspace;

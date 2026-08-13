@@ -415,23 +415,6 @@ const Dashboard: React.FC = () => {
                     </p>
                   </CardContent>
                 </Card>
-
-                <Card
-                  className="cursor-pointer transition-colors hover:bg-muted/50"
-                  onClick={() => navigate('/portal/device-catalog')}
-                >
-                  <CardHeader className="flex flex-row items-center gap-4">
-                    <div className="p-2 rounded-lg bg-primary/10">
-                      <Box className="w-6 h-6 text-primary" />
-                    </div>
-                    <CardTitle className="text-lg">{t('Enhetskatalog', 'Device Catalog')}</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-muted-foreground">
-                      {t('Enhetsmallar, kalibrering och simuleringsverktyg', 'Device templates, calibration and simulation tools')}
-                    </p>
-                  </CardContent>
-                </Card>
               </div>
             </div>
 

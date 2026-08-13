@@ -48,7 +48,7 @@ const CustomerDashboardCards: React.FC<CustomerDashboardCardsProps> = ({
       ),
     },
     {
-      title: t('Energimodellering', 'Energy Modeling'),
+      title: t('Energioptimering', 'Energy Optimisation'),
       icon: Zap,
       path: `${basePath}/energy-modeling`,
       content: (

@@ -57,7 +57,6 @@ const CustomerInvoicePage = lazy(() => import("./pages/portal/CustomerInvoicePag
 const HomeProfile = lazy(() => import("./pages/portal/HomeProfile"));
 const EnergyModeling = lazy(() => import("./pages/portal/EnergyModeling"));
 const EnergyHistory = lazy(() => import("./pages/portal/EnergyHistory"));
-const DeviceCatalog = lazy(() => import("./pages/portal/DeviceCatalog"));
 const SetPassword = lazy(() => import("./pages/onboarding/SetPassword"));
 const Verify = lazy(() => import("./pages/Verify"));
 const CustomerViewDashboard = lazy(() => import("./pages/portal/customer-view/CustomerViewDashboard"));
@@ -180,7 +179,6 @@ const App = () => (
                         <Route path="/portal/settings/energy-tariffs" element={<EnergyTariffSettings />} />
                         <Route path="/portal/contacts" element={<Contacts />} />
                         <Route path="/portal/contacts/:id" element={<ContactDetail />} />
-                        <Route path="/portal/device-catalog" element={<DeviceCatalog />} />
                         <Route path="/portal/skus" element={<SKUCatalog />} />
                         <Route path="/portal/skus/import" element={<SKUImport />} />
                         <Route path="/portal/skus/categories" element={<CategoryManager />} />

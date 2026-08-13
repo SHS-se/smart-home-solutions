@@ -133,7 +133,6 @@ Deno.test("staff nav covers CRM, sales, catalog and admin sections", () => {
     "/portal/boms",
     "/portal/skus",
     "/portal/templates",
-    "/portal/device-catalog",
     "/portal/settings/margins",
     "/portal/customers/questionnaire",
     "/portal/erd",

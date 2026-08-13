@@ -133,7 +133,7 @@ export function getCustomerNavItems(basePath: string = CUSTOMER_PORTAL_BASE): Ap
         },
       ],
     },
-    { path: `${basePath}/energy-modeling`, labelSv: 'Energimodellering', labelEn: 'Energy modeling', icon: 'energy' },
+    { path: `${basePath}/energy-modeling`, labelSv: 'Energioptimering', labelEn: 'Energy optimisation', icon: 'energy' },
     { path: `${basePath}/offers`, labelSv: 'Offerter', labelEn: 'Offers', icon: 'offers' },
     { path: `${basePath}/billing`, labelSv: 'Fakturor', labelEn: 'Billing', icon: 'billing' },
     { path: `${basePath}/tickets`, labelSv: 'Ärenden', labelEn: 'Tickets', icon: 'tickets' },
@@ -192,7 +192,6 @@ export const staffNavGroups: AppNavGroup[] = [
     items: [
       { path: '/portal/skus', labelSv: 'SKU-katalog', labelEn: 'SKU catalog', icon: 'skus' },
       { path: '/portal/templates', labelSv: 'Mallpaket', labelEn: 'Templates', icon: 'templates' },
-      { path: '/portal/device-catalog', labelSv: 'Enhetskatalog', labelEn: 'Device catalog', icon: 'devices' },
     ],
   },
   {

@@ -851,7 +851,7 @@ test.describe('customer navigation shell', () => {
     await login(page);
 
     await expect(page.getByText('Kundportal').first()).toBeVisible();
-    for (const label of ['Hemprofil', 'Energimodellering', 'Offerter', 'Fakturor', 'Konto']) {
+    for (const label of ['Hemprofil', 'Energioptimering', 'Offerter', 'Fakturor', 'Konto']) {
       await expect(page.getByRole('link', { name: label, exact: true })).toBeVisible();
     }
     const sidebar = page.locator('[data-sidebar="sidebar"]');
