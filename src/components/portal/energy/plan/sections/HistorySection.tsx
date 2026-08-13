@@ -190,14 +190,25 @@ const HistorySection: React.FC<{
             />
           </div>
           {unpriced && homeId && (
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/20 p-3">
-              <p className="text-xs text-muted-foreground">
-                {t(
-                  `${summary.slotCount - summary.pricedSlotCount} av ${summary.slotCount} kvartar saknar pris. Home Assistant skickar priser framåt från installationen; äldre kvartar prissätts här från publicerad spotmarknad och gällande nättariff.`,
-                  `${summary.slotCount - summary.pricedSlotCount} of ${summary.slotCount} quarters have no price. Home Assistant sends prices forward from when it was installed; older quarters are priced here from the published spot market and the tariff in force.`,
-                )}
+            // An outline button on a muted panel read as a label, not an
+            // action — it was missed entirely. The one thing on this card the
+            // customer can actually do gets the emphasis.
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50/60 p-3 dark:border-amber-800 dark:bg-amber-950/25">
+              <p className="text-xs text-foreground">
+                <span className="font-medium">
+                  {t(
+                    `${summary.slotCount - summary.pricedSlotCount} av ${summary.slotCount} kvartar saknar pris.`,
+                    `${summary.slotCount - summary.pricedSlotCount} of ${summary.slotCount} quarters have no price.`,
+                  )}
+                </span>{' '}
+                <span className="text-muted-foreground">
+                  {t(
+                    'Home Assistant skickar priser framåt från installationen; äldre kvartar prissätts här från publicerad spotmarknad och gällande nättariff.',
+                    'Home Assistant sends prices forward from when it was installed; older quarters are priced here from the published spot market and the tariff in force.',
+                  )}
+                </span>
               </p>
-              <Button size="sm" variant="outline" disabled={backfilling} onClick={runBackfill}>
+              <Button size="sm" disabled={backfilling} onClick={runBackfill}>
                 {backfilling && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {t('Hämta priser för perioden', 'Fill in prices for this period')}
               </Button>
