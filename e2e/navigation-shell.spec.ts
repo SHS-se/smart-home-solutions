@@ -560,7 +560,7 @@ test.describe('staff navigation shell', () => {
     ]);
   });
 
-  test('overview shows single-field events and chart annotations', async ({ page }) => {
+  test('overview annotates charts with recorded events', async ({ page }) => {
     await login(page);
     await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history`);
 
@@ -577,14 +577,31 @@ test.describe('staff navigation shell', () => {
     await expect(page.getByText('◆ 1 händelser')).toBeVisible();
     await expect(page.locator('line[stroke="#0f766e"][stroke-dasharray="4 4"]')).toHaveCount(1);
 
-    const events = page.getByTestId('energy-history-events');
+    // The entry form used to live under a chart in Jämförelser. It moved to its
+    // own section, so Jämförelser should now be charts only.
     await page.getByRole('tab', { name: 'Jämförelser' }).click();
-    await expect(events.getByRole('heading', { name: 'Lägg till händelse' })).toBeVisible();
+    await expect(page.getByTestId('energy-history-events')).toHaveCount(0);
+  });
+
+  test('events are recorded in their own section, typed, with a period end date', async ({ page }) => {
+    await login(page);
+    await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history?tab=events`);
+
+    const events = page.getByTestId('energy-events-section');
+    await expect(events.getByRole('heading', { name: 'Registrera en händelse' })).toBeVisible();
+    await expect(events.getByLabel('Beskrivning')).toBeVisible();
+
+    // A period event asks when it ended; a step event does not, because the
+    // database rejects an end date on one.
+    await expect(events.getByTestId('energy-event-end-date')).toBeVisible();
+    await expect(events.getByLabel('Från')).toBeVisible();
+
+    await events.getByTestId('energy-event-type').click();
+    await page.getByRole('option', { name: 'Renovering' }).click();
+    await expect(events.getByTestId('energy-event-end-date')).toHaveCount(0);
     await expect(events.getByLabel('Datum')).toBeVisible();
-    await expect(events.getByLabel('Händelse')).toBeVisible();
-    await expect(events.getByLabel('Rubrik')).toHaveCount(0);
-    await expect(events.getByLabel('Beskrivning')).toHaveCount(0);
-    await expect(events.getByText('Installerade 3-glasfönster och nya ytterdörrar')).toHaveCount(0);
+
+    await expect(events.getByRole('heading', { name: 'Registrerade händelser' })).toBeVisible();
 
     await page.screenshot({ path: 'test-results/energy-history-events.png', fullPage: true });
   });

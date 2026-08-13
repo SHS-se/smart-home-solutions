@@ -218,12 +218,14 @@ const EnergyEventsSection: React.FC<EnergyEventsSectionProps> = ({
           <form className="space-y-4" onSubmit={submit}>
             <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto_auto]">
               <div>
-                <Label className="text-sm">{t('Typ av händelse', 'Event type')}</Label>
+                <Label className="text-sm" htmlFor="energy-event-type">
+                  {t('Typ av händelse', 'Event type')}
+                </Label>
                 <Select
                   value={eventType}
                   onValueChange={value => setEventType(value as EnergyEventType)}
                 >
-                  <SelectTrigger data-testid="energy-event-type">
+                  <SelectTrigger id="energy-event-type" data-testid="energy-event-type">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -234,10 +236,11 @@ const EnergyEventsSection: React.FC<EnergyEventsSectionProps> = ({
                 </Select>
               </div>
               <div>
-                <Label className="text-sm">
+                <Label className="text-sm" htmlFor="energy-event-start">
                   {treatment === 'period' ? t('Från', 'From') : t('Datum', 'Date')}
                 </Label>
                 <Input
+                  id="energy-event-start"
                   type="date"
                   value={noteDate}
                   onChange={e => setNoteDate(e.target.value)}
@@ -246,8 +249,11 @@ const EnergyEventsSection: React.FC<EnergyEventsSectionProps> = ({
               </div>
               {treatment === 'period' && (
                 <div>
-                  <Label className="text-sm">{t('Till och med', 'Until (inclusive)')}</Label>
+                  <Label className="text-sm" htmlFor="energy-event-end">
+                    {t('Till och med', 'Until (inclusive)')}
+                  </Label>
                   <Input
+                    id="energy-event-end"
                     type="date"
                     value={endDate}
                     min={noteDate}
@@ -264,8 +270,11 @@ const EnergyEventsSection: React.FC<EnergyEventsSectionProps> = ({
             </p>
 
             <div>
-              <Label className="text-sm">{t('Beskrivning', 'Description')}</Label>
+              <Label className="text-sm" htmlFor="energy-event-text">
+                {t('Beskrivning', 'Description')}
+              </Label>
               <Textarea
+                id="energy-event-text"
                 value={eventText}
                 onChange={e => setEventText(e.target.value)}
                 rows={2}
