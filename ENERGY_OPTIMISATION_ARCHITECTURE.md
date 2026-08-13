@@ -378,6 +378,46 @@ argument for the renovation input noted in §1.3.4a.
   boarea+biarea estimate of 424 — only 2.5% out, which is reassuring for homes
   with no certificate, but where a certificate exists its Atemp is authoritative.
 
+#### 1.3.4a-3 Energideklaration upload (implemented 2026-08-13)
+
+Certificates are parsed by the **existing** energy-data upload (Energy history →
+Data), not a new surface. The uploader already distinguishes grid invoices,
+electricity invoices, grid import and whole-home CSVs; a declaration is a fifth
+kind. It is tried **before** the invoice parsers, because it is unambiguous to
+detect and would otherwise be rejected with a useless `unknown_format`.
+
+| File | Role |
+|---|---|
+| `src/lib/energy-declaration-parser.ts` | Pure parser. Accepts both the one-page summary and the full declaration. |
+| `src/lib/energy-declaration-storage.ts` | Import, fetch latest, and `restatedPrimaryEnergy()`. |
+| `supabase/migrations/20260813100000_add_energy_declarations.sql` | Table + `create_energy_declaration` definer function. |
+
+Design points worth keeping:
+
+- **Posts are parsed by number, not label.** Boverket's form numbers its energy
+  rows (1)–(19) and those numbers are stable; the labels are translated,
+  reordered and footnote-marked between versions. A row printed without a value
+  ("Fjärrvärme (1) kWh") must stay *absent* rather than becoming zero, or an
+  all-electric house acquires phantom district heating.
+- **The weighting factor is taken from the document, not its date.**
+  `primary_energy_kwh_per_year / building_energy_kwh_per_year` gives 1.6000 on
+  the reference certificate. That is immune to a misparsed date and to
+  transitional issuance. The date is the fallback.
+- **Only structured data is stored**, matching the invoice behaviour. The PDF is
+  not retained.
+- **Writes go through a SECURITY DEFINER function** with direct INSERT revoked,
+  matching `create_energy_billing_document`. A client must not be able to invent
+  a certificate or fabricate an energy class.
+
+One defect worth recording because the live document did not catch it: the
+first version of the kWh/år pattern allowed the digit run to start mid-word and
+to span a newline, so the footnote marker in "primärenergianvändning**6**" was
+read as part of the value — 19,567 became 619,567, which in turn made the
+implied weighting factor 0.05. The real PDF happened to lay out in a way that
+hid this; the test fixture did not. Anchoring with `(?:^|\s)` and a space-only
+inner class fixed it. **The fixture is more adversarial than the source
+document, and that is the point of having one.**
+
 #### 1.3.4b The staff Device Catalog is removed too
 
 Checked before agreeing: `device_types`, `device_instances`, `device_profiles`

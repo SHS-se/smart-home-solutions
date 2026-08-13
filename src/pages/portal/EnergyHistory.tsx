@@ -37,6 +37,7 @@ import {
   fetchEnergyTariffCalculations,
 } from '@/lib/energy-tariff-storage';
 import { fetchEnergyHistoryHomeProfileInputs } from '@/lib/home-profile-functional-data';
+import { fetchLatestEnergyDeclaration } from '@/lib/energy-declaration-storage';
 import {
   ENERGY_HISTORY_SAMPLE_CHANGES,
   ENERGY_HISTORY_SAMPLE_SERIES,
@@ -152,6 +153,15 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   const homeProfileQuery = useQuery({
     queryKey: ['energy-history-home-profile', customerId],
     queryFn: () => fetchEnergyHistoryHomeProfileInputs(customerId),
+    enabled: homeProfileEnabled,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+  });
+  const declarationQuery = useQuery({
+    queryKey: ['energy-history-declaration', customerId],
+    queryFn: () => fetchLatestEnergyDeclaration(customerId),
     enabled: homeProfileEnabled,
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
@@ -613,6 +623,8 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
                 // BBR 31 Table 9:2c is not loaded yet; the UI says so.
                 geographicAdjustmentFactor: null,
               }}
+              declaration={declarationQuery.data ?? null}
+              onUploadDeclarationClick={() => showSection('data')}
               periodStartMonth={displayedPeriodStart}
               periodEndMonth={latestAnalyticalMonth}
               isLoading={homeProfileQuery.isLoading || usageIsLoading || allWeatherQuery.isLoading}

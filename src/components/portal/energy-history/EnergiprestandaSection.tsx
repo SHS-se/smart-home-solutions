@@ -32,6 +32,11 @@ import {
   type ResolvedEnergyPerformance,
 } from '@/lib/energy-performance';
 import type { IndicativeEnergyGrade } from '@/lib/indicative-energy-performance';
+import {
+  restatedPrimaryEnergy,
+  wasRestated,
+  type StoredEnergyDeclaration,
+} from '@/lib/energy-declaration-storage';
 
 const GRADE_BANDS: Array<{
   grade: IndicativeEnergyGrade;
@@ -91,6 +96,9 @@ interface EnergiprestandaSectionProps {
   hasSolar?: boolean | null;
   /** Build year, dwelling form and heating system, for the cold-start prior. */
   homeFacts?: EnergyPerformanceHomeFacts;
+  /** Official Boverket certificate, when the customer has uploaded one. */
+  declaration?: StoredEnergyDeclaration | null;
+  onUploadDeclarationClick?: () => void;
   periodStartMonth: string | null;
   periodEndMonth: string | null;
   isLoading: boolean;
@@ -215,6 +223,8 @@ const EnergiprestandaSection: React.FC<EnergiprestandaSectionProps> = ({
   heatedBiareaM2 = null,
   hasSolar = null,
   homeFacts = {},
+  declaration = null,
+  onUploadDeclarationClick,
   periodStartMonth,
   periodEndMonth,
   isLoading,
@@ -594,6 +604,91 @@ const EnergiprestandaSection: React.FC<EnergiprestandaSectionProps> = ({
               ))}
             </div>
           </div>
+
+          {declaration ? (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4 dark:border-emerald-900 dark:bg-emerald-950/20">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <p className="text-sm font-medium">
+                  {t('Officiell energideklaration', 'Official energy declaration')}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {[
+                    declaration.issuedOn
+                      ? dateFormatter.format(new Date(`${declaration.issuedOn}T00:00:00Z`))
+                      : null,
+                    declaration.declarationId ? `ID ${declaration.declarationId}` : null,
+                  ].filter(Boolean).join(' · ')}
+                </p>
+              </div>
+              <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                <div>
+                  <p className="text-xs text-muted-foreground">
+                    {t('Som utfärdad', 'As issued')}
+                  </p>
+                  <p className="font-medium tabular-nums">
+                    {t('Klass', 'Class')} {declaration.energyClass} ·{' '}
+                    {numberFormatter.format(declaration.primaryEnergyKwhM2)} kWh/m²
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">
+                    {t('Omräknad till dagens elfaktor', 'Restated on today’s factor')}
+                  </p>
+                  <p className="font-medium tabular-nums">
+                    {numberFormatter.format(round(restatedPrimaryEnergy(declaration), 1))} kWh/m²
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">
+                    {t('Uppmätt Atemp', 'Surveyed Atemp')}
+                  </p>
+                  <p className="font-medium tabular-nums">
+                    {declaration.atempM2 !== null
+                      ? `${numberFormatter.format(declaration.atempM2)} m²`
+                      : '–'}
+                  </p>
+                </div>
+              </div>
+              {wasRestated(declaration) && (
+                <p className="mt-3 text-xs text-muted-foreground">
+                  {t(
+                    `Deklarationen använde viktningsfaktorn ${numberFormatter.format(declaration.weightingFactor ?? 1.6)} för el. Sedan 1 september 2020 gäller 1,8, så samma byggnad med samma energianvändning får ett högre tal idag utan att något har förändrats.`,
+                    `The declaration used an electricity weighting factor of ${numberFormatter.format(declaration.weightingFactor ?? 1.6)}. Since 1 September 2020 the factor is 1.8, so the same building with the same energy use scores higher today without anything having changed.`,
+                  )}
+                </p>
+              )}
+              {declaration.similarBuildingsKwhM2 !== null && (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {t(
+                    `Boverkets referensvärde för liknande byggnader är ${numberFormatter.format(declaration.similarBuildingsKwhM2)} kWh/m². Detta hus låg på ${Math.round((restatedPrimaryEnergy(declaration) / declaration.similarBuildingsKwhM2) * 100)} % av det.`,
+                    `Boverket’s reference value for similar buildings is ${numberFormatter.format(declaration.similarBuildingsKwhM2)} kWh/m². This house was at ${Math.round((restatedPrimaryEnergy(declaration) / declaration.similarBuildingsKwhM2) * 100)}% of that.`,
+                  )}
+                </p>
+              )}
+            </div>
+          ) : (
+            <div className="rounded-xl border border-dashed border-border/70 p-4">
+              <p className="text-sm font-medium">
+                {t('Har du en energideklaration?', 'Do you have an energy declaration?')}
+              </p>
+              <p className="mt-1 max-w-3xl text-xs text-muted-foreground">
+                {t(
+                  'Ladda upp den under Data så läses husets uppmätta Atemp, certifierade energiklass och Boverkets referensvärde för liknande byggnader in automatiskt. Det ersätter flera av uppskattningarna ovan och gör det möjligt att jämföra före och efter era förbättringar.',
+                  'Upload it under Data and the home’s surveyed Atemp, certified energy class and Boverket’s reference value for similar buildings are read automatically. That replaces several of the estimates above and makes it possible to compare before and after your improvements.',
+                )}
+              </p>
+              {onUploadDeclarationClick && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-3"
+                  onClick={onUploadDeclarationClick}
+                >
+                  {t('Gå till uppladdning', 'Go to upload')}
+                </Button>
+              )}
+            </div>
+          )}
 
           <details className="rounded-xl border border-border/70 bg-muted/15 p-4">
             <summary className="cursor-pointer text-sm font-medium">

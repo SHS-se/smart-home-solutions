@@ -17,6 +17,11 @@ import {
   type ParsedEnergyDocument,
 } from '@/lib/energy-billing-parser';
 import {
+  parseEnergyDeclaration,
+  type ParsedEnergyDeclaration,
+} from '@/lib/energy-declaration-parser';
+import { storeEnergyDeclaration } from '@/lib/energy-declaration-storage';
+import {
   EnergyBillingImportError,
   storeEnergyBillingDocument,
 } from '@/lib/energy-billing-storage';
@@ -52,6 +57,7 @@ interface UploadResult {
   status: UploadStatus;
   documentParsed?: ParsedEnergyDocument;
   usageParsed?: ParsedEnergyUsageCsv;
+  declarationParsed?: ParsedEnergyDeclaration;
   error?: string;
   warning?: string;
   retainedFailure?: EnergyParseFailureRecord;
@@ -183,23 +189,46 @@ const EnergyDataUploadCard: React.FC<EnergyDataUploadCardProps> = ({
               message,
             });
           });
-          const documentParsed = parseEnergyBillingDocument(extraction.rawText);
-          updateResult(resultId, { documentParsed });
-          if (!documentParsed.importable) {
-            rejectedByParser = true;
-            throw new Error(
-              `Billing parser rejected the file: ${
-                documentParsed.errors.join(', ') || 'unknown_format'
-              }`,
-            );
+          // An energideklaration is tried first: it is unambiguous to detect
+          // and would otherwise be handed to the invoice parsers, which would
+          // reject it with an unhelpful "unknown_format".
+          const declarationParsed = parseEnergyDeclaration(extraction.rawText);
+          if (declarationParsed.formatRecognized) {
+            updateResult(resultId, { declarationParsed });
+            if (!declarationParsed.importable) {
+              rejectedByParser = true;
+              throw new Error(
+                `Declaration parser rejected the file: ${
+                  declarationParsed.errors.join(', ') || 'unknown_format'
+                }`,
+              );
+            }
+            retainOnFailure = false;
+            await storeEnergyDeclaration({
+              customerId,
+              parsed: declarationParsed,
+              documentSha256: fileSha256,
+              originalFileName: file.name,
+            });
+          } else {
+            const documentParsed = parseEnergyBillingDocument(extraction.rawText);
+            updateResult(resultId, { documentParsed });
+            if (!documentParsed.importable) {
+              rejectedByParser = true;
+              throw new Error(
+                `Billing parser rejected the file: ${
+                  documentParsed.errors.join(', ') || 'unknown_format'
+                }`,
+              );
+            }
+            retainOnFailure = false;
+            await storeEnergyBillingDocument({
+              customerId,
+              file,
+              parsed: documentParsed,
+              documentSha256: fileSha256,
+            });
           }
-          retainOnFailure = false;
-          await storeEnergyBillingDocument({
-            customerId,
-            file,
-            parsed: documentParsed,
-            documentSha256: fileSha256,
-          });
         }
 
         dataChanged = true;
@@ -331,6 +360,9 @@ const EnergyDataUploadCard: React.FC<EnergyDataUploadCardProps> = ({
       : null
   );
   const detectedKindLabel = (result: UploadResult) => {
+    if (result.declarationParsed?.formatRecognized) {
+      return t('Energideklaration', 'Energy declaration');
+    }
     if (result.documentParsed?.documentKind === 'grid') {
       return t('Elnätsfaktura', 'Grid invoice');
     }
@@ -370,8 +402,14 @@ const EnergyDataUploadCard: React.FC<EnergyDataUploadCardProps> = ({
             </CardTitle>
             <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
               {t(
-                'Lägg alla filer i samma ruta. Systemet skiljer automatiskt på elnätsfakturor, elhandelsfakturor, dagligt nätuttag och Sigenergy-data för husets verkliga totalförbrukning.',
-                'Put every file in the same box. The system automatically distinguishes grid invoices, electricity invoices, daily grid import, and Sigenergy whole-home consumption data.',
+                'Lägg alla filer i samma ruta. Systemet skiljer automatiskt på elnätsfakturor, elhandelsfakturor, dagligt nätuttag, Sigenergy-data för husets verkliga totalförbrukning och officiella energideklarationer.',
+                'Put every file in the same box. The system automatically distinguishes grid invoices, electricity invoices, daily grid import, Sigenergy whole-home consumption data, and official energy declarations.',
+              )}
+            </p>
+            <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+              {t(
+                'En energideklaration ger husets uppmätta Atemp, certifierade energiklass och Boverkets referensvärde för liknande byggnader — allt sådant vi annars måste uppskatta.',
+                'An energy declaration supplies the home’s surveyed Atemp, its certified energy class and Boverket’s reference value for similar buildings — all things we otherwise have to estimate.',
               )}
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
@@ -380,6 +418,7 @@ const EnergyDataUploadCard: React.FC<EnergyDataUploadCardProps> = ({
                 t('Elhandelsfaktura', 'Electricity invoice'),
                 t('Nätuttag', 'Grid import'),
                 t('Totalförbrukning', 'Whole-home consumption'),
+                t('Energideklaration', 'Energy declaration'),
               ].map((label) => (
                 <Badge key={label} variant="secondary" className="font-normal">
                   <Sparkles className="mr-1 h-3 w-3" />

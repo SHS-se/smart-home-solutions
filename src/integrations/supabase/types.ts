@@ -1421,6 +1421,114 @@ export type Database = {
           },
         ]
       }
+      energy_declarations: {
+        Row: {
+          atemp_m2: number | null
+          building_energy_kwh_per_year: number | null
+          created_at: string
+          customer_id: string
+          declaration_id: string | null
+          energy_class: string
+          heating_system: string | null
+          home_id: string | null
+          id: string
+          issued_on: string | null
+          measurement_period_end: string | null
+          measurement_period_start: string | null
+          municipality: string | null
+          new_build_requirement_kwh_m2: number | null
+          original_file_name: string
+          parser_version: number
+          posts_kwh: Json
+          primary_energy_kwh_m2: number
+          primary_energy_kwh_per_year: number | null
+          similar_buildings_kwh_m2: number | null
+          specific_energy_kwh_m2: number | null
+          document_sha256: string
+          updated_at: string
+          uploaded_by: string
+          valid_until: string | null
+          ventilation_type: string | null
+          weighting_factor: number | null
+          year_built: number | null
+        }
+        Insert: {
+          atemp_m2?: number | null
+          building_energy_kwh_per_year?: number | null
+          created_at?: string
+          customer_id: string
+          declaration_id?: string | null
+          energy_class: string
+          heating_system?: string | null
+          home_id?: string | null
+          id?: string
+          issued_on?: string | null
+          measurement_period_end?: string | null
+          measurement_period_start?: string | null
+          municipality?: string | null
+          new_build_requirement_kwh_m2?: number | null
+          original_file_name: string
+          parser_version?: number
+          posts_kwh?: Json
+          primary_energy_kwh_m2: number
+          primary_energy_kwh_per_year?: number | null
+          similar_buildings_kwh_m2?: number | null
+          specific_energy_kwh_m2?: number | null
+          document_sha256: string
+          updated_at?: string
+          uploaded_by: string
+          valid_until?: string | null
+          ventilation_type?: string | null
+          weighting_factor?: number | null
+          year_built?: number | null
+        }
+        Update: {
+          atemp_m2?: number | null
+          building_energy_kwh_per_year?: number | null
+          created_at?: string
+          customer_id?: string
+          declaration_id?: string | null
+          energy_class?: string
+          heating_system?: string | null
+          home_id?: string | null
+          id?: string
+          issued_on?: string | null
+          measurement_period_end?: string | null
+          measurement_period_start?: string | null
+          municipality?: string | null
+          new_build_requirement_kwh_m2?: number | null
+          original_file_name?: string
+          parser_version?: number
+          posts_kwh?: Json
+          primary_energy_kwh_m2?: number
+          primary_energy_kwh_per_year?: number | null
+          similar_buildings_kwh_m2?: number | null
+          specific_energy_kwh_m2?: number | null
+          document_sha256?: string
+          updated_at?: string
+          uploaded_by?: string
+          valid_until?: string | null
+          ventilation_type?: string | null
+          weighting_factor?: number | null
+          year_built?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "energy_declarations_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_declarations_home_id_fkey"
+            columns: ["home_id"]
+            isOneToOne: false
+            referencedRelation: "homes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       energy_device_readings: {
         Row: {
           category: string
@@ -4600,6 +4708,13 @@ export type Database = {
           p_customer_id: string
           p_document: Json
           p_line_items: Json
+        }
+        Returns: string
+      }
+      create_energy_declaration: {
+        Args: {
+          p_customer_id: string
+          p_declaration: Json
         }
         Returns: string
       }
