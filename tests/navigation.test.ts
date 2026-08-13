@@ -36,11 +36,12 @@ Deno.test("customer nav covers the customer portal pages", () => {
   ]);
 });
 
-Deno.test("energy history exposes its four sections as sidebar sub-navigation", () => {
+Deno.test("energy history exposes its five sections as sidebar sub-navigation", () => {
   const energyHistory = getCustomerNavItems().find((item) => item.path === "/portal/energy-history")!;
   assertEquals(energyHistory.subItems?.map((item) => item.path), [
     "/portal/energy-history?tab=overview",
     "/portal/energy-history?tab=data",
+    "/portal/energy-history?tab=events",
     "/portal/energy-history?tab=temperature",
     "/portal/energy-history?tab=performance",
   ]);
