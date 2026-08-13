@@ -550,10 +550,56 @@ data.
 
 `comparePlans()` already yields the correct deltas (`netCostSekDelta`,
 `terminalAdjustedCostSekDelta`). The gap is horizon: 72 hours is not a year.
-Annual ROI must come from the §10.1 seasonal fixtures run as weighted
-representative periods, which depends on the thermal-zone contract §10.1 records
-as outstanding. Until then ROI states a horizon-bounded figure rather than
-implying an annual one.
+
+**Implemented 2026-08-13** in `src/lib/energy-roi.ts` and a rewritten `ROITab`.
+Savings now come from `energy_optimisation_plan_runs` — the planner's own
+priority-versus-baseline comparison for this home, which is real, specific and
+accumulating. Three properties of that data shaped the design:
+
+1. **Runs overlap.** They are issued hourly over a 72-hour horizon, so
+   consecutive runs share 71/72 of their window. Averaging *rates* is unbiased,
+   but the independent sample is the number of **distinct days**, not runs. The
+   UI reports days; a test pins this (240 runs over 10 days must read as 10).
+2. **Retention is 30 days** (`prune_energy_optimisation_data`), so a *measured*
+   annual saving can never be accumulated. The annual figure is therefore an
+   explicit "if this rate held all year" extrapolation, labelled as such on the
+   card and in the method note. A durable monthly rollup is the proper fix and
+   remains outstanding.
+3. **Only `ready` runs count.** An infeasible or incomplete run has no
+   meaningful cost to compare and would drag the median.
+
+Below `MIN_DAYS_FOR_OBSERVED_RATE` (7 days) the page states **no figure at all**
+and says which of "no plan history" or "too few days" applies. It does not
+substitute a modelled number for the customer's own.
+
+#### 1.3.6a The seasonal fixtures found a planner regression
+
+The first plan was to derive the annual figure from the §10.1 seasonal fixtures.
+Running them stopped that:
+
+| Fixture | Priority | Baseline | Saving over 72 h |
+|---|---|---|---|
+| Winter | 154.39 | 160.07 | +5.68 |
+| Spring | 55.05 | 63.09 | +8.05 |
+| Summer | −10.26 | −0.65 | +9.61 |
+| **Autumn** | **112.38** | **99.61** | **−12.77** |
+
+**In the autumn fixture the priority plan costs 12.77 SEK more than its own
+baseline**, and both plans end at an identical 55% SOC, so it is not a
+terminal-valuation artefact. Weighted by season the reference home's "annual
+saving" comes to 313 SEK — a number that would have been presented as a business
+case while burying a planner defect inside it.
+
+So the fixtures are **not** used as a customer figure. `seasonalPlannerCheck()`
+runs them as a diagnostic, flags any season where the plan loses to its own
+baseline, and the ROI page shows that regression explicitly rather than
+averaging it away. Investigating the autumn case belongs with the §10.1 autumn
+scenario work: "stable seasonal restart, preheating and forecast-error
+recovery".
+
+Investment and subscription remain manual inputs, now labelled as example
+values rather than presented as if sourced. Pulling them from an accepted quote
+is separate work.
 
 ## 2. Terms
 

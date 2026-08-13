@@ -1,15 +1,25 @@
-import React, { useState, useEffect } from 'react';
-import { TrendingUp, DollarSign, Clock, BarChart3, Plus, AlertCircle, ArrowRight, Loader2, Play } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { AlertCircle, ArrowRight, BarChart3, Clock, DollarSign, Loader2, TrendingUp } from 'lucide-react';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
-import { useToast } from '@/hooks/use-toast';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import {
+  Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis,
+} from 'recharts';
+import {
+  computeRoi,
+  MIN_DAYS_FOR_OBSERVED_RATE,
+  seasonalPlannerCheck,
+  summariseObservedSavings,
+  type PlanRunRow,
+  type Season,
+} from '@/lib/energy-roi';
 
 const REQUIRED_FIELDS = ['heated_boarea_m2', 'heated_biarea_m2', 'year_built', 'dwelling_type'];
 const SEMANTIC_LABELS: Record<string, { sv: string; en: string }> = {
@@ -27,117 +37,72 @@ interface ROITabProps {
 
 const ROITab: React.FC<ROITabProps> = ({ customerId, homeId, homeCount = 1 }) => {
   const { t } = useLanguage();
-  const { toast } = useToast();
   const navigate = useNavigate();
   const [hardwareCost, setHardwareCost] = useState(50000);
   const [installCost, setInstallCost] = useState(15000);
   const [monthlySubscription, setMonthlySubscription] = useState(299);
-  const [addPropertyOpen, setAddPropertyOpen] = useState(false);
-  const [newPropertyName, setNewPropertyName] = useState('');
-  const [creating, setCreating] = useState(false);
   const [missingFields, setMissingFields] = useState<string[]>([]);
   const [homeName, setHomeName] = useState<string>('');
-  const [checkingFields, setCheckingFields] = useState(true);
+  const [runs, setRuns] = useState<PlanRunRow[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  // Model run data
-  const [dumbRun, setDumbRun] = useState<Record<string, number> | null>(null);
-  const [smartRun, setSmartRun] = useState<Record<string, number> | null>(null);
-  const [loadingRuns, setLoadingRuns] = useState(true);
-
-  // Check missing fields for ROI
   useEffect(() => {
-    if (!homeId) { setCheckingFields(false); return; }
-    const checkFields = async () => {
-      setCheckingFields(true);
-      const { data: home } = await supabase.from('homes').select('name').eq('id', homeId).single();
-      if (home) setHomeName(home.name);
+    if (!homeId) { setLoading(false); return; }
+    let cancelled = false;
+    const load = async () => {
+      setLoading(true);
+      const [home, questions, answers, planRuns] = await Promise.all([
+        supabase.from('homes').select('name').eq('id', homeId).single(),
+        supabase.from('home_questions').select('id, semantic_key').in('semantic_key', REQUIRED_FIELDS),
+        supabase.from('home_answers').select('question_id, answer_value').eq('home_id', homeId),
+        supabase
+          .from('energy_optimisation_plan_runs')
+          .select('issued_at, status, summary')
+          .eq('home_id', homeId)
+          .order('issued_at', { ascending: false })
+          .limit(1000),
+      ]);
+      if (cancelled) return;
 
-      const { data: questions } = await supabase
-        .from('home_questions')
-        .select('id, semantic_key')
-        .in('semantic_key', REQUIRED_FIELDS);
-
-      if (!questions) { setCheckingFields(false); return; }
-
-      const { data: answers } = await supabase
-        .from('home_answers')
-        .select('question_id, answer_value')
-        .eq('home_id', homeId);
-
-      const answeredIds = new Set((answers || []).filter(a => a.answer_value != null).map(a => a.question_id));
-      const missing = questions.filter(q => !answeredIds.has(q.id)).map(q => q.semantic_key!).filter(Boolean);
-      setMissingFields(missing);
-      setCheckingFields(false);
+      if (home.data) setHomeName(home.data.name);
+      if (questions.data) {
+        const answered = new Set(
+          (answers.data ?? []).filter(a => a.answer_value != null).map(a => a.question_id),
+        );
+        setMissingFields(
+          questions.data.filter(q => !answered.has(q.id)).map(q => q.semantic_key!).filter(Boolean),
+        );
+      }
+      setRuns((planRuns.data ?? []) as PlanRunRow[]);
+      setLoading(false);
     };
-    checkFields();
+    void load();
+    return () => { cancelled = true; };
   }, [homeId]);
 
-  // Fetch latest model_runs for dumb and smart scenarios
-  useEffect(() => {
-    if (!homeId) { setLoadingRuns(false); return; }
-    const fetchRuns = async () => {
-      setLoadingRuns(true);
-      const { data: runs } = await supabase
-        .from('model_runs')
-        .select('scenario, results_summary')
-        .eq('home_id', homeId)
-        .order('created_at', { ascending: false });
+  const observed = useMemo(() => summariseObservedSavings(runs), [runs]);
+  // A planner diagnostic, not the customer's money: the fixtures describe one
+  // synthetic reference home. Pinned reference time so it stays stable on screen.
+  const plannerCheck = useMemo(() => seasonalPlannerCheck(), []);
+  const roi = useMemo(() => computeRoi({
+    observed,
+    investmentSek: hardwareCost + installCost,
+    monthlySubscriptionSek: monthlySubscription,
+  }), [observed, hardwareCost, installCost, monthlySubscription]);
 
-      const dumb = runs?.find(r => r.scenario === 'dumb') || null;
-      const smart = runs?.find(r => r.scenario === 'smart') || null;
-      setDumbRun(dumb ? (dumb.results_summary as Record<string, number>) : null);
-      setSmartRun(smart ? (smart.results_summary as Record<string, number>) : null);
-      setLoadingRuns(false);
-    };
-    fetchRuns();
-  }, [homeId]);
+  const seasonLabel = (season: Season) => ({
+    winter: t('Vinter', 'Winter'),
+    spring: t('Vår', 'Spring'),
+    summer: t('Sommar', 'Summer'),
+    autumn: t('Höst', 'Autumn'),
+  }[season]);
 
-  const handleCreateProperty = async () => {
-    if (!newPropertyName.trim() || !customerId) return;
-    setCreating(true);
-    try {
-      const { data, error } = await supabase
-        .from('homes')
-        .insert({ customer_id: customerId, name: newPropertyName.trim() })
-        .select('id')
-        .single();
-      if (error) throw error;
-      toast({ title: t('Fastighet skapad!', 'Property created!') });
-      setAddPropertyOpen(false);
-      setNewPropertyName('');
-      navigate(`/portal/home-profile?home=${data.id}`);
-    } catch (err) {
-      toast({ title: t('Fel', 'Error'), description: err.message, variant: 'destructive' });
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const hasBothRuns = dumbRun != null && smartRun != null;
-  const missingRuns = !loadingRuns && !hasBothRuns;
-
-  const annualCostDumb = dumbRun?.annualCostSek ?? 0;
-  const annualCostSmart = smartRun?.annualCostSek ?? 0;
-  const annualSavings = hasBothRuns ? annualCostDumb - annualCostSmart : 0;
-  const totalInvestment = hardwareCost + installCost;
-  const annualSubscription = monthlySubscription * 12;
-  const netAnnualSavings = annualSavings - annualSubscription;
-  const paybackYears = netAnnualSavings > 0 ? totalInvestment / netAnnualSavings : Infinity;
-
-  const costBreakdown = hasBothRuns ? [
-    { name: t('Nätavgift', 'Network Fee'), dumb: dumbRun.annualNetworkCost ?? 0, smart: smartRun.annualNetworkCost ?? 0 },
-    { name: t('Energi', 'Energy'), dumb: dumbRun.annualEnergyCost ?? 0, smart: smartRun.annualEnergyCost ?? 0 },
-    { name: t('Fast avgift', 'Fixed Fee'), dumb: dumbRun.annualFixedCost ?? 0, smart: smartRun.annualFixedCost ?? 0 },
-  ] : [];
-
-  const scenarioComparison = [
-    { label: t('Årlig kostnad (Dum)', 'Annual Cost (Dumb)'), value: hasBothRuns ? `${annualCostDumb.toLocaleString()} SEK` : '—' },
-    { label: t('Årlig kostnad (Smart)', 'Annual Cost (Smart)'), value: hasBothRuns ? `${annualCostSmart.toLocaleString()} SEK` : '—' },
-    { label: t('Årlig besparing', 'Annual Savings'), value: hasBothRuns ? `${annualSavings.toLocaleString()} SEK` : '—' },
-    { label: t('Abonnemang/år', 'Subscription/yr'), value: `${annualSubscription.toLocaleString()} SEK` },
-    { label: t('Nettobesparing/år', 'Net Savings/yr'), value: hasBothRuns ? `${netAnnualSavings.toLocaleString()} SEK` : '—' },
-    { label: t('Återbetalningstid', 'Payback Period'), value: !hasBothRuns ? '—' : paybackYears === Infinity ? '—' : `${paybackYears.toFixed(1)} ${t('år', 'years')}` },
-  ];
+  const sek = (value: number | null, digits = 0) => (
+    value === null ? '—' : `${value.toLocaleString(undefined, {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    })} SEK`
+  );
 
   if (!homeId) {
     return (
@@ -147,25 +112,34 @@ const ROITab: React.FC<ROITabProps> = ({ customerId, homeId, homeCount = 1 }) =>
     );
   }
 
-  const hasMissingFields = missingFields.length > 0 && !checkingFields;
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 py-12 text-sm text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        {t('Laddar lönsamhet…', 'Loading ROI…')}
+      </div>
+    );
+  }
+
+  const seasonalData = plannerCheck.perSeason.map(point => ({
+    name: seasonLabel(point.season),
+    saving: Math.round(point.savingSekPerDay * point.days),
+  }));
 
   return (
     <div className="space-y-6">
       {homeCount <= 1 && homeName && (
-        <p className="text-sm text-muted-foreground">
-          {t('Lönsamhet för', 'ROI for')}: {homeName}
-        </p>
+        <p className="text-sm text-muted-foreground">{t('Lönsamhet för', 'ROI for')}: {homeName}</p>
       )}
 
-      {/* Missing fields panel */}
-      {hasMissingFields && (
+      {missingFields.length > 0 && (
         <Card className="border-primary/30 bg-primary/5">
           <CardContent className="pt-6">
             <div className="flex items-start gap-3">
               <AlertCircle className="w-5 h-5 text-primary mt-0.5 shrink-0" />
               <div className="space-y-3 flex-1">
                 <p className="font-medium text-sm">
-                  {t('Några detaljer behövs för att beräkna lönsamhet', 'A few details needed to calculate ROI')}
+                  {t('Några detaljer gör beräkningen bättre', 'A few details would improve this calculation')}
                 </p>
                 <ul className="space-y-1">
                   {missingFields.map(key => (
@@ -185,179 +159,212 @@ const ROITab: React.FC<ROITabProps> = ({ customerId, homeId, homeCount = 1 }) =>
         </Card>
       )}
 
-      {/* Missing runs banner */}
-      {missingRuns && !hasMissingFields && (
-        <Card className="border-primary/30 bg-primary/5">
+      {/*
+        The honesty that this page previously lacked. The old version compared
+        two `model_runs` scenarios that ran the identical simulation, so its
+        "annual savings" was noise between two runs' inputs.
+      */}
+      <Alert>
+        <AlertTitle>{t('Så räknas besparingen', 'How this saving is calculated')}</AlertTitle>
+        <AlertDescription className="text-xs leading-relaxed">
+          {t(
+            'Siffran jämför planerarens egen prioriterade plan med dess referensplan för samma timme och samma priser. Det är en skillnad mot vad huset annars hade gjort — inte en uppmätt före-och-efter-jämförelse. Planhistoriken sparas i 30 dagar, så ett helt år kan aldrig mätas: årssiffran nedan är din uppmätta dygnstakt framskriven över ett år, och besparingen varierar starkt med säsong. Behandla den som en indikation, inte ett löfte.',
+            'The figure compares the planner’s own priority plan with its baseline plan for the same hour and the same prices. It is a difference against what the house would otherwise have done — not a measured before-and-after. Plan history is retained for 30 days, so a full year can never be measured: the annual figure below is your observed daily rate carried across a year, and savings vary strongly by season. Treat it as an indication, not a promise.',
+          )}
+        </AlertDescription>
+      </Alert>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card>
           <CardContent className="pt-6">
-            <div className="flex items-start gap-3">
-              <Play className="w-5 h-5 text-primary mt-0.5 shrink-0" />
-              <div className="space-y-2 flex-1">
-                <p className="font-medium text-sm">
-                  {t(
-                    'Kör båda Dum och Smart simuleringar för att beräkna lönsamhet.',
-                    'Run both Dumb and Smart simulations to calculate ROI.'
-                  )}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {!dumbRun && !smartRun
-                    ? t('Inga simuleringar hittades.', 'No simulations found.')
-                    : !dumbRun
-                      ? t('Dum-scenario saknas.', 'Dumb scenario missing.')
-                      : t('Smart-scenario saknas.', 'Smart scenario missing.')}
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-primary/10"><TrendingUp className="w-5 h-5 text-primary" /></div>
+              <div className="min-w-0">
+                <p className="text-xs text-muted-foreground">{t('Besparing per dygn', 'Saving per day')}</p>
+                <p className="text-xl font-semibold">{sek(roi.savingSekPerDay, 2)}</p>
+                <Badge variant="outline" className="mt-1 text-[10px]">
+                  {roi.blocker === null
+                    ? t(`uppmätt över ${observed.days} dygn`, `observed over ${observed.days} days`)
+                    : roi.blocker === 'too_few_days'
+                      ? t(`${observed.days} av ${MIN_DAYS_FOR_OBSERVED_RATE} dygn`, `${observed.days} of ${MIN_DAYS_FOR_OBSERVED_RATE} days`)
+                      : t('ingen planhistorik', 'no plan history')}
+                </Badge>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-accent"><DollarSign className="w-5 h-5 text-accent-foreground" /></div>
+              <div className="min-w-0">
+                <p className="text-xs text-muted-foreground">{t('Per år om takten håller', 'Per year if the rate holds')}</p>
+                <p className="text-xl font-semibold">{sek(roi.annualIfSustainedSek)}</p>
+                <Badge variant="outline" className="mt-1 text-[10px]">
+                  {t('framskrivning', 'extrapolation')}
+                </Badge>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-secondary"><DollarSign className="w-5 h-5 text-secondary-foreground" /></div>
+              <div className="min-w-0">
+                <p className="text-xs text-muted-foreground">{t('Netto efter abonnemang', 'Net after subscription')}</p>
+                <p className="text-xl font-semibold">{sek(roi.netAnnualIfSustainedSek)}</p>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  {t('abonnemang', 'subscription')} {sek(roi.annualSubscriptionSek)}/{t('år', 'yr')}
                 </p>
               </div>
             </div>
           </CardContent>
         </Card>
-      )}
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-secondary"><Clock className="w-5 h-5 text-secondary-foreground" /></div>
+              <div className="min-w-0">
+                <p className="text-xs text-muted-foreground">{t('Återbetalningstid', 'Payback period')}</p>
+                <p className="text-xl font-semibold">
+                  {roi.paybackYearsIfSustained === null
+                    ? '—'
+                    : `${roi.paybackYearsIfSustained.toFixed(1)} ${t('år', 'yr')}`}
+                </p>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  {roi.blocker !== null
+                    ? t('behöver mer planhistorik', 'needs more plan history')
+                    : roi.paybackYearsIfSustained === null
+                      ? t('besparingen täcker inte abonnemanget', 'the saving does not cover the subscription')
+                      : t('om takten håller', 'if the rate holds')}
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
 
-      {/* ROI content */}
-      <div className={hasMissingFields || missingRuns ? 'opacity-50 pointer-events-none' : ''}>
-        {/* Summary cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-destructive/10"><DollarSign className="w-5 h-5 text-destructive" /></div>
-                <div>
-                  <p className="text-xs text-muted-foreground">{t('Utan smart styrning', 'Without Smart Control')}</p>
-                  <p className="text-xl font-semibold">{annualCostDumb.toLocaleString()} SEK</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-primary/10"><DollarSign className="w-5 h-5 text-primary" /></div>
-                <div>
-                  <p className="text-xs text-muted-foreground">{t('Med smart styrning', 'With Smart Control')}</p>
-                  <p className="text-xl font-semibold">{annualCostSmart.toLocaleString()} SEK</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-accent"><TrendingUp className="w-5 h-5 text-accent-foreground" /></div>
-                <div>
-                  <p className="text-xs text-muted-foreground">{t('Årlig besparing', 'Annual Savings')}</p>
-                  <p className="text-xl font-semibold">{annualSavings.toLocaleString()} SEK</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-secondary"><Clock className="w-5 h-5 text-secondary-foreground" /></div>
-                <div>
-                  <p className="text-xs text-muted-foreground">{t('Återbetalningstid', 'Payback Period')}</p>
-                  <p className="text-xl font-semibold">{!hasBothRuns ? '—' : paybackYears === Infinity ? '—' : `${paybackYears.toFixed(1)} ${t('år', 'yr')}`}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <BarChart3 className="w-4 h-4" />
+              {t('Planerarkontroll per säsong', 'Planner check by season')}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={260}>
+              <BarChart data={seasonalData}>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                <XAxis dataKey="name" className="text-xs" />
+                <YAxis tickFormatter={v => `${(v / 1000).toFixed(0)}k`} className="text-xs" />
+                <Tooltip formatter={(v: number) => [`${v.toLocaleString()} SEK`]} />
+                <Legend />
+                <Bar dataKey="saving" name={t('Besparing', 'Saving')} fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+            <p className="mt-2 text-xs text-muted-foreground">
+              {t(
+                'Det här är en kontroll av planeraren, inte dina pengar. De fyra säsongsfallen beskriver ett syntetiskt referenshus och körs genom samma planerare som en riktig plan, så en säsong som går back är ett fel i planeraren — inte en prognos för ditt hem.',
+                'This is a check on the planner, not your money. The four seasonal cases describe a synthetic reference home and run through the same planner as a live plan, so a season that loses money is a planner defect — not a forecast for your home.',
+              )}
+            </p>
+            {plannerCheck.regressions.length > 0 && (
+              <Alert variant="destructive" className="mt-3">
+                <AlertTitle className="text-sm">
+                  {t('Planeraren går back i en säsong', 'The planner loses money in one season')}
+                </AlertTitle>
+                <AlertDescription className="text-xs">
+                  {t(
+                    `I ${plannerCheck.regressions.map(seasonLabel).join(', ').toLowerCase()} kostar den prioriterade planen mer än sin egen referensplan. Det är ett känt fel som utreds, och det är skälet till att årssiffran ovan bygger på din uppmätta takt i stället för på de här fallen.`,
+                    `In ${plannerCheck.regressions.map(seasonLabel).join(', ').toLowerCase()} the priority plan costs more than its own baseline. This is a known defect under investigation, and it is why the annual figure above is based on your observed rate rather than on these cases.`,
+                  )}
+                </AlertDescription>
+              </Alert>
+            )}
+          </CardContent>
+        </Card>
 
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-4">
-          {/* Cost breakdown chart */}
+        <div className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                <BarChart3 className="w-4 h-4" />
-                {t('Kostnadsfördelning', 'Cost Breakdown')}
-              </CardTitle>
+              <CardTitle className="text-base">{t('Din planhistorik', 'Your plan history')}</CardTitle>
             </CardHeader>
-            <CardContent>
-              {costBreakdown.length > 0 ? (
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={costBreakdown}>
-                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                    <XAxis dataKey="name" className="text-xs" />
-                    <YAxis tickFormatter={v => `${(v / 1000).toFixed(0)}k`} className="text-xs" />
-                    <Tooltip formatter={(v: number) => [`${v.toLocaleString()} SEK`]} />
-                    <Legend />
-                    <Bar dataKey="dumb" name={t('Dum', 'Dumb')} fill="hsl(var(--destructive))" radius={[4, 4, 0, 0]} fillOpacity={0.7} />
-                    <Bar dataKey="smart" name={t('Smart', 'Smart')} fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+            <CardContent className="space-y-2 text-sm">
+              {observed.days === 0 ? (
+                <p className="text-muted-foreground">
+                  {t(
+                    'Ingen planhistorik ännu. När Home Assistant har begärt planer i några dygn visas din egen uppmätta besparingstakt här.',
+                    'No plan history yet. Once Home Assistant has requested plans for a few days, your own observed saving rate appears here.',
+                  )}
+                </p>
               ) : (
-                <div className="flex items-center justify-center h-[300px] text-sm text-muted-foreground">
-                  {t('Kör simuleringar för att se data', 'Run simulations to see data')}
-                </div>
+                <>
+                  <div className="flex justify-between border-b py-1">
+                    <span className="text-muted-foreground">{t('Dagar med planer', 'Days with plans')}</span>
+                    <span className="font-medium tabular-nums">
+                      {observed.days}
+                      {observed.days < MIN_DAYS_FOR_OBSERVED_RATE
+                        && ` ${t(`(minst ${MIN_DAYS_FOR_OBSERVED_RATE} behövs)`, `(at least ${MIN_DAYS_FOR_OBSERVED_RATE} needed)`)}`}
+                    </span>
+                  </div>
+                  <div className="flex justify-between border-b py-1">
+                    <span className="text-muted-foreground">{t('Median per dygn', 'Median per day')}</span>
+                    <span className="font-medium tabular-nums">{sek(observed.medianSavingSekPerDay, 2)}</span>
+                  </div>
+                  <div className="flex justify-between border-b py-1">
+                    <span className="text-muted-foreground">{t('Spridning (p10–p90)', 'Spread (p10–p90)')}</span>
+                    <span className="font-medium tabular-nums">
+                      {sek(observed.p10SavingSekPerDay, 2)} – {sek(observed.p90SavingSekPerDay, 2)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between border-b py-1">
+                    <span className="text-muted-foreground">{t('Summa över perioden', 'Total over the period')}</span>
+                    <span className="font-medium tabular-nums">{sek(roi.observedPeriodSavingSek, 0)}</span>
+                  </div>
+                  <div className="flex justify-between py-1">
+                    <span className="text-muted-foreground">{t('Säsonger som täcks', 'Seasons covered')}</span>
+                    <span className="font-medium">{observed.seasons.map(seasonLabel).join(', ')}</span>
+                  </div>
+                  <p className="pt-2 text-xs text-muted-foreground">
+                    {t(
+                      `${observed.runs} planer över ${observed.days} dygn. Planer begärs varje timme och sträcker sig 72 timmar, så de överlappar kraftigt — antalet dygn är det som räknas som underlag, inte antalet planer.`,
+                      `${observed.runs} plans across ${observed.days} days. Plans are requested hourly and cover 72 hours, so they overlap heavily — the number of days is the evidence, not the number of plans.`,
+                    )}
+                  </p>
+                </>
               )}
             </CardContent>
           </Card>
 
-          {/* Inputs + scenario table */}
-          <div className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">{t('Investeringskostnad', 'Investment Cost')}</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div>
-                  <Label className="text-sm">{t('Hårdvarukostnad (SEK)', 'Hardware Cost (SEK)')}</Label>
-                  <Input type="number" value={hardwareCost} onChange={e => setHardwareCost(Number(e.target.value) || 0)} />
-                </div>
-                <div>
-                  <Label className="text-sm">{t('Installationskostnad (SEK)', 'Installation Cost (SEK)')}</Label>
-                  <Input type="number" value={installCost} onChange={e => setInstallCost(Number(e.target.value) || 0)} />
-                </div>
-                <div>
-                  <Label className="text-sm">{t('Månadsabonnemang (SEK)', 'Monthly Subscription (SEK)')}</Label>
-                  <Input type="number" value={monthlySubscription} onChange={e => setMonthlySubscription(Number(e.target.value) || 0)} />
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">{t('Scenariojämförelse', 'Scenario Comparison')}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  {scenarioComparison.map((row, i) => (
-                    <div key={i} className="flex justify-between py-1 border-b border-border last:border-0 text-sm">
-                      <span className="text-muted-foreground">{row.label}</span>
-                      <span className="font-medium">{row.value}</span>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">{t('Investeringskostnad', 'Investment cost')}</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div>
+                <Label className="text-sm">{t('Hårdvarukostnad (SEK)', 'Hardware cost (SEK)')}</Label>
+                <Input type="number" value={hardwareCost} onChange={e => setHardwareCost(Number(e.target.value) || 0)} />
+              </div>
+              <div>
+                <Label className="text-sm">{t('Installationskostnad (SEK)', 'Installation cost (SEK)')}</Label>
+                <Input type="number" value={installCost} onChange={e => setInstallCost(Number(e.target.value) || 0)} />
+              </div>
+              <div>
+                <Label className="text-sm">{t('Månadsabonnemang (SEK)', 'Monthly subscription (SEK)')}</Label>
+                <Input type="number" value={monthlySubscription} onChange={e => setMonthlySubscription(Number(e.target.value) || 0)} />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {t(
+                  'Ange siffror från en verklig offert. Fälten är exempelvärden och hämtas ännu inte automatiskt.',
+                  'Enter figures from a real quote. These fields are example values and are not yet pulled from one automatically.',
+                )}
+              </p>
+            </CardContent>
+          </Card>
         </div>
       </div>
-
-      {/* Add Property Dialog */}
-      <Dialog open={addPropertyOpen} onOpenChange={setAddPropertyOpen}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>{t('Lägg till en annan fastighet', 'Add another property')}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div>
-              <Label>{t('Fastighetens namn', 'Property name')}</Label>
-              <Input
-                value={newPropertyName}
-                onChange={e => setNewPropertyName(e.target.value)}
-                placeholder={t('t.ex. Sommarhus, Hyreslägenhet', 'e.g. Summer house, Rental apartment')}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setAddPropertyOpen(false)}>{t('Avbryt', 'Cancel')}</Button>
-            <Button onClick={handleCreateProperty} disabled={creating || !newPropertyName.trim()}>
-              {creating && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
-              {t('Börja inställning', 'Start setup')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 };
