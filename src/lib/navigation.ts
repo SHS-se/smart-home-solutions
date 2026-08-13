@@ -122,6 +122,11 @@ export function getCustomerNavItems(basePath: string = CUSTOMER_PORTAL_BASE): Ap
           labelEn: 'Data',
         },
         {
+          path: `${basePath}/energy-history?tab=events`,
+          labelSv: 'Händelser',
+          labelEn: 'Events',
+        },
+        {
           path: `${basePath}/energy-history?tab=temperature`,
           labelSv: 'Temperatur',
           labelEn: 'Temperature',

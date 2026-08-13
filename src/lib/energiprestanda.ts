@@ -174,6 +174,8 @@ export interface EnergiprestandaResult {
   correctedHeatingKwh: number | null;
   /** Degree-day normalization factor actually applied to heating. */
   degreeDayFactor: number | null;
+  /** Days dropped because the customer flagged them as unrepresentative. */
+  excludedDayCount: number;
   heatingCoverage: SeasonalCoverage | null;
   coolingCoverage: SeasonalCoverage | null;
   geographicAdjustmentFactor: number;
@@ -191,6 +193,13 @@ function isoDaysAgo(endIso: string, days: number): string {
 
 export interface EnergiprestandaOptions {
   geographicAdjustmentFactor?: number;
+  /**
+   * Days the customer has told us are unrepresentative — a holiday, guests, a
+   * broken heat pump. Excluded from both the energy and the degree days, so the
+   * ratio stays honest: dropping a fortnight's kWh while keeping its cold days
+   * would make the house look worse, not neutral.
+   */
+  excludedDates?: ReadonlySet<string>;
 }
 
 export function computeEnergiprestanda(
@@ -200,6 +209,7 @@ export function computeEnergiprestanda(
   options: EnergiprestandaOptions = {},
 ): EnergiprestandaResult {
   const fGeo = options.geographicAdjustmentFactor ?? DEFAULT_GEOGRAPHIC_ADJUSTMENT_FACTOR;
+  const excludedDates = options.excludedDates ?? new Set<string>();
 
   const empty: EnergiprestandaResult = {
     ep: null,
@@ -208,6 +218,7 @@ export function computeEnergiprestanda(
     windowEnd: null,
     coverageDays: 0,
     coverageDaysByCategory: {},
+    excludedDayCount: 0,
     measuredKwh: {},
     annualizedIncludedKwh: null,
     correctedHeatingKwh: null,
@@ -234,6 +245,7 @@ export function computeEnergiprestanda(
   for (const reading of readings) {
     if (reading.reading_date < windowStart || reading.reading_date > windowEnd) continue;
     if (!Number.isFinite(reading.kwh) || reading.kwh < 0) continue;
+    if (excludedDates.has(reading.reading_date)) continue;
 
     measuredKwh[reading.category] = (measuredKwh[reading.category] ?? 0) + reading.kwh;
 
@@ -258,6 +270,8 @@ export function computeEnergiprestanda(
     windowEnd,
     coverageDays: includedDates.size,
     coverageDaysByCategory,
+    excludedDayCount: [...excludedDates]
+      .filter(date => date >= windowStart && date <= windowEnd).length,
     measuredKwh,
   };
 

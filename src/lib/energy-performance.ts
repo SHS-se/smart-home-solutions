@@ -35,6 +35,14 @@ import {
   type EnergiprestandaResult,
 } from './energiprestanda';
 import {
+  eventCoverage,
+  latestRenovationYear,
+  renovationHeatingFactor,
+  periodDates,
+  type EnergyEvent,
+  type EventCoverageWarning,
+} from './energy-events';
+import {
   archetypePrior,
   type ArchetypePrior,
   type DwellingArchetype,
@@ -99,6 +107,12 @@ export interface ResolvedEnergyPerformance {
   /** True when F_geo was assumed rather than known. */
   geographicFactorAssumed: boolean;
   hasCategoryReadings: boolean;
+  /** Most recent recorded envelope renovation, if any. */
+  renovationYear: number | null;
+  /** Multiplier applied to the prior's heating term for recorded renovations. */
+  renovationHeatingFactor: number;
+  /** What the customer's recorded events mean for this window. */
+  eventWarnings: EventCoverageWarning[];
 }
 
 function normalizedArea(atempM2: number | null): number | null {
@@ -156,6 +170,7 @@ export function resolveEnergyPerformance(
   weather: readonly DailyTemperature[],
   hasSolar: boolean | null = null,
   homeFacts: EnergyPerformanceHomeFacts = {},
+  events: readonly EnergyEvent[] = [],
 ): ResolvedEnergyPerformance {
   const area = normalizedArea(atempM2);
   const geographicFactorAssumed =
@@ -165,15 +180,23 @@ export function resolveEnergyPerformance(
     ? DEFAULT_GEOGRAPHIC_ADJUSTMENT_FACTOR
     : (homeFacts.geographicAdjustmentFactor as number);
 
+  // Days the customer flagged as unrepresentative never enter the evidence.
+  const excludedDates = periodDates(events);
   const measured = computeEnergiprestanda(categoryReadings, area, weather, {
     geographicAdjustmentFactor: fGeo,
+    excludedDates,
   });
   const estimated = buildIndicativeEnergyPerformance(dailyReadings, area, hasSolar);
   const newBuildRequirementKwhM2 = area === null
     ? null
     : smallHouseNewBuildRequirement(area);
 
-  const prior = area === null
+  // A renovated house does not perform like its unimproved cohort. This is the
+  // input §1.3.4a recorded as missing, now supplied by a recorded event. It is
+  // applied to heat demand rather than by shifting the build year — see
+  // renovationHeatingFactor for why the obvious approach is wrong.
+  const renovationFactor = renovationHeatingFactor(events);
+  const basePrior = area === null
     ? null
     : archetypePrior({
       yearBuilt: homeFacts.yearBuilt ?? null,
@@ -181,6 +204,18 @@ export function resolveEnergyPerformance(
       heating: homeFacts.heating ?? null,
       heatedAreaM2: area,
     });
+  const prior = basePrior === null ? null : {
+    ...basePrior,
+    heatingKwh: basePrior.heatingKwh * renovationFactor,
+    buildingEnergyKwh: basePrior.heatingKwh * renovationFactor
+      + basePrior.hotWaterKwh + basePrior.propertyEnergyKwh,
+    basis: renovationFactor < 1
+      ? [
+        ...basePrior.basis,
+        `Recorded renovation: heating ×${renovationFactor.toFixed(2)} (modelled)`,
+      ]
+      : basePrior.basis,
+  };
   const priorEp = prior !== null && area !== null
     ? priorPrimaryEnergy(prior, area, fGeo)
     : null;
@@ -194,6 +229,11 @@ export function resolveEnergyPerformance(
     priorPrimaryEnergyKwhM2: priorEp,
     geographicFactorAssumed,
     hasCategoryReadings: categoryReadings.length > 0,
+    renovationYear: latestRenovationYear(events),
+    renovationHeatingFactor: renovationFactor,
+    eventWarnings: measured.windowStart !== null && measured.windowEnd !== null
+      ? eventCoverage(events, measured.windowStart, measured.windowEnd)
+      : [],
   };
 
   const finish = (

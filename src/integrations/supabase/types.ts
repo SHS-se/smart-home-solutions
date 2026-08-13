@@ -1378,7 +1378,10 @@ export type Database = {
           created_at: string
           created_by: string
           customer_id: string
+          end_date: string | null
           event_text: string
+          event_type: string
+          home_id: string | null
           id: string
           note_date: string
           updated_at: string
@@ -1388,7 +1391,10 @@ export type Database = {
           created_at?: string
           created_by: string
           customer_id: string
+          end_date?: string | null
           event_text: string
+          event_type?: string
+          home_id?: string | null
           id?: string
           note_date: string
           updated_at?: string
@@ -1398,7 +1404,10 @@ export type Database = {
           created_at?: string
           created_by?: string
           customer_id?: string
+          end_date?: string | null
           event_text?: string
+          event_type?: string
+          home_id?: string | null
           id?: string
           note_date?: string
           updated_at?: string

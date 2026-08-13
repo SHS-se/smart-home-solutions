@@ -26,7 +26,6 @@ import {
   YAxis,
 } from 'recharts';
 import { useLanguage } from '@/contexts/LanguageContext';
-import EnergyHistoryEventForm from '@/components/portal/energy-history/EnergyHistoryEventForm';
 import EnergyPriceInflationCard from '@/components/portal/energy-history/EnergyPriceInflationCard';
 import EnergySavingsCard from '@/components/portal/energy-history/EnergySavingsCard';
 import EnergySourceInsights from '@/components/portal/energy-history/EnergySourceInsights';
@@ -979,10 +978,6 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
           </ResponsiveContainer>
         </CardContent>
           </Card>
-          <EnergyHistoryEventForm
-            loadError={notesError}
-            onCreate={onCreateNote}
-          />
           <Card className="overflow-hidden border-violet-200/80 bg-gradient-to-br from-background to-violet-500/5 shadow-sm dark:border-violet-900/70">
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-3">

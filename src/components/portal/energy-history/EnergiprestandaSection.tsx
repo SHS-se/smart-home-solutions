@@ -32,6 +32,7 @@ import {
   type ResolvedEnergyPerformance,
 } from '@/lib/energy-performance';
 import type { IndicativeEnergyGrade } from '@/lib/indicative-energy-performance';
+import type { EnergyEvent } from '@/lib/energy-events';
 import {
   restatedPrimaryEnergy,
   wasRestated,
@@ -96,6 +97,9 @@ interface EnergiprestandaSectionProps {
   hasSolar?: boolean | null;
   /** Build year, dwelling form and heating system, for the cold-start prior. */
   homeFacts?: EnergyPerformanceHomeFacts;
+  /** Recorded events. Holidays and faults are excluded; renovations shift the prior. */
+  events?: EnergyEvent[];
+  onManageEventsClick?: () => void;
   /** Official Boverket certificate, when the customer has uploaded one. */
   declaration?: StoredEnergyDeclaration | null;
   onUploadDeclarationClick?: () => void;
@@ -223,6 +227,8 @@ const EnergiprestandaSection: React.FC<EnergiprestandaSectionProps> = ({
   heatedBiareaM2 = null,
   hasSolar = null,
   homeFacts = {},
+  events = [],
+  onManageEventsClick,
   declaration = null,
   onUploadDeclarationClick,
   periodStartMonth,
@@ -252,8 +258,9 @@ const EnergiprestandaSection: React.FC<EnergiprestandaSectionProps> = ({
       weatherObservations,
       hasSolar,
       homeFacts,
+      events,
     ),
-    [atempM2, dailyReadings, hasSolar, homeFacts, readings, weatherObservations],
+    [atempM2, dailyReadings, events, hasSolar, homeFacts, readings, weatherObservations],
   );
 
   const visibleCategoryReadings = useMemo(() => readings.filter((reading) => {
@@ -604,6 +611,48 @@ const EnergiprestandaSection: React.FC<EnergiprestandaSectionProps> = ({
               ))}
             </div>
           </div>
+
+          {/*
+            Events are inputs here, so the card has to say when they changed the
+            answer. A silently excluded fortnight is exactly the kind of hidden
+            adjustment this page has been cleaned of.
+          */}
+          {(performance.eventWarnings.length > 0
+            || performance.renovationHeatingFactor < 1) && (
+            <div className="rounded-xl border border-teal-200 bg-teal-50/40 p-4 dark:border-teal-900 dark:bg-teal-950/20">
+              <p className="text-sm font-medium">
+                {t('Dina händelser påverkar den här siffran', 'Your events affect this figure')}
+              </p>
+              <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
+                {performance.renovationHeatingFactor < 1 && (
+                  <li>
+                    {t(
+                      `En registrerad renovering${performance.renovationYear ? ` (${performance.renovationYear})` : ''} sänker modellens uppvärmningsbehov med ${Math.round((1 - performance.renovationHeatingFactor) * 100)} %. Det är ett försiktigt antagande — uppmätt data ersätter det efterhand.`,
+                      `A recorded renovation${performance.renovationYear ? ` (${performance.renovationYear})` : ''} lowers the model’s heat demand by ${Math.round((1 - performance.renovationHeatingFactor) * 100)}%. That is a conservative assumption — measured data replaces it over time.`,
+                    )}
+                  </li>
+                )}
+                {performance.eventWarnings.map((warning) => (
+                  <li key={warning.kind}>
+                    {warning.kind === 'period_days_excluded'
+                      ? t(
+                        `${warning.days} dagar är borträknade som ej representativa (bortrest, gäster eller utrustningsfel).`,
+                        `${warning.days} days are excluded as unrepresentative (away, guests or an equipment fault).`,
+                      )
+                      : t(
+                        `Perioden innehåller ${warning.steps?.length} varaktig förändring av huset eller hushållet, så data före och efter beskriver inte samma förutsättningar.`,
+                        `The window contains ${warning.steps?.length} lasting change to the house or household, so data before and after does not describe the same conditions.`,
+                      )}
+                  </li>
+                ))}
+              </ul>
+              {onManageEventsClick && (
+                <Button size="sm" variant="outline" className="mt-3" onClick={onManageEventsClick}>
+                  {t('Hantera händelser', 'Manage events')}
+                </Button>
+              )}
+            </div>
+          )}
 
           {declaration ? (
             <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4 dark:border-emerald-900 dark:bg-emerald-950/20">

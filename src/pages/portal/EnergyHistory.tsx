@@ -43,6 +43,7 @@ import {
   ENERGY_HISTORY_SAMPLE_SERIES,
 } from '@/lib/energy-history-sample';
 import EnergyDataUploadCard from '@/components/portal/energy-history/EnergyDataUploadCard';
+import EnergyEventsSection from '@/components/portal/energy-history/EnergyEventsSection';
 import EnergiprestandaSection from '@/components/portal/energy-history/EnergiprestandaSection';
 import {
   fetchAllWeatherObservations,
@@ -60,6 +61,7 @@ import {
 } from '@/lib/energy-history-period';
 import {
   createEnergyHistoryNote,
+  deleteEnergyHistoryNote,
   deleteEnergyUsageImport,
   fetchEnergyHistoryNotes,
   fetchEnergyUsageImportBatches,
@@ -79,10 +81,11 @@ interface EnergyHistoryProps {
 }
 
 const SHARED_WEATHER_DATASET_QUERY_KEY = ['energy-shared-weather-dataset'] as const;
-type EnergyHistorySection = 'overview' | 'data' | 'temperature' | 'performance';
+type EnergyHistorySection = 'overview' | 'data' | 'events' | 'temperature' | 'performance';
 const ENERGY_HISTORY_SECTIONS = new Set<EnergyHistorySection>([
   'overview',
   'data',
+  'events',
   'temperature',
   'performance',
 ]);
@@ -136,7 +139,8 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   const performanceDataEnabled = customerEnergyEnabled && activeTab === 'performance';
   const managementDataEnabled = customerEnergyEnabled && activeTab === 'data';
   const notesDataEnabled = customerEnergyEnabled
-    && (activeTab === 'overview' || activeTab === 'temperature');
+    && (activeTab === 'overview' || activeTab === 'temperature' || activeTab === 'events'
+      || activeTab === 'performance');
   // The Data section's coverage table reads the same merged series, so it needs the
   // calculated halves too or it would report every month as thinner than it is.
   const tariffCalculationsEnabled = customerEnergyEnabled
@@ -385,6 +389,11 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
     await refreshNotes();
   };
 
+  const handleDeleteNote = async (noteId: string) => {
+    await deleteEnergyHistoryNote(customerId, noteId);
+    await refreshNotes();
+  };
+
   const handleDeleteDocument = async (document: EnergyBillingDocumentRecord) => {
     await deleteEnergyBillingDocument(customerId, document);
     await refreshDocuments();
@@ -607,6 +616,15 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
               )}
             </div>
           )}
+          {activeTab === 'events' && (
+            <EnergyEventsSection
+              notes={notesQuery.data ?? []}
+              isLoading={notesQuery.isLoading}
+              loadError={notesQuery.error}
+              onCreate={handleCreateNote}
+              onDelete={handleDeleteNote}
+            />
+          )}
           {activeTab === 'performance' && (
             <EnergiprestandaSection
               readings={deviceReadingsQuery.data ?? []}
@@ -623,6 +641,8 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
                 // BBR 31 Table 9:2c is not loaded yet; the UI says so.
                 geographicAdjustmentFactor: null,
               }}
+              events={notesQuery.data ?? []}
+              onManageEventsClick={() => showSection('events')}
               declaration={declarationQuery.data ?? null}
               onUploadDeclarationClick={() => showSection('data')}
               periodStartMonth={displayedPeriodStart}

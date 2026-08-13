@@ -1,4 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
+import { treatmentOf, type EnergyEventType } from './energy-events';
 import type { Json, Tables, TablesUpdate } from '@/integrations/supabase/types';
 import {
   parseEnergyUsageCsv,
@@ -28,6 +29,10 @@ export class EnergyUsageImportError extends Error {
 export interface TimelineNoteValues {
   noteDate: string;
   eventText: string;
+  /** Selects how the event is treated in analysis. See lib/energy-events.ts. */
+  eventType?: EnergyEventType;
+  /** Inclusive last day, for period events only. */
+  endDate?: string | null;
 }
 
 export async function fetchEnergyUsageReadings(
@@ -144,10 +149,15 @@ async function currentUserId(): Promise<string> {
 }
 
 function notePayload(customerId: string, userId: string, values: TimelineNoteValues) {
+  const eventType = values.eventType ?? 'other';
   return {
     customer_id: customerId,
     note_date: values.noteDate,
     event_text: values.eventText.trim(),
+    event_type: eventType,
+    // A step event describes an instant; the database rejects an end date on
+    // one, so drop it rather than letting a stale form value fail the insert.
+    end_date: treatmentOf(eventType) === 'period' ? (values.endDate || null) : null,
     created_by: userId,
     updated_by: userId,
   };
@@ -174,9 +184,12 @@ export async function updateEnergyHistoryNote(
   values: TimelineNoteValues,
 ): Promise<EnergyHistoryNoteRecord> {
   const userId = await currentUserId();
+  const eventType = values.eventType ?? 'other';
   const update: TablesUpdate<'energy_history_notes'> = {
     note_date: values.noteDate,
     event_text: values.eventText.trim(),
+    event_type: eventType,
+    end_date: treatmentOf(eventType) === 'period' ? (values.endDate || null) : null,
     updated_by: userId,
   };
   const { data, error } = await supabase

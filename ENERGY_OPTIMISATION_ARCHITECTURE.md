@@ -418,6 +418,54 @@ hid this; the test fixture did not. Anchoring with `(?:^|\s)` and a space-only
 inner class fixed it. **The fixture is more adversarial than the source
 document, and that is the point of having one.**
 
+#### 1.3.4a-4 Typed events (implemented 2026-08-13)
+
+Events existed as free text on a date, drawn on the charts, entered from a form
+buried under a chart in Comparisons. That makes them a caption. They are now an
+**input**, because most of what looks wrong in energy data has a mundane
+explanation only the customer has: they were away, the heat pump was broken,
+someone moved in.
+
+They live at **Energy history → Events**, alongside Data, because they explain
+the data. Deliberately *not* added to `home_questions`, which is already
+overloaded and is about the building rather than its timeline.
+
+The axis that matters is not the label but the treatment:
+
+| Treatment | Types | Effect |
+|---|---|---|
+| **Step** | renovation, heating system change, solar/battery installed, major load added/removed, occupancy increase/decrease | Data before the date describes a different house or household. Comparison across it is not like-for-like. Does **not** remove days. |
+| **Period** | absence, guests, equipment fault | Those days happened but are unrepresentative. Excluded from anything that fits a model. Carries an end date, enforced by a check constraint. |
+| **None** | other | Recorded and drawn, affects no calculation. Every pre-existing untyped note defaults here, so nothing retroactively changes. |
+
+Wired in: `energiprestanda` drops flagged days from both the energy *and* the
+degree days (dropping a fortnight's kWh while keeping its cold days would make
+a house look worse for having gone away), reports `excludedDayCount`, and the
+performance card names the adjustment rather than making it silently.
+
+**A defect this found, and the invariant that now prevents it.** The first
+implementation applied a renovation by shifting the effective build year toward
+the renovation year — a 1970 house renovated in 1990 was treated as built in
+1990. The published band table is **not monotonic** (1981–1990 uses 94.7 kWh/m²
+against 89.4 for 1961–1970), so recording a renovation made the rating *worse*:
+135.1 → 142.6 kWh/m². The bands describe original construction cohorts, not
+renovation states.
+
+A renovation is now a direct reduction in modelled heat demand — physically what
+it is, and monotone by construction. The magnitude (15%) is `modelled` and
+applied once regardless of how many renovations are recorded.
+`heating_system_change` deliberately takes no discount, because the published
+per-system factors in `HEATING_SYSTEM_FACTORS` already carry that improvement
+and applying both would count it twice. A test now pins the invariant:
+**a recorded renovation must never make the modelled rating worse.**
+
+One further test note worth keeping. "Excluding a holiday must not distort the
+degree-day ratio" initially failed with a 3.5 kWh/m² swing depending on whether
+the excluded fortnight was in winter or summer. That was the *fixture*, not the
+code: it used a flat 12 kWh/day of heating, which violates the proportionality
+the whole normalization rests on. Under a physical fixture — heating
+proportional to degree days — the estimator is unbiased, as it should be.
+
 #### 1.3.4b The staff Device Catalog is removed too
 
 Checked before agreeing: `device_types`, `device_instances`, `device_profiles`
