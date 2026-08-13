@@ -12,10 +12,11 @@ import {
 } from '@/lib/energy-shift/contracts';
 import type { EmpiricalEnergyDevice } from '../EmpiricalDeviceModelsCard';
 import {
-  Area, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Area, Line,
 } from 'recharts';
 import { COLORS, DEVICE_COLORS, type ActualSeriesKey, type EmpiricalDeviceSlotMatrix } from './types';
-import { SeriesToggleLegend, useSeriesVisibility } from './ui';
+import { SeriesToggleLegend } from './ui';
+import EnergyPowerChart from './EnergyPowerChart';
 
 const ActualPerformance: React.FC<{
   actuals: ActualEnergySlot[];
@@ -51,7 +52,7 @@ const ActualPerformance: React.FC<{
       actualByDeviceAndStart.get(`${device.id}:${slot.start_ts}`) ?? null,
     ])),
   })), [actualByDeviceAndStart, actuals, controllableDevices]);
-  const ticks = data.filter((_, index) => index % 12 === 0).map(value => value.i);
+  const ticks = data.filter((_, index) => index % 24 === 0).map(value => value.i);
   const series = [
     { key: 'load' as const, label: t('Faktisk last', 'Actual load'), color: COLORS.actual },
     { key: 'pv' as const, label: t('Faktisk sol', 'Actual PV'), color: COLORS.pv },
@@ -76,7 +77,10 @@ const ActualPerformance: React.FC<{
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="text-base">{t('Uppmätt prestanda — senaste 72 timmarna', 'Measured performance — last 72 hours')}</CardTitle>
+        <CardTitle className="text-lg">{t('Uppmätt prestanda — senaste 72 timmarna', 'Measured performance — last 72 hours')}</CardTitle>
+        <p className="text-sm text-muted-foreground">
+          {t('Samma 15-minuterslayout och kW-axel som planen ovan.', 'The same 15-minute layout and kW axis as the plan above.')}
+        </p>
       </CardHeader>
       <CardContent>
         {data.length === 0 ? (
@@ -85,26 +89,23 @@ const ActualPerformance: React.FC<{
           </p>
         ) : (
           <>
-            <ResponsiveContainer width="100%" height={230}>
-              <ComposedChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-muted" vertical={false} />
-                <XAxis dataKey="i" type="number" domain={[0, data.length - 1]} ticks={ticks} tickFormatter={index => data[index]?.label ?? ''} tick={{ fontSize: 11 }} interval={0} />
-                <YAxis tick={{ fontSize: 11 }} tickFormatter={watts => `${(Number(watts) / 1_000).toFixed(0)}`} label={{ value: 'kW', angle: -90, position: 'insideLeft', fontSize: 11 }} />
-                {series.map(item => !hidden.has(item.key) && (
-                  <Line
-                    key={item.key}
-                    type="stepAfter"
-                    dataKey={'dataKey' in item ? item.dataKey : item.key}
-                    name={item.label}
-                    stroke={item.color}
-                    strokeWidth={item.key === 'load' || item.key === 'pv' ? 2 : 1.5}
-                    dot={false}
-                    connectNulls={false}
-                  />
-                ))}
-                <Tooltip labelFormatter={index => data[index as number]?.label ?? ''} formatter={(value, name) => [`${(Number(value) / 1_000).toFixed(2)} kW`, name]} />
-              </ComposedChart>
-            </ResponsiveContainer>
+            <EnergyPowerChart data={data} ticks={ticks}>
+              {!hidden.has('load') && (
+                <Area yAxisId="power" type="stepAfter" dataKey="load" name={series[0].label} stroke={COLORS.actual} fill={COLORS.actual} fillOpacity={0.22} strokeWidth={1.5} dot={false} connectNulls={false} />
+              )}
+              {!hidden.has('pv') && (
+                <Area yAxisId="power" type="stepAfter" dataKey="pv" name={series[1].label} stroke={COLORS.pv} fill={COLORS.pv} fillOpacity={0.14} strokeWidth={1.5} dot={false} connectNulls={false} />
+              )}
+              {controllableDevices.map((device, index) => {
+                const item = series[6 + index];
+                return !hidden.has(item.key) && (
+                  <Area key={item.key} yAxisId="power" type="stepAfter" dataKey={`device${index}`} name={item.label} stroke={item.color} fill={item.color} fillOpacity={0.16} strokeWidth={1} dot={false} connectNulls={false} />
+                );
+              })}
+              {series.slice(2, 6).map(item => !hidden.has(item.key) && (
+                <Line key={item.key} yAxisId="power" type="stepAfter" dataKey={item.key} name={item.label} stroke={item.color} strokeWidth={1.5} dot={false} connectNulls={false} />
+              ))}
+            </EnergyPowerChart>
             <SeriesToggleLegend
               series={series}
               hidden={hidden}

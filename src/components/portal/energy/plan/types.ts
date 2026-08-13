@@ -112,12 +112,11 @@ export const COLORS = {
 
 export type PlanViewMode = 'planned' | 'unplanned';
 /**
- * The plan is now split across top-level tabs rather than an internal segmented
- * control. `plan` carries the headline numbers and data-source health; the
- * other four are one chart each, so each can grow its own tab-specific tools
- * without competing for room inside a single view.
+ * The optimisation workspace uses top-level tabs. `plan` contains the headline
+ * numbers, live schedule, and measured performance; `devices` owns empirical
+ * Home Assistant models; the remaining sections each own a focused chart.
  */
-export type PlanSection = 'plan' | 'power' | 'thermal' | 'economics' | 'storage';
+export type PlanSection = 'plan' | 'devices' | 'thermal' | 'economics' | 'storage';
 export type PlanChartSeriesKey =
   | 'pv'
   | 'base'
@@ -167,4 +166,3 @@ export type ActualSeriesKey =
   | 'batteryCharge'
   | 'batteryDischarge'
   | `device:${string}`;
-

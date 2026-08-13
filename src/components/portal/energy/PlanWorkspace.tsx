@@ -1,18 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import {
-  Area,
-  CartesianGrid,
-  ComposedChart,
-  Line,
-  ReferenceArea,
-  ReferenceLine,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
-import { AlertTriangle, CheckCircle2, Clock3, Loader2, Sparkles } from 'lucide-react';
+import { AlertTriangle, Loader2, Sparkles } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -20,40 +8,21 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
 import {
-  effectiveControlType,
-  effectivePlanningRole,
   isOptimisationPlan,
   type ActualEnergySlot,
-  type OptimisationPlanV5,
-  type PortalOptimisationPlan,
   type ThermalFixtureSeason,
 } from '@/lib/energy-shift/contracts';
 import { createWebsiteDemoActuals, createWebsiteDemoPlan } from '@/lib/energy-shift/demo';
-import { comparePlans, formatSigned } from '@/lib/energy-shift/plan-comparison';
+import { formatSigned } from '@/lib/energy-shift/plan-comparison';
 import {
-  foldDevicePowerIntoBase,
-  reconcilePlanDeviceRoles,
-} from '@/lib/energy-shift/plan-device-roles';
-import {
-  assessThermalReadiness,
-  THERMAL_TRAINING_SLOTS,
   type ThermalObservationSummary,
-  type ThermalReadinessState,
   type ThermalZoneModelSummary,
 } from '@/lib/energy-shift/thermal-readiness';
 import {
-  COLORS,
-  DEVICE_COLORS,
   EMPTY_THERMAL_OBSERVATIONS,
   type CurrentRow,
   type EmpiricalDeviceSlotMatrix,
   type HomeAssistantConnection,
-  type PlanChartSeries,
-  type PlanChartSeriesKey,
-  type PlanViewMode,
-  type EconomicsSeriesKey,
-  type StorageSeriesKey,
-  type ThermalSeriesKey,
   type ZoneModelRow,
   type ThermalSlotRow,
   summariseThermalSlots,
@@ -64,9 +33,6 @@ import {
   DeltaKpi,
   EmptyState,
   Kpi,
-  SeriesToggleLegend,
-  SourceRow,
-  useSeriesVisibility,
 } from './plan/ui';
 import ActualPerformance from './plan/ActualPerformance';
 import { usePlanModel } from './plan/usePlanModel';
@@ -256,7 +222,28 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
   const activeConnection = connections.find(connection => connection.home_id === homeId);
 
   let content: React.ReactNode;
-  if (view === 'demo') {
+  if (section === 'devices') {
+    if (!homeId) {
+      content = <EmptyState text={t('Välj ett hem för att visa enhetsmodeller.', 'Select a home to view its device models.')} />;
+    } else if (loading && empiricalDevices.length === 0) {
+      content = <div className="flex items-center gap-2 py-12 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t('Laddar enhetsmodeller…', 'Loading device models…')}</div>;
+    } else if (error && empiricalDevices.length === 0) {
+      content = (
+        <Alert variant="destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>{t('Kunde inte läsa enhetsmodellerna', 'Could not load device models')}</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      );
+    } else {
+      content = (
+        <EmpiricalDeviceModelsCard
+          devices={empiricalDevices}
+          onChanged={() => load(true)}
+        />
+      );
+    }
+  } else if (view === 'demo') {
     content = (
       <PlanView
         section={section}
@@ -333,7 +320,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
             </p>
           </CardContent>
         </Card>
-        <ActualPerformance actuals={actuals} devices={empiricalDevices} deviceActuals={deviceActuals} />
+        {section === 'plan' && <ActualPerformance actuals={actuals} devices={empiricalDevices} deviceActuals={deviceActuals} />}
       </div>
     );
   } else {
@@ -364,16 +351,18 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end gap-2">
-        <Button size="sm" variant={view === 'live' ? 'default' : 'outline'} onClick={() => setView('live')}>
-          {t('Mitt hem', 'My home')}
-        </Button>
-        <Button size="sm" variant={view === 'demo' ? 'default' : 'outline'} onClick={() => setView('demo')}>
-          <Sparkles className="mr-2 h-4 w-4" />
-          {t('Exempel', 'Example')}
-        </Button>
-      </div>
-      {view === 'demo' && (
+      {section !== 'devices' && (
+        <div className="flex justify-end gap-2">
+          <Button size="sm" variant={view === 'live' ? 'default' : 'outline'} onClick={() => setView('live')}>
+            {t('Mitt hem', 'My home')}
+          </Button>
+          <Button size="sm" variant={view === 'demo' ? 'default' : 'outline'} onClick={() => setView('demo')}>
+            <Sparkles className="mr-2 h-4 w-4" />
+            {t('Exempel', 'Example')}
+          </Button>
+        </div>
+      )}
+      {section !== 'devices' && view === 'demo' && (
         <div className="flex flex-wrap justify-end gap-1" role="group" aria-label={t('Demoperiod', 'Demo season')}>
           {([
             ['winter', t('Vinter', 'Winter')],
@@ -395,12 +384,6 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
         </div>
       )}
       {content}
-      {view === 'live' && customerId && homeId && (
-        <EmpiricalDeviceModelsCard
-          devices={empiricalDevices}
-          onChanged={() => load(true)}
-        />
-      )}
     </div>
   );
 };
@@ -549,10 +532,10 @@ const PlanView: React.FC<{
             <Kpi label={t('Nettokostnad', 'Net cost')} value={`${active.summary.net_cost_sek.toFixed(2)} SEK`} detail={t('endast publicerade priser', 'published prices only')} />
             <Kpi label={t('Terminaljusterad', 'Terminal-adjusted')} value={`${active.summary.terminal_adjusted_cost_sek.toFixed(2)} SEK`} detail={t('värderar kvarvarande batteri', 'values remaining battery')} />
           </div>
+          <PowerSection model={model} />
           </>
           )}
 
-          {section === 'power' && <PowerSection model={model} />}
           {section === 'thermal' && (
             <ThermalSection
               model={model}
@@ -570,54 +553,6 @@ const PlanView: React.FC<{
       <ActualPerformance actuals={actuals} devices={empiricalDevices} deviceActuals={deviceActuals} />
       )}
 
-      {section === 'plan' && (
-      <Card>
-        <CardHeader className="pb-3"><CardTitle className="text-base">{t('Datakällor och kvalitet', 'Data sources and quality')}</CardTitle></CardHeader>
-        <CardContent className="space-y-3 text-sm">
-          {Object.entries(plan.sources).map(([key, source]) => source ? (
-            <SourceRow key={key} name={key.replace('_', ' ')} source={source} />
-          ) : (
-            <div key={key} className="grid grid-cols-1 gap-x-4 md:grid-cols-[140px_180px_1fr]">
-              <div className="font-medium capitalize">{key.replace('_', ' ')}</div>
-              <div>{t('Inte installerad', 'Not installed')}</div>
-            </div>
-          ))}
-          <div className="border-t pt-3">
-            <div className="font-medium">{t('Verifierade modellindata', 'Verified model inputs')}</div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              {plan.battery ? <>{t('Batteri', 'Battery')} {plan.battery.capacity_kwh.toFixed(2)} kWh · SOC {pct(plan.battery.soc)} · {t('ladda/urladda', 'charge/discharge')} {(plan.battery.charge_max_w / 1_000).toFixed(1)}/{(plan.battery.discharge_max_w / 1_000).toFixed(1)} kW · η {(plan.battery.charge_efficiency * 100).toFixed(0)}/{(plan.battery.discharge_efficiency * 100).toFixed(0)}% · </> : null}
-              {t('Nätgräns in/ut', 'Grid limit in/out')} {(plan.grid.import_limit_w / 1_000).toFixed(1)}/{(plan.grid.export_limit_w / 1_000).toFixed(1)} kW
-            </div>
-            {plan.ev_battery && (
-              <div className="mt-1 text-xs text-muted-foreground">
-                {plan.ev_battery.name} · SOC {pct(plan.ev_battery.soc)} → {pct(plan.ev_battery.departure_target_soc)} · {plan.ev_battery.capacity_kwh.toFixed(2)} kWh · η {(plan.ev_battery.charge_efficiency * 100).toFixed(0)}% · {t('prioritet', 'priority')} {plan.ev_battery.priority} ({t('1 är högst', '1 is highest')}) · {plan.ev_battery.connected ? t('ansluten', 'connected') : t('inte ansluten', 'not connected')}
-              </div>
-            )}
-            {plan.services.length > 0 && (
-              <div className="mt-2 space-y-1 text-xs text-muted-foreground">
-                {plan.services.map(service => {
-                  const sampleKey = service.device === 'boiler' ? 'hot_water' : service.device === 'pool' ? 'pool_heating' : 'ev_charging';
-                  const samples = plan.service_requirement_sample_days[sampleKey];
-                  const minimumRunMinutes = 'min_run_slots' in service ? service.min_run_slots * 15 : 0;
-                  return (
-                    <div key={service.id}>
-                      {service.id}: {service.required_kwh.toFixed(2)} kWh · {service.control.type === 'fixed_power'
-                        ? `${(service.control.power_w / 1_000).toFixed(1)} kW · ${t('minsta körning', 'minimum run')} ${minimumRunMinutes} min`
-                        : service.control.type === 'discrete_current'
-                          ? `${service.control.min_current_a}–${service.control.max_current_a} A (${service.control.current_step_a} A ${t('steg', 'steps')}, ${service.control.phase_count}×${service.control.voltage_v} V) · ${t('minsta körning', 'minimum run')} ${minimumRunMinutes} min`
-                          : `${t('empirisk förväntan', 'empirical expectation')} · ${(service.control.rated_power_w / 1_000).toFixed(1)} kW ${t('märkeffekt', 'rated')} · ${t('högst avstängd', 'maximum inhibit')} ${service.control.max_consecutive_inhibit_slots * 15} min`} · {t('prioritet', 'priority')} {service.priority} · {t('fönster slutar', 'window ends')} {new Date(service.deadline).toLocaleString()}{samples != null ? ` · n=${samples} ${service.control.type === 'duty_cycle' ? t('kvartsvärden', 'quarter samples') : t('aktiva dagar', 'active days')}` : ''}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-          <div className="border-t pt-3 text-xs text-muted-foreground">
-            {t('Home Assistant behåller rådata. Webbplatsen får högst 96 aggregerade rader per dygn och hem, en aktuell plan som skrivs över varje timme och små körsammanfattningar. Kvartsdata rensas efter 120 dagar och körhistorik efter 30 dagar.', 'Home Assistant retains raw samples. The website receives at most 96 aggregated rows per day and home, one current plan overwritten hourly, and small run summaries. Quarter-hour data is pruned after 120 days and run history after 30 days.')}
-          </div>
-        </CardContent>
-      </Card>
-      )}
     </div>
   );
 };

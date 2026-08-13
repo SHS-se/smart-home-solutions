@@ -22,8 +22,8 @@ type EnergyTab = 'roi' | PlanSection;
  * planner path reads. Home profile answers are edited at /portal/home-profile
  * and the live tariff at Settings → Energy Tariff.
  *
- * The plan's four dimensions are top-level tabs rather than a control inside
- * one view, so each can grow its own tools.
+ * The live power schedule belongs to Plan. Device classification has its own
+ * workspace because it changes how future plans are built.
  */
 const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustomerId, isStaffView = false }) => {
   const { isStaff, customerData } = useAuth();
@@ -71,7 +71,7 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
   const tabs: Array<{ key: EnergyTab; label: string }> = [
     { key: 'roi', label: t('Lönsamhet', 'ROI') },
     { key: 'plan', label: t('Plan', 'Plan') },
-    { key: 'power', label: t('Effekt', 'Power') },
+    { key: 'devices', label: t('Enheter', 'Devices') },
     { key: 'thermal', label: t('Termik', 'Thermal') },
     { key: 'economics', label: t('Ekonomi', 'Economics') },
     { key: 'storage', label: t('Lagring', 'Storage') },

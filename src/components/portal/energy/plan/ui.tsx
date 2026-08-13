@@ -6,7 +6,6 @@ import React, { useCallback, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { useLanguage } from '@/contexts/LanguageContext';
-import type { OptimisationPlanV5 } from '@/lib/energy-shift/contracts';
 
 export const useSeriesVisibility = <T extends string>() => {
   const [hidden, setHidden] = useState<Set<T>>(() => new Set());
@@ -20,26 +19,6 @@ export const useSeriesVisibility = <T extends string>() => {
   }, []);
   return { hidden, toggle, visible: (key: T) => !hidden.has(key) };
 };
-
-export const SourceRow: React.FC<{
-  name: string;
-  source: NonNullable<OptimisationPlanV5['sources'][keyof OptimisationPlanV5['sources']]>;
-}> = ({ name, source }) => (
-  <div className="grid grid-cols-1 gap-x-4 gap-y-0.5 md:grid-cols-[140px_180px_1fr]">
-    <div className="font-medium capitalize">{name}</div>
-    <div>{source.provider} · {source.quality}</div>
-    <div className="text-xs text-muted-foreground">
-      {source.entity_ids.join(', ')} · valid {new Date(source.valid_until).toLocaleString()}
-      {source.sample_count != null ? ` · n=${source.sample_count}` : ''}
-      {source.mape_percent != null ? ` · MAPE ${source.mape_percent.toFixed(1)}%` : ''}
-      {source.bias_percent != null ? ` · bias ${source.bias_percent.toFixed(1)}%` : ''}
-      {source.location?.market_area ? ` · ${source.location.market_area}` : ''}
-      {source.location?.latitude != null && source.location?.longitude != null
-        ? ` · ${source.location.latitude.toFixed(3)}, ${source.location.longitude.toFixed(3)}`
-        : ''}
-    </div>
-  </div>
-);
 
 export const Kpi: React.FC<{ label: string; value: string; detail: string; tone?: 'good' | 'bad' }> = ({ label, value, detail, tone }) => (
   <div className="rounded-lg border p-3">
