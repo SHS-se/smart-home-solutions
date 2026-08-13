@@ -517,11 +517,27 @@ Two implementation notes worth keeping:
   chart, and the thermal readiness panel now lives on `Thermal` where it
   belongs. Validation errors show on every section because they always matter.
 
-What remains internal work: `PlanWorkspace.tsx` is still one large file. The
-derived-state computation (`chartData`, `economicsData`, `thermalData`, series
-definitions) should move to a `usePlanModel` hook with one thin component per
-section. That is a mechanical refactor with no user-visible change and is
-deliberately not bundled with this one.
+**Done in a follow-up commit.** `PlanWorkspace.tsx` went 1,467 → 627 lines:
+
+| File | Holds |
+|---|---|
+| `plan/types.ts` | shared types, colours, thermal helpers |
+| `plan/ui.tsx` | `Kpi`, `DeltaKpi`, `SeriesToggleLegend`, `SourceRow`, `EmptyState` |
+| `plan/usePlanModel.ts` | every value the sections derive from one plan row |
+| `plan/ThermalReadinessPanel.tsx` | per-zone model readiness |
+| `plan/ActualPerformance.tsx` | plan-versus-actual reporting |
+| `plan/sections/*Section.tsx` | one component per chart tab |
+
+Series *visibility* deliberately stayed out of the model hook: it is per-section
+UI state, so it lives in the section that owns the chart and toggling a series
+on Power no longer re-renders Storage. Each section destructures only the model
+fields it uses.
+
+Because the app cannot be run from the agent sandbox, equivalence was checked
+mechanically: whitespace-normalised diffs of the moved JSX and the derived-state
+body against the previous commit are character-identical, the only deliberate
+edit being an explicit `'good' | 'bad' | undefined` annotation on `costTone`,
+which returning it through an object literal would otherwise widen to `string`.
 
 #### 1.3.6 ROI is rebuilt on the planner
 
