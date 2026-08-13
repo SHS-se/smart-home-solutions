@@ -1,24 +1,36 @@
 // The live power chart shown in the Plan workspace.
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   Area, Line, ReferenceArea,
 } from 'recharts';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { COLORS } from '../types';
-import { SeriesToggleLegend, useSeriesVisibility } from '../ui';
+import {
+  attributeEnergy,
+  type SupplySlotInput,
+} from '@/lib/energy-shift/energy-attribution';
+import { COLORS, WINDOW_SLOTS_PER_DAY, type WindowDays } from '../types';
+import { SeriesToggleLegend, useSeriesVisibility, WindowDaysToggle } from '../ui';
 import type { PlanModel } from '../usePlanModel';
 import type { PlanChartSeriesKey } from '../types';
+import DeviceEnergyTable from '../DeviceEnergyTable';
 import EnergyPowerChart from '../EnergyPowerChart';
 
-const PowerSection: React.FC<{ model: PlanModel }> = ({ model }) => {
+/** A quarter of average power in watts is that many watt-hours over four. */
+const QUARTER_W_TO_KWH = 4_000;
+
+const PowerSection: React.FC<{
+  model: PlanModel;
+  windowDays: WindowDays;
+  onWindowDaysChange: (value: WindowDays) => void;
+}> = ({ model, windowDays, onWindowDaysChange }) => {
   const { t } = useLanguage();
   const powerVisibility = useSeriesVisibility<PlanChartSeriesKey>();
   const {
     plan,
+    active,
     chartData,
     bindingIndex,
-    ticks,
     hasPv,
     seriesByKey,
     deviceSeries,
@@ -29,10 +41,53 @@ const PowerSection: React.FC<{ model: PlanModel }> = ({ model }) => {
     deviceRoleView,
   } = model;
 
+  const slotLimit = windowDays * WINDOW_SLOTS_PER_DAY;
+  const windowed = useMemo(() => chartData.slice(0, slotLimit), [chartData, slotLimit]);
+  const ticks = useMemo(
+    () => windowed
+      .filter(row => {
+        const start = new Date(row.start);
+        return start.getMinutes() === 0 && start.getHours() % (windowDays === 1 ? 3 : 6) === 0;
+      })
+      .map(row => row.i),
+    [windowDays, windowed],
+  );
+
+  // The plan prices its own slots, so the forward table needs no price archive.
+  const attribution = useMemo(() => {
+    const models = deviceRoleView.visibleModels;
+    const slots: SupplySlotInput[] = active.slots.slice(0, slotLimit).map(slot => ({
+      start: slot.start,
+      loadKwh: slot.load_w / QUARTER_W_TO_KWH,
+      solarKwh: slot.pv_w / QUARTER_W_TO_KWH,
+      gridImportKwh: slot.grid_import_w / QUARTER_W_TO_KWH,
+      gridExportKwh: slot.grid_export_w / QUARTER_W_TO_KWH,
+      batteryChargeKwh: slot.battery_charge_w / QUARTER_W_TO_KWH,
+      batteryDischargeKwh: slot.battery_discharge_w / QUARTER_W_TO_KWH,
+      deviceKwh: Object.fromEntries(models.map(entry => [
+        entry.key,
+        (slot.device_loads_w[entry.key] ?? 0) / QUARTER_W_TO_KWH,
+      ])),
+      importPriceSekPerKwh: slot.import_price_sek_per_kwh,
+      exportPriceSekPerKwh: slot.export_price_sek_per_kwh,
+    }));
+    return attributeEnergy(
+      slots,
+      new Map(models.map(entry => [entry.key, entry.name])),
+      {
+        baseLoad: t('Baslast — allt övrigt', 'Base load — everything else'),
+        batteryCharging: t('Batteriladdning', 'Battery charging'),
+      },
+    );
+  }, [active.slots, deviceRoleView.visibleModels, slotLimit, t]);
+
   return (
     <>
-      <EnergyPowerChart data={chartData} ticks={ticks}>
-        {bindingIndex < chartData.length && <ReferenceArea yAxisId="power" x1={bindingIndex} x2={chartData.length - 1} fill="currentColor" className="text-muted" fillOpacity={0.24} />}
+      <div className="mb-2 flex justify-end">
+        <WindowDaysToggle value={windowDays} onChange={onWindowDaysChange} />
+      </div>
+      <EnergyPowerChart data={windowed} ticks={ticks}>
+        {bindingIndex < windowed.length && <ReferenceArea yAxisId="power" x1={bindingIndex} x2={windowed.length - 1} fill="currentColor" className="text-muted" fillOpacity={0.24} />}
         {hasPv && powerVisibility.visible('pv') && <Area yAxisId="power" type="monotone" dataKey="pv" name={seriesByKey.pv.label} stroke={COLORS.pv} fill={COLORS.pv} fillOpacity={0.14} dot={false} />}
         {powerVisibility.visible('base') && <Area yAxisId="power" type="stepAfter" dataKey="base" stackId="load" name={seriesByKey.base.label} fill={COLORS.base} strokeWidth={0} />}
         {showBoilerAggregate && powerVisibility.visible('boiler') && <Area yAxisId="power" type="stepAfter" dataKey="boiler" stackId="load" name={seriesByKey.boiler.label} fill={COLORS.boiler} strokeWidth={0} />}
@@ -57,6 +112,18 @@ const PowerSection: React.FC<{ model: PlanModel }> = ({ model }) => {
           'The changed device role is shown immediately; schedule and cost calculations update with the next Home Assistant plan.',
         )}`}
       </p>
+      <div className="mt-6">
+        <h3 className="text-sm font-medium">
+          {t('Planerad förbrukning per enhet', 'Planned consumption by device')}
+        </h3>
+        <p className="mb-2 text-xs text-muted-foreground">
+          {t(
+            `Nästa ${windowDays * 24} timmar enligt ${plan.plans.priority === active ? 'Med plan' : 'Utan plan'}, största förbrukaren först.`,
+            `The next ${windowDays * 24} hours under ${plan.plans.priority === active ? 'With plan' : 'Without plan'}, largest consumer first.`,
+          )}
+        </p>
+        <DeviceEnergyTable result={attribution} />
+      </div>
     </>
   );
 };

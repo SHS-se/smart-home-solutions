@@ -2403,6 +2403,64 @@ export type Database = {
           },
         ]
       }
+      energy_optimisation_price_slots: {
+        Row: {
+          customer_id: string
+          device_token_id: string | null
+          export_price_sek_per_kwh: number
+          home_id: string
+          id: string
+          import_price_sek_per_kwh: number
+          received_at: string
+          source: string
+          start_ts: string
+        }
+        Insert: {
+          customer_id: string
+          device_token_id?: string | null
+          export_price_sek_per_kwh: number
+          home_id: string
+          id?: string
+          import_price_sek_per_kwh: number
+          received_at?: string
+          source: string
+          start_ts: string
+        }
+        Update: {
+          customer_id?: string
+          device_token_id?: string | null
+          export_price_sek_per_kwh?: number
+          home_id?: string
+          id?: string
+          import_price_sek_per_kwh?: number
+          received_at?: string
+          source?: string
+          start_ts?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "energy_optimisation_price_slots_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_optimisation_price_slots_home_id_fkey"
+            columns: ["home_id"]
+            isOneToOne: false
+            referencedRelation: "homes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_optimisation_price_slots_device_token_id_fkey"
+            columns: ["device_token_id"]
+            isOneToOne: false
+            referencedRelation: "ha_device_tokens"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       energy_weather_datasets: {
         Row: {
           created_at: string

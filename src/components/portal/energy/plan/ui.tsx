@@ -4,8 +4,10 @@
 
 import React, { useCallback, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { WINDOW_DAY_OPTIONS, type WindowDays } from './types';
 
 export const useSeriesVisibility = <T extends string>() => {
   const [hidden, setHidden] = useState<Set<T>>(() => new Set());
@@ -86,3 +88,30 @@ export const SeriesToggleLegend = <Key extends string,>({ series, hidden, onTogg
 export const EmptyState: React.FC<{ text: string }> = ({ text }) => (
   <Card><CardContent className="py-10 text-sm text-muted-foreground">{text}</CardContent></Card>
 );
+
+/**
+ * How many days of the window to draw. Shared by the plan and history tabs so
+ * the two charts stay comparable at a glance, which is the whole point of them
+ * keeping the same 15-minute layout and kW axis.
+ */
+export const WindowDaysToggle: React.FC<{
+  value: WindowDays;
+  onChange: (value: WindowDays) => void;
+}> = ({ value, onChange }) => {
+  const { t } = useLanguage();
+  return (
+    <div className="flex gap-1" role="group" aria-label={t('Period', 'Period')}>
+      {WINDOW_DAY_OPTIONS.map(days => (
+        <Button
+          key={days}
+          size="sm"
+          variant={value === days ? 'secondary' : 'ghost'}
+          aria-pressed={value === days}
+          onClick={() => onChange(days)}
+        >
+          {days} {days === 1 ? t('dag', 'day') : t('dagar', 'days')}
+        </Button>
+      ))}
+    </div>
+  );
+};

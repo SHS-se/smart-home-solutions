@@ -1,6 +1,9 @@
-// Plan-versus-actual reporting. Lives on the Plan tab.
+// The measured power chart. Lives on the History tab.
 //
-// Moved verbatim out of the former LoadShiftTab on 2026-08-13.
+// Moved verbatim out of the former LoadShiftTab on 2026-08-13, then moved again
+// from the Plan tab to History later the same day
+// (ENERGY_OPTIMISATION_ARCHITECTURE.md §1.3.7). The caller now slices the
+// window, so this component draws whatever it is given.
 
 import React, { useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,7 +17,13 @@ import type { EmpiricalEnergyDevice } from '../EmpiricalDeviceModelsCard';
 import {
   Area, Line,
 } from 'recharts';
-import { COLORS, DEVICE_COLORS, type ActualSeriesKey, type EmpiricalDeviceSlotMatrix } from './types';
+import {
+  COLORS,
+  DEVICE_COLORS,
+  type ActualSeriesKey,
+  type EmpiricalDeviceSlotMatrix,
+  type WindowDays,
+} from './types';
 import { SeriesToggleLegend } from './ui';
 import EnergyPowerChart from './EnergyPowerChart';
 
@@ -22,7 +31,8 @@ const ActualPerformance: React.FC<{
   actuals: ActualEnergySlot[];
   devices: EmpiricalEnergyDevice[];
   deviceActuals: EmpiricalDeviceSlotMatrix[];
-}> = ({ actuals, devices, deviceActuals }) => {
+  windowDays: WindowDays;
+}> = ({ actuals, devices, deviceActuals, windowDays }) => {
   const { t } = useLanguage();
   const [hidden, setHidden] = useState<Set<ActualSeriesKey>>(() => new Set());
   const controllableDevices = useMemo(
@@ -52,7 +62,10 @@ const ActualPerformance: React.FC<{
       actualByDeviceAndStart.get(`${device.id}:${slot.start_ts}`) ?? null,
     ])),
   })), [actualByDeviceAndStart, actuals, controllableDevices]);
-  const ticks = data.filter((_, index) => index % 24 === 0).map(value => value.i);
+  // A tick every six hours on one day, every twelve on three, so the axis stays
+  // legible as the window grows.
+  const tickEvery = windowDays === 1 ? 24 : windowDays * 24;
+  const ticks = data.filter((_, index) => index % tickEvery === 0).map(value => value.i);
   const series = [
     { key: 'load' as const, label: t('Faktisk last', 'Actual load'), color: COLORS.actual },
     { key: 'pv' as const, label: t('Faktisk sol', 'Actual PV'), color: COLORS.pv },
@@ -77,7 +90,12 @@ const ActualPerformance: React.FC<{
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="text-lg">{t('Uppmätt prestanda — senaste 72 timmarna', 'Measured performance — last 72 hours')}</CardTitle>
+        <CardTitle className="text-lg">
+          {t(
+            `Uppmätt prestanda — senaste ${windowDays * 24} timmarna`,
+            `Measured performance — last ${windowDays * 24} hours`,
+          )}
+        </CardTitle>
         <p className="text-sm text-muted-foreground">
           {t('Samma 15-minuterslayout och kW-axel som planen ovan.', 'The same 15-minute layout and kW axis as the plan above.')}
         </p>

@@ -22,8 +22,11 @@ type EnergyTab = 'roi' | PlanSection;
  * planner path reads. Home profile answers are edited at /portal/home-profile
  * and the live tariff at Settings → Energy Tariff.
  *
- * The live power schedule belongs to Plan. Device classification has its own
- * workspace because it changes how future plans are built.
+ * The live power schedule belongs to Plan. Measured performance and what it
+ * cost belong to History (ENERGY_OPTIMISATION_ARCHITECTURE.md §1.3.7); the two
+ * charts shared the Plan tab until 2026-08-13 and were competing for it. Device
+ * classification has its own workspace because it changes how future plans are
+ * built.
  */
 const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustomerId, isStaffView = false }) => {
   const { isStaff, customerData } = useAuth();
@@ -71,6 +74,7 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
   const tabs: Array<{ key: EnergyTab; label: string }> = [
     { key: 'roi', label: t('Lönsamhet', 'ROI') },
     { key: 'plan', label: t('Plan', 'Plan') },
+    { key: 'history', label: t('Historik', 'History') },
     { key: 'devices', label: t('Enheter', 'Devices') },
     { key: 'thermal', label: t('Termik', 'Thermal') },
     { key: 'economics', label: t('Ekonomi', 'Economics') },

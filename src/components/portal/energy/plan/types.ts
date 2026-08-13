@@ -113,10 +113,26 @@ export const COLORS = {
 export type PlanViewMode = 'planned' | 'unplanned';
 /**
  * The optimisation workspace uses top-level tabs. `plan` contains the headline
- * numbers, live schedule, and measured performance; `devices` owns empirical
- * Home Assistant models; the remaining sections each own a focused chart.
+ * numbers and the live schedule; `history` owns measured performance and what
+ * it cost; `devices` owns empirical Home Assistant models; the remaining
+ * sections each own a focused chart.
  */
-export type PlanSection = 'plan' | 'devices' | 'thermal' | 'economics' | 'storage';
+export type PlanSection = 'plan' | 'history' | 'devices' | 'thermal' | 'economics' | 'storage';
+
+/**
+ * How much of the window either chart draws. Both tabs fetch the full 72 hours
+ * once and slice locally, so changing this never costs a round trip
+ * (ENERGY_OPTIMISATION_ARCHITECTURE.md §1.3.7).
+ */
+export type WindowDays = 1 | 2 | 3;
+export const WINDOW_DAY_OPTIONS: WindowDays[] = [1, 2, 3];
+export const WINDOW_SLOTS_PER_DAY = 96;
+
+export interface PriceSlotRow {
+  start_ts: string;
+  import_price_sek_per_kwh: number;
+  export_price_sek_per_kwh: number;
+}
 export type PlanChartSeriesKey =
   | 'pv'
   | 'base'

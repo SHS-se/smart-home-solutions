@@ -649,6 +649,145 @@ Investment and subscription remain manual inputs, now labelled as example
 values rather than presented as if sourced. Pulling them from an accepted quote
 is separate work.
 
+#### 1.3.7 Measured history becomes its own tab, and gets a price (2026-08-13)
+
+Decided with Phil on 2026-08-13. The Plan tab carried two charts: the forward
+plan and `ActualPerformance`'s trailing 72 hours. They are separated, both get a
+1/2/3-day window control, and both gain a per-device table underneath. The
+history tab gains window summary cards (grid import, grid export, cost, house
+consumption, solar production).
+
+##### 1.3.7.1 The portal has no historical price, and could not derive one honestly
+
+Everything below follows from one gap. The website stores measured energy and
+nothing else:
+
+| Store | Holds | Covers |
+|---|---|---|
+| `energy_optimisation_actual_slots` | kWh per quarter, per category | past, 120-day retention |
+| `energy_optimisation_device_slots` | kWh per quarter, per device | past, 120-day retention |
+| `energy_optimisation_current.plan` | priced slots | **now → +72 h only** |
+| `energy_optimisation_plan_runs` | `summary` jsonb, no slots | past, 30 days |
+
+The plan's prices never overlap the history window, and the plan runs keep no
+slot array, so no stored row anywhere prices a past quarter.
+
+Recomputing one in the portal was rejected. The price the planner optimises
+against is **all-in** — supplier spot × the effective-dated supplier terms,
+plus grid transfer, plus energy tax, plus VAT (`coordinator.py:2141`, summing
+`supplier_import` and `grid["import_price_sek_per_kwh"]`). The supplier half is
+already shared TypeScript (`_shared/energy-supplier-pricing.ts`), but the grid
+half exists only as Python in `tariff.py:_transfer_rate`/`_energy_tax_rate`.
+Reimplementing it in TypeScript would create a second pricing implementation
+free to drift from the one that actually spent the customer's money, and the
+history tab exists precisely to audit that spending. **One price implementation,
+and it is the integration's.**
+
+##### 1.3.7.2 Home Assistant sends the price; a new archive stores it
+
+The integration already holds both halves for any timestamp, past or future:
+`integration-prices` accepts `from`/`to` and serves historical spot up to 62 days
+per request, and grid tariffs are effective-dated and published ahead, so
+`current_grid_prices(catalog, when)` resolves a past quarter exactly rather than
+predicting it. So the integration sends the number it used.
+
+- New table **`energy_optimisation_price_slots`** — `(home_id, start_ts)` unique,
+  all-in import and export price, `source`, 120-day pruning alongside the other
+  quarter tables.
+- New optional **`price_slots`** array on the ingest payload.
+
+Prices are a separate array rather than two more columns on `actual_slots`, for
+three reasons: a price exists for future quarters that have no actuals; the
+ingest deliberately refuses actuals older than 8 days to keep the recorder
+watermark honest, and a backfill needs a far wider window; and a published price
+is a property of a quarter for the home, not of a measurement of it.
+
+**The ingest also archives the snapshot's own priced slots** (`source =
+'snapshot'`). The snapshot already carries the same all-in numbers for its
+horizon, so this costs nothing, and it means the archive starts filling from the
+moment the website deploys rather than waiting on a HACS release. Both writers
+produce the same figure by construction — the snapshot's prices *are* the
+integration's — so the upsert lets either win and only records which arrived
+last.
+
+##### 1.3.7.3 Backfill is an integration action
+
+Phil is tuning the planner and needs to check historical figures now, so the
+archive filling forward is not sufficient. `shs_energy.backfill_prices` walks a
+requested window, pairs historical supplier prices with the tariff catalogue
+quarter by quarter, and pushes them in chunks. It reuses the machinery the
+supplier daily-cost backfill already has for 61-day chunked historical fetches
+(`coordinator.py:987`).
+
+##### 1.3.7.4 Only grid energy costs money
+
+Solar and battery energy are priced at zero. Panel and cell degradation are real
+costs and are deliberately out of scope; the tables say so rather than implying
+self-consumption is free in an accounting sense.
+
+Each quarter is decomposed into where the load's energy came from, before any
+device sees it. Exported energy is assumed to be solar before it is battery, and
+battery charging is assumed to take surplus solar before it takes grid:
+
+```
+solarToExport  = min(S, E)
+solarToBattery = min(S − solarToExport, Bc)
+gridToBattery  = Bc − solarToBattery
+solarToLoad    = S − solarToExport − solarToBattery
+batteryToLoad  = Bd
+gridToLoad     = G − gridToBattery
+```
+
+Every device in the quarter then takes a share `e_d / L` of each of
+`gridToLoad`, `solarToLoad` and `batteryToLoad`, and is charged
+`grid_d × import_price` for that quarter. Four energy columns — **Grid, Solar,
+Battery, Total** — plus SEK, sorted by Total descending.
+
+Two rows exist so the columns reconcile against the bill rather than
+approximately resembling it:
+
+- **Base load — everything else**, `L − Σ e_d`. Without it the table would omit
+  every unmetered device and quietly understate the house.
+- **Battery charging**, carrying `gridToBattery` and `solarToBattery`. Grid
+  energy that charged the battery is real grid energy on a real invoice; with no
+  row to hold it the Grid column would sum to less than the metered import and
+  the cost column to less than the bill.
+
+With both rows the Grid column sums to `G` and the cost column to
+`Σ G × import_price`, exactly.
+
+**The meter balance residual is shown, not smoothed.** `total_load_kwh` is
+derived from the category balance when it is not measured directly
+(`coordinator.py:_actual_quarters`), in which case
+`gridToLoad + solarToLoad + batteryToLoad = L` identically and the residual is
+zero. Where the load is separately metered the two can disagree. That difference
+is reported as its own figure rather than scaled away across the devices: this
+tab is a debugging surface for the planner, and a scaling factor hiding a broken
+category mapping is the exact failure §1.3.1 was written about.
+
+##### 1.3.7.5 A randomised test caught surplus solar being billed as consumption
+
+The fixed unit cases all passed. A property test over 2,000 randomised quarters
+did not, and the defect it found is one those cases could not reach.
+
+`total_load_kwh` is derived as `max(0, G + S + Bd − Bc − E)`. When solar exceeds
+everything the house consumed, stored and exported — curtailment, or a load
+meter reading low — that `max` clamps and the balance identity stops holding
+from *above*: the sources exceed the load. The first implementation still
+handed every device its share of all three source terms, so each one was
+credited with solar that never reached it, and the solar column inflated. Over
+the randomised window this came to **358 kWh of fictitious consumption**.
+
+The supply terms are now capped at the reported load, and **only solar and
+battery give way**. The grid term must survive intact, because
+`grid column = metered import` is the one identity that has to match an invoice.
+Whatever is held back is reported as unmatched supply rather than discarded
+silently — on this tab that number is a symptom worth reading, not noise.
+
+Two properties are now pinned by test across the randomised window: the grid
+column totals the metered import, and the cost column totals
+`Σ import × price`. Both to within 0.05 kWh and 0.05 SEK over 2,000 quarters.
+
 ## 2. Terms
 
 - **Baseline controller:** the normal local schedule, thermostat, occupancy, and

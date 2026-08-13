@@ -23,6 +23,8 @@ import {
   type CurrentRow,
   type EmpiricalDeviceSlotMatrix,
   type HomeAssistantConnection,
+  type PriceSlotRow,
+  type WindowDays,
   type ZoneModelRow,
   type ThermalSlotRow,
   summariseThermalSlots,
@@ -34,8 +36,8 @@ import {
   EmptyState,
   Kpi,
 } from './plan/ui';
-import ActualPerformance from './plan/ActualPerformance';
 import { usePlanModel } from './plan/usePlanModel';
+import HistorySection from './plan/sections/HistorySection';
 import PowerSection from './plan/sections/PowerSection';
 import ThermalSection from './plan/sections/ThermalSection';
 import EconomicsSection from './plan/sections/EconomicsSection';
@@ -58,6 +60,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
   const { t } = useLanguage();
   const [current, setCurrent] = useState<CurrentRow | null>(null);
   const [actuals, setActuals] = useState<ActualEnergySlot[]>([]);
+  const [prices, setPrices] = useState<PriceSlotRow[]>([]);
   const [empiricalDevices, setEmpiricalDevices] = useState<EmpiricalEnergyDevice[]>([]);
   const [deviceActuals, setDeviceActuals] = useState<EmpiricalDeviceSlotMatrix[]>([]);
   const [thermalObservations, setThermalObservations] = useState<ThermalObservationSummary>(
@@ -68,6 +71,9 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<'live' | 'demo'>('live');
+  // Both charts always load the full 72 hours and slice locally, so this is
+  // presentation state and never triggers a refetch.
+  const [windowDays, setWindowDays] = useState<WindowDays>(1);
   const [demoSeason, setDemoSeason] = useState<ThermalFixtureSeason>('winter');
   const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
   const [clock, setClock] = useState(Date.now());
@@ -76,6 +82,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
     if (!customerId || !homeId) {
       setCurrent(null);
       setActuals([]);
+      setPrices([]);
       setEmpiricalDevices([]);
       setDeviceActuals([]);
       setThermalObservations(EMPTY_THERMAL_OBSERVATIONS);
@@ -92,6 +99,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
       const [
         planResult,
         actualResult,
+        priceResult,
         connectionResult,
         deviceResult,
         deviceActualResult,
@@ -107,6 +115,18 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
         supabase
           .from('energy_optimisation_actual_slots')
           .select('start_ts, total_load_kwh, solar_production_kwh, grid_import_kwh, grid_export_kwh, battery_charge_kwh, battery_discharge_kwh')
+          .eq('customer_id', customerId)
+          .eq('home_id', homeId)
+          .gte('start_ts', from)
+          .lt('start_ts', to)
+          .order('start_ts'),
+        // The only historical price the portal has: Home Assistant sends the
+        // all-in figure the planner used, because reproducing the grid transfer
+        // and energy tax here would be a second pricing implementation free to
+        // drift (ENERGY_OPTIMISATION_ARCHITECTURE.md §1.3.7.1).
+        supabase
+          .from('energy_optimisation_price_slots')
+          .select('start_ts, import_price_sek_per_kwh, export_price_sek_per_kwh')
           .eq('customer_id', customerId)
           .eq('home_id', homeId)
           .gte('start_ts', from)
@@ -149,6 +169,10 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
       if (planError) throw planError;
       const { data: actualRows, error: actualError } = actualResult;
       if (actualError) throw actualError;
+      // A price gap must not blank the measured chart: the history tab still
+      // reports energy and marks the unpriced quarters.
+      const { data: priceRows, error: priceError } = priceResult;
+      if (priceError) console.warn('[ENERGY] price slots unavailable', priceError);
       const { data: connectionRows, error: connectionError } = connectionResult;
       if (connectionError) throw connectionError;
       const { data: deviceRows, error: deviceError } = deviceResult;
@@ -156,6 +180,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
       const { data: deviceActualRows, error: deviceActualError } = deviceActualResult;
       if (deviceActualError) throw deviceActualError;
       setActuals(actualRows ?? []);
+      setPrices(priceError ? [] : ((priceRows ?? []) as PriceSlotRow[]));
       setEmpiricalDevices((deviceRows ?? []) as EmpiricalEnergyDevice[]);
       const deviceKeyById = new Map(
         (deviceRows ?? []).map(row => [row.id as string, row.device_key as string]),
@@ -222,7 +247,27 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
   const activeConnection = connections.find(connection => connection.home_id === homeId);
 
   let content: React.ReactNode;
-  if (section === 'devices') {
+  if (section === 'history') {
+    // History describes what the meters recorded, so it is readable with no
+    // plan at all — a home that has never produced one still has a bill.
+    const isDemo = view === 'demo';
+    if (!homeId && !isDemo) {
+      content = <EmptyState text={t('Välj ett hem för att visa historiken.', 'Select a home to view its history.')} />;
+    } else if (loading && actuals.length === 0 && !isDemo) {
+      content = <div className="flex items-center gap-2 py-12 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t('Laddar historik…', 'Loading history…')}</div>;
+    } else {
+      content = (
+        <HistorySection
+          actuals={isDemo ? demoActuals : actuals}
+          devices={isDemo ? [] : empiricalDevices}
+          deviceActuals={isDemo ? [] : deviceActuals}
+          prices={isDemo ? [] : prices}
+          windowDays={windowDays}
+          onWindowDaysChange={setWindowDays}
+        />
+      );
+    }
+  } else if (section === 'devices') {
     if (!homeId) {
       content = <EmptyState text={t('Välj ett hem för att visa enhetsmodeller.', 'Select a home to view its device models.')} />;
     } else if (loading && empiricalDevices.length === 0) {
@@ -252,9 +297,10 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
         empiricalDevices={[]}
         thermalObservations={EMPTY_THERMAL_OBSERVATIONS}
         zoneModels={[]}
-        deviceActuals={[]}
         stale={false}
         isDemo
+        windowDays={windowDays}
+        onWindowDaysChange={setWindowDays}
       />
     );
   } else if (!homeId) {
@@ -320,7 +366,6 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
             </p>
           </CardContent>
         </Card>
-        {section === 'plan' && <ActualPerformance actuals={actuals} devices={empiricalDevices} deviceActuals={deviceActuals} />}
       </div>
     );
   } else {
@@ -340,10 +385,11 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
           empiricalDevices={empiricalDevices}
           thermalObservations={thermalObservations}
           zoneModels={zoneModels}
-          deviceActuals={deviceActuals}
           stale={clock > Date.parse(current.plan.valid_until)}
           isDemo={false}
           lastCheckedAt={lastCheckedAt}
+          windowDays={windowDays}
+          onWindowDaysChange={setWindowDays}
         />
       </div>
     );
@@ -395,21 +441,23 @@ const PlanView: React.FC<{
   empiricalDevices: EmpiricalEnergyDevice[];
   thermalObservations: ThermalObservationSummary;
   zoneModels: ThermalZoneModelSummary[];
-  deviceActuals: EmpiricalDeviceSlotMatrix[];
   stale: boolean;
   isDemo: boolean;
   lastCheckedAt?: number | null;
+  windowDays: WindowDays;
+  onWindowDaysChange: (value: WindowDays) => void;
 }> = ({
   section,
   current,
   actuals,
   empiricalDevices,
-  deviceActuals,
   thermalObservations,
   zoneModels,
   stale,
   isDemo,
   lastCheckedAt,
+  windowDays,
+  onWindowDaysChange,
 }) => {
   const { t } = useLanguage();
   const model = usePlanModel(current, empiricalDevices, stale);
@@ -532,7 +580,11 @@ const PlanView: React.FC<{
             <Kpi label={t('Nettokostnad', 'Net cost')} value={`${active.summary.net_cost_sek.toFixed(2)} SEK`} detail={t('endast publicerade priser', 'published prices only')} />
             <Kpi label={t('Terminaljusterad', 'Terminal-adjusted')} value={`${active.summary.terminal_adjusted_cost_sek.toFixed(2)} SEK`} detail={t('värderar kvarvarande batteri', 'values remaining battery')} />
           </div>
-          <PowerSection model={model} />
+          <PowerSection
+            model={model}
+            windowDays={windowDays}
+            onWindowDaysChange={onWindowDaysChange}
+          />
           </>
           )}
 
@@ -548,11 +600,6 @@ const PlanView: React.FC<{
           {section === 'storage' && <StorageSection model={model} />}
         </CardContent>
       </Card>
-
-      {section === 'plan' && (
-      <ActualPerformance actuals={actuals} devices={empiricalDevices} deviceActuals={deviceActuals} />
-      )}
-
     </div>
   );
 };

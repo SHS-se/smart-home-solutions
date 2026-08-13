@@ -33,8 +33,16 @@ const corsHeaders = {
 
 const MAX_ACTUAL_SLOTS_PER_PUSH = 288;
 const MAX_THERMAL_SLOTS_PER_PUSH = 288;
+// A price row is four numbers, so a backfill sweeping weeks of history costs
+// far less per slot than an actual does. The cap is what keeps one push inside
+// MAX_REQUEST_BYTES, not a statement about how much history is reasonable.
+const MAX_PRICE_SLOTS_PER_PUSH = 2_880;
 const MAX_DEVICES_PER_PUSH = 100;
 const MAX_QUARTER_KWH = 100;
+// No published Swedish tariff reaches this. The bound rejects a unit error —
+// öre sent as SEK, say — while leaving the negative spot prices that genuinely
+// occur alone.
+const MAX_PRICE_SEK_PER_KWH = 100;
 const MAX_REQUEST_BYTES = 2_000_000;
 const SLOT_MS = 15 * 60_000;
 const ACTUAL_AGGREGATION = "sum_of_recorder_5minute_changes";
@@ -73,6 +81,18 @@ interface IncomingActualSlot {
   battery_discharge_kwh?: number | null;
   device_energy_kwh?: Record<string, number>;
   quality?: Record<string, unknown>;
+}
+
+/**
+ * All-in marginal price for one quarter (ENERGY_OPTIMISATION_ARCHITECTURE.md
+ * §1.3.7.2). Separate from the actual slot because a price exists for future
+ * quarters that have no measurement, and because a backfill reaches far further
+ * back than the eight days the actual-slot watermark allows.
+ */
+interface IncomingPriceSlot {
+  start: string;
+  import_price_sek_per_kwh: number;
+  export_price_sek_per_kwh: number;
 }
 
 interface IncomingDevice {
@@ -323,6 +343,7 @@ serve(async (req) => {
     }
 
     let actuals: IncomingActualSlot[] = [];
+    let prices: IncomingPriceSlot[] = [];
     let devices: IncomingDevice[] = [];
     let thermals: IncomingThermalSlot[] = [];
     let snapshot: OptimisationSnapshotV5 | null = null;
@@ -356,7 +377,11 @@ serve(async (req) => {
       ) {
         throw new Error("thermal_slots");
       }
+      if (body.price_slots !== undefined && !Array.isArray(body.price_slots)) {
+        throw new Error("price_slots");
+      }
       actuals = body.actual_slots ?? [];
+      prices = body.price_slots ?? [];
       devices = body.devices ?? [];
       thermals = body.thermal_slots ?? [];
       snapshot = body.snapshot ?? null;
@@ -365,7 +390,7 @@ serve(async (req) => {
     }
     if (
       actuals.length === 0 && snapshot === null && devices.length === 0 &&
-      thermals.length === 0
+      thermals.length === 0 && prices.length === 0
     ) {
       return json({ error: "empty_body" }, 400);
     }
@@ -374,6 +399,9 @@ serve(async (req) => {
     }
     if (actuals.length > MAX_ACTUAL_SLOTS_PER_PUSH) {
       return json({ error: "too_many_actual_slots" }, 400);
+    }
+    if (prices.length > MAX_PRICE_SLOTS_PER_PUSH) {
+      return json({ error: "too_many_price_slots" }, 400);
     }
     if (devices.length > MAX_DEVICES_PER_PUSH) {
       return json({ error: "too_many_devices" }, 400);
@@ -645,6 +673,99 @@ serve(async (req) => {
       }
     }
 
+    // Prices carry no watermark and no recorder dependency: they are published
+    // figures the integration looked up, so a backfill may reach back to the
+    // retention horizon and forward across the whole plan horizon.
+    const earliestPriceStart = latestCompleteStart - 120 * 24 * 60 * 60_000;
+    const latestPriceStart = latestCompleteStart + 8 * 24 * 60 * 60_000;
+    const priceRows: Record<string, unknown>[] = [];
+    const pricedStarts = new Set<number>();
+    for (const [index, price] of prices.entries()) {
+      const start = Date.parse(String(price?.start ?? ""));
+      if (
+        !Number.isFinite(start) || start % SLOT_MS !== 0 ||
+        start < earliestPriceStart || start > latestPriceStart
+      ) {
+        return json({
+          error: "invalid_price_start",
+          detail: `price_slots[${index}]`,
+        }, 400);
+      }
+      if (pricedStarts.has(start)) {
+        return json(
+          { error: "duplicate_price_start", detail: price.start },
+          400,
+        );
+      }
+      pricedStarts.add(start);
+      const values = [
+        price.import_price_sek_per_kwh,
+        price.export_price_sek_per_kwh,
+      ];
+      if (
+        values.some((value) =>
+          typeof value !== "number" || !Number.isFinite(value) ||
+          Math.abs(value) > MAX_PRICE_SEK_PER_KWH
+        )
+      ) {
+        return json({
+          error: "invalid_price",
+          detail: `price_slots[${index}]`,
+        }, 400);
+      }
+      priceRows.push({
+        customer_id: auth.customerId,
+        home_id: auth.homeId,
+        start_ts: new Date(start).toISOString(),
+        import_price_sek_per_kwh: round(price.import_price_sek_per_kwh),
+        export_price_sek_per_kwh: round(price.export_price_sek_per_kwh),
+        source: "integration",
+        device_token_id: auth.tokenId,
+      });
+    }
+
+    // The snapshot already priced its own horizon with the same all-in figure,
+    // so harvesting it costs one pass over an array we were sent anyway. It
+    // means the archive starts filling the moment this function deploys, rather
+    // than waiting on an integration release. An explicit price_slots entry for
+    // the same quarter takes precedence only because it is written second.
+    if (snapshot) {
+      for (const slot of snapshot.slots ?? []) {
+        const start = Date.parse(String(slot?.start ?? ""));
+        const importPrice = slot?.import_price_sek_per_kwh;
+        const exportPrice = slot?.export_price_sek_per_kwh;
+        if (
+          !Number.isFinite(start) || start % SLOT_MS !== 0 ||
+          start < earliestPriceStart || start > latestPriceStart ||
+          pricedStarts.has(start) ||
+          typeof importPrice !== "number" || !Number.isFinite(importPrice) ||
+          typeof exportPrice !== "number" || !Number.isFinite(exportPrice) ||
+          Math.abs(importPrice) > MAX_PRICE_SEK_PER_KWH ||
+          Math.abs(exportPrice) > MAX_PRICE_SEK_PER_KWH
+        ) continue;
+        pricedStarts.add(start);
+        priceRows.push({
+          customer_id: auth.customerId,
+          home_id: auth.homeId,
+          start_ts: new Date(start).toISOString(),
+          import_price_sek_per_kwh: round(importPrice),
+          export_price_sek_per_kwh: round(exportPrice),
+          source: "snapshot",
+          device_token_id: auth.tokenId,
+        });
+      }
+    }
+
+    if (priceRows.length > 0) {
+      const { error } = await supabase
+        .from("energy_optimisation_price_slots")
+        .upsert(priceRows, { onConflict: "home_id,start_ts" });
+      if (error) {
+        console.error("[ENERGY-OPTIMISATION] price upsert failed", error);
+        return json({ error: "storage_failed" }, 500);
+      }
+    }
+
     // Thermal observations arrive on their own window: a zone sensor can
     // settle after its energy meter, so a quarter already accepted
     // electrically may only now become describable thermally.
@@ -897,6 +1018,7 @@ serve(async (req) => {
         : null,
       thermal_slots_accepted: thermalRows.length,
       thermal_slots_accepted_until: thermalAcceptedUntil,
+      price_slots_accepted: priceRows.length,
       plan: generated,
       device_configuration: storedDevices.map((device) => ({
         key: device.key,
