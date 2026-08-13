@@ -8,7 +8,22 @@
  * verified before it may be published as `ready`.
  */
 
+import {
+  buildPriceOutlook,
+  type PriceShape,
+} from "./energy-price-shape.ts";
+
 export const OPTIMISATION_SCHEMA_VERSION = 5;
+// NOT yet bumped for the §1.4 objective change, deliberately. The integration
+// checks this string for equality (`optimisation.py:682`) and refuses any plan
+// that does not match, so bumping here before every installation has the
+// tolerant build would stop live control until each one updated through HACS —
+// and CI deploys this on push while HACS updates by hand.
+//
+// Sequence: ship the integration build that accepts v6 and v7, confirm it is
+// installed, then bump to `shadow-price-planner-v7`. Until then v6 plans carry
+// v7 behaviour, which the ROI page cannot distinguish; that is a smaller cost
+// than a home whose planner has gone silent.
 export const OPTIMISATION_MODEL_VERSION = "battery-export-planner-v6";
 export const SLOT_MINUTES = 15;
 export const SLOT_HOURS = SLOT_MINUTES / 60;
@@ -339,7 +354,27 @@ interface PreparedSlot extends ForecastSlotInput {
   pv_w: number;
   uncontrolled_device_w: number;
   binding: boolean;
+  /**
+   * What a kWh is worth here, in SEK: the published price where the market has
+   * set one, and the measured shape prior where it has not
+   * (ENERGY_OPTIMISATION_ARCHITECTURE.md §1.4.2). Nord Pool publishes day-ahead
+   * against a 72-hour horizon, so two thirds of every plan depends on this.
+   */
+  shadow_import_sek_per_kwh: number;
+  shadow_export_sek_per_kwh: number;
 }
+
+/**
+ * Weight on the convex peak term, in SEK per kW of slot draw squared.
+ *
+ * The grid tariff has no demand charge today and Phil expects an equivalent to
+ * return, so this is deliberately small: enough to break a tie toward a flat
+ * draw, not enough to outweigh a real price difference (§1.4.4). Convexity is
+ * what makes spreading win — the previous objective was linear in power, so
+ * four quarters at 2 kW and one at 8 kW scored identically. When a demand
+ * charge returns this becomes its actual rate.
+ */
+const PEAK_WEIGHT_SEK_PER_KW2 = 0.004;
 
 interface Schedule {
   pool: number[];
@@ -909,12 +944,33 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV5): string[] {
   return [...new Set(errors)];
 }
 
-function preparedSlots(snapshot: OptimisationSnapshotV5): PreparedSlot[] {
+function preparedSlots(
+  snapshot: OptimisationSnapshotV5,
+  shape: PriceShape | null = null,
+): PreparedSlot[] {
   const captured = isoMs(snapshot.captured_at);
   const controlledCategories = new Set<string>();
   if (snapshot.capabilities.boiler) controlledCategories.add("hot_water");
   if (snapshot.capabilities.pool) controlledCategories.add("pool_heating");
   if (snapshot.capabilities.ev) controlledCategories.add("ev_charging");
+  const outlook = buildPriceOutlook(snapshot.slots, shape, snapshot.timezone);
+  // Export is not shaped separately: the archive stores an import price, and
+  // the spread between them is a supplier and tariff construct rather than
+  // something the market shape says anything about. Holding the observed ratio
+  // is a weaker claim than inventing a second curve.
+  const publishedRatios = snapshot.slots
+    .filter((slot) =>
+      slot.import_price_sek_per_kwh !== null &&
+      slot.export_price_sek_per_kwh !== null &&
+      slot.import_price_sek_per_kwh !== 0
+    )
+    .map((slot) =>
+      slot.export_price_sek_per_kwh! / slot.import_price_sek_per_kwh!
+    );
+  const exportRatio = publishedRatios.length > 0
+    ? publishedRatios.reduce((total, value) => total + value, 0) /
+      publishedRatios.length
+    : 0;
   let priceGapSeen = false;
   return snapshot.slots.map((slot, index) => {
     const epoch = isoMs(slot.start);
@@ -945,6 +1001,9 @@ function preparedSlots(snapshot: OptimisationSnapshotV5): PreparedSlot[] {
         0,
       ),
       binding,
+      shadow_import_sek_per_kwh: outlook.shadowImportSekPerKwh[index],
+      shadow_export_sek_per_kwh: slot.export_price_sek_per_kwh ??
+        outlook.shadowImportSekPerKwh[index] * exportRatio,
     };
   });
 }
@@ -1076,19 +1135,87 @@ function serviceCost(
     );
     const solarW = Math.min(powerW, remainingSolar);
     const gridW = powerW - solarW;
-    if (slot.binding) {
-      total += (solarW / 1_000) * SLOT_HOURS *
-        slot.export_price_sek_per_kwh!;
-      total += (gridW / 1_000) * SLOT_HOURS *
-        slot.import_price_sek_per_kwh!;
-    } else {
-      total += gridW / 100;
-    }
+    // One objective across the whole horizon, in SEK. Published price where the
+    // market set one, measured shape prior where it did not, so the day-ahead
+    // boundary is no longer a discontinuity the planner can arbitrage.
+    total += (solarW / 1_000) * SLOT_HOURS * slot.shadow_export_sek_per_kwh;
+    total += (gridW / 1_000) * SLOT_HOURS * slot.shadow_import_sek_per_kwh;
+    total += peakPenalty(slot, gridW, occupiedW[index], reservedW[index]);
     if (key === "priority" && reservedW[index] > 0 && powerW > 0) {
       total += 1_000_000;
     }
     return total;
   }, 0);
+}
+
+/**
+ * What it will cost to put an exported kWh back, in SEK.
+ *
+ * Zero when the remaining horizon forecasts more surplus PV than the battery
+ * can absorb — that energy would otherwise be exported or curtailed, so selling
+ * it now costs nothing to replace. Otherwise the cheapest shadow import price
+ * still ahead, grossed up by the round trip, because that is what refilling
+ * actually takes.
+ *
+ * This is the comparison a fixed `battery_export_min_price_sek_per_kwh` cannot
+ * make: the same 2 SEK spike is a good trade before a sunny day and a poor one
+ * before a dark, expensive week (§1.4.5).
+ */
+function replacementCostSekPerKwh(
+  slots: PreparedSlot[],
+  snapshot: OptimisationSnapshotV5,
+  fromIndex: number,
+): number {
+  const battery = snapshot.battery;
+  if (!battery) return Number.POSITIVE_INFINITY;
+  const remaining = slots.slice(fromIndex + 1);
+  if (remaining.length === 0) return Number.POSITIVE_INFINITY;
+
+  const surplusKwh = remaining.reduce((total, slot) => {
+    const surplusW = slot.pv_w - fixedLoadW(slot);
+    return total + (surplusW > 0 ? (surplusW / 1_000) * SLOT_HOURS : 0);
+  }, 0);
+  const headroomKwh = Math.max(
+    0,
+    (battery.max_soc - battery.min_soc) * battery.capacity_kwh,
+  );
+  if (surplusKwh >= headroomKwh) return 0;
+
+  const roundTrip = Math.max(
+    0.05,
+    battery.charge_efficiency * battery.discharge_efficiency,
+  );
+  const cheapest = remaining.reduce(
+    (lowest, slot) => Math.min(lowest, slot.shadow_import_sek_per_kwh),
+    Number.POSITIVE_INFINITY,
+  );
+  return Number.isFinite(cheapest)
+    ? cheapest / roundTrip
+    : Number.POSITIVE_INFINITY;
+}
+
+/**
+ * Convex penalty on grid draw, so a load spreads rather than stacking.
+ *
+ * Charged on the *marginal* increase in the square of total grid power, which
+ * is what makes adding to an already-heavy slot cost more than adding to an
+ * empty one. A linear term — the whole of the old unpriced objective — cannot
+ * express that, because moving a kW between slots leaves the total unchanged.
+ */
+function peakPenalty(
+  slot: PreparedSlot,
+  addedGridW: number,
+  occupiedW: number,
+  reservedW: number,
+): number {
+  if (addedGridW <= 0) return 0;
+  const existingGridKw = Math.max(
+    0,
+    fixedLoadW(slot) + occupiedW + reservedW - Math.max(0, slot.pv_w),
+  ) / 1_000;
+  const addedKw = addedGridW / 1_000;
+  return PEAK_WEIGHT_SEK_PER_KW2 *
+    ((existingGridKw + addedKw) ** 2 - existingGridKw ** 2);
 }
 
 function discreteCurrentCandidate(
@@ -1145,12 +1272,11 @@ function discreteCurrentCandidate(
       const solarAfter = Math.min(powers[offset] + deltaW, availableSolar);
       const solarW = solarAfter - solarBefore;
       const gridW = deltaW - solarW;
-      const score = slots[index].binding
-        ? solarW / 1_000 * SLOT_HOURS *
-            slots[index].export_price_sek_per_kwh! +
-          gridW / 1_000 * SLOT_HOURS *
-            slots[index].import_price_sek_per_kwh!
-        : gridW / 100;
+      const score = solarW / 1_000 * SLOT_HOURS *
+          slots[index].shadow_export_sek_per_kwh +
+        gridW / 1_000 * SLOT_HOURS *
+          slots[index].shadow_import_sek_per_kwh +
+        peakPenalty(slots[index], gridW, occupiedW[index], reservedW[index]);
       return [{
         offset,
         score: score +
@@ -1685,10 +1811,21 @@ function simulate(
     let gridExportW = 0;
     let curtailedW = 0;
     let unservedW = 0;
+    // Export when the spike beats what refilling will cost, not when it clears
+    // a fixed number (§1.4.5). The static threshold survives as a hard floor
+    // beneath the comparison: a trade that beats a cheap tomorrow can still be
+    // a bad trade outright. Still requires a published price — exporting the
+    // battery on a guess is not a trade worth making.
+    const replacementCost = replacementCostSekPerKwh(
+      slots,
+      snapshot,
+      slot.index,
+    );
     const deliberateExport = key !== "baseline" &&
       snapshot.policy.battery_export_enabled === true && slot.binding &&
       slot.export_price_sek_per_kwh! >=
-        snapshot.policy.battery_export_min_price_sek_per_kwh;
+        snapshot.policy.battery_export_min_price_sek_per_kwh &&
+      slot.export_price_sek_per_kwh! > replacementCost;
     const exportFloor = Math.max(
       battery.min_soc,
       floor ?? battery.min_soc,
@@ -2039,6 +2176,13 @@ function buildPlan(
 export function generateOptimisationPlan(
   snapshot: OptimisationSnapshotV5,
   now = new Date(),
+  /**
+   * Measured price shape for this home, or null when the archive is too thin.
+   * Optional so every existing caller and contract test keeps working: with no
+   * shape the tail prices flat at the published level, which still prefers
+   * solar and a flat draw, just without time preference (§1.4.3).
+   */
+  priceShape: PriceShape | null = null,
 ): OptimisationPlanV5 {
   const validationErrors = validateSnapshot(snapshot);
   const snapshotAge = now.getTime() - isoMs(snapshot.captured_at);
@@ -2051,7 +2195,7 @@ export function generateOptimisationPlan(
   if (validationErrors.length > 0) {
     throw new Error(validationErrors.join("; "));
   }
-  const slots = preparedSlots(snapshot);
+  const slots = preparedSlots(snapshot, priceShape);
   const { reservedW, protectedSoc } = batteryReservation(slots, snapshot);
   const baseline = buildPlan(
     "baseline",

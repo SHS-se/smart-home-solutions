@@ -140,6 +140,55 @@ const input = (
   };
 };
 
+Deno.test("the unpriced tail prefers the hours the shape says are cheap", () => {
+  // Before §1.4 every unpriced slot scored `gridW / 100`, so 03:00 and 18:00
+  // were indistinguishable and a deferrable load landed on the tie-break.
+  const base = input();
+  const shape = {
+    byDayType: {
+      weekday: Array.from({ length: 96 }, (_, quarter) =>
+        // Expensive 06:00-09:00, cheap otherwise.
+        quarter >= 24 && quarter < 36 ? 3 : 0.5),
+      weekend: Array.from({ length: 96 }, () => 1),
+    },
+    coverageDays: { weekday: 30, weekend: 30 },
+    sampleCount: 30 * 96,
+  };
+  const snapshot = input({
+    slots: base.slots.map((slot, index) => ({
+      ...slot,
+      pv_forecast_w: 0,
+      // Only the first slot is published, so the level is set and everything
+      // after it is priced by the shape.
+      import_price_sek_per_kwh: index === 0 ? 1 : null,
+      export_price_sek_per_kwh: index === 0 ? 0.1 : null,
+    })),
+  });
+
+  const prepared = generateOptimisationPlan(
+    snapshot,
+    new Date("2026-08-10T07:55:00Z"),
+    shape,
+  );
+  const expensive = prepared.plans.priority.slots.filter((slot) => {
+    const hour = new Date(slot.start).getUTCHours();
+    return hour >= 4 && hour < 7; // 06:00-09:00 Stockholm in summer
+  });
+  const cheap = prepared.plans.priority.slots.filter((slot) => {
+    const hour = new Date(slot.start).getUTCHours();
+    return hour >= 22 || hour < 3;
+  });
+  const mean = (slots: typeof expensive) =>
+    slots.reduce((total, slot) => total + slot.grid_import_w, 0) /
+    Math.max(1, slots.length);
+  assert(
+    mean(cheap) >= mean(expensive),
+    `the shape should push load out of the expensive band: cheap ${
+      mean(cheap).toFixed(0)
+    } W vs expensive ${mean(expensive).toFixed(0)} W`,
+  );
+});
+
 Deno.test("all scenarios use equal discrete contiguous service workloads", () => {
   const result = generateOptimisationPlan(
     input(),
@@ -593,7 +642,11 @@ Deno.test("high-price battery export respects the configured SOC reserve", () =>
     slots: base.slots.map((slot, index) => ({
       ...slot,
       pv_forecast_w: 0,
-      import_price_sek_per_kwh: index < 20 ? 3 : null,
+      // A spike, then cheap energy to refill from. Export is only worth making
+      // when it beats the cost of putting the kWh back (§1.4.5), so the window
+      // has to be followed by something cheaper or the planner is right to
+      // refuse it — see the companion test below.
+      import_price_sek_per_kwh: index < 20 ? (index < 6 ? 3 : 0.5) : null,
       export_price_sek_per_kwh: index < 20
         ? index === 4 || index === 5 ? 2.6 : 1
         : null,
@@ -636,6 +689,101 @@ Deno.test("high-price battery export respects the configured SOC reserve", () =>
   assert(
     planned.summary.net_cost_sek < baseline.summary.net_cost_sek,
     "high-price export did not improve the priced plan",
+  );
+});
+
+Deno.test("export is refused when refilling costs more than the spike pays", () => {
+  // Same shape as the test above, but nothing cheap follows the spike. Selling
+  // at 2.6 to buy back at 3 / round-trip loses money on every kWh, and a fixed
+  // battery_export_min_price threshold cannot see that (§1.4.5).
+  const base = input();
+  const snapshot = input({
+    capabilities: {
+      pv: false,
+      battery: true,
+      pool: false,
+      boiler: false,
+      ev: false,
+    },
+    battery: {
+      ...base.battery!,
+      soc: 1,
+      charge_max_w: 0,
+      discharge_max_w: 4_000,
+    },
+    sources: { ...base.sources, pv: null },
+    pv_calibration: {
+      correction_factor_by_lead_day: [1, 1, 1, 1],
+      sample_count_by_lead_day: [0, 0, 0, 0],
+    },
+    slots: base.slots.map((slot, index) => ({
+      ...slot,
+      pv_forecast_w: 0,
+      import_price_sek_per_kwh: index < 20 ? 3 : null,
+      export_price_sek_per_kwh: index < 20
+        ? index === 4 || index === 5 ? 2.6 : 1
+        : null,
+    })),
+    policy: {
+      ...base.policy,
+      battery_end_of_solar_target_soc: 0.05,
+      battery_target_is_hard: false,
+      battery_export_enabled: true,
+      battery_export_reserve_soc: 0.8,
+      // Low enough that the old fixed threshold would have exported.
+      battery_export_min_price_sek_per_kwh: 2.5,
+    },
+    device_models: [],
+    services: [],
+    service_requirement_sample_days: {},
+  });
+
+  const planned = generateOptimisationPlan(
+    snapshot,
+    new Date("2026-08-10T07:55:00Z"),
+  ).plans.priority;
+  assert(
+    planned.slots.every((slot) => slot.battery_export_w === 0),
+    "sold stored energy below the cost of replacing it",
+  );
+});
+
+Deno.test("surplus solar makes stored energy free to replace", () => {
+  // The mirror case: the same unprofitable-looking spike becomes worth taking
+  // when tomorrow's forecast will refill the battery anyway, because that
+  // energy would otherwise have been exported or curtailed regardless.
+  const base = input();
+  const snapshot = input({
+    battery: { ...base.battery!, soc: 1, charge_max_w: 0, discharge_max_w: 4_000 },
+    slots: base.slots.map((slot, index) => ({
+      ...slot,
+      // Far more surplus than the battery can hold, later in the horizon.
+      pv_forecast_w: index > 30 ? 20_000 : 0,
+      import_price_sek_per_kwh: index < 20 ? 3 : null,
+      export_price_sek_per_kwh: index < 20
+        ? index === 4 || index === 5 ? 2.6 : 1
+        : null,
+    })),
+    policy: {
+      ...base.policy,
+      battery_end_of_solar_target_soc: 0.05,
+      battery_target_is_hard: false,
+      battery_export_enabled: true,
+      battery_export_reserve_soc: 0.8,
+      battery_export_min_price_sek_per_kwh: 2.5,
+    },
+    device_models: [],
+    services: [],
+    service_requirement_sample_days: {},
+  });
+
+  const planned = generateOptimisationPlan(
+    snapshot,
+    new Date("2026-08-10T07:55:00Z"),
+  ).plans.priority;
+  assert(
+    planned.slots.some((slot) => slot.battery_export_w > 0),
+    "refused a spike the sun was going to refill for free",
   );
 });
 

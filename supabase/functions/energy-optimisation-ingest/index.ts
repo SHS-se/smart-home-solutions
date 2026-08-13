@@ -16,6 +16,10 @@ import {
   type OptimisationSnapshotV5,
 } from "../_shared/energy-optimisation.ts";
 import {
+  buildPriceShape,
+  type PriceShape,
+} from "../_shared/energy-price-shape.ts";
+import {
   buildThermalProjection,
   fitZones,
   type ProjectionZoneInput,
@@ -43,6 +47,10 @@ const MAX_QUARTER_KWH = 100;
 // öre sent as SEK, say — while leaving the negative spot prices that genuinely
 // occur alone.
 const MAX_PRICE_SEK_PER_KWH = 100;
+// How much archive the price shape is fitted over. Long enough to average out
+// weather and single-day spikes, short enough that a tariff or supplier change
+// works its way out within a season.
+const PRICE_SHAPE_WINDOW_DAYS = 60;
 const MAX_REQUEST_BYTES = 2_000_000;
 const SLOT_MS = 15 * 60_000;
 const ACTUAL_AGGREGATION = "sum_of_recorder_5minute_changes";
@@ -926,8 +934,29 @@ serve(async (req) => {
           };
         }),
       };
+      // The measured price shape for this home, from the archive §1.3.7 added.
+      // Two thirds of the horizon is beyond the day-ahead window, and without
+      // this those slots price flat and the planner has no reason to prefer one
+      // hour over another (§1.4.3). A read failure is not fatal: no shape means
+      // a flat tail, which is the behaviour before this existed.
+      let priceShape: PriceShape | null = null;
+      const shapeFrom = new Date(
+        Date.now() - PRICE_SHAPE_WINDOW_DAYS * 86_400_000,
+      ).toISOString();
+      const { data: shapeRows, error: shapeError } = await supabase
+        .from("energy_optimisation_price_slots")
+        .select("start_ts, import_price_sek_per_kwh")
+        .eq("home_id", auth.homeId)
+        .gte("start_ts", shapeFrom)
+        .order("start_ts");
+      if (shapeError) {
+        console.error("[ENERGY-OPTIMISATION] price shape read failed", shapeError);
+      } else {
+        priceShape = buildPriceShape(shapeRows ?? [], snapshot.timezone);
+      }
+
       try {
-        generated = generateOptimisationPlan(snapshot);
+        generated = generateOptimisationPlan(snapshot, new Date(), priceShape);
       } catch (error) {
         const detail = error instanceof Error
           ? error.message
