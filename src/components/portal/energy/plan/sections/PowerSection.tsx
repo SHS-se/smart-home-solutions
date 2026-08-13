@@ -2,7 +2,7 @@
 
 import React, { useMemo } from 'react';
 import {
-  Area, Line, ReferenceArea,
+  Area, Line, ReferenceArea, ReferenceLine,
 } from 'recharts';
 import { useLanguage } from '@/contexts/LanguageContext';
 import {
@@ -98,6 +98,8 @@ const PowerSection: React.FC<{
         ))}
         {powerVisibility.visible('gridImport') && <Line yAxisId="power" type="stepAfter" dataKey="gridImport" name={seriesByKey.gridImport.label} stroke={COLORS.import} dot={false} />}
         {powerVisibility.visible('gridExport') && <Line yAxisId="power" type="stepAfter" dataKey="gridExport" name={seriesByKey.gridExport.label} stroke={COLORS.export} dot={false} />}
+        {powerVisibility.visible('batteryChargePower') && <Line yAxisId="power" type="stepAfter" dataKey="batteryChargePower" name={seriesByKey.batteryChargePower.label} stroke={COLORS.batteryCharge} strokeDasharray="4 2" dot={false} />}
+        <ReferenceLine yAxisId="power" y={0} stroke="currentColor" className="text-muted-foreground" strokeWidth={1} />
       </EnergyPowerChart>
       <SeriesToggleLegend
         series={planChartSeries}

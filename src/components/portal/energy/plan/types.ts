@@ -141,6 +141,7 @@ export type PlanChartSeriesKey =
   | 'ev'
   | 'gridImport'
   | 'gridExport'
+  | 'batteryChargePower'
   | `device:${string}`;
 export type ThermalSeriesKey =
   | 'outdoor'

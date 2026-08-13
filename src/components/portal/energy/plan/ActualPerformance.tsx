@@ -15,7 +15,7 @@ import {
 } from '@/lib/energy-shift/contracts';
 import type { EmpiricalEnergyDevice } from '../EmpiricalDeviceModelsCard';
 import {
-  Area, Line,
+  Area, Line, ReferenceLine,
 } from 'recharts';
 import {
   COLORS,
@@ -35,10 +35,11 @@ const ActualPerformance: React.FC<{
 }> = ({ actuals, devices, deviceActuals, windowDays }) => {
   const { t } = useLanguage();
   const [hidden, setHidden] = useState<Set<ActualSeriesKey>>(() => new Set());
-  const controllableDevices = useMemo(
-    () => devices.filter(device => effectivePlanningRole(device) === 'controllable'),
-    [devices],
-  );
+  // Every metered device, not just the controllable ones. The table below drew
+  // from the full set while this chart drew only controllables, so devices
+  // appeared in one and not the other and "base load" silently meant two
+  // different things. One list, one meaning: base load is what has no meter.
+  const chartedDevices = devices;
   const actualByDeviceAndStart = useMemo(() => {
     const rows = new Map<string, number>();
     for (const slot of deviceActuals) {
@@ -54,14 +55,17 @@ const ActualPerformance: React.FC<{
     load: slot.total_load_kwh == null ? null : slot.total_load_kwh * 4_000,
     pv: slot.solar_production_kwh == null ? null : slot.solar_production_kwh * 4_000,
     gridImport: slot.grid_import_kwh == null ? null : slot.grid_import_kwh * 4_000,
-    gridExport: slot.grid_export_kwh == null ? null : slot.grid_export_kwh * 4_000,
-    batteryCharge: slot.battery_charge_kwh == null ? null : slot.battery_charge_kwh * 4_000,
+    // Export and charging are energy leaving the house. Drawn positive they
+    // read as consumption, and an exporting afternoon looked like a demand
+    // spike. Below the axis they read as what they are.
+    gridExport: slot.grid_export_kwh == null ? null : -slot.grid_export_kwh * 4_000,
+    batteryCharge: slot.battery_charge_kwh == null ? null : -slot.battery_charge_kwh * 4_000,
     batteryDischarge: slot.battery_discharge_kwh == null ? null : slot.battery_discharge_kwh * 4_000,
-    ...Object.fromEntries(controllableDevices.map((device, deviceIndex) => [
+    ...Object.fromEntries(chartedDevices.map((device, deviceIndex) => [
       `device${deviceIndex}`,
       actualByDeviceAndStart.get(`${device.id}:${slot.start_ts}`) ?? null,
     ])),
-  })), [actualByDeviceAndStart, actuals, controllableDevices]);
+  })), [actualByDeviceAndStart, actuals, chartedDevices]);
   // A tick every six hours on one day, every twelve on three, so the axis stays
   // legible as the window grows.
   const tickEvery = windowDays === 1 ? 24 : windowDays * 24;
@@ -70,10 +74,10 @@ const ActualPerformance: React.FC<{
     { key: 'load' as const, label: t('Faktisk last', 'Actual load'), color: COLORS.actual },
     { key: 'pv' as const, label: t('Faktisk sol', 'Actual PV'), color: COLORS.pv },
     { key: 'gridImport' as const, label: t('Faktisk import', 'Actual import'), color: COLORS.import },
-    { key: 'gridExport' as const, label: t('Faktisk export', 'Actual export'), color: COLORS.export },
-    { key: 'batteryCharge' as const, label: t('Faktisk batteriladdning', 'Actual battery charge'), color: COLORS.batteryCharge },
+    { key: 'gridExport' as const, label: t('Faktisk export (negativ)', 'Actual export (negative)'), color: COLORS.export },
+    { key: 'batteryCharge' as const, label: t('Faktisk batteriladdning (negativ)', 'Actual battery charge (negative)'), color: COLORS.batteryCharge },
     { key: 'batteryDischarge' as const, label: t('Faktisk batteriurladdning', 'Actual battery discharge'), color: COLORS.batteryDischarge },
-    ...controllableDevices.map((device, index) => ({
+    ...chartedDevices.map((device, index) => ({
       key: `device:${device.id}` as const,
       dataKey: `device${index}`,
       label: `${device.name} · ${effectiveControlType(device)?.replace(/_/g, ' ')}`,
@@ -114,7 +118,7 @@ const ActualPerformance: React.FC<{
               {!hidden.has('pv') && (
                 <Area yAxisId="power" type="stepAfter" dataKey="pv" name={series[1].label} stroke={COLORS.pv} fill={COLORS.pv} fillOpacity={0.14} strokeWidth={1.5} dot={false} connectNulls={false} />
               )}
-              {controllableDevices.map((device, index) => {
+              {chartedDevices.map((device, index) => {
                 const item = series[6 + index];
                 return !hidden.has(item.key) && (
                   <Area key={item.key} yAxisId="power" type="stepAfter" dataKey={`device${index}`} name={item.label} stroke={item.color} fill={item.color} fillOpacity={0.16} strokeWidth={1} dot={false} connectNulls={false} />
@@ -123,6 +127,7 @@ const ActualPerformance: React.FC<{
               {series.slice(2, 6).map(item => !hidden.has(item.key) && (
                 <Line key={item.key} yAxisId="power" type="stepAfter" dataKey={item.key} name={item.label} stroke={item.color} strokeWidth={1.5} dot={false} connectNulls={false} />
               ))}
+              <ReferenceLine yAxisId="power" y={0} stroke="currentColor" className="text-muted-foreground" strokeWidth={1} />
             </EnergyPowerChart>
             <SeriesToggleLegend
               series={series}

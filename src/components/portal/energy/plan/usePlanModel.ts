@@ -66,12 +66,16 @@ export function usePlanModel(
         ? null
         : plan.ev_battery.departure_target_soc * 100,
       evConnected: slot.ev_connected,
+      // Charging and export leave the house. The storage chart reads them as
+      // stored-versus-released, so they keep their own sign there; the power
+      // chart plots them against load, where positive would read as demand.
       homeCharge: slot.battery_charge_w,
       homeDischarge: slot.battery_discharge_w,
       homeExport: slot.battery_export_w,
       evCharge: slot.ev_w,
       gridImport: slot.grid_import_w,
-      gridExport: slot.grid_export_w,
+      gridExport: -slot.grid_export_w,
+      batteryChargePower: -slot.battery_charge_w,
       importPrice: slot.import_price_sek_per_kwh,
       exportPrice: slot.export_price_sek_per_kwh,
       ...Object.fromEntries(deviceRoleView.visibleModels.map((model, modelIndex) => [
@@ -149,7 +153,8 @@ export function usePlanModel(
     pool: { key: 'pool', label: t('Pool', 'Pool'), color: COLORS.pool },
     ev: { key: 'ev', label: t('Bil', 'EV'), color: COLORS.ev },
     gridImport: { key: 'gridImport', label: t('Importeffekt', 'Grid import'), color: COLORS.import },
-    gridExport: { key: 'gridExport', label: t('Exporteffekt', 'Grid export'), color: COLORS.export },
+    gridExport: { key: 'gridExport', label: t('Exporteffekt (negativ)', 'Grid export (negative)'), color: COLORS.export },
+    batteryChargePower: { key: 'batteryChargePower', label: t('Batteriladdning (negativ)', 'Battery charge (negative)'), color: COLORS.batteryCharge },
   };
   const deviceSeries: PlanChartSeries[] = deviceRoleView.visibleModels.map((model, index) => ({
     key: `device:${model.key}`,
@@ -170,6 +175,7 @@ export function usePlanModel(
     ...deviceSeries,
     seriesByKey.gridImport,
     seriesByKey.gridExport,
+    ...(hasBattery ? [seriesByKey.batteryChargePower] : []),
   ];
   const thermalSeries = [
     { key: 'outdoor' as const, label: t('Utomhus', 'Outdoor'), color: '#475569' },
