@@ -23,21 +23,21 @@ export const TRAINING_WINDOW_DAYS = 21;
 
 /** One row of `get_energy_thermal_training_moments`. */
 export interface ThermalMomentRow extends ThermalMoments {
-  device_id: string;
-  device_key: string;
+  room_key: string;
+  room_name: string;
   active_power_w: number | null;
 }
 
 export interface ZoneFit {
-  device_id: string;
-  device_key: string;
+  room_key: string;
+  room_name: string;
   result: ThermalFitResult;
 }
 
 export const fitZones = (rows: ThermalMomentRow[]): ZoneFit[] =>
   rows.map((row) => ({
-    device_id: row.device_id,
-    device_key: row.device_key,
+    room_key: row.room_key,
+    room_name: row.room_name,
     result: fitThermalZoneFromMoments(row, row.active_power_w),
   }));
 
@@ -51,12 +51,13 @@ export const zoneModelRows = (
     trainingTo: string;
   },
 ): Record<string, unknown>[] =>
-  fits.map(({ device_id, result }) => {
+  fits.map(({ room_key, room_name, result }) => {
     if (result.ok === false) {
       return {
         customer_id: context.customerId,
         home_id: context.homeId,
-        device_id,
+        room_key,
+        room_name,
         fitted_at: new Date().toISOString(),
         training_from: context.trainingFrom,
         training_to: context.trainingTo,
@@ -77,7 +78,8 @@ export const zoneModelRows = (
     return {
       customer_id: context.customerId,
       home_id: context.homeId,
-      device_id,
+      room_key,
+      room_name,
       fitted_at: new Date().toISOString(),
       training_from: context.trainingFrom,
       training_to: context.trainingTo,

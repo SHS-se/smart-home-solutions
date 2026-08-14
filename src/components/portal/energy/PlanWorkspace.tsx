@@ -140,9 +140,10 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
           .order('created_at', { ascending: false }),
         supabase
           .from('energy_optimisation_devices')
-          .select('id, device_key, statistic_id, name, category, load_type_override, planning_role_override, control_type_override, mapping_status, mapped_control_type, mapping_error, mapping_reported_at, active_power_w, profile_sample_count, last_seen_at')
+          .select('id, device_key, statistic_id, name, category, load_type_override, planning_role_override, control_type_override, mapping_status, mapped_control_type, mapping_error, mapping_summary, mapping_reported_at, active_power_w, profile_sample_count, last_seen_at')
           .eq('customer_id', customerId)
           .eq('home_id', homeId)
+          .is('retired_at', null)
           .order('name'),
         supabase.rpc('get_energy_optimisation_device_slots', {
           p_customer_id: customerId,
@@ -161,7 +162,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
         }),
         supabase
           .from('energy_optimisation_zone_models')
-          .select('device_id, trained, rejection_reason, sample_count')
+          .select('room_key, trained, rejection_reason, sample_count')
           .eq('customer_id', customerId)
           .eq('home_id', homeId),
       ]);
@@ -182,9 +183,6 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
       setActuals(actualRows ?? []);
       setPrices(priceError ? [] : ((priceRows ?? []) as PriceSlotRow[]));
       setEmpiricalDevices((deviceRows ?? []) as EmpiricalEnergyDevice[]);
-      const deviceKeyById = new Map(
-        (deviceRows ?? []).map(row => [row.id as string, row.device_key as string]),
-      );
       setDeviceActuals((deviceActualRows ?? []) as EmpiricalDeviceSlotMatrix[]);
       // A thermal read failure must not blank the electrical plan; the panel
       // simply reports nothing received.
@@ -199,9 +197,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
         zoneModelResult.error
           ? []
           : ((zoneModelResult.data ?? []) as ZoneModelRow[]).map(row => ({
-            // The panel counts zones, not parameters, so the device key is
-            // only needed to line a model up with its device.
-            device_key: deviceKeyById.get(row.device_id) ?? row.device_id,
+            room_key: row.room_key,
             trained: row.trained,
             rejection_reason: row.rejection_reason,
             sample_count: row.sample_count,

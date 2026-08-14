@@ -208,8 +208,12 @@ export function buildComfortForecast(
   }
   const modes = comfortModesForStarts(starts, timezone, schedule);
   const target = modes.map((mode) => temperatureForMode(schedule, mode));
-  const comfortMin = target.map((value) => value - 0.3);
-  const comfortMax = target.map((value) => value + 0.5);
+  // These are temperature objectives, not thermostat bands. In particular,
+  // the first high-temp quarter is a deadline: the room must already be at
+  // the configured comfort temperature when that quarter begins. The upper
+  // series is only a planner-side preheat ceiling.
+  const comfortMin = [...target];
+  const comfortMax = target.map(() => schedule.high_temperature_c + 0.5);
 
   // Required temperature at the start of each quarter. Looking backwards
   // allows a high-mass floor to start recovery before the comfort period,
@@ -241,13 +245,9 @@ export function buildComfortForecast(
         );
     const desiredPower = (desiredNext - passiveNext) /
       (SLOT_HOURS * model.gain_c_per_wh);
-    // If the outdoor air is already at or above the desired room
-    // temperature, the model waits for passive warming instead of asking for
-    // summer heating merely because the room sensor trails by a fraction.
-    const watts =
-      heatingLockout[index] || outdoorTemperatureC[index] >= desiredNext
-        ? 0
-        : Math.max(0, Math.min(ratedPowerW, desiredPower));
+    const watts = heatingLockout[index]
+      ? 0
+      : Math.max(0, Math.min(ratedPowerW, desiredPower));
     power.push(Math.round(watts * 100) / 100);
     temperature = passiveNext +
       SLOT_HOURS * model.gain_c_per_wh * watts;

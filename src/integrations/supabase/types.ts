@@ -2105,12 +2105,13 @@ export type Database = {
       energy_optimisation_comfort_schedules: {
         Row: {
           customer_id: string
-          device_id: string
           high_temperature_c: number
           home_id: string
           id: string
           low_temperature_c: number
           off_temperature_c: number
+          room_key: string
+          room_name: string
           source: string
           updated_at: string
           weekday_modes: Json
@@ -2118,12 +2119,13 @@ export type Database = {
         }
         Insert: {
           customer_id: string
-          device_id: string
           high_temperature_c?: number
           home_id: string
           id?: string
           low_temperature_c?: number
           off_temperature_c?: number
+          room_key: string
+          room_name: string
           source?: string
           updated_at?: string
           weekday_modes?: Json
@@ -2131,12 +2133,13 @@ export type Database = {
         }
         Update: {
           customer_id?: string
-          device_id?: string
           high_temperature_c?: number
           home_id?: string
           id?: string
           low_temperature_c?: number
           off_temperature_c?: number
+          room_key?: string
+          room_name?: string
           source?: string
           updated_at?: string
           weekday_modes?: Json
@@ -2148,13 +2151,6 @@ export type Database = {
             columns: ["customer_id"]
             isOneToOne: false
             referencedRelation: "customers"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "energy_optimisation_comfort_schedules_device_id_fkey"
-            columns: ["device_id"]
-            isOneToOne: true
-            referencedRelation: "energy_optimisation_devices"
             referencedColumns: ["id"]
           },
           {
@@ -2171,7 +2167,6 @@ export type Database = {
           background_gain_c_per_h: number | null
           cooling_constant_per_h: number | null
           customer_id: string
-          device_id: string
           fitted_at: string
           gain_c_per_wh: number | null
           heat_loss_w_per_c: number | null
@@ -2181,6 +2176,8 @@ export type Database = {
           r2: number | null
           rejection_reason: string | null
           residual_std_c: number | null
+          room_key: string
+          room_name: string
           sample_count: number
           thermal_capacity_wh_per_c: number | null
           time_constant_h: number | null
@@ -2192,7 +2189,6 @@ export type Database = {
           background_gain_c_per_h?: number | null
           cooling_constant_per_h?: number | null
           customer_id: string
-          device_id: string
           fitted_at?: string
           gain_c_per_wh?: number | null
           heat_loss_w_per_c?: number | null
@@ -2202,6 +2198,8 @@ export type Database = {
           r2?: number | null
           rejection_reason?: string | null
           residual_std_c?: number | null
+          room_key: string
+          room_name: string
           sample_count: number
           thermal_capacity_wh_per_c?: number | null
           time_constant_h?: number | null
@@ -2213,7 +2211,6 @@ export type Database = {
           background_gain_c_per_h?: number | null
           cooling_constant_per_h?: number | null
           customer_id?: string
-          device_id?: string
           fitted_at?: string
           gain_c_per_wh?: number | null
           heat_loss_w_per_c?: number | null
@@ -2223,6 +2220,8 @@ export type Database = {
           r2?: number | null
           rejection_reason?: string | null
           residual_std_c?: number | null
+          room_key?: string
+          room_name?: string
           sample_count?: number
           thermal_capacity_wh_per_c?: number | null
           time_constant_h?: number | null
@@ -2236,13 +2235,6 @@ export type Database = {
             columns: ["customer_id"]
             isOneToOne: false
             referencedRelation: "customers"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "energy_optimisation_zone_models_device_id_fkey"
-            columns: ["device_id"]
-            isOneToOne: true
-            referencedRelation: "energy_optimisation_devices"
             referencedColumns: ["id"]
           },
           {
@@ -2276,6 +2268,7 @@ export type Database = {
           name: string
           planning_role_override: string
           profile_sample_count: number
+          retired_at: string | null
           statistic_id: string
           suggested_control_type: string | null
           suggested_load_type: string
@@ -2302,6 +2295,7 @@ export type Database = {
           name: string
           planning_role_override: string
           profile_sample_count?: number
+          retired_at?: string | null
           statistic_id: string
           suggested_control_type?: string | null
           suggested_load_type: string
@@ -2328,6 +2322,7 @@ export type Database = {
           name?: string
           planning_role_override?: string
           profile_sample_count?: number
+          retired_at?: string | null
           statistic_id?: string
           suggested_control_type?: string | null
           suggested_load_type?: string
@@ -4954,12 +4949,13 @@ export type Database = {
         }
         Returns: Database["public"]["Tables"]["energy_optimisation_devices"]["Row"]
       }
-      set_energy_zone_comfort_schedule: {
+      set_energy_room_comfort_schedule: {
         Args: {
-          p_device_id: string
+          p_home_id: string
           p_high_temperature_c: number
           p_low_temperature_c: number
           p_off_temperature_c: number
+          p_room_key: string
           p_weekday_modes: Json
           p_weekend_modes: Json
         }

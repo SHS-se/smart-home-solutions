@@ -6,6 +6,7 @@ export interface ThermalReadinessDevice {
   mapping_status: 'not_configured' | 'ready' | 'invalid';
   mapped_control_type: string | null;
   mapping_error: string | null;
+  mapping_summary?: Record<string, unknown>;
   profile_sample_count: number;
 }
 
@@ -24,8 +25,8 @@ export interface ThermalObservationSummary {
   slotCount: number;
   /** Quarters carrying a measured outdoor temperature. */
   outdoorSlotCount: number;
-  /** Device keys that contributed at least one observation. */
-  observedDeviceKeys: string[];
+  /** Home Assistant room keys that contributed at least one observation. */
+  observedRoomKeys: string[];
   /** Oldest and newest observed quarter, ISO, or null when none exist. */
   firstObservedAt: string | null;
   lastObservedAt: string | null;
@@ -33,7 +34,7 @@ export interface ThermalObservationSummary {
 
 /** One zone's trained model, or the reason it could not be trained. */
 export interface ThermalZoneModelSummary {
-  device_key: string;
+  room_key: string;
   trained: boolean;
   rejection_reason: string | null;
   sample_count: number;
@@ -43,6 +44,7 @@ export type ThermalReadinessState = 'ready' | 'waiting' | 'blocked';
 
 export interface ThermalReadinessAssessment {
   selectedDevices: ThermalReadinessDevice[];
+  selectedRoomCount: number;
   mappingReadyCount: number;
   electricalHistoryReadyCount: number;
   electricalForecastReadyCount: number;
@@ -74,7 +76,7 @@ export const assessThermalReadiness = (
   observations: ThermalObservationSummary = {
     slotCount: 0,
     outdoorSlotCount: 0,
-    observedDeviceKeys: [],
+    observedRoomKeys: [],
     firstObservedAt: null,
     lastObservedAt: null,
   },
@@ -88,23 +90,34 @@ export const assessThermalReadiness = (
       .filter(device => device.control_type === 'setpoint')
       .map(device => device.key),
   );
+  const roomKey = (device: ThermalReadinessDevice) => {
+    const key = device.mapping_summary?.room_key;
+    return typeof key === 'string' && key ? key : null;
+  };
   const mappingReady = (device: ThermalReadinessDevice) =>
     device.mapping_status === 'ready'
-    && device.mapped_control_type === device.control_type_override;
+    && device.mapped_control_type === device.control_type_override
+    && roomKey(device) !== null;
 
-  const observedKeys = new Set(observations.observedDeviceKeys);
-  const thermalObservedCount = selectedDevices.filter(device =>
-    observedKeys.has(device.device_key)).length;
+  const selectedRoomKeys = new Set(
+    selectedDevices.flatMap(device => {
+      const key = roomKey(device);
+      return mappingReady(device) && key ? [key] : [];
+    }),
+  );
+  const observedKeys = new Set(observations.observedRoomKeys);
+  const thermalObservedCount = [...selectedRoomKeys].filter(key =>
+    observedKeys.has(key)).length;
   const trainedZoneCount = zoneModels.filter(model => model.trained).length;
 
   // Blocked means nothing is arriving and nothing will without a change.
   // Waiting means the pipeline works and only time is missing. Conflating
   // the two is what made the old panel unactionable.
-  const thermalState: ThermalReadinessState = selectedDevices.length === 0
+  const thermalState: ThermalReadinessState = selectedRoomKeys.size === 0
     ? 'blocked'
     : thermalObservedCount === 0
       ? 'blocked'
-      : thermalObservedCount === selectedDevices.length
+      : thermalObservedCount === selectedRoomKeys.size
         ? 'ready'
         : 'waiting';
   const outdoorState: ThermalReadinessState = observations.outdoorSlotCount === 0
@@ -135,6 +148,7 @@ export const assessThermalReadiness = (
 
   return {
     selectedDevices,
+    selectedRoomCount: selectedRoomKeys.size,
     mappingReadyCount: selectedDevices.filter(mappingReady).length,
     electricalHistoryReadyCount: selectedDevices.filter(device =>
       device.profile_sample_count > 0).length,

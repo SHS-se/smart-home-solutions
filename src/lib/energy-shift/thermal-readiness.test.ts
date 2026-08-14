@@ -16,6 +16,11 @@ Deno.test('thermal readiness distinguishes electrical data from missing thermal 
       mapping_status: 'ready',
       mapped_control_type: 'setpoint',
       mapping_error: null,
+      mapping_summary: {
+        room_key: 'office',
+        room_name: 'Office',
+        controlled_devices: ['climate.office_heater'],
+      },
       profile_sample_count: 960,
     },
     {
@@ -58,7 +63,7 @@ Deno.test('thermal readiness distinguishes electrical data from missing thermal 
   assertEquals(assessment.pipelineComplete, false, 'pipeline incomplete');
 });
 
-const heater = (device_key: string) => ({
+const heater = (device_key: string, room_key = device_key) => ({
   device_key,
   name: device_key,
   planning_role_override: 'controllable' as const,
@@ -66,6 +71,11 @@ const heater = (device_key: string) => ({
   mapping_status: 'ready' as const,
   mapped_control_type: 'setpoint',
   mapping_error: null,
+  mapping_summary: {
+    room_key,
+    room_name: room_key,
+    controlled_devices: [`climate.${device_key}`],
+  },
   profile_sample_count: 960,
 });
 
@@ -73,12 +83,12 @@ Deno.test('a partially reporting home is waiting, not blocked', () => {
   // One zone arriving proves the pipeline works, so the remaining zones are
   // a matter of time rather than a configuration fault.
   const assessment = assessThermalReadiness(
-    [heater('office-heater'), heater('kitchen-heater')],
+    [heater('office-heater', 'office'), heater('kitchen-heater', 'kitchen')],
     [],
     {
       slotCount: 200,
       outdoorSlotCount: 200,
-      observedDeviceKeys: ['office-heater'],
+      observedRoomKeys: ['office'],
       firstObservedAt: '2026-08-10T00:00:00Z',
       lastObservedAt: '2026-08-12T00:00:00Z',
     },
@@ -92,17 +102,17 @@ Deno.test('a partially reporting home is waiting, not blocked', () => {
 
 Deno.test('a fully reporting home with a fitted zone is ready', () => {
   const assessment = assessThermalReadiness(
-    [heater('office-heater')],
+    [heater('office-heater', 'office')],
     [],
     {
       slotCount: 2880,
       outdoorSlotCount: 2880,
-      observedDeviceKeys: ['office-heater'],
+      observedRoomKeys: ['office'],
       firstObservedAt: '2026-07-13T00:00:00Z',
       lastObservedAt: '2026-08-12T00:00:00Z',
     },
     [{
-      device_key: 'office-heater',
+      room_key: 'office',
       trained: true,
       rejection_reason: null,
       sample_count: 2880,
@@ -116,12 +126,12 @@ Deno.test('a fully reporting home with a fitted zone is ready', () => {
 
 Deno.test('zones reporting without an outdoor source cannot train', () => {
   const assessment = assessThermalReadiness(
-    [heater('office-heater')],
+    [heater('office-heater', 'office')],
     [],
     {
       slotCount: 2880,
       outdoorSlotCount: 0,
-      observedDeviceKeys: ['office-heater'],
+      observedRoomKeys: ['office'],
       firstObservedAt: '2026-07-13T00:00:00Z',
       lastObservedAt: '2026-08-12T00:00:00Z',
     },

@@ -25,6 +25,7 @@ export interface EmpiricalEnergyDevice {
   mapping_status: 'not_configured' | 'ready' | 'invalid';
   mapped_control_type: DeviceControlType | null;
   mapping_error: string | null;
+  mapping_summary: Record<string, unknown>;
   mapping_reported_at: string | null;
   active_power_w: number | null;
   profile_sample_count: number;

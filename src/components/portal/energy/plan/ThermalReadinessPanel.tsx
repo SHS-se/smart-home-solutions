@@ -63,6 +63,7 @@ const ThermalReadinessPanel: React.FC<{
     [devices, planDevices, observations, zoneModels],
   );
   const selectedCount = readiness.selectedDevices.length;
+  const roomCount = readiness.selectedRoomCount;
   const allMappingsReady = selectedCount > 0
     && readiness.mappingReadyCount === selectedCount;
   const allHistoryReady = selectedCount > 0
@@ -146,8 +147,8 @@ const ThermalReadinessPanel: React.FC<{
               'No room temperature or actuator state has been received from Home Assistant. Update the integration and check that every zone has a room sensor.',
             )
             : t(
-              `${readiness.thermalObservedCount} av ${selectedCount} zoner rapporterar, ${readiness.thermalSlotCount.toLocaleString()} kvartar lagrade.`,
-              `${readiness.thermalObservedCount} of ${selectedCount} zones are reporting, ${readiness.thermalSlotCount.toLocaleString()} quarters stored.`,
+              `${readiness.thermalObservedCount} av ${roomCount} rum rapporterar, ${readiness.thermalSlotCount.toLocaleString()} kvartar lagrade.`,
+              `${readiness.thermalObservedCount} of ${roomCount} rooms are reporting, ${readiness.thermalSlotCount.toLocaleString()} quarters stored.`,
             )}
           state={readiness.thermalState}
           stateLabel={stateLabels[readiness.thermalState]}
@@ -170,8 +171,8 @@ const ThermalReadinessPanel: React.FC<{
           label={t('Inlärd termisk zonmodell', 'Learned thermal zone model')}
           detail={readiness.trainedZoneCount > 0
             ? t(
-              `${readiness.trainedZoneCount} av ${selectedCount} zoner har en anpassad värmemodell.`,
-              `${readiness.trainedZoneCount} of ${selectedCount} zones have a fitted thermal model.`,
+              `${readiness.trainedZoneCount} av ${roomCount} rum har en anpassad värmemodell.`,
+              `${readiness.trainedZoneCount} of ${roomCount} rooms have a fitted thermal model.`,
             )
             : readiness.dominantRejection
               ? t(

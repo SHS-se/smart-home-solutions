@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Check,
   Clock3,
@@ -13,6 +13,12 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
@@ -30,13 +36,13 @@ import {
 interface ComfortZone {
   id: string;
   name: string;
-  device_key: string;
-  mapping_status: 'not_configured' | 'ready' | 'invalid';
+  controlledDevices: string[];
 }
 
 interface StoredComfortSchedule extends ZoneComfortSchedule {
   id: string;
-  device_id: string;
+  room_key: string;
+  room_name: string;
   source: 'node_red_seed' | 'portal';
   updated_at: string;
 }
@@ -100,16 +106,19 @@ const ComfortSchedulesTab: React.FC<{
     const [deviceResult, scheduleResult] = await Promise.all([
       supabase
         .from('energy_optimisation_devices')
-        .select('id, name, device_key, mapping_status')
+        .select('mapping_summary')
         .eq('customer_id', customerId)
         .eq('home_id', homeId)
         .eq('category', 'heating')
         .eq('planning_role_override', 'controllable')
         .eq('control_type_override', 'setpoint')
+        .eq('mapping_status', 'ready')
+        .eq('mapped_control_type', 'setpoint')
+        .is('retired_at', null)
         .order('name'),
       supabase
         .from('energy_optimisation_comfort_schedules')
-        .select('id, device_id, weekday_modes, weekend_modes, off_temperature_c, low_temperature_c, high_temperature_c, source, updated_at')
+        .select('id, room_key, room_name, weekday_modes, weekend_modes, off_temperature_c, low_temperature_c, high_temperature_c, source, updated_at')
         .eq('customer_id', customerId)
         .eq('home_id', homeId),
     ]);
@@ -122,15 +131,34 @@ const ComfortSchedulesTab: React.FC<{
       return;
     }
 
-    const nextZones = (deviceResult.data ?? []) as ComfortZone[];
-    const rowsByDevice = new Map(
-      (scheduleResult.data ?? []).map(row => [row.device_id, row]),
+    const grouped = new Map<string, ComfortZone>();
+    for (const device of deviceResult.data ?? []) {
+      const summary = device.mapping_summary && typeof device.mapping_summary === 'object' && !Array.isArray(device.mapping_summary)
+        ? device.mapping_summary as Record<string, unknown>
+        : {};
+      const roomKey = typeof summary.room_key === 'string' ? summary.room_key : '';
+      const roomName = typeof summary.room_name === 'string' ? summary.room_name : '';
+      const controlled = Array.isArray(summary.controlled_devices)
+        ? summary.controlled_devices.filter((value): value is string => typeof value === 'string')
+        : [];
+      if (!roomKey || !roomName || controlled.length === 0) continue;
+      const room = grouped.get(roomKey) ?? {
+        id: roomKey,
+        name: roomName,
+        controlledDevices: [],
+      };
+      room.controlledDevices = [...new Set([...room.controlledDevices, ...controlled])].sort();
+      grouped.set(roomKey, room);
+    }
+    const nextZones = [...grouped.values()].sort((left, right) => left.name.localeCompare(right.name));
+    const rowsByRoom = new Map(
+      (scheduleResult.data ?? []).map(row => [row.room_key, row]),
     );
     const nextStored: Record<string, StoredComfortSchedule> = {};
     const nextDrafts: Record<string, ZoneComfortSchedule> = {};
     const missing: string[] = [];
     for (const zone of nextZones) {
-      const row = rowsByDevice.get(zone.id);
+      const row = rowsByRoom.get(zone.id);
       const candidate = row && {
         weekday_modes: row.weekday_modes,
         weekend_modes: row.weekend_modes,
@@ -144,7 +172,8 @@ const ComfortSchedulesTab: React.FC<{
       }
       const schedule: StoredComfortSchedule = {
         id: row.id,
-        device_id: row.device_id,
+        room_key: row.room_key,
+        room_name: row.room_name,
         source: row.source as StoredComfortSchedule['source'],
         updated_at: row.updated_at,
         ...candidate,
@@ -216,9 +245,10 @@ const ComfortSchedulesTab: React.FC<{
     if (!selectedId || !draft || !temperaturesValid) return;
     setSaving(true);
     const { data, error: saveError } = await supabase.rpc(
-      'set_energy_zone_comfort_schedule',
+      'set_energy_room_comfort_schedule',
       {
-        p_device_id: selectedId,
+        p_home_id: homeId,
+        p_room_key: selectedId,
         p_weekday_modes: draft.weekday_modes,
         p_weekend_modes: draft.weekend_modes,
         p_off_temperature_c: draft.off_temperature_c,
@@ -254,14 +284,6 @@ const ComfortSchedulesTab: React.FC<{
     setSaving(false);
   };
 
-  const comfortHours = useMemo(() => {
-    if (!draft) return { weekday: 0, weekend: 0 };
-    return {
-      weekday: draft.weekday_modes.filter(mode => mode === 'high-temp').length / 4,
-      weekend: draft.weekend_modes.filter(mode => mode === 'high-temp').length / 4,
-    };
-  }, [draft]);
-
   if (!homeId) {
     return <p className="py-12 text-sm text-muted-foreground">{t(
       'Välj ett hem för att redigera komfortschemat.',
@@ -290,8 +312,8 @@ const ComfortSchedulesTab: React.FC<{
               </CardTitle>
               <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
                 {t(
-                  'Måla den vanliga veckorytmen för varje rum. Det här beskriver önskad komfort, inte närvaroövervakning. Väderprognosen och rummets inlärda värmetröghet avgör sedan när uppvärmningen faktiskt behöver börja.',
-                  'Paint the usual weekly rhythm for each room. This describes desired comfort, not presence tracking. The weather forecast and the room’s learned thermal response then decide when heating actually needs to begin.',
+                  'Måla den vanliga veckorytmen för varje rum. Komfort är en deadline: rummet ska ha nått temperaturen när den första gula kvarten börjar. Planeraren får förvärma under sänkt temperatur och fördelar uppvärmningen mellan rummen för att undvika onödiga effekttoppar.',
+                  'Paint the usual weekly rhythm for each room. Comfort is a deadline: the room should have reached the temperature when the first yellow quarter begins. The planner may preheat during Setback and spreads heating across rooms to avoid unnecessary power peaks.',
                 )}
               </p>
             </div>
@@ -308,8 +330,8 @@ const ComfortSchedulesTab: React.FC<{
               <p className="mt-3 font-medium">{t('Inga komfortzoner ännu', 'No comfort zones yet')}</p>
               <p className="mt-1 text-sm text-muted-foreground">
                 {t(
-                  'Välj Styrbar · Börvärde för rummets värmeenhet på fliken Enheter. Då skapas ett schema automatiskt.',
-                  'Choose Controllable · Setpoint for the room heater on the Devices tab. Its schedule will then be created automatically.',
+                  'Välj Styrbar · Börvärde för en eller flera värmeenheter på fliken Enheter och mappa dem sedan till ett Home Assistant-rum. Då skapas ett gemensamt rumsschema automatiskt.',
+                  'Choose Controllable · Setpoint for one or more heating devices on the Devices tab, then map them to a Home Assistant room. One shared room schedule will be created automatically.',
                 )}
               </p>
             </div>
@@ -329,7 +351,7 @@ const ComfortSchedulesTab: React.FC<{
                       <span className="truncate">{zone.name}</span>
                       {!sameSchedule(drafts[zone.id], stored[zone.id])
                         ? <span className="ml-auto h-2 w-2 rounded-full bg-amber-500" title={t('Osparade ändringar', 'Unsaved changes')} />
-                        : zone.mapping_status === 'ready' && <Check className="ml-auto h-3.5 w-3.5 text-emerald-600" />}
+                        : <Check className="ml-auto h-3.5 w-3.5 text-emerald-600" />}
                     </Button>
                   ))}
                 </div>
@@ -345,6 +367,12 @@ const ComfortSchedulesTab: React.FC<{
                           ? t('Startvärden från det befintliga Node-RED-schemat', 'Initial values from the existing Node-RED schedule')
                           : `${t('Senast ändrad', 'Last changed')} ${new Date(saved.updated_at).toLocaleString()}`}
                       </p>
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                        <span className="mr-1 text-xs text-muted-foreground">{t('Planerade styrenheter:', 'Planned controls:')}</span>
+                        {selectedZone.controlledDevices.map(device => (
+                          <Badge key={device} variant="secondary" className="font-normal">{device}</Badge>
+                        ))}
+                      </div>
                     </div>
                     <div className="flex items-center gap-2">
                       {dirty && <Badge variant="outline">{t('Osparat', 'Unsaved')}</Badge>}
@@ -424,8 +452,8 @@ const ComfortSchedulesTab: React.FC<{
                       ))}
                     </div>
                     <p className="mt-2 text-xs text-muted-foreground">{t(
-                      'Klicka eller dra över tidsbandet. Varje ruta är 15 minuter.',
-                      'Click or drag across a time band. Each cell is 15 minutes.',
+                      'Klicka eller dra över tidsbandet. En gul ruta sätter ett komfortmål när kvarten börjar; måla flera i rad för att hålla rummet varmt.',
+                      'Click or drag across a time band. One yellow cell sets a comfort target when its quarter begins; paint several in a row to keep the room warm.',
                     )}</p>
                   </div>
 
@@ -440,7 +468,7 @@ const ComfortSchedulesTab: React.FC<{
                           <div>
                             <p className="font-medium">{dayType === 'weekday' ? t('Vardagar', 'Weekdays') : t('Helg', 'Weekend')}</p>
                             <p className="text-xs text-muted-foreground">
-                              {periods.length > 0 ? `${periods.join(', ')} · ${comfortHours[dayType]} h ${t('komfort', 'comfort')}` : t('Ingen komfortperiod', 'No comfort period')}
+                              {periods.length > 0 ? periods.join(', ') : t('Inget komfortmål', 'No comfort target')}
                             </p>
                           </div>
                           <Button
@@ -465,29 +493,36 @@ const ComfortSchedulesTab: React.FC<{
                               aria-label={`${dayType === 'weekday' ? t('Vardagar', 'Weekdays') : t('Helg', 'Weekend')} · ${selectedZone.name}`}
                               onPointerLeave={() => { painting.current = false; }}
                             >
-                              {modes.map((mode, quarter) => (
-                                <button
-                                  key={quarter}
-                                  type="button"
-                                  role="gridcell"
-                                  aria-label={`${quarterLabel(quarter)}–${quarterLabel(quarter + 1)}: ${modeLabel[mode]}`}
-                                  title={`${quarterLabel(quarter)}–${quarterLabel(quarter + 1)} · ${modeLabel[mode]}`}
-                                  className={cn(
-                                    'h-10 border-r border-background/50 outline-none focus-visible:relative focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-ring',
-                                    quarter % 4 === 3 && 'border-r-foreground/20',
-                                    modeClasses[mode],
-                                  )}
-                                  onClick={() => paint(dayType, quarter)}
-                                  onPointerDown={event => {
-                                    event.preventDefault();
-                                    painting.current = true;
-                                    paint(dayType, quarter);
-                                  }}
-                                  onPointerEnter={() => {
-                                    if (painting.current) paint(dayType, quarter);
-                                  }}
-                                />
-                              ))}
+                              <TooltipProvider delayDuration={0} skipDelayDuration={0}>
+                                {modes.map((mode, quarter) => (
+                                  <Tooltip key={quarter}>
+                                    <TooltipTrigger asChild>
+                                      <button
+                                        type="button"
+                                        role="gridcell"
+                                        aria-label={`${quarterLabel(quarter)}–${quarterLabel(quarter + 1)}: ${modeLabel[mode]}`}
+                                        className={cn(
+                                          'h-10 border-r border-background/50 outline-none focus-visible:relative focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-ring',
+                                          quarter % 4 === 3 && 'border-r-foreground/20',
+                                          modeClasses[mode],
+                                        )}
+                                        onClick={() => paint(dayType, quarter)}
+                                        onPointerDown={event => {
+                                          event.preventDefault();
+                                          painting.current = true;
+                                          paint(dayType, quarter);
+                                        }}
+                                        onPointerEnter={() => {
+                                          if (painting.current) paint(dayType, quarter);
+                                        }}
+                                      />
+                                    </TooltipTrigger>
+                                    <TooltipContent side="bottom" className="tabular-nums">
+                                      {quarterLabel(quarter)}–{quarterLabel(quarter + 1)} · {modeLabel[mode]}
+                                    </TooltipContent>
+                                  </Tooltip>
+                                ))}
+                              </TooltipProvider>
                             </div>
                           </div>
                         </div>

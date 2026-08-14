@@ -110,7 +110,7 @@ Deno.test("a slow cold room begins recovery before comfort starts", () => {
   );
 });
 
-Deno.test("warm outdoor air produces no summer heating instruction", () => {
+Deno.test("warm outdoor air does not cancel an imminent comfort deadline", () => {
   const modes = new Array<ComfortMode>(96).fill("high-temp");
   const result = buildComfortForecast(
     starts("2026-08-16T22:00:00Z", 96),
@@ -123,8 +123,13 @@ Deno.test("warm outdoor air produces no summer heating instruction", () => {
     new Array(96).fill(false),
   );
   assert(
-    result.power_w.every((watts) => watts === 0),
-    `summer forecast requested ${Math.max(...result.power_w)} W`,
+    result.power_w.some((watts) => watts > 0),
+    "the room was left cold while passive warming was too slow",
+  );
+  assert(
+    result.power_w[0] === 2_000 &&
+      result.temperature_c.slice(1).some((temperature) => temperature >= 19.99),
+    "the room did not recover at its available rating",
   );
 });
 

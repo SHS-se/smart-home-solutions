@@ -1,11 +1,11 @@
 # Energy optimisation architecture
 
-Status: **schema-v5 controllable-device selection, empirical history and duty-cycle permit path implemented; energy-performance correction and cold-start priors in progress; deployment, live commissioning and device executors remain**
+Status: **schema-v5 controllable-device selection, empirical history, room-keyed comfort planning and duty-cycle permit path implemented; energy-performance correction and cold-start priors in progress; deployment, live commissioning and device executors remain**
 
-Date: **2026-08-13**
+Date: **2026-08-14**
 
-Latest decisions: **§1.3** (energy-performance defects, cold-start archetype
-priors, portal surface removal, ROI rebuild).
+Latest decisions: **§1.5** (Home Assistant room identity, exact comfort
+deadlines, shared preheating optimisation, live device-inventory reconciliation).
 
 Source material: `ENERGY_OPTIMISATION_NOTES.md`, the current portal implementation in
 this repository, the current `shs_energy` Home Assistant integration in
@@ -43,12 +43,12 @@ The canonical timestep is **15 minutes**. The server replans from measured state
 the local reactive layer corrects for what actually happens between plans.
 
 The first shadow release simulates the battery, protects an explicit reserve,
-optimises discrete pool work, inhibits empirical boiler duty cycles around high loads, and assigns a valid charger current to
-every planned EV quarter while publishing opportunity/surplus signals.
-Price-led battery grid charging/export and thermal state optimisation belong to
-the next solver stage. Device controllers retain their existing closed-loop
-logic. EMHASS remains a useful reference and shadow comparator, not the product
-runtime.
+optimises discrete pool work, inhibits empirical boiler duty cycles around high
+loads, assigns a valid charger current to every planned EV quarter, and plans
+room preheating against exact temperature objectives while publishing
+opportunity/surplus signals. Device controllers retain their existing
+closed-loop logic. EMHASS remains a useful reference and shadow comparator,
+not the product runtime.
 
 ### 1.1 Implementation checkpoint (2026-08-10)
 
@@ -81,16 +81,17 @@ empirical per-zone fit (§9.3).
 Two decisions were settled in the process and are load-bearing for everything
 that follows:
 
-- **The portal owns the comfort band, not Home Assistant** (§5.5). Reading
-  scheduled levels out of local helpers would bind the contract to one home's
-  automation conventions and could not be offered to other customers.
-- **The band is time-varying, not a target.** A single scheduled setpoint per
-  period leaves the planner no freedom; a min/max band per period is what makes
-  load shifting possible at all.
+- **The portal owns the room's temperature objectives, not Home Assistant
+  schedule helpers** (§5.5). Reading scheduled levels out of local helpers
+  would bind the contract to one home's automation conventions and could not
+  be offered to other customers.
+- **A painted quarter is an objective, not a thermostat band or a prescribed
+  heater-on period.** The room must be at that mode's temperature when the
+  quarter starts. The planner may heat in preceding setback quarters and is
+  therefore free to spread recovery across rooms, prices and available power.
 
-Still outstanding before any thermal control is advisory-safe: the comfort-band
-schedule editor and its data model, the planner constraint that consumes it,
-and the setpoint-trajectory executor described in §7.5.
+The room schedule editor, data model and planner constraint are now implemented
+in §1.5. The setpoint-trajectory executor described in §7.5 remains outstanding.
 
 ### 1.2 Configuration and customer capability decision
 
@@ -1019,10 +1020,12 @@ the objective is worth doing before it.
    sample window — `sensor.pool_room_floor_heater_energy` — before assuming the
    statistic is wrong; the meter may be reporting something real.
 2. **Is a `setpoint` device being modelled as an energy demand at all?** Twelve
-   of the seventeen mapped devices are `setpoint`, i.e. thermal zones. A zone's
-   demand is a function of outdoor temperature and comfort band (§9.3), not of
-   what it drew last Tuesday. A duty-cycle mean is the wrong model for it, and
-   that would explain heaters appearing in an August plan.
+   of the seventeen mapped devices are `setpoint`, but they are meters and
+   actuators rather than thermal zones. A room's demand is a function of its
+   measured temperature, fitted response, outdoor temperature and scheduled
+   objective (§9.3), not of what one heater drew last Tuesday. A duty-cycle mean
+   is the wrong model for it, and that would explain heaters appearing in an
+   August plan.
 3. **Why is planned base load 1.8× measured?** Both figures now mean the same
    thing after the device-list fix, so the comparison is finally sound. Suspect
    double counting: `build_base_load_profile` subtracts modelled devices from the
@@ -1087,20 +1090,20 @@ The thirteen zones each own an `input_text.<zone>_heating_mode`, confirmed live:
 Their states right now are a mix of `off`, `low-temp` and `high-temp`, so the
 mode is real, per-zone, and already machine-readable.
 
-**Proposed occupancy input, replacing the trimmed mean for heating zones:**
+**Implemented routine input, replacing the trimmed mean for heating rooms:**
 
-- A per-zone weekly **comfort schedule** — quarter-of-day × day-type → one of
+- A per-room weekly **comfort schedule** — quarter-of-day × day-type → one of
   `off` / `low-temp` / `high-temp` — seeded by a one-off import of the cron
   expressions above, then editable in the portal. It is a *household routine*,
-  not a device statistic, so it belongs beside the home profile.
-- The zone's demand for a slot is then the **thermal model** (§9.3) evaluated
-  against that mode's target, the outdoor forecast and solar gain — not a
-  historical mean. This is what stops an August plan asking for floor heating:
-  at 24 °C outdoors the physics returns zero regardless of what the meter did
-  last winter.
+  not a device statistic, and is keyed by the stable Home Assistant area ID.
+- The room's demand for a slot is then the **thermal model** (§9.3) evaluated
+  against that mode's objective and the outdoor forecast — not a historical
+  mean. June–August use an explicit heating lockout. Outside that lockout warm
+  outdoor air contributes passive heat through the fitted physics, but does not
+  falsely claim that a currently cold room is already at its next objective.
 - `ble_trilateration` (Phil's work in progress) can later replace the seeded
   schedule with observed room occupancy. The interface should therefore be
-  "a per-zone occupancy/comfort series", so swapping the source changes nothing
+  "a per-room occupancy/comfort series", so swapping the source changes nothing
   downstream.
 
 ##### What must stay reactive, and must not enter the plan
@@ -1136,7 +1139,7 @@ them:
 
 ##### Sequencing this work
 
-1. Fit heating zones from the thermal model + comfort schedule instead of the
+1. Fit heating rooms from the thermal model + comfort schedule instead of the
    historical mean. Largest single correction, and it fixes the August floor
    heating outright.
 2. Import the Node-RED cron schedules once to seed the comfort schedules.
@@ -1148,45 +1151,92 @@ them:
 
 #### 1.5.5 Implemented comfort-driven forecast (2026-08-14)
 
-The fix keeps the routine in the portal and the physics in the planning edge,
-which is where the fitted zone models already live. Nothing calls Node-RED at
-runtime.
+The fix keeps the routine in the portal, Home Assistant identity and telemetry
+in the integration, and the fitted physics in the planning edge. Nothing calls
+Node-RED at runtime.
+
+**Room identity and configuration**
+
+- Thermal intent is keyed by Home Assistant's stable **area ID**, with the live
+  area name retained as its display label. An Energy Dashboard meter is no
+  longer treated as a room. Several meters and several heater/climate actuators
+  may map to the same room; their energy and rated power are summed for one
+  temperature model and one objective.
+- The integration's setpoint mapping asks for the room, its temperature sensor,
+  optional direct setpoint and all controlled heater/climate entities. It no
+  longer asks for scheduled comfort/setback helpers or reactive manual-override
+  fields. The portal shows the room name and the complete actuator list beside
+  its schedule.
+- The other planned-control mappings use the same smaller contract: switch
+  minimum run is optional; availability/season is gone; power is one field that
+  accepts either a W/kW entity or reviewed watts; and current-limit/variable-
+  power controls share one number entity plus optional minimum and maximum.
+  Entity bounds are proposed automatically, while entered bounds take
+  precedence.
+- Each device card has its own Save action. Home Assistant validates the card,
+  sends the resulting mapping to the server and changes the card to **Ready**
+  only from the acknowledged response. Live entity, device and area names are
+  uploaded on later exchanges. A complete-inventory marker retires Energy
+  Dashboard devices that were removed, while reappearing keys clear retirement;
+  renamed devices and rooms therefore update without creating phantom controls.
+
+**The schedule's meaning**
 
 - `energy_optimisation_comfort_schedules` stores one 96-quarter weekday row and
-  one weekend row per setpoint zone, plus the zone's off, setback and comfort
-  temperatures. A trigger creates the row when a device becomes a setpoint
-  zone. Existing zones are seeded once with the Node-RED routine above:
-  05:00–09:30 and 14:00–21:30 at `high-temp`, `low-temp` otherwise. The latest
-  reported high/low helper values seed each zone's temperatures when available.
-- Energy Modeling now has a **Comfort schedule** tab. The customer selects a
-  room, chooses an Off / Setback / Comfort brush and paints either 24-hour band
-  in 15-minute cells. The exact comfort periods and hours are written beside
-  the band, temperatures are editable per zone, and weekday/weekend routines
-  can be copied between each other. This is deliberately described as desired
-  comfort rather than presence tracking.
-- Season remains independent of weather: every June–August heating slot is an
-  explicit zero-demand lockout, so summer does not require fresh winter samples
-  merely to conclude that room heat stays off.
-- Outside that lockout, every heating-category `setpoint` device is joined to
-  its latest room temperature, fitted 1R1C model, reviewed active power, portal
-  schedule and slot-aligned outdoor forecast. A backwards pass computes how
-  early that particular room must recover; a forwards pass emits bounded
-  expected power and temperature. Slow concrete floors therefore start earlier
-  than convectors instead of receiving the same copied duty cycle.
-- When forecast outdoor air is already at or above the desired room
-  temperature, the zone also requests zero heating. The seasonal lockout and
-  this weather invariant remove the August floor-heating schedule.
-- Outside summer lockout, a selected setpoint zone with a missing schedule,
-  stale room temperature, untrained model, missing rating or incomplete weather
-  horizon fails the plan. It never silently falls back to last week's
-  consumption.
-- The generated device model carries `forecast_method =
-  seasonal_heating_lockout_v1` or `thermal_comfort_schedule_v1`; other
-  controllable devices carry `empirical_recent_history`. The Thermal tab names
-  the distinction and draws the slot-varying comfort target rather than one
-  flat band.
+  one weekend row per room, plus its Off, Setback and Comfort temperatures. A
+  trigger creates and renames the row from ready room mappings, preserves it
+  when another heater joins the room, and keeps it dormant if the final heater
+  is retired or temporarily unmapped. Existing rows are seeded once with the Node-RED routine:
+  05:00–09:30 and 14:00–21:30 at `high-temp`, `low-temp` otherwise.
+- Energy Modeling has a **Comfort** tab. The customer selects a room, chooses an
+  Off / Setback / Comfort brush and paints weekday and weekend rows in
+  15-minute cells. Tooltips open without a hover delay. Temperatures are
+  editable per room, and either day can be copied to the other.
+- A yellow Comfort cell is an exact temperature objective, not a command to
+  switch heaters on and not a broad comfort band. The room must already have
+  reached the configured Comfort temperature when the cell begins. A single
+  yellow cell therefore behaves as a 15-minute appointment: recovery may start
+  in earlier blue Setback cells, and the next cell's objective governs after
+  that instant. Consecutive yellow cells express a period that must remain
+  comfortable at each quarter boundary.
+- Blue Setback and grey Off cells remain lower temperature objectives, not
+  forbidden heating windows. The scheduler may use them for recovery before a
+  later yellow deadline. This preserves the freedom needed to stagger rooms
+  instead of reproducing Node-RED's simultaneous high/low transitions.
 
-The first version intentionally does **not** derive passive solar heat from the
+**How room heat enters the shared plan**
+
+- Outside the explicit June–August lockout, the edge joins each room to its
+  latest temperature, fitted room-level 1R1C model, summed reviewed heater
+  power, portal schedule and slot-aligned outdoor forecast. A backwards pass
+  finds the latest physically feasible recovery trajectory. This is the
+  unplanned/baseline reference, not the final command.
+- The shared electrical planner then moves room heat earlier when doing so
+  improves the selected plan's price/solar/peak objective. It evaluates all
+  rooms against the same home import envelope and battery reservation, which is
+  what permits recovery to be spread across rooms. Moving heat across time
+  compensates for thermal decay, so a watt-hour moved earlier is not assumed to
+  have identical value at the deadline.
+- Every candidate schedule is projected through the fitted room physics. Each
+  future quarter must meet its exact temperature objective, heater power cannot
+  exceed the combined room rating or grid envelope, and preheating cannot exceed
+  the room's Comfort temperature plus the small planner safety ceiling. If
+  these constraints cannot all hold, that plan is infeasible rather than
+  publishing a plausible-looking but physically false schedule.
+- The resulting room wattage is allocated across the room's underlying device
+  rows in proportion to reviewed active power, preserving the electrical
+  balance and exposing executable per-device requests without inventing a room
+  meter.
+- Outside summer lockout, a selected room with a missing schedule, stale room
+  temperature, untrained model, missing rating, inconsistent mapping or
+  incomplete weather horizon fails the plan. It never silently falls back to
+  last week's consumption.
+- Generated heating device models retain `forecast_method =
+  seasonal_heating_lockout_v1` or `thermal_comfort_schedule_v1`; other
+  controllable devices carry `empirical_recent_history`. Planned slots also
+  carry the authoritative `room_heating_w` map used by the thermal projection.
+
+This version intentionally does **not** derive passive solar heat from the
 PV electrical forecast. Outdoor temperature and seasonality are now real
 inputs; a calibrated glazing/solar-gain term remains the next thermal-model
 increment rather than an invented conversion factor. Cooling-category setpoint
@@ -1197,12 +1247,14 @@ not reused backwards as an air-conditioning model.
 #### 1.5.6 Constraint on any fix
 
 The portal validates the snapshot but does not second-guess a thermal result.
-The planning edge now owns the setpoint-zone series and replaces the
-integration's empirical input before validation, hashing and storage. Schema 5
-retains the `forecast_w_by_slot` field, but its provenance is explicit through
-`forecast_method`; an empirical 3 kW heater series and a comfort/physics-derived
-series are no longer indistinguishable. A thermal input failure refuses the plan
-instead of publishing the empirical series under the thermal method.
+The planning edge now converts the integration's room telemetry into validated
+`thermal_zones` constraints before hashing and storage. Schema 5 retains each
+device's `forecast_w_by_slot` as the unplanned/reference trajectory, with
+provenance explicit through `forecast_method`; the shared planner's
+`room_heating_w` output is the authoritative room-heating decision. An empirical
+3 kW heater series and a comfort/physics-derived constraint are therefore no
+longer interchangeable, and a thermal input failure refuses the plan instead of
+publishing the empirical series under the thermal method.
 
 ## 2. Terms
 

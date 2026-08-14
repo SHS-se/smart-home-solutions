@@ -12,6 +12,10 @@ import {
   buildPriceOutlook,
   type PriceShape,
 } from "./energy-price-shape.ts";
+import {
+  projectZoneTemperature,
+  type ThermalZoneModel,
+} from "./thermal-model.ts";
 
 export const OPTIMISATION_SCHEMA_VERSION = 5;
 /**
@@ -21,10 +25,10 @@ export const OPTIMISATION_SCHEMA_VERSION = 5;
  *
  * Bump it whenever the *decisions* change, not merely the code: the ROI page
  * medians over runs, and two planners sharing a label make that median
- * meaningless. v7 is §1.4, the objective for the unpriced two thirds of the
- * horizon.
+ * meaningless. v8 makes comfort schedules room-temperature constraints and
+ * moves preheating inside the shared electrical objective.
  */
-export const OPTIMISATION_MODEL_VERSION = "shadow-price-planner-v7";
+export const OPTIMISATION_MODEL_VERSION = "thermal-room-planner-v8";
 export const SLOT_MINUTES = 15;
 export const SLOT_HOURS = SLOT_MINUTES / 60;
 export const MAX_FORECAST_SLOTS = 72 * 4;
@@ -210,6 +214,25 @@ export interface EmpiricalDeviceModelInput {
   forecast_w_by_slot: number[];
 }
 
+/**
+ * Server-prepared room constraint. Home Assistant identifies the room and its
+ * actuators; the planning edge joins that to the learned 1R1C model and the
+ * portal-owned weekly routine before the pure planner sees it.
+ */
+export interface ThermalZonePlanningInput {
+  key: string;
+  name: string;
+  device_keys: string[];
+  model: ThermalZoneModel;
+  start_temperature_c: number;
+  rated_power_w: number;
+  comfort_min_c: number[];
+  target_c: number[];
+  comfort_max_c: number[];
+  maximum_power_w_by_slot: number[];
+  unplanned_power_w: number[];
+}
+
 export interface OptimisationSnapshotV5 {
   schema_version: 5;
   // Only Home Assistant live snapshots cross the ingestion boundary. The
@@ -263,6 +286,8 @@ export interface OptimisationSnapshotV5 {
    * this, electrical planning does not.
    */
   outdoor_temperature_c?: (number | null)[];
+  /** Injected and validated by the planning edge, never supplied by the app. */
+  thermal_zones?: ThermalZonePlanningInput[];
 }
 
 export interface PlannedSlot {
@@ -279,6 +304,7 @@ export interface PlannedSlot {
   boiler_expected_w: number;
   boiler_permitted: boolean;
   ev_w: number;
+  room_heating_w: Record<string, number>;
   device_loads_w: Record<string, number>;
   ev_target_current_a: number;
   ev_min_current_a: number;
@@ -393,6 +419,7 @@ interface Schedule {
   evTargetCurrentA: number[];
   evMinCurrentA: number[];
   evMaxCurrentA: number[];
+  roomHeating: Record<string, number[]>;
   serviceSlots: Record<string, number[]>;
   serviceCurrentsA: Record<string, number[]>;
   serviceInhibitedSlots: Record<string, number[]>;
@@ -760,6 +787,75 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV5): string[] {
       errors.push(`device_models[${index}] is invalid`);
     }
   }
+  if (
+    snapshot?.thermal_zones !== undefined &&
+    !Array.isArray(snapshot.thermal_zones)
+  ) {
+    errors.push("thermal_zones must be an array when supplied");
+  }
+  const thermalKeys = new Set<string>();
+  const thermalDeviceKeys = new Set<string>();
+  const horizonLength = snapshot?.slots?.length ?? 0;
+  if (
+    (snapshot?.thermal_zones?.length ?? 0) > 0 &&
+    (!Array.isArray(snapshot.outdoor_temperature_c) ||
+      snapshot.outdoor_temperature_c.length !== horizonLength ||
+      snapshot.outdoor_temperature_c.some((value) =>
+        value === null || !inRange(value, -80, 80)
+      ))
+  ) {
+    errors.push("thermal_zones require complete outdoor_temperature_c");
+  }
+  for (const [index, zone] of (snapshot?.thermal_zones ?? []).entries()) {
+    const model = zone?.model;
+    const series = [
+      zone?.comfort_min_c,
+      zone?.target_c,
+      zone?.comfort_max_c,
+      zone?.maximum_power_w_by_slot,
+      zone?.unplanned_power_w,
+    ];
+    const duplicateDevice = zone?.device_keys?.some((key) =>
+      thermalDeviceKeys.has(key)
+    );
+    const invalidDevice = zone?.device_keys?.some((key) => {
+      const device = snapshot.device_models.find((candidate) =>
+        candidate.key === key
+      );
+      return !device || device.control_type !== "setpoint" ||
+        device.category !== "heating";
+    });
+    if (
+      !zone?.key || thermalKeys.has(zone.key) || !zone?.name ||
+      !Array.isArray(zone?.device_keys) || zone.device_keys.length === 0 ||
+      new Set(zone.device_keys).size !== zone.device_keys.length ||
+      duplicateDevice || invalidDevice ||
+      !inRange(zone?.start_temperature_c, -50, 80) ||
+      !inRange(zone?.rated_power_w, 1, 100_000) || !model ||
+      !inRange(model.gain_c_per_wh, 1e-9, 1) ||
+      !inRange(model.cooling_constant_per_h, 0, 3.99) ||
+      !inRange(model.background_gain_c_per_h, -10, 10) ||
+      series.some((values) =>
+        !Array.isArray(values) || values.length !== horizonLength ||
+        values.some((value) => !finite(value))
+      ) ||
+      zone.comfort_min_c.some((value, slot) =>
+        !inRange(value, 5, 30) || !inRange(zone.target_c[slot], 5, 30) ||
+        !inRange(zone.comfort_max_c[slot], 5, 31) ||
+        !inRange(zone.maximum_power_w_by_slot[slot], 0, 100_000) ||
+        !inRange(zone.unplanned_power_w[slot], 0, 100_000) ||
+        value > zone.target_c[slot] ||
+        zone.target_c[slot] > zone.comfort_max_c[slot] ||
+        zone.maximum_power_w_by_slot[slot] > zone.rated_power_w ||
+        zone.unplanned_power_w[slot] > zone.maximum_power_w_by_slot[slot]
+      )
+    ) {
+      errors.push(`thermal_zones[${index}] is invalid`);
+      continue;
+    }
+    thermalKeys.add(zone.key);
+    for (const key of zone.device_keys) thermalDeviceKeys.add(key);
+  }
   if (!Array.isArray(snapshot?.services)) {
     errors.push("services must be an array");
   }
@@ -970,6 +1066,9 @@ function preparedSlots(
   if (snapshot.capabilities.boiler) controlledCategories.add("hot_water");
   if (snapshot.capabilities.pool) controlledCategories.add("pool_heating");
   if (snapshot.capabilities.ev) controlledCategories.add("ev_charging");
+  const thermalDeviceKeys = new Set(
+    (snapshot.thermal_zones ?? []).flatMap((zone) => zone.device_keys),
+  );
   const outlook = buildPriceOutlook(snapshot.slots, shape, snapshot.timezone);
   // Export is not shaped separately: the archive stores an import price, and
   // the spread between them is a supplier and tariff construct rather than
@@ -1012,7 +1111,8 @@ function preparedSlots(
       uncontrolled_device_w: snapshot.device_models.reduce(
         (sum, model) =>
           sum +
-          (controlledCategories.has(model.category)
+          (controlledCategories.has(model.category) ||
+              thermalDeviceKeys.has(model.key)
             ? 0
             : model.forecast_w_by_slot[index]),
         0,
@@ -1124,6 +1224,7 @@ function emptySchedule(length: number): Schedule {
     evTargetCurrentA: new Array(length).fill(0),
     evMinCurrentA: new Array(length).fill(0),
     evMaxCurrentA: new Array(length).fill(0),
+    roomHeating: {},
     serviceSlots: {},
     serviceCurrentsA: {},
     serviceInhibitedSlots: {},
@@ -1588,6 +1689,225 @@ function scheduleServices(
   return { schedule, errors };
 }
 
+const THERMAL_SHIFT_STEP_W = 100;
+const THERMAL_SHIFT_LOOKBACK_SLOTS = 48 * 4;
+const THERMAL_PRIORITY_PEAK_WEIGHT_SEK_PER_KW2 = 0.04;
+
+const scheduledServiceW = (schedule: Schedule, index: number) =>
+  schedule.pool[index] + schedule.boiler[index] + schedule.ev[index];
+
+/** Absolute slot score used when deciding whether to move room heat earlier. */
+function thermalSlotScore(
+  key: Exclude<PlanKey, "baseline">,
+  slot: PreparedSlot,
+  occupiedW: number,
+  reservedW: number,
+): number {
+  const demandW = fixedLoadW(slot) + occupiedW;
+  const importW = Math.max(0, demandW - slot.pv_w);
+  const exportW = Math.max(0, slot.pv_w - demandW);
+  const peakWeight = key === "priority"
+    ? THERMAL_PRIORITY_PEAK_WEIGHT_SEK_PER_KW2
+    : PEAK_WEIGHT_SEK_PER_KW2;
+  let score = SLOT_HOURS / 1_000 * (
+    importW * slot.shadow_import_sek_per_kwh -
+    exportW * slot.shadow_export_sek_per_kwh
+  ) + peakWeight * (importW / 1_000) ** 2;
+  // In Priority, battery target reservations outrank discretionary preheat.
+  if (key === "priority" && reservedW > 0) {
+    score += occupiedW * 1_000;
+  }
+  return score;
+}
+
+/**
+ * Move thermal power from a later quarter to an earlier one while preserving
+ * its exact temperature contribution from the later quarter onward. Earlier
+ * heat decays by alpha, so the moved wattage is increased by that known loss.
+ * This gives the shared electrical objective genuine room-level flexibility
+ * without weakening a single temperature deadline.
+ */
+function optimiseRoomPreheating(
+  key: Exclude<PlanKey, "baseline">,
+  slots: PreparedSlot[],
+  snapshot: OptimisationSnapshotV5,
+  schedule: Schedule,
+  reservedW: number[],
+): void {
+  const outdoor = snapshot.outdoor_temperature_c as number[];
+  const occupiedW = slots.map((slot) =>
+    scheduledServiceW(schedule, slot.index) +
+    Object.values(schedule.roomHeating).reduce(
+      (sum, values) => sum + values[slot.index],
+      0,
+    )
+  );
+  const batterySupportW = snapshot.battery?.discharge_max_w ?? 0;
+
+  for (const zone of [...(snapshot.thermal_zones ?? [])].sort((a, b) =>
+    a.key.localeCompare(b.key)
+  )) {
+    const powers = schedule.roomHeating[zone.key];
+    const alpha = 1 - zone.model.cooling_constant_per_h * SLOT_HOURS;
+    const heatGain = zone.model.gain_c_per_wh * SLOT_HOURS;
+    if (!(alpha > 0) || !(heatGain > 0)) continue;
+    let temperatures = projectZoneTemperature(
+      zone.model,
+      zone.start_temperature_c,
+      outdoor,
+      powers,
+    );
+
+    for (let source = powers.length - 1; source > 0; source -= 1) {
+      while (powers[source] > 0.01) {
+        let best: {
+          candidate: number;
+          removeW: number;
+          addW: number;
+          delta: number;
+        } | null = null;
+        const firstCandidate = Math.max(
+          0,
+          source - THERMAL_SHIFT_LOOKBACK_SLOTS,
+        );
+        for (
+          let candidate = firstCandidate;
+          candidate < source;
+          candidate += 1
+        ) {
+          const retention = alpha ** (source - candidate);
+          if (!(retention > 1e-6)) continue;
+          let maxAddW = zone.maximum_power_w_by_slot[candidate] -
+            powers[candidate];
+          if (maxAddW <= 0.01) continue;
+
+          // Extra warmth may appear only between the new and old quarters;
+          // from source + 1 onward the added and removed effects cancel.
+          for (let at = candidate + 1; at <= source; at += 1) {
+            const influence = heatGain * alpha ** (at - candidate - 1);
+            const headroomC = zone.comfort_max_c[at] - temperatures[at];
+            if (headroomC <= 0 || influence <= 0) {
+              maxAddW = 0;
+              break;
+            }
+            maxAddW = Math.min(maxAddW, headroomC / influence);
+          }
+          if (maxAddW <= 0.01) continue;
+          const removeW = Math.min(
+            powers[source],
+            THERMAL_SHIFT_STEP_W,
+            maxAddW * retention,
+          );
+          if (removeW <= 0.01) continue;
+          const addW = removeW / retention;
+          const candidateDemandW = fixedLoadW(slots[candidate]) +
+            occupiedW[candidate] + addW;
+          if (
+            candidateDemandW > snapshot.grid.import_limit_w +
+              slots[candidate].pv_w + batterySupportW + 0.01
+          ) continue;
+
+          const before = thermalSlotScore(
+            key,
+            slots[candidate],
+            occupiedW[candidate],
+            reservedW[candidate],
+          ) + thermalSlotScore(
+            key,
+            slots[source],
+            occupiedW[source],
+            reservedW[source],
+          );
+          const after = thermalSlotScore(
+            key,
+            slots[candidate],
+            occupiedW[candidate] + addW,
+            reservedW[candidate],
+          ) + thermalSlotScore(
+            key,
+            slots[source],
+            occupiedW[source] - removeW,
+            reservedW[source],
+          );
+          const delta = after - before;
+          if (
+            delta < -1e-8 &&
+            (!best || delta < best.delta ||
+              (Math.abs(delta - best.delta) < 1e-8 &&
+                candidate > best.candidate))
+          ) {
+            best = { candidate, removeW, addW, delta };
+          }
+        }
+        if (!best) break;
+        powers[source] -= best.removeW;
+        powers[best.candidate] += best.addW;
+        occupiedW[source] -= best.removeW;
+        occupiedW[best.candidate] += best.addW;
+        temperatures = projectZoneTemperature(
+          zone.model,
+          zone.start_temperature_c,
+          outdoor,
+          powers,
+        );
+      }
+    }
+  }
+}
+
+function scheduleRoomHeating(
+  key: PlanKey,
+  slots: PreparedSlot[],
+  snapshot: OptimisationSnapshotV5,
+  schedule: Schedule,
+  reservedW: number[],
+): string[] {
+  const zones = snapshot.thermal_zones ?? [];
+  if (zones.length === 0) return [];
+  for (const zone of zones) {
+    schedule.roomHeating[zone.key] = [...zone.unplanned_power_w];
+  }
+  if (key !== "baseline") {
+    optimiseRoomPreheating(key, slots, snapshot, schedule, reservedW);
+  }
+
+  const outdoor = snapshot.outdoor_temperature_c as number[];
+  const errors: string[] = [];
+  for (const zone of zones) {
+    const powers = schedule.roomHeating[zone.key];
+    const temperatures = projectZoneTemperature(
+      zone.model,
+      zone.start_temperature_c,
+      outdoor,
+      powers,
+    );
+    for (let index = 0; index < slots.length; index += 1) {
+      if (
+        powers[index] < -0.01 ||
+        powers[index] > zone.maximum_power_w_by_slot[index] + 0.01
+      ) {
+        errors.push(`${zone.name}: heating power is outside its envelope`);
+        break;
+      }
+      // The first slot is already underway when the snapshot is captured. A
+      // plan can recover from an existing deficit, but cannot rewrite its
+      // starting temperature. Every later quarter is a real deadline.
+      if (
+        index > 0 &&
+        temperatures[index] + 0.01 < zone.comfort_min_c[index]
+      ) {
+        errors.push(
+          `${zone.name}: ${temperatures[index].toFixed(2)} C misses the ` +
+            `${zone.comfort_min_c[index].toFixed(2)} C objective at ` +
+            slots[index].start,
+        );
+        break;
+      }
+    }
+  }
+  return errors;
+}
+
 function batteryReservation(
   slots: PreparedSlot[],
   snapshot: OptimisationSnapshotV5,
@@ -1681,6 +2001,7 @@ function empiricalDeviceLoads(
   snapshot: OptimisationSnapshotV5,
   index: number,
   controlled: Record<string, number>,
+  roomHeating: Record<string, number>,
 ): Record<string, number> {
   const result: Record<string, number> = {};
   const controlledCategory = new Map<string, number>();
@@ -1693,7 +2014,11 @@ function empiricalDeviceLoads(
   if (snapshot.capabilities.ev) {
     controlledCategory.set("ev_charging", controlled.ev);
   }
+  const thermalDeviceKeys = new Set(
+    (snapshot.thermal_zones ?? []).flatMap((zone) => zone.device_keys),
+  );
   for (const model of snapshot.device_models) {
+    if (thermalDeviceKeys.has(model.key)) continue;
     if (!controlledCategory.has(model.category)) {
       result[model.key] = round(model.forecast_w_by_slot[index], 2);
       continue;
@@ -1718,6 +2043,21 @@ function empiricalDeviceLoads(
       controlledCategory.get(model.category)! * share,
       2,
     );
+  }
+  for (const zone of snapshot.thermal_zones ?? []) {
+    const models = zone.device_keys.map((key) =>
+      snapshot.device_models.find((model) => model.key === key)!
+    );
+    const activeTotal = models.reduce(
+      (sum, model) => sum + (model.active_power_w ?? 0),
+      0,
+    );
+    for (const model of models) {
+      const share = activeTotal > 0
+        ? (model.active_power_w ?? 0) / activeTotal
+        : 1 / models.length;
+      result[model.key] = round((roomHeating[zone.key] ?? 0) * share, 2);
+    }
   }
   return result;
 }
@@ -1785,12 +2125,23 @@ function simulate(
     const evW = schedule.ev[slot.index];
     const evConnected = snapshot.ev_battery?.connected === true &&
       slot.epoch_ms >= evAvailableFrom && slot.epoch_ms < evDeparture;
-    const flexibleW = poolW + boilerW + evW;
+    const roomHeating = Object.fromEntries(
+      Object.entries(schedule.roomHeating).map(([roomKey, values]) => [
+        roomKey,
+        values[slot.index],
+      ]),
+    );
+    const roomHeatingW = Object.values(roomHeating).reduce(
+      (sum, watts) => sum + watts,
+      0,
+    );
+    const serviceFlexibleW = poolW + boilerW + evW;
+    const flexibleW = serviceFlexibleW + roomHeatingW;
     const deviceLoads = empiricalDeviceLoads(snapshot, slot.index, {
       boiler: boilerW,
       pool: poolW,
       ev: evW,
-    });
+    }, roomHeating);
     const unrepresentedControlledW =
       (representedCategories.has("pool_heating") ? 0 : poolW) +
       (representedCategories.has("hot_water") ? 0 : boilerW) +
@@ -1929,6 +2280,12 @@ function simulate(
       boiler_expected_w: round(boilerW, 2),
       boiler_permitted: schedule.boilerPermitted[slot.index],
       ev_w: evW,
+      room_heating_w: Object.fromEntries(
+        Object.entries(roomHeating).map(([roomKey, watts]) => [
+          roomKey,
+          round(watts, 2),
+        ]),
+      ),
       device_loads_w: deviceLoads,
       ev_target_current_a: schedule.evTargetCurrentA[slot.index],
       ev_min_current_a: schedule.evMinCurrentA[slot.index],
@@ -2022,9 +2379,16 @@ function simulate(
     }
     return sum + indices.length * service.control.power_w / 1_000 * SLOT_HOURS;
   }, 0);
-  if (Math.abs(flexibleKwh - deliveredKwh) > 1e-6) {
+  const thermalKwh = Object.values(schedule.roomHeating).reduce(
+    (total, powers) => total + powers.reduce(
+      (sum, watts) => sum + watts / 1_000 * SLOT_HOURS,
+      0,
+    ),
+    0,
+  );
+  if (Math.abs(flexibleKwh - thermalKwh - deliveredKwh) > 1e-6) {
     errors.push(
-      `simulated flexible load ${round(flexibleKwh, 3)} differs from ` +
+      `simulated service load ${round(flexibleKwh - thermalKwh, 3)} differs from ` +
         `${round(deliveredKwh, 3)} delivered kWh`,
     );
   }
@@ -2165,6 +2529,13 @@ function buildPlan(
     snapshot,
     key === "priority" ? reservedW : new Array(slots.length).fill(0),
   );
+  const thermalErrors = scheduleRoomHeating(
+    key,
+    slots,
+    snapshot,
+    scheduled.schedule,
+    key === "priority" ? reservedW : new Array(slots.length).fill(0),
+  );
   const simulated = simulate(
     key,
     slots,
@@ -2172,7 +2543,11 @@ function buildPlan(
     scheduled.schedule,
     key === "priority" ? protectedSoc : new Array(slots.length).fill(null),
   );
-  const validationErrors = [...scheduled.errors, ...simulated.errors];
+  const validationErrors = [
+    ...scheduled.errors,
+    ...thermalErrors,
+    ...simulated.errors,
+  ];
   return {
     key,
     label: key === "baseline"

@@ -40,13 +40,13 @@ export const THERMAL_REJECTION_SV: Record<string, string> = {
 export const EMPTY_THERMAL_OBSERVATIONS: ThermalObservationSummary = {
   slotCount: 0,
   outdoorSlotCount: 0,
-  observedDeviceKeys: [],
+  observedRoomKeys: [],
   firstObservedAt: null,
   lastObservedAt: null,
 };
 
 export interface ZoneModelRow {
-  device_id: string;
+  room_key: string;
   trained: boolean;
   rejection_reason: string | null;
   sample_count: number;
@@ -66,18 +66,18 @@ export const summariseThermalSlots = (
   rows: ThermalSlotRow[] | null,
 ): ThermalObservationSummary => {
   if (!rows || rows.length === 0) return EMPTY_THERMAL_OBSERVATIONS;
-  const observedDeviceKeys = new Set<string>();
+  const observedRoomKeys = new Set<string>();
   let outdoorSlotCount = 0;
   for (const row of rows) {
     if (row.outdoor_temperature_c !== null) outdoorSlotCount += 1;
     for (const key of Object.keys(row.zone_observations ?? {})) {
-      observedDeviceKeys.add(key);
+      observedRoomKeys.add(key);
     }
   }
   return {
     slotCount: rows.length,
     outdoorSlotCount,
-    observedDeviceKeys: [...observedDeviceKeys],
+    observedRoomKeys: [...observedRoomKeys],
     firstObservedAt: rows[0]?.start_ts ?? null,
     lastObservedAt: rows[rows.length - 1]?.start_ts ?? null,
   };

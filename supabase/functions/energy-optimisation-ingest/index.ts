@@ -133,9 +133,62 @@ interface StoredDevice extends IncomingDevice {
   control_type_override: DeviceControlType | null;
 }
 
+interface RoomMapping {
+  key: string;
+  name: string;
+  controlled_devices: string[];
+}
+
+const roomMapping = (
+  device: Pick<IncomingDevice, "mapping_status" | "mapped_control_type" | "mapping_summary">,
+): RoomMapping | null => {
+  if (
+    device.mapping_status !== "ready" ||
+    device.mapped_control_type !== "setpoint"
+  ) return null;
+  const key = device.mapping_summary.room_key;
+  const name = device.mapping_summary.room_name;
+  const controlled = device.mapping_summary.controlled_devices;
+  if (
+    typeof key !== "string" || key.length < 1 || key.length > 255 ||
+    typeof name !== "string" || name.length < 1 || name.length > 255 ||
+    !Array.isArray(controlled) || controlled.length === 0 ||
+    controlled.some((value) =>
+      typeof value !== "string" || value.length < 1 || value.length > 255
+    )
+  ) return null;
+  return { key, name, controlled_devices: [...new Set(controlled)] };
+};
+
 const effectivePlanning = (device: StoredDevice) => ({
   planning_role: device.planning_role_override,
   control_type: device.control_type_override,
+});
+
+const STORED_DEVICE_COLUMNS =
+  "id, device_key, statistic_id, name, category, suggested_load_type, load_type_override, suggested_planning_role, planning_role_override, suggested_control_type, control_type_override, active_power_w, profile_sample_count, inference, mapping_status, mapped_control_type, mapping_error, mapping_summary";
+
+const storedDeviceFromRow = (row: Record<string, unknown>): StoredDevice => ({
+  id: row.id as string,
+  key: row.device_key as string,
+  statistic_id: row.statistic_id as string,
+  name: row.name as string,
+  category: row.category as string,
+  suggested_load_type: row.suggested_load_type as DeviceLoadType,
+  load_type_override: row.load_type_override as DeviceLoadType,
+  suggested_planning_role: row.suggested_planning_role as DevicePlanningRole,
+  planning_role_override: row.planning_role_override as DevicePlanningRole,
+  suggested_control_type: row.suggested_control_type as DeviceControlType | null,
+  control_type_override: row.control_type_override as DeviceControlType | null,
+  active_power_w: row.active_power_w === null
+    ? null
+    : Number(row.active_power_w),
+  profile_sample_count: Number(row.profile_sample_count),
+  inference: row.inference as Record<string, unknown>,
+  mapping_status: row.mapping_status as DeviceMappingStatus,
+  mapped_control_type: row.mapped_control_type as DeviceControlType | null,
+  mapping_error: row.mapping_error as string | null,
+  mapping_summary: row.mapping_summary as Record<string, unknown>,
 });
 
 const ENERGY_FIELDS = [
@@ -218,6 +271,7 @@ async function prepareThermalPlanning(
   customerId: string,
   homeId: string,
   snapshot: OptimisationSnapshotV5,
+  storedDevices: StoredDevice[],
 ): Promise<PreparedThermalPlanning> {
   const setpointModels = snapshot.device_models.filter((model) =>
     model.control_type === "setpoint" && model.category === "heating"
@@ -230,9 +284,34 @@ async function prepareThermalPlanning(
           ...model,
           forecast_method: model.forecast_method ?? "empirical_recent_history",
         })),
+        thermal_zones: [],
       },
       zones: [],
     };
+  }
+
+  const storedByKey = new Map(storedDevices.map((device) => [device.key, device]));
+  const rooms = new Map<string, {
+    key: string;
+    name: string;
+    models: typeof setpointModels;
+  }>();
+  for (const model of setpointModels) {
+    const stored = storedByKey.get(model.key);
+    const room = stored ? roomMapping(stored) : null;
+    if (!stored || !room) {
+      throw new Error(`${model.name}: a ready Home Assistant room mapping is required`);
+    }
+    const grouped = rooms.get(room.key) ?? {
+      key: room.key,
+      name: room.name,
+      models: [],
+    };
+    if (grouped.name !== room.name) {
+      throw new Error(`${room.key}: Home Assistant reported two room names`);
+    }
+    grouped.models.push(model);
+    rooms.set(room.key, grouped);
   }
 
   const starts = snapshot.slots.map((slot) => slot.start);
@@ -254,6 +333,7 @@ async function prepareThermalPlanning(
             ? starts.map(() => 0)
             : model.forecast_w_by_slot,
         })),
+        thermal_zones: [],
       },
       zones: [],
     };
@@ -272,7 +352,7 @@ async function prepareThermalPlanning(
   const now = Date.now();
   const { data: existing } = await supabase
     .from("energy_optimisation_zone_models")
-    .select("device_id, fitted_at")
+    .select("room_key, fitted_at")
     .eq("home_id", homeId)
     .order("fitted_at", { ascending: false })
     .limit(1);
@@ -301,92 +381,73 @@ async function prepareThermalPlanning(
         .from("energy_optimisation_zone_models")
         .upsert(
           zoneModelRows(fits, { customerId, homeId, trainingFrom, trainingTo }),
-          { onConflict: "device_id" },
+          { onConflict: "home_id,room_key" },
         );
       if (upsertError) throw upsertError;
     }
   }
 
-  const [trainedResult, deviceResult, latestResult, scheduleResult] = await Promise.all([
+  const [trainedResult, latestResult, scheduleResult] = await Promise.all([
     supabase
       .from("energy_optimisation_zone_models")
       .select(
-        "device_id, gain_c_per_wh, cooling_constant_per_h, background_gain_c_per_h, thermal_capacity_wh_per_c, heat_loss_w_per_c, time_constant_h, heating_rate_c_per_h, r2, residual_std_c, sample_count",
+        "room_key, room_name, gain_c_per_wh, cooling_constant_per_h, background_gain_c_per_h, thermal_capacity_wh_per_c, heat_loss_w_per_c, time_constant_h, heating_rate_c_per_h, r2, residual_std_c, sample_count",
       )
       .eq("home_id", homeId)
       .eq("trained", true),
-    supabase
-      .from("energy_optimisation_devices")
-      .select("id, device_key, name, active_power_w")
-      .eq("home_id", homeId),
     // The trajectory starts from a real room reading no more than six hours
     // old. A guessed midpoint would describe a different house.
     supabase
       .from("energy_optimisation_thermal_slots")
-      .select("device_id, room_temperature_c, start_ts")
+      .select("room_key, room_temperature_c, start_ts")
       .eq("home_id", homeId)
       .gte("start_ts", new Date(now - 6 * 3_600_000).toISOString())
       .order("start_ts", { ascending: false }),
     supabase
       .from("energy_optimisation_comfort_schedules")
       .select(
-        "device_id, weekday_modes, weekend_modes, off_temperature_c, low_temperature_c, high_temperature_c",
+        "room_key, room_name, weekday_modes, weekend_modes, off_temperature_c, low_temperature_c, high_temperature_c",
       )
       .eq("home_id", homeId),
   ]);
   for (const result of [
     trainedResult,
-    deviceResult,
     latestResult,
     scheduleResult,
   ]) {
     if (result.error) throw result.error;
   }
 
-  const trainedByDevice = new Map<string, Record<string, unknown>>(
+  const trainedByRoom = new Map<string, Record<string, unknown>>(
     (trainedResult.data ?? []).map((model: Record<string, unknown>) => [
-      model.device_id as string,
+      model.room_key as string,
       model,
     ] as const),
   );
-  const deviceById = new Map<string, Record<string, unknown>>(
-    (deviceResult.data ?? []).map((device: Record<string, unknown>) => [
-      device.id as string,
-      device,
-    ] as const),
-  );
-  const latestByDevice = new Map<string, Record<string, unknown>>();
+  const latestByRoom = new Map<string, Record<string, unknown>>();
   for (const row of latestResult.data ?? []) {
-    if (!latestByDevice.has(row.device_id)) latestByDevice.set(row.device_id, row);
+    if (!latestByRoom.has(row.room_key)) latestByRoom.set(row.room_key, row);
   }
-  const scheduleByDevice = new Map<string, Record<string, unknown>>(
+  const scheduleByRoom = new Map<string, Record<string, unknown>>(
     (scheduleResult.data ?? []).map((schedule: Record<string, unknown>) => [
-      schedule.device_id as string,
+      schedule.room_key as string,
       schedule,
-    ] as const),
-  );
-  const deviceByKey = new Map<string, Record<string, unknown>>(
-    [...deviceById.values()].map((device) => [
-      device.device_key as string,
-      device,
     ] as const),
   );
   const forecasts = new Map<string, number[]>();
 
   const zones: ProjectionZoneInput[] = [];
-  for (const requested of setpointModels) {
-    const device = deviceByKey.get(requested.key);
-    if (!device) throw new Error(`${requested.name}: stored device is missing`);
-    const deviceId = device.id as string;
-    const fitted = trainedByDevice.get(deviceId);
+  const planningZones: NonNullable<OptimisationSnapshotV5["thermal_zones"]> = [];
+  for (const room of rooms.values()) {
+    const fitted = trainedByRoom.get(room.key);
     if (!fitted) {
-      throw new Error(`${requested.name}: no trained thermal model is available`);
+      throw new Error(`${room.name}: no trained thermal model is available`);
     }
-    const observation = latestByDevice.get(deviceId);
+    const observation = latestByRoom.get(room.key);
     if (!observation || !Number.isFinite(Number(observation.room_temperature_c))) {
-      throw new Error(`${requested.name}: no recent room temperature is available`);
+      throw new Error(`${room.name}: no recent room temperature is available`);
     }
-    const rawSchedule = scheduleByDevice.get(deviceId);
+    const rawSchedule = scheduleByRoom.get(room.key);
     const schedule: ZoneComfortSchedule | null = rawSchedule
       ? {
         weekday_modes: rawSchedule.weekday_modes as ZoneComfortSchedule["weekday_modes"],
@@ -397,11 +458,14 @@ async function prepareThermalPlanning(
       }
       : null;
     if (!isZoneComfortSchedule(schedule)) {
-      throw new Error(`${requested.name}: comfort schedule is missing or invalid`);
+      throw new Error(`${room.name}: comfort schedule is missing or invalid`);
     }
-    const ratedPowerW = Number(requested.active_power_w ?? device.active_power_w);
+    const ratedPowerW = room.models.reduce(
+      (sum, model) => sum + Number(model.active_power_w ?? 0),
+      0,
+    );
     if (!Number.isFinite(ratedPowerW) || ratedPowerW <= 0) {
-      throw new Error(`${requested.name}: rated power is unavailable`);
+      throw new Error(`${room.name}: rated power is unavailable`);
     }
     const thermalModel = {
       gain_c_per_wh: Number(fitted.gain_c_per_wh),
@@ -420,7 +484,7 @@ async function prepareThermalPlanning(
     if (Object.entries(thermalModel).some(([key, value]) =>
       key !== "heating_rate_c_per_h" && !Number.isFinite(value)
     )) {
-      throw new Error(`${requested.name}: fitted thermal model is incomplete`);
+      throw new Error(`${room.name}: fitted thermal model is incomplete`);
     }
     const forecast = buildComfortForecast(
       starts,
@@ -432,10 +496,13 @@ async function prepareThermalPlanning(
       ratedPowerW,
       summerLockout,
     );
-    forecasts.set(requested.key, forecast.power_w);
+    for (const model of room.models) {
+      const share = (model.active_power_w ?? 0) / ratedPowerW;
+      forecasts.set(model.key, forecast.power_w.map((watts) => watts * share));
+    }
     zones.push({
-      key: requested.key,
-      name: requested.name,
+      key: room.key,
+      name: room.name,
       model: thermalModel,
       start_temperature_c: Number(observation.room_temperature_c),
       rated_power_w: ratedPowerW,
@@ -443,6 +510,21 @@ async function prepareThermalPlanning(
       target_c: forecast.target_c,
       comfort_max_c: forecast.comfort_max_c,
       planned_power_w: forecast.power_w,
+      unplanned_power_w: forecast.power_w,
+    });
+    planningZones.push({
+      key: room.key,
+      name: room.name,
+      device_keys: room.models.map((model) => model.key),
+      model: thermalModel,
+      start_temperature_c: Number(observation.room_temperature_c),
+      rated_power_w: ratedPowerW,
+      comfort_min_c: forecast.comfort_min_c,
+      target_c: forecast.target_c,
+      comfort_max_c: forecast.comfort_max_c,
+      maximum_power_w_by_slot: summerLockout.map((locked) =>
+        locked ? 0 : ratedPowerW
+      ),
       unplanned_power_w: forecast.power_w,
     });
   }
@@ -457,6 +539,7 @@ async function prepareThermalPlanning(
           : model.forecast_method ?? "empirical_recent_history",
         forecast_w_by_slot: forecasts.get(model.key) ?? model.forecast_w_by_slot,
       })),
+      thermal_zones: planningZones,
     },
     zones,
   };
@@ -486,6 +569,7 @@ serve(async (req) => {
     let devices: IncomingDevice[] = [];
     let thermals: IncomingThermalSlot[] = [];
     let snapshot: OptimisationSnapshotV5 | null = null;
+    let deviceInventoryComplete = false;
     try {
       const declaredLength = Number(req.headers.get("content-length") ?? 0);
       if (declaredLength > MAX_REQUEST_BYTES) {
@@ -519,17 +603,24 @@ serve(async (req) => {
       if (body.price_slots !== undefined && !Array.isArray(body.price_slots)) {
         throw new Error("price_slots");
       }
+      if (
+        body.device_inventory_complete !== undefined &&
+        typeof body.device_inventory_complete !== "boolean"
+      ) {
+        throw new Error("device_inventory_complete");
+      }
       actuals = body.actual_slots ?? [];
       prices = body.price_slots ?? [];
       devices = body.devices ?? [];
       thermals = body.thermal_slots ?? [];
       snapshot = body.snapshot ?? null;
+      deviceInventoryComplete = body.device_inventory_complete ?? false;
     } catch {
       return json({ error: "invalid_body" }, 400);
     }
     if (
       actuals.length === 0 && snapshot === null && devices.length === 0 &&
-      thermals.length === 0 && prices.length === 0
+      thermals.length === 0 && prices.length === 0 && !deviceInventoryComplete
     ) {
       return json({ error: "empty_body" }, 400);
     }
@@ -608,7 +699,9 @@ serve(async (req) => {
             device.mapping_error !== null)) ||
         (device.mapping_status === "ready" &&
           (!controlTypes.has(device.mapped_control_type as DeviceControlType) ||
-            device.mapping_error !== null)) ||
+            device.mapping_error !== null ||
+            (device.mapped_control_type === "setpoint" &&
+              roomMapping(device) === null))) ||
         (device.mapping_status === "invalid" &&
           (!controlTypes.has(device.mapped_control_type as DeviceControlType) ||
             typeof device.mapping_error !== "string" ||
@@ -643,47 +736,74 @@ serve(async (req) => {
         mapping_reported_at: new Date().toISOString(),
         device_token_id: auth.tokenId,
         last_seen_at: new Date().toISOString(),
+        retired_at: null,
       });
     }
 
-    let storedDevices: StoredDevice[] = [];
     if (deviceRows.length > 0) {
-      const { data, error } = await supabase
+      const { error } = await supabase
         .from("energy_optimisation_devices")
         .upsert(deviceRows, { onConflict: "home_id,device_key" })
-        .select(
-          "id, device_key, statistic_id, name, category, suggested_load_type, load_type_override, suggested_planning_role, planning_role_override, suggested_control_type, control_type_override, active_power_w, profile_sample_count, inference, mapping_status, mapped_control_type, mapping_error, mapping_summary",
-        );
+        .select("id");
       if (error) {
         console.error("[ENERGY-OPTIMISATION] device upsert failed", error);
         return json({ error: "storage_failed" }, 500);
       }
-      storedDevices = (data ?? []).map((row) => ({
-        id: row.id,
-        key: row.device_key,
-        statistic_id: row.statistic_id,
-        name: row.name,
-        category: row.category,
-        suggested_load_type: row.suggested_load_type,
-        load_type_override: row.load_type_override,
-        suggested_planning_role: row.suggested_planning_role,
-        planning_role_override: row.planning_role_override,
-        suggested_control_type: row.suggested_control_type,
-        control_type_override: row.control_type_override,
-        active_power_w: row.active_power_w === null
-          ? null
-          : Number(row.active_power_w),
-        profile_sample_count: row.profile_sample_count,
-        inference: row.inference,
-        mapping_status: row.mapping_status,
-        mapped_control_type: row.mapped_control_type,
-        mapping_error: row.mapping_error,
-        mapping_summary: row.mapping_summary,
-      })) as StoredDevice[];
     }
+    if (deviceInventoryComplete) {
+      const { data: activeRows, error: activeError } = await supabase
+        .from("energy_optimisation_devices")
+        .select("id, device_key")
+        .eq("customer_id", auth.customerId)
+        .eq("home_id", auth.homeId)
+        .is("retired_at", null);
+      if (activeError) {
+        console.error("[ENERGY-OPTIMISATION] device inventory read failed", activeError);
+        return json({ error: "storage_failed" }, 500);
+      }
+      const staleIds = (activeRows ?? [])
+        .filter((row: Record<string, unknown>) =>
+          !deviceKeys.has(row.device_key as string)
+        )
+        .map((row: Record<string, unknown>) => row.id as string);
+      if (staleIds.length > 0) {
+        const { error: retireError } = await supabase
+          .from("energy_optimisation_devices")
+          .update({ retired_at: new Date().toISOString() })
+          .in("id", staleIds);
+        if (retireError) {
+          console.error("[ENERGY-OPTIMISATION] device retirement failed", retireError);
+          return json({ error: "storage_failed" }, 500);
+        }
+      }
+    }
+    const { data: storedRows, error: storedError } = await supabase
+      .from("energy_optimisation_devices")
+      .select(STORED_DEVICE_COLUMNS)
+      .eq("customer_id", auth.customerId)
+      .eq("home_id", auth.homeId)
+      .is("retired_at", null);
+    if (storedError) {
+      console.error("[ENERGY-OPTIMISATION] device inventory load failed", storedError);
+      return json({ error: "storage_failed" }, 500);
+    }
+    const storedDevices = (storedRows ?? []).map(storedDeviceFromRow);
     const storedDeviceByKey = new Map(
       storedDevices.map((device) => [device.key, device]),
     );
+    const storedRoomByKey = new Map<string, RoomMapping>();
+    for (const device of storedDevices) {
+      const room = roomMapping(device);
+      if (!room) continue;
+      const existing = storedRoomByKey.get(room.key);
+      if (existing && existing.name !== room.name) {
+        return json({
+          error: "invalid_device_room_mapping",
+          detail: `${room.key} has more than one name`,
+        }, 400);
+      }
+      storedRoomByKey.set(room.key, room);
+    }
 
     const now = Date.now();
     const latestCompleteStart = Math.floor(now / SLOT_MS) * SLOT_MS - SLOT_MS;
@@ -965,11 +1085,11 @@ serve(async (req) => {
           detail: `thermal_slots[${index}].zone_observations`,
         }, 400);
       }
-      for (const [deviceKey, observation] of Object.entries(observations)) {
-        const storedDevice = storedDeviceByKey.get(deviceKey);
+      for (const [roomKey, observation] of Object.entries(observations)) {
+        const storedRoom = storedRoomByKey.get(roomKey);
         const detail =
-          `thermal_slots[${index}].zone_observations.${deviceKey}`;
-        if (!storedDevice || !observation || typeof observation !== "object") {
+          `thermal_slots[${index}].zone_observations.${roomKey}`;
+        if (!storedRoom || !observation || typeof observation !== "object") {
           return json({ error: "invalid_zone_observations", detail }, 400);
         }
         const room = temperature(observation.room_temperature_c);
@@ -1007,7 +1127,8 @@ serve(async (req) => {
         thermalRows.push({
           customer_id: auth.customerId,
           home_id: auth.homeId,
-          device_id: storedDevice.id,
+          room_key: storedRoom.key,
+          room_name: storedRoom.name,
           start_ts: new Date(start).toISOString(),
           room_temperature_c: room,
           actuator_duty: round(duty, 4),
@@ -1033,7 +1154,7 @@ serve(async (req) => {
     if (thermalRows.length > 0) {
       const { error } = await supabase
         .from("energy_optimisation_thermal_slots")
-        .upsert(thermalRows, { onConflict: "device_id,start_ts" });
+        .upsert(thermalRows, { onConflict: "home_id,room_key,start_ts" });
       if (error) {
         console.error("[ENERGY-OPTIMISATION] thermal upsert failed", error);
         return json({ error: "storage_failed" }, 500);
@@ -1095,6 +1216,7 @@ serve(async (req) => {
           auth.customerId,
           auth.homeId,
           snapshot,
+          storedDevices,
         );
         snapshot = thermal.snapshot;
         thermalZones = thermal.zones;
@@ -1117,7 +1239,7 @@ serve(async (req) => {
           thermalZones.map((zone) => ({
             ...zone,
             planned_power_w: plannedSlots.map((slot) =>
-              slot.device_loads_w?.[zone.key] ?? 0
+              slot.room_heating_w?.[zone.key] ?? 0
             ),
           })),
         );

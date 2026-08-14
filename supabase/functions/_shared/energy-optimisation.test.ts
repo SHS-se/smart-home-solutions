@@ -3,6 +3,7 @@ import {
   type OptimisationSnapshotV5,
   validateSnapshot,
 } from "./energy-optimisation.ts";
+import { projectZoneTemperature } from "./thermal-model.ts";
 
 const assert: (condition: boolean, message: string) => asserts condition = (
   condition,
@@ -355,6 +356,118 @@ Deno.test("a controlled empirical device is replaced rather than double counted"
       "controlled empirical device was counted twice",
     );
   }
+});
+
+Deno.test("room comfort is reached by the first comfort quarter and preheat is staggered", () => {
+  const base = input();
+  const thermalModel = {
+    gain_c_per_wh: 0.001,
+    cooling_constant_per_h: 0,
+    background_gain_c_per_h: 0,
+    thermal_capacity_wh_per_c: 1_000,
+    heat_loss_w_per_c: 0,
+    time_constant_h: 1_000,
+    heating_rate_c_per_h: 4,
+    r2: 0.95,
+    residual_std_c: 0.05,
+    sample_count: 1_000,
+  };
+  const slotCount = base.slots.length;
+  const minimum = Array.from({ length: slotCount }, (_, index) =>
+    index < 4 ? 18 : 20
+  );
+  const unplanned = Array.from({ length: slotCount }, (_, index) =>
+    index === 2 || index === 3 ? 4_000 : 0
+  );
+  const device = (key: string, name: string) => ({
+    key,
+    name,
+    statistic_id: `sensor.${key}_energy`,
+    category: "heating",
+    suggested_load_type: "duty_cycle" as const,
+    load_type: "duty_cycle" as const,
+    planning_role: "controllable" as const,
+    control_type: "setpoint" as const,
+    active_power_w: 4_000,
+    profile_sample_count: 1_000,
+    forecast_method: "thermal_comfort_schedule_v1" as const,
+    forecast_w_by_slot: [...unplanned],
+  });
+  const zone = (key: string, name: string, deviceKey: string) => ({
+    key,
+    name,
+    device_keys: [deviceKey],
+    model: thermalModel,
+    start_temperature_c: 18,
+    rated_power_w: 4_000,
+    comfort_min_c: [...minimum],
+    target_c: [...minimum],
+    comfort_max_c: new Array(slotCount).fill(20.5),
+    maximum_power_w_by_slot: new Array(slotCount).fill(4_000),
+    unplanned_power_w: [...unplanned],
+  });
+  const snapshot = input({
+    capabilities: {
+      pv: false,
+      battery: false,
+      pool: false,
+      boiler: false,
+      ev: false,
+    },
+    battery: null,
+    sources: { ...base.sources, pv: null, battery: null },
+    policy: {
+      battery_end_of_solar_target_soc: 0,
+      battery_target_is_hard: false,
+      terminal_soc_min: 0,
+      terminal_energy_value_sek_per_kwh: 0,
+      battery_export_enabled: false,
+      battery_export_reserve_soc: 0,
+      battery_export_min_price_sek_per_kwh: 0,
+    },
+    slots: base.slots.map((slot) => ({ ...slot, pv_forecast_w: 0 })),
+    device_models: [device("office-heater", "Office heater"), device("bedroom-heater", "Bedroom heater")],
+    services: [],
+    service_requirement_sample_days: {},
+    outdoor_temperature_c: new Array(slotCount).fill(0),
+    thermal_zones: [
+      zone("office", "Office", "office-heater"),
+      zone("bedroom", "Bedroom", "bedroom-heater"),
+    ],
+  });
+
+  const result = generateOptimisationPlan(
+    snapshot,
+    new Date("2026-08-10T07:55:00Z"),
+  );
+  const baseline = result.plans.baseline.slots;
+  const priority = result.plans.priority.slots;
+  assert(
+    baseline.slice(0, 4).some((slot) =>
+      Object.values(slot.room_heating_w).some((watts) => watts > 0)
+    ),
+    "the rooms did not preheat during setback",
+  );
+  for (const roomKey of ["office", "bedroom"]) {
+    const powers = baseline.map((slot) => slot.room_heating_w[roomKey] ?? 0);
+    const temperatures = projectZoneTemperature(
+      thermalModel,
+      18,
+      snapshot.outdoor_temperature_c as number[],
+      powers,
+    );
+    assert(
+      temperatures[4] >= 19.99,
+      `${roomKey} was ${temperatures[4]} C when Comfort began`,
+    );
+  }
+  const peak = (slots: typeof baseline) => Math.max(...slots.map((slot) =>
+    Object.values(slot.room_heating_w).reduce((sum, watts) => sum + watts, 0)
+  ));
+  assert(
+    peak(priority) < peak(baseline),
+    `priority did not spread the room peak (${peak(priority)} vs ${peak(baseline)} W)`,
+  );
 });
 
 Deno.test("snapshot device series must be explicitly controllable", () => {
