@@ -51,32 +51,50 @@ export const zoneModelRows = (
     trainingTo: string;
   },
 ): Record<string, unknown>[] =>
-  fits.map(({ device_id, result }) => ({
-    customer_id: context.customerId,
-    home_id: context.homeId,
-    device_id,
-    fitted_at: new Date().toISOString(),
-    training_from: context.trainingFrom,
-    training_to: context.trainingTo,
-    sample_count: result.ok ? result.model.sample_count : result.sample_count,
-    trained: result.ok,
-    rejection_reason: result.ok ? null : result.reason,
-    gain_c_per_wh: result.ok ? result.model.gain_c_per_wh : null,
-    cooling_constant_per_h: result.ok
-      ? result.model.cooling_constant_per_h
-      : null,
-    background_gain_c_per_h: result.ok
-      ? result.model.background_gain_c_per_h
-      : null,
-    thermal_capacity_wh_per_c: result.ok
-      ? result.model.thermal_capacity_wh_per_c
-      : null,
-    heat_loss_w_per_c: result.ok ? result.model.heat_loss_w_per_c : null,
-    time_constant_h: result.ok ? result.model.time_constant_h : null,
-    heating_rate_c_per_h: result.ok ? result.model.heating_rate_c_per_h : null,
-    r2: result.ok ? result.model.r2 : null,
-    residual_std_c: result.ok ? result.model.residual_std_c : null,
-  }));
+  fits.map(({ device_id, result }) => {
+    if (result.ok === false) {
+      return {
+        customer_id: context.customerId,
+        home_id: context.homeId,
+        device_id,
+        fitted_at: new Date().toISOString(),
+        training_from: context.trainingFrom,
+        training_to: context.trainingTo,
+        sample_count: result.sample_count,
+        trained: false,
+        rejection_reason: result.reason,
+        gain_c_per_wh: null,
+        cooling_constant_per_h: null,
+        background_gain_c_per_h: null,
+        thermal_capacity_wh_per_c: null,
+        heat_loss_w_per_c: null,
+        time_constant_h: null,
+        heating_rate_c_per_h: null,
+        r2: null,
+        residual_std_c: null,
+      };
+    }
+    return {
+      customer_id: context.customerId,
+      home_id: context.homeId,
+      device_id,
+      fitted_at: new Date().toISOString(),
+      training_from: context.trainingFrom,
+      training_to: context.trainingTo,
+      sample_count: result.model.sample_count,
+      trained: true,
+      rejection_reason: null,
+      gain_c_per_wh: result.model.gain_c_per_wh,
+      cooling_constant_per_h: result.model.cooling_constant_per_h,
+      background_gain_c_per_h: result.model.background_gain_c_per_h,
+      thermal_capacity_wh_per_c: result.model.thermal_capacity_wh_per_c,
+      heat_loss_w_per_c: result.model.heat_loss_w_per_c,
+      time_constant_h: result.model.time_constant_h,
+      heating_rate_c_per_h: result.model.heating_rate_c_per_h,
+      r2: result.model.r2,
+      residual_std_c: result.model.residual_std_c,
+    };
+  });
 
 export interface ProjectionZoneInput {
   key: string;
@@ -85,17 +103,18 @@ export interface ProjectionZoneInput {
   /** Latest observed room temperature, the trajectory's starting point. */
   start_temperature_c: number;
   rated_power_w: number;
-  /** Most recently observed comfort edges, when the home reported any. */
-  comfort_min_c: number | null;
-  comfort_max_c: number | null;
+  /** Slot-aligned comfort series from the portal-owned weekly routine. */
+  comfort_min_c: number[];
+  target_c: number[];
+  comfort_max_c: number[];
   /** Power the plan places in each slot. */
   planned_power_w: number[];
-  /** Power the empirical forecast expected without planning. */
+  /** Power the comfort baseline expects without later price shifting. */
   unplanned_power_w: number[];
 }
 
 export interface ThermalProjectionOutput {
-  source: "home_assistant_history";
+  source: "comfort_schedule_model";
   season: null;
   slot_minutes: 15;
   starts: string[];
@@ -125,11 +144,9 @@ export interface ThermalProjectionOutput {
  * Returns null when no zone can be projected, so the plan simply carries no
  * thermal projection rather than an empty chart implying zero degrees.
  *
- * Until the planner takes thermal constraints into account, the planned and
- * unplanned power series for a setpoint zone are usually identical, and the
- * two temperature curves will coincide. That is the honest picture: the model
- * predicts what the current schedule produces, and the curves will separate
- * exactly when the planner starts shifting heat.
+ * Planned and unplanned power are currently identical because this first
+ * version fixes demand realism before attempting price-led heat shifting. The
+ * two temperature curves will separate when thermal flexibility is added.
  */
 export function buildThermalProjection(
   starts: string[],
@@ -147,11 +164,16 @@ export function buildThermalProjection(
   if (length === 0) return null;
 
   const outdoor = outdoorTemperatureC.slice(0, length) as number[];
+  if (zones.some((zone) =>
+    zone.comfort_min_c.length < length || zone.target_c.length < length ||
+    zone.comfort_max_c.length < length || zone.planned_power_w.length < length ||
+    zone.unplanned_power_w.length < length
+  )) {
+    throw new Error("thermal projection series do not cover the weather horizon");
+  }
   const projectedZones = zones.map((zone, index) => {
     const planned = zone.planned_power_w.slice(0, length);
     const unplanned = zone.unplanned_power_w.slice(0, length);
-    const comfortMin = zone.comfort_min_c;
-    const comfortMax = zone.comfort_max_c;
     return {
       key: zone.key,
       name: zone.name,
@@ -159,13 +181,9 @@ export function buildThermalProjection(
       load_type: "duty_cycle" as const,
       priority: index + 1,
       rated_power_w: zone.rated_power_w,
-      comfort_min_c: new Array(length).fill(comfortMin ?? 0),
-      target_c: new Array(length).fill(
-        comfortMin !== null && comfortMax !== null
-          ? (comfortMin + comfortMax) / 2
-          : zone.start_temperature_c,
-      ),
-      comfort_max_c: new Array(length).fill(comfortMax ?? 0),
+      comfort_min_c: zone.comfort_min_c.slice(0, length),
+      target_c: zone.target_c.slice(0, length),
+      comfort_max_c: zone.comfort_max_c.slice(0, length),
       planned_temperature_c: projectZoneTemperature(
         zone.model,
         zone.start_temperature_c,
@@ -191,7 +209,7 @@ export function buildThermalProjection(
       ));
 
   return {
-    source: "home_assistant_history",
+    source: "comfort_schedule_model",
     season: null,
     slot_minutes: 15,
     starts: starts.slice(0, length),

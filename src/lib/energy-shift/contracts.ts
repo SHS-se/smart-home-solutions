@@ -50,13 +50,9 @@ export interface ThermalZoneProjection {
   unplanned_power_w: number[];
 }
 
-/**
- * A read-only projection shown beside the electrical plan. It is deliberately
- * not part of the executable v5 control contract; confirmed models can be
- * promoted into optimisation only after the visual result has been reviewed.
- */
+/** The room-temperature consequence of the executable comfort-driven demand. */
 export interface ThermalProjection {
-  source: 'synthetic_season_fixture' | 'home_assistant_history';
+  source: 'synthetic_season_fixture' | 'comfort_schedule_model';
   season: ThermalFixtureSeason | null;
   slot_minutes: 15;
   starts: string[];

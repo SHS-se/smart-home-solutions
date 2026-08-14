@@ -66,7 +66,7 @@ const ThermalSection: React.FC<{
                     <p className="mt-2 text-xs text-muted-foreground">
                       {thermalProjection.source === 'synthetic_season_fixture'
                         ? t('Detta är en 72-timmars skuggprojektion för säsongstest. Den visar samordning och komfort men ingår ännu inte i den körbara planen.', 'This is a 72-hour shadow projection for seasonal testing. It shows coordination and comfort but is not yet part of the executable plan.')
-                        : t('Temperaturprojektionen bygger på bekräftade Home Assistant-bindningar och historik.', 'The temperature projection uses confirmed Home Assistant bindings and history.')}
+                        : t('Värmebehovet beräknas från komfortschemat, väderprognosen, aktuell rumstemperatur och rummets inlärda värmetröghet — inte från vad värmaren drog förra veckan.', 'Heating demand is calculated from the comfort schedule, weather forecast, current room temperature, and the room’s learned thermal response—not from what the heater drew last week.')}
                     </p>
                   </>
                 ) : (

@@ -2102,6 +2102,70 @@ export type Database = {
           },
         ]
       }
+      energy_optimisation_comfort_schedules: {
+        Row: {
+          customer_id: string
+          device_id: string
+          high_temperature_c: number
+          home_id: string
+          id: string
+          low_temperature_c: number
+          off_temperature_c: number
+          source: string
+          updated_at: string
+          weekday_modes: Json
+          weekend_modes: Json
+        }
+        Insert: {
+          customer_id: string
+          device_id: string
+          high_temperature_c?: number
+          home_id: string
+          id?: string
+          low_temperature_c?: number
+          off_temperature_c?: number
+          source?: string
+          updated_at?: string
+          weekday_modes?: Json
+          weekend_modes?: Json
+        }
+        Update: {
+          customer_id?: string
+          device_id?: string
+          high_temperature_c?: number
+          home_id?: string
+          id?: string
+          low_temperature_c?: number
+          off_temperature_c?: number
+          source?: string
+          updated_at?: string
+          weekday_modes?: Json
+          weekend_modes?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "energy_optimisation_comfort_schedules_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_optimisation_comfort_schedules_device_id_fkey"
+            columns: ["device_id"]
+            isOneToOne: true
+            referencedRelation: "energy_optimisation_devices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_optimisation_comfort_schedules_home_id_fkey"
+            columns: ["home_id"]
+            isOneToOne: false
+            referencedRelation: "homes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       energy_optimisation_zone_models: {
         Row: {
           background_gain_c_per_h: number | null
@@ -4889,6 +4953,17 @@ export type Database = {
           p_planning_role: string
         }
         Returns: Database["public"]["Tables"]["energy_optimisation_devices"]["Row"]
+      }
+      set_energy_zone_comfort_schedule: {
+        Args: {
+          p_device_id: string
+          p_high_temperature_c: number
+          p_low_temperature_c: number
+          p_off_temperature_c: number
+          p_weekday_modes: Json
+          p_weekend_modes: Json
+        }
+        Returns: Database["public"]["Tables"]["energy_optimisation_comfort_schedules"]["Row"]
       }
       set_energy_tariff_settings: {
         Args: {

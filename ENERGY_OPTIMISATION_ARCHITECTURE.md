@@ -969,9 +969,11 @@ nothing past the priced window valued stored energy, so the battery was worth
 draining. Once `shadowImport` extends across the whole horizon, the terminal
 valuation the plan already computes has something to price against.
 
-### 1.5 `forecast_w_by_slot` is a command, not a forecast — OPEN
+### 1.5 `forecast_w_by_slot` is a command, not a forecast — IMPLEMENTED 2026-08-14
 
-**Status: not fixed. This section is a handoff, not a record of work done.**
+**Status: fixed for setpoint-controlled heating zones.** The empirical profile
+remains appropriate for non-thermal devices; it is no longer allowed to become
+a room-heating schedule.
 
 #### 1.5.1 Why this outranks the objective
 
@@ -1144,14 +1146,63 @@ them:
    deadlines, which §5.5 already describes.
 5. Vacation dates as a portal input; reactive controller later.
 
-#### 1.5.5 Constraint on any fix
+#### 1.5.5 Implemented comfort-driven forecast (2026-08-14)
 
-The portal validates the snapshot but does not second-guess it. If the
-integration is going to send an instruction dressed as a forecast, the contract
-should say so — either rename the field for what it does, or split "predicted
-demand" from "commanded schedule" so the portal can tell them apart and refuse
-an implausible one. Today it cannot: a device model that says 3 kW at 03:00 in
-August is indistinguishable from a legitimate one.
+The fix keeps the routine in the portal and the physics in the planning edge,
+which is where the fitted zone models already live. Nothing calls Node-RED at
+runtime.
+
+- `energy_optimisation_comfort_schedules` stores one 96-quarter weekday row and
+  one weekend row per setpoint zone, plus the zone's off, setback and comfort
+  temperatures. A trigger creates the row when a device becomes a setpoint
+  zone. Existing zones are seeded once with the Node-RED routine above:
+  05:00–09:30 and 14:00–21:30 at `high-temp`, `low-temp` otherwise. The latest
+  reported high/low helper values seed each zone's temperatures when available.
+- Energy Modeling now has a **Comfort schedule** tab. The customer selects a
+  room, chooses an Off / Setback / Comfort brush and paints either 24-hour band
+  in 15-minute cells. The exact comfort periods and hours are written beside
+  the band, temperatures are editable per zone, and weekday/weekend routines
+  can be copied between each other. This is deliberately described as desired
+  comfort rather than presence tracking.
+- Season remains independent of weather: every June–August heating slot is an
+  explicit zero-demand lockout, so summer does not require fresh winter samples
+  merely to conclude that room heat stays off.
+- Outside that lockout, every heating-category `setpoint` device is joined to
+  its latest room temperature, fitted 1R1C model, reviewed active power, portal
+  schedule and slot-aligned outdoor forecast. A backwards pass computes how
+  early that particular room must recover; a forwards pass emits bounded
+  expected power and temperature. Slow concrete floors therefore start earlier
+  than convectors instead of receiving the same copied duty cycle.
+- When forecast outdoor air is already at or above the desired room
+  temperature, the zone also requests zero heating. The seasonal lockout and
+  this weather invariant remove the August floor-heating schedule.
+- Outside summer lockout, a selected setpoint zone with a missing schedule,
+  stale room temperature, untrained model, missing rating or incomplete weather
+  horizon fails the plan. It never silently falls back to last week's
+  consumption.
+- The generated device model carries `forecast_method =
+  seasonal_heating_lockout_v1` or `thermal_comfort_schedule_v1`; other
+  controllable devices carry `empirical_recent_history`. The Thermal tab names
+  the distinction and draws the slot-varying comfort target rather than one
+  flat band.
+
+The first version intentionally does **not** derive passive solar heat from the
+PV electrical forecast. Outdoor temperature and seasonality are now real
+inputs; a calibrated glazing/solar-gain term remains the next thermal-model
+increment rather than an invented conversion factor. Cooling-category setpoint
+devices also remain on their empirical model until a separately fitted cooling
+response exists; the heating fit deliberately excludes cooling quarters and is
+not reused backwards as an air-conditioning model.
+
+#### 1.5.6 Constraint on any fix
+
+The portal validates the snapshot but does not second-guess a thermal result.
+The planning edge now owns the setpoint-zone series and replaces the
+integration's empirical input before validation, hashing and storage. Schema 5
+retains the `forecast_w_by_slot` field, but its provenance is explicit through
+`forecast_method`; an empirical 3 kW heater series and a comfort/physics-derived
+series are no longer indistinguishable. A thermal input failure refuses the plan
+instead of publishing the empirical series under the thermal method.
 
 ## 2. Terms
 

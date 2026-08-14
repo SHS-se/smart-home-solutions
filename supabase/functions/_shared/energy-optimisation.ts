@@ -198,6 +198,15 @@ export interface EmpiricalDeviceModelInput {
   control_type: DeviceControlType;
   active_power_w: number | null;
   profile_sample_count: number;
+  /**
+   * Named explicitly because this series is consumed as the baseline control
+   * schedule. Setpoint zones are replaced server-side by the fitted thermal
+   * model plus the portal comfort routine before the planner runs.
+   */
+  forecast_method?:
+    | "empirical_recent_history"
+    | "seasonal_heating_lockout_v1"
+    | "thermal_comfort_schedule_v1";
   forecast_w_by_slot: number[];
 }
 
@@ -736,6 +745,14 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV5): string[] {
         !inRange(model.active_power_w, 0, 100_000)) ||
       !Number.isInteger(model?.profile_sample_count) ||
       model.profile_sample_count < 0 ||
+      (model.forecast_method !== undefined &&
+        ![
+          "empirical_recent_history",
+          "seasonal_heating_lockout_v1",
+          "thermal_comfort_schedule_v1",
+        ].includes(
+          model.forecast_method,
+        )) ||
       !Array.isArray(model?.forecast_w_by_slot) ||
       model.forecast_w_by_slot.length !== snapshot.slots.length ||
       model.forecast_w_by_slot.some((value) => !inRange(value, 0, 100_000))

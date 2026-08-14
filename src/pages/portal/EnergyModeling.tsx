@@ -7,13 +7,14 @@ import { supabase } from '@/integrations/supabase/client';
 import PlanWorkspace, { type PlanSection } from '@/components/portal/energy/PlanWorkspace';
 import ROITab from '@/components/portal/energy/ROITab';
 import HomeSelector from '@/components/portal/energy/HomeSelector';
+import ComfortSchedulesTab from '@/components/portal/energy/ComfortSchedulesTab';
 
 interface EnergyModelingProps {
   customerId?: string;
   isStaffView?: boolean;
 }
 
-type EnergyTab = 'roi' | PlanSection;
+type EnergyTab = 'roi' | 'comfort' | PlanSection;
 
 /**
  * The old device-day simulator, house setup, home devices and tariff tabs were
@@ -76,6 +77,7 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
     { key: 'plan', label: t('Plan', 'Plan') },
     { key: 'history', label: t('Historik', 'History') },
     { key: 'devices', label: t('Enheter', 'Devices') },
+    { key: 'comfort', label: t('Komfort', 'Comfort') },
     { key: 'thermal', label: t('Termik', 'Thermal') },
     { key: 'economics', label: t('Ekonomi', 'Economics') },
     { key: 'storage', label: t('Lagring', 'Storage') },
@@ -100,7 +102,7 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
       )}
 
       <Tabs value={tab} onValueChange={value => setTab(value as EnergyTab)}>
-        <TabsList>
+        <TabsList className="h-auto w-full justify-start overflow-x-auto">
           {tabs.map(item => (
             <TabsTrigger key={item.key} value={item.key}>{item.label}</TabsTrigger>
           ))}
@@ -114,6 +116,8 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
       */}
       {tab === 'roi' ? (
         <ROITab customerId={resolvedCustomerId} homeId={selectedHomeId} homeCount={homeCount} />
+      ) : tab === 'comfort' ? (
+        <ComfortSchedulesTab customerId={resolvedCustomerId} homeId={selectedHomeId} />
       ) : (
         <PlanWorkspace
           section={tab}

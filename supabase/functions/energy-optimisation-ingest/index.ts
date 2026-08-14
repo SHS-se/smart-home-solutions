@@ -28,6 +28,12 @@ import {
   TRAINING_WINDOW_DAYS,
   zoneModelRows,
 } from "../_shared/thermal-training.ts";
+import {
+  buildComfortForecast,
+  isZoneComfortSchedule,
+  summerHeatingLockoutForStarts,
+  type ZoneComfortSchedule,
+} from "../_shared/comfort-schedule.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -177,6 +183,7 @@ const compactPlanSummary = (
     control_type: model.control_type,
     active_power_w: model.active_power_w,
     profile_sample_count: model.profile_sample_count,
+    forecast_method: model.forecast_method,
   })),
   service_requirement_sample_days: plan.service_requirement_sample_days,
   plans: Object.fromEntries(
@@ -191,22 +198,77 @@ const compactPlanSummary = (
   ),
 });
 
+interface PreparedThermalPlanning {
+  snapshot: OptimisationSnapshotV5;
+  zones: ProjectionZoneInput[];
+}
+
 /**
- * Refit stale zone models and build a temperature projection for the plan.
+ * Replace every setpoint heating zone's recent-history profile with the demand
+ * implied by its portal comfort routine, season, outdoor forecast, latest
+ * measured temperature and fitted 1R1C model.
  *
- * Returns null whenever a projection would be misleading: no fitted zone, no
- * outdoor forecast, or no recent room temperature to start the trajectory
- * from. A missing projection reads as "not yet", which is true; an invented
- * one would read as a measurement.
+ * This is deliberately fail-fast. Once a device is opted into setpoint
+ * planning, an empirical Tuesday cannot silently take over when any thermal
+ * input is missing; that was the unsafe behaviour this model replaces.
  */
-async function refitAndProject(
+async function prepareThermalPlanning(
   // deno-lint-ignore no-explicit-any
   supabase: any,
   customerId: string,
   homeId: string,
   snapshot: OptimisationSnapshotV5,
-  plan: ReturnType<typeof generateOptimisationPlan>,
-) {
+): Promise<PreparedThermalPlanning> {
+  const setpointModels = snapshot.device_models.filter((model) =>
+    model.control_type === "setpoint" && model.category === "heating"
+  );
+  if (setpointModels.length === 0) {
+    return {
+      snapshot: {
+        ...snapshot,
+        device_models: snapshot.device_models.map((model) => ({
+          ...model,
+          forecast_method: model.forecast_method ?? "empirical_recent_history",
+        })),
+      },
+      zones: [],
+    };
+  }
+
+  const starts = snapshot.slots.map((slot) => slot.start);
+  const summerLockout = summerHeatingLockoutForStarts(
+    starts,
+    snapshot.timezone,
+  );
+  if (summerLockout.every(Boolean)) {
+    const lockedKeys = new Set(setpointModels.map((model) => model.key));
+    return {
+      snapshot: {
+        ...snapshot,
+        device_models: snapshot.device_models.map((model) => ({
+          ...model,
+          forecast_method: lockedKeys.has(model.key)
+            ? "seasonal_heating_lockout_v1"
+            : model.forecast_method ?? "empirical_recent_history",
+          forecast_w_by_slot: lockedKeys.has(model.key)
+            ? starts.map(() => 0)
+            : model.forecast_w_by_slot,
+        })),
+      },
+      zones: [],
+    };
+  }
+
+  const outdoor = snapshot.outdoor_temperature_c;
+  if (
+    !outdoor || outdoor.length !== snapshot.slots.length ||
+    outdoor.some((value) => value === null || !Number.isFinite(value))
+  ) {
+    throw new Error(
+      "setpoint comfort forecasting needs outdoor temperature for every slot",
+    );
+  }
+
   const now = Date.now();
   const { data: existing } = await supabase
     .from("energy_optimisation_zone_models")
@@ -245,90 +307,159 @@ async function refitAndProject(
     }
   }
 
-  const outdoor = snapshot.outdoor_temperature_c;
-  if (!outdoor || outdoor.length === 0) return null;
-
-  const { data: trained } = await supabase
-    .from("energy_optimisation_zone_models")
-    .select(
-      "device_id, gain_c_per_wh, cooling_constant_per_h, background_gain_c_per_h, thermal_capacity_wh_per_c, heat_loss_w_per_c, time_constant_h, heating_rate_c_per_h, r2, residual_std_c, sample_count",
-    )
-    .eq("home_id", homeId)
-    .eq("trained", true);
-  if (!trained || trained.length === 0) return null;
-
-  const { data: devices } = await supabase
-    .from("energy_optimisation_devices")
-    .select("id, device_key, name, active_power_w")
-    .eq("home_id", homeId);
-  const deviceById = new Map(
-    (devices ?? []).map((device: Record<string, unknown>) => [
-      device.id as string,
-      device,
-    ]),
-  );
-
-  // The trajectory has to start from a real reading, not from the middle of
-  // a comfort band, or the projection describes a house nobody lives in.
-  const { data: latest } = await supabase
-    .from("energy_optimisation_thermal_slots")
-    .select("device_id, room_temperature_c, comfort_min_c, comfort_max_c, start_ts")
-    .eq("home_id", homeId)
-    .gte("start_ts", new Date(now - 6 * 3_600_000).toISOString())
-    .order("start_ts", { ascending: false });
-  const latestByDevice = new Map<string, Record<string, unknown>>();
-  for (const row of latest ?? []) {
-    if (!latestByDevice.has(row.device_id)) latestByDevice.set(row.device_id, row);
+  const [trainedResult, deviceResult, latestResult, scheduleResult] = await Promise.all([
+    supabase
+      .from("energy_optimisation_zone_models")
+      .select(
+        "device_id, gain_c_per_wh, cooling_constant_per_h, background_gain_c_per_h, thermal_capacity_wh_per_c, heat_loss_w_per_c, time_constant_h, heating_rate_c_per_h, r2, residual_std_c, sample_count",
+      )
+      .eq("home_id", homeId)
+      .eq("trained", true),
+    supabase
+      .from("energy_optimisation_devices")
+      .select("id, device_key, name, active_power_w")
+      .eq("home_id", homeId),
+    // The trajectory starts from a real room reading no more than six hours
+    // old. A guessed midpoint would describe a different house.
+    supabase
+      .from("energy_optimisation_thermal_slots")
+      .select("device_id, room_temperature_c, start_ts")
+      .eq("home_id", homeId)
+      .gte("start_ts", new Date(now - 6 * 3_600_000).toISOString())
+      .order("start_ts", { ascending: false }),
+    supabase
+      .from("energy_optimisation_comfort_schedules")
+      .select(
+        "device_id, weekday_modes, weekend_modes, off_temperature_c, low_temperature_c, high_temperature_c",
+      )
+      .eq("home_id", homeId),
+  ]);
+  for (const result of [
+    trainedResult,
+    deviceResult,
+    latestResult,
+    scheduleResult,
+  ]) {
+    if (result.error) throw result.error;
   }
 
-  const slots = plan.plans.cost?.slots ?? plan.plans.baseline?.slots ?? [];
-  const forecastByKey = new Map(
-    snapshot.device_models.map((model) => [model.key, model.forecast_w_by_slot]),
+  const trainedByDevice = new Map<string, Record<string, unknown>>(
+    (trainedResult.data ?? []).map((model: Record<string, unknown>) => [
+      model.device_id as string,
+      model,
+    ] as const),
   );
+  const deviceById = new Map<string, Record<string, unknown>>(
+    (deviceResult.data ?? []).map((device: Record<string, unknown>) => [
+      device.id as string,
+      device,
+    ] as const),
+  );
+  const latestByDevice = new Map<string, Record<string, unknown>>();
+  for (const row of latestResult.data ?? []) {
+    if (!latestByDevice.has(row.device_id)) latestByDevice.set(row.device_id, row);
+  }
+  const scheduleByDevice = new Map<string, Record<string, unknown>>(
+    (scheduleResult.data ?? []).map((schedule: Record<string, unknown>) => [
+      schedule.device_id as string,
+      schedule,
+    ] as const),
+  );
+  const deviceByKey = new Map<string, Record<string, unknown>>(
+    [...deviceById.values()].map((device) => [
+      device.device_key as string,
+      device,
+    ] as const),
+  );
+  const forecasts = new Map<string, number[]>();
 
   const zones: ProjectionZoneInput[] = [];
-  for (const model of trained) {
-    const device = deviceById.get(model.device_id);
-    const observation = latestByDevice.get(model.device_id);
-    if (!device || !observation) continue;
-    const key = device.device_key as string;
-    const forecast = forecastByKey.get(key);
-    if (!forecast) continue;
+  for (const requested of setpointModels) {
+    const device = deviceByKey.get(requested.key);
+    if (!device) throw new Error(`${requested.name}: stored device is missing`);
+    const deviceId = device.id as string;
+    const fitted = trainedByDevice.get(deviceId);
+    if (!fitted) {
+      throw new Error(`${requested.name}: no trained thermal model is available`);
+    }
+    const observation = latestByDevice.get(deviceId);
+    if (!observation || !Number.isFinite(Number(observation.room_temperature_c))) {
+      throw new Error(`${requested.name}: no recent room temperature is available`);
+    }
+    const rawSchedule = scheduleByDevice.get(deviceId);
+    const schedule: ZoneComfortSchedule | null = rawSchedule
+      ? {
+        weekday_modes: rawSchedule.weekday_modes as ZoneComfortSchedule["weekday_modes"],
+        weekend_modes: rawSchedule.weekend_modes as ZoneComfortSchedule["weekend_modes"],
+        off_temperature_c: Number(rawSchedule.off_temperature_c),
+        low_temperature_c: Number(rawSchedule.low_temperature_c),
+        high_temperature_c: Number(rawSchedule.high_temperature_c),
+      }
+      : null;
+    if (!isZoneComfortSchedule(schedule)) {
+      throw new Error(`${requested.name}: comfort schedule is missing or invalid`);
+    }
+    const ratedPowerW = Number(requested.active_power_w ?? device.active_power_w);
+    if (!Number.isFinite(ratedPowerW) || ratedPowerW <= 0) {
+      throw new Error(`${requested.name}: rated power is unavailable`);
+    }
+    const thermalModel = {
+      gain_c_per_wh: Number(fitted.gain_c_per_wh),
+      cooling_constant_per_h: Number(fitted.cooling_constant_per_h),
+      background_gain_c_per_h: Number(fitted.background_gain_c_per_h),
+      thermal_capacity_wh_per_c: Number(fitted.thermal_capacity_wh_per_c),
+      heat_loss_w_per_c: Number(fitted.heat_loss_w_per_c),
+      time_constant_h: Number(fitted.time_constant_h),
+      heating_rate_c_per_h: fitted.heating_rate_c_per_h === null
+        ? null
+        : Number(fitted.heating_rate_c_per_h),
+      r2: Number(fitted.r2),
+      sample_count: Number(fitted.sample_count),
+      residual_std_c: Number(fitted.residual_std_c),
+    };
+    if (Object.entries(thermalModel).some(([key, value]) =>
+      key !== "heating_rate_c_per_h" && !Number.isFinite(value)
+    )) {
+      throw new Error(`${requested.name}: fitted thermal model is incomplete`);
+    }
+    const forecast = buildComfortForecast(
+      starts,
+      snapshot.timezone,
+      schedule,
+      thermalModel,
+      Number(observation.room_temperature_c),
+      outdoor as number[],
+      ratedPowerW,
+      summerLockout,
+    );
+    forecasts.set(requested.key, forecast.power_w);
     zones.push({
-      key,
-      name: device.name as string,
-      model: {
-        gain_c_per_wh: Number(model.gain_c_per_wh),
-        cooling_constant_per_h: Number(model.cooling_constant_per_h),
-        background_gain_c_per_h: Number(model.background_gain_c_per_h),
-        thermal_capacity_wh_per_c: Number(model.thermal_capacity_wh_per_c),
-        heat_loss_w_per_c: Number(model.heat_loss_w_per_c),
-        time_constant_h: Number(model.time_constant_h),
-        heating_rate_c_per_h: model.heating_rate_c_per_h === null
-          ? null
-          : Number(model.heating_rate_c_per_h),
-        r2: Number(model.r2),
-        sample_count: Number(model.sample_count),
-        residual_std_c: Number(model.residual_std_c),
-      },
+      key: requested.key,
+      name: requested.name,
+      model: thermalModel,
       start_temperature_c: Number(observation.room_temperature_c),
-      rated_power_w: Number(device.active_power_w ?? 0),
-      comfort_min_c: observation.comfort_min_c === null
-        ? null
-        : Number(observation.comfort_min_c),
-      comfort_max_c: observation.comfort_max_c === null
-        ? null
-        : Number(observation.comfort_max_c),
-      planned_power_w: slots.map((slot) => slot.device_loads_w?.[key] ?? 0),
-      unplanned_power_w: [...forecast],
+      rated_power_w: ratedPowerW,
+      comfort_min_c: forecast.comfort_min_c,
+      target_c: forecast.target_c,
+      comfort_max_c: forecast.comfort_max_c,
+      planned_power_w: forecast.power_w,
+      unplanned_power_w: forecast.power_w,
     });
   }
 
-  return buildThermalProjection(
-    slots.map((slot) => slot.start),
-    outdoor,
+  return {
+    snapshot: {
+      ...snapshot,
+      device_models: snapshot.device_models.map((model) => ({
+        ...model,
+        forecast_method: forecasts.has(model.key)
+          ? "thermal_comfort_schedule_v1"
+          : model.forecast_method ?? "empirical_recent_history",
+        forecast_w_by_slot: forecasts.get(model.key) ?? model.forecast_w_by_slot,
+      })),
+    },
     zones,
-  );
+  };
 }
 
 serve(async (req) => {
@@ -912,7 +1043,9 @@ serve(async (req) => {
       ? new Date(Math.max(...thermalStarts) + SLOT_MS).toISOString()
       : null;
 
-    let generated: ReturnType<typeof generateOptimisationPlan> | null = null;
+    let generated: (ReturnType<typeof generateOptimisationPlan> & {
+      thermal_projection?: NonNullable<ReturnType<typeof buildThermalProjection>>;
+    }) | null = null;
     if (snapshot !== null) {
       const models = new Map(
         snapshot.device_models.map((model) => [model.key, model]),
@@ -955,7 +1088,16 @@ serve(async (req) => {
         priceShape = buildPriceShape(shapeRows ?? [], snapshot.timezone);
       }
 
+      let thermalZones: ProjectionZoneInput[] = [];
       try {
+        const thermal = await prepareThermalPlanning(
+          supabase,
+          auth.customerId,
+          auth.homeId,
+          snapshot,
+        );
+        snapshot = thermal.snapshot;
+        thermalZones = thermal.zones;
         generated = generateOptimisationPlan(snapshot, new Date(), priceShape);
       } catch (error) {
         const detail = error instanceof Error
@@ -964,22 +1106,24 @@ serve(async (req) => {
         return json({ error: "invalid_snapshot", detail }, 400);
       }
 
-      // Refit zones and attach a temperature projection. A failure here must
-      // never cost the home its electrical plan, which is already valid and
-      // is the part that actually controls equipment.
-      try {
-        const projection = await refitAndProject(
-          supabase,
-          auth.customerId,
-          auth.homeId,
-          snapshot,
-          generated,
+      // The same scheduled demand is projected into room temperature for the
+      // Thermal tab. This is descriptive; the executable power series was
+      // already installed in the snapshot before planning above.
+      if (thermalZones.length > 0) {
+        const plannedSlots = generated.plans.priority.slots;
+        const projection = buildThermalProjection(
+          snapshot.slots.map((slot) => slot.start),
+          snapshot.outdoor_temperature_c as number[],
+          thermalZones.map((zone) => ({
+            ...zone,
+            planned_power_w: plannedSlots.map((slot) =>
+              slot.device_loads_w?.[zone.key] ?? 0
+            ),
+          })),
         );
         if (projection) {
           generated = { ...generated, thermal_projection: projection };
         }
-      } catch (error) {
-        console.error("[ENERGY-OPTIMISATION] thermal fit failed", error);
       }
 
       const inputHash = await sha256Hex(JSON.stringify(snapshot));
