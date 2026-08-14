@@ -969,6 +969,77 @@ nothing past the priced window valued stored energy, so the battery was worth
 draining. Once `shadowImport` extends across the whole horizon, the terminal
 valuation the plan already computes has something to price against.
 
+### 1.5 `forecast_w_by_slot` is a command, not a forecast — OPEN
+
+**Status: not fixed. This section is a handoff, not a record of work done.**
+
+#### 1.5.1 Why this outranks the objective
+
+§1.4 changed *when* the planner places load. It cannot change *how much*, and
+the numbers that make a plan unreadable are magnitudes:
+
+| Device | Planned, 72 h | Measured, 72 h |
+|---|---|---|
+| Pool room floor heater | **10.98 kWh** | ≈ 0 |
+| Base load — everything else | **67.2 kWh** | 36.6 kWh |
+| Car charging | 1.7 kWh | 19.1 kWh |
+
+Floor heating for eleven kilowatt-hours in August is not a scheduling decision.
+Nothing in the objective creates load; it only moves it. That number comes from
+`device_models[].forecast_w_by_slot` in the snapshot, built by the integration in
+`optimisation.py`, and the portal's planner consumes it as given.
+
+**The critical property, in Phil's words: it "is not making a forecast, it is
+deciding what controllable loads to actually run."** For a controllable device
+the planner does not predict demand and then satisfy it — the forecast *becomes*
+the schedule the automations execute. A forecast that says three hours of
+basement floor heating is an instruction to run it for three hours. So an error
+here is not a cosmetic mis-estimate on a chart; it is the wrong physical
+behaviour, and it is why the automations are not wired up yet.
+
+Judging the schedule is impossible until this is right, and no further work on
+the objective is worth doing before it.
+
+#### 1.5.2 Where to look
+
+- `custom_components/shs_energy/optimisation.py` — `build_empirical_device_profile()`
+  and `build_base_load_profile()`. These produce the per-slot series.
+- `OPTIMISATION_PROFILE_DAYS = 10` in `const.py` — the sample window.
+- The profile is keyed on weekday/weekend and quarter-of-day, like the price
+  shape in §1.4.3.
+
+#### 1.5.3 Questions worth answering first
+
+1. **Is a seasonal load being projected out of season?** A ten-day trimmed mean
+   has no notion of "the heating season ended". If the sample window catches any
+   heating at all, or a thermostat self-test, it becomes a standing daily
+   expectation. Check what the pool room floor heater actually drew over the
+   sample window — `sensor.pool_room_floor_heater_energy` — before assuming the
+   statistic is wrong; the meter may be reporting something real.
+2. **Is a `setpoint` device being modelled as an energy demand at all?** Twelve
+   of the seventeen mapped devices are `setpoint`, i.e. thermal zones. A zone's
+   demand is a function of outdoor temperature and comfort band (§9.3), not of
+   what it drew last Tuesday. A duty-cycle mean is the wrong model for it, and
+   that would explain heaters appearing in an August plan.
+3. **Why is planned base load 1.8× measured?** Both figures now mean the same
+   thing after the device-list fix, so the comparison is finally sound. Suspect
+   double counting: `build_base_load_profile` subtracts modelled devices from the
+   house total, so a device that is metered but *not* modelled stays inside base
+   load while also appearing as its own row.
+4. **What should a device with no usable history do?** Silence and a standing
+   average are both wrong. A device the planner cannot model should probably be
+   excluded from control and left in base load, rather than issued a schedule
+   derived from noise.
+
+#### 1.5.4 Constraint on any fix
+
+The portal validates the snapshot but does not second-guess it. If the
+integration is going to send an instruction dressed as a forecast, the contract
+should say so — either rename the field for what it does, or split "predicted
+demand" from "commanded schedule" so the portal can tell them apart and refuse
+an implausible one. Today it cannot: a device model that says 3 kW at 03:00 in
+August is indistinguishable from a legitimate one.
+
 ## 2. Terms
 
 - **Baseline controller:** the normal local schedule, thermostat, occupancy, and

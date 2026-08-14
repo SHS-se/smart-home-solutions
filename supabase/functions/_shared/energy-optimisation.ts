@@ -14,17 +14,17 @@ import {
 } from "./energy-price-shape.ts";
 
 export const OPTIMISATION_SCHEMA_VERSION = 5;
-// NOT yet bumped for the §1.4 objective change, deliberately. The integration
-// checks this string for equality (`optimisation.py:682`) and refuses any plan
-// that does not match, so bumping here before every installation has the
-// tolerant build would stop live control until each one updated through HACS —
-// and CI deploys this on push while HACS updates by hand.
-//
-// Sequence: ship the integration build that accepts v6 and v7, confirm it is
-// installed, then bump to `shadow-price-planner-v7`. Until then v6 plans carry
-// v7 behaviour, which the ROI page cannot distinguish; that is a smaller cost
-// than a home whose planner has gone silent.
-export const OPTIMISATION_MODEL_VERSION = "battery-export-planner-v6";
+/**
+ * The planner's own version. It lives here because the planner lives here — the
+ * integration only validates the string, against a set since beta.19, so this
+ * can move without stopping control on an installation that has not updated.
+ *
+ * Bump it whenever the *decisions* change, not merely the code: the ROI page
+ * medians over runs, and two planners sharing a label make that median
+ * meaningless. v7 is §1.4, the objective for the unpriced two thirds of the
+ * horizon.
+ */
+export const OPTIMISATION_MODEL_VERSION = "shadow-price-planner-v7";
 export const SLOT_MINUTES = 15;
 export const SLOT_HOURS = SLOT_MINUTES / 60;
 export const MAX_FORECAST_SLOTS = 72 * 4;

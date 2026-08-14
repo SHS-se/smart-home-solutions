@@ -50,6 +50,17 @@ const HistorySection: React.FC<{
   const { toast } = useToast();
   const [backfilling, setBackfilling] = useState(false);
 
+  // Only devices the integration has actually mapped. Energy Dashboard
+  // discovery reports every metered thing in the house, so the freezer, the
+  // oven and a dozen unnamed power points arrived with no control type and
+  // showed up as "· undefined" on the chart and as their own table rows. They
+  // are real consumption and still belong in the house total — they belong in
+  // base load, which is exactly what base load is for.
+  const configuredDevices = useMemo(
+    () => devices.filter(device => device.mapping_status === 'ready'),
+    [devices],
+  );
+
   // The full 72 hours are already loaded, so narrowing the window is a slice
   // rather than a refetch.
   const windowed = useMemo(
@@ -79,13 +90,13 @@ const HistorySection: React.FC<{
     });
     return attributeEnergy(
       slots,
-      new Map(devices.map(device => [device.id, device.name])),
+      new Map(configuredDevices.map(device => [device.id, device.name])),
       {
         baseLoad: t('Baslast — allt övrigt', 'Base load — everything else'),
         batteryCharging: t('Batteriladdning', 'Battery charging'),
       },
     );
-  }, [deviceActuals, devices, prices, t, windowed]);
+  }, [configuredDevices, deviceActuals, prices, t, windowed]);
 
   const { summary } = attribution;
   const unpriced = summary.pricedSlotCount < summary.slotCount;
@@ -219,7 +230,7 @@ const HistorySection: React.FC<{
 
       <ActualPerformance
         actuals={windowed}
-        devices={devices}
+        devices={configuredDevices}
         deviceActuals={deviceActuals}
         windowDays={windowDays}
       />
