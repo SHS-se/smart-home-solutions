@@ -652,7 +652,6 @@ serve(async (req) => {
       "variable_power",
       "permit_inhibit",
       "setpoint",
-      "current_limit",
     ]);
     const mappingStatuses = new Set<DeviceMappingStatus>([
       "not_configured",

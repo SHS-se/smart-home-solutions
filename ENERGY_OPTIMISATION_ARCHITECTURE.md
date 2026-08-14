@@ -1352,8 +1352,9 @@ Each home-local Energy Dashboard device has a planning role of `base_load` or
 `controllable`. Base-load devices still use measured Home Assistant history but
 are merged into the aggregate curve and omitted from device legends. A
 controllable device is removed from that aggregate and carries one reviewed
-control type: on/off schedule, variable power, permit/inhibit, setpoint or
-current limit. Initial classification is deliberately conservative: hot water,
+control type: on/off schedule, variable power, permit/inhibit or setpoint.
+Current-limited equipment uses variable power; Home Assistant determines the
+electrical meaning from the mapped number entity. Initial classification is deliberately conservative: hot water,
 pool heating and EV charging start with their supported controls; ordinary
 household, heating and cooling meters start in base load. The inferred values
 are persisted on first discovery and only change when a customer or staff member

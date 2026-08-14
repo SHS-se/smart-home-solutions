@@ -44,7 +44,6 @@ const CONTROL_TYPES: DeviceControlType[] = [
   'variable_power',
   'permit_inhibit',
   'setpoint',
-  'current_limit',
 ];
 
 const EmpiricalDeviceModelsCard: React.FC<{
@@ -69,7 +68,6 @@ const EmpiricalDeviceModelsCard: React.FC<{
     variable_power: t('Variabel effekt', 'Variable power'),
     permit_inhibit: t('Tillåt/blockera', 'Permit/inhibit'),
     setpoint: t('Börvärde', 'Setpoint'),
-    current_limit: t('Strömgräns', 'Current limit'),
   };
   const mappingState = (device: EmpiricalEnergyDevice) => {
     if (device.planning_role_override === 'base_load') return 'base_load' as const;

@@ -58,8 +58,7 @@ export type DeviceControlType =
   | "switch_schedule"
   | "variable_power"
   | "permit_inhibit"
-  | "setpoint"
-  | "current_limit";
+  | "setpoint";
 
 export interface OptimisationCapabilities {
   pv: boolean;
@@ -755,7 +754,6 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV5): string[] {
     "variable_power",
     "permit_inhibit",
     "setpoint",
-    "current_limit",
   ]);
   for (const [index, model] of (snapshot?.device_models ?? []).entries()) {
     if (!model?.key || deviceModelKeys.has(model.key)) {
