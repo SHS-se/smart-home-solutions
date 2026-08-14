@@ -1031,7 +1031,120 @@ the objective is worth doing before it.
    excluded from control and left in base load, rather than issued a schedule
    derived from noise.
 
-#### 1.5.4 Constraint on any fix
+#### 1.5.4 What actually predicts the five loads (Phil, 2026-08-14)
+
+Recorded verbatim in substance because it is the domain knowledge the statistics
+were missing, and it reframes the whole problem.
+
+**Five loads matter. Everything else is base load:**
+
+1. Car charging
+2. Water boiler
+3. Pool heating
+4. Air conditioners
+5. Electrical heaters
+
+**Four factors predict them:**
+
+| Factor | Availability |
+|---|---|
+| Season | Known exactly, free |
+| Outdoor temperature | Forecast, already in the snapshot. Kept **separate from season** on purpose — a mild January and a cold May are not their seasons |
+| Solar gain (passive heating through glazing) | Derivable from the PV forecast, but needs work: the panels measure *electrical* yield, and what matters here is *thermal* gain into the house. Related but not the same curve |
+| **Occupancy** | **Missing. This is the gap.** |
+
+A ten-day trimmed mean of past consumption is a proxy for all four at once and
+therefore for none of them. That is the whole defect: `build_empirical_device_profile`
+answers "what did this device draw at this quarter last week", when the question
+is "what will this room need, given who is home, how cold it is outside and how
+much sun is coming through the windows".
+
+##### The occupancy model already exists — in Node-RED
+
+Phil's occupancy model is, in effect, the room heating schedules in Node-RED. It
+must not be a runtime dependency — **nothing in the website may call Node-RED** —
+but the schedules are the best statement of household routine available and
+should be *extracted once* to prime the website's own model.
+
+Shape, from the `cronplus` "Heating Schedule" node:
+
+| Schedule | Cron | Writes |
+|---|---|---|
+| `morning_high` | `00 5 * * *` | `high-temp` |
+| `morning_low` | `30 9 * * *` | `low-temp` |
+| `evening_high` | `0 14 * * *` | `high-temp` |
+| `evening_low` | `30 21 * * *` | `low-temp` |
+
+So a zone is *occupied-warm* 05:00–09:30 and 14:00–21:30, and setback otherwise.
+The thirteen zones each own an `input_text.<zone>_heating_mode`, confirmed live:
+
+`basement_bathroom`, `entrance_hall`, `ground_floor_bathroom`, `kitchen`,
+`laundry`, `living_room`, `marks_bedroom`, `master_bathroom`, `master_bedroom`,
+`parents_room`, `phils_office`, `sophia_s_bedroom`, `tv_room`
+
+Their states right now are a mix of `off`, `low-temp` and `high-temp`, so the
+mode is real, per-zone, and already machine-readable.
+
+**Proposed occupancy input, replacing the trimmed mean for heating zones:**
+
+- A per-zone weekly **comfort schedule** — quarter-of-day × day-type → one of
+  `off` / `low-temp` / `high-temp` — seeded by a one-off import of the cron
+  expressions above, then editable in the portal. It is a *household routine*,
+  not a device statistic, so it belongs beside the home profile.
+- The zone's demand for a slot is then the **thermal model** (§9.3) evaluated
+  against that mode's target, the outdoor forecast and solar gain — not a
+  historical mean. This is what stops an August plan asking for floor heating:
+  at 24 °C outdoors the physics returns zero regardless of what the meter did
+  last winter.
+- `ble_trilateration` (Phil's work in progress) can later replace the seeded
+  schedule with observed room occupancy. The interface should therefore be
+  "a per-zone occupancy/comfort series", so swapping the source changes nothing
+  downstream.
+
+##### What must stay reactive, and must not enter the plan
+
+Some occupancy is unpredictable by construction. These belong to the reactive
+controller (§7, **not yet built**) and the planner should not pretend to model
+them:
+
+1. **Pool usage.** Only detectable through `sensor.pool_room_th_humidity`: it
+   spikes when the cover comes off and falls once the FTX has pulled the
+   moisture back out. The existing Node-RED FTX flow already encodes usable
+   thresholds — humidity limits scaled by pool-room temperature (>50% above
+   24 °C, >60% at 20–24 °C, >70% at 16–20 °C, >80% below 16 °C), a 3-hour
+   maximum FTX run, and a `counter.swim_count` incremented on a >65% spike.
+   That counter is a genuine occupancy signal and is already being recorded.
+2. **Sauna.** Not metered as a device at all, and enormous — unmetered draw has
+   been seen spiking to 16 kW, with the low setting around 8 kW. Nothing can
+   plan around it; the reactive layer has to absorb it. Worth noting it will
+   also corrupt any base-load statistic that includes it, which is an argument
+   for fitting base load robustly (median, trimmed) rather than on the mean.
+3. **Car usage.** Ordinary departure/return variance.
+4. **Away for a few hours.** Phil's existing automation drops every zone to
+   `low-temp`. **The reactive controller should deliberately do nothing here.**
+   The recovery is the problem, not the setback: every zone returning to
+   `high-temp` simultaneously produced a large coincident spike, which mattered
+   under effektavgift and matters *more* under 15-minute spot pricing, since the
+   return can land on an expensive quarter. Any future handling must stagger the
+   recovery, not just trigger it.
+5. **Vacation.** The simple case, and the one worth building first: let the house
+   fall to a floor (~12 °C), then reheat gradually starting ~48 h before return,
+   spreading the recovery to limit peak draw. Needs explicit away-dates as an
+   input — which the portal is the natural place to hold.
+
+##### Sequencing this work
+
+1. Fit heating zones from the thermal model + comfort schedule instead of the
+   historical mean. Largest single correction, and it fixes the August floor
+   heating outright.
+2. Import the Node-RED cron schedules once to seed the comfort schedules.
+3. Separate solar *thermal* gain from PV electrical yield.
+4. Boiler, pool and EV keep demand-based models (litres, degrees, kWh to
+   departure) rather than occupancy schedules — they are services with
+   deadlines, which §5.5 already describes.
+5. Vacation dates as a portal input; reactive controller later.
+
+#### 1.5.5 Constraint on any fix
 
 The portal validates the snapshot but does not second-guess it. If the
 integration is going to send an instruction dressed as a forecast, the contract
