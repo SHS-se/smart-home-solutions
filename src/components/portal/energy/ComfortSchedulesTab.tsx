@@ -330,8 +330,8 @@ const ComfortSchedulesTab: React.FC<{
               <p className="mt-3 font-medium">{t('Inga komfortzoner ännu', 'No comfort zones yet')}</p>
               <p className="mt-1 text-sm text-muted-foreground">
                 {t(
-                  'Välj Styrbar · Börvärde för en eller flera värmeenheter på fliken Enheter och mappa dem sedan till ett Home Assistant-rum. Då skapas ett gemensamt rumsschema automatiskt.',
-                  'Choose Controllable · Setpoint for one or more heating devices on the Devices tab, then map them to a Home Assistant room. One shared room schedule will be created automatically.',
+                  'Välj Styrbar · Börvärde för en eller flera värmeenheter på fliken Enheter och tilldela deras styrdon till ett Home Assistant-rum. Då skapas ett gemensamt rumsschema automatiskt.',
+                  'Choose Controllable · Setpoint for one or more heating devices on the Devices tab, then assign their actuators to a Home Assistant room. One shared room schedule will be created automatically.',
                 )}
               </p>
             </div>

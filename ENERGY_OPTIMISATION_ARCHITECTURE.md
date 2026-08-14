@@ -1162,15 +1162,17 @@ Node-RED at runtime.
   longer treated as a room. Several meters and several heater/climate actuators
   may map to the same room; their energy and rated power are summed for one
   temperature model and one objective.
-- The integration's setpoint mapping asks for the room, its temperature sensor,
-  optional direct setpoint and all controlled heater/climate entities. It no
-  longer asks for scheduled comfort/setback helpers or reactive manual-override
-  fields. The portal shows the room name and the complete actuator list beside
-  its schedule.
+- The integration's setpoint mapping asks for the temperature sensor, optional
+  direct setpoint and all controlled heater/climate entities. It derives one
+  stable room ID from the actuators' entity or parent-device areas; save fails
+  if an actuator has no area or the actuators span multiple rooms. It no longer
+  asks for a duplicate room selector, scheduled comfort/setback helpers or
+  reactive manual-override fields. The portal shows the derived live room name
+  and complete actuator list beside its schedule.
 - The other planned-control mappings use the same smaller contract: switch
   minimum run is optional; availability/season is gone; power is one field that
-  accepts either a W/kW entity or reviewed watts; and current-limit/variable-
-  power controls share one number entity plus optional minimum and maximum.
+  accepts either a W/kW entity or reviewed watts; and variable-power control
+  uses one number entity plus optional minimum and maximum.
   Entity bounds are proposed automatically, while entered bounds take
   precedence.
 - Each device card has its own Save action. Home Assistant validates the card,
