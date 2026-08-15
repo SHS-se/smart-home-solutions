@@ -63,6 +63,28 @@ Deno.test('thermal readiness distinguishes electrical data from missing thermal 
   assertEquals(assessment.pipelineComplete, false, 'pipeline incomplete');
 });
 
+Deno.test('reversible on-off air conditioners participate in thermal readiness', () => {
+  const assessment = assessThermalReadiness([{
+    device_key: 'entrance-aircon',
+    name: 'Entrance aircon',
+    category: 'cooling',
+    planning_role_override: 'controllable',
+    control_type_override: 'switch_schedule',
+    mapping_status: 'ready',
+    mapped_control_type: 'switch_schedule',
+    mapping_error: null,
+    mapping_summary: {
+      room_key: 'entrance',
+      room_name: 'Entrance',
+      controlled_devices: ['climate.entrance_aircon'],
+    },
+    profile_sample_count: 960,
+  }], [{ key: 'entrance-aircon', control_type: 'switch_schedule' }]);
+  assertEquals(assessment.selectedDevices.length, 1, 'selected heat pump count');
+  assertEquals(assessment.mappingReadyCount, 1, 'ready heat pump mapping count');
+  assertEquals(assessment.electricalForecastReadyCount, 1, 'planned heat pump count');
+});
+
 const heater = (device_key: string, room_key = device_key) => ({
   device_key,
   name: device_key,

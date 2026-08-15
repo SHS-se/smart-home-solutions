@@ -110,9 +110,9 @@ const ComfortSchedulesTab: React.FC<{
         .eq('customer_id', customerId)
         .eq('home_id', homeId)
         .eq('planning_role_override', 'controllable')
-        .eq('control_type_override', 'setpoint')
+        .in('control_type_override', ['setpoint', 'switch_schedule'])
         .eq('mapping_status', 'ready')
-        .eq('mapped_control_type', 'setpoint')
+        .in('mapped_control_type', ['setpoint', 'switch_schedule'])
         .is('retired_at', null)
         .order('name'),
       supabase

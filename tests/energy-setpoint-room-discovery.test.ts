@@ -10,16 +10,31 @@ const ingest = await Deno.readTextFile(
   "supabase/functions/energy-optimisation-ingest/index.ts",
 );
 const migration = await Deno.readTextFile(
-  "supabase/migrations/20260815100000_make_setpoint_role_category_independent.sql",
+  "supabase/migrations/20260815113000_include_on_off_room_heaters.sql",
+);
+const optimiser = await Deno.readTextFile(
+  "supabase/functions/_shared/energy-optimisation.ts",
 );
 
-Deno.test("every Ready setpoint room is visible regardless of inferred category", () => {
+Deno.test("every Ready room control is visible regardless of actuator style", () => {
   assert(!comfortTab.includes(".eq('category', 'heating')"));
-  assertStringIncludes(ingest, 'model.control_type === "setpoint"');
+  assertStringIncludes(
+    comfortTab,
+    ".in('control_type_override', ['setpoint', 'switch_schedule'])",
+  );
+  assertStringIncludes(ingest, 'model.control_type !== "switch_schedule"');
   assert(!ingest.includes(
     'model.control_type === "setpoint" && model.category === "heating"',
   ));
   assert(!migration.includes("device.category = 'heating'"));
+  assertStringIncludes(
+    migration,
+    "device.control_type_override IN ('setpoint', 'switch_schedule')",
+  );
+  assertStringIncludes(
+    optimiser,
+    '!["setpoint", "switch_schedule"].includes(',
+  );
   assertStringIncludes(
     migration,
     "INSERT INTO public.energy_optimisation_comfort_schedules",

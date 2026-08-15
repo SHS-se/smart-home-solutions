@@ -820,8 +820,9 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV5): string[] {
       const device = snapshot.device_models.find((candidate) =>
         candidate.key === key
       );
-      return !device || device.control_type !== "setpoint" ||
-        device.category !== "heating";
+      return !device || !["setpoint", "switch_schedule"].includes(
+        device.control_type,
+      );
     });
     if (
       !zone?.key || thermalKeys.has(zone.key) || !zone?.name ||

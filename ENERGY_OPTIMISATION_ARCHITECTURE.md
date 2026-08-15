@@ -1162,18 +1162,23 @@ Node-RED at runtime.
   longer treated as a room. Several meters and several heater/climate actuators
   may map to the same room; their energy and rated power are summed for one
   temperature model and one objective.
-- The integration's setpoint mapping asks for the temperature sensor, optional
-  direct setpoint and all controlled heater/climate entities. It derives one
-  stable room ID from the actuators' entity or parent-device areas; save fails
+- Both direct-setpoint devices and on/off room heaters ask for a temperature
+  sensor and all controlled heater/climate entities; only the setpoint contract
+  additionally offers a direct target entity. The integration derives one
+  stable room ID from the actuators' entity or parent-device areas. Save fails
   if an actuator has no area or the actuators span multiple rooms. It no longer
   asks for a duplicate room selector, scheduled comfort/setback helpers or
-  reactive manual-override fields. The portal shows the derived live room name
-  and complete actuator list beside its schedule.
+  reactive manual-override fields. The portal groups every Ready room control
+  by that area and shows the complete actuator list beside its schedule.
 - An explicit `setpoint` planning role is authoritative regardless of the
   Energy Dashboard category. Heating meters, heat-capable air conditioners and
   pool-room equipment therefore create the same room-owned comfort schedule;
   an inferred `cooling` or `pool_heating` label cannot hide a Ready mapping.
-- The other planned-control mappings use the same smaller contract: switch
+- A `switch_schedule` mapping joins the room model when its category is
+  `heating` or `cooling`; this covers resistive heaters and reversible air
+  conditioners without turning pool pumps or household switches into rooms.
+  Multiple such devices in one area remain one comfort objective.
+- The planned-control mappings otherwise use the same smaller contract: switch
   minimum run is optional; availability/season is gone; power is one field that
   accepts either a W/kW entity or reviewed watts; and variable-power control
   uses one number entity plus optional minimum and maximum.
@@ -1245,10 +1250,11 @@ Node-RED at runtime.
 This version intentionally does **not** derive passive solar heat from the
 PV electrical forecast. Outdoor temperature and seasonality are now real
 inputs; a calibrated glazing/solar-gain term remains the next thermal-model
-increment rather than an invented conversion factor. Cooling-category setpoint
-devices also remain on their empirical model until a separately fitted cooling
-response exists; the heating fit deliberately excludes cooling quarters and is
-not reused backwards as an air-conditioning model.
+increment rather than an invented conversion factor. A `cooling`-category room
+control is interpreted as a reversible unit supplying heat because that is the
+reviewed installation contract. The heating fit still excludes quarters where
+the unit actually cooled; active cooling planning needs its own fitted response
+and is not inferred by running the heating model backwards.
 
 #### 1.5.6 Constraint on any fix
 

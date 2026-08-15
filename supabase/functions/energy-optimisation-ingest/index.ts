@@ -139,12 +139,22 @@ interface RoomMapping {
   controlled_devices: string[];
 }
 
+const hasRoomMappingMetadata = (
+  device: Pick<IncomingDevice, "mapping_summary">,
+) => {
+  const summary = device.mapping_summary;
+  return !!summary && typeof summary === "object" && !Array.isArray(summary) &&
+    ["room_key", "room_name", "controlled_devices"].some((key) =>
+      Object.prototype.hasOwnProperty.call(summary, key)
+    );
+};
+
 const roomMapping = (
   device: Pick<IncomingDevice, "mapping_status" | "mapped_control_type" | "mapping_summary">,
 ): RoomMapping | null => {
   if (
     device.mapping_status !== "ready" ||
-    device.mapped_control_type !== "setpoint"
+    !["setpoint", "switch_schedule"].includes(device.mapped_control_type ?? "")
   ) return null;
   const key = device.mapping_summary.room_key;
   const name = device.mapping_summary.room_name;
@@ -257,11 +267,11 @@ interface PreparedThermalPlanning {
 }
 
 /**
- * Replace every setpoint room's recent-history profile with the demand
+ * Replace every mapped room control's recent-history profile with the demand
  * implied by its portal comfort routine, season, outdoor forecast, latest
  * measured temperature and fitted 1R1C model.
  *
- * This is deliberately fail-fast. Once a device is opted into setpoint
+ * This is deliberately fail-fast. Once a device is opted into room
  * planning, an empirical Tuesday cannot silently take over when any thermal
  * input is missing; that was the unsafe behaviour this model replaces.
  */
@@ -273,10 +283,15 @@ async function prepareThermalPlanning(
   snapshot: OptimisationSnapshotV5,
   storedDevices: StoredDevice[],
 ): Promise<PreparedThermalPlanning> {
-  const setpointModels = snapshot.device_models.filter((model) =>
-    model.control_type === "setpoint"
-  );
-  if (setpointModels.length === 0) {
+  const storedByKey = new Map(storedDevices.map((device) => [device.key, device]));
+  const roomModels = snapshot.device_models.filter((model) => {
+    if (model.control_type === "setpoint") return true;
+    if (model.control_type !== "switch_schedule") return false;
+    const stored = storedByKey.get(model.key);
+    return stored?.control_type_override === model.control_type &&
+      roomMapping(stored) !== null;
+  });
+  if (roomModels.length === 0) {
     return {
       snapshot: {
         ...snapshot,
@@ -290,13 +305,12 @@ async function prepareThermalPlanning(
     };
   }
 
-  const storedByKey = new Map(storedDevices.map((device) => [device.key, device]));
   const rooms = new Map<string, {
     key: string;
     name: string;
-    models: typeof setpointModels;
+    models: typeof roomModels;
   }>();
-  for (const model of setpointModels) {
+  for (const model of roomModels) {
     const stored = storedByKey.get(model.key);
     const room = stored ? roomMapping(stored) : null;
     if (!stored || !room) {
@@ -320,7 +334,7 @@ async function prepareThermalPlanning(
     snapshot.timezone,
   );
   if (summerLockout.every(Boolean)) {
-    const lockedKeys = new Set(setpointModels.map((model) => model.key));
+    const lockedKeys = new Set(roomModels.map((model) => model.key));
     return {
       snapshot: {
         ...snapshot,
@@ -345,7 +359,7 @@ async function prepareThermalPlanning(
     outdoor.some((value) => value === null || !Number.isFinite(value))
   ) {
     throw new Error(
-      "setpoint comfort forecasting needs outdoor temperature for every slot",
+      "room comfort forecasting needs outdoor temperature for every slot",
     );
   }
 
@@ -699,7 +713,8 @@ serve(async (req) => {
         (device.mapping_status === "ready" &&
           (!controlTypes.has(device.mapped_control_type as DeviceControlType) ||
             device.mapping_error !== null ||
-            (device.mapped_control_type === "setpoint" &&
+            ((device.mapped_control_type === "setpoint" ||
+                hasRoomMappingMetadata(device)) &&
               roomMapping(device) === null))) ||
         (device.mapping_status === "invalid" &&
           (!controlTypes.has(device.mapped_control_type as DeviceControlType) ||

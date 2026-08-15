@@ -105,10 +105,10 @@ const ThermalReadinessPanel: React.FC<{
 
       <div className="rounded-lg border px-4">
         <ThermalReadinessRow
-          label={t('Värmeenheter valda för börvärdesstyrning', 'Heaters selected for setpoint control')}
+          label={t('Värmeenheter valda för rumstemperaturstyrning', 'Heaters selected for room temperature control')}
           detail={selectedCount > 0
             ? t(`${selectedCount} enheter är valda på webbplatsen.`, `${selectedCount} devices are selected on the website.`)
-            : t('Välj Styrbar · Börvärde för minst en värmeenhet.', 'Select Controllable · Setpoint for at least one heater.')}
+            : t('Välj Börvärde eller På/av-schema för minst en värmeenhet.', 'Select Setpoint or On/off schedule for at least one heater.')}
           state={selectedCount > 0 ? 'ready' : 'blocked'}
           stateLabel={selectedCount > 0 ? readyLabel : blockedLabel}
         />

@@ -426,7 +426,14 @@ Deno.test("room comfort is reached by the first comfort quarter and preheat is s
       battery_export_min_price_sek_per_kwh: 0,
     },
     slots: base.slots.map((slot) => ({ ...slot, pv_forecast_w: 0 })),
-    device_models: [device("office-heater", "Office heater"), device("bedroom-heater", "Bedroom heater")],
+    device_models: [
+      device("office-heater", "Office heater"),
+      {
+        ...device("bedroom-heater", "Bedroom heat pump"),
+        category: "cooling",
+        control_type: "switch_schedule" as const,
+      },
+    ],
     services: [],
     service_requirement_sample_days: {},
     outdoor_temperature_c: new Array(slotCount).fill(0),

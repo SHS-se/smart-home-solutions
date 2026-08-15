@@ -1,6 +1,7 @@
 export interface ThermalReadinessDevice {
   device_key: string;
   name: string;
+  category?: string;
   planning_role_override: 'base_load' | 'controllable';
   control_type_override: string | null;
   mapping_status: 'not_configured' | 'ready' | 'invalid';
@@ -84,10 +85,12 @@ export const assessThermalReadiness = (
 ): ThermalReadinessAssessment => {
   const selectedDevices = devices.filter(device =>
     device.planning_role_override === 'controllable'
-    && device.control_type_override === 'setpoint');
+    && (device.control_type_override === 'setpoint'
+      || (device.control_type_override === 'switch_schedule'
+        && ['heating', 'cooling'].includes(device.category ?? ''))));
   const plannedKeys = new Set(
     planDevices
-      .filter(device => device.control_type === 'setpoint')
+      .filter(device => ['setpoint', 'switch_schedule'].includes(device.control_type))
       .map(device => device.key),
   );
   const roomKey = (device: ThermalReadinessDevice) => {
