@@ -29,6 +29,12 @@ import {
   type ThermalSlotRow,
   summariseThermalSlots,
 } from './plan/types';
+import {
+  availablePlanWindows,
+  planWindowRange,
+  summarisePlanWindow,
+  type PlanWindow,
+} from '@/lib/energy-shift/plan-window';
 export type { PlanSection } from './plan/types';
 import type { PlanSection } from './plan/types';
 import {
@@ -72,8 +78,10 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<'live' | 'demo'>('live');
   // Both charts always load the full 72 hours and slice locally, so this is
-  // presentation state and never triggers a refetch.
+  // presentation state and never triggers a refetch. History looks back over
+  // a running period; the plan pages forward one day at a time.
   const [windowDays, setWindowDays] = useState<WindowDays>(1);
+  const [planWindow, setPlanWindow] = useState<PlanWindow>(1);
   const [demoSeason, setDemoSeason] = useState<ThermalFixtureSeason>('winter');
   const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
   const [clock, setClock] = useState(Date.now());
@@ -299,6 +307,8 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
         isDemo
         windowDays={windowDays}
         onWindowDaysChange={setWindowDays}
+        planWindow={planWindow}
+        onPlanWindowChange={setPlanWindow}
       />
     );
   } else if (!homeId) {
@@ -388,6 +398,8 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
           lastCheckedAt={lastCheckedAt}
           windowDays={windowDays}
           onWindowDaysChange={setWindowDays}
+          planWindow={planWindow}
+          onPlanWindowChange={setPlanWindow}
         />
       </div>
     );
@@ -444,6 +456,8 @@ const PlanView: React.FC<{
   lastCheckedAt?: number | null;
   windowDays: WindowDays;
   onWindowDaysChange: (value: WindowDays) => void;
+  planWindow: PlanWindow;
+  onPlanWindowChange: (value: PlanWindow) => void;
 }> = ({
   section,
   current,
@@ -456,6 +470,8 @@ const PlanView: React.FC<{
   lastCheckedAt,
   windowDays,
   onWindowDaysChange,
+  planWindow,
+  onPlanWindowChange,
 }) => {
   const { t } = useLanguage();
   const model = usePlanModel(current, empiricalDevices, stale);
@@ -464,6 +480,34 @@ const PlanView: React.FC<{
     sourceStale, bindingExpired, ready, pct, costDelta, costTone, costMeaning,
     validationMessages,
   } = model;
+  // Every headline number describes the days on screen. Reading a 72-hour
+  // total above a one-day chart made the two impossible to check against each
+  // other, which is how an over-scheduled pool stayed invisible.
+  const planWindowOptions = availablePlanWindows(active.slots.length);
+  const windowRange = planWindowRange(active.slots.length, planWindow);
+  const windowSummary = summarisePlanWindow(active.slots, windowRange);
+  const baselineWindow = summarisePlanWindow(plan.plans.baseline.slots, windowRange);
+  const plannedWindow = summarisePlanWindow(plan.plans.priority.slots, windowRange);
+  const windowLoadDelta = plannedWindow.loadKwh - baselineWindow.loadKwh;
+  const windowImportDelta = plannedWindow.gridImportKwh - baselineWindow.gridImportKwh;
+  const windowCostDelta = plannedWindow.netCostSek - baselineWindow.netCostSek;
+  const windowCostTone: 'good' | 'bad' | undefined = windowCostDelta < -0.005
+    ? 'good'
+    : windowCostDelta > 0.005 ? 'bad' : undefined;
+  const windowCostMeaning = windowCostDelta < -0.005
+    ? t('uppskattad besparing', 'estimated saving')
+    : windowCostDelta > 0.005
+      ? t('uppskattad merkostnad', 'estimated added cost')
+      : t('ingen uppskattad förändring', 'no estimated change');
+  const windowLabel = planWindow === 'all'
+    ? t('hela planen', 'the whole plan')
+    : `${t('dag', 'day')} ${planWindow}`;
+  const midnightLabel = windowSummary.midnightStart === null
+    ? t('ingen midnatt i perioden', 'no midnight in this period')
+    : new Date(windowSummary.midnightStart).toLocaleDateString([], {
+      month: '2-digit',
+      day: '2-digit',
+    });
 
   return (
     <div className="space-y-6">
@@ -551,37 +595,38 @@ const PlanView: React.FC<{
           <div className="mb-6 grid gap-3 md:grid-cols-3">
             <DeltaKpi
               label={t('Förbrukningsskillnad', 'Consumption difference')}
-              value={`${formatSigned(comparison.loadKwhDelta, 1)} kWh`}
-              detail={`${t('Med plan', 'With plan')} ${plan.plans.priority.summary.load_kwh.toFixed(1)} · ${t('utan plan', 'without plan')} ${plan.plans.baseline.summary.load_kwh.toFixed(1)} kWh`}
+              value={`${formatSigned(windowLoadDelta, 1)} kWh`}
+              detail={`${t('Med plan', 'With plan')} ${plannedWindow.loadKwh.toFixed(1)} · ${t('utan plan', 'without plan')} ${baselineWindow.loadKwh.toFixed(1)} kWh`}
             />
             <DeltaKpi
               label={t('Skillnad i nätenergi', 'Grid energy difference')}
-              value={`${formatSigned(comparison.gridImportKwhDelta, 1)} kWh`}
+              value={`${formatSigned(windowImportDelta, 1)} kWh`}
               detail={t('import med plan minus utan plan', 'import with plan minus without plan')}
-              tone={comparison.gridImportKwhDelta < -0.05 ? 'good' : comparison.gridImportKwhDelta > 0.05 ? 'bad' : undefined}
+              tone={windowImportDelta < -0.05 ? 'good' : windowImportDelta > 0.05 ? 'bad' : undefined}
             />
             <DeltaKpi
               label={t('Uppskattad kostnadsskillnad', 'Estimated cost difference')}
-              value={`${formatSigned(costDelta, 2)} SEK`}
-              detail={`${costMeaning} · ${t('inklusive värdet på kvarvarande batteri', 'including remaining battery value')}`}
-              tone={costTone}
+              value={`${formatSigned(windowCostDelta, 2)} SEK`}
+              detail={`${windowCostMeaning} · ${windowLabel}`}
+              tone={windowCostTone}
               emphasized
             />
           </div>
           <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-6">
-            <Kpi label={t('Modellerad flexibel energi', 'Modeled flexible energy')} value={`${active.summary.flexible_load_kwh.toFixed(1)} kWh`} detail={active.summary.duty_cycle_deferred_kwh > 0.005 ? `${active.summary.duty_cycle_deferred_kwh.toFixed(2)} kWh ${t('förskjuts utanför perioden', 'deferred beyond the period')}` : `${active.summary.service_delivered_kwh.toFixed(1)} / ${active.summary.service_required_kwh.toFixed(1)} kWh`} />
+            <Kpi label={t('Modellerad flexibel energi', 'Modeled flexible energy')} value={`${windowSummary.flexibleKwh.toFixed(1)} kWh`} detail={`${t('styrbara sänkor', 'controllable sinks')} · ${windowLabel}`} />
             {hasBattery
-              ? <Kpi label={t('Lägsta batteri', 'Battery low')} value={pct(active.summary.battery_soc_low)} detail={`${pct(active.summary.battery_soc_start)} → ${pct(active.summary.battery_soc_end)}`} />
+              ? <Kpi label={t('Batteri-SOC vid midnatt', 'Battery SOC at midnight')} value={windowSummary.batterySocAtMidnight === null ? '—' : pct(windowSummary.batterySocAtMidnight)} detail={midnightLabel} />
               : <Kpi label={t('Batteri', 'Battery')} value={t('Saknas', 'Not installed')} detail={t('ingen batterimodell används', 'no battery model used')} />}
-            <Kpi label={t('Nätimport', 'Grid import')} value={`${active.summary.grid_import_kwh.toFixed(1)} kWh`} detail={`${active.summary.priced_import_kwh.toFixed(1)} ${t('prissatt', 'priced')}`} />
-            <Kpi label={t('Nätexport', 'Grid export')} value={`${active.summary.grid_export_kwh.toFixed(1)} kWh`} detail={`${active.summary.priced_export_kwh.toFixed(1)} ${t('prissatt', 'priced')}`} />
-            <Kpi label={t('Nettokostnad', 'Net cost')} value={`${active.summary.net_cost_sek.toFixed(2)} SEK`} detail={t('endast publicerade priser', 'published prices only')} />
-            <Kpi label={t('Terminaljusterad', 'Terminal-adjusted')} value={`${active.summary.terminal_adjusted_cost_sek.toFixed(2)} SEK`} detail={t('värderar kvarvarande batteri', 'values remaining battery')} />
+            <Kpi label={t('Nätimport', 'Grid import')} value={`${windowSummary.gridImportKwh.toFixed(1)} kWh`} detail={`${windowSummary.pricedImportKwh.toFixed(1)} ${t('prissatt', 'priced')}`} />
+            <Kpi label={t('Nätexport', 'Grid export')} value={`${windowSummary.gridExportKwh.toFixed(1)} kWh`} detail={`${windowSummary.pricedExportKwh.toFixed(1)} ${t('prissatt', 'priced')}`} />
+            <Kpi label={t('Nettokostnad', 'Net cost')} value={`${windowSummary.netCostSek.toFixed(2)} SEK`} detail={t('endast publicerade priser', 'published prices only')} />
+            <Kpi label={t('Total solenergi', 'Total solar energy')} value={`${windowSummary.pvKwh.toFixed(1)} kWh`} detail={`${t('prognos', 'forecast')} · ${windowLabel}`} />
           </div>
           <PowerSection
             model={model}
-            windowDays={windowDays}
-            onWindowDaysChange={onWindowDaysChange}
+            planWindow={planWindow}
+            planWindowOptions={planWindowOptions}
+            onPlanWindowChange={onPlanWindowChange}
           />
           </>
           )}

@@ -1277,6 +1277,107 @@ provenance explicit through `forecast_method`; the shared planner's
 longer interchangeable, and a thermal input failure refuses the plan instead of
 publishing the empirical series under the thermal method.
 
+### 1.6 First readable plan, and what it shows (2026-08-15)
+
+The plan reached the portal end to end for the first time on 2026-08-15 after
+the routing defect in §1.6.2 was cleared. That makes the schedule itself
+legible for the first time, and it is not good. Nothing in this section has
+been acted on: the scheduler is deliberately untouched until the load model
+underneath it is trustworthy, because a plan built on a wrong forecast cannot
+be judged.
+
+#### 1.6.1 Observed scheduling defects (Phil, 2026-08-15)
+
+Recorded against the 72-hour plan issued 2026-08-15 22:30, model
+`thermal-room-planner-v8`. Horizon days: **day 1 = Sunday 16 Aug, day 2 =
+Monday 17 Aug, day 3 = Tuesday 18 Aug.**
+
+| Day | Observation |
+|---|---|
+| 1 | Pool is **over-scheduled**. Too little of the solar surplus is allowed to reach the house battery, so the house draws grid import overnight to cover what the battery should have carried. Bad scheduling. |
+| 2 | Pool is already fully heated and the house battery is fully charged — and the planner **exports the surplus rather than charging the car**. |
+| 3 | **No pool heating, no car charging.** House battery charges, and everything else is exported. |
+
+The common thread across all three days is that **export is being chosen over
+on-site sinks that still have unmet demand**. An EV below its target SOC and a
+pool below its daily requirement are both worth more than the export price in
+every hour these plans export, so either the objective is ranking export too
+highly, the sinks' remaining demand is not visible to it, or the service
+windows have already closed by the time the surplus appears. Day 3 having
+neither pool nor car scheduled at all suggests the second: a service whose
+requirement is already satisfied on paper generates no demand for the planner
+to place, even when the physical device would accept the energy.
+
+This is a scheduling-objective question (§8) and a service-sizing question
+(§5.3), not a thermal one. It is written down here rather than fixed because
+§1.6.3 shows the forecast feeding it is still wrong on one of the three days.
+
+#### 1.6.2 Why this was not visible before
+
+`_build_services` selected each service by **meter category** and asserted a
+fixed category→control-type table, so a pool-room floor heater metered as
+`pool_heating` but mapped as a `setpoint` room control raised
+`must use switch_schedule control` and the entire plan was abandoned. Routing
+now goes through `device_controls.planning_path()`, the single authority on
+which planning model owns a device. A category never implies a control
+contract.
+
+Two further consequences were fixed with it, both of the same shape:
+
+- A service was sized from its whole meter category, so the pool service
+  demanded the daily kWh of the pool room's floor heater as well. Each service
+  is now measured from the meters it actually controls.
+- The portal's `empiricalDeviceLoads` shared a service's planned watts across
+  every model in the category, including one already planned as a thermal
+  room, which under-counted total load.
+
+#### 1.6.3 `forecast_w_by_slot` conformance to §1.5 — partial
+
+**Implemented.** The §1.5 headline fix holds. Room-controlled devices no longer
+receive an empirical duty-cycle mean: `prepareThermalPlanning` replaces their
+`forecast_w_by_slot` with a comfort/physics-derived series and stamps
+`forecast_method = thermal_comfort_schedule_v1` (or
+`seasonal_heating_lockout_v1` under summer lockout). A missing thermal input
+refuses the plan rather than silently reverting to last week's consumption.
+
+**Not implemented: base load.** §1.5.4 says four factors predict the loads —
+season, outdoor temperature, solar gain, occupancy — and that a rolling mean is
+a proxy for all four and therefore for none. That still describes
+`build_base_load_profile()` exactly. It remains a per-quarter median of the
+last `OPTIMISATION_PROFILE_DAYS = 10` days, split only by weekday/weekend.
+
+**This explains the day-1 anomaly.** Base load exceeds 4 kW across day 1 while
+days 2 and 3 look reasonable. Day 1 is the horizon's only weekend day, and a
+ten-day window is a poor weekend sample. For the plan issued 2026-08-15 the
+window was 05–15 Aug:
+
+| Day type | Days in window | Applies to |
+|---|---|---|
+| Weekend | **3** (Sat 8, Sun 9, Sat 15) | Day 1 — Sunday 16 Aug |
+| Weekday | **8** (6, 7, 10, 11, 12, 13, 14 …) | Days 2 and 3 |
+
+Each weekend quarter is therefore a median of three values — two of which are
+Saturdays — applied to a Sunday. One atypical weekend (guests, sauna, oven,
+laundry) becomes the standing expectation for every future weekend quarter,
+and there are not enough samples for the median to reject it. The weekday
+profile has eight samples and is correspondingly calmer. The same 2–3 sample
+weakness applies to `build_empirical_device_profile()`, which is keyed the same
+way.
+
+So the reported symptom is not a scheduler fault and not a §1.5 regression: it
+is the known base-load defect, made visible now that a plan renders at all.
+Raising the sample window would help the arithmetic and would still be the
+wrong model — a longer mean is a longer proxy. §1.5.4 remains the target.
+
+**Open, in priority order:**
+
+1. Base load needs a model with the four factors as inputs, not a rolling mean
+   keyed on day type. Occupancy is still the missing one (§1.5.4).
+2. Until then, weekend quarters should carry their thin evidence honestly —
+   the plan already publishes `base_p10_w`/`base_p90_w`, and a three-sample
+   weekend band is wide. The portal does not yet show it.
+3. Only after 1 is the scheduling critique in §1.6.1 worth acting on.
+
 ## 2. Terms
 
 - **Baseline controller:** the normal local schedule, thermostat, occupancy, and

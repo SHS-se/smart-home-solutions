@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { WINDOW_DAY_OPTIONS, type WindowDays } from './types';
+import type { PlanWindow } from '@/lib/energy-shift/plan-window';
 
 export const useSeriesVisibility = <T extends string>() => {
   const [hidden, setHidden] = useState<Set<T>>(() => new Set());
@@ -90,9 +91,8 @@ export const EmptyState: React.FC<{ text: string }> = ({ text }) => (
 );
 
 /**
- * How many days of the window to draw. Shared by the plan and history tabs so
- * the two charts stay comparable at a glance, which is the whole point of them
- * keeping the same 15-minute layout and kW axis.
+ * How many days of measured history to draw. History looks backwards, so it
+ * stays a running total: "the last two days" is a period, not a page.
  */
 export const WindowDaysToggle: React.FC<{
   value: WindowDays;
@@ -110,6 +110,34 @@ export const WindowDaysToggle: React.FC<{
           onClick={() => onChange(days)}
         >
           {days} {days === 1 ? t('dag', 'day') : t('dagar', 'days')}
+        </Button>
+      ))}
+    </div>
+  );
+};
+
+/**
+ * Which day of the plan to read. Forward-looking, so each button is a page
+ * rather than a running total: comparing Tuesday with Monday is impossible
+ * when Tuesday's view still contains Monday.
+ */
+export const PlanWindowToggle: React.FC<{
+  value: PlanWindow;
+  options: PlanWindow[];
+  onChange: (value: PlanWindow) => void;
+}> = ({ value, options, onChange }) => {
+  const { t } = useLanguage();
+  return (
+    <div className="flex gap-1" role="group" aria-label={t('Plandag', 'Plan day')}>
+      {options.map(window => (
+        <Button
+          key={String(window)}
+          size="sm"
+          variant={value === window ? 'secondary' : 'ghost'}
+          aria-pressed={value === window}
+          onClick={() => onChange(window)}
+        >
+          {window === 'all' ? t('Alla', 'All') : `${t('Dag', 'Day')} ${window}`}
         </Button>
       ))}
     </div>
