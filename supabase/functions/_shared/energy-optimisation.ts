@@ -636,14 +636,17 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV5): string[] {
       ? Number.NaN
       : isoMs(evBattery.available_from);
     const departure = evBattery.departure === null
-      ? Number.NaN
+      ? null
       : isoMs(evBattery.departure);
     if (
       evBattery.connected &&
-      (!Number.isFinite(availableFrom) || !Number.isFinite(departure) ||
-        availableFrom >= departure)
+      (!Number.isFinite(availableFrom) ||
+        (departure !== null &&
+          (!Number.isFinite(departure) || availableFrom >= departure)))
     ) {
-      errors.push("connected ev_battery requires a valid availability window");
+      errors.push(
+        "connected ev_battery requires a valid availability start and optional departure",
+      );
     }
     if (
       !evBattery.connected &&
@@ -2115,7 +2118,7 @@ function simulate(
     ? Number.NaN
     : isoMs(snapshot.ev_battery.available_from);
   const evDeparture = snapshot.ev_battery?.departure == null
-    ? Number.NaN
+    ? slots.at(-1)!.epoch_ms + SLOT_MS
     : isoMs(snapshot.ev_battery.departure);
 
   for (const slot of slots) {

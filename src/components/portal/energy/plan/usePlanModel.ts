@@ -212,7 +212,7 @@ export function usePlanModel(
     ] : []),
     ...(hasEvBattery ? [
       { key: 'evSoc' as const, label: t('Bilbatteri SOC', 'EV battery SOC'), color: COLORS.ev },
-      { key: 'evTarget' as const, label: t('Bilens avgångsmål', 'EV departure target'), color: '#c084fc' },
+      { key: 'evTarget' as const, label: t('Bilens SOC-mål', 'EV target SOC'), color: '#c084fc' },
       { key: 'evCharge' as const, label: t('Billaddning', 'EV charge'), color: '#7c3aed' },
     ] : []),
   ];

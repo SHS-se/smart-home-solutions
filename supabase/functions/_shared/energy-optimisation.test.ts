@@ -613,6 +613,28 @@ Deno.test("EV charging is planned as valid discrete current setpoints", () => {
     );
   }
 
+  const horizonBound = structuredClone(snapshot);
+  horizonBound.ev_battery!.departure = null;
+  horizonBound.services[0].id = "ev:horizon";
+  horizonBound.services[0].deadline = new Date(
+    Date.parse(base.slots.at(-1)!.start) + 15 * 60_000,
+  ).toISOString();
+  assert(
+    validateSnapshot(horizonBound).length === 0,
+    "connected EV without a departure timestamp was rejected",
+  );
+  const horizonResult = generateOptimisationPlan(
+    horizonBound,
+    new Date("2026-08-10T07:55:00Z"),
+  );
+  assert(
+    horizonResult.status === "ready" &&
+      Object.values(horizonResult.plans).every((plan) =>
+        plan.slots.every((slot) => slot.ev_connected)
+      ),
+    "horizon-bound EV planning lost its connection window",
+  );
+
   const infeasible = structuredClone(snapshot);
   infeasible.services[0].deadline = base.slots[2].start;
   const infeasibleResult = generateOptimisationPlan(

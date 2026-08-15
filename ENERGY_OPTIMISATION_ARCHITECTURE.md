@@ -109,9 +109,11 @@ configuration:
 
 Solar, battery, pool, water heating and EV are independent optional
 capabilities in snapshot schema 5. A category mapped for reporting is not
-assumed controllable. Installation ratings still require measured or explicitly
-commissioned values; product defaults are limited to policy/orchestration facts
-such as 15-minute slots, efficiency starting values, and default time windows.
+assumed controllable. A website-selected device enters the advisory plan as
+soon as its local mapping is complete; there is no second enable or
+deferrability-confirmation switch. Installation ratings still require measured
+or explicitly commissioned values. The current planner only publishes and
+visualises schedules: it never calls a Home Assistant actuator.
 
 The GUI is stored as a Home Assistant config entry in
 `.storage/core.config_entries`, but that file must never be hand-edited. The
@@ -131,7 +133,14 @@ set:
 | Battery | 18.08 kWh, 8.8 kW charge, 9.6 kW discharge, live Sigen SOC, 13.2 kW plant/grid envelope |
 | Pool | `sensor.pool_heater_energy` plus `sensor.pool_pump_energy`; active measured power about 3.67 kW; `input_boolean.pool_heating` is the season gate |
 | Hot water | `sensor.hot_water_energy`; 3.0 kW installed rating remains an explicit commissioned fact |
-| EV | `sensor.car_charging_lifetime_energy`, Tesla cable/SOC/target/energy-remaining entities, and `number.tesla_model_y_charge_current`; its 5 A minimum, 16 A maximum and 1 A step are reviewed from entity attributes. EV planning remains unavailable until Home Assistant exposes an explicit timezone-aware departure timestamp; the integration does not invent a default deadline |
+| EV | `sensor.car_charging_lifetime_energy`, Tesla cable/SOC/target/energy-remaining entities, and `number.tesla_model_y_charge_current`; its 5 A minimum, 16 A maximum and 1 A step are reviewed from entity attributes. A timezone-aware departure timestamp is optional; without one, the target SOC is planned against the end of the rolling 72-hour horizon |
+
+Pool and water heating are likewise included whenever their website role and
+local mapping are ready. There is no user-defined pool service window: the
+planner learns the daily pool energy requirement and may place it anywhere in
+that local day. Water heating retains its learned full-day duty requirement.
+Old inclusion toggles, confirmation values, and pool-window values are archived
+during integration upgrade and are not consulted by the runtime.
 
 ### 1.3 Portal surface and energy-performance decisions (2026-08-13)
 
@@ -2190,7 +2199,7 @@ effektavgift.
 | Class | Examples | Source/owner | Can be learned? |
 |---|---|---|---|
 | Hard installation | Fuse/import/export limit, rated power, battery min/max SOC, inverter modes, actuator relationship | Staff commissioning + integration verification | No |
-| Customer policy | Comfort targets/ranges, EV departure target, pool season, quiet hours, reserve preference | Customer/staff in portal | No; suggestions only |
+| Customer policy | Comfort targets/ranges, EV target SOC and optional departure, quiet hours, reserve preference | Customer/staff in portal | No; suggestions only |
 | Live state | SOC, temperatures, presence, cycle complete, override, availability, work completed | Integration from HA | No substitution |
 | Forecast | PV, outdoor temperature, base load, import/export prices | Integration adapters + server models | Bias/error can be learned |
 | Device dynamics | COP, modulation, startup, efficiency, thermal capacity/loss, power curve | Manufacturer profile, then measured calibration | Yes, within validated bounds |
@@ -2213,7 +2222,8 @@ effektavgift.
 - presence/cable state, SOC source and freshness, and usable remaining energy;
 - a mapped EV energy meter whenever EV scheduling is enabled, so historical EV
   demand can be removed from base load before a new EV service is added;
-- minimum departure SOC, preferred target, deadline, and urgent threshold;
+- target SOC, optional departure deadline (rolling-horizon end when absent),
+  and urgent threshold;
 - charger current steps and vehicle limit; three 230 V phases and 92% charging
   efficiency are integration invariants, while usable capacity is derived from
   live remaining energy and SOC;
@@ -2481,8 +2491,9 @@ states, and all reason codes.
   the unidentified Shelly channel;
 - battery capacity/power/SOC sources are verified; usable-vs-rated capacity,
   efficiency calibration, reserve policy and Sigen write-mode semantics remain;
-- EV charge-current granularity and live power are verified; an explicit
-  departure timestamp and SOC reliability remain commissioning decisions;
+- EV charge-current granularity and live power are verified; an optional
+  explicit departure timestamp and SOC reliability remain commissioning
+  decisions;
 - boiler tank state, hard temperature bounds, losses, and hygiene policy;
 - pool water state, cover/season policy, loss model, filtration requirement,
   and hard bounds;
