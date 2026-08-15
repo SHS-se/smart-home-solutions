@@ -257,7 +257,7 @@ interface PreparedThermalPlanning {
 }
 
 /**
- * Replace every setpoint heating zone's recent-history profile with the demand
+ * Replace every setpoint room's recent-history profile with the demand
  * implied by its portal comfort routine, season, outdoor forecast, latest
  * measured temperature and fitted 1R1C model.
  *
@@ -274,7 +274,7 @@ async function prepareThermalPlanning(
   storedDevices: StoredDevice[],
 ): Promise<PreparedThermalPlanning> {
   const setpointModels = snapshot.device_models.filter((model) =>
-    model.control_type === "setpoint" && model.category === "heating"
+    model.control_type === "setpoint"
   );
   if (setpointModels.length === 0) {
     return {

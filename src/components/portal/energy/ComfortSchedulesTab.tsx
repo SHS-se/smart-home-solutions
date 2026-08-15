@@ -109,7 +109,6 @@ const ComfortSchedulesTab: React.FC<{
         .select('mapping_summary')
         .eq('customer_id', customerId)
         .eq('home_id', homeId)
-        .eq('category', 'heating')
         .eq('planning_role_override', 'controllable')
         .eq('control_type_override', 'setpoint')
         .eq('mapping_status', 'ready')

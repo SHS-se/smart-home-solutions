@@ -60,7 +60,7 @@ static portal prototype:
 | Customer telemetry was compiled into the public JavaScript bundle | Deleted the hard-coded input snapshot. The selected `home_id` now reads a row protected by RLS. Pairing codes and active device tokens are bound to one home. |
 | The page was a manually copied snapshot | `shs_energy` now uploads completed 15-minute actuals and requests a fresh rolling plan hourly. The portal shows issue/expiry/source freshness and measured overlays. |
 | A/B/C used unequal work and fabricated a final partial day | Services have explicit earliest times and deadlines. Only deadlines inside the horizon create work; all scenarios use the same rounded integer slot count, and end-of-solar metrics omit an unfinished final local day. |
-| Pool, boiler and EV used fractional/chattering power and an invented 11 kW EV rate | Pool remains a contiguous whole-slot service. The boiler is now a probability-weighted empirical duty forecast with a separate bounded permit/inhibit control. An EV current controller declares its minimum, maximum, step, phases and voltage; the planner chooses a supported current per 15-minute slot. Phil's 5–16 A three-phase range therefore models 3.45–11.04 kW rather than freezing the plan at the entity's instantaneous state. |
+| Pool, boiler and EV used fractional/chattering power and an invented 11 kW EV rate | Pool remains a contiguous whole-slot service. The boiler is now a probability-weighted empirical duty forecast with a separate bounded permit/inhibit control. An EV current controller supplies its reviewed minimum, maximum and step, while the integration applies the installation-wide three-phase 230 V contract; the planner chooses a supported current per 15-minute slot. Phil's 5–16 A range therefore models 3.45–11.04 kW rather than freezing the plan at the entity's instantaneous state. |
 | The 80% battery claim was not verified | End-of-solar and terminal SOC are simulation invariants. The 80% target is soft by default so it cannot silently reserve solar and force pool/hot-water work onto night import; explicitly making it hard retains fail-closed infeasibility checks. |
 | Export was valued with the import supplier price | SHS fetches spot prices and applies the selected supplier's effective-dated terms. Import and export are separate server-calculated series; Home Assistant price entities are not inputs. |
 | One August day was repeated as baseload | Baseload is a weekday/weekend per-local-quarter median of recorder history. Only devices explicitly classified as controllable are subtracted and then added back as individual planner series; every other Energy Dashboard device remains represented by its real use inside baseload. p10/p90 and sample counts remain diagnostic data rather than graph noise. |
@@ -131,7 +131,7 @@ set:
 | Battery | 18.08 kWh, 8.8 kW charge, 9.6 kW discharge, live Sigen SOC, 13.2 kW plant/grid envelope |
 | Pool | `sensor.pool_heater_energy` plus `sensor.pool_pump_energy`; active measured power about 3.67 kW; `input_boolean.pool_heating` is the season gate |
 | Hot water | `sensor.hot_water_energy`; 3.0 kW installed rating remains an explicit commissioned fact |
-| EV | `sensor.car_charging_lifetime_energy`, Tesla cable/SOC/target/energy-remaining entities, and `number.tesla_model_y_charge_current`; its 5 A minimum, 16 A maximum and 1 A step are read from entity attributes. No departure entity exists, so the next configured default departure time is used |
+| EV | `sensor.car_charging_lifetime_energy`, Tesla cable/SOC/target/energy-remaining entities, and `number.tesla_model_y_charge_current`; its 5 A minimum, 16 A maximum and 1 A step are reviewed from entity attributes. EV planning remains unavailable until Home Assistant exposes an explicit timezone-aware departure timestamp; the integration does not invent a default deadline |
 
 ### 1.3 Portal surface and energy-performance decisions (2026-08-13)
 
@@ -1169,6 +1169,10 @@ Node-RED at runtime.
   asks for a duplicate room selector, scheduled comfort/setback helpers or
   reactive manual-override fields. The portal shows the derived live room name
   and complete actuator list beside its schedule.
+- An explicit `setpoint` planning role is authoritative regardless of the
+  Energy Dashboard category. Heating meters, heat-capable air conditioners and
+  pool-room equipment therefore create the same room-owned comfort schedule;
+  an inferred `cooling` or `pool_heating` label cannot hide a Ready mapping.
 - The other planned-control mappings use the same smaller contract: switch
   minimum run is optional; availability/season is gone; power is one field that
   accepts either a W/kW entity or reviewed watts; and variable-power control
@@ -2200,11 +2204,13 @@ effektavgift.
 
 **EV/charger**
 
-- presence/cable state, SOC source and freshness, usable battery capacity;
+- presence/cable state, SOC source and freshness, and usable remaining energy;
 - a mapped EV energy meter whenever EV scheduling is enabled, so historical EV
   demand can be removed from base load before a new EV service is added;
 - minimum departure SOC, preferred target, deadline, and urgent threshold;
-- charger phase/current steps, maximum power, efficiency, and vehicle limit;
+- charger current steps and vehicle limit; three 230 V phases and 92% charging
+  efficiency are integration invariants, while usable capacity is derived from
+  live remaining energy and SOC;
 - customer force-charge/manual semantics; and
 - behaviour when SOC is unavailable but the vehicle is connected. This must be
   an explicit policy, not a guessed SOC.
@@ -2469,8 +2475,8 @@ states, and all reason codes.
   the unidentified Shelly channel;
 - battery capacity/power/SOC sources are verified; usable-vs-rated capacity,
   efficiency calibration, reserve policy and Sigen write-mode semantics remain;
-- EV charge-current granularity and live power are verified; charge efficiency,
-  default-departure policy and SOC reliability remain commissioning decisions;
+- EV charge-current granularity and live power are verified; an explicit
+  departure timestamp and SOC reliability remain commissioning decisions;
 - boiler tank state, hard temperature bounds, losses, and hygiene policy;
 - pool water state, cover/season policy, loss model, filtration requirement,
   and hard bounds;
