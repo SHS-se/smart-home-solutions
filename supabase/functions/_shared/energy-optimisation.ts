@@ -2025,8 +2025,13 @@ function empiricalDeviceLoads(
       result[model.key] = round(model.forecast_w_by_slot[index], 2);
       continue;
     }
+    // A category can hold both a deferrable service and a room heater — a pool
+    // meter and the pool room's floor heater, say. Sharing the service across
+    // the room's meter too would leave part of the service load unaccounted
+    // for, since the thermal pass overwrites that meter below.
     const categoryModels = snapshot.device_models.filter((candidate) =>
-      candidate.category === model.category
+      candidate.category === model.category &&
+      !thermalDeviceKeys.has(candidate.key)
     );
     const forecastTotal = categoryModels.reduce(
       (sum, candidate) => sum + candidate.forecast_w_by_slot[index],

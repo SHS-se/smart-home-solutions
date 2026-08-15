@@ -358,6 +358,86 @@ Deno.test("a controlled empirical device is replaced rather than double counted"
   }
 });
 
+Deno.test("a room heater sharing a service's meter category keeps the service whole", () => {
+  // The pool room's floor heater is metered as pool_heating but planned as a
+  // room. Sharing the pool service across it left part of the pool's load
+  // unaccounted for, because the thermal pass overwrites that meter.
+  const base = input();
+  const slotCount = base.slots.length;
+  const snapshot = input({
+    device_models: [
+      {
+        key: "pool-heater",
+        name: "Pool heater",
+        statistic_id: "sensor.pool_heater_energy",
+        category: "pool_heating",
+        suggested_load_type: "fixed_full_load",
+        load_type: "fixed_full_load",
+        planning_role: "controllable",
+        control_type: "switch_schedule",
+        active_power_w: 2_000,
+        profile_sample_count: 1_000,
+        forecast_w_by_slot: base.slots.map(() => 400),
+      },
+      {
+        key: "pool-room-floor-heater",
+        name: "Pool room floor heater",
+        statistic_id: "sensor.pool_room_floor_heater_energy",
+        category: "pool_heating",
+        suggested_load_type: "fixed_full_load",
+        load_type: "fixed_full_load",
+        planning_role: "controllable",
+        control_type: "setpoint",
+        active_power_w: 800,
+        profile_sample_count: 1_000,
+        forecast_method: "thermal_comfort_schedule_v1",
+        forecast_w_by_slot: base.slots.map(() => 400),
+      },
+    ],
+    outdoor_temperature_c: new Array(slotCount).fill(5),
+    thermal_zones: [{
+      key: "basement-bathroom",
+      name: "Basement bathroom",
+      device_keys: ["pool-room-floor-heater"],
+      model: {
+        gain_c_per_wh: 0.001,
+        cooling_constant_per_h: 0.1,
+        background_gain_c_per_h: 0,
+        thermal_capacity_wh_per_c: 1_000,
+        heat_loss_w_per_c: 10,
+        time_constant_h: 100,
+        heating_rate_c_per_h: 2,
+        r2: 0.95,
+        residual_std_c: 0.05,
+        sample_count: 1_000,
+      },
+      start_temperature_c: 21,
+      rated_power_w: 800,
+      comfort_min_c: new Array(slotCount).fill(20),
+      target_c: new Array(slotCount).fill(21),
+      comfort_max_c: new Array(slotCount).fill(22),
+      maximum_power_w_by_slot: new Array(slotCount).fill(800),
+      unplanned_power_w: new Array(slotCount).fill(400),
+    }],
+  });
+
+  const result = generateOptimisationPlan(
+    snapshot,
+    new Date("2026-08-10T07:55:00Z"),
+  );
+  for (const slot of result.plans.baseline.slots) {
+    assert(
+      slot.device_loads_w["pool-heater"] === slot.pool_w,
+      "the pool service was diluted across a meter planned as a room",
+    );
+    assert(
+      slot.device_loads_w["pool-room-floor-heater"] ===
+        (slot.room_heating_w["basement-bathroom"] ?? 0),
+      "the room heater did not carry its room's planned power",
+    );
+  }
+});
+
 Deno.test("room comfort is reached by the first comfort quarter and preheat is staggered", () => {
   const base = input();
   const thermalModel = {
