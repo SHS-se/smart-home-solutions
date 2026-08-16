@@ -160,9 +160,16 @@ const PowerSection: React.FC<{
     );
   }
 
+  const title = !hasPlan
+    ? t('Uppmätt förbrukning', 'Historical consumption')
+    : !hasHistory
+      ? t('Planerad förbrukning', 'Planned consumption')
+      : t('Uppmätt och planerad förbrukning', 'Historical and planned consumption');
+
   return (
     <>
-      <div className="mb-2 flex justify-end">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-medium">{title}</h3>
         <DayWindowToggle value={dayWindow} options={dayWindowOptions} onChange={onDayWindowChange} />
       </div>
       <EnergyPowerChart data={windowed} ticks={ticks} showPercentAxis={hasBattery || hasEvBattery}>
@@ -208,8 +215,8 @@ const PowerSection: React.FC<{
             : t('Hela dagen är planerad.', 'The whole day is planned.')}
         {' '}
         {t(
-          'Fyllda staplar staplas till husets förbrukning. Nätimport, nätexport och batteriladdning är flöden över husets gräns; export och laddning är negativa. Laddningsnivåer läses av på den högra axeln och finns bara för planerade kvartar.',
-          'Filled bars stack into what the house consumes. Grid import, grid export and battery charge are flows across the house boundary; export and charging are negative. State of charge reads on the right-hand axis and exists only for planned quarters.',
+          'Fyllda staplar staplas till husets förbrukning. Nätimport, nätexport och batteriladdning är flöden över husets gräns; export och laddning är negativa. Laddningsnivåer läses av på den högra axeln.',
+          'Filled bars stack into what the house consumes. Grid import, grid export and battery charge are flows across the house boundary; export and charging are negative. State of charge reads on the right-hand axis.',
         )}
         {idleDeviceCount > 0 && ` ${t(
           `${idleDeviceCount} enheter är dolda eftersom de aldrig drar effekt i den här perioden.`,

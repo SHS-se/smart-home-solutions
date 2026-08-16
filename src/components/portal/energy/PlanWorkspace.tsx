@@ -120,7 +120,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
           .maybeSingle(),
         supabase
           .from('energy_optimisation_actual_slots')
-          .select('start_ts, total_load_kwh, solar_production_kwh, grid_import_kwh, grid_export_kwh, battery_charge_kwh, battery_discharge_kwh')
+          .select('start_ts, total_load_kwh, solar_production_kwh, grid_import_kwh, grid_export_kwh, battery_charge_kwh, battery_discharge_kwh, battery_soc, ev_soc')
           .eq('customer_id', customerId)
           .eq('home_id', homeId)
           .gte('start_ts', from)

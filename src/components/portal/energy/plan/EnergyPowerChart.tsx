@@ -13,7 +13,8 @@ interface EnergyChartRow {
   label: string;
 }
 
-const CHART_MARGIN = { top: 8, right: 10, left: 0, bottom: 4 };
+// Room for the "now" divider's label, which sits above the plot area.
+const CHART_MARGIN = { top: 22, right: 10, left: 0, bottom: 4 };
 
 /** Series drawn against the right-hand percentage axis rather than kW. */
 const PERCENT_SERIES = new Set(['homeSoc', 'evSoc']);

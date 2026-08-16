@@ -30,6 +30,9 @@ export interface ActualEnergySlot {
   grid_export_kwh: number | null;
   battery_charge_kwh: number | null;
   battery_discharge_kwh: number | null;
+  /** Measured fractions. Null for quarters recorded before they were sent. */
+  battery_soc: number | null;
+  ev_soc: number | null;
 }
 
 export type ThermalFixtureSeason = 'winter' | 'spring' | 'summer' | 'autumn' | 'ev_only';

@@ -38,7 +38,8 @@ export interface TimelineRow {
   /** Negative: energy leaving the house reads as demand when drawn positive. */
   gridExportW: number | null;
   batteryChargeW: number | null;
-  /** Fractions, and only ever known on the planned side. */
+  batteryDischargeW: number | null;
+  /** Fractions, measured on the past side and planned on the future side. */
   batterySoc: number | null;
   evSoc: number | null;
   deviceW: Record<string, number>;
@@ -137,10 +138,11 @@ export const buildEnergyTimeline = ({
       batteryChargeW: slot.battery_charge_kwh == null
         ? null
         : -slot.battery_charge_kwh * QUARTER_W_TO_KWH,
-      // History carries no state of charge. Inventing one would make the line
-      // look continuous across a boundary it does not cross.
-      batterySoc: null,
-      evSoc: null,
+      batteryDischargeW: watts(slot.battery_discharge_kwh),
+      // Measured, not derived. Quarters recorded before the integration began
+      // sending these stay null and simply leave a gap in the line.
+      batterySoc: slot.battery_soc ?? null,
+      evSoc: slot.ev_soc ?? null,
       deviceW,
       costSek: importCost === null && exportCredit === null
         ? null
@@ -161,6 +163,7 @@ export const buildEnergyTimeline = ({
       gridImportW: slot.grid_import_w,
       gridExportW: -slot.grid_export_w,
       batteryChargeW: -slot.battery_charge_w,
+      batteryDischargeW: slot.battery_discharge_w,
       batterySoc: slot.battery_soc,
       evSoc: slot.ev_soc,
       deviceW: { ...slot.device_loads_w },

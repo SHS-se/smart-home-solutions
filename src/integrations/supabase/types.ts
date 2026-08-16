@@ -1969,9 +1969,11 @@ export type Database = {
         Row: {
           battery_charge_kwh: number | null
           battery_discharge_kwh: number | null
+          battery_soc: number | null
           customer_id: string
           device_token_id: string | null
           ev_charging_kwh: number | null
+          ev_soc: number | null
           grid_export_kwh: number | null
           grid_import_kwh: number | null
           home_id: string
@@ -1987,9 +1989,11 @@ export type Database = {
         Insert: {
           battery_charge_kwh?: number | null
           battery_discharge_kwh?: number | null
+          battery_soc?: number | null
           customer_id: string
           device_token_id?: string | null
           ev_charging_kwh?: number | null
+          ev_soc?: number | null
           grid_export_kwh?: number | null
           grid_import_kwh?: number | null
           home_id: string
@@ -2005,9 +2009,11 @@ export type Database = {
         Update: {
           battery_charge_kwh?: number | null
           battery_discharge_kwh?: number | null
+          battery_soc?: number | null
           customer_id?: string
           device_token_id?: string | null
           ev_charging_kwh?: number | null
+          ev_soc?: number | null
           grid_export_kwh?: number | null
           grid_import_kwh?: number | null
           home_id?: string

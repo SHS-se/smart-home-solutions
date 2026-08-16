@@ -315,7 +315,9 @@ export function createWebsiteDemoActuals(now = Date.now()): ActualEnergySlot[] {
       grid_import_kwh: Number(Math.max(0, netKwh).toFixed(4)),
       grid_export_kwh: Number(Math.max(0, -netKwh).toFixed(4)),
       battery_charge_kwh: Number(Math.max(0, -netKwh * 0.45).toFixed(4)),
-      battery_discharge_kwh: Number(Math.max(0, netKwh * 0.18).toFixed(4)),
+      battery_soc: null,
+    ev_soc: null,
+    battery_discharge_kwh: Number(Math.max(0, netKwh * 0.18).toFixed(4)),
     };
   });
 }

@@ -90,9 +90,10 @@ export const EmptyState: React.FC<{ text: string }> = ({ text }) => (
 );
 
 /**
- * Which calendar day to read, relative to today. Days are absolute — midnight
- * to midnight — so the same button always means the same wall-clock hours
- * however long ago the plan was issued.
+ * Which calendar day to read. Labelled by date rather than by offset: "−1" is
+ * arithmetic the reader has to do, and the axis underneath is already in dates.
+ * Past and future are tinted differently so the shape of the row says which
+ * half of the chart is measurement and which is forecast.
  */
 export const DayWindowToggle: React.FC<{
   value: DayWindow;
@@ -106,12 +107,16 @@ export const DayWindowToggle: React.FC<{
     const day = new Date();
     day.setHours(0, 0, 0, 0);
     day.setDate(day.getDate() + window);
-    // The offset is what the reader asked for; the date is what they need to
-    // recognise the day on the axis below.
-    return `${window > 0 ? '+' : '−'}${Math.abs(window)} · ${day.toLocaleDateString([], { day: '2-digit', month: '2-digit' })}`;
+    return day.toLocaleDateString([], { day: '2-digit', month: '2-digit' });
+  };
+  const tone = (window: DayWindow) => {
+    if (window === 'all' || window === 0) return '';
+    return window < 0
+      ? 'text-slate-600 dark:text-slate-300'
+      : 'text-sky-700 dark:text-sky-300';
   };
   return (
-    <div className="flex flex-wrap gap-1" role="group" aria-label={t('Dag', 'Day')}>
+    <div className="flex flex-wrap items-center gap-1" role="group" aria-label={t('Dag', 'Day')}>
       {options.map(window => (
         <Button
           key={String(window)}
@@ -119,6 +124,7 @@ export const DayWindowToggle: React.FC<{
           variant={value === window ? 'secondary' : 'ghost'}
           aria-pressed={value === window}
           onClick={() => onChange(window)}
+          className={value === window ? undefined : tone(window)}
         >
           {label(window)}
         </Button>

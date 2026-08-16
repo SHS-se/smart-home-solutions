@@ -213,6 +213,11 @@ const ENERGY_FIELDS = [
   "battery_discharge_kwh",
 ] as const;
 
+// Measured state of charge, sent as fractions. Kept apart from the energy
+// fields because they are levels rather than quantities: they are bounded 0..1
+// and a slot carrying only a battery level has measured no energy at all.
+const FRACTION_FIELDS = ["battery_soc", "ev_soc"] as const;
+
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
@@ -880,6 +885,20 @@ serve(async (req) => {
         }
         row[field] = round(value);
         populated += 1;
+      }
+      for (const field of FRACTION_FIELDS) {
+        const value = actual[field];
+        if (value === undefined || value === null) {
+          row[field] = null;
+          continue;
+        }
+        if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
+          return json({
+            error: "invalid_actual_soc",
+            detail: `actual_slots[${index}].${field}`,
+          }, 400);
+        }
+        row[field] = round(value);
       }
       if (populated === 0) {
         return json({

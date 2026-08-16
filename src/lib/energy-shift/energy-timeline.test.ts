@@ -33,6 +33,8 @@ const actual = (startMs: number, overrides: Partial<ActualEnergySlot> = {}): Act
   grid_export_kwh: 0.2,
   battery_charge_kwh: 0.05,
   battery_discharge_kwh: 0,
+  battery_soc: null,
+  ev_soc: null,
   ...overrides,
 });
 
@@ -113,15 +115,21 @@ Deno.test('a plan slot never overwrites a quarter already measured', () => {
   assert(rows[0].measured, 'and stays marked as measured');
 });
 
-Deno.test('state of charge exists only where it is actually known', () => {
+Deno.test('measured state of charge is read, never derived', () => {
   const rows = build({
-    actuals: [actual(NOW - SLOT_MS)],
+    actuals: [actual(NOW - SLOT_MS, { battery_soc: 0.31, ev_soc: 0.44 })],
     planSlots: [planned(NOW)],
   });
-  assertEquals(rows[0].batterySoc, null, 'history has no SOC');
-  assertEquals(rows[0].evSoc, null, 'history has no EV SOC');
-  assertEquals(rows[1].batterySoc, 0.75, 'plan does');
+  assertEquals(rows[0].batterySoc, 0.31, 'the measured house battery');
+  assertEquals(rows[0].evSoc, 0.44, 'and the measured car');
+  assertEquals(rows[1].batterySoc, 0.75, 'the plan carries its own');
   assertEquals(rows[1].evSoc, 0.6, 'and for the car');
+});
+
+Deno.test('a quarter recorded before SOC was sent leaves a gap, not a guess', () => {
+  const rows = build({ actuals: [actual(NOW - SLOT_MS)], planSlots: [planned(NOW)] });
+  assertEquals(rows[0].batterySoc, null, 'no level to show');
+  assertEquals(rows[0].evSoc, null, 'nor for the car');
 });
 
 Deno.test('measured devices are reconciled onto the key the plan uses', () => {
