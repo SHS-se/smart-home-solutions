@@ -110,6 +110,20 @@ export interface BatteryInput {
  * project SOC. The executable charging envelope still comes exclusively from
  * the EV service below, so adding this metadata cannot actuate the vehicle.
  */
+/**
+ * Measured pool state.
+ *
+ * Volume is a reviewed installation figure; the loss coefficient and the heat
+ * pump's COP curve are deliberately absent, because both are fitted from the
+ * water-temperature series against outdoor temperature and the pool heater's
+ * metered energy rather than entered at commissioning (§8.10).
+ */
+export interface PoolStateInput {
+  water_temperature_c: number;
+  volume_m3: number;
+  source_entity_ids?: Record<string, string>;
+}
+
 export interface EvBatteryInput {
   name: string;
   connected: boolean;
@@ -262,6 +276,12 @@ export interface OptimisationSnapshotV5 {
   // EV telemetry publisher. Missing metadata must not stop their established
   // charging service from being planned.
   ev_battery?: EvBatteryInput | null;
+  // Pool state, once its water temperature sensor is mapped (§8.3). Carried
+  // and validated here but not yet consumed: the planner still sizes the pool
+  // from a daily requirement, and will keep doing so until the whole objective
+  // moves to marginal value at once. A planner reading a state for one store
+  // and an energy budget for another cannot rank them against each other.
+  pool?: PoolStateInput | null;
   grid: {
     import_limit_w: number;
     export_limit_w: number;
@@ -653,6 +673,20 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV5): string[] {
       (evBattery.available_from !== null || evBattery.departure !== null)
     ) {
       errors.push("disconnected ev_battery must not declare an availability window");
+    }
+  }
+  const pool = snapshot?.pool;
+  if (pool !== undefined && pool !== null) {
+    // A pool sensor reading an air probe, or a volume nobody reviewed, would
+    // silently mis-scale every degree the planner later buys. Refuse it here
+    // rather than store a state that reads plausibly and models nothing.
+    if (
+      !finite(pool.water_temperature_c) ||
+      !inRange(pool.water_temperature_c, -5, 60) ||
+      !finite(pool.volume_m3) ||
+      !inRange(pool.volume_m3, 0.5, 5_000)
+    ) {
+      errors.push("pool state is invalid");
     }
   }
   if (

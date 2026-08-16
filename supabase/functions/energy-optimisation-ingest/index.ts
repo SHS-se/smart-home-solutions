@@ -103,6 +103,13 @@ interface IncomingActualSlot {
  * quarters that have no measurement, and because a backfill reaches far further
  * back than the eight days the actual-slot watermark allows.
  */
+/** Pool water temperature for one quarter: the pool's measured state (§8.3). */
+interface IncomingPoolSlot {
+  start: string;
+  water_temperature_c: number;
+  quality?: Record<string, unknown>;
+}
+
 interface IncomingPriceSlot {
   start: string;
   import_price_sek_per_kwh: number;
@@ -587,6 +594,7 @@ serve(async (req) => {
     let prices: IncomingPriceSlot[] = [];
     let devices: IncomingDevice[] = [];
     let thermals: IncomingThermalSlot[] = [];
+    let pools: IncomingPoolSlot[] = [];
     let snapshot: OptimisationSnapshotV5 | null = null;
     let deviceInventoryComplete = false;
     try {
@@ -622,6 +630,9 @@ serve(async (req) => {
       if (body.price_slots !== undefined && !Array.isArray(body.price_slots)) {
         throw new Error("price_slots");
       }
+      if (body.pool_slots !== undefined && !Array.isArray(body.pool_slots)) {
+        throw new Error("pool_slots");
+      }
       if (
         body.device_inventory_complete !== undefined &&
         typeof body.device_inventory_complete !== "boolean"
@@ -632,6 +643,7 @@ serve(async (req) => {
       prices = body.price_slots ?? [];
       devices = body.devices ?? [];
       thermals = body.thermal_slots ?? [];
+      pools = body.pool_slots ?? [];
       snapshot = body.snapshot ?? null;
       deviceInventoryComplete = body.device_inventory_complete ?? false;
     } catch {
@@ -1190,6 +1202,45 @@ serve(async (req) => {
         .upsert(thermalRows, { onConflict: "home_id,room_key,start_ts" });
       if (error) {
         console.error("[ENERGY-OPTIMISATION] thermal upsert failed", error);
+        return json({ error: "storage_failed" }, 500);
+      }
+    }
+
+    // Pool water temperature: the state the pool is scheduled against, and the
+    // training series for its loss coefficient and its heat pump's COP (§8.3).
+    const poolRows: Record<string, unknown>[] = [];
+    if (pools.length > 0) {
+      for (const row of pools) {
+        const start = Date.parse(String(row?.start));
+        const water = Number(row?.water_temperature_c);
+        if (!Number.isFinite(start) || start % SLOT_MS !== 0) {
+          return json(
+            { error: "invalid_pool_slot", detail: `${row?.start}` },
+            400,
+          );
+        }
+        if (!Number.isFinite(water) || water < -5 || water > 60) {
+          return json({
+            error: "invalid_pool_temperature",
+            detail: `${row?.water_temperature_c}`,
+          }, 400);
+        }
+        poolRows.push({
+          customer_id: auth.customerId,
+          home_id: auth.homeId,
+          start_ts: new Date(start).toISOString(),
+          water_temperature_c: round(water, 3),
+          quality: row?.quality ?? {},
+          device_token_id: auth.tokenId,
+        });
+      }
+    }
+    if (poolRows.length > 0) {
+      const { error } = await supabase
+        .from("energy_optimisation_pool_slots")
+        .upsert(poolRows, { onConflict: "home_id,start_ts" });
+      if (error) {
+        console.error("[ENERGY-OPTIMISATION] pool upsert failed", error);
         return json({ error: "storage_failed" }, 500);
       }
     }
