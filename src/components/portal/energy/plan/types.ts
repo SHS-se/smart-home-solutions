@@ -117,7 +117,7 @@ export type PlanViewMode = 'planned' | 'unplanned';
  * it cost; `devices` owns empirical Home Assistant models; the remaining
  * sections each own a focused chart.
  */
-export type PlanSection = 'plan' | 'history' | 'devices' | 'thermal' | 'economics' | 'storage';
+export type PlanSection = 'plan' | 'history' | 'devices' | 'thermal' | 'economics';
 
 /**
  * How much of the window either chart draws. Both tabs fetch the full 72 hours

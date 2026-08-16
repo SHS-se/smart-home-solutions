@@ -15,13 +15,19 @@ interface EnergyChartRow {
 
 const CHART_MARGIN = { top: 8, right: 10, left: 0, bottom: 4 };
 
+/** Series drawn against the right-hand percentage axis rather than kW. */
+const PERCENT_SERIES = new Set(['homeSoc', 'evSoc']);
+
 const EnergyPowerChart = <Row extends EnergyChartRow>({
   data,
   ticks,
+  showPercentAxis = false,
   children,
 }: {
   data: Row[];
   ticks: number[];
+  /** State of charge shares the chart but not the unit. */
+  showPercentAxis?: boolean;
   children: React.ReactNode;
 }) => (
   <ResponsiveContainer width="100%" height={360}>
@@ -42,11 +48,25 @@ const EnergyPowerChart = <Row extends EnergyChartRow>({
         tickFormatter={watts => `${(Number(watts) / 1_000).toFixed(0)}`}
         label={{ value: 'kW', angle: -90, position: 'insideLeft', fontSize: 11 }}
       />
+      {showPercentAxis && (
+        <YAxis
+          yAxisId="soc"
+          orientation="right"
+          domain={[0, 100]}
+          tick={{ fontSize: 11 }}
+          tickFormatter={value => `${Number(value).toFixed(0)}%`}
+        />
+      )}
       {children}
       <Tooltip
         contentStyle={{ fontSize: 12, borderRadius: 8 }}
         labelFormatter={index => data[index as number]?.label ?? ''}
-        formatter={(value, name) => [`${(Number(value) / 1_000).toFixed(2)} kW`, name]}
+        formatter={(value, name, item) => [
+          PERCENT_SERIES.has(String(item?.dataKey))
+            ? `${Number(value).toFixed(0)} %`
+            : `${(Number(value) / 1_000).toFixed(2)} kW`,
+          name,
+        ]}
       />
     </ComposedChart>
   </ResponsiveContainer>

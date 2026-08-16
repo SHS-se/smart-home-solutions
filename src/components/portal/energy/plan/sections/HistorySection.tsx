@@ -17,7 +17,6 @@ import {
   type SupplySlotInput,
 } from '@/lib/energy-shift/energy-attribution';
 import type { EmpiricalEnergyDevice } from '../../EmpiricalDeviceModelsCard';
-import ActualPerformance from '../ActualPerformance';
 import DeviceEnergyTable from '../DeviceEnergyTable';
 import { Kpi, WindowDaysToggle } from '../ui';
 import {
@@ -227,13 +226,6 @@ const HistorySection: React.FC<{
           )}
         </CardContent>
       </Card>
-
-      <ActualPerformance
-        actuals={windowed}
-        devices={configuredDevices}
-        deviceActuals={deviceActuals}
-        windowDays={windowDays}
-      />
 
       <Card>
         <CardHeader className="pb-3">

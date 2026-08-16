@@ -80,7 +80,6 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
     { key: 'comfort', label: t('Komfort', 'Comfort') },
     { key: 'thermal', label: t('Termik', 'Thermal') },
     { key: 'economics', label: t('Ekonomi', 'Economics') },
-    { key: 'storage', label: t('Lagring', 'Storage') },
   ];
 
   return (

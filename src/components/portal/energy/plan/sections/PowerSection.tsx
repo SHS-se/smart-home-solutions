@@ -1,4 +1,8 @@
-// The live power chart shown in the Plan workspace.
+// One continuous chart: measured history to the left of now, plan to the right.
+//
+// History and the plan were separate tabs with separate windows, so "today"
+// existed in neither. They are the same quantities on the same grid; the only
+// difference is which side of now they fall on.
 
 import React, { useMemo } from 'react';
 import {
@@ -10,183 +14,206 @@ import {
   type SupplySlotInput,
 } from '@/lib/energy-shift/energy-attribution';
 import {
-  isServiceScheduled,
-  planWindowRange,
-  scheduledDeviceKeys,
-  type PlanWindow,
-} from '@/lib/energy-shift/plan-window';
-import { COLORS } from '../types';
-import { PlanWindowToggle, SeriesToggleLegend, useSeriesVisibility } from '../ui';
+  activeDeviceKeys,
+  nowDividerIndex,
+  type DayWindow,
+  type TimelineRange,
+  type TimelineRow,
+} from '@/lib/energy-shift/energy-timeline';
+import { COLORS, DEVICE_COLORS } from '../types';
+import { DayWindowToggle, SeriesToggleLegend, useSeriesVisibility } from '../ui';
 import type { PlanModel } from '../usePlanModel';
-import type { PlanChartSeriesKey } from '../types';
 import DeviceEnergyTable from '../DeviceEnergyTable';
 import EnergyPowerChart from '../EnergyPowerChart';
 
-/** A quarter of average power in watts is that many watt-hours over four. */
 const QUARTER_W_TO_KWH = 4_000;
 
 /**
- * Grid and battery flows are what the reader is checking the plan against, so
- * they are drawn heavier than any device series. Eighteen device colours will
- * always out-number them; weight is the only thing that keeps them legible.
+ * Grid and battery flows are what the plan gets checked against, so they are
+ * drawn heavier than any device series. Eighteen device colours will always
+ * out-number them; weight is the only thing that keeps them legible.
  */
 const FLOW_STROKE_WIDTH = 2.5;
 
+type SeriesKey =
+  | 'solar' | 'base' | 'gridImport' | 'gridExport' | 'batteryCharge'
+  | 'homeSoc' | 'evSoc' | `device:${string}`;
+
 const PowerSection: React.FC<{
   model: PlanModel;
-  planWindow: PlanWindow;
-  planWindowOptions: PlanWindow[];
-  onPlanWindowChange: (value: PlanWindow) => void;
-}> = ({ model, planWindow, planWindowOptions, onPlanWindowChange }) => {
+  rows: TimelineRow[];
+  range: TimelineRange;
+  dayWindow: DayWindow;
+  dayWindowOptions: DayWindow[];
+  onDayWindowChange: (value: DayWindow) => void;
+  deviceNameByKey: ReadonlyMap<string, string>;
+  hasBattery: boolean;
+  hasEvBattery: boolean;
+}> = ({
+  model,
+  rows,
+  range,
+  dayWindow,
+  dayWindowOptions,
+  onDayWindowChange,
+  deviceNameByKey,
+  hasBattery,
+  hasEvBattery,
+}) => {
   const { t } = useLanguage();
-  const powerVisibility = useSeriesVisibility<PlanChartSeriesKey>();
-  const {
-    plan,
-    active,
-    chartData,
-    bindingIndex,
-    hasPv,
-    seriesByKey,
-    deviceSeries,
-    showBoilerAggregate,
-    showPoolAggregate,
-    showEvAggregate,
-    planChartSeries,
-    deviceRoleView,
-  } = model;
+  const visibility = useSeriesVisibility<SeriesKey>();
+  const { deviceRoleView } = model;
 
-  const range = useMemo(
-    () => planWindowRange(active.slots.length, planWindow),
-    [active.slots.length, planWindow],
+  const scheduled = useMemo(() => activeDeviceKeys(rows, range), [range, rows]);
+  const deviceKeys = useMemo(
+    () => [...scheduled].sort((left, right) =>
+      (deviceNameByKey.get(left) ?? left).localeCompare(deviceNameByKey.get(right) ?? right)),
+    [deviceNameByKey, scheduled],
   );
-  // The chart's x-axis reads `i` as the array position, so a window that does
-  // not start at slot zero has to be re-indexed. Day 2 and Day 3 would
-  // otherwise plot against an axis that stops before their first point.
-  const windowed = useMemo(
-    () => chartData
-      .slice(range.from, range.to)
-      .map((row, index) => ({ ...row, i: index })),
-    [chartData, range.from, range.to],
-  );
-  const singleDay = planWindow !== 'all';
+
+  const windowed = useMemo(() => rows.slice(range.from, range.to).map((row, index) => ({
+    i: index,
+    start: row.start,
+    label: new Date(row.start).toLocaleString([], {
+      month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+    }),
+    solar: row.solarW,
+    base: row.baseW,
+    gridImport: row.gridImportW,
+    gridExport: row.gridExportW,
+    batteryCharge: row.batteryChargeW,
+    homeSoc: row.batterySoc === null ? null : row.batterySoc * 100,
+    evSoc: row.evSoc === null ? null : row.evSoc * 100,
+    ...Object.fromEntries(deviceKeys.map((key, keyIndex) => [
+      `device${keyIndex}`,
+      row.deviceW[key] ?? 0,
+    ])),
+  })), [deviceKeys, range.from, range.to, rows]);
+
   const ticks = useMemo(
     () => windowed
       .filter(row => {
         const start = new Date(row.start);
-        return start.getMinutes() === 0 && start.getHours() % (singleDay ? 3 : 6) === 0;
+        return start.getMinutes() === 0
+          && start.getHours() % (dayWindow === 'all' ? 6 : 3) === 0;
       })
       .map(row => row.i),
-    [singleDay, windowed],
+    [dayWindow, windowed],
   );
-  const advisoryFrom = bindingIndex - range.from;
+  const divider = nowDividerIndex(rows, range);
+  const hasHistory = divider > 0;
+  const hasPlan = divider < windowed.length;
 
-  // A house with eighteen mapped devices puts eighteen entries in the legend,
-  // nearly all flat at zero. Only what the plan actually runs in view is worth
-  // a colour; the rest is noise over the series that carry the schedule.
-  const scheduled = useMemo(
-    () => scheduledDeviceKeys(active.slots, range),
-    [active.slots, range],
+  const deviceSeries = useMemo(
+    () => deviceKeys.map((key, index) => ({
+      key: `device:${key}` as SeriesKey,
+      dataKey: `device${index}`,
+      label: deviceNameByKey.get(key) ?? key,
+      color: DEVICE_COLORS[index % DEVICE_COLORS.length],
+    })),
+    [deviceKeys, deviceNameByKey],
   );
-  const visibleDeviceSeries = useMemo(
-    () => deviceSeries.filter(series => scheduled.has(series.key.replace(/^device:/, ''))),
-    [deviceSeries, scheduled],
-  );
-  const poolScheduled = showPoolAggregate
-    && isServiceScheduled(active.slots, range, slot => slot.pool_w);
-  const boilerScheduled = showBoilerAggregate
-    && isServiceScheduled(active.slots, range, slot => slot.boiler_expected_w);
-  const evScheduled = showEvAggregate
-    && isServiceScheduled(active.slots, range, slot => slot.ev_w);
-  const legendSeries = useMemo(() => {
-    const shown = new Set<PlanChartSeriesKey>([
-      ...visibleDeviceSeries.map(series => series.key),
-      ...(poolScheduled ? (['pool'] as const) : []),
-      ...(boilerScheduled ? (['boiler'] as const) : []),
-      ...(evScheduled ? (['ev'] as const) : []),
-    ]);
-    return planChartSeries.filter(series =>
-      !series.key.startsWith('device:')
-        && !['pool', 'boiler', 'ev'].includes(series.key)
-        ? true
-        : shown.has(series.key));
-  }, [boilerScheduled, evScheduled, planChartSeries, poolScheduled, visibleDeviceSeries]);
-  const idleDeviceCount = deviceSeries.length - visibleDeviceSeries.length;
+  const legendSeries = useMemo(() => [
+    { key: 'solar' as SeriesKey, label: t('Solproduktion', 'Solar production'), color: COLORS.pv },
+    { key: 'base' as SeriesKey, label: t('Baslast', 'Base load'), color: COLORS.base },
+    ...deviceSeries,
+    { key: 'gridImport' as SeriesKey, label: t('Nätimport', 'Grid import'), color: COLORS.import },
+    { key: 'gridExport' as SeriesKey, label: t('Nätexport (negativ)', 'Grid export (negative)'), color: COLORS.export },
+    { key: 'batteryCharge' as SeriesKey, label: t('Batteriladdning (negativ)', 'Battery charge (negative)'), color: COLORS.batteryCharge },
+    ...(hasBattery ? [{ key: 'homeSoc' as SeriesKey, label: t('Hembatteri SOC', 'Home battery SOC'), color: COLORS.soc }] : []),
+    ...(hasEvBattery ? [{ key: 'evSoc' as SeriesKey, label: t('Bilbatteri SOC', 'EV battery SOC'), color: COLORS.ev }] : []),
+  ], [deviceSeries, hasBattery, hasEvBattery, t]);
 
-  // The plan prices its own slots, so the forward table needs no price archive.
+  const idleDeviceCount = Math.max(0, deviceNameByKey.size - deviceKeys.length);
+
   const attribution = useMemo(() => {
-    const models = deviceRoleView.visibleModels;
-    const slots: SupplySlotInput[] = active.slots.slice(range.from, range.to).map(slot => ({
-      start: slot.start,
-      loadKwh: slot.load_w / QUARTER_W_TO_KWH,
-      solarKwh: slot.pv_w / QUARTER_W_TO_KWH,
-      gridImportKwh: slot.grid_import_w / QUARTER_W_TO_KWH,
-      gridExportKwh: slot.grid_export_w / QUARTER_W_TO_KWH,
-      batteryChargeKwh: slot.battery_charge_w / QUARTER_W_TO_KWH,
-      batteryDischargeKwh: slot.battery_discharge_w / QUARTER_W_TO_KWH,
-      deviceKwh: Object.fromEntries(models.map(entry => [
-        entry.key,
-        (slot.device_loads_w[entry.key] ?? 0) / QUARTER_W_TO_KWH,
-      ])),
-      importPriceSekPerKwh: slot.import_price_sek_per_kwh,
-      exportPriceSekPerKwh: slot.export_price_sek_per_kwh,
+    const slots: SupplySlotInput[] = rows.slice(range.from, range.to).map(row => ({
+      start: row.start,
+      loadKwh: (row.loadW ?? 0) / QUARTER_W_TO_KWH,
+      solarKwh: (row.solarW ?? 0) / QUARTER_W_TO_KWH,
+      gridImportKwh: (row.gridImportW ?? 0) / QUARTER_W_TO_KWH,
+      gridExportKwh: Math.abs(row.gridExportW ?? 0) / QUARTER_W_TO_KWH,
+      batteryChargeKwh: Math.abs(row.batteryChargeW ?? 0) / QUARTER_W_TO_KWH,
+      batteryDischargeKwh: 0,
+      deviceKwh: Object.fromEntries(
+        Object.entries(row.deviceW).map(([key, value]) => [key, value / QUARTER_W_TO_KWH]),
+      ),
+      importPriceSekPerKwh: null,
+      exportPriceSekPerKwh: null,
     }));
-    return attributeEnergy(
-      slots,
-      new Map(models.map(entry => [entry.key, entry.name])),
-      {
-        baseLoad: t('Baslast — allt övrigt', 'Base load — everything else'),
-        batteryCharging: t('Batteriladdning', 'Battery charging'),
-      },
+    return attributeEnergy(slots, new Map(deviceNameByKey), {
+      baseLoad: t('Baslast — allt övrigt', 'Base load — everything else'),
+      batteryCharging: t('Batteriladdning', 'Battery charging'),
+    });
+  }, [deviceNameByKey, range.from, range.to, rows, t]);
+
+  if (windowed.length === 0) {
+    return (
+      <>
+        <div className="mb-2 flex justify-end">
+          <DayWindowToggle value={dayWindow} options={dayWindowOptions} onChange={onDayWindowChange} />
+        </div>
+        <p className="py-10 text-center text-sm text-muted-foreground">
+          {t('Ingen data för den valda dagen.', 'No data for the selected day.')}
+        </p>
+      </>
     );
-  }, [active.slots, deviceRoleView.visibleModels, range.from, range.to, t]);
+  }
 
   return (
     <>
       <div className="mb-2 flex justify-end">
-        <PlanWindowToggle
-          value={planWindow}
-          options={planWindowOptions}
-          onChange={onPlanWindowChange}
-        />
+        <DayWindowToggle value={dayWindow} options={dayWindowOptions} onChange={onDayWindowChange} />
       </div>
-      <EnergyPowerChart data={windowed} ticks={ticks}>
-        {advisoryFrom < windowed.length && <ReferenceArea yAxisId="power" x1={Math.max(0, advisoryFrom)} x2={windowed.length - 1} fill="currentColor" className="text-muted" fillOpacity={0.24} />}
-        {hasPv && powerVisibility.visible('pv') && <Area yAxisId="power" type="monotone" dataKey="pv" name={seriesByKey.pv.label} stroke={COLORS.pv} fill={COLORS.pv} fillOpacity={0.14} dot={false} />}
-        {powerVisibility.visible('base') && <Area yAxisId="power" type="stepAfter" dataKey="base" stackId="load" name={seriesByKey.base.label} fill={COLORS.base} strokeWidth={0} />}
-        {boilerScheduled && powerVisibility.visible('boiler') && <Area yAxisId="power" type="stepAfter" dataKey="boiler" stackId="load" name={seriesByKey.boiler.label} fill={COLORS.boiler} strokeWidth={0} />}
-        {poolScheduled && powerVisibility.visible('pool') && <Area yAxisId="power" type="stepAfter" dataKey="pool" stackId="load" name={seriesByKey.pool.label} fill={COLORS.pool} strokeWidth={0} />}
-        {evScheduled && powerVisibility.visible('ev') && <Area yAxisId="power" type="stepAfter" dataKey="ev" stackId="load" name={seriesByKey.ev.label} fill={COLORS.ev} strokeWidth={0} />}
-        {visibleDeviceSeries.map(series => powerVisibility.visible(series.key) && (
+      <EnergyPowerChart data={windowed} ticks={ticks} showPercentAxis={hasBattery || hasEvBattery}>
+        {/* Everything right of the divider is forecast rather than measured. */}
+        {hasPlan && hasHistory && (
+          <ReferenceArea yAxisId="power" x1={divider} x2={windowed.length - 1} fill="currentColor" className="text-muted" fillOpacity={0.16} />
+        )}
+        {visibility.visible('solar') && <Area yAxisId="power" type="monotone" dataKey="solar" name={t('Solproduktion', 'Solar production')} stroke={COLORS.pv} fill={COLORS.pv} fillOpacity={0.14} dot={false} connectNulls />}
+        {visibility.visible('base') && <Area yAxisId="power" type="stepAfter" dataKey="base" stackId="load" name={t('Baslast', 'Base load')} fill={COLORS.base} strokeWidth={0} />}
+        {deviceSeries.map(series => visibility.visible(series.key) && (
           <Area key={series.key} yAxisId="power" type="stepAfter" dataKey={series.dataKey} stackId="load" name={series.label} fill={series.color} stroke={series.color} fillOpacity={0.65} strokeWidth={1} />
         ))}
-        {/*
-          Flows, not consumption: they cross the house boundary rather than
-          stacking into it, so they stay unfilled lines above the stack. All
-          three are solid — a dash on one of the three read as a fourth kind of
-          series rather than as a distinction.
-        */}
-        {powerVisibility.visible('gridImport') && <Line yAxisId="power" type="stepAfter" dataKey="gridImport" name={seriesByKey.gridImport.label} stroke={COLORS.import} strokeWidth={FLOW_STROKE_WIDTH} dot={false} />}
-        {powerVisibility.visible('gridExport') && <Line yAxisId="power" type="stepAfter" dataKey="gridExport" name={seriesByKey.gridExport.label} stroke={COLORS.export} strokeWidth={FLOW_STROKE_WIDTH} dot={false} />}
-        {powerVisibility.visible('batteryChargePower') && <Line yAxisId="power" type="stepAfter" dataKey="batteryChargePower" name={seriesByKey.batteryChargePower.label} stroke={COLORS.batteryCharge} strokeWidth={FLOW_STROKE_WIDTH} dot={false} />}
+        {visibility.visible('gridImport') && <Line yAxisId="power" type="stepAfter" dataKey="gridImport" name={t('Nätimport', 'Grid import')} stroke={COLORS.import} strokeWidth={FLOW_STROKE_WIDTH} dot={false} connectNulls />}
+        {visibility.visible('gridExport') && <Line yAxisId="power" type="stepAfter" dataKey="gridExport" name={t('Nätexport (negativ)', 'Grid export (negative)')} stroke={COLORS.export} strokeWidth={FLOW_STROKE_WIDTH} dot={false} connectNulls />}
+        {visibility.visible('batteryCharge') && <Line yAxisId="power" type="stepAfter" dataKey="batteryCharge" name={t('Batteriladdning (negativ)', 'Battery charge (negative)')} stroke={COLORS.batteryCharge} strokeWidth={FLOW_STROKE_WIDTH} dot={false} connectNulls />}
+        {/* SOC is a percentage, so it rides the right-hand axis. It exists
+            only on the planned side; history carries no state of charge. */}
+        {hasBattery && visibility.visible('homeSoc') && <Line yAxisId="soc" type="monotone" dataKey="homeSoc" name={t('Hembatteri SOC', 'Home battery SOC')} stroke={COLORS.soc} strokeWidth={1.5} dot={false} connectNulls={false} />}
+        {hasEvBattery && visibility.visible('evSoc') && <Line yAxisId="soc" type="monotone" dataKey="evSoc" name={t('Bilbatteri SOC', 'EV battery SOC')} stroke={COLORS.ev} strokeWidth={1.5} dot={false} connectNulls={false} />}
         <ReferenceLine yAxisId="power" y={0} stroke="currentColor" className="text-muted-foreground" strokeWidth={1} />
+        {hasPlan && hasHistory && (
+          <ReferenceLine
+            yAxisId="power"
+            x={divider}
+            stroke="currentColor"
+            className="text-foreground"
+            strokeWidth={1.5}
+            label={{ value: t('nu', 'now'), position: 'top', fontSize: 11 }}
+          />
+        )}
       </EnergyPowerChart>
       <SeriesToggleLegend
         series={legendSeries}
-        hidden={powerVisibility.hidden}
-        onToggle={powerVisibility.toggle}
+        hidden={visibility.hidden}
+        onToggle={visibility.toggle}
         ariaLabel={t('Effektserier', 'Power series')}
       />
       <p className="mt-2 text-xs text-muted-foreground">
+        {hasHistory && hasPlan
+          ? t('Till vänster om linjen är uppmätt, till höger planerat.', 'Left of the line is measured; right of it is planned.')
+          : hasHistory
+            ? t('Hela dagen är uppmätt.', 'The whole day is measured.')
+            : t('Hela dagen är planerad.', 'The whole day is planned.')}
+        {' '}
         {t(
-          'Fyllda staplar staplas till husets förbrukning. Nätimport, nätexport och batteriladdning är flöden över husets gräns och ritas som kraftigare linjer; export och laddning är negativa.',
-          'Filled bars stack into what the house consumes. Grid import, grid export and battery charge are flows across the house boundary and are drawn as heavier lines; export and charging are negative.',
+          'Fyllda staplar staplas till husets förbrukning. Nätimport, nätexport och batteriladdning är flöden över husets gräns; export och laddning är negativa. Laddningsnivåer läses av på den högra axeln och finns bara för planerade kvartar.',
+          'Filled bars stack into what the house consumes. Grid import, grid export and battery charge are flows across the house boundary; export and charging are negative. State of charge reads on the right-hand axis and exists only for planned quarters.',
         )}
-      </p>
-      <p className="mt-1 text-xs text-muted-foreground">
-        {t('Baslasten innehåller varje enhet som inte är markerad som styrbar. Styrbara enheter visas separat och räknas inte dubbelt.', 'Base load contains every device not marked controllable. Controllable devices are shown separately and are not double-counted.')}
         {idleDeviceCount > 0 && ` ${t(
-          `${idleDeviceCount} styrbara enheter är dolda eftersom planen aldrig startar dem i den här perioden.`,
-          `${idleDeviceCount} controllable device${idleDeviceCount === 1 ? '' : 's'} ${idleDeviceCount === 1 ? 'is' : 'are'} hidden because the plan never runs ${idleDeviceCount === 1 ? 'it' : 'them'} in this period.`,
+          `${idleDeviceCount} enheter är dolda eftersom de aldrig drar effekt i den här perioden.`,
+          `${idleDeviceCount} device${idleDeviceCount === 1 ? '' : 's'} ${idleDeviceCount === 1 ? 'is' : 'are'} hidden because ${idleDeviceCount === 1 ? 'it draws' : 'they draw'} no power in this period.`,
         )}`}
         {deviceRoleView.requiresPlanRefresh && ` ${t(
           'Den ändrade enhetsrollen visas direkt; schema- och kostnadsberäkningarna uppdateras vid nästa Home Assistant-plan.',
@@ -195,13 +222,10 @@ const PowerSection: React.FC<{
       </p>
       <div className="mt-6">
         <h3 className="text-sm font-medium">
-          {t('Planerad förbrukning per enhet', 'Planned consumption by device')}
+          {t('Förbrukning per enhet', 'Consumption by device')}
         </h3>
         <p className="mb-2 text-xs text-muted-foreground">
-          {t(
-            `${planWindow === 'all' ? 'Hela planen' : `Dag ${planWindow}`} enligt ${plan.plans.priority === active ? 'Med plan' : 'Utan plan'}, största förbrukaren först.`,
-            `${planWindow === 'all' ? 'The whole plan' : `Day ${planWindow}`} under ${plan.plans.priority === active ? 'With plan' : 'Without plan'}, largest consumer first.`,
-          )}
+          {t('Största förbrukaren först, för den valda perioden.', 'Largest consumer first, for the selected period.')}
         </p>
         <DeviceEnergyTable result={attribution} />
       </div>

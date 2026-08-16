@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { WINDOW_DAY_OPTIONS, type WindowDays } from './types';
-import type { PlanWindow } from '@/lib/energy-shift/plan-window';
+import type { DayWindow } from '@/lib/energy-shift/energy-timeline';
 
 export const useSeriesVisibility = <T extends string>() => {
   const [hidden, setHidden] = useState<Set<T>>(() => new Set());
@@ -117,18 +117,28 @@ export const WindowDaysToggle: React.FC<{
 };
 
 /**
- * Which day of the plan to read. Forward-looking, so each button is a page
- * rather than a running total: comparing Tuesday with Monday is impossible
- * when Tuesday's view still contains Monday.
+ * Which calendar day to read, relative to today. Days are absolute — midnight
+ * to midnight — so the same button always means the same wall-clock hours
+ * however long ago the plan was issued.
  */
-export const PlanWindowToggle: React.FC<{
-  value: PlanWindow;
-  options: PlanWindow[];
-  onChange: (value: PlanWindow) => void;
+export const DayWindowToggle: React.FC<{
+  value: DayWindow;
+  options: DayWindow[];
+  onChange: (value: DayWindow) => void;
 }> = ({ value, options, onChange }) => {
   const { t } = useLanguage();
+  const label = (window: DayWindow) => {
+    if (window === 'all') return t('Alla', 'All');
+    if (window === 0) return t('Idag', 'Today');
+    const day = new Date();
+    day.setHours(0, 0, 0, 0);
+    day.setDate(day.getDate() + window);
+    // The offset is what the reader asked for; the date is what they need to
+    // recognise the day on the axis below.
+    return `${window > 0 ? '+' : '−'}${Math.abs(window)} · ${day.toLocaleDateString([], { day: '2-digit', month: '2-digit' })}`;
+  };
   return (
-    <div className="flex gap-1" role="group" aria-label={t('Plandag', 'Plan day')}>
+    <div className="flex flex-wrap gap-1" role="group" aria-label={t('Dag', 'Day')}>
       {options.map(window => (
         <Button
           key={String(window)}
@@ -137,7 +147,7 @@ export const PlanWindowToggle: React.FC<{
           aria-pressed={value === window}
           onClick={() => onChange(window)}
         >
-          {window === 'all' ? t('Alla', 'All') : `${t('Dag', 'Day')} ${window}`}
+          {label(window)}
         </Button>
       ))}
     </div>

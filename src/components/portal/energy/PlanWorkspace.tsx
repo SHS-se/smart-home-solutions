@@ -13,7 +13,6 @@ import {
   type ThermalFixtureSeason,
 } from '@/lib/energy-shift/contracts';
 import { createWebsiteDemoActuals, createWebsiteDemoPlan } from '@/lib/energy-shift/demo';
-import { formatSigned } from '@/lib/energy-shift/plan-comparison';
 import {
   type ThermalObservationSummary,
   type ThermalZoneModelSummary,
@@ -30,15 +29,15 @@ import {
   summariseThermalSlots,
 } from './plan/types';
 import {
-  availablePlanWindows,
-  planWindowRange,
-  summarisePlanWindow,
-  type PlanWindow,
-} from '@/lib/energy-shift/plan-window';
+  availableDayWindows,
+  buildEnergyTimeline,
+  dayWindowRange,
+  summariseTimeline,
+  type DayWindow,
+} from '@/lib/energy-shift/energy-timeline';
 export type { PlanSection } from './plan/types';
 import type { PlanSection } from './plan/types';
 import {
-  DeltaKpi,
   EmptyState,
   Kpi,
 } from './plan/ui';
@@ -47,7 +46,6 @@ import HistorySection from './plan/sections/HistorySection';
 import PowerSection from './plan/sections/PowerSection';
 import ThermalSection from './plan/sections/ThermalSection';
 import EconomicsSection from './plan/sections/EconomicsSection';
-import StorageSection from './plan/sections/StorageSection';
 
 import EmpiricalDeviceModelsCard, {
   type EmpiricalEnergyDevice,
@@ -81,7 +79,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
   // presentation state and never triggers a refetch. History looks back over
   // a running period; the plan pages forward one day at a time.
   const [windowDays, setWindowDays] = useState<WindowDays>(1);
-  const [planWindow, setPlanWindow] = useState<PlanWindow>(1);
+  const [dayWindow, setDayWindow] = useState<DayWindow>(0);
   const [demoSeason, setDemoSeason] = useState<ThermalFixtureSeason>('winter');
   const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
   const [clock, setClock] = useState(Date.now());
@@ -307,8 +305,11 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
         isDemo
         windowDays={windowDays}
         onWindowDaysChange={setWindowDays}
-        planWindow={planWindow}
-        onPlanWindowChange={setPlanWindow}
+        deviceActuals={[]}
+        prices={[]}
+        now={clock}
+        dayWindow={dayWindow}
+        onDayWindowChange={setDayWindow}
       />
     );
   } else if (!homeId) {
@@ -398,8 +399,11 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
           lastCheckedAt={lastCheckedAt}
           windowDays={windowDays}
           onWindowDaysChange={setWindowDays}
-          planWindow={planWindow}
-          onPlanWindowChange={setPlanWindow}
+          deviceActuals={deviceActuals}
+          prices={prices}
+          now={clock}
+          dayWindow={dayWindow}
+          onDayWindowChange={setDayWindow}
         />
       </div>
     );
@@ -456,8 +460,11 @@ const PlanView: React.FC<{
   lastCheckedAt?: number | null;
   windowDays: WindowDays;
   onWindowDaysChange: (value: WindowDays) => void;
-  planWindow: PlanWindow;
-  onPlanWindowChange: (value: PlanWindow) => void;
+  deviceActuals: EmpiricalDeviceSlotMatrix[];
+  prices: PriceSlotRow[];
+  now: number;
+  dayWindow: DayWindow;
+  onDayWindowChange: (value: DayWindow) => void;
 }> = ({
   section,
   current,
@@ -470,44 +477,58 @@ const PlanView: React.FC<{
   lastCheckedAt,
   windowDays,
   onWindowDaysChange,
-  planWindow,
-  onPlanWindowChange,
+  dayWindow,
+  onDayWindowChange,
+  deviceActuals,
+  prices,
+  now,
 }) => {
   const { t } = useLanguage();
   const model = usePlanModel(current, empiricalDevices, stale);
   const {
-    plan, planView, setPlanView, executed, active, comparison, hasBattery,
+    plan, planView, setPlanView, executed, active, comparison, hasBattery, hasEvBattery,
     sourceStale, bindingExpired, ready, pct, costDelta, costTone, costMeaning,
     validationMessages,
   } = model;
-  // Every headline number describes the days on screen. Reading a 72-hour
-  // total above a one-day chart made the two impossible to check against each
-  // other, which is how an over-scheduled pool stayed invisible.
-  const planWindowOptions = availablePlanWindows(active.slots.length);
-  const windowRange = planWindowRange(active.slots.length, planWindow);
-  const windowSummary = summarisePlanWindow(active.slots, windowRange);
-  const baselineWindow = summarisePlanWindow(plan.plans.baseline.slots, windowRange);
-  const plannedWindow = summarisePlanWindow(plan.plans.priority.slots, windowRange);
-  const windowLoadDelta = plannedWindow.loadKwh - baselineWindow.loadKwh;
-  const windowImportDelta = plannedWindow.gridImportKwh - baselineWindow.gridImportKwh;
-  const windowCostDelta = plannedWindow.netCostSek - baselineWindow.netCostSek;
-  const windowCostTone: 'good' | 'bad' | undefined = windowCostDelta < -0.005
-    ? 'good'
-    : windowCostDelta > 0.005 ? 'bad' : undefined;
-  const windowCostMeaning = windowCostDelta < -0.005
-    ? t('uppskattad besparing', 'estimated saving')
-    : windowCostDelta > 0.005
-      ? t('uppskattad merkostnad', 'estimated added cost')
-      : t('ingen uppskattad förändring', 'no estimated change');
-  const windowLabel = planWindow === 'all'
-    ? t('hela planen', 'the whole plan')
-    : `${t('dag', 'day')} ${planWindow}`;
-  const midnightLabel = windowSummary.midnightStart === null
-    ? t('ingen midnatt i perioden', 'no midnight in this period')
-    : new Date(windowSummary.midnightStart).toLocaleDateString([], {
-      month: '2-digit',
-      day: '2-digit',
-    });
+  // One timeline: measured quarters up to now, planned quarters after it.
+  // Every headline number describes the day on screen, so a total can be
+  // checked against the chart under it.
+  const nowMs = now;
+  const deviceNameByKey = useMemo(
+    () => new Map(empiricalDevices.map(device => [device.device_key, device.name])),
+    [empiricalDevices],
+  );
+  const deviceKeyById = useMemo(
+    () => new Map(empiricalDevices.map(device => [device.id, device.device_key])),
+    [empiricalDevices],
+  );
+  const timeline = useMemo(() => buildEnergyTimeline({
+    actuals,
+    deviceActuals,
+    prices,
+    planSlots: active.slots,
+    deviceKeyById,
+    nowMs,
+  }), [actuals, active.slots, deviceActuals, deviceKeyById, nowMs, prices]);
+  const dayWindowOptions = availableDayWindows(timeline, nowMs);
+  const timelineRange = dayWindowRange(timeline, dayWindow, nowMs);
+  const windowSummary = summariseTimeline(timeline, timelineRange);
+  const windowLabel = dayWindow === 'all'
+    ? t('hela perioden', 'the whole period')
+    : dayWindow === 0
+      ? t('idag', 'today')
+      : new Date(timeline[timelineRange.from]?.start ?? nowMs)
+        .toLocaleDateString([], { day: '2-digit', month: '2-digit' });
+  // "Today" is part measured and part forecast. Saying which is which is the
+  // difference between a number and a claim.
+  const provenance = windowSummary.measuredSlotCount > 0 && windowSummary.plannedSlotCount > 0
+    ? t(
+      `${windowSummary.measuredSlotCount} uppmätta · ${windowSummary.plannedSlotCount} planerade kvartar`,
+      `${windowSummary.measuredSlotCount} measured · ${windowSummary.plannedSlotCount} planned quarters`,
+    )
+    : windowSummary.plannedSlotCount > 0
+      ? t('planerat', 'planned')
+      : t('uppmätt', 'measured');
 
   return (
     <div className="space-y-6">
@@ -592,41 +613,46 @@ const PlanView: React.FC<{
         <CardContent>
           {section === 'plan' && (
           <>
-          <div className="mb-6 grid gap-3 md:grid-cols-3">
-            <DeltaKpi
-              label={t('Förbrukningsskillnad', 'Consumption difference')}
-              value={`${formatSigned(windowLoadDelta, 1)} kWh`}
-              detail={`${t('Med plan', 'With plan')} ${plannedWindow.loadKwh.toFixed(1)} · ${t('utan plan', 'without plan')} ${baselineWindow.loadKwh.toFixed(1)} kWh`}
+          <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-5">
+            <Kpi
+              label={t('Solproduktion', 'Solar production')}
+              value={`${windowSummary.solarKwh.toFixed(1)} kWh`}
+              detail={provenance}
             />
-            <DeltaKpi
-              label={t('Skillnad i nätenergi', 'Grid energy difference')}
-              value={`${formatSigned(windowImportDelta, 1)} kWh`}
-              detail={t('import med plan minus utan plan', 'import with plan minus without plan')}
-              tone={windowImportDelta < -0.05 ? 'good' : windowImportDelta > 0.05 ? 'bad' : undefined}
+            <Kpi
+              label={t('Husets förbrukning', 'House consumption')}
+              value={`${windowSummary.consumptionKwh.toFixed(1)} kWh`}
+              detail={t('all last i perioden', 'all load in the period')}
             />
-            <DeltaKpi
-              label={t('Uppskattad kostnadsskillnad', 'Estimated cost difference')}
-              value={`${formatSigned(windowCostDelta, 2)} SEK`}
-              detail={`${windowCostMeaning} · ${windowLabel}`}
-              tone={windowCostTone}
-              emphasized
+            <Kpi
+              label={t('Nätimport', 'Grid import')}
+              value={`${windowSummary.gridImportKwh.toFixed(1)} kWh`}
+              detail={windowLabel}
             />
-          </div>
-          <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-6">
-            <Kpi label={t('Modellerad flexibel energi', 'Modeled flexible energy')} value={`${windowSummary.flexibleKwh.toFixed(1)} kWh`} detail={`${t('styrbara sänkor', 'controllable sinks')} · ${windowLabel}`} />
-            {hasBattery
-              ? <Kpi label={t('Batteri-SOC vid midnatt', 'Battery SOC at midnight')} value={windowSummary.batterySocAtMidnight === null ? '—' : pct(windowSummary.batterySocAtMidnight)} detail={midnightLabel} />
-              : <Kpi label={t('Batteri', 'Battery')} value={t('Saknas', 'Not installed')} detail={t('ingen batterimodell används', 'no battery model used')} />}
-            <Kpi label={t('Nätimport', 'Grid import')} value={`${windowSummary.gridImportKwh.toFixed(1)} kWh`} detail={`${windowSummary.pricedImportKwh.toFixed(1)} ${t('prissatt', 'priced')}`} />
-            <Kpi label={t('Nätexport', 'Grid export')} value={`${windowSummary.gridExportKwh.toFixed(1)} kWh`} detail={`${windowSummary.pricedExportKwh.toFixed(1)} ${t('prissatt', 'priced')}`} />
-            <Kpi label={t('Nettokostnad', 'Net cost')} value={`${windowSummary.netCostSek.toFixed(2)} SEK`} detail={t('endast publicerade priser', 'published prices only')} />
-            <Kpi label={t('Total solenergi', 'Total solar energy')} value={`${windowSummary.pvKwh.toFixed(1)} kWh`} detail={`${t('prognos', 'forecast')} · ${windowLabel}`} />
+            <Kpi
+              label={t('Nätexport', 'Grid export')}
+              value={`${windowSummary.gridExportKwh.toFixed(1)} kWh`}
+              detail={windowLabel}
+            />
+            <Kpi
+              label={t('Nettokostnad', 'Net cost')}
+              value={`${windowSummary.netCostSek.toFixed(2)} SEK`}
+              detail={windowSummary.fullyPriced
+                ? t('import minus exportersättning', 'import minus export credit')
+                : t('endast prissatta kvartar', 'priced quarters only')}
+              tone={windowSummary.netCostSek > 0 ? undefined : 'good'}
+            />
           </div>
           <PowerSection
             model={model}
-            planWindow={planWindow}
-            planWindowOptions={planWindowOptions}
-            onPlanWindowChange={onPlanWindowChange}
+            rows={timeline}
+            range={timelineRange}
+            dayWindow={dayWindow}
+            dayWindowOptions={dayWindowOptions}
+            onDayWindowChange={onDayWindowChange}
+            deviceNameByKey={deviceNameByKey}
+            hasBattery={hasBattery}
+            hasEvBattery={hasEvBattery}
           />
           </>
           )}
@@ -640,7 +666,6 @@ const PlanView: React.FC<{
             />
           )}
           {section === 'economics' && <EconomicsSection model={model} />}
-          {section === 'storage' && <StorageSection model={model} />}
         </CardContent>
       </Card>
     </div>
