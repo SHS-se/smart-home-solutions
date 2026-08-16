@@ -6,7 +6,10 @@ import {
   dayBounds,
   dayWindowRange,
   nowDividerIndex,
+  powerAxisDomain,
   SLOT_MS,
+  socAxisDomain,
+  stackOrder,
   summariseTimeline,
   unpricedMeasuredQuarters,
 } from './energy-timeline.ts';
@@ -237,4 +240,59 @@ Deno.test('a measured quarter with no price is what triggers a backfill', () => 
     0,
     'matched on the quarter, not the exact string',
   );
+});
+
+Deno.test('a stack is ordered so its shape can be read', () => {
+  const order = stackOrder([
+    // Base load: present in every quarter.
+    { key: 'base', values: [500, 500, 500, 500, 500, 500] },
+    // One long block, and the largest of them.
+    { key: 'pool-heater', values: [0, 3_000, 3_000, 3_000, 0, 0] },
+    // One short block.
+    { key: 'pool-pump', values: [0, 0, 400, 0, 0, 0] },
+    // On and off repeatedly.
+    { key: 'hot-water', values: [2_000, 0, 2_000, 0, 2_000, 0] },
+  ], ['base']);
+  assertEquals(
+    order,
+    ['pool-pump', 'pool-heater', 'hot-water', 'base'],
+    'continuous loads underneath, cycling loads above them, base load on top',
+  );
+});
+
+Deno.test('a cycling load sits above a continuous one even when it is smaller', () => {
+  const order = stackOrder([
+    { key: 'steady', values: [1_000, 1_000, 1_000, 1_000] },
+    { key: 'flickering', values: [10, 0, 10, 0] },
+  ]);
+  assertEquals(order, ['steady', 'flickering'], 'gaps outrank size');
+});
+
+Deno.test('a series that never runs keeps a stable place', () => {
+  const order = stackOrder([
+    { key: 'idle', values: [0, 0, 0] },
+    { key: 'busy', values: [5, 5, 5] },
+    { key: 'also-idle', values: [null, null, null] },
+  ]);
+  assertEquals(order, ['also-idle', 'idle', 'busy'], 'empty first, then by size');
+});
+
+Deno.test('zero percent lands on the same line as zero watts', () => {
+  const power = powerAxisDomain([-2_600, 8_100, 0, 400]);
+  assertEquals(power, [-3_000, 9_000], 'rounded out to whole kilowatts');
+
+  const [socMin, socMax] = socAxisDomain(power);
+  const zeroPower = (0 - power[0]) / (power[1] - power[0]);
+  const zeroSoc = (0 - socMin) / (socMax - socMin);
+  assert(
+    Math.abs(zeroPower - zeroSoc) < 1e-9,
+    `zero must sit at the same height: ${zeroPower} vs ${zeroSoc}`,
+  );
+  assertEquals(socMax, 100, 'full charge stays at the top');
+});
+
+Deno.test('a chart with no export leaves both axes starting at zero', () => {
+  const power = powerAxisDomain([0, 4_200]);
+  assertEquals(power, [0, 5_000], 'nothing below the line');
+  assertEquals(socAxisDomain(power), [0, 100], 'and no phantom negative charge');
 });

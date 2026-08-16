@@ -16,6 +16,9 @@ import {
 import {
   activeDeviceKeys,
   nowDividerIndex,
+  powerAxisDomain,
+  socAxisDomain,
+  stackOrder,
   type DayWindow,
   type TimelineRange,
   type TimelineRow,
@@ -65,11 +68,15 @@ const PowerSection: React.FC<{
   const { deviceRoleView } = model;
 
   const scheduled = useMemo(() => activeDeviceKeys(rows, range), [range, rows]);
-  const deviceKeys = useMemo(
-    () => [...scheduled].sort((left, right) =>
-      (deviceNameByKey.get(left) ?? left).localeCompare(deviceNameByKey.get(right) ?? right)),
-    [deviceNameByKey, scheduled],
-  );
+  // Bottom of the stack first. Recharts draws stacked areas in render order,
+  // so this list is the drawing order as well as the reading order.
+  const deviceKeys = useMemo(() => {
+    const view = rows.slice(range.from, range.to);
+    return stackOrder([...scheduled].map(key => ({
+      key,
+      values: view.map(row => row.deviceW[key] ?? 0),
+    })));
+  }, [range.from, range.to, rows, scheduled]);
 
   const windowed = useMemo(() => rows.slice(range.from, range.to).map((row, index) => ({
     i: index,
@@ -100,6 +107,19 @@ const PowerSection: React.FC<{
       .map(row => row.i),
     [dayWindow, windowed],
   );
+  const powerDomain = useMemo(() => powerAxisDomain(windowed.flatMap(row => [
+    row.solar,
+    row.gridImport,
+    row.gridExport,
+    row.batteryCharge,
+    // The stack total, not its parts: that is what reaches the top.
+    deviceKeys.reduce(
+      (total, _key, index) => total + Number(row[`device${index}`] ?? 0),
+      row.base ?? 0,
+    ),
+  ])), [deviceKeys, windowed]);
+  const socDomain = useMemo(() => socAxisDomain(powerDomain), [powerDomain]);
+
   const divider = nowDividerIndex(rows, range);
   const hasHistory = divider > 0;
   const hasPlan = divider < windowed.length;
@@ -115,8 +135,9 @@ const PowerSection: React.FC<{
   );
   const legendSeries = useMemo(() => [
     { key: 'solar' as SeriesKey, label: t('Solproduktion', 'Solar production'), color: COLORS.pv },
-    { key: 'base' as SeriesKey, label: t('Baslast', 'Base load'), color: COLORS.base },
+    // Same order as the stack, bottom to top, so the two agree.
     ...deviceSeries,
+    { key: 'base' as SeriesKey, label: t('Baslast', 'Base load'), color: COLORS.base },
     { key: 'gridImport' as SeriesKey, label: t('Nätimport', 'Grid import'), color: COLORS.import },
     { key: 'gridExport' as SeriesKey, label: t('Nätexport (negativ)', 'Grid export (negative)'), color: COLORS.export },
     { key: 'batteryCharge' as SeriesKey, label: t('Batteriladdning (negativ)', 'Battery charge (negative)'), color: COLORS.batteryCharge },
@@ -172,16 +193,22 @@ const PowerSection: React.FC<{
         <h3 className="text-sm font-medium">{title}</h3>
         <DayWindowToggle value={dayWindow} options={dayWindowOptions} onChange={onDayWindowChange} />
       </div>
-      <EnergyPowerChart data={windowed} ticks={ticks} showPercentAxis={hasBattery || hasEvBattery}>
+      <EnergyPowerChart
+        data={windowed}
+        ticks={ticks}
+        showPercentAxis={hasBattery || hasEvBattery}
+        powerDomain={powerDomain}
+        socDomain={socDomain}
+      >
         {/* Everything right of the divider is forecast rather than measured. */}
         {hasPlan && hasHistory && (
           <ReferenceArea yAxisId="power" x1={divider} x2={windowed.length - 1} fill="currentColor" className="text-muted" fillOpacity={0.16} />
         )}
         {visibility.visible('solar') && <Area yAxisId="power" type="monotone" dataKey="solar" name={t('Solproduktion', 'Solar production')} stroke={COLORS.pv} fill={COLORS.pv} fillOpacity={0.14} dot={false} connectNulls />}
-        {visibility.visible('base') && <Area yAxisId="power" type="stepAfter" dataKey="base" stackId="load" name={t('Baslast', 'Base load')} fill={COLORS.base} strokeWidth={0} />}
         {deviceSeries.map(series => visibility.visible(series.key) && (
           <Area key={series.key} yAxisId="power" type="stepAfter" dataKey={series.dataKey} stackId="load" name={series.label} fill={series.color} stroke={series.color} fillOpacity={0.65} strokeWidth={1} />
         ))}
+        {visibility.visible('base') && <Area yAxisId="power" type="stepAfter" dataKey="base" stackId="load" name={t('Baslast', 'Base load')} fill={COLORS.base} strokeWidth={0} />}
         {visibility.visible('gridImport') && <Line yAxisId="power" type="stepAfter" dataKey="gridImport" name={t('Nätimport', 'Grid import')} stroke={COLORS.import} strokeWidth={FLOW_STROKE_WIDTH} dot={false} connectNulls />}
         {visibility.visible('gridExport') && <Line yAxisId="power" type="stepAfter" dataKey="gridExport" name={t('Nätexport (negativ)', 'Grid export (negative)')} stroke={COLORS.export} strokeWidth={FLOW_STROKE_WIDTH} dot={false} connectNulls />}
         {visibility.visible('batteryCharge') && <Line yAxisId="power" type="stepAfter" dataKey="batteryCharge" name={t('Batteriladdning (negativ)', 'Battery charge (negative)')} stroke={COLORS.batteryCharge} strokeWidth={FLOW_STROKE_WIDTH} dot={false} connectNulls />}

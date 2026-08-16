@@ -19,16 +19,24 @@ const CHART_MARGIN = { top: 22, right: 10, left: 0, bottom: 4 };
 /** Series drawn against the right-hand percentage axis rather than kW. */
 const PERCENT_SERIES = new Set(['homeSoc', 'evSoc']);
 
+/** Only the real range is labelled; the domain may reach below zero. */
+const SOC_TICKS = [0, 25, 50, 75, 100];
+
 const EnergyPowerChart = <Row extends EnergyChartRow>({
   data,
   ticks,
   showPercentAxis = false,
+  powerDomain,
+  socDomain,
   children,
 }: {
   data: Row[];
   ticks: number[];
   /** State of charge shares the chart but not the unit. */
   showPercentAxis?: boolean;
+  /** Both domains are fixed by the caller so their zeros coincide. */
+  powerDomain?: [number, number];
+  socDomain?: [number, number];
   children: React.ReactNode;
 }) => (
   <ResponsiveContainer width="100%" height={360}>
@@ -45,6 +53,8 @@ const EnergyPowerChart = <Row extends EnergyChartRow>({
       />
       <YAxis
         yAxisId="power"
+        domain={powerDomain ?? ['auto', 'auto']}
+        allowDataOverflow={powerDomain !== undefined}
         tick={{ fontSize: 11 }}
         tickFormatter={watts => `${(Number(watts) / 1_000).toFixed(0)}`}
         label={{ value: 'kW', angle: -90, position: 'insideLeft', fontSize: 11 }}
@@ -53,7 +63,9 @@ const EnergyPowerChart = <Row extends EnergyChartRow>({
         <YAxis
           yAxisId="soc"
           orientation="right"
-          domain={[0, 100]}
+          domain={socDomain ?? [0, 100]}
+          ticks={SOC_TICKS}
+          allowDataOverflow
           tick={{ fontSize: 11 }}
           tickFormatter={value => `${Number(value).toFixed(0)}%`}
         />
