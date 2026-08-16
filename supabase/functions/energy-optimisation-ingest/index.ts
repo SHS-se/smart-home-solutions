@@ -1335,12 +1335,19 @@ serve(async (req) => {
       // knowable then against what happened, so this cannot be reconstructed
       // later from outturn data and cannot be backfilled at all.
       //
-      // At most one row per hour, and a failure here is logged rather than
-      // returned: losing an hour of archive is a gap in a study, while failing
-      // the request would stop the house being planned.
+      // One row per six-hour window, matching the cadence of the weather models
+      // underneath the PV forecast, and stored as parallel arrays with implied
+      // slot times. A failure here is logged rather than returned: losing one
+      // window is a gap in a study, while failing the request would stop the
+      // house being planned.
       const issuedAt = new Date(snapshot.captured_at);
-      const issuedHour = new Date(issuedAt);
-      issuedHour.setUTCMinutes(0, 0, 0);
+      const issuedBucket = new Date(issuedAt);
+      issuedBucket.setUTCHours(
+        Math.floor(issuedBucket.getUTCHours() / 6) * 6,
+        0,
+        0,
+        0,
+      );
       const outdoor = snapshot.outdoor_temperature_c as number[] | null;
       const { error: forecastError } = await supabase
         .from("energy_optimisation_forecast_runs")
@@ -1348,21 +1355,29 @@ serve(async (req) => {
           customer_id: auth.customerId,
           home_id: auth.homeId,
           issued_at: issuedAt.toISOString(),
-          issued_hour: issuedHour.toISOString(),
+          issued_bucket: issuedBucket.toISOString(),
           horizon_start: snapshot.slots[0]?.start ?? snapshot.captured_at,
           slot_minutes: snapshot.slot_minutes,
-          slots: snapshot.slots.map((slot, index) => ({
-            start: slot.start,
-            pv_forecast_w: slot.pv_forecast_w,
-            base_load_forecast_w: slot.base_load_forecast_w,
-            base_load_p10_w: slot.base_load_p10_w,
-            base_load_p90_w: slot.base_load_p90_w,
-            outdoor_temperature_c: outdoor?.[index] ?? null,
-            import_price_sek_per_kwh: slot.import_price_sek_per_kwh,
-            export_price_sek_per_kwh: slot.export_price_sek_per_kwh,
-          })),
+          slot_count: snapshot.slots.length,
+          series: {
+            pv_forecast_w: snapshot.slots.map((slot) => slot.pv_forecast_w),
+            base_load_forecast_w: snapshot.slots.map((slot) =>
+              slot.base_load_forecast_w
+            ),
+            base_load_p10_w: snapshot.slots.map((slot) => slot.base_load_p10_w),
+            base_load_p90_w: snapshot.slots.map((slot) => slot.base_load_p90_w),
+            outdoor_temperature_c: snapshot.slots.map((_slot, index) =>
+              outdoor?.[index] ?? null
+            ),
+            import_price_sek_per_kwh: snapshot.slots.map((slot) =>
+              slot.import_price_sek_per_kwh
+            ),
+            export_price_sek_per_kwh: snapshot.slots.map((slot) =>
+              slot.export_price_sek_per_kwh
+            ),
+          },
           sources: snapshot.sources,
-        }, { onConflict: "home_id,issued_hour", ignoreDuplicates: true });
+        }, { onConflict: "home_id,issued_bucket", ignoreDuplicates: true });
       if (forecastError) {
         console.error(
           "[ENERGY-OPTIMISATION] forecast archive upsert failed",
