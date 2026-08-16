@@ -8,6 +8,7 @@ import {
   nowDividerIndex,
   SLOT_MS,
   summariseTimeline,
+  unpricedMeasuredQuarters,
 } from './energy-timeline.ts';
 
 const assertEquals = (actual: unknown, expected: unknown, message: string) => {
@@ -205,4 +206,27 @@ Deno.test('only devices carrying load reach the legend', () => {
     ],
   });
   assertEquals([...activeDeviceKeys(rows, { from: 0, to: rows.length })], ['pool'], 'active');
+});
+
+Deno.test('a measured quarter with no price is what triggers a backfill', () => {
+  const priced = new Date(NOW - 2 * SLOT_MS).toISOString();
+  const missing = unpricedMeasuredQuarters(
+    [{ start_ts: priced }, { start_ts: new Date(NOW - SLOT_MS).toISOString() }],
+    [{ start_ts: priced }],
+  );
+  assertEquals(missing, 1, 'one unpriced quarter');
+  assertEquals(
+    unpricedMeasuredQuarters([{ start_ts: priced }], [{ start_ts: priced }]),
+    0,
+    'nothing to backfill when every quarter is priced',
+  );
+  // Timestamps arrive from two tables and need not be byte-identical.
+  assertEquals(
+    unpricedMeasuredQuarters(
+      [{ start_ts: new Date(NOW - SLOT_MS).toISOString() }],
+      [{ start_ts: new Date(NOW - SLOT_MS + 400).toISOString() }],
+    ),
+    0,
+    'matched on the quarter, not the exact string',
+  );
 });

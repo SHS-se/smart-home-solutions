@@ -4,20 +4,15 @@
 // §1.3.7). The measured chart moved here unchanged; the window summary and the
 // per-device table are new.
 
-import React, { useMemo, useState } from 'react';
-import { Loader2 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import React, { useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { useToast } from '@/hooks/use-toast';
-import { supabase } from '@/integrations/supabase/client';
 import type { ActualEnergySlot } from '@/lib/energy-shift/contracts';
 import {
   attributeEnergy,
   type SupplySlotInput,
 } from '@/lib/energy-shift/energy-attribution';
 import type { EmpiricalEnergyDevice } from '../../EmpiricalDeviceModelsCard';
-import DeviceEnergyTable from '../DeviceEnergyTable';
 import { Kpi, WindowDaysToggle } from '../ui';
 import {
   WINDOW_SLOTS_PER_DAY,
@@ -33,8 +28,6 @@ const HistorySection: React.FC<{
   prices: PriceSlotRow[];
   windowDays: WindowDays;
   onWindowDaysChange: (value: WindowDays) => void;
-  homeId?: string | null;
-  onBackfilled?: () => void;
 }> = ({
   actuals,
   devices,
@@ -42,12 +35,8 @@ const HistorySection: React.FC<{
   prices,
   windowDays,
   onWindowDaysChange,
-  homeId,
-  onBackfilled,
 }) => {
   const { t } = useLanguage();
-  const { toast } = useToast();
-  const [backfilling, setBackfilling] = useState(false);
 
   // Only devices the integration has actually mapped. Energy Dashboard
   // discovery reports every metered thing in the house, so the freezer, the
@@ -99,53 +88,6 @@ const HistorySection: React.FC<{
 
   const { summary } = attribution;
   const unpriced = summary.pricedSlotCount < summary.slotCount;
-
-  // Prices only accumulate forward from the day Home Assistant started sending
-  // them, while measured energy goes back 120 days. Rather than explain that,
-  // offer the fix where the gap is visible.
-  const runBackfill = async () => {
-    if (!homeId) return;
-    setBackfilling(true);
-    try {
-      const { data, error } = await supabase.functions.invoke(
-        'backfill-energy-prices',
-        { body: { home_id: homeId, days: windowDays } },
-      );
-      if (error) throw error;
-      const result = data as {
-        quarters_priced: number;
-        days_priced: number;
-        skipped_days: Array<{ date: string; reason: string }>;
-      };
-      const skipped = result.skipped_days ?? [];
-      toast({
-        title: t('Priser hämtade', 'Prices filled in'),
-        description: [
-          t(
-            `${result.quarters_priced} kvartar prissatta över ${result.days_priced} dagar.`,
-            `${result.quarters_priced} quarters priced across ${result.days_priced} days.`,
-          ),
-          // Naming the first skipped day and its reason is the difference
-          // between a fixable gap and a mystery.
-          skipped.length > 0
-            ? t(
-              `${skipped.length} dagar hoppades över — ${skipped[0].date}: ${skipped[0].reason}.`,
-              `${skipped.length} days skipped — ${skipped[0].date}: ${skipped[0].reason}.`,
-            )
-            : '',
-        ].filter(Boolean).join(' '),
-      });
-      onBackfilled?.();
-    } catch (error) {
-      toast({
-        variant: 'destructive',
-        title: t('Kunde inte hämta priser', 'Could not fill in prices'),
-        description: error instanceof Error ? error.message : String(error),
-      });
-    } finally {
-      setBackfilling(false);
-    }
-  };
 
   return (
     <div className="space-y-6">
@@ -199,45 +141,9 @@ const HistorySection: React.FC<{
               tone={summary.netCostSek > 0 ? undefined : 'good'}
             />
           </div>
-          {unpriced && homeId && (
-            // An outline button on a muted panel read as a label, not an
-            // action — it was missed entirely. The one thing on this card the
-            // customer can actually do gets the emphasis.
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50/60 p-3 dark:border-amber-800 dark:bg-amber-950/25">
-              <p className="text-xs text-foreground">
-                <span className="font-medium">
-                  {t(
-                    `${summary.slotCount - summary.pricedSlotCount} av ${summary.slotCount} kvartar saknar pris.`,
-                    `${summary.slotCount - summary.pricedSlotCount} of ${summary.slotCount} quarters have no price.`,
-                  )}
-                </span>{' '}
-                <span className="text-muted-foreground">
-                  {t(
-                    'Home Assistant skickar priser framåt från installationen; äldre kvartar prissätts här från publicerad spotmarknad och gällande nättariff.',
-                    'Home Assistant sends prices forward from when it was installed; older quarters are priced here from the published spot market and the tariff in force.',
-                  )}
-                </span>
-              </p>
-              <Button size="sm" disabled={backfilling} onClick={runBackfill}>
-                {backfilling && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {t('Hämta priser för perioden', 'Fill in prices for this period')}
-              </Button>
-            </div>
-          )}
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-lg">{t('Förbrukning per enhet', 'Consumption by device')}</CardTitle>
-          <p className="text-sm text-muted-foreground">
-            {t('Största förbrukaren först, för den valda perioden.', 'Largest consumer first, for the selected period.')}
-          </p>
-        </CardHeader>
-        <CardContent>
-          <DeviceEnergyTable result={attribution} showBalance />
-        </CardContent>
-      </Card>
     </div>
   );
 };

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, Loader2, Sparkles } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -33,6 +33,7 @@ import {
   buildEnergyTimeline,
   dayWindowRange,
   summariseTimeline,
+  unpricedMeasuredQuarters,
   type DayWindow,
 } from '@/lib/energy-shift/energy-timeline';
 export type { PlanSection } from './plan/types';
@@ -59,6 +60,9 @@ interface PlanWorkspaceProps {
 }
 
 // wording that says whether anything needs doing.
+
+/** The portal draws three days of history; there is nothing older to price. */
+const LOADED_HISTORY_DAYS = 3;
 
 const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, homeId, accountPath }) => {
   const { t } = useLanguage();
@@ -226,6 +230,30 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
     }
   }, [customerId, homeId, t]);
 
+  // Pricing gaps close themselves. Prices only accumulate forward from the day
+  // the integration was installed, so a fresh home shows measured kWh with no
+  // cost against exactly the history a planner is judged on. Filling that in is
+  // never the reader's decision — the fix is always the same, and the missing
+  // spot day is the same one for every home in that price area. Attempted once
+  // per home per mount so a day the market never published cannot become a
+  // request on every poll.
+  const backfilledHomes = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!homeId || loading || actuals.length === 0) return;
+    if (backfilledHomes.current.has(homeId)) return;
+    if (unpricedMeasuredQuarters(actuals, prices) === 0) return;
+    backfilledHomes.current.add(homeId);
+    void (async () => {
+      const { error: backfillError } = await supabase.functions.invoke(
+        'backfill-energy-prices',
+        { body: { home_id: homeId, days: LOADED_HISTORY_DAYS } },
+      );
+      // A failure is left silent on purpose: the cost figures already say
+      // "priced quarters only", and nothing the reader can do would help.
+      if (!backfillError) await load(true);
+    })();
+  }, [actuals, homeId, load, loading, prices]);
+
   useEffect(() => { void load(false); }, [load]);
   useEffect(() => {
     const timer = window.setInterval(() => void load(true), 30_000);
@@ -266,8 +294,6 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
           prices={isDemo ? [] : prices}
           windowDays={windowDays}
           onWindowDaysChange={setWindowDays}
-          homeId={isDemo ? null : homeId}
-          onBackfilled={() => load(true)}
         />
       );
     }

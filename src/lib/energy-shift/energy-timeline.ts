@@ -276,3 +276,26 @@ export const nowDividerIndex = (
   const index = view.findIndex(row => !row.measured);
   return index < 0 ? view.length : index;
 };
+
+/**
+ * Quarters that were measured but never priced, over the loaded window.
+ *
+ * Prices only accumulate forward from the day the integration started sending
+ * them, while measured energy goes back months, so a fresh install shows kWh
+ * with no cost against exactly the history a planner is judged on. The gap is
+ * closed automatically on the next fetch rather than by a button: the fix is
+ * always the same, it is never the reader's decision, and the same missing
+ * spot day affects every home in that price area.
+ */
+export const unpricedMeasuredQuarters = (
+  actuals: readonly { start_ts: string }[],
+  prices: readonly { start_ts: string }[],
+): number => {
+  const priced = new Set(prices.map(price => quarterFloor(Date.parse(price.start_ts))));
+  let missing = 0;
+  for (const slot of actuals) {
+    const startMs = quarterFloor(Date.parse(slot.start_ts));
+    if (Number.isFinite(startMs) && !priced.has(startMs)) missing += 1;
+  }
+  return missing;
+};
