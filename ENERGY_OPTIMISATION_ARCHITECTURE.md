@@ -2683,6 +2683,41 @@ a modelling error or a correction to the heuristic — both are findings.
 | 6 | Buy from the grid whenever price is below the marginal utility of a sink; accept expensive imports in winter when no cheaper window exists | The objective itself (§8.2) |
 | 7 | Grid-charge the battery only when the intraday spread beats round-trip losses plus wear | `d_batt` + efficiency in the objective (§8.10) |
 
+#### 8.12.1 Implementation status (2026-08-16)
+
+| Piece | State |
+|---|---|
+| Base load and device forecasts per weekday (§1.6.4) | **Landed.** Integration `0.7.0-beta.17` |
+| Forecast archive as issued (§8.11 run 2) | **Landed.** Collecting from first deploy |
+| Pool and vehicle as physical state (`store-models.ts`) | **Landed**, pure and tested, not yet wired |
+| Utility curves and marginal value (`store-value.ts`) | **Landed**, pure and tested, not yet wired |
+| Scheduler consuming them | **Blocked**, see below |
+| Capacity-charge state (§8.5) | Not started; waits on the published tariff |
+
+Heuristics 1, 4 and 7 are already reproduced as executable tests against
+`store-value.ts`, without any rule encoding them. Heuristics 3 and 5 are
+reproduced against `store-models.ts`. That is the acceptance criterion in
+§8.12 being met at the unit level, not yet in a whole plan.
+
+Replacing the scheduler core is blocked on inputs that do not exist yet, and
+none of them are solver work:
+
+1. **Telemetry.** The snapshot carries no pool water temperature and no vehicle
+   efficiency. `sensor.filtered_pool_water_temperature` and
+   `sensor.pool_heater_cop` exist in the house and are unmapped; the integration
+   needs options for both, and the vehicle needs a fitted kWh/km.
+2. **Configuration.** The five utility curves have nowhere to live — no table,
+   no portal editor. They are the only customer input the new objective takes,
+   so they cannot be defaulted away silently.
+3. **Contract.** Carrying state and curves is a schema 6 snapshot, and the
+   integration's tolerated-version set has to accept the new planner before the
+   server can publish it (§3.2's sequencing constraint).
+
+Until those land the old `required_kwh` scheduler stays in place. It is wrong in
+the ways §1.6.1 records, but it is coherent, and a half-migrated planner that
+reads a state for one store and an energy budget for another would be worse
+than either.
+
 Test 7 also answers the open question about winter battery value quantitatively.
 At an 85% round trip the price ratio must exceed about 1.18 on energy alone;
 adding a degradation cost in the region of 0.3–0.7 SEK/kWh means a grid-charged
