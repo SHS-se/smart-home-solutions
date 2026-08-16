@@ -2285,7 +2285,7 @@ maximise   Σ_t [ Σ_s U_s(x_s,t)                     service delivered
          + V_T(x_T, P_month, T)                     value of what is left
 ```
 
-subject to the physics of each store, the grid and per-phase limits, and the
+subject to the physics of each store, the grid import and export limits, and the
 device contracts in §5.
 
 Four properties matter more than the algebra:
@@ -2417,6 +2417,14 @@ three highest hours on distinct days, that same evening costs a third of a step
 and the planner has real work to do on the other two. A controller tuned for one
 is misconfigured for the other.
 
+That example also marks the boundary of this section. Short unplanned draws —
+sauna, an oven, a guest weekend — are not schedulable and the planner should not
+pretend otherwise; they belong to the reactive layer (§7), which is not yet
+specified. The only bearing they have here is on how sensitive the resulting
+bill is to the tariff's statistic, which is an argument for reading the tariff
+carefully when it is published, not for reserving capacity against events the
+plan cannot see.
+
 **The marginal cost of a peak is probabilistic, and that is what makes it
 schedulable.** Setting a new peak *P* at time *t* only costs anything if no
 higher peak occurs in the remainder of the month, so
@@ -2494,41 +2502,37 @@ The requirements that follow:
 - Prices beyond the day-ahead window are a *distribution*, not a point. The
   measured price shape (§1.4.3) is the prior; `V_T` must consume the spread, not
   just the central estimate.
-- Service delivery should carry a chance constraint — P(comfort or service
-  violation) ≤ ε — rather than relying on a linear penalty alone. A plan saving
-  200 SEK a month with an occasional cold house is worse than one saving 180
-  with none, and expected-cost minimisation cannot express that.
 - **Only the first slot is a commitment.** Everything beyond it is a value
   estimate. Success is measured as realised cost against the counterfactual, not
   as plan stability between solves.
 
-### 8.8 Prices, in full
+There is no separate risk-appetite parameter, and there must not be one. Risk
+appetite is already expressed as the **steepness of each utility curve**. Room
+comfort is near-vertical below its objective — nobody wants to live in a cold
+house, and the money available from trading comfort away is negligible against
+the annoyance — so in practice it behaves as a hard constraint without being
+declared one. The pool is genuinely soft in both directions, and the top of the
+EV curve is flat. That variation *is* the risk policy, expressed once per store
+in the same units as everything else.
 
-The objective is only as good as the two price series, and both have structure
-that is easy to under-model.
+The consequence for the product is worth stating plainly: **savings come from
+moving load in time, never from delivering less service.** Any plan that
+economises by leaving the house cold has misread its own curve.
+
+### 8.8 Prices
+
+The objective is only as good as its two price series.
 
 - **Import** is all-in: spot, supplier margin, energy transfer fee (often
-  time-of-use), energy tax and VAT. VAT applies to import and not to export,
-  which is most of why self-consumption usually beats export without needing a
-  self-consumption term.
-- **Export** is spot plus network compensation plus the microproduction tax
-  credit. The credit is worth substantially more than the spread the planner
-  would otherwise see, and it carries two couplings that no 72-hour horizon can
-  observe: an **annual volume cap**, and eligibility limited to the lesser of
-  annual export and annual import. A home approaching either limit has a
-  materially lower marginal export price than the tariff suggests. Both are
-  annual state variables and belong in `V_T`'s price inputs, not in the slot
-  loop.
-- **Grid limits are per phase, not just in total.** A single-phase EV charger or
-  heater can trip a phase while total draw looks comfortable. Any home with
-  single-phase loads needs per-phase constraints; total-power modelling is not
-  sufficient and will produce plans that trip a fuse.
-- **Unplanned loads must be reserved against.** The sauna is unmetered and has
-  been observed above 16 kW. Under a capacity charge, grid headroom is itself a
-  store with an option value, and the reactive layer needs standing authority to
-  shed controllable load when an unplanned draw appears. The planner's job is to
-  leave headroom sized by the probability of such an event — the same option
-  value as the battery buffer, applied to the connection.
+  time-of-use), energy tax and VAT.
+- **Export** is spot plus any network compensation. The microproduction tax
+  reduction was **abolished on 1 January 2026** and must not appear anywhere in
+  the export price.
+
+VAT applies to import and not to export. That asymmetry is most of why
+self-consumption usually beats export, and it is why no separate
+self-consumption objective is needed: pricing both sides correctly produces the
+preference on its own.
 
 ### 8.9 There is no priority stack
 
@@ -2566,23 +2570,22 @@ preference**: every manual override is a datum. A customer raising a room at
 06:00 is stating that the discomfort price is set too low. After a season of
 this the household has configured nothing at all.
 
-**Modelled explicitly:** pool and tank thermodynamics with losses and (for the
-tank) stratification; COP(air, water) for the pool heat pump; battery efficiency
-and power limits; per-phase electrical limits; compressor start costs and
-minimum run and off times.
+**Modelled explicitly:** pool and tank thermodynamics with losses; COP(air,
+water) for the pool heat pump; battery efficiency and power limits; total grid
+import and export limits; compressor start costs and minimum run and off times.
 
 That last item is worth naming, because it is where §8.7's buffer argument meets
 physics. Not wanting to interrupt a pool heating cycle or a car charge is not a
 preference — it is a start cost plus a minimum run time. Once both are in the
 model, holding battery reserve to ride out a cloud rather than stop a compressor
-is something the solver chooses on its own. It is also sub-slot behaviour that a
-quarter-hourly plan cannot see, so what the planner actually owes the reactive
-layer is priced headroom.
+is something the solver chooses on its own.
 
-**A state that cannot be measured cannot be valued.** A single tank sensor
-cannot report litre-degrees in a stratified cylinder, and a pool without a water
-temperature sensor has no state to optimise. Commissioning must treat the
-sensors these curves read as required instrumentation, not optional telemetry.
+Everything in this section is supplied **once**, at commissioning, and then
+left alone. That is a hard design constraint rather than an aspiration: the
+money available to a household from this system is small compared with the value
+of the household's attention, so any parameter needing periodic tuning is a
+feature that costs more than it returns. A setting the customer has to revisit
+is a defect.
 
 ### 8.11 Verification: historical replay before any control
 
