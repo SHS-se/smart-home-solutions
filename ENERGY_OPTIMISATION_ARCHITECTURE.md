@@ -2251,47 +2251,404 @@ temperature. Selecting the aggregate or a room opens the same plan at room
 resolution. This preserves one authoritative plan while allowing both a clean
 whole-home explanation and detailed commissioning diagnostics.
 
-## 8. Objective function
+## 8. Objective function (rewritten 2026-08-16)
 
-### 8.1 Recommended hierarchy
+This section replaces the earlier priority hierarchy and the
+`battery_target_is_hard` policy switch. Both were proxies for optimisation the
+planner was not doing. The test applied throughout is: **if a behaviour has to
+be written down as a rule, the model is wrong.** Every operating heuristic in
+§8.12 is reproduced here as a consequence of one objective, not as a policy.
 
-Use hard constraints first, then a cost-aligned objective:
+### 8.1 Why cost minimisation alone is degenerate
 
-1. satisfy safety and hard service constraints;
-2. minimise expected total customer cost: imports minus exports plus any
-   tariff-defined demand cost, explicitly configured degradation cost, and a
-   quantified penalty for deviation inside each soft comfort/service range; and
-3. among economically near-equivalent plans, avoid unnecessary import peaks,
-   switching, and loss of terminal flexibility.
+Minimising cost subject to service constraints has a trivial solution: turn
+everything off. The formulation only becomes well-posed when the *service* is
+priced as well as the energy. Every setting a customer would otherwise have to
+invent — end-of-day battery SOC, export floor price, reserve SOC, car departure
+time, pool daily kWh — exists to patch over that missing half of the objective.
 
-Self-consumption does not need an independent first-priority objective when
-import and export are priced correctly: consuming a solar kWh instead of
-exporting it is valued by the actual avoided-import versus forgone-export
-spread. Thermal preheating is valuable when it avoids forecast future imports,
-not merely because it consumes PV.
+The correction is to maximise value rather than minimise cost, where value is
+delivered service minus the energy and wear spent obtaining it.
 
-### 8.2 Policy is explicit per home
+### 8.2 The objective
 
-The notes state a strict “self-consumption, then balance, then cost” hierarchy.
-That conflicts with the stated customer value and can choose a more expensive
-plan. The contract therefore records `battery_target_is_hard` rather than
-silently choosing an interpretation:
+Over a receding horizon of slots *t*, and stores *s* (house battery, pool, EV,
+hot-water tank, each heated room):
 
-- **Cost-led:** minimise the real bill with hard service constraints and use
-  balance/self-consumption as tie-breakers and explanatory metrics; or
-- **Hard reserve:** define a quantified battery target, its allowed cost premium,
-  and exceptions for negative/high export prices, battery wear, and future
-  service needs.
+```
+maximise   Σ_t [ Σ_s U_s(x_s,t)                     service delivered
+                 − c_imp,t · g_imp,t                energy bought
+                 + c_exp,t · g_exp,t                energy sold
+                 − d_batt · throughput_t            battery wear
+                 − Σ_j k_j · start_j,t ]            compressor/relay starts
+         − C_peak(P_month)                          capacity charge (§8.5)
+         + V_T(x_T, P_month, T)                     value of what is left
+```
 
-Both are shown for commissioning comparison. The integration executes only the
-configured priority policy and only when its target verifies; it never selects
-whichever chart happens to look cheapest. Do not expose EMHASS's raw `profit`,
-`cost`, and `self-consumption` modes to customers.
+subject to the physics of each store, the grid and per-phase limits, and the
+device contracts in §5.
 
-No demand-charge term is included unless the effective tariff version contains
-one. A general import envelope and smoothing tie-breaker may still protect the
-connection and reduce avoidable spikes, but must not be presented as a billed
-effektavgift.
+Four properties matter more than the algebra:
+
+- **`U_s` is over a physical state, not an energy quantity.** Pool temperature,
+  EV range in kilometres, litre-degrees in the tank, room temperature. A
+  deferrable load is never "N kWh inside a window"; it is a state that must
+  satisfy a requirement when it is actually used. Run duration is an *output*.
+- **`U_s` is concave.** The first kWh into an empty store is worth much more
+  than the last kWh into a nearly full one. Concavity is what makes marginal
+  value well defined, and it is exactly representable as piecewise-linear
+  segments, so the whole problem stays a MILP. Sophistication here costs
+  nothing in solve time.
+- **`V_T` is a value function, not a target.** It prices what the home is left
+  holding at the horizon edge, which is the only thing coupling one solve to
+  the next.
+- **There is no priority ordering anywhere in it.** See §8.9.
+
+### 8.3 The utility curves
+
+These are the irreducible inputs. They are *values*, not schedules, they are
+stable over years, and they can be seeded with defaults and then fitted from
+overrides (§8.10). There are five.
+
+| Store | Curve is over | Shape | Source |
+|---|---|---|---|
+| House battery | kWh stored | **Derived, never supplied** — see §8.4 | Computed |
+| Pool | Water temperature °C | Rising steeply to the enjoyable band, flat across it, zero above, mildly negative when too warm | Household taste, one curve |
+| EV | **Available range in km** | Steeply concave: low SOC is worth a great deal, the top fifth is worth almost nothing without a known trip | Taste + trip history |
+| Hot water | Litre-degrees above draw temperature | Steep up to one household's peak draw, flat beyond | Taste, or fitted from draws |
+| Room | °C against the comfort schedule (§5.5) | Steep below the objective, flat at and above it, negative when overheated | Comfort schedule + one discomfort price |
+
+Three notes that materially change behaviour:
+
+**The pool is a one-way, lossy store.** Energy in the house battery can serve
+any later load; energy in the pool can only ever serve "the pool is warm", and
+it leaks at a rate set by air temperature and cover state. Its marginal value
+is therefore capped by the utility of pool warmth, which is why the pool should
+be charged from surplus that would otherwise export cheaply and should be the
+first thing cut when energy is scarce. A soft target in *both* directions falls
+straight out of the curve: overheating before a forecast cloudy day is
+profitable whenever the marginal utility of the extra degree exceeds the export
+price of the energy, and skipping a cloudy day entirely is profitable whenever
+it does not.
+
+**The EV curve is defined over range, not SOC.** Stating it in kilometres makes
+winter automatic: a learned kWh/km that rises with falling temperature means the
+same 60% SOC is worth more in January than in July without any seasonal
+parameter. It also explains why charging to the limit from the grid is rarely
+correct — the marginal utility of the top segments is below the import price.
+For a plug-in hybrid the shortfall price is not a taste at all: it is the petrol
+cost per kilometre, which is knowable to two decimals.
+
+**The COP belongs in the physics, not the objective.** An air-to-water pool heat
+pump delivers heat at COP(air temperature, water temperature), so the effective
+price of pool heat is the electricity price divided by that COP. In spring the
+COP varies more across a day than the price does, so "heat the pool when the air
+is warm, not when power is cheap" is arithmetic rather than a seasonal rule. The
+same physics states when heating stops being worthwhile at all — delivered heat
+below the loss rate — which is what the hard-coded June–August room heating
+lockout (§1.5.5) is currently standing in for.
+
+### 8.4 The value of stored energy, and the end of the SOC target
+
+The house battery's utility curve is **computed, never configured**. Its
+marginal value at the horizon edge is the expected cost of replacing that energy
+later: the forecast price distribution beyond *T*, grossed up by round-trip
+efficiency, weighted by the probability that free surplus does not arrive first.
+
+Every deleted setting follows from it:
+
+| Deleted setting | Replaced by |
+|---|---|
+| End-of-solar SOC target | Marginal value of stored energy at *T* |
+| `battery_target_is_hard` | Nothing. The trade-off is priced, not switched |
+| Battery export minimum price | Export whenever the export price exceeds that marginal value |
+| Battery reserve SOC | Outage insurance and peak insurance, both priced (§8.5, §8.6) |
+| Pool daily kWh requirement | Pool state, its loss model and its utility curve |
+| EV departure time | Learned departure distribution plus the range curve |
+
+"Roughly 10–12 kWh carries a summer night" must never be entered as a number. It
+is the point where the marginal value of the battery falls away, and it should
+be computed from tonight's base-load forecast — which yields a different and
+correct number in January with no seasonal parameter anywhere. The qualifier
+"as long as tomorrow's sun reliably refills it" is where the cliff becomes a
+slope: the thirteenth kWh is not worthless, it is worth
+
+```
+P(tomorrow disappoints) × cost of covering the shortfall
+```
+
+so there is no threshold to tune, and no rule to write.
+
+**This is what makes a monthly objective tractable.** With energy-only pricing,
+monthly cost is separable across days except through stored state. Get the
+marginal value of stored state right at the boundary and a rolling 48–72 h solve
+is optimal in expectation over the month. That is a Bellman decomposition, not
+an approximation. The rule for horizon length is that it must exceed the time
+constant of the slowest store the value function has to see — comfortably true
+of the battery at 72 h, and of the pool in summer, but not of a house's thermal
+mass in deep winter, where the horizon should extend rather than the value
+function absorb it.
+
+### 8.5 Capacity charges: the second state variable
+
+A demand charge is not another term in the sum. **It breaks the separability
+that §8.4 depends on**, because monthly cost stops being a function of this
+week's decisions alone and becomes a function of the running monthly peak. The
+design must carry a second state variable, `P_month`, and a second value
+function over it.
+
+Sweden's effektavgift was removed in the June 2026 revision and is expected to
+return in some form, driven by the cost-reflective network tariff requirement in
+EU electricity market law. **Its exact functional form is not yet known, and the
+form matters more than the price.** The requirement is therefore a parameterised
+family, not a formula:
+
+| Parameter | Range that must be supported |
+|---|---|
+| Measurement window | 15 or 60 minutes |
+| Statistic | Monthly maximum; mean of the *k* highest, on distinct days; per-day maximum averaged over the month |
+| Applicable hours | All hours, or a defined peak window |
+| Applicable months | All year, or a winter season |
+| Price | SEK per kW of the resulting figure |
+
+The difference is not cosmetic. Under a monthly maximum, one sauna evening
+defines the whole month's charge and little else matters. Under a mean of the
+three highest hours on distinct days, that same evening costs a third of a step
+and the planner has real work to do on the other two. A controller tuned for one
+is misconfigured for the other.
+
+**The marginal cost of a peak is probabilistic, and that is what makes it
+schedulable.** Setting a new peak *P* at time *t* only costs anything if no
+higher peak occurs in the remainder of the month, so
+
+```
+E[marginal cost of raising the peak] = tariff × P(this remains binding)
+```
+
+Early in the month that probability is low and headroom is cheap; on the 28th
+with the month's peak at 8.2 kW it approaches one and the same kilowatt is worth
+the full step. This derives the intuition that peaks matter more later in the
+month, and it is computable from the home's own load distribution. It is not a
+rule to encode.
+
+**Merit order for peak shaving falls out of the marginal costs**, and is worth
+stating because it is unintuitive: room heat first (thermal mass stores at
+almost no marginal cost, and shifting it inside the comfort curve is invisible),
+then pool (nearly free, one-way), then EV deferral (free while the range curve
+is flat), then battery discharge (costs `d_batt` per kWh), then service
+curtailment. The battery is *not* the first instrument to reach for.
+
+### 8.6 Heating is the load-balancing instrument — and the main peak risk
+
+Under a capacity charge, household heating becomes the single most important
+controllable load, for two opposed reasons.
+
+It is the **cheapest peak-shaving resource available**: the building's thermal
+mass is the only store large enough to absorb or shed several kilowatts for
+hours without a user-visible service change, and unlike the battery it has no
+per-kWh wear cost. Preheating within the comfort curve is close to free.
+
+It is also **the largest single peak risk in the house**. Thirteen zones
+recovering from setback at the same instant produce a large coincident draw —
+already observed under the old effektavgift and worse under 15-minute settlement
+(§1.5.4). This forces a structural requirement:
+
+- Rooms must be optimised **jointly against the shared peak state**, never
+  independently against a common envelope. The joint distribution of room draw
+  is the quantity being priced.
+- **Staggering is a first-class output**, not a smoothing tie-breaker. The
+  planner must be free to place recovery for different rooms in different slots,
+  which is exactly the freedom the comfort schedule's "Setback cells are not
+  forbidden heating windows" rule (§1.5.5) was written to preserve.
+- Global events that touch every zone at once — return from away, end of
+  vacation setback, morning recovery — are the peak-defining moments and must be
+  planned as spread recoveries, not as simultaneous transitions. Reproducing
+  Node-RED's synchronous high/low switching would be the worst possible policy
+  under a capacity charge.
+
+### 8.7 Uncertainty: why this must be stochastic
+
+Optimising against a point forecast quietly deletes two behaviours the home
+depends on.
+
+**Buffer value disappears.** Under a deterministic forecast the battery has no
+option value — if the future is known exactly, holding reserve is pure waste, so
+the solver drains it every time. The value of keeping charge in hand against a
+price spike or a cloudy patch mid-charge exists *only* across scenarios. A
+deterministic optimiser will reproduce the depletion behaviour we are trying to
+avoid, however good its prices are.
+
+**Flexibility is undervalued.** Shortfall cost is convex, so planning on the
+mean systematically understates the cost of being wrong and under-charges every
+store. Optimising on the mean is not neutral; it is biased.
+
+The requirements that follow:
+
+- Solve over a modest scenario set for PV and load — a handful is enough to
+  restore option value — or at minimum constrain against a pessimistic quantile
+  while valuing against the mean.
+- Forecast error must be characterised **by lead time**, since near-term
+  forecasts are materially better than far-term ones. The far horizon should
+  influence `V_T` and almost nothing else; detail out there is noise, and a plan
+  that reshuffles hour 40 between solves is behaving correctly.
+- Prices beyond the day-ahead window are a *distribution*, not a point. The
+  measured price shape (§1.4.3) is the prior; `V_T` must consume the spread, not
+  just the central estimate.
+- Service delivery should carry a chance constraint — P(comfort or service
+  violation) ≤ ε — rather than relying on a linear penalty alone. A plan saving
+  200 SEK a month with an occasional cold house is worse than one saving 180
+  with none, and expected-cost minimisation cannot express that.
+- **Only the first slot is a commitment.** Everything beyond it is a value
+  estimate. Success is measured as realised cost against the counterfactual, not
+  as plan stability between solves.
+
+### 8.8 Prices, in full
+
+The objective is only as good as the two price series, and both have structure
+that is easy to under-model.
+
+- **Import** is all-in: spot, supplier margin, energy transfer fee (often
+  time-of-use), energy tax and VAT. VAT applies to import and not to export,
+  which is most of why self-consumption usually beats export without needing a
+  self-consumption term.
+- **Export** is spot plus network compensation plus the microproduction tax
+  credit. The credit is worth substantially more than the spread the planner
+  would otherwise see, and it carries two couplings that no 72-hour horizon can
+  observe: an **annual volume cap**, and eligibility limited to the lesser of
+  annual export and annual import. A home approaching either limit has a
+  materially lower marginal export price than the tariff suggests. Both are
+  annual state variables and belong in `V_T`'s price inputs, not in the slot
+  loop.
+- **Grid limits are per phase, not just in total.** A single-phase EV charger or
+  heater can trip a phase while total draw looks comfortable. Any home with
+  single-phase loads needs per-phase constraints; total-power modelling is not
+  sufficient and will produce plans that trip a fuse.
+- **Unplanned loads must be reserved against.** The sauna is unmetered and has
+  been observed above 16 kW. Under a capacity charge, grid headroom is itself a
+  store with an option value, and the reactive layer needs standing authority to
+  shed controllable load when an unplanned draw appears. The planner's job is to
+  leave headroom sized by the probability of such an event — the same option
+  value as the battery buffer, applied to the connection.
+
+### 8.9 There is no priority stack
+
+The old hierarchy ranked services. That cannot express a reversal, and reversals
+are the normal case: the car outranks the pool when it is at 30% SOC and the
+pool is warm, and the pool outranks the car when the car is at 80% and the pool
+has fallen out of its band. Both follow from comparing two marginal utilities;
+neither is expressible as a fixed order.
+
+**Priority is an output.** At any instant the ranking is simply the stores
+sorted by marginal value per kWh. The `priority` and `cost` plan variants exist
+today because the objective was incomplete; once it is complete they converge,
+and the surviving comparison is plan versus measured counterfactual (§8.10).
+
+### 8.10 What must be supplied, learned, and modelled
+
+**Supplied by the household** — values only, no schedules:
+
+- the four service utility curves in §8.3 (the battery's is derived);
+- battery degradation cost per kWh of throughput, computed as purchase price
+  divided by warranted lifetime throughput. This is what stops a cost-minimising
+  solver from taking three shallow cycles a day for twenty öre and consuming the
+  warranty;
+- shortfall prices where the curve has a floor — of which a plug-in hybrid's is
+  simply the petrol cost per kilometre.
+
+**Learned from the home:** PV forecast error by lead time (the calibration data
+is already collected); base load against season, outdoor temperature, solar gain
+and occupancy (§1.5.4 — occupancy remains the open one); trip distances and
+departure times; pool and hot-water usage; EV kWh/km against temperature;
+fitted room and pool thermal responses.
+
+Utility curves also need a cold start. Ship defaults, then fit from **revealed
+preference**: every manual override is a datum. A customer raising a room at
+06:00 is stating that the discomfort price is set too low. After a season of
+this the household has configured nothing at all.
+
+**Modelled explicitly:** pool and tank thermodynamics with losses and (for the
+tank) stratification; COP(air, water) for the pool heat pump; battery efficiency
+and power limits; per-phase electrical limits; compressor start costs and
+minimum run and off times.
+
+That last item is worth naming, because it is where §8.7's buffer argument meets
+physics. Not wanting to interrupt a pool heating cycle or a car charge is not a
+preference — it is a start cost plus a minimum run time. Once both are in the
+model, holding battery reserve to ride out a cloud rather than stop a compressor
+is something the solver chooses on its own. It is also sub-slot behaviour that a
+quarter-hourly plan cannot see, so what the planner actually owes the reactive
+layer is priced headroom.
+
+**A state that cannot be measured cannot be valued.** A single tank sensor
+cannot report litre-degrees in a stratified cylinder, and a pool without a water
+temperature sensor has no state to optimise. Commissioning must treat the
+sensors these curves read as required instrumentation, not optional telemetry.
+
+### 8.11 Verification: historical replay before any control
+
+The objective is judged by replay against Phil's own history, across seasons,
+before it is allowed to command anything. Three runs over the same period:
+
+1. **Perfect foresight** — the outturn used as the forecast. Not achievable; it
+   is the upper bound, and the value of the whole programme is bounded by it.
+2. **As-was forecasts** — the PV, weather and price forecasts *as they stood at
+   each decision time*, never the outturn. This is the achievable number.
+3. **Measured baseline** — what the house actually did and actually cost.
+
+The gap between 3 and 2 is the customer value; the gap between 2 and 1 is what
+better forecasting is worth. Reporting only one of these numbers is not a
+result.
+
+This requires an **archive of forecasts as issued, by lead time**. The PV
+calibration series is the seed of it; weather and price forecasts must be
+archived the same way or run 2 is impossible and the exercise degenerates into
+run 1.
+
+Periods to replay, chosen for what each one stresses:
+
+| Period | What it tests |
+|---|---|
+| Deep winter | Import-dominated operation, few cheap windows, whether the battery pays at all, capacity-charge behaviour |
+| Spring | Pool COP transition — the season where air temperature outranks price |
+| Autumn | Heating restart, shoulder-season base load, the end of the summer lockout |
+| Summer | Export decisions, battery sufficiency overnight, pool as a store |
+
+One honesty requirement: the house did not have solar or a battery through the
+last winter, so the winter run is a **simulation** against real prices and real
+measured base load, not a backtest. It must be labelled as such. Its conclusion
+about winter battery value is a modelled result and should be revisited against
+the first real winter.
+
+Alongside the seasonal replays, the scenario matrix in §10 remains the synthetic
+counterpart: replay establishes whether the objective is *worth* anything,
+fixtures establish whether it is *correct*.
+
+### 8.12 Acceptance tests: the operating heuristics must emerge
+
+These are Phil's observed heuristics for how the house actually behaves
+(2026-08-16). None of them may be implemented as a rule. Each is an acceptance
+test: given the objective, the curves and the physics, the planner must produce
+the behaviour **without being told**. A heuristic that has to be coded is a
+defect in the formulation, and a heuristic the formulation contradicts is either
+a modelling error or a correction to the heuristic — both are findings.
+
+| # | Behaviour that must emerge | Emerges from |
+|---|---|---|
+| 1 | Self-consume solar by default, but export when the price is high and tomorrow's sun reliably refills the battery | Concave battery value + probabilistic PV forecast (§8.4, §8.7) |
+| 2 | Keep a buffer rather than run the battery flat, against price spikes and mid-charge cloud | Scenario-based solve + start costs (§8.7) |
+| 3 | Overheat the pool before a forecast cloudy day; cut it short or skip it on a cloudy day when the battery needs the energy | Pool state + one-way lossy store + concave utility (§8.3) |
+| 4 | Car outranks pool at low SOC and stops outranking it near full; winter raises the value of the same SOC | Marginal value comparison + utility over range (§8.3, §8.9) |
+| 5 | Pool heating tracks air temperature ahead of price in spring, and stops being worthwhile in winter | COP(air, water) in the physics (§8.3) |
+| 6 | Buy from the grid whenever price is below the marginal utility of a sink; accept expensive imports in winter when no cheaper window exists | The objective itself (§8.2) |
+| 7 | Grid-charge the battery only when the intraday spread beats round-trip losses plus wear | `d_batt` + efficiency in the objective (§8.10) |
+
+Test 7 also answers the open question about winter battery value quantitatively.
+At an 85% round trip the price ratio must exceed about 1.18 on energy alone;
+adding a degradation cost in the region of 0.3–0.7 SEK/kWh means a grid-charged
+cycle needs an intraday spread of roughly 0.5–1 SEK/kWh to be worth taking. Cold
+Swedish winter days routinely clear that and mild ones do not, so the correct
+answer is "on some days", computed per day — which is the point. It is an output
+of the model, not a parameter of it.
 
 ## 9. Parameter model
 
@@ -2554,8 +2911,12 @@ states, and all reason codes.
 
 ### 11.1 Must be decided before any production control
 
-1. **Objective policy:** resolve the self-consumption-versus-money conflict in
-   section 8.
+1. **Objective policy:** ~~resolve the self-consumption-versus-money
+   conflict~~. **Resolved 2026-08-16** by the rewritten section 8: service is
+   priced alongside energy, self-consumption stops being a competing objective,
+   and the `battery_target_is_hard` switch is deleted rather than answered.
+   What remains is to elicit the five utility curves (§8.3) and the degradation
+   cost, and to complete the seasonal replay in §8.11 before any control.
 2. **Multiple-instance policy:** token/read/plan binding to one `home_id` is
    implemented; still define whether multiple HA instances may represent one
    home and which instance is authoritative.
