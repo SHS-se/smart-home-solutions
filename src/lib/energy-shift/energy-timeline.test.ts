@@ -263,7 +263,7 @@ Deno.test('a stack is ordered so its shape can be read', () => {
 Deno.test('a cycling load sits above a continuous one even when it is smaller', () => {
   const order = stackOrder([
     { key: 'steady', values: [1_000, 1_000, 1_000, 1_000] },
-    { key: 'flickering', values: [10, 0, 10, 0] },
+    { key: 'flickering', values: [60, 0, 60, 0] },
   ]);
   assertEquals(order, ['steady', 'flickering'], 'gaps outrank size');
 });
@@ -271,7 +271,7 @@ Deno.test('a cycling load sits above a continuous one even when it is smaller', 
 Deno.test('a series that never runs keeps a stable place', () => {
   const order = stackOrder([
     { key: 'idle', values: [0, 0, 0] },
-    { key: 'busy', values: [5, 5, 5] },
+    { key: 'busy', values: [500, 500, 500] },
     { key: 'also-idle', values: [null, null, null] },
   ]);
   assertEquals(order, ['also-idle', 'idle', 'busy'], 'empty first, then by size');
@@ -295,4 +295,22 @@ Deno.test('a chart with no export leaves both axes starting at zero', () => {
   const power = powerAxisDomain([0, 4_200]);
   assertEquals(power, [0, 5_000], 'nothing below the line');
   assertEquals(socAxisDomain(power), [0, 100], 'and no phantom negative charge');
+});
+
+Deno.test('standby draw never earns a place on the chart', () => {
+  const rows = build({
+    planSlots: [planned(NOW, {
+      device_loads_w: {
+        'sensor.fridge': 4,          // rounds to 0.00 kW
+        'sensor.tv_standby': 9.9,    // just under the line
+        'sensor.internet': 10,       // exactly on it
+        'sensor.hot_water': 2_590,
+      },
+    })],
+  });
+  assertEquals(
+    [...activeDeviceKeys(rows, { from: 0, to: rows.length })].sort(),
+    ['sensor.hot_water', 'sensor.internet'],
+    'only loads worth a colour',
+  );
 });

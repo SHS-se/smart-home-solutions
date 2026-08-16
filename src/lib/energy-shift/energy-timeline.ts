@@ -21,8 +21,14 @@ export const SLOT_MS = 15 * 60_000;
 /** A quarter of average watts is that many watt-hours over four. */
 const QUARTER_W_TO_KWH = 4_000;
 
-/** Below this a device is off; recorder noise should not light up a legend. */
-const ACTIVE_POWER_W = 0.5;
+/**
+ * Below this a device is off as far as this chart is concerned. Standby draw,
+ * a meter's own quantisation and a fridge light are all real, and all noise
+ * here: a series that renders as "0.00 kW" costs a colour, a legend entry and
+ * a tooltip line while saying nothing. Ten watts is under a tenth of the
+ * smallest load the planner can act on.
+ */
+export const SIGNIFICANT_POWER_W = 10;
 
 export interface TimelineRow {
   startMs: number;
@@ -261,7 +267,7 @@ export const activeDeviceKeys = (
   const active = new Set<string>();
   for (const row of rows.slice(range.from, range.to)) {
     for (const [key, value] of Object.entries(row.deviceW)) {
-      if (value > ACTIVE_POWER_W) active.add(key);
+      if (value >= SIGNIFICANT_POWER_W) active.add(key);
     }
   }
   return active;
@@ -313,7 +319,7 @@ const runsAndCount = (values: readonly (number | null)[]) => {
   let count = 0;
   let inRun = false;
   for (const value of values) {
-    const active = (value ?? 0) > 0;
+    const active = (value ?? 0) >= SIGNIFICANT_POWER_W;
     if (active) {
       count += 1;
       if (!inRun) runs += 1;

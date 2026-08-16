@@ -7,6 +7,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { SIGNIFICANT_POWER_W } from '@/lib/energy-shift/energy-timeline';
 
 interface EnergyChartRow {
   i: number;
@@ -21,9 +22,6 @@ const PERCENT_SERIES = new Set(['homeSoc', 'evSoc']);
 
 /** Only the real range is labelled; the domain may reach below zero. */
 const SOC_TICKS = [0, 25, 50, 75, 100];
-
-/** Below this a device is off, matching the threshold the legend filters on. */
-const ACTIVE_POWER_W = 0.5;
 
 interface TooltipEntry {
   name?: string | number;
@@ -54,7 +52,7 @@ const ChartTooltip: React.FC<{
     if (!Number.isFinite(value)) return false;
     return PERCENT_SERIES.has(String(entry.dataKey))
       ? true
-      : Math.abs(value) >= ACTIVE_POWER_W;
+      : Math.abs(value) >= SIGNIFICANT_POWER_W;
   });
   return (
     <div className="rounded-lg border bg-background px-2.5 py-2 text-xs shadow-md">
