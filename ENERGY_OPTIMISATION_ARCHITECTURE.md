@@ -1378,6 +1378,44 @@ wrong model — a longer mean is a longer proxy. §1.5.4 remains the target.
    weekend band is wide. The portal does not yet show it.
 3. Only after 1 is the scheduling critique in §1.6.1 worth acting on.
 
+#### 1.6.4 Base load, first correction (2026-08-16)
+
+The weekday/weekend keying is gone. Both defects above were visible directly in
+the plan: because every future weekday drew the same 96-value series, 17 and 18
+August were byte-identical, and the weekend profile rested on two Saturdays and
+one Sunday.
+
+`build_base_load_model()` replaces `build_base_load_profile()`. Splitting into
+seven independent day-of-week profiles would have made the sample problem worse,
+so it pools rather than splits: one shared quarter-of-day shape learned from
+every day, a scalar level per weekday that needs only a few whole days to
+emerge, and a per-quarter deviation held near one until the samples justify it.
+Evidence is weighted by recency on a fortnight half-life, and thin cells widen
+the published `p10`/`p90` band instead of narrowing it. With a short window
+every day collapses to the shared shape, which is no worse than what it
+replaced; as history accumulates, real routine separates on its own.
+
+This is a correction to the *statistics*, not the model class. Open item 1
+stands: season, outdoor temperature, solar gain and occupancy are still not
+inputs, and a better-pooled proxy for four factors is still a proxy. What it
+buys is that days now differ for a defensible reason and that thin evidence is
+visible rather than hidden.
+
+Two constraints found while making the change, both bearing on what comes next:
+
+- Home Assistant's recorder keeps 5-minute statistics for about ten days, which
+  is why the window was ten days. A longer window has to come from the
+  portal's own `energy_optimisation_actual_slots` archive, which began on
+  2026-08-10 and is therefore still shorter than the recorder's. The estimator
+  is written to improve monotonically as that archive deepens; moving it
+  server-side is the natural next step, and the per-slot snapshot contract
+  already allows it without a contract change.
+- There is **no hot-water tank temperature sensor in the house**. The §8.3
+  litre-degree utility curve is therefore not implementable for hot water
+  today; the boiler must keep its duty-cycle contract with inhibition until
+  a tank sensor exists. Pool water temperature, pool heat-pump COP and every
+  room temperature *are* measured, so those curves are unblocked.
+
 ## 2. Terms
 
 - **Baseline controller:** the normal local schedule, thermostat, occupancy, and
