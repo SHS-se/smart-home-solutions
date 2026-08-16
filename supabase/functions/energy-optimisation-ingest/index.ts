@@ -1329,6 +1329,46 @@ serve(async (req) => {
         );
         return json({ error: "storage_failed" }, 500);
       }
+
+      // Archive the forecasts exactly as they stood at this decision time.
+      // §8.11's second replay run — the only achievable one — compares what was
+      // knowable then against what happened, so this cannot be reconstructed
+      // later from outturn data and cannot be backfilled at all.
+      //
+      // At most one row per hour, and a failure here is logged rather than
+      // returned: losing an hour of archive is a gap in a study, while failing
+      // the request would stop the house being planned.
+      const issuedAt = new Date(snapshot.captured_at);
+      const issuedHour = new Date(issuedAt);
+      issuedHour.setUTCMinutes(0, 0, 0);
+      const outdoor = snapshot.outdoor_temperature_c as number[] | null;
+      const { error: forecastError } = await supabase
+        .from("energy_optimisation_forecast_runs")
+        .upsert({
+          customer_id: auth.customerId,
+          home_id: auth.homeId,
+          issued_at: issuedAt.toISOString(),
+          issued_hour: issuedHour.toISOString(),
+          horizon_start: snapshot.slots[0]?.start ?? snapshot.captured_at,
+          slot_minutes: snapshot.slot_minutes,
+          slots: snapshot.slots.map((slot, index) => ({
+            start: slot.start,
+            pv_forecast_w: slot.pv_forecast_w,
+            base_load_forecast_w: slot.base_load_forecast_w,
+            base_load_p10_w: slot.base_load_p10_w,
+            base_load_p90_w: slot.base_load_p90_w,
+            outdoor_temperature_c: outdoor?.[index] ?? null,
+            import_price_sek_per_kwh: slot.import_price_sek_per_kwh,
+            export_price_sek_per_kwh: slot.export_price_sek_per_kwh,
+          })),
+          sources: snapshot.sources,
+        }, { onConflict: "home_id,issued_hour", ignoreDuplicates: true });
+      if (forecastError) {
+        console.error(
+          "[ENERGY-OPTIMISATION] forecast archive upsert failed",
+          forecastError,
+        );
+      }
     }
 
     const { error: pruneError } = await supabase.rpc(
