@@ -7,7 +7,6 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { WINDOW_DAY_OPTIONS, type WindowDays } from './types';
 import type { DayWindow } from '@/lib/energy-shift/energy-timeline';
 
 export const useSeriesVisibility = <T extends string>() => {
@@ -89,32 +88,6 @@ export const SeriesToggleLegend = <Key extends string,>({ series, hidden, onTogg
 export const EmptyState: React.FC<{ text: string }> = ({ text }) => (
   <Card><CardContent className="py-10 text-sm text-muted-foreground">{text}</CardContent></Card>
 );
-
-/**
- * How many days of measured history to draw. History looks backwards, so it
- * stays a running total: "the last two days" is a period, not a page.
- */
-export const WindowDaysToggle: React.FC<{
-  value: WindowDays;
-  onChange: (value: WindowDays) => void;
-}> = ({ value, onChange }) => {
-  const { t } = useLanguage();
-  return (
-    <div className="flex gap-1" role="group" aria-label={t('Period', 'Period')}>
-      {WINDOW_DAY_OPTIONS.map(days => (
-        <Button
-          key={days}
-          size="sm"
-          variant={value === days ? 'secondary' : 'ghost'}
-          aria-pressed={value === days}
-          onClick={() => onChange(days)}
-        >
-          {days} {days === 1 ? t('dag', 'day') : t('dagar', 'days')}
-        </Button>
-      ))}
-    </div>
-  );
-};
 
 /**
  * Which calendar day to read, relative to today. Days are absolute — midnight

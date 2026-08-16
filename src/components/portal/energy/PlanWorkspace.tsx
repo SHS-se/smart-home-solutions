@@ -23,7 +23,6 @@ import {
   type EmpiricalDeviceSlotMatrix,
   type HomeAssistantConnection,
   type PriceSlotRow,
-  type WindowDays,
   type ZoneModelRow,
   type ThermalSlotRow,
   summariseThermalSlots,
@@ -43,7 +42,6 @@ import {
   Kpi,
 } from './plan/ui';
 import { usePlanModel } from './plan/usePlanModel';
-import HistorySection from './plan/sections/HistorySection';
 import PowerSection from './plan/sections/PowerSection';
 import ThermalSection from './plan/sections/ThermalSection';
 import EconomicsSection from './plan/sections/EconomicsSection';
@@ -79,10 +77,8 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<'live' | 'demo'>('live');
-  // Both charts always load the full 72 hours and slice locally, so this is
-  // presentation state and never triggers a refetch. History looks back over
-  // a running period; the plan pages forward one day at a time.
-  const [windowDays, setWindowDays] = useState<WindowDays>(1);
+  // The chart always loads the full window and slices locally, so this is
+  // presentation state and never triggers a refetch.
   const [dayWindow, setDayWindow] = useState<DayWindow>(0);
   const [demoSeason, setDemoSeason] = useState<ThermalFixtureSeason>('winter');
   const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
@@ -277,27 +273,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
   const activeConnection = connections.find(connection => connection.home_id === homeId);
 
   let content: React.ReactNode;
-  if (section === 'history') {
-    // History describes what the meters recorded, so it is readable with no
-    // plan at all — a home that has never produced one still has a bill.
-    const isDemo = view === 'demo';
-    if (!homeId && !isDemo) {
-      content = <EmptyState text={t('Välj ett hem för att visa historiken.', 'Select a home to view its history.')} />;
-    } else if (loading && actuals.length === 0 && !isDemo) {
-      content = <div className="flex items-center gap-2 py-12 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t('Laddar historik…', 'Loading history…')}</div>;
-    } else {
-      content = (
-        <HistorySection
-          actuals={isDemo ? demoActuals : actuals}
-          devices={isDemo ? [] : empiricalDevices}
-          deviceActuals={isDemo ? [] : deviceActuals}
-          prices={isDemo ? [] : prices}
-          windowDays={windowDays}
-          onWindowDaysChange={setWindowDays}
-        />
-      );
-    }
-  } else if (section === 'devices') {
+  if (section === 'devices') {
     if (!homeId) {
       content = <EmptyState text={t('Välj ett hem för att visa enhetsmodeller.', 'Select a home to view its device models.')} />;
     } else if (loading && empiricalDevices.length === 0) {
@@ -329,8 +305,6 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
         zoneModels={[]}
         stale={false}
         isDemo
-        windowDays={windowDays}
-        onWindowDaysChange={setWindowDays}
         deviceActuals={[]}
         prices={[]}
         now={clock}
@@ -423,8 +397,6 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
           stale={clock > Date.parse(current.plan.valid_until)}
           isDemo={false}
           lastCheckedAt={lastCheckedAt}
-          windowDays={windowDays}
-          onWindowDaysChange={setWindowDays}
           deviceActuals={deviceActuals}
           prices={prices}
           now={clock}
@@ -484,8 +456,6 @@ const PlanView: React.FC<{
   stale: boolean;
   isDemo: boolean;
   lastCheckedAt?: number | null;
-  windowDays: WindowDays;
-  onWindowDaysChange: (value: WindowDays) => void;
   deviceActuals: EmpiricalDeviceSlotMatrix[];
   prices: PriceSlotRow[];
   now: number;
@@ -501,8 +471,6 @@ const PlanView: React.FC<{
   stale,
   isDemo,
   lastCheckedAt,
-  windowDays,
-  onWindowDaysChange,
   dayWindow,
   onDayWindowChange,
   deviceActuals,

@@ -75,7 +75,6 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
   const tabs: Array<{ key: EnergyTab; label: string }> = [
     { key: 'roi', label: t('Lönsamhet', 'ROI') },
     { key: 'plan', label: t('Plan', 'Plan') },
-    { key: 'history', label: t('Historik', 'History') },
     { key: 'devices', label: t('Enheter', 'Devices') },
     { key: 'comfort', label: t('Komfort', 'Comfort') },
     { key: 'thermal', label: t('Termik', 'Thermal') },
@@ -110,7 +109,7 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
 
       {/*
         Rendered outside TabsContent on purpose. One PlanWorkspace instance stays
-        mounted across the five plan sections, so switching tabs changes a prop
+        mounted across the plan sections, so switching tabs changes a prop
         instead of remounting and refetching a 72-hour plan each time.
       */}
       {tab === 'roi' ? (

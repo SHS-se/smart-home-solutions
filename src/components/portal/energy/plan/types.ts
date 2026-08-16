@@ -113,20 +113,17 @@ export const COLORS = {
 export type PlanViewMode = 'planned' | 'unplanned';
 /**
  * The optimisation workspace uses top-level tabs. `plan` contains the headline
- * numbers and the live schedule; `history` owns measured performance and what
- * it cost; `devices` owns empirical Home Assistant models; the remaining
+ * numbers, the live schedule and what the meters already recorded; `devices`
+ * owns empirical Home Assistant models; the remaining
  * sections each own a focused chart.
  */
-export type PlanSection = 'plan' | 'history' | 'devices' | 'thermal' | 'economics';
+export type PlanSection = 'plan' | 'devices' | 'thermal' | 'economics';
 
 /**
  * How much of the window either chart draws. Both tabs fetch the full 72 hours
  * once and slice locally, so changing this never costs a round trip
  * (ENERGY_OPTIMISATION_ARCHITECTURE.md §1.3.7).
  */
-export type WindowDays = 1 | 2 | 3;
-export const WINDOW_DAY_OPTIONS: WindowDays[] = [1, 2, 3];
-export const WINDOW_SLOTS_PER_DAY = 96;
 
 export interface PriceSlotRow {
   start_ts: string;
@@ -175,11 +172,3 @@ export const DEVICE_COLORS = ['#0ea5e9', '#8b5cf6', '#22c55e', '#eab308', '#f973
 
 export type ReadinessState = 'ready' | 'blocked' | 'waiting';
 
-export type ActualSeriesKey =
-  | 'load'
-  | 'pv'
-  | 'gridImport'
-  | 'gridExport'
-  | 'batteryCharge'
-  | 'batteryDischarge'
-  | `device:${string}`;
