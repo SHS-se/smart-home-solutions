@@ -22,6 +22,59 @@ const PERCENT_SERIES = new Set(['homeSoc', 'evSoc']);
 /** Only the real range is labelled; the domain may reach below zero. */
 const SOC_TICKS = [0, 25, 50, 75, 100];
 
+/** Below this a device is off, matching the threshold the legend filters on. */
+const ACTIVE_POWER_W = 0.5;
+
+interface TooltipEntry {
+  name?: string | number;
+  value?: number | string | Array<number | string>;
+  color?: string;
+  dataKey?: string | number;
+}
+
+/**
+ * The default tooltip lists every series in the chart, so a house with twenty
+ * meters produced twenty lines to read, nearly all of them "0.00 kW", and the
+ * two or three that were actually running were lost among them. Only series
+ * carrying something are worth a line.
+ *
+ * A state of charge is kept whenever it is known, including a genuine zero: an
+ * empty battery is a reading, not an absence.
+ */
+const ChartTooltip: React.FC<{
+  active?: boolean;
+  payload?: TooltipEntry[];
+  label?: string | number;
+  rows: EnergyChartRow[];
+}> = ({ active, payload, label, rows }) => {
+  if (!active) return null;
+  const heading = rows[Number(label)]?.label ?? '';
+  const entries = (payload ?? []).filter(entry => {
+    const value = Number(entry.value);
+    if (!Number.isFinite(value)) return false;
+    return PERCENT_SERIES.has(String(entry.dataKey))
+      ? true
+      : Math.abs(value) >= ACTIVE_POWER_W;
+  });
+  return (
+    <div className="rounded-lg border bg-background px-2.5 py-2 text-xs shadow-md">
+      <div className="mb-1 font-medium">{heading}</div>
+      {entries.length === 0
+        ? <div className="text-muted-foreground">—</div>
+        : entries.map(entry => (
+          <div key={String(entry.dataKey)} className="flex items-baseline justify-between gap-4">
+            <span style={{ color: entry.color }}>{entry.name}</span>
+            <span className="tabular-nums">
+              {PERCENT_SERIES.has(String(entry.dataKey))
+                ? `${Number(entry.value).toFixed(0)} %`
+                : `${(Number(entry.value) / 1_000).toFixed(2)} kW`}
+            </span>
+          </div>
+        ))}
+    </div>
+  );
+};
+
 const EnergyPowerChart = <Row extends EnergyChartRow>({
   data,
   ticks,
@@ -71,16 +124,7 @@ const EnergyPowerChart = <Row extends EnergyChartRow>({
         />
       )}
       {children}
-      <Tooltip
-        contentStyle={{ fontSize: 12, borderRadius: 8 }}
-        labelFormatter={index => data[index as number]?.label ?? ''}
-        formatter={(value, name, item) => [
-          PERCENT_SERIES.has(String(item?.dataKey))
-            ? `${Number(value).toFixed(0)} %`
-            : `${(Number(value) / 1_000).toFixed(2)} kW`,
-          name,
-        ]}
-      />
+      <Tooltip content={<ChartTooltip rows={data} />} />
     </ComposedChart>
   </ResponsiveContainer>
 );
