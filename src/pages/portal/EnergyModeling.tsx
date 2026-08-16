@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Zap } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuth } from '@/contexts/AuthContext';
@@ -15,6 +16,20 @@ interface EnergyModelingProps {
 }
 
 type EnergyTab = 'roi' | 'comfort' | PlanSection;
+
+const ENERGY_TABS = new Set<EnergyTab>([
+  'roi', 'plan', 'devices', 'comfort', 'thermal', 'economics',
+]);
+
+/**
+ * The open tab lives in the URL rather than in component state, so a refresh
+ * returns to the tab being read instead of to ROI — and so a link to a chart
+ * is a link to that chart. An unknown value falls back rather than throwing:
+ * tabs have been removed before, and an old bookmark should still open.
+ */
+function isEnergyTab(value: string | null): value is EnergyTab {
+  return value !== null && ENERGY_TABS.has(value as EnergyTab);
+}
 
 /**
  * The old device-day simulator, house setup, home devices and tariff tabs were
@@ -38,7 +53,16 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
 
   const [selectedHomeId, setSelectedHomeId] = useState<string | null>(null);
   const [homeCount, setHomeCount] = useState(0);
-  const [tab, setTab] = useState<EnergyTab>('roi');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedTab = searchParams.get('tab');
+  const tab: EnergyTab = isEnergyTab(requestedTab) ? requestedTab : 'roi';
+  const setTab = (next: EnergyTab) => {
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set('tab', next);
+    // Replace, so the browser's back button leaves the page rather than
+    // walking back through every tab that was looked at.
+    setSearchParams(nextParams, { replace: true });
+  };
 
   useEffect(() => {
     if (!resolvedCustomerId || showStaffGlobal) return;
