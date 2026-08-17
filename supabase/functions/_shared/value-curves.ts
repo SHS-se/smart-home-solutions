@@ -42,19 +42,30 @@ export const DEFAULT_VALUE_SETTINGS: ValueSettings = {
 /**
  * Pool water temperature.
  *
- * Steep up to the bottom of the enjoyable band, flat across it, nothing above.
- * The flat section is what lets the planner overheat before a cloudy day at no
- * cost to the objective, and the zero above 30 °C is what stops it doing so
- * without limit. Slightly negative would be more honest — an over-warm pool
- * evaporates faster and is less pleasant — but a curve that goes negative can
- * make *cooling* look profitable, and there is no actuator for that.
+ * Steep below the enjoyable band, moderate across it, nothing above. The
+ * moderate section is what lets the planner bank surplus before a cloudy day,
+ * and the zero above 31 °C is what stops it doing so without limit. Slightly
+ * negative would be more honest — an over-warm pool evaporates faster and is
+ * less pleasant — but a curve that goes negative can make *cooling* look
+ * profitable, and there is no actuator for that.
+ *
+ * The levels are set against the physics rather than picked freely, because a
+ * pool is enormous and a curve that ignores its scale simply never heats. A
+ * 55 m³ pool holds about 64 kWh per °C, so at a COP of 4.5 a degree costs
+ * roughly 14 kWh — about 17 SEK of grid import, or 5 SEK of forgone export. An
+ * earlier draft valued a degree at 4 SEK and the planner correctly refused to
+ * heat at all, which was a defect in the default rather than in the objective.
+ *
+ * The resulting behaviour is the intended one: a cold pool is worth heating
+ * from the grid, a pool inside its band is worth topping up from surplus only,
+ * and a warm pool is worth nothing.
  */
 export const DEFAULT_POOL_CURVE: UtilityCurve = {
   unit: "celsius",
   points: [
-    { at: 24, sek_per_unit: 12 },
-    { at: 27, sek_per_unit: 4 },
-    { at: 29, sek_per_unit: 1 },
+    { at: 25, sek_per_unit: 80 },
+    { at: 28, sek_per_unit: 30 },
+    { at: 30, sek_per_unit: 8 },
     { at: 31, sek_per_unit: 0 },
   ],
 };
