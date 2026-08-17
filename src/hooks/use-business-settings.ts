@@ -34,9 +34,9 @@ export const BUSINESS_SETTINGS_QUERY_KEY = ['business_settings'] as const;
 export const PUBLIC_BUSINESS_SETTINGS_QUERY_KEY = ['business_settings_public'] as const;
 
 /**
- * Fields that never appear in the public view (payment details). Must match
- * the columns omitted by business_settings_public in
- * supabase/migrations/20260707132000_business_settings_public_view.sql.
+ * Fields the public surfaces never see (payment details). Must match the
+ * columns omitted by get_public_business_settings() in
+ * supabase/migrations/20260817190000_public_business_settings_function.sql.
  */
 const PAYMENT_FIELDS = ['bankgiro_number', 'iban', 'bic', 'bank_name', 'payee_name'] as const;
 
@@ -60,12 +60,11 @@ async function fetchBusinessSettings(): Promise<BusinessSettings> {
 }
 
 async function fetchPublicBusinessSettings(): Promise<PublicBusinessSettings> {
-  // Reads the business_settings_public view, which excludes payment details and
-  // is readable by anon + authenticated (the base table is staff-only).
+  // Reads get_public_business_settings(), which returns the singleton row
+  // without its payment details and is executable by anon + authenticated (the
+  // base table is staff-only).
   const { data, error } = await supabase
-    .from('business_settings_public' as never)
-    .select('*')
-    .eq('id', 1)
+    .rpc('get_public_business_settings' as never)
     .maybeSingle();
   if (error) throw error;
   return (data as PublicBusinessSettings | null) ?? PUBLIC_BUSINESS_SETTINGS_FALLBACK;
