@@ -33,7 +33,9 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
 };
 
-const PRICE_SHAPE_WINDOW_DAYS = 60;
+// Shorter than the ingest path's window. The shape only prices the tail beyond
+// day-ahead, a month is ample for that, and this endpoint is interactive.
+const PRICE_SHAPE_WINDOW_DAYS = 30;
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -47,99 +49,136 @@ serve(async (request) => {
   }
   if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
 
-  const authorization = request.headers.get("Authorization");
-  if (!authorization) return json({ error: "unauthorized" }, 401);
-
-  // The caller's own token, so row-level security decides which homes they may
-  // touch. A replan must never be able to reach a home the user cannot read.
-  const supabase = createClient(
-    Deno.env.get("SUPABASE_URL") ?? "",
-    Deno.env.get("SUPABASE_ANON_KEY") ?? "",
-    { global: { headers: { Authorization: authorization } } },
-  );
-
-  let homeId: string;
+  // Everything is inside one guard so a fault is reported rather than escaping
+  // as an opaque runtime envelope. The first failure of this endpoint returned
+  // a bare 500 with no message, which said nothing about where it broke.
   try {
-    const body = await request.json();
-    homeId = String(body?.home_id ?? "");
-    if (!homeId) return json({ error: "home_id_required" }, 400);
-  } catch {
-    return json({ error: "invalid_body" }, 400);
-  }
+    const authorization = request.headers.get("Authorization");
+    if (!authorization) return json({ error: "unauthorized" }, 401);
 
-  const { data: current, error: readError } = await supabase
-    .from("energy_optimisation_current")
-    .select("customer_id, home_id, snapshot")
-    .eq("home_id", homeId)
-    .maybeSingle();
-  if (readError) {
-    console.error("[ENERGY-REPLAN] current read failed", readError);
-    return json({ error: "read_failed" }, 500);
-  }
-  if (!current?.snapshot) return json({ error: "no_snapshot" }, 404);
+    const url = Deno.env.get("SUPABASE_URL") ?? "";
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+    if (!url || !anonKey || !serviceKey) {
+      console.error("[ENERGY-REPLAN] missing environment configuration");
+      return json({ error: "not_configured" }, 500);
+    }
 
-  const stored = current.snapshot as OptimisationSnapshotV5;
+    let homeId: string;
+    try {
+      const body = await request.json();
+      homeId = String(body?.home_id ?? "");
+      if (!homeId) return json({ error: "home_id_required" }, 400);
+    } catch {
+      return json({ error: "invalid_body" }, 400);
+    }
 
-  const { data: curveRows } = await supabase
-    .from("energy_optimisation_value_curves")
-    .select("store_key, unit, points")
-    .eq("home_id", homeId);
-  const resolved = resolveValueCurves(curveRows ?? []);
+    // Authorise with the caller's own token: a row-level-security-checked read
+    // is what proves they may touch this home.
+    const asCaller = createClient(url, anonKey, {
+      global: { headers: { Authorization: authorization } },
+      auth: { persistSession: false },
+    });
+    const { data: readable, error: readError } = await asCaller
+      .from("energy_optimisation_current")
+      .select("home_id")
+      .eq("home_id", homeId)
+      .maybeSingle();
+    if (readError) {
+      console.error("[ENERGY-REPLAN] authorisation read failed", readError);
+      return json({ error: "read_failed", detail: readError.message }, 500);
+    }
+    if (!readable) return json({ error: "not_found" }, 404);
 
-  const shapeFrom = new Date(
-    Date.now() - PRICE_SHAPE_WINDOW_DAYS * 24 * 60 * 60_000,
-  ).toISOString();
-  const { data: shapeRows } = await supabase
-    .from("energy_optimisation_price_slots")
-    .select("start_ts, import_price_sek_per_kwh")
-    .eq("home_id", homeId)
-    .gte("start_ts", shapeFrom)
-    .order("start_ts");
-  const priceShape = buildPriceShape(shapeRows ?? [], stored.timezone);
+    // Then write as the service role. `energy_optimisation_current` carries a
+    // read policy for subscribers and no write policy at all — it is the
+    // device's table — so an update with the caller's token silently matches no
+    // rows and the replan appears to succeed while changing nothing.
+    const service = createClient(url, serviceKey, {
+      auth: { persistSession: false },
+    });
 
-  const snapshot: OptimisationSnapshotV5 = {
-    ...stored,
-    value_curves: {
-      pool: resolved.curves.pool.curve,
-      ev: resolved.curves.ev.curve,
-    },
-  };
+    const { data: current, error: currentError } = await service
+      .from("energy_optimisation_current")
+      .select("customer_id, home_id, snapshot")
+      .eq("home_id", homeId)
+      .maybeSingle();
+    if (currentError) {
+      console.error("[ENERGY-REPLAN] current read failed", currentError);
+      return json({ error: "read_failed", detail: currentError.message }, 500);
+    }
+    if (!current?.snapshot) return json({ error: "no_snapshot" }, 404);
 
-  let generated;
-  try {
-    generated = generateOptimisationPlan(snapshot, new Date(), priceShape);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : "replan failed";
-    // The commonest case by far: the snapshot has aged past the planner's
-    // freshness limit. Say so plainly rather than returning a bare failure,
-    // because the remedy is simply to wait for the next push.
-    return json({ error: "cannot_replan", detail, warnings: resolved.warnings }, 409);
-  }
+    const stored = current.snapshot as OptimisationSnapshotV5;
 
-  const { error: writeError } = await supabase
-    .from("energy_optimisation_current")
-    .update({
-      plan: generated,
+    const { data: curveRows } = await service
+      .from("energy_optimisation_value_curves")
+      .select("store_key, unit, points")
+      .eq("home_id", homeId);
+    const resolved = resolveValueCurves(curveRows ?? []);
+
+    const shapeFrom = new Date(
+      Date.now() - PRICE_SHAPE_WINDOW_DAYS * 24 * 60 * 60_000,
+    ).toISOString();
+    const { data: shapeRows } = await service
+      .from("energy_optimisation_price_slots")
+      .select("start_ts, import_price_sek_per_kwh")
+      .eq("home_id", homeId)
+      .gte("start_ts", shapeFrom)
+      .order("start_ts");
+    const priceShape = buildPriceShape(shapeRows ?? [], stored.timezone);
+
+    const snapshot: OptimisationSnapshotV5 = {
+      ...stored,
+      value_curves: {
+        pool: resolved.curves.pool.curve,
+        ev: resolved.curves.ev.curve,
+      },
+    };
+
+    let generated;
+    try {
+      generated = generateOptimisationPlan(snapshot, new Date(), priceShape);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "replan failed";
+      // The commonest case by far: the snapshot has aged past the planner's
+      // freshness limit. Say so plainly rather than returning a bare failure,
+      // because the remedy is simply to wait for the next push.
+      return json(
+        { error: "cannot_replan", detail, warnings: resolved.warnings },
+        409,
+      );
+    }
+
+    const { error: writeError } = await service
+      .from("energy_optimisation_current")
+      .update({
+        plan: generated,
+        issued_at: generated.issued_at,
+        valid_until: generated.valid_until,
+        binding_until: generated.binding_until,
+        status: generated.status,
+        model_version: generated.model_version,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("home_id", homeId);
+    if (writeError) {
+      console.error("[ENERGY-REPLAN] write failed", writeError);
+      return json({ error: "storage_failed", detail: writeError.message }, 500);
+    }
+
+    return json({
+      status: generated.status,
       issued_at: generated.issued_at,
       valid_until: generated.valid_until,
-      binding_until: generated.binding_until,
-      status: generated.status,
       model_version: generated.model_version,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("home_id", homeId);
-  if (writeError) {
-    console.error("[ENERGY-REPLAN] write failed", writeError);
-    return json({ error: "storage_failed" }, 500);
+      validation_errors: generated.validation_errors,
+      store_diagnostics: generated.plans.priority.store_diagnostics ?? [],
+      warnings: resolved.warnings,
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error("[ENERGY-REPLAN] unhandled", detail, error);
+    return json({ error: "replan_failed", detail }, 500);
   }
-
-  return json({
-    status: generated.status,
-    issued_at: generated.issued_at,
-    valid_until: generated.valid_until,
-    model_version: generated.model_version,
-    validation_errors: generated.validation_errors,
-    store_diagnostics: generated.plans.priority.store_diagnostics,
-    warnings: resolved.warnings,
-  });
 });

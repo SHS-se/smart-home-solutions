@@ -206,9 +206,22 @@ const ValueCurvesTab: React.FC<Props> = ({
     });
     setReplanning(false);
     if (error) {
+      // supabase-js reports only "non-2xx status code" for a failed call, so
+      // the function's own explanation has to be read off the response body.
+      // Without this the first failure of this button said nothing at all.
+      let detail = error.message;
+      const response = (error as { context?: Response }).context;
+      if (response && typeof response.json === 'function') {
+        try {
+          const body = await response.json();
+          detail = body?.detail ?? body?.error ?? detail;
+        } catch {
+          // Keep the generic message rather than replacing it with a parse error.
+        }
+      }
       toast({
         title: t('Kunde inte planera om', 'Could not replan'),
-        description: error.message,
+        description: detail,
         variant: 'destructive',
       });
       return;
