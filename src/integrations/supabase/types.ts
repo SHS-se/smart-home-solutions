@@ -2168,6 +2168,96 @@ export type Database = {
           },
         ]
       }
+      energy_optimisation_value_curves: {
+        Row: {
+          customer_id: string
+          home_id: string
+          id: string
+          points: Json
+          store_key: string
+          unit: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          customer_id: string
+          home_id: string
+          id?: string
+          points: Json
+          store_key: string
+          unit: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          customer_id?: string
+          home_id?: string
+          id?: string
+          points?: Json
+          store_key?: string
+          unit?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "energy_optimisation_value_curves_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_optimisation_value_curves_home_id_fkey"
+            columns: ["home_id"]
+            isOneToOne: false
+            referencedRelation: "homes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      energy_optimisation_value_settings: {
+        Row: {
+          battery_degradation_sek_per_kwh: number
+          customer_id: string
+          home_id: string
+          updated_at: string
+          updated_by: string | null
+          vehicle_fallback_sek_per_km: number | null
+        }
+        Insert: {
+          battery_degradation_sek_per_kwh?: number
+          customer_id: string
+          home_id: string
+          updated_at?: string
+          updated_by?: string | null
+          vehicle_fallback_sek_per_km?: number | null
+        }
+        Update: {
+          battery_degradation_sek_per_kwh?: number
+          customer_id?: string
+          home_id?: string
+          updated_at?: string
+          updated_by?: string | null
+          vehicle_fallback_sek_per_km?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "energy_optimisation_value_settings_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_optimisation_value_settings_home_id_fkey"
+            columns: ["home_id"]
+            isOneToOne: true
+            referencedRelation: "homes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       energy_optimisation_zone_models: {
         Row: {
           background_gain_c_per_h: number | null

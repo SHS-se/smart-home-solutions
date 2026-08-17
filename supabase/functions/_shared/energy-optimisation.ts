@@ -25,10 +25,15 @@ import {
   stepPoolTemperature,
   WATER_KWH_PER_M3_K,
 } from "./store-models.ts";
-import { batteryValueCurve, marginalValue } from "./store-value.ts";
 import {
+  batteryValueCurve,
+  marginalValue,
+  type UtilityCurve,
+} from "./store-value.ts";
+import {
+  DEFAULT_VALUE_CURVES,
   DEFAULT_VALUE_SETTINGS,
-  resolveValueCurves,
+  type ValueStoreKey,
   vehicleRangeCurve,
 } from "./value-curves.ts";
 
@@ -313,6 +318,15 @@ export interface OptimisationSnapshotV5 {
   // moves to marginal value at once. A planner reading a state for one store
   // and an energy budget for another cannot rank them against each other.
   pool?: PoolStateInput | null;
+  /**
+   * The home's utility curves, resolved by the edge before planning.
+   *
+   * Set server-side rather than sent by Home Assistant: the curves are a
+   * customer preference held in the portal, and the integration has no business
+   * knowing what a degree of pool water is worth. Absent means the shipped
+   * defaults apply, which is what a home that has never opened the editor gets.
+   */
+  value_curves?: Partial<Record<ValueStoreKey, UtilityCurve>> | null;
   grid: {
     import_limit_w: number;
     export_limit_w: number;
@@ -1740,7 +1754,10 @@ function buildDispatchStores(
   const stores: DispatchStore[] = [];
   const count = slots.length;
   const outdoor = snapshot.outdoor_temperature_c as number[] | null;
-  const { curves } = resolveValueCurves([]);
+  const curves = {
+    pool: snapshot.value_curves?.pool ?? DEFAULT_VALUE_CURVES.pool,
+    ev: snapshot.value_curves?.ev ?? DEFAULT_VALUE_CURVES.ev,
+  };
 
   if (snapshot.capabilities.pool) {
     const pool = snapshot.pool;
@@ -1754,7 +1771,7 @@ function buildDispatchStores(
     const airAt = (index: number) => outdoor?.[index] ?? 15;
     stores.push({
       key: "pool",
-      curve: curves.pool.curve,
+      curve: curves.pool,
       initial_state: pool.water_temperature_c,
       max_power_w: SEEDED_POOL_HEAT_PUMP.rated_power_w,
       min_run_slots: 4,

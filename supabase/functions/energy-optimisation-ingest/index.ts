@@ -28,6 +28,7 @@ import {
   TRAINING_WINDOW_DAYS,
   zoneModelRows,
 } from "../_shared/thermal-training.ts";
+import { resolveValueCurves } from "../_shared/value-curves.ts";
 import {
   buildComfortForecast,
   isZoneComfortSchedule,
@@ -1292,6 +1293,25 @@ serve(async (req) => {
       } else {
         priceShape = buildPriceShape(shapeRows ?? [], snapshot.timezone);
       }
+
+      // The home's own curves, if it has edited any. Resolved here rather than
+      // inside the planner so a malformed row degrades to the shipped default
+      // with a warning instead of failing the plan.
+      const { data: curveRows } = await supabase
+        .from("energy_optimisation_value_curves")
+        .select("store_key, unit, points")
+        .eq("home_id", auth.homeId);
+      const resolved = resolveValueCurves(curveRows ?? []);
+      for (const warning of resolved.warnings) {
+        console.warn("[ENERGY-OPTIMISATION] value curve", warning);
+      }
+      snapshot = {
+        ...snapshot,
+        value_curves: {
+          pool: resolved.curves.pool.curve,
+          ev: resolved.curves.ev.curve,
+        },
+      };
 
       let thermalZones: ProjectionZoneInput[] = [];
       try {
