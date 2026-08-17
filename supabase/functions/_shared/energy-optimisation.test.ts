@@ -1511,3 +1511,54 @@ Deno.test("a car past its charge limit leaves the surplus alone", () => {
     `charging past the limit is what the flat tail exists to prevent, got ${charged} kWh`,
   );
 });
+
+Deno.test("the plan explains why each store bought what it did", () => {
+  // A pool one degree above the top of its own curve is right to do nothing.
+  // Establishing that previously meant querying the database for the snapshot
+  // and re-running the planner locally, because the plan said only that it was
+  // valid. It now carries the comparison that produced the outcome.
+  const base = horizon();
+  const snapshot = horizon({
+    pool: { water_temperature_c: 30.15, volume_m3: 55 },
+    capabilities: { ...base.capabilities, ev: true, pool: true },
+    ev_battery: {
+      name: "Tesla Model Y",
+      connected: true,
+      capacity_kwh: 77.25,
+      soc: 0.56,
+      departure_target_soc: 0.8,
+      charge_efficiency: 0.92,
+      available_from: base.slots[0].start,
+      departure: null,
+      priority: 3,
+      source_entity_ids: {
+        connected: "binary_sensor.cable",
+        soc: "sensor.level",
+        target_soc: "number.limit",
+        energy_remaining: null,
+        charge_current: "number.current",
+      },
+    },
+  });
+
+  const plan = generateOptimisationPlan(snapshot, new Date(NOW));
+  const byKey = new Map(
+    plan.plans.priority.store_diagnostics.map((entry) => [entry.key, entry]),
+  );
+
+  const pool = byKey.get("pool")!;
+  assertEquals(pool.reason, "state_above_curve");
+  assertEquals(pool.planned_kwh, 0);
+  assertEquals(pool.marginal_value_sek_per_kwh, 0);
+  assertEquals(pool.unit, "celsius");
+  assertEquals(pool.state, 30.15);
+
+  // And a car below its own charge limit says the opposite, in the same units.
+  const ev = byKey.get("ev")!;
+  assertEquals(ev.reason, "scheduled");
+  assert(ev.planned_kwh > 0);
+  assert(
+    ev.marginal_value_sek_per_kwh > ev.cheapest_energy_sek_per_kwh,
+    "a store buys when its value beats the cheapest energy it could have used",
+  );
+});

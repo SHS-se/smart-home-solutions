@@ -25,7 +25,7 @@ import {
   stepPoolTemperature,
   WATER_KWH_PER_M3_K,
 } from "./store-models.ts";
-import { batteryValueCurve } from "./store-value.ts";
+import { batteryValueCurve, marginalValue } from "./store-value.ts";
 import {
   DEFAULT_VALUE_SETTINGS,
   resolveValueCurves,
@@ -413,6 +413,8 @@ export interface GeneratedPlan {
    * and the portal read this.
    */
   dispatched_devices: string[];
+  /** Why each dispatched store bought what it did (empty on schema 5). */
+  store_diagnostics: StoreDiagnostic[];
 }
 
 export interface OptimisationPlanV5 {
@@ -494,6 +496,37 @@ interface Schedule {
   dispatched: Set<string>;
   batteryChargeW: number[];
   batteryDischargeW: number[];
+  storeDiagnostics: StoreDiagnostic[];
+}
+
+/**
+ * Why a store did what it did, in the plan itself.
+ *
+ * A planner that only reports validation errors cannot answer "why is nothing
+ * scheduled?", which is the question actually asked of it. Answering it
+ * previously meant querying the database for the snapshot and re-running the
+ * planner locally — for a pool that turned out to be sitting one degree above
+ * the top of its own curve and was therefore right to do nothing.
+ *
+ * Every number here is in the units the decision was made in, so the comparison
+ * that produced the outcome can be read directly: a store buys when its
+ * marginal value beats the cheapest energy it could have used.
+ */
+export interface StoreDiagnostic {
+  key: string;
+  unit: string;
+  state: number;
+  /** What one more kWh into this store is worth right now, in SEK. */
+  marginal_value_sek_per_kwh: number;
+  /** The cheapest energy available to it anywhere in the horizon, in SEK. */
+  cheapest_energy_sek_per_kwh: number;
+  planned_kwh: number;
+  returned_kwh: number;
+  reason:
+    | "scheduled"
+    | "state_above_curve"
+    | "value_below_price"
+    | "no_headroom";
 }
 
 const finite = (value: unknown): value is number =>
@@ -1325,6 +1358,7 @@ function emptySchedule(length: number): Schedule {
     dispatched: new Set<string>(),
     batteryChargeW: new Array(length).fill(0),
     batteryDischargeW: new Array(length).fill(0),
+    storeDiagnostics: [],
   };
 }
 
@@ -1885,7 +1919,43 @@ function scheduleServices(
         grid_export_limit_w: snapshot.grid.export_limit_w,
       },
     );
+    const dispatchSlots = slots.map((slot, index) => ({
+      pv_w: slot.pv_w,
+      fixed_load_w: fixedLoadW(slot) + reservedW[index],
+      import_price_sek_per_kwh: slot.shadow_import_sek_per_kwh,
+      export_price_sek_per_kwh: slot.shadow_export_sek_per_kwh,
+    }));
     for (const store of dispatchStores) {
+      // Record the comparison that decided this store, whichever way it went.
+      const plannedKwh = dispatched.power_w[store.key]
+        .reduce((total, watts) => total + watts, 0) / 4_000;
+      const returnedKwh = dispatched.discharge_w[store.key]
+        .reduce((total, watts) => total + watts, 0) / 4_000;
+      const value = marginalValue(store.curve, store.initial_state) *
+        store.units_per_kwh(store.initial_state, 0);
+      const cheapest = dispatchSlots.reduce((lowest, slot) => {
+        const surplusW = slot.pv_w - slot.fixed_load_w;
+        const price = surplusW > 0
+          ? slot.export_price_sek_per_kwh
+          : slot.import_price_sek_per_kwh;
+        return Math.min(lowest, price);
+      }, Number.POSITIVE_INFINITY);
+      schedule.storeDiagnostics.push({
+        key: store.key,
+        unit: store.curve.unit,
+        state: round(store.initial_state, 3),
+        marginal_value_sek_per_kwh: round(value, 4),
+        cheapest_energy_sek_per_kwh: round(cheapest, 4),
+        planned_kwh: round(plannedKwh, 3),
+        returned_kwh: round(returnedKwh, 3),
+        reason: plannedKwh > 0
+          ? "scheduled"
+          : value <= 0
+          ? "state_above_curve"
+          : value < cheapest
+          ? "value_below_price"
+          : "no_headroom",
+      });
       schedule.dispatched.add(store.key);
       const powers = dispatched.power_w[store.key];
       const returns = dispatched.discharge_w[store.key];
@@ -3000,6 +3070,7 @@ function buildPlan(
     service_currents_a: scheduled.schedule.serviceCurrentsA,
     service_inhibited_slots: scheduled.schedule.serviceInhibitedSlots,
     dispatched_devices: [...scheduled.schedule.dispatched].sort(),
+    store_diagnostics: scheduled.schedule.storeDiagnostics,
   };
 }
 
