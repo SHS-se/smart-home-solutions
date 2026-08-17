@@ -9,17 +9,16 @@ import PlanWorkspace, { type PlanSection } from '@/components/portal/energy/Plan
 import ROITab from '@/components/portal/energy/ROITab';
 import HomeSelector from '@/components/portal/energy/HomeSelector';
 import ComfortSchedulesTab from '@/components/portal/energy/ComfortSchedulesTab';
-import ValueCurvesTab from '@/components/portal/energy/ValueCurvesTab';
 
 interface EnergyModelingProps {
   customerId?: string;
   isStaffView?: boolean;
 }
 
-type EnergyTab = 'roi' | 'comfort' | 'values' | PlanSection;
+type EnergyTab = 'roi' | 'comfort' | PlanSection;
 
 const ENERGY_TABS = new Set<EnergyTab>([
-  'roi', 'plan', 'devices', 'comfort', 'values', 'thermal', 'economics',
+  'roi', 'plan', 'devices', 'comfort', 'thermal', 'economics',
 ]);
 
 /**
@@ -102,7 +101,6 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
     { key: 'plan', label: t('Plan', 'Plan') },
     { key: 'devices', label: t('Enheter', 'Devices') },
     { key: 'comfort', label: t('Komfort', 'Comfort') },
-    { key: 'values', label: t('Värden', 'Values') },
     { key: 'thermal', label: t('Termik', 'Thermal') },
     { key: 'economics', label: t('Ekonomi', 'Economics') },
   ];
@@ -142,8 +140,6 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
         <ROITab customerId={resolvedCustomerId} homeId={selectedHomeId} homeCount={homeCount} />
       ) : tab === 'comfort' ? (
         <ComfortSchedulesTab customerId={resolvedCustomerId} homeId={selectedHomeId} />
-      ) : tab === 'values' ? (
-        <ValueCurvesTab customerId={resolvedCustomerId} homeId={selectedHomeId} />
       ) : (
         <PlanWorkspace
           section={tab}

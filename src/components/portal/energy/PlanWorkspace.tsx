@@ -45,6 +45,7 @@ import { usePlanModel } from './plan/usePlanModel';
 import PowerSection from './plan/sections/PowerSection';
 import ThermalSection from './plan/sections/ThermalSection';
 import EconomicsSection from './plan/sections/EconomicsSection';
+import ValueCurvesTab from './ValueCurvesTab';
 
 import EmpiricalDeviceModelsCard, {
   type EmpiricalEnergyDevice,
@@ -298,6 +299,8 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
     content = (
       <PlanView
         section={section}
+        customerId={null}
+        homeId={null}
         current={demoCurrent}
         actuals={demoActuals}
         empiricalDevices={[]}
@@ -389,6 +392,8 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
         )}
         <PlanView
           section={section}
+          customerId={customerId}
+          homeId={homeId}
           current={current}
           actuals={actuals}
           empiricalDevices={empiricalDevices}
@@ -448,6 +453,8 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
 
 const PlanView: React.FC<{
   section: PlanSection;
+  customerId: string | null;
+  homeId: string | null;
   current: CurrentRow;
   actuals: ActualEnergySlot[];
   empiricalDevices: EmpiricalEnergyDevice[];
@@ -463,6 +470,8 @@ const PlanView: React.FC<{
   onDayWindowChange: (value: DayWindow) => void;
 }> = ({
   section,
+  customerId,
+  homeId,
   current,
   actuals,
   empiricalDevices,
@@ -490,6 +499,32 @@ const PlanView: React.FC<{
   // the first quarter at or after that threshold rather than the threshold
   // itself. Shown because "is this plan stale or is the planner ignoring me?"
   // was previously unanswerable from the page.
+  // The price the planner is comparing against right now, and where each store
+  // actually sits, so the curve chart marks real positions rather than a
+  // textbook example.
+  const livePrices = useMemo(() => {
+    const slot = plan?.plans?.priority?.slots?.find(
+      entry => Date.parse(entry.start) <= now &&
+        now < Date.parse(entry.start) + 15 * 60_000,
+    ) ?? plan?.plans?.priority?.slots?.[0];
+    return {
+      import: typeof slot?.import_price_sek_per_kwh === 'number'
+        ? slot.import_price_sek_per_kwh
+        : null,
+      export: typeof slot?.export_price_sek_per_kwh === 'number'
+        ? slot.export_price_sek_per_kwh
+        : null,
+    };
+  }, [plan, now]);
+
+  const vehicleRangeKm = useMemo(() => {
+    const vehicle = plan?.ev_battery;
+    if (!vehicle?.capacity_kwh || typeof vehicle.soc !== 'number') return null;
+    // The same seeded 0.16 kWh/km the planner uses, so the marker and the
+    // decision agree.
+    return (vehicle.soc * vehicle.capacity_kwh) / 0.16;
+  }, [plan]);
+
   const nextReplanAt = useMemo(() => {
     if (!plan?.valid_until) return null;
     const validUntil = Date.parse(plan.valid_until);
@@ -678,7 +713,26 @@ const PlanView: React.FC<{
               zoneModels={zoneModels}
             />
           )}
-          {section === 'economics' && <EconomicsSection model={model} />}
+          {section === 'economics' && (
+            <>
+              <EconomicsSection model={model} />
+              {/*
+                The curves sit under Economics because that is where the prices
+                they are compared against already are: a curve is only readable
+                next to the import and export price it has to beat.
+              */}
+              <div className="mt-6">
+                <ValueCurvesTab
+                  customerId={customerId}
+                  homeId={homeId}
+                  importPriceSekPerKwh={livePrices.import}
+                  exportPriceSekPerKwh={livePrices.export}
+                  poolTemperatureC={plan?.pool?.water_temperature_c ?? null}
+                  vehicleRangeKm={vehicleRangeKm}
+                />
+              </div>
+            </>
+          )}
         </CardContent>
       </Card>
     </div>

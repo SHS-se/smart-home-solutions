@@ -195,12 +195,15 @@ export function usePlanModel(
       },
     ]) ?? []),
   ];
+  // Prices only. The three cumulative-cost lines that used to sit here plotted
+  // running SEK on a second axis against SEK/kWh on the first, so the shapes
+  // were not comparable and the numbers they implied were not readable off
+  // either axis. The headline cost figures already state the same thing
+  // exactly, and the value curves below say what the prices are being compared
+  // against, which is the question this chart is actually asked.
   const economicsSeries = [
     { key: 'importPrice' as const, label: t('Köppris', 'Import price'), color: COLORS.import },
     { key: 'exportPrice' as const, label: t('Säljpris', 'Export price'), color: COLORS.export },
-    { key: 'plannedCost' as const, label: t('Kumulativ kostnad med plan', 'Cumulative cost with plan'), color: '#2563eb' },
-    { key: 'unplannedCost' as const, label: t('Kumulativ kostnad utan plan', 'Cumulative cost without plan'), color: '#64748b' },
-    { key: 'costDifference' as const, label: t('Kostnadsskillnad', 'Cost difference'), color: '#a855f7' },
   ];
   const storageSeries = [
     ...(hasBattery ? [

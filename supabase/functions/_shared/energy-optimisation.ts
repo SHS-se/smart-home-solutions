@@ -450,6 +450,8 @@ export interface OptimisationPlanV5 {
   policy: OptimisationSnapshotV5["policy"];
   battery: BatteryInput | null;
   ev_battery: EvBatteryInput | null;
+  /** Echoed like the batteries, so a reader can see the state it was planned from. */
+  pool: PoolStateInput | null;
   grid: OptimisationSnapshotV5["grid"];
   device_models: EmpiricalDeviceModelInput[];
   services: ServiceInput[];
@@ -3184,6 +3186,7 @@ export function generateOptimisationPlan(
     policy: snapshot.policy,
     battery: snapshot.battery,
     ev_battery: snapshot.ev_battery ?? null,
+    pool: snapshot.pool ?? null,
     grid: snapshot.grid,
     device_models: snapshot.device_models,
     services: snapshot.services,
