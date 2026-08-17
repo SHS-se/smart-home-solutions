@@ -542,7 +542,8 @@ export interface StoreDiagnostic {
     | "scheduled"
     | "state_above_curve"
     | "value_below_price"
-    | "no_headroom";
+    /** Cleared the cheapest price somewhere, but that energy went elsewhere. */
+    | "outbid";
 }
 
 const finite = (value: unknown): value is number =>
@@ -1845,22 +1846,44 @@ function buildDispatchStores(
       const surplusW = slot.pv_w - fixedLoadW(slot);
       return total + (surplusW > 0 ? surplusW / 1_000 * SLOT_HOURS : 0);
     }, 0);
-    // The covering window: how much draw the battery has to carry before enough
-    // surplus arrives to refill it. Summing the draw over the *whole* horizon
-    // instead made the covering band swallow the entire pack over 72 hours, so
+    // The covering band: the draw of the longest single deficit run in the
+    // horizon — one night — and the prices during it.
+    //
+    // Two earlier attempts got this wrong in opposite directions. Summing the
+    // deficit over the whole horizon made the band swallow the entire pack, so
     // every stored kWh was priced at the dearest import in three days and the
-    // battery hoarded charge through expensive evenings rather than spending it.
-    // One night is what a pack of this size actually covers.
+    // battery hoarded through expensive evenings. Walking forward until enough
+    // surplus had arrived to refill the pack fixed that, but when a plan is
+    // issued in the morning that window closes before the night even begins, so
+    // the band collapsed to nothing and the battery never charged for the night
+    // at all. What the battery actually has to carry is one deficit run, and
+    // that is the same quantity whatever time of day the plan is built.
     let expectedDrawKwh = 0;
-    let refillableKwh = 0;
-    const windowPrices: number[] = [];
+    let runKwh = 0;
+    let runPrices: number[] = [];
+    let windowPrices: number[] = [];
     for (const slot of slots) {
       const netW = slot.pv_w - fixedLoadW(slot);
-      if (netW > 0) refillableKwh += netW / 1_000 * SLOT_HOURS;
-      else expectedDrawKwh += -netW / 1_000 * SLOT_HOURS;
-      windowPrices.push(slot.shadow_import_sek_per_kwh);
-      if (refillableKwh >= usableKwh) break;
+      if (netW < 0) {
+        runKwh += -netW / 1_000 * SLOT_HOURS;
+        runPrices.push(slot.shadow_import_sek_per_kwh);
+      } else {
+        if (runKwh > expectedDrawKwh) {
+          expectedDrawKwh = runKwh;
+          windowPrices = runPrices;
+        }
+        runKwh = 0;
+        runPrices = [];
+      }
     }
+    if (runKwh > expectedDrawKwh) {
+      expectedDrawKwh = runKwh;
+      windowPrices = runPrices;
+    }
+    if (windowPrices.length === 0) {
+      windowPrices = slots.map((slot) => slot.shadow_import_sek_per_kwh);
+    }
+
     // Derived every solve from the forecast, never configured (§8.4). This is
     // what replaces the end-of-solar SOC target and the export floor price.
     const curve = batteryValueCurve({
@@ -1878,9 +1901,17 @@ function buildDispatchStores(
       stores.push({
         key: "battery",
         curve,
-        initial_state: battery.soc * battery.capacity_kwh,
-        min_state: battery.min_soc * battery.capacity_kwh,
-        max_state: battery.max_soc * battery.capacity_kwh,
+        // State is measured in *usable* kWh above the floor, because that is
+        // the domain `batteryValueCurve` defines its breakpoints over. Passing
+        // absolute kWh offset every lookup by the reserve, which mattered
+        // little against a step function and mis-prices every unit once the
+        // curve is interpolated.
+        initial_state: Math.max(
+          0,
+          (battery.soc - battery.min_soc) * battery.capacity_kwh,
+        ),
+        min_state: 0,
+        max_state: usableKwh,
         max_power_w: battery.charge_max_w,
         // No `wear_sek_per_kwh` here: `batteryValueCurve` already subtracts
         // degradation from what stored energy is worth. Charging it a second
@@ -1973,7 +2004,7 @@ function scheduleServices(
           ? "state_above_curve"
           : value < cheapest
           ? "value_below_price"
-          : "no_headroom",
+          : "outbid",
       });
       schedule.dispatched.add(store.key);
       const powers = dispatched.power_w[store.key];

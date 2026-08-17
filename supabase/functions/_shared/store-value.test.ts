@@ -43,15 +43,19 @@ Deno.test("utility integrates the marginal value, and a move is its difference",
     points: [{ at: 4, sek_per_unit: 2 }, { at: 10, sek_per_unit: 0.5 }],
   };
 
+  // Flat below the first breakpoint, then a straight decline to the next.
   assertEquals(marginalValue(curve, 0), 2);
-  assertEquals(marginalValue(curve, 6), 0.5);
+  assertEquals(marginalValue(curve, 4), 2);
+  assertEquals(marginalValue(curve, 7), 1.25, "halfway down the 4→10 segment");
+  assertEquals(marginalValue(curve, 10), 0.5);
   assertEquals(marginalValue(curve, 12), 0, "past the top it is worth nothing");
+  // Rectangle below the first point, trapezoid above it.
   assertEquals(totalUtility(curve, 4), 8);
-  assertEquals(totalUtility(curve, 10), 8 + 3);
+  assertEquals(totalUtility(curve, 10), 8 + 6 * (2 + 0.5) / 2);
   // A large move must use the integral, not marginal × step, or the curvature
   // that motivated having a curve is thrown away.
-  assertEquals(valueOfMove(curve, 0, 10), 11);
-  assertEquals(valueOfMove(curve, 10, 4), -3);
+  assertEquals(valueOfMove(curve, 0, 10), 8 + 7.5);
+  assertEquals(valueOfMove(curve, 10, 4), -7.5);
 });
 
 Deno.test("§8.12 #1 — a sunny tomorrow makes exporting correct", () => {
@@ -152,7 +156,10 @@ Deno.test("§8.12 #4 — the car outranks the pool, then stops outranking it", (
   assertEquals(nearlyEmpty[0].key, "ev");
 
   const nearlyFull = rankStores([
-    { key: "ev", curve: evCurve, at: 280, unitsPerKwh: evUnitsPerKwh },
+    // Interpolation makes the ordering depend on where in a band a store sits,
+    // which is the point of it: at 299 km the car is almost at the top of its
+    // curve rather than anywhere inside a flat step.
+    { key: "ev", curve: evCurve, at: 299, unitsPerKwh: evUnitsPerKwh },
     { key: "pool", curve: poolCurve, at: 24, unitsPerKwh: poolUnitsPerKwh },
   ]);
   assertEquals(

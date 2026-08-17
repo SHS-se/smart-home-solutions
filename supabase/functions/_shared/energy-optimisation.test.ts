@@ -1338,11 +1338,10 @@ Deno.test("schema 6 without pool state falls back rather than guessing", () => {
 });
 
 Deno.test("schema 6 lets the dispatch own the battery, and simulate follows", () => {
-  const base = input();
-  const snapshot = input({
-    schema_version: 6,
+  // The 72-hour fixture, because the battery is sized against one night's draw
+  // and a horizon shorter than a night has no night in it to measure.
+  const snapshot = horizon({
     pool: { water_temperature_c: 29, volume_m3: 55 },
-    outdoor_temperature_c: base.slots.map(() => 22),
   });
 
   const plan = generateOptimisationPlan(snapshot, new Date(NOW));
@@ -1547,11 +1546,16 @@ Deno.test("the plan explains why each store bought what it did", () => {
   );
 
   const pool = byKey.get("pool")!;
-  assertEquals(pool.reason, "state_above_curve");
   assertEquals(pool.planned_kwh, 0);
-  assertEquals(pool.marginal_value_sek_per_kwh, 0);
   assertEquals(pool.unit, "celsius");
   assertEquals(pool.state, 30.15);
+  // Just past the top breakpoint the pool is worth a little rather than
+  // nothing — the interpolated curve declines to zero at 31 °C instead of
+  // falling off a step at 30 — so the honest reason is that what it is worth
+  // does not clear the price, not that it is full.
+  assertEquals(pool.reason, "value_below_price");
+  assert(pool.marginal_value_sek_per_kwh > 0);
+  assert(pool.marginal_value_sek_per_kwh < pool.cheapest_energy_sek_per_kwh);
 
   // And a car below its own charge limit says the opposite, in the same units.
   const ev = byKey.get("ev")!;

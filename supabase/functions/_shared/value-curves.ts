@@ -101,10 +101,17 @@ export function vehicleRangeCurve(targetRangeKm: number): UtilityCurve {
   const target = Math.max(20, targetRangeKm);
   return {
     unit: "km",
+    // Breakpoints are vertices of an interpolated curve, not band values, so
+    // the anxiety zone needs its own pair: with only one high point the decline
+    // to the wanted level would be spread across the whole mid range and a car
+    // at half charge would bid several times what a kilometre is worth.
     points: [
-      { at: round2(target * 0.25), sek_per_unit: 2.0 },
+      { at: round2(target * 0.15), sek_per_unit: 2.0 },
+      { at: round2(target * 0.3), sek_per_unit: 0.45 },
       { at: round2(target), sek_per_unit: 0.32 },
-      { at: round2(target * 1.3), sek_per_unit: 0.05 },
+      // Ends at zero so the top is a slope rather than a cliff: an interpolated
+      // curve stopping at a positive value drops straight to nothing there.
+      { at: round2(target * 1.3), sek_per_unit: 0 },
     ],
   };
 }

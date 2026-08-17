@@ -88,18 +88,35 @@ export function validateCurve(curve: UtilityCurve): CurveRejection | null {
 /**
  * Marginal value of one more unit of state, in SEK per unit.
  *
- * Below the first breakpoint the first segment's value applies, and above the
- * last it is zero — a store past the top of its curve is full in the only sense
- * that matters, and further energy into it is worth nothing. That is how "the
- * top fifth of the battery is not worth buying from the grid" and "10–12 kWh
- * carries a summer night" arrive without either being configured.
+ * Interpolated between breakpoints rather than held constant across them, so
+ * the curve declines continuously and two stores can be ranked against each
+ * other at any state. A piecewise-*constant* marginal value — the derivative of
+ * piecewise-linear utility — is what an LP formulation needs, but this planner
+ * dispatches greedily on marginal value directly, so it is free to use the
+ * smoother function and gets finer prioritisation for it. With a step, every
+ * temperature between two breakpoints bid identically and a pool at 25.1 °C
+ * was indistinguishable from one at 27.9 °C.
+ *
+ * Above the last breakpoint the value is zero: a store past the top of its
+ * curve is full in the only sense that matters. Curves should therefore end at
+ * or near zero, or that transition is a cliff rather than a slope.
  */
 export function marginalValue(curve: UtilityCurve, at: number): number {
   const points = curve.points;
   if (points.length === 0) return 0;
-  if (at < points[0].at) return points[0].sek_per_unit;
-  for (let index = 0; index < points.length; index += 1) {
-    if (at < points[index].at) return points[index].sek_per_unit;
+  // Flat below the first breakpoint: the first unit into an empty store is
+  // worth what the curve says, and there is nothing below it to interpolate to.
+  if (at <= points[0].at) return points[0].sek_per_unit;
+  for (let index = 1; index < points.length; index += 1) {
+    const previous = points[index - 1];
+    const next = points[index];
+    if (at <= next.at) {
+      const span = next.at - previous.at;
+      if (span <= 0) return next.sek_per_unit;
+      const ratio = (at - previous.at) / span;
+      return previous.sek_per_unit +
+        (next.sek_per_unit - previous.sek_per_unit) * ratio;
+    }
   }
   return 0;
 }
@@ -119,23 +136,33 @@ export function marginalValue(curve: UtilityCurve, at: number): number {
 export function marginalValueHeld(curve: UtilityCurve, at: number): number {
   const points = curve.points;
   if (points.length === 0 || at <= 0) return 0;
-  for (const point of points) {
-    if (at <= point.at) return point.sek_per_unit;
-  }
-  return points[points.length - 1].sek_per_unit;
+  const last = points[points.length - 1];
+  // Above the domain the buy side is zero, but what is *held* there is still
+  // worth the top of the curve. Returning zero made a full battery value its
+  // charge at nothing and discharge into any positive price.
+  if (at >= last.at) return last.sek_per_unit;
+  return marginalValue(curve, at);
 }
 
 /** Total utility of holding `at` units, the integral of the marginal value. */
 export function totalUtility(curve: UtilityCurve, at: number): number {
   const points = curve.points;
   if (points.length === 0 || at <= 0) return 0;
+  // Rectangle below the first breakpoint, then trapezoids between them, because
+  // the marginal value is now a sloped line rather than a flat step.
   let total = 0;
-  let previous = 0;
-  for (const point of points) {
-    const upper = Math.min(at, point.at);
-    if (upper > previous) total += (upper - previous) * point.sek_per_unit;
-    previous = Math.max(previous, point.at);
-    if (at <= point.at) break;
+  const first = points[0];
+  const flatTo = Math.min(at, first.at);
+  if (flatTo > 0) total += flatTo * first.sek_per_unit;
+  for (let index = 1; index < points.length; index += 1) {
+    const previous = points[index - 1];
+    const next = points[index];
+    if (at <= previous.at) break;
+    const upper = Math.min(at, next.at);
+    const span = upper - previous.at;
+    if (span <= 0) continue;
+    const valueAtUpper = marginalValue(curve, upper);
+    total += span * (previous.sek_per_unit + valueAtUpper) / 2;
   }
   return total;
 }
@@ -238,16 +265,33 @@ export function batteryValueCurve(
     const remainingKwh = usableKwh - coveringKwh;
     const refilledBySun = futureSurplusKwh >= remainingKwh;
     const level = (refilledBySun ? cheapest : median) / efficiency;
-    points.push({
-      at: usableKwh,
-      sek_per_unit: Math.max(
-        0,
-        Math.min(
-          level - degradationSekPerKwh,
-          points[0]?.sek_per_unit ?? Number.POSITIVE_INFINITY,
-        ),
+    const top = Math.max(
+      0,
+      Math.min(
+        level - degradationSekPerKwh,
+        points[0]?.sek_per_unit ?? Number.POSITIVE_INFINITY,
       ),
-    });
+    );
+    // A short transition, then flat.
+    //
+    // Marginal value is interpolated between breakpoints, which is right for a
+    // household's own preference — warmth and range decline smoothly. The
+    // battery's curve is derived rather than stated, and its two regimes are
+    // genuinely separate: energy below the expected draw displaces tonight's
+    // import, energy above it is refilled by tomorrow's sun. Sloping straight
+    // between them would price the kWh just above the covering band as though
+    // it were half of tonight's, and the battery would hold charge it should
+    // have sold.
+    const transition = Math.min(
+      usableKwh,
+      coveringKwh + Math.max(0.01, usableKwh * 0.1),
+    );
+    if (transition > coveringKwh) {
+      points.push({ at: transition, sek_per_unit: top });
+    }
+    if (usableKwh > transition) {
+      points.push({ at: usableKwh, sek_per_unit: top });
+    }
   }
   return { unit: "kwh", points };
 }

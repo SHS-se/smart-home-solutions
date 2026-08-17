@@ -28,15 +28,18 @@ Deno.test("the pool default orders a cold pool above a warm one", () => {
 
 Deno.test("the EV default makes the last fifth nearly worthless", () => {
   const ev = DEFAULT_VALUE_CURVES.ev;
-  // Roughly a Model Y: 75 kWh at 0.16 kWh/km is about 470 km full.
+  // Roughly a Model Y: 75 kWh at 0.16 kWh/km is about 470 km full, against a
+  // nominal 400 km target.
   const nearlyEmpty = marginalValue(ev, 40);
-  const nearlyFull = marginalValue(ev, 400);
+  const atTarget = marginalValue(ev, 400);
+  const beyondTarget = marginalValue(ev, 480);
 
-  assert(nearlyEmpty > nearlyFull * 20, "range anxiety must dominate topping up");
+  assert(nearlyEmpty > atTarget * 5, "range anxiety must dominate topping up");
   assert(
-    nearlyFull < 0.2,
-    "the top of the pack must not outbid an ordinary import price",
+    beyondTarget < atTarget,
+    "and range beyond the charge limit must be worth less than range up to it",
   );
+  assertEquals(marginalValue(ev, 520), 0, "nothing is worth buying past full");
 });
 
 Deno.test("a missing row falls back to the default and says so", () => {

@@ -71,6 +71,19 @@ const UNIT_TEXT: Record<string, { level: [string, string]; per: [string, string]
   litre_degrees: { level: ['Litergrader', 'Litre-degrees'], per: ['SEK per litergrad', 'SEK per litre-degree'] },
 };
 
+/** What one kWh of electricity actually buys, in the store's own units. */
+const CONVERSION_TEXT: Record<ValueStoreKey, { sv: string; en: string }> = {
+  pool: {
+    sv: `En kWh el höjer poolen ca ${(UNITS_PER_KWH.pool).toFixed(3)} °C — det krävs alltså ${(1 / UNITS_PER_KWH.pool).toFixed(1)} kWh per grad (55 m³, COP 4,6).`,
+    en: `One kWh of electricity raises the pool about ${(UNITS_PER_KWH.pool).toFixed(3)} °C, so a degree takes ${(1 / UNITS_PER_KWH.pool).toFixed(1)} kWh (55 m³, COP 4.6).`,
+  },
+  ev: {
+    sv: `En kWh el ger ca ${(UNITS_PER_KWH.ev).toFixed(1)} km räckvidd (0,16 kWh/km, 92 % laddverkningsgrad).`,
+    en: `One kWh of electricity buys about ${(UNITS_PER_KWH.ev).toFixed(1)} km of range (0.16 kWh/km, 92% charging efficiency).`,
+  },
+  hot_water: { sv: '', en: '' },
+};
+
 const toDraft = (curve: UtilityCurve): Draft => ({
   points: curve.points.map(point => ({
     at: String(point.at),
@@ -353,13 +366,17 @@ const ValueCurvesTab: React.FC<Props> = ({
                 </div>
               )}
 
-              <div className="grid grid-cols-[1fr_1fr_auto] gap-3 text-xs text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
+                {t(CONVERSION_TEXT[key].sv, CONVERSION_TEXT[key].en)}
+              </p>
+              <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-3 text-xs text-muted-foreground">
                 <span>{t(text.level[0], text.level[1])}</span>
                 <span>{t(text.per[0], text.per[1])}</span>
+                <span>{t('Motsvarar (SEK/kWh el)', 'Equivalent (SEK/kWh electricity)')}</span>
                 <span className="w-9" />
               </div>
               {draft.points.map((point, index) => (
-                <div key={index} className="grid grid-cols-[1fr_1fr_auto] gap-3">
+                <div key={index} className="grid grid-cols-[1fr_1fr_1fr_auto] gap-3">
                   <Input
                     value={point.at}
                     inputMode="decimal"
@@ -372,6 +389,16 @@ const ValueCurvesTab: React.FC<Props> = ({
                     aria-label={t(text.per[0], text.per[1])}
                     onChange={event => editRow(key, index, 'sek_per_unit', event.target.value)}
                   />
+                  {/*
+                    Read-only, and the whole point of the table: the planner
+                    compares this figure with the import and export price, so a
+                    value in SEK per °C is otherwise impossible to judge.
+                  */}
+                  <div className="flex items-center px-3 text-sm tabular-nums text-muted-foreground">
+                    {Number.isFinite(Number(point.sek_per_unit))
+                      ? `${(Number(point.sek_per_unit) * UNITS_PER_KWH[key]).toFixed(2)} SEK/kWh`
+                      : '—'}
+                  </div>
                   <Button
                     variant="ghost"
                     size="icon"
