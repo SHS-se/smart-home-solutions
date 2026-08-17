@@ -186,3 +186,20 @@ Deno.test("a full store never outbids anything", () => {
   assertEquals(worthBuying(store, 0.01), false);
   assertAlmostEquals(rankStores([store])[0].sekPerKwh, 0, 1e-12);
 });
+
+Deno.test("a sunny forecast must not zero the charge that covers tonight", () => {
+  // The defect this guards: subtracting forecast surplus from the whole pack
+  // collapsed the curve to zero, so the battery refused to charge at all before
+  // a sunny day. Tomorrow's sun cannot power tonight.
+  const curve = battery(40, [0.4, 1.1, 2.0]);
+
+  assert(
+    marginalValue(curve, 1) > 1,
+    "the charge covering tonight's draw keeps its value",
+  );
+  assertEquals(
+    marginalValue(curve, 9),
+    0,
+    "while the room the sun will refill is still worth nothing to hold",
+  );
+});

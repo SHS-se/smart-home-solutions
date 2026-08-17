@@ -213,12 +213,14 @@ export function batteryValueCurve(
   const median = sorted[Math.floor(sorted.length / 2)];
   const cheapest = sorted[sorted.length - 1];
 
-  // How much of the store the sun is expected to replace for free. That energy
-  // is worth nothing to hold, because holding it displaces nothing — it simply
-  // occupies room that tomorrow's surplus would have filled.
-  const replacedKwh = Math.max(0, Math.min(usableKwh, futureSurplusKwh));
-  const scarceKwh = Math.max(0, Math.min(usableKwh - replacedKwh, usableKwh));
-  const coveringKwh = Math.max(0, Math.min(expectedDrawKwh, scarceKwh));
+  // The energy that covers the draw before the next surplus arrives. This
+  // segment survives however sunny tomorrow is, and an earlier version of this
+  // function got that wrong: it subtracted forecast surplus from the *whole*
+  // pack first, so a sunny forecast collapsed the entire curve to zero and the
+  // battery refused to charge at all. Tomorrow's sun cannot power tonight, so
+  // the charge that displaces tonight's import is worth the import it displaces
+  // no matter what the forecast says.
+  const coveringKwh = Math.max(0, Math.min(expectedDrawKwh, usableKwh));
 
   const points: { at: number; sek_per_unit: number }[] = [];
   if (coveringKwh > 0) {
@@ -228,28 +230,21 @@ export function batteryValueCurve(
       sek_per_unit: Math.max(0, dear / efficiency - degradationSekPerKwh),
     });
   }
-  if (scarceKwh > coveringKwh) {
-    points.push({
-      at: scarceKwh,
-      sek_per_unit: Math.max(
-        0,
-        Math.min(
-          median / efficiency,
-          points[0]?.sek_per_unit ?? median / efficiency,
-        ) - degradationSekPerKwh,
-      ),
-    });
-  }
-  if (usableKwh > scarceKwh) {
-    // Energy the forecast says will be free tomorrow. Worth the cheapest price
-    // ahead at most, and often nothing.
+  if (usableKwh > coveringKwh) {
+    // Everything above the covering band. If the forecast says the sun will
+    // refill this room anyway, holding it displaces nothing and it is worth the
+    // cheapest price ahead at most — often nothing, which is exactly when
+    // exporting into a spike is right.
+    const remainingKwh = usableKwh - coveringKwh;
+    const refilledBySun = futureSurplusKwh >= remainingKwh;
+    const level = (refilledBySun ? cheapest : median) / efficiency;
     points.push({
       at: usableKwh,
       sek_per_unit: Math.max(
         0,
         Math.min(
-          cheapest / efficiency - degradationSekPerKwh,
-          points[points.length - 1]?.sek_per_unit ?? 0,
+          level - degradationSekPerKwh,
+          points[0]?.sek_per_unit ?? Number.POSITIVE_INFINITY,
         ),
       ),
     });

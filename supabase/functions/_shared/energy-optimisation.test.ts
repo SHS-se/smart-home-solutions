@@ -1240,6 +1240,11 @@ Deno.test("schema 6 with pool state dispatches by temperature, not by budget", (
 
   assertEquals(plan.schema_version, 6);
   assertEquals(plan.model_version, "marginal-value-planner-v9");
+  // Asserted explicitly: an earlier version of this test checked the pool
+  // energy but not the status, and so passed while every schema 6 plan was
+  // reported infeasible by validations that still assumed fixed blocks.
+  assertEquals(plan.validation_errors, []);
+  assertEquals(plan.status, "ready");
   const priority = plan.plans.priority;
   const poolKwh = priority.slots.reduce(
     (total, slot) => total + slot.pool_w / 1_000 * 0.25,
@@ -1262,6 +1267,7 @@ Deno.test("schema 6 leaves an already-warm pool alone", () => {
   });
 
   const plan = generateOptimisationPlan(snapshot, new Date(NOW));
+  assertEquals(plan.status, "ready");
   const poolW = plan.plans.priority.slots.reduce(
     (total, slot) => total + slot.pool_w,
     0,
@@ -1282,4 +1288,52 @@ Deno.test("schema 6 without pool state falls back rather than guessing", () => {
   // No measured state means no store, so the whole plan stays on the model it
   // can actually support rather than mixing a temperature with a budget.
   assertEquals(plan.plans.priority.service_slots["pool:2026-08-10"].length > 0, true);
+});
+
+Deno.test("schema 6 lets the dispatch own the battery, and simulate follows", () => {
+  const base = input();
+  const snapshot = input({
+    schema_version: 6,
+    pool: { water_temperature_c: 29, volume_m3: 55 },
+    outdoor_temperature_c: base.slots.map(() => 22),
+  });
+
+  const plan = generateOptimisationPlan(snapshot, new Date(NOW));
+
+  assertEquals(plan.status, "ready");
+  // Conservation is still checked every slot; an unfollowed schedule would
+  // show up here as an energy-balance error rather than passing quietly.
+  assertEquals(plan.validation_errors, []);
+  const priority = plan.plans.priority;
+  for (const slot of priority.slots) {
+    assert(
+      slot.battery_soc >= snapshot.battery!.min_soc - 1e-6 &&
+        slot.battery_soc <= snapshot.battery!.max_soc + 1e-6,
+      `SOC ${slot.battery_soc} left its bounds`,
+    );
+  }
+  assert(
+    priority.slots.some((slot) => slot.battery_charge_w > 0),
+    "surplus should still reach the battery once the sinks are satisfied",
+  );
+});
+
+Deno.test("a hard battery target is not enforced once the curve prices it", () => {
+  const base = input();
+  const snapshot = input({
+    schema_version: 6,
+    pool: { water_temperature_c: 23, volume_m3: 55 },
+    outdoor_temperature_c: base.slots.map(() => 22),
+    policy: { ...base.policy, battery_target_is_hard: true },
+  });
+
+  const plan = generateOptimisationPlan(snapshot, new Date(NOW));
+
+  // §8.4 deletes the setting rather than answering it. Enforcing a target on
+  // top of the marginal-value comparison would override the thing that
+  // replaced it.
+  assertEquals(
+    plan.validation_errors.filter((error) => error.includes("battery target")),
+    [],
+  );
 });

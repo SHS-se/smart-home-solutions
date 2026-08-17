@@ -25,7 +25,11 @@ import {
   stepPoolTemperature,
   WATER_KWH_PER_M3_K,
 } from "./store-models.ts";
-import { resolveValueCurves } from "./value-curves.ts";
+import { batteryValueCurve } from "./store-value.ts";
+import {
+  DEFAULT_VALUE_SETTINGS,
+  resolveValueCurves,
+} from "./value-curves.ts";
 
 /**
  * Snapshot versions this planner can read, and the plan version it emits.
@@ -468,6 +472,18 @@ interface Schedule {
   serviceSlots: Record<string, number[]>;
   serviceCurrentsA: Record<string, number[]>;
   serviceInhibitedSlots: Record<string, number[]>;
+  /**
+   * Devices the marginal-value dispatch owns.
+   *
+   * Empty on schema 5. When it names a device, the block-model reconciliations
+   * below must not be applied to it: a dispatched store has no `required_kwh`
+   * to deliver and no per-service window to fill, so checking it against either
+   * reports a plan as infeasible for failing to obey a model it is no longer
+   * using.
+   */
+  dispatched: Set<string>;
+  batteryChargeW: number[];
+  batteryDischargeW: number[];
 }
 
 const finite = (value: unknown): value is number =>
@@ -1294,6 +1310,11 @@ function emptySchedule(length: number): Schedule {
     serviceSlots: {},
     serviceCurrentsA: {},
     serviceInhibitedSlots: {},
+    // Which devices the marginal-value dispatch owns. Empty on schema 5, where
+    // the block model and simulate's own battery rule still apply.
+    dispatched: new Set<string>(),
+    batteryChargeW: new Array(length).fill(0),
+    batteryDischargeW: new Array(length).fill(0),
   };
 }
 
@@ -1749,6 +1770,53 @@ function buildDispatchStores(
     }
   }
 
+  const battery = snapshot.battery;
+  if (battery) {
+    const usableKwh = (battery.max_soc - battery.min_soc) * battery.capacity_kwh;
+    const remainingSurplusKwh = slots.reduce((total, slot) => {
+      const surplusW = slot.pv_w - fixedLoadW(slot);
+      return total + (surplusW > 0 ? surplusW / 1_000 * SLOT_HOURS : 0);
+    }, 0);
+    const expectedDrawKwh = slots.reduce((total, slot) => {
+      const deficitW = fixedLoadW(slot) - slot.pv_w;
+      return total + (deficitW > 0 ? deficitW / 1_000 * SLOT_HOURS : 0);
+    }, 0);
+    // Derived every solve from the forecast, never configured (§8.4). This is
+    // what replaces the end-of-solar SOC target and the export floor price.
+    const curve = batteryValueCurve({
+      futureImportSekPerKwh: slots.map((slot) => slot.shadow_import_sek_per_kwh),
+      futureSurplusKwh: remainingSurplusKwh,
+      usableKwh,
+      roundTrip: battery.charge_efficiency * battery.discharge_efficiency,
+      degradationSekPerKwh: DEFAULT_VALUE_SETTINGS.battery_degradation_sek_per_kwh,
+      expectedDrawKwh,
+    });
+    if (curve.points.length > 0) {
+      stores.push({
+        key: "battery",
+        curve,
+        initial_state: battery.soc * battery.capacity_kwh,
+        min_state: battery.min_soc * battery.capacity_kwh,
+        max_state: battery.max_soc * battery.capacity_kwh,
+        max_power_w: battery.charge_max_w,
+        wear_sek_per_kwh:
+          DEFAULT_VALUE_SETTINGS.battery_degradation_sek_per_kwh,
+        retention_per_slot: 1,
+        usage_weight: new Array(count).fill(0),
+        // Charge held at the horizon edge is worth what the curve says, which
+        // is the whole of §8.4 and the reason no SOC target is needed.
+        terminal_weight: 1,
+        units_per_kwh: () => battery.charge_efficiency,
+        drift: (state) => state,
+        discharge: {
+          max_power_w: battery.discharge_max_w,
+          state_per_kwh_out: () => 1 / battery.discharge_efficiency,
+          export_allowed: snapshot.policy.battery_export_enabled,
+        },
+      });
+    }
+  }
+
   return stores.length > 0 ? stores : null;
 }
 
@@ -1785,9 +1853,18 @@ function scheduleServices(
       },
     );
     for (const store of dispatchStores) {
+      schedule.dispatched.add(store.key);
       const powers = dispatched.power_w[store.key];
+      const returns = dispatched.discharge_w[store.key];
       for (let index = 0; index < slots.length; index += 1) {
         const powerW = round(powers[index], 2);
+        if (store.key === "battery") {
+          // The battery's own charge is not a house load: it is settled in the
+          // energy balance below, so it must not enter `occupiedW`.
+          schedule.batteryChargeW[index] = powerW;
+          schedule.batteryDischargeW[index] = round(returns[index], 2);
+          continue;
+        }
         if (powerW <= 0) continue;
         if (store.key === "pool") schedule.pool[index] = powerW;
         if (store.key === "ev") {
@@ -2449,7 +2526,27 @@ function simulate(
       maxDischargeW,
       exportableKwh * battery.discharge_efficiency * 1_000 / SLOT_HOURS,
     );
-    if (netW >= 0) {
+    // When the dispatch owns the battery it has already decided this slot by
+    // marginal value, against the same prices every other store bid on. Simulate
+    // must follow it rather than re-deciding: two mechanisms choosing the same
+    // flow is how a plan comes to charge and discharge for contradictory
+    // reasons within an hour.
+    const dispatchOwnsBattery = schedule.dispatched.has("battery");
+    if (dispatchOwnsBattery) {
+      batteryChargeW = Math.min(schedule.batteryChargeW[slot.index], maxChargeW);
+      batteryDischargeW = Math.min(
+        schedule.batteryDischargeW[slot.index],
+        maxDischargeW,
+      );
+      const balanceW = netW - batteryChargeW + batteryDischargeW;
+      if (balanceW >= 0) {
+        gridExportW = Math.min(balanceW, snapshot.grid.export_limit_w);
+        curtailedW = Math.max(0, balanceW - gridExportW);
+      } else {
+        gridImportW = Math.min(-balanceW, snapshot.grid.import_limit_w);
+        unservedW = Math.max(0, -balanceW - gridImportW);
+      }
+    } else if (netW >= 0) {
       batteryChargeW = Math.min(netW, maxChargeW);
       const afterBatteryW = netW - batteryChargeW;
       if (deliberateExport && batteryChargeW <= 0.01) {
@@ -2597,6 +2694,10 @@ function simulate(
     0,
   );
   const deliveredKwh = snapshot.services.reduce((sum, service) => {
+    // A dispatched store has no block to reconcile. Its energy is already in
+    // `flexibleKwh` and is subtracted from it below, so counting it here too
+    // would make the check compare a number against itself.
+    if (schedule.dispatched.has(service.device)) return sum;
     const indices = schedule.serviceSlots[service.id] ?? [];
     if (isDutyCycleService(service)) {
       const earliest = isoMs(service.earliest_start);
@@ -2628,13 +2729,28 @@ function simulate(
     ),
     0,
   );
-  if (Math.abs(flexibleKwh - thermalKwh - deliveredKwh) > 1e-6) {
+  const dispatchedKwh = slots.reduce(
+    (total, slot) =>
+      total +
+      (schedule.dispatched.has("pool") ? schedule.pool[slot.index] : 0) / 1_000 *
+        SLOT_HOURS +
+      (schedule.dispatched.has("ev") ? schedule.ev[slot.index] : 0) / 1_000 *
+        SLOT_HOURS,
+    0,
+  );
+  if (Math.abs(flexibleKwh - thermalKwh - dispatchedKwh - deliveredKwh) > 1e-6) {
     errors.push(
-      `simulated service load ${round(flexibleKwh - thermalKwh, 3)} differs from ` +
+      `simulated service load ${
+        round(flexibleKwh - thermalKwh - dispatchedKwh, 3)
+      } differs from ` +
         `${round(deliveredKwh, 3)} delivered kWh`,
     );
   }
   for (const service of snapshot.services) {
+    // A dispatched device is planned as a state, so it has no window to fill
+    // and no daily energy to deliver. Judging it against either is judging it
+    // by the model it replaced.
+    if (schedule.dispatched.has(service.device)) continue;
     const indices = schedule.serviceSlots[service.id] ?? [];
     if (isDutyCycleService(service)) {
       let consecutive = 0;
@@ -2683,7 +2799,10 @@ function simulate(
       );
     }
   }
-  if (snapshot.policy.battery_target_is_hard) {
+  // A hard SOC target is meaningless once the battery bids by marginal value:
+  // the trade-off is priced rather than switched (§8.4), and enforcing a target
+  // on top would override the very comparison that replaced it.
+  if (snapshot.policy.battery_target_is_hard && !schedule.dispatched.has("battery")) {
     for (const [day, endSoc] of Object.entries(endOfSolar)) {
       if (endSoc + 1e-6 < snapshot.policy.battery_end_of_solar_target_soc) {
         errors.push(
