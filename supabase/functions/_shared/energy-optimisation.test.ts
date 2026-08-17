@@ -4,6 +4,10 @@ import {
   validateSnapshot,
 } from "./energy-optimisation.ts";
 import { projectZoneTemperature } from "./thermal-model.ts";
+import { assertEquals } from "jsr:@std/assert@1";
+
+/** The captured_at the shared fixture uses, so a plan is always fresh. */
+const NOW = "2026-08-10T07:55:00Z";
 
 const assert: (condition: boolean, message: string) => asserts condition = (
   condition,
@@ -1211,4 +1215,71 @@ Deno.test("overlapping commitments cannot double-book one physical device", () =
     ),
     "the conflicting commitment was not explained",
   );
+});
+
+Deno.test("a schema 5 snapshot keeps the planner it was built for", () => {
+  // The rollout rule: an installation that cannot send pool state is never
+  // handed a plan that assumes it. Both planners are live at once.
+  const plan = generateOptimisationPlan(input(), new Date(NOW));
+
+  assertEquals(plan.schema_version, 5);
+  assertEquals(plan.model_version, "thermal-room-planner-v8");
+});
+
+Deno.test("schema 6 with pool state dispatches by temperature, not by budget", () => {
+  const base = input();
+  const snapshot = input({
+    schema_version: 6,
+    // Cold water: worth heating. The daily `required_kwh` below is deliberately
+    // left at 2 kWh to prove it is no longer what sizes the load.
+    pool: { water_temperature_c: 23, volume_m3: 55 },
+    outdoor_temperature_c: base.slots.map(() => 22),
+  });
+
+  const plan = generateOptimisationPlan(snapshot, new Date(NOW));
+
+  assertEquals(plan.schema_version, 6);
+  assertEquals(plan.model_version, "marginal-value-planner-v9");
+  const priority = plan.plans.priority;
+  const poolKwh = priority.slots.reduce(
+    (total, slot) => total + slot.pool_w / 1_000 * 0.25,
+    0,
+  );
+  assert(
+    poolKwh > 2.5,
+    `a 23 °C pool needs far more than its old 2 kWh budget, got ${poolKwh}`,
+  );
+  // And there are no per-service blocks any more, because there are no blocks.
+  assertEquals(priority.service_slots["pool:2026-08-10"], []);
+});
+
+Deno.test("schema 6 leaves an already-warm pool alone", () => {
+  const base = input();
+  const snapshot = input({
+    schema_version: 6,
+    pool: { water_temperature_c: 31, volume_m3: 55 },
+    outdoor_temperature_c: base.slots.map(() => 22),
+  });
+
+  const plan = generateOptimisationPlan(snapshot, new Date(NOW));
+  const poolW = plan.plans.priority.slots.reduce(
+    (total, slot) => total + slot.pool_w,
+    0,
+  );
+
+  assertEquals(
+    poolW,
+    0,
+    "the old planner demanded its daily kWh whatever the water temperature",
+  );
+});
+
+Deno.test("schema 6 without pool state falls back rather than guessing", () => {
+  const snapshot = input({ schema_version: 6 });
+
+  const plan = generateOptimisationPlan(snapshot, new Date(NOW));
+
+  // No measured state means no store, so the whole plan stays on the model it
+  // can actually support rather than mixing a temperature with a budget.
+  assertEquals(plan.plans.priority.service_slots["pool:2026-08-10"].length > 0, true);
 });

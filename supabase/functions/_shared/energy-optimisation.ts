@@ -16,8 +16,32 @@ import {
   projectZoneTemperature,
   type ThermalZoneModel,
 } from "./thermal-model.ts";
+import {
+  type DispatchStore,
+  planDispatch,
+} from "./dispatch-plan.ts";
+import {
+  poolCop,
+  stepPoolTemperature,
+  WATER_KWH_PER_M3_K,
+} from "./store-models.ts";
+import { resolveValueCurves } from "./value-curves.ts";
 
-export const OPTIMISATION_SCHEMA_VERSION = 5;
+/**
+ * Snapshot versions this planner can read, and the plan version it emits.
+ *
+ * A plan is emitted at the same version as the snapshot that produced it. That
+ * is the whole rollout mechanism: an installation that can only send schema 5
+ * keeps getting a schema 5 plan and the schema 5 planner, and one that has
+ * updated to send 6 gets the store-based planner. Neither is ever handed a
+ * contract it cannot read, which is what went wrong when v8 shipped.
+ *
+ * Schema 6 adds measured pool state. That is not decoration: it is the
+ * difference between the pool being a temperature the planner schedules against
+ * and a daily energy budget it has to believe.
+ */
+export const OPTIMISATION_SCHEMA_VERSION = 6;
+export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6] as const;
 /**
  * The planner's own version. It lives here because the planner lives here — the
  * integration only validates the string, against a set since beta.19, so this
@@ -28,7 +52,9 @@ export const OPTIMISATION_SCHEMA_VERSION = 5;
  * meaningless. v8 makes comfort schedules room-temperature constraints and
  * moves preheating inside the shared electrical objective.
  */
-export const OPTIMISATION_MODEL_VERSION = "thermal-room-planner-v8";
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v9";
+/** The planner a schema 5 snapshot still receives, unchanged. */
+export const LEGACY_MODEL_VERSION = "thermal-room-planner-v8";
 export const SLOT_MINUTES = 15;
 export const SLOT_HOURS = SLOT_MINUTES / 60;
 export const MAX_FORECAST_SLOTS = 72 * 4;
@@ -247,7 +273,7 @@ export interface ThermalZonePlanningInput {
 }
 
 export interface OptimisationSnapshotV5 {
-  schema_version: 5;
+  schema_version: 5 | 6;
   // Only Home Assistant live snapshots cross the ingestion boundary. The
   // website's promotional demo is a client-side plan fixture, not a snapshot.
   mode: "live";
@@ -376,7 +402,7 @@ export interface GeneratedPlan {
 }
 
 export interface OptimisationPlanV5 {
-  schema_version: 5;
+  schema_version: 5 | 6;
   mode: PlanMode;
   capabilities: OptimisationCapabilities;
   model_version: string;
@@ -514,8 +540,12 @@ function completedLocalDays(
 
 export function validateSnapshot(snapshot: OptimisationSnapshotV5): string[] {
   const errors: string[] = [];
-  if (snapshot?.schema_version !== OPTIMISATION_SCHEMA_VERSION) {
-    errors.push("schema_version must be 5");
+  if (
+    !SUPPORTED_SNAPSHOT_VERSIONS.includes(
+      snapshot?.schema_version as 5 | 6,
+    )
+  ) {
+    errors.push("schema_version must be 5 or 6");
   }
   if (snapshot?.mode !== "live") {
     errors.push("mode must be live");
@@ -1613,6 +1643,118 @@ function applyDutyCycleServices(
   }
 }
 
+/** Seeded until the fit converges; see store-models.ts for why not asked for. */
+const SEEDED_POOL_LOSS_KW_PER_K = 0.35;
+const SEEDED_POOL_HEAT_PUMP = {
+  rated_cop: 4.5,
+  rated_air_c: 20,
+  rated_water_c: 27,
+  cop_per_air_c: 0.045,
+  cop_per_water_c: -0.02,
+  cutout_air_c: 8,
+  rated_power_w: 3_500,
+};
+/** Until a fitted kWh/km exists, a mid-size EV at a mild temperature. */
+const SEEDED_VEHICLE_KWH_PER_KM = 0.16;
+
+/**
+ * Build the stores the marginal-value planner dispatches, or null.
+ *
+ * Returns null unless *every* dispatchable store can be expressed as measured
+ * state. That is deliberate and is the one rule that keeps this migration
+ * coherent: a planner holding a temperature for the pool and an energy budget
+ * for the car cannot rank them against each other, so it would be worse than
+ * either model applied consistently. A home without a pool temperature sensor
+ * therefore stays on the schema 5 planner in full.
+ */
+function buildDispatchStores(
+  slots: PreparedSlot[],
+  snapshot: OptimisationSnapshotV5,
+): DispatchStore[] | null {
+  if (snapshot.schema_version < 6) return null;
+  const stores: DispatchStore[] = [];
+  const count = slots.length;
+  const outdoor = snapshot.outdoor_temperature_c as number[] | null;
+  const { curves } = resolveValueCurves([]);
+
+  if (snapshot.capabilities.pool) {
+    const pool = snapshot.pool;
+    if (!pool) return null;
+    const model = {
+      volume_m3: pool.volume_m3,
+      loss_kw_per_k: SEEDED_POOL_LOSS_KW_PER_K,
+      heat_pump: SEEDED_POOL_HEAT_PUMP,
+    };
+    const capacityKwhPerK = pool.volume_m3 * WATER_KWH_PER_M3_K;
+    const airAt = (index: number) => outdoor?.[index] ?? 15;
+    stores.push({
+      key: "pool",
+      curve: curves.pool.curve,
+      initial_state: pool.water_temperature_c,
+      max_power_w: SEEDED_POOL_HEAT_PUMP.rated_power_w,
+      min_run_slots: 4,
+      start_cost_sek: 0.5,
+      // Warmth is wanted whenever somebody might swim, so the weight spreads
+      // across the horizon rather than landing on a deadline. Replacing this
+      // with observed pool use — the swim counter already exists — is what
+      // turns a guess about the household into evidence about it.
+      usage_weight: new Array(count).fill(1 / Math.max(1, count)),
+      retention_per_slot: Math.max(
+        0.9,
+        1 - SEEDED_POOL_LOSS_KW_PER_K * SLOT_HOURS / capacityKwhPerK,
+      ),
+      units_per_kwh: (waterC, index) =>
+        poolCop(model.heat_pump, airAt(index), waterC) / capacityKwhPerK,
+      drift: (waterC, index) =>
+        stepPoolTemperature(model, waterC, airAt(index), 0),
+    });
+  }
+
+  if (snapshot.capabilities.ev) {
+    const vehicle = snapshot.ev_battery;
+    if (!vehicle || !vehicle.connected) {
+      // A disconnected car is not a store the planner can fill. It contributes
+      // nothing rather than blocking the whole dispatch path.
+      if (!vehicle) return null;
+    } else {
+      const perKm = SEEDED_VEHICLE_KWH_PER_KM;
+      const departure = vehicle.departure ? isoMs(vehicle.departure) : null;
+      const usage = new Array(count).fill(0);
+      if (departure !== null) {
+        // A declared departure is a point in time, but the weight is still a
+        // distribution: it is the slot before leaving that matters, and a
+        // learned spread replaces this without changing anything downstream.
+        let placed = false;
+        for (let index = count - 1; index >= 0; index -= 1) {
+          if (slots[index].epoch_ms <= departure) {
+            usage[index] = 1;
+            placed = true;
+            break;
+          }
+        }
+        if (!placed) usage[count - 1] = 1;
+      } else {
+        usage[count - 1] = 1;
+      }
+      stores.push({
+        key: "ev",
+        curve: curves.ev.curve,
+        initial_state: vehicle.soc * vehicle.capacity_kwh / perKm,
+        max_power_w: EV_PHASE_COUNT * EV_PHASE_VOLTAGE * 16,
+        usage_weight: usage,
+        retention_per_slot: 1,
+        units_per_kwh: () => vehicle.charge_efficiency / perKm,
+        drift: (state) => state,
+      });
+    }
+  }
+
+  return stores.length > 0 ? stores : null;
+}
+
+const EV_PHASE_COUNT = 3;
+const EV_PHASE_VOLTAGE = 230;
+
 function scheduleServices(
   key: PlanKey,
   slots: PreparedSlot[],
@@ -1622,6 +1764,65 @@ function scheduleServices(
   const schedule = emptySchedule(slots.length);
   const occupiedW = new Array(slots.length).fill(0);
   const errors: string[] = [];
+
+  // Schema 6 with measured state: dispatch pool and vehicle by marginal value
+  // instead of placing fixed-energy blocks. The boiler keeps its duty-cycle
+  // permission contract below, because the house has no tank sensor and so no
+  // state to value (§1.6.4).
+  const dispatchStores = buildDispatchStores(slots, snapshot);
+  if (dispatchStores) {
+    const dispatched = planDispatch(
+      slots.map((slot, index) => ({
+        pv_w: slot.pv_w,
+        fixed_load_w: fixedLoadW(slot) + reservedW[index],
+        import_price_sek_per_kwh: slot.shadow_import_sek_per_kwh,
+        export_price_sek_per_kwh: slot.shadow_export_sek_per_kwh,
+      })),
+      dispatchStores,
+      {
+        grid_import_limit_w: snapshot.grid.import_limit_w,
+        grid_export_limit_w: snapshot.grid.export_limit_w,
+      },
+    );
+    for (const store of dispatchStores) {
+      const powers = dispatched.power_w[store.key];
+      for (let index = 0; index < slots.length; index += 1) {
+        const powerW = round(powers[index], 2);
+        if (powerW <= 0) continue;
+        if (store.key === "pool") schedule.pool[index] = powerW;
+        if (store.key === "ev") {
+          schedule.ev[index] = powerW;
+          const amps = powerW / (EV_PHASE_COUNT * EV_PHASE_VOLTAGE);
+          schedule.evTargetCurrentA[index] = Math.round(amps);
+        }
+        occupiedW[index] += powerW;
+      }
+    }
+    applyDutyCycleServices(
+      key,
+      slots,
+      snapshot,
+      snapshot.services.filter(isDutyCycleService),
+      occupiedW,
+      schedule,
+    );
+    for (const service of snapshot.services.filter(isDispatchableService)) {
+      // The schema 6 plan carries no per-service block, because there are no
+      // blocks. The key is still published so a reader can see the service was
+      // considered rather than dropped.
+      schedule.serviceSlots[service.id] = [];
+      if (isDiscreteCurrentService(service)) {
+        schedule.serviceCurrentsA[service.id] = [];
+      }
+    }
+    applyEvCurrentEnvelopes(
+      schedule,
+      slots,
+      snapshot.services.filter(isDispatchableService),
+    );
+    return { schedule, errors };
+  }
+
   const services = snapshot.services.filter(isDispatchableService).sort((
     a,
     b,
@@ -2677,10 +2878,12 @@ export function generateOptimisationPlan(
     : "ready";
 
   return {
-    schema_version: 5,
+    schema_version: snapshot.schema_version,
     mode: snapshot.mode,
     capabilities: snapshot.capabilities,
-    model_version: OPTIMISATION_MODEL_VERSION,
+    model_version: snapshot.schema_version >= 6
+      ? OPTIMISATION_MODEL_VERSION
+      : LEGACY_MODEL_VERSION,
     // One snapshot produces one deterministic plan identity, so retries cannot
     // append duplicate run-history rows.
     plan_id: snapshot.snapshot_id,
