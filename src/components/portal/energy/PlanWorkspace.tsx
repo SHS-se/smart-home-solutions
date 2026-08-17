@@ -484,6 +484,20 @@ const PlanView: React.FC<{
     sourceStale, bindingExpired, ready, pct, costDelta, costTone, costMeaning,
     validationMessages,
   } = model;
+
+  // When Home Assistant will next ask for a plan. It refreshes 30 minutes
+  // before expiry, and only ever on a quarter boundary, so the honest answer is
+  // the first quarter at or after that threshold rather than the threshold
+  // itself. Shown because "is this plan stale or is the planner ignoring me?"
+  // was previously unanswerable from the page.
+  const nextReplanAt = useMemo(() => {
+    if (!plan?.valid_until) return null;
+    const validUntil = Date.parse(plan.valid_until);
+    if (!Number.isFinite(validUntil)) return null;
+    const threshold = validUntil - 30 * 60_000;
+    const quarter = 15 * 60_000;
+    return new Date(Math.ceil(threshold / quarter) * quarter);
+  }, [plan?.valid_until]);
   // One timeline: measured quarters up to now, planned quarters after it.
   // Every headline number describes the day on screen, so a total can be
   // checked against the chart under it.
@@ -576,6 +590,11 @@ const PlanView: React.FC<{
               {!isDemo && lastCheckedAt && (
                 <p className="mt-1 text-xs text-muted-foreground">
                   {t('Portalen kontrollerade senast', 'Portal last checked')} {new Date(lastCheckedAt).toLocaleTimeString()} · {t('Home Assistant använder vyn Med plan för styrning', 'Home Assistant executes the With plan schedule')}
+                </p>
+              )}
+              {!isDemo && nextReplanAt && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {t('Nästa omplanering', 'Next replan')} {nextReplanAt.toLocaleTimeString()} · {t('planen gäller till', 'plan valid until')} {new Date(plan.valid_until).toLocaleTimeString()}
                 </p>
               )}
             </div>
