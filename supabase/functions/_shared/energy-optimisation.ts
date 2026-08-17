@@ -1786,14 +1786,29 @@ function buildDispatchStores(
       const surplusW = slot.pv_w - fixedLoadW(slot);
       return total + (surplusW > 0 ? surplusW / 1_000 * SLOT_HOURS : 0);
     }, 0);
-    const expectedDrawKwh = slots.reduce((total, slot) => {
-      const deficitW = fixedLoadW(slot) - slot.pv_w;
-      return total + (deficitW > 0 ? deficitW / 1_000 * SLOT_HOURS : 0);
-    }, 0);
+    // The covering window: how much draw the battery has to carry before enough
+    // surplus arrives to refill it. Summing the draw over the *whole* horizon
+    // instead made the covering band swallow the entire pack over 72 hours, so
+    // every stored kWh was priced at the dearest import in three days and the
+    // battery hoarded charge through expensive evenings rather than spending it.
+    // One night is what a pack of this size actually covers.
+    let expectedDrawKwh = 0;
+    let refillableKwh = 0;
+    const windowPrices: number[] = [];
+    for (const slot of slots) {
+      const netW = slot.pv_w - fixedLoadW(slot);
+      if (netW > 0) refillableKwh += netW / 1_000 * SLOT_HOURS;
+      else expectedDrawKwh += -netW / 1_000 * SLOT_HOURS;
+      windowPrices.push(slot.shadow_import_sek_per_kwh);
+      if (refillableKwh >= usableKwh) break;
+    }
     // Derived every solve from the forecast, never configured (§8.4). This is
     // what replaces the end-of-solar SOC target and the export floor price.
     const curve = batteryValueCurve({
-      futureImportSekPerKwh: slots.map((slot) => slot.shadow_import_sek_per_kwh),
+      // Prices from the covering window, not the whole horizon: what the
+      // stored energy displaces is tonight's import, not the dearest quarter
+      // three days out.
+      futureImportSekPerKwh: windowPrices,
       futureSurplusKwh: remainingSurplusKwh,
       usableKwh,
       roundTrip: battery.charge_efficiency * battery.discharge_efficiency,
@@ -1808,8 +1823,11 @@ function buildDispatchStores(
         min_state: battery.min_soc * battery.capacity_kwh,
         max_state: battery.max_soc * battery.capacity_kwh,
         max_power_w: battery.charge_max_w,
-        wear_sek_per_kwh:
-          DEFAULT_VALUE_SETTINGS.battery_degradation_sek_per_kwh,
+        // No `wear_sek_per_kwh` here: `batteryValueCurve` already subtracts
+        // degradation from what stored energy is worth. Charging it a second
+        // time as a flow cost made charging unprofitable at any price the curve
+        // would accept, so a discharged battery never refilled — it emptied
+        // through one evening and then sat flat while surplus was exported.
         retention_per_slot: 1,
         usage_weight: new Array(count).fill(0),
         // Charge held at the horizon edge is worth what the curve says, which

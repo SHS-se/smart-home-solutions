@@ -1337,3 +1337,73 @@ Deno.test("a hard battery target is not enforced once the curve prices it", () =
     [],
   );
 });
+
+Deno.test("a full battery spends into a dear evening and refills from surplus", () => {
+  // A 72-hour horizon, which is where both of these defects lived and where a
+  // 32-slot fixture cannot see them:
+  //
+  //  - `expectedDrawKwh` summed the draw over the whole horizon, so the
+  //    covering band swallowed the entire pack and every stored kWh was priced
+  //    at the dearest import in three days. The battery hoarded charge through
+  //    expensive evenings and imported instead.
+  //  - degradation was subtracted from the derived curve *and* charged again as
+  //    a flow cost, so charging was unprofitable at any price the curve would
+  //    accept. Once discharged the battery never refilled, and surplus was
+  //    exported past a half-empty pack.
+  const base = input();
+  const start = Date.parse("2026-08-10T08:00:00.000Z");
+  const slots = Array.from({ length: 288 }, (_value, index) => {
+    const hour = ((index / 4) + 10) % 24;
+    const pv = hour >= 6 && hour <= 18
+      ? Math.round(9_000 * Math.sin(((hour - 6) / 12) * Math.PI))
+      : 0;
+    const priced = index < 96;
+    return {
+      start: new Date(start + index * 15 * 60_000).toISOString(),
+      pv_forecast_w: pv,
+      base_load_forecast_w: 1_000,
+      base_load_p10_w: 800,
+      base_load_p90_w: 1_400,
+      import_price_sek_per_kwh: priced ? (hour >= 17 ? 2.4 : 1.6) : null,
+      export_price_sek_per_kwh: priced ? 0.99 : null,
+    };
+  });
+  const snapshot = input({
+    schema_version: 6,
+    slots,
+    outdoor_temperature_c: slots.map(() => 22),
+    pool: { water_temperature_c: 26, volume_m3: 55 },
+    battery: { ...base.battery!, soc: 1.0 },
+    services: [],
+    service_requirement_sample_days: {},
+  });
+
+  const plan = generateOptimisationPlan(snapshot, new Date(NOW));
+  assertEquals(plan.status, "ready");
+  const planned = plan.plans.priority.slots;
+  const total = (read: (slot: typeof planned[number]) => number) =>
+    planned.reduce((sum, slot) => sum + read(slot), 0) / 4_000;
+
+  assert(
+    total((slot) => slot.battery_discharge_w) > 5,
+    "a full battery must spend into a 2.4 SEK evening, not import beside it",
+  );
+  assert(
+    total((slot) => slot.battery_charge_w) > 5,
+    "and must refill from surplus rather than sit flat while it is exported",
+  );
+  // The symptom as it appeared in a real plan: state of charge pinned at 100%
+  // straight through an expensive evening while grid import rose beside it.
+  // Ending the horizon full is *not* a defect — with surplus to spare, the
+  // terminal value says a full pack is worth having — so the assertion is about
+  // the evening, not the edge.
+  const firstEvening = planned.slice(28, 48);
+  assert(
+    Math.min(...firstEvening.map((slot) => slot.battery_soc)) < 0.9,
+    "the pack must be spent through the dear evening, not held at full",
+  );
+  assert(
+    firstEvening.every((slot) => slot.grid_import_w < 1 || slot.battery_soc <= 0.66),
+    "importing while a nearly full battery sits idle is the defect",
+  );
+});
