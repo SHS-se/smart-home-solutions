@@ -403,6 +403,15 @@ export interface GeneratedPlan {
   service_slots: Record<string, number[]>;
   service_currents_a: Record<string, number[]>;
   service_inhibited_slots: Record<string, number[]>;
+  /**
+   * Devices this scenario planned as states rather than as fixed blocks.
+   *
+   * Published because a reader cannot otherwise tell an empty `service_slots`
+   * apart from a service that was dropped, and would reject a perfectly good
+   * plan for failing to fill a window it no longer has. Both the integration
+   * and the portal read this.
+   */
+  dispatched_devices: string[];
 }
 
 export interface OptimisationPlanV5 {
@@ -2923,6 +2932,7 @@ function buildPlan(
     service_slots: scheduled.schedule.serviceSlots,
     service_currents_a: scheduled.schedule.serviceCurrentsA,
     service_inhibited_slots: scheduled.schedule.serviceInhibitedSlots,
+    dispatched_devices: [...scheduled.schedule.dispatched].sort(),
   };
 }
 
