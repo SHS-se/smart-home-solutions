@@ -327,6 +327,18 @@ export interface OptimisationSnapshotV5 {
    * defaults apply, which is what a home that has never opened the editor gets.
    */
   value_curves?: Partial<Record<ValueStoreKey, UtilityCurve>> | null;
+  /**
+   * The pool's fitted loss and COP, when the fit was accepted.
+   *
+   * Absent through an unheated summer, which is the normal state rather than a
+   * fault: with the heater idle there is no COP to identify. The planner uses
+   * the seeded figures then, and says so through `forecast_method`.
+   */
+  pool_model?: {
+    loss_kw_per_k: number;
+    rated_cop: number;
+    cop_per_air_c: number;
+  } | null;
   grid: {
     import_limit_w: number;
     export_limit_w: number;
@@ -1765,10 +1777,17 @@ function buildDispatchStores(
   if (snapshot.capabilities.pool) {
     const pool = snapshot.pool;
     if (!pool) return null;
+    // Fitted where the evidence allowed it, seeded where it did not.
+    const fitted = snapshot.pool_model;
     const model = {
       volume_m3: pool.volume_m3,
-      loss_kw_per_k: SEEDED_POOL_LOSS_KW_PER_K,
-      heat_pump: SEEDED_POOL_HEAT_PUMP,
+      loss_kw_per_k: fitted?.loss_kw_per_k ?? SEEDED_POOL_LOSS_KW_PER_K,
+      heat_pump: {
+        ...SEEDED_POOL_HEAT_PUMP,
+        rated_cop: fitted?.rated_cop ?? SEEDED_POOL_HEAT_PUMP.rated_cop,
+        cop_per_air_c: fitted?.cop_per_air_c ??
+          SEEDED_POOL_HEAT_PUMP.cop_per_air_c,
+      },
     };
     const capacityKwhPerK = pool.volume_m3 * WATER_KWH_PER_M3_K;
     const airAt = (index: number) => outdoor?.[index] ?? 15;
@@ -1786,7 +1805,7 @@ function buildDispatchStores(
       usage_weight: new Array(count).fill(1 / Math.max(1, count)),
       retention_per_slot: Math.max(
         0.9,
-        1 - SEEDED_POOL_LOSS_KW_PER_K * SLOT_HOURS / capacityKwhPerK,
+        1 - model.loss_kw_per_k * SLOT_HOURS / capacityKwhPerK,
       ),
       units_per_kwh: (waterC, index) =>
         poolCop(model.heat_pump, airAt(index), waterC) / capacityKwhPerK,

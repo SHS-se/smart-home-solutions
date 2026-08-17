@@ -1566,3 +1566,35 @@ Deno.test("the plan explains why each store bought what it did", () => {
     "a store buys when its value beats the cheapest energy it could have used",
   );
 });
+
+Deno.test("a fitted pool model replaces the seeded loss and COP", () => {
+  const base = horizon({ pool: { water_temperature_c: 27, volume_m3: 55 } });
+  // A leakier pool with a worse pump than the seeded assumption. If the fit
+  // were ignored the two plans would be identical.
+  const fitted = horizon({
+    pool: { water_temperature_c: 27, volume_m3: 55 },
+    pool_model: { loss_kw_per_k: 1.2, rated_cop: 2.4, cop_per_air_c: 0.045 },
+  });
+
+  const seededPlan = generateOptimisationPlan(base, new Date(NOW));
+  const fittedPlan = generateOptimisationPlan(fitted, new Date(NOW));
+  assertEquals(fittedPlan.status, "ready");
+
+  const poolKwh = (plan: typeof seededPlan) =>
+    plan.plans.priority.slots.reduce((total, slot) => total + slot.pool_w, 0) /
+      4_000;
+
+  assert(
+    Math.abs(poolKwh(fittedPlan) - poolKwh(seededPlan)) > 0.5,
+    "a measured pool must not be planned as though it were the assumed one",
+  );
+  // A worse COP means each kWh buys less warmth, so the same degree is worth
+  // fewer SEK per kWh of electricity.
+  const value = (plan: typeof seededPlan) =>
+    plan.plans.priority.store_diagnostics
+      .find(entry => entry.key === 'pool')!.marginal_value_sek_per_kwh;
+  assert(
+    value(fittedPlan) < value(seededPlan),
+    "a poorer pump lowers what a kWh is worth to the pool",
+  );
+});

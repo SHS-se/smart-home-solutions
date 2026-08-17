@@ -30,6 +30,10 @@ import {
 } from "../_shared/thermal-training.ts";
 import { resolveValueCurves } from "../_shared/value-curves.ts";
 import {
+  fitPoolModel,
+  type PoolTrainingSample,
+} from "../_shared/pool-training.ts";
+import {
   buildComfortForecast,
   isZoneComfortSchedule,
   summerHeatingLockoutForStarts,
@@ -288,6 +292,113 @@ interface PreparedThermalPlanning {
  * planning, an empirical Tuesday cannot silently take over when any thermal
  * input is missing; that was the unsafe behaviour this model replaces.
  */
+
+/**
+ * Refit the pool's loss and COP, at the same cadence as the room models.
+ *
+ * The training set joins three series the ingest path already stores: water
+ * temperature, the pool heater's metered energy, and outdoor temperature. All
+ * three are on the same quarter boundaries, so the join is exact rather than
+ * interpolated.
+ *
+ * A refusal is written down as readily as a fit. Through a Swedish summer the
+ * pool sits at temperature and the heater barely runs, so there is no COP to
+ * identify for months — recording that is what lets the planner fall back to
+ * its seeded figures deliberately instead of by accident.
+ */
+async function refitPoolModel(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  customerId: string,
+  homeId: string,
+  volumeM3: number,
+  poolDeviceKeys: string[],
+): Promise<void> {
+  const now = Date.now();
+  const { data: existing } = await supabase
+    .from("energy_optimisation_pool_model")
+    .select("fitted_at")
+    .eq("home_id", homeId)
+    .maybeSingle();
+  const lastFit = existing?.fitted_at ? Date.parse(existing.fitted_at) : 0;
+  if (now - lastFit < REFIT_INTERVAL_HOURS * 3_600_000) return;
+
+  const from = new Date(now - TRAINING_WINDOW_DAYS * 86_400_000).toISOString();
+  const [{ data: waterRows }, { data: outdoorRows }, { data: deviceRows }] =
+    await Promise.all([
+      supabase.from("energy_optimisation_pool_slots")
+        .select("start_ts, water_temperature_c")
+        .eq("home_id", homeId).gte("start_ts", from).order("start_ts"),
+      supabase.from("energy_optimisation_outdoor_slots")
+        .select("start_ts, outdoor_temperature_c")
+        .eq("home_id", homeId).gte("start_ts", from),
+      supabase.from("energy_optimisation_device_slots")
+        .select("start_ts, device_key, energy_kwh")
+        .eq("home_id", homeId).gte("start_ts", from),
+    ]);
+
+  const outdoorByStart = new Map<number, number>(
+    (outdoorRows ?? []).map((row: Record<string, unknown>) => [
+      Date.parse(String(row.start_ts)),
+      Number(row.outdoor_temperature_c),
+    ]),
+  );
+  const heaterByStart = new Map<number, number>();
+  for (const row of deviceRows ?? []) {
+    if (!poolDeviceKeys.includes(String(row.device_key))) continue;
+    const at = Date.parse(String(row.start_ts));
+    heaterByStart.set(at, (heaterByStart.get(at) ?? 0) + Number(row.energy_kwh));
+  }
+
+  const water = (waterRows ?? []).map((row: Record<string, unknown>) => ({
+    at: Date.parse(String(row.start_ts)),
+    c: Number(row.water_temperature_c),
+  }));
+  const samples: PoolTrainingSample[] = [];
+  for (let index = 0; index + 1 < water.length; index += 1) {
+    const current = water[index];
+    const next = water[index + 1];
+    // Only consecutive quarters describe one slot's change. A gap would put an
+    // hour of cooling into a fifteen-minute rate and bias the loss upward.
+    if (next.at - current.at !== SLOT_MS) continue;
+    const air = outdoorByStart.get(current.at);
+    if (air === undefined || !Number.isFinite(air)) continue;
+    samples.push({
+      water_temperature_c: current.c,
+      next_water_temperature_c: next.c,
+      outdoor_temperature_c: air,
+      electrical_kwh: heaterByStart.get(current.at) ?? 0,
+    });
+  }
+
+  const result = fitPoolModel(samples, volumeM3);
+  const row = "fitted" in result
+    ? {
+      home_id: homeId,
+      customer_id: customerId,
+      fitted_at: new Date(now).toISOString(),
+      ...result.fitted,
+      rejection: null,
+    }
+    : {
+      home_id: homeId,
+      customer_id: customerId,
+      fitted_at: new Date(now).toISOString(),
+      loss_kw_per_k: null,
+      rated_cop: null,
+      cop_per_air_c: null,
+      background_kw: null,
+      r2: null,
+      sample_count: result.sample_count,
+      heated_sample_count: result.heated_sample_count,
+      rejection: result.rejected,
+    };
+  const { error } = await supabase
+    .from("energy_optimisation_pool_model")
+    .upsert(row, { onConflict: "home_id" });
+  if (error) console.error("[ENERGY-OPTIMISATION] pool refit failed", error);
+}
+
 async function prepareThermalPlanning(
   // deno-lint-ignore no-explicit-any
   supabase: any,
@@ -1312,6 +1423,43 @@ serve(async (req) => {
           ev: resolved.curves.ev.curve,
         },
       };
+
+      // Refit the pool alongside the rooms, then hand the planner whatever the
+      // fit produced. A refusal leaves `pool_model` absent and the planner
+      // falls back to its seeded figures.
+      if (snapshot.pool) {
+        const poolKeys = storedDevices
+          .filter((device) => device.category === "pool_heating")
+          .map((device) => device.key);
+        try {
+          await refitPoolModel(
+            supabase,
+            auth.customerId,
+            auth.homeId,
+            snapshot.pool.volume_m3,
+            poolKeys,
+          );
+        } catch (error) {
+          // A refit is an improvement, never a precondition: a home must still
+          // be planned on seeded figures if the fit itself fails.
+          console.error("[ENERGY-OPTIMISATION] pool refit skipped", error);
+        }
+        const { data: poolModel } = await supabase
+          .from("energy_optimisation_pool_model")
+          .select("loss_kw_per_k, rated_cop, cop_per_air_c")
+          .eq("home_id", auth.homeId)
+          .maybeSingle();
+        if (poolModel?.loss_kw_per_k && poolModel?.rated_cop) {
+          snapshot = {
+            ...snapshot,
+            pool_model: {
+              loss_kw_per_k: Number(poolModel.loss_kw_per_k),
+              rated_cop: Number(poolModel.rated_cop),
+              cop_per_air_c: Number(poolModel.cop_per_air_c ?? 0),
+            },
+          };
+        }
+      }
 
       let thermalZones: ProjectionZoneInput[] = [];
       try {
