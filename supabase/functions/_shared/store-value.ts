@@ -104,6 +104,27 @@ export function marginalValue(curve: UtilityCurve, at: number): number {
   return 0;
 }
 
+/**
+ * Value of the last unit **already held**, which is not the same question.
+ *
+ * `marginalValue` answers "what is the next unit worth?" and correctly returns
+ * zero above the top of the curve: a full store should buy nothing. But asking
+ * the same function what a full store's charge is worth to *give up* returns
+ * zero too, and a battery that values its charge at nothing will discharge into
+ * any positive price — filling from the grid and emptying again in a loop.
+ *
+ * The sell side must therefore read the segment the last held unit sits in,
+ * which is the one ending at or above the current state.
+ */
+export function marginalValueHeld(curve: UtilityCurve, at: number): number {
+  const points = curve.points;
+  if (points.length === 0 || at <= 0) return 0;
+  for (const point of points) {
+    if (at <= point.at) return point.sek_per_unit;
+  }
+  return points[points.length - 1].sek_per_unit;
+}
+
 /** Total utility of holding `at` units, the integral of the marginal value. */
 export function totalUtility(curve: UtilityCurve, at: number): number {
   const points = curve.points;

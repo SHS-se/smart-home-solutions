@@ -30,6 +30,7 @@
 
 import {
   marginalValue,
+  marginalValueHeld,
   type UtilityCurve,
 } from "./store-value.ts";
 
@@ -73,10 +74,43 @@ export interface DispatchStore {
    * declared time nobody wants to maintain (§8.4).
    */
   usage_weight: number[];
+  /**
+   * Weight on state still held *after* the horizon ends. The terminal value.
+   *
+   * Without this the backward pass gives the final slot a retention of zero,
+   * so a store concludes that energy it is holding at the edge is worthless and
+   * dumps it — the exact horizon-edge artefact §8.4 exists to prevent, and the
+   * reason end-of-day SOC targets were ever invented. A house battery sets this
+   * to 1 and no usage weight at all: its curve is already the forward-looking
+   * replacement cost, so what matters is simply that charge kept to the end is
+   * still worth what the curve says.
+   */
+  terminal_weight?: number;
   /** Physical units gained per kWh delivered, at this state and slot. */
   units_per_kwh: (state: number, index: number) => number;
   /** State one slot later with no energy delivered: losses, ambient drift. */
   drift: (state: number, index: number) => number;
+  /** Hard bounds on the state, if it has any. */
+  min_state?: number;
+  max_state?: number;
+  /**
+   * Present only for a store that can give energy back to the house.
+   *
+   * The house battery is the one two-sided store, and unifying it with the
+   * sinks is what makes the comparison in §8.9 complete. Before this, charging
+   * was decided by marginal value while discharging was decided by a separate
+   * greedy rule in the simulator, so the two could disagree: the planner could
+   * fill the battery from surplus in the afternoon on the grounds that stored
+   * energy was valuable, and the simulator could empty it an hour later to
+   * cover a load it valued at nothing. One mechanism cannot contradict itself.
+   */
+  discharge?: {
+    max_power_w: number;
+    /** State consumed per kWh actually delivered to the house. */
+    state_per_kwh_out: (state: number, index: number) => number;
+    /** Whether discharging into export is permitted, not merely to cover load. */
+    export_allowed: boolean;
+  };
 }
 
 export interface DispatchLimits {
@@ -86,6 +120,8 @@ export interface DispatchLimits {
 
 export interface DispatchResult {
   power_w: Record<string, number[]>;
+  /** Energy returned to the house, per store. Zero for a pure sink. */
+  discharge_w: Record<string, number[]>;
   state: Record<string, number[]>;
   import_w: number[];
   export_w: number[];
@@ -107,7 +143,7 @@ function retentionBySlot(store: DispatchStore, slots: number): number[] {
   const decay = Math.min(1, Math.max(0, store.retention_per_slot));
   // Walk backwards so each slot reuses the next one's tail in O(1).
   //   R[t] = w[t+1] + decay * R[t+1]
-  let tail = 0;
+  let tail = store.terminal_weight ?? 0;
   for (let index = slots - 1; index >= 0; index -= 1) {
     const nextWeight = store.usage_weight[index + 1] ?? 0;
     tail = nextWeight + decay * tail;
@@ -120,15 +156,45 @@ function retentionBySlot(store: DispatchStore, slots: number): number[] {
 function project(
   store: DispatchStore,
   powerW: number[],
+  dischargeW: number[],
   from: number,
   state: number[],
 ): void {
+  const low = store.min_state ?? -Infinity;
+  const high = store.max_state ?? Infinity;
   for (let index = from; index < powerW.length; index += 1) {
     const current = state[index];
-    const kwh = powerW[index] / 1_000 * SLOT_HOURS;
-    const gained = kwh * store.units_per_kwh(current, index);
-    state[index + 1] = store.drift(current + gained, index);
+    const inKwh = powerW[index] / 1_000 * SLOT_HOURS;
+    const outKwh = dischargeW[index] / 1_000 * SLOT_HOURS;
+    const gained = inKwh * store.units_per_kwh(current, index);
+    const spent = outKwh > 0
+      ? outKwh * (store.discharge?.state_per_kwh_out(current, index) ?? 0)
+      : 0;
+    const next = store.drift(current + gained - spent, index);
+    state[index + 1] = Math.min(high, Math.max(low, next));
   }
+}
+
+/**
+ * Suffix extremes of a state trajectory.
+ *
+ * A discharge at one slot lowers the state in every later slot, so it is only
+ * feasible if the *lowest* state still to come can absorb it. Checking the
+ * running minimum is what stops the planner promising energy it will already
+ * have spent, which a per-slot bound check silently permits.
+ */
+function suffixBounds(state: number[]): { min: number[]; max: number[] } {
+  const min = new Array(state.length).fill(Infinity);
+  const max = new Array(state.length).fill(-Infinity);
+  let runningMin = Infinity;
+  let runningMax = -Infinity;
+  for (let index = state.length - 1; index >= 0; index -= 1) {
+    runningMin = Math.min(runningMin, state[index]);
+    runningMax = Math.max(runningMax, state[index]);
+    min[index] = runningMin;
+    max[index] = runningMax;
+  }
+  return { min, max };
 }
 
 /**
@@ -158,9 +224,10 @@ function headroomW(
   slot: DispatchSlot,
   limits: DispatchLimits,
   occupiedW: number,
+  returnedW = 0,
 ): number {
-  const availableW = limits.grid_import_limit_w + Math.max(0, slot.pv_w) -
-    slot.fixed_load_w - occupiedW;
+  const availableW = limits.grid_import_limit_w + Math.max(0, slot.pv_w) +
+    returnedW - slot.fixed_load_w - occupiedW;
   return Math.max(0, availableW);
 }
 
@@ -186,15 +253,20 @@ export function planDispatch(
 ): DispatchResult {
   const count = slots.length;
   const powerW: Record<string, number[]> = {};
+  const dischargeW: Record<string, number[]> = {};
   const stateByKey: Record<string, number[]> = {};
   const retentionByKey: Record<string, number[]> = {};
   const occupiedW = new Array(count).fill(0);
+  // Energy the stores are returning to the house, which offsets the load every
+  // other candidate is costed against.
+  const returnedW = new Array(count).fill(0);
 
   for (const store of stores) {
     powerW[store.key] = new Array(count).fill(0);
+    dischargeW[store.key] = new Array(count).fill(0);
     const state = new Array(count + 1).fill(store.initial_state);
     state[0] = store.initial_state;
-    project(store, powerW[store.key], 0, state);
+    project(store, powerW[store.key], dischargeW[store.key], 0, state);
     stateByKey[store.key] = state;
     retentionByKey[store.key] = retentionBySlot(store, count);
   }
@@ -209,10 +281,12 @@ export function planDispatch(
       index: number;
       powerW: number;
       surplus: number;
+      direction: "charge" | "discharge";
     } | null = null;
 
     for (const store of stores) {
       const schedule = powerW[store.key];
+      const dischargeByKey = dischargeW[store.key];
       const state = stateByKey[store.key];
       const retention = retentionByKey[store.key];
       const minRun = Math.max(1, store.min_run_slots ?? 1);
@@ -221,7 +295,7 @@ export function planDispatch(
         const slot = slots[index];
         const fullW = Math.min(
           store.max_power_w,
-          headroomW(slot, limits, occupiedW[index]),
+          headroomW(slot, limits, occupiedW[index], returnedW[index]),
         );
         if (fullW <= 0) continue;
 
@@ -260,7 +334,66 @@ export function planDispatch(
           const surplus = (value - cost) * kwh;
           if (surplus <= 1e-9) continue;
           if (!best || surplus > best.surplus) {
-            best = { store, index, powerW: powerLevel, surplus };
+            best = {
+              store,
+              index,
+              powerW: powerLevel,
+              surplus,
+              direction: "charge",
+            };
+          }
+        }
+      }
+
+      // Discharge is the same comparison with the signs exchanged: the value is
+      // the import it avoids, and the cost is the stored energy given up. Making
+      // it a candidate in the same auction is the point — a battery that would
+      // rather keep its charge simply loses to the sinks, and one whose charge is
+      // worth less than tonight's import price wins.
+      if (!store.discharge) continue;
+      const bounds = suffixBounds(state);
+      for (let index = 0; index < count; index += 1) {
+        if (schedule[index] > 0 || dischargeByKey[index] > 0) continue;
+        const slot = slots[index];
+        const deficitW = Math.max(
+          0,
+          slot.fixed_load_w + occupiedW[index] - slot.pv_w - returnedW[index],
+        );
+        const coverW = Math.min(store.discharge.max_power_w, deficitW);
+        const exportW = store.discharge.export_allowed
+          ? Math.min(
+            store.discharge.max_power_w - coverW,
+            Math.max(0, limits.grid_export_limit_w - Math.max(0, slot.pv_w - slot.fixed_load_w)),
+          )
+          : 0;
+        for (const [powerLevel, price] of [
+          [coverW, slot.import_price_sek_per_kwh] as const,
+          [coverW + exportW, slot.export_price_sek_per_kwh] as const,
+        ]) {
+          if (powerLevel <= 0) continue;
+          const kwh = powerLevel / 1_000 * SLOT_HOURS;
+          const spent = kwh *
+            store.discharge.state_per_kwh_out(state[index], index);
+          // Feasible only if the lowest state still to come can absorb it.
+          if (
+            store.min_state !== undefined &&
+            bounds.min[index] - spent < store.min_state - 1e-9
+          ) continue;
+          // The sell side of the curve: what the charge being given up is
+          // worth, not what the next unit would be worth to buy.
+          const givenUp = marginalValueHeld(store.curve, state[index]) *
+            (spent / Math.max(kwh, 1e-9)) * retention[index];
+          const gained = price - (store.wear_sek_per_kwh ?? 0);
+          const surplus = (gained - givenUp) * kwh;
+          if (surplus <= 1e-9) continue;
+          if (!best || surplus > best.surplus) {
+            best = {
+              store,
+              index,
+              powerW: powerLevel,
+              surplus,
+              direction: "discharge",
+            };
           }
         }
       }
@@ -272,22 +405,32 @@ export function planDispatch(
     // forward from it. Extension is deliberately not re-tested for profit: a
     // compressor that may not stop for four slots costs four slots, and
     // pretending otherwise is how a plan becomes unexecutable.
-    const minRun = Math.max(1, best.store.min_run_slots ?? 1);
     const schedule = powerW[best.store.key];
-    for (let offset = 0; offset < minRun; offset += 1) {
-      const index = best.index + offset;
-      if (index >= count || schedule[index] > 0) continue;
-      const available = Math.min(
-        best.powerW,
-        headroomW(slots[index], limits, occupiedW[index]),
-      );
-      if (available <= 0) continue;
-      schedule[index] = available;
-      occupiedW[index] += available;
+    const discharge = dischargeW[best.store.key];
+    if (best.direction === "discharge") {
+      // Discharge is applied one slot at a time: there is no compressor to
+      // protect, and holding a battery open for a minimum run would forfeit
+      // charge the next slot might value more.
+      discharge[best.index] = best.powerW;
+      returnedW[best.index] += best.powerW;
+    } else {
+      const minRun = Math.max(1, best.store.min_run_slots ?? 1);
+      for (let offset = 0; offset < minRun; offset += 1) {
+        const index = best.index + offset;
+        if (index >= count || schedule[index] > 0) continue;
+        const available = Math.min(
+          best.powerW,
+          headroomW(slots[index], limits, occupiedW[index], returnedW[index]),
+        );
+        if (available <= 0) continue;
+        schedule[index] = available;
+        occupiedW[index] += available;
+      }
     }
     project(
       best.store,
       schedule,
+      discharge,
       best.index,
       stateByKey[best.store.key],
     );
@@ -297,8 +440,8 @@ export function planDispatch(
   const importW = new Array(count).fill(0);
   const exportW = new Array(count).fill(0);
   for (let index = 0; index < count; index += 1) {
-    const net = slots[index].pv_w - slots[index].fixed_load_w -
-      occupiedW[index];
+    const net = slots[index].pv_w + returnedW[index] -
+      slots[index].fixed_load_w - occupiedW[index];
     if (net >= 0) {
       exportW[index] = Math.min(net, limits.grid_export_limit_w);
     } else {
@@ -308,6 +451,7 @@ export function planDispatch(
 
   return {
     power_w: powerW,
+    discharge_w: dischargeW,
     state: stateByKey,
     import_w: importW,
     export_w: exportW,

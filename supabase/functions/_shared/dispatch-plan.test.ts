@@ -272,3 +272,151 @@ Deno.test("dispatch terminates without hitting the iteration cap", () => {
 
   assertEquals(result.stopped_because, "no_profitable_candidate");
 });
+
+/** A house battery: two-sided, its curve derived from the price outlook. */
+function batteryStore(
+  slots: number,
+  socKwh: number,
+  valueSekPerKwh: number,
+  { exportAllowed = false } = {},
+): DispatchStore {
+  return {
+    key: "battery",
+    curve: {
+      unit: "kwh",
+      points: [{ at: 18, sek_per_unit: valueSekPerKwh }],
+    },
+    initial_state: socKwh,
+    min_state: 1,
+    max_state: 18,
+    max_power_w: 8_800,
+    retention_per_slot: 1,
+    // No usage weight and a terminal weight of one: charge kept to the horizon
+    // edge is worth exactly what the derived curve says, which is what stops
+    // the planner dumping it in the final slot (§8.4).
+    usage_weight: new Array(slots).fill(0),
+    terminal_weight: 1,
+    units_per_kwh: () => 0.95,
+    drift: (state) => state,
+    discharge: {
+      max_power_w: 9_600,
+      state_per_kwh_out: () => 1 / 0.95,
+      export_allowed: exportAllowed,
+    },
+  };
+}
+
+Deno.test("the battery discharges to cover load worth more than its charge", () => {
+  // Dark, dear import, a full battery whose charge is worth little.
+  const slots = buildSlots([new Array(SLOTS_PER_DAY).fill(0)], {
+    importPrice: 2.5,
+  });
+  const battery = batteryStore(slots.length, 17, 0.4);
+
+  const result = planDispatch(slots, [battery], LIMITS);
+  const discharged = result.discharge_w.battery.reduce((a, b) => a + b, 0);
+
+  assert(discharged > 0, "2.5 SEK import against 0.4 SEK charge must discharge");
+  assert(
+    result.import_w.reduce((a, b) => a + b, 0) <
+      slots.length * slots[0].fixed_load_w,
+    "discharging must reduce import",
+  );
+});
+
+Deno.test("the battery holds charge it values above the import price", () => {
+  const slots = buildSlots([new Array(SLOTS_PER_DAY).fill(0)], {
+    importPrice: 0.8,
+  });
+  // A dark expensive week ahead makes stored energy dear to replace.
+  const battery = batteryStore(slots.length, 17, 3.0);
+
+  const result = planDispatch(slots, [battery], LIMITS);
+
+  assertEquals(
+    result.discharge_w.battery.reduce((a, b) => a + b, 0),
+    0,
+    "charge worth 3 SEK must not be spent avoiding a 0.8 SEK import",
+  );
+});
+
+Deno.test("an empty battery is never discharged past its floor", () => {
+  const slots = buildSlots([new Array(SLOTS_PER_DAY).fill(0)], {
+    importPrice: 5,
+  });
+  const battery = batteryStore(slots.length, 1.2, 0.1);
+
+  const result = planDispatch(slots, [battery], LIMITS);
+
+  for (const state of result.state.battery) {
+    assert(state >= 1 - 1e-6, `state ${state} fell below the 1 kWh floor`);
+  }
+});
+
+Deno.test("charge and discharge never happen in the same slot", () => {
+  const slots = buildSlots([solarDay(9_000)], { importPrice: 2.0 });
+  const battery = batteryStore(slots.length, 9, 0.5);
+
+  const result = planDispatch(slots, [battery], LIMITS);
+
+  for (let index = 0; index < slots.length; index += 1) {
+    assert(
+      result.power_w.battery[index] === 0 ||
+        result.discharge_w.battery[index] === 0,
+      `slot ${index} both charges and discharges`,
+    );
+  }
+});
+
+Deno.test("§8.12 #2 — the battery competes with the sinks, not against them", () => {
+  // One mechanism means the battery and the car bid in the same auction. A
+  // nearly empty car must beat storing the same surplus for later.
+  const slots = buildSlots([solarDay(5_000)]);
+  const scarce: DispatchLimits = {
+    grid_import_limit_w: 0,
+    grid_export_limit_w: 13_200,
+  };
+  const withEmptyCar = planDispatch(
+    slots,
+    [batteryStore(slots.length, 9, 0.5), evStore(slots.length, 60, slots.length - 1)],
+    scarce,
+  );
+  const withFullCar = planDispatch(
+    slots,
+    [batteryStore(slots.length, 9, 0.5), evStore(slots.length, 500, slots.length - 1)],
+    scarce,
+  );
+
+  const sum = (values: number[]) => values.reduce((a, b) => a + b, 0);
+  assert(
+    sum(withEmptyCar.power_w.ev) > 0,
+    "an empty car must win surplus from the battery",
+  );
+  assert(
+    sum(withFullCar.power_w.battery) > sum(withEmptyCar.power_w.battery),
+    "and a full car must leave that surplus to the battery",
+  );
+});
+
+Deno.test("export from storage only happens when it is permitted", () => {
+  const slots = buildSlots([new Array(SLOTS_PER_DAY).fill(0)], {
+    importPrice: 0.1,
+    exportPrice: 4,
+  });
+  const forbidden = planDispatch(
+    slots,
+    [batteryStore(slots.length, 17, 0.3)],
+    LIMITS,
+  );
+  const allowed = planDispatch(
+    slots,
+    [batteryStore(slots.length, 17, 0.3, { exportAllowed: true })],
+    LIMITS,
+  );
+
+  const sum = (values: number[]) => values.reduce((a, b) => a + b, 0);
+  assert(
+    sum(allowed.discharge_w.battery) > sum(forbidden.discharge_w.battery),
+    "a 4 SEK export price must draw more discharge once export is allowed",
+  );
+});
