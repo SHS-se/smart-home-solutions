@@ -145,6 +145,53 @@ const input = (
   };
 };
 
+/**
+ * A realistic 72-hour horizon: three solar days, the first 24 hours priced and
+ * the rest left to the modelled shape, as Nord Pool actually publishes.
+ *
+ * The default `input()` fixture is 32 slots, which is fine for contract checks
+ * and actively misleading for planning ones. Two battery defects survived every
+ * test written against it — a covering band sized over the whole horizon and a
+ * double-counted wear cost — because neither is visible when the horizon is
+ * shorter than a single night. Planner behaviour belongs here.
+ */
+const horizon = (
+  overrides: Partial<OptimisationSnapshotV5> = {},
+  { peakPvW = 9_000, baseLoadW = 1_000, pricedSlots = 96 } = {},
+): OptimisationSnapshotV5 => {
+  const base = input();
+  const start = Date.parse("2026-08-10T08:00:00.000Z");
+  const slots = Array.from({ length: 288 }, (_value, index) => {
+    // The fixture's first slot is 10:00 local, so a day's shape has to be
+    // anchored to that rather than to the index.
+    const hour = ((index / 4) + 10) % 24;
+    const pv = hour >= 6 && hour <= 18
+      ? Math.round(peakPvW * Math.sin(((hour - 6) / 12) * Math.PI))
+      : 0;
+    const priced = index < pricedSlots;
+    return {
+      start: new Date(start + index * 15 * 60_000).toISOString(),
+      pv_forecast_w: pv,
+      base_load_forecast_w: baseLoadW,
+      base_load_p10_w: Math.round(baseLoadW * 0.8),
+      base_load_p90_w: Math.round(baseLoadW * 1.4),
+      // A dear evening against an ordinary day, which is what makes storing and
+      // spending distinguishable at all.
+      import_price_sek_per_kwh: priced ? (hour >= 17 ? 2.4 : 1.6) : null,
+      export_price_sek_per_kwh: priced ? 0.99 : null,
+    };
+  });
+  return input({
+    schema_version: 6,
+    slots,
+    outdoor_temperature_c: slots.map(() => 22),
+    battery: base.battery,
+    services: [],
+    service_requirement_sample_days: {},
+    ...overrides,
+  });
+};
+
 Deno.test("the unpriced tail prefers the hours the shape says are cheap", () => {
   // Before §1.4 every unpriced slot scored `gridW / 100`, so 03:00 and 18:00
   // were indistinguishable and a deferrable load landed on the tie-break.
@@ -1351,31 +1398,9 @@ Deno.test("a full battery spends into a dear evening and refills from surplus", 
   //    accept. Once discharged the battery never refilled, and surplus was
   //    exported past a half-empty pack.
   const base = input();
-  const start = Date.parse("2026-08-10T08:00:00.000Z");
-  const slots = Array.from({ length: 288 }, (_value, index) => {
-    const hour = ((index / 4) + 10) % 24;
-    const pv = hour >= 6 && hour <= 18
-      ? Math.round(9_000 * Math.sin(((hour - 6) / 12) * Math.PI))
-      : 0;
-    const priced = index < 96;
-    return {
-      start: new Date(start + index * 15 * 60_000).toISOString(),
-      pv_forecast_w: pv,
-      base_load_forecast_w: 1_000,
-      base_load_p10_w: 800,
-      base_load_p90_w: 1_400,
-      import_price_sek_per_kwh: priced ? (hour >= 17 ? 2.4 : 1.6) : null,
-      export_price_sek_per_kwh: priced ? 0.99 : null,
-    };
-  });
-  const snapshot = input({
-    schema_version: 6,
-    slots,
-    outdoor_temperature_c: slots.map(() => 22),
+  const snapshot = horizon({
     pool: { water_temperature_c: 26, volume_m3: 55 },
     battery: { ...base.battery!, soc: 1.0 },
-    services: [],
-    service_requirement_sample_days: {},
   });
 
   const plan = generateOptimisationPlan(snapshot, new Date(NOW));
@@ -1405,5 +1430,84 @@ Deno.test("a full battery spends into a dear evening and refills from surplus", 
   assert(
     firstEvening.every((slot) => slot.grid_import_w < 1 || slot.battery_soc <= 0.66),
     "importing while a nearly full battery sits idle is the defect",
+  );
+});
+
+Deno.test("a half-charged car takes surplus rather than letting it be exported", () => {
+  // Observed in a real plan: a Model Y at 55% declined every kWh of a sunny
+  // 72-hour forecast and 30 kWh a day was exported instead. The car was not
+  // being outbid — its curve valued the middle of its own range at less than
+  // the export price, so nothing could have won it.
+  const base = horizon();
+  const snapshot = horizon({
+    pool: { water_temperature_c: 31, volume_m3: 55 },
+    capabilities: { ...base.capabilities, ev: true, pool: true },
+    ev_battery: {
+      name: "Model Y",
+      connected: true,
+      capacity_kwh: 75,
+      soc: 0.55,
+      departure_target_soc: 0.8,
+      charge_efficiency: 0.92,
+      available_from: base.slots[0].start,
+      departure: null,
+      priority: 3,
+      source_entity_ids: {
+        connected: "binary_sensor.charge_cable",
+        soc: "sensor.battery_level",
+        target_soc: "number.charge_limit",
+        energy_remaining: null,
+        charge_current: "number.charge_current",
+      },
+    },
+  });
+
+  const plan = generateOptimisationPlan(snapshot, new Date(NOW));
+  assertEquals(plan.validation_errors, []);
+  const charged = plan.plans.priority.slots.reduce(
+    (total, slot) => total + slot.ev_w,
+    0,
+  ) / 4_000;
+
+  assert(
+    charged > 2,
+    `a car below its own charge limit must take free surplus, got ${charged} kWh`,
+  );
+});
+
+Deno.test("a car past its charge limit leaves the surplus alone", () => {
+  const base = horizon();
+  const snapshot = horizon({
+    pool: { water_temperature_c: 31, volume_m3: 55 },
+    capabilities: { ...base.capabilities, ev: true, pool: true },
+    ev_battery: {
+      name: "Model Y",
+      connected: true,
+      capacity_kwh: 75,
+      soc: 0.99,
+      departure_target_soc: 0.8,
+      charge_efficiency: 0.92,
+      available_from: base.slots[0].start,
+      departure: null,
+      priority: 3,
+      source_entity_ids: {
+        connected: "binary_sensor.charge_cable",
+        soc: "sensor.battery_level",
+        target_soc: "number.charge_limit",
+        energy_remaining: null,
+        charge_current: "number.charge_current",
+      },
+    },
+  });
+
+  const plan = generateOptimisationPlan(snapshot, new Date(NOW));
+  const charged = plan.plans.priority.slots.reduce(
+    (total, slot) => total + slot.ev_w,
+    0,
+  ) / 4_000;
+
+  assert(
+    charged < 0.5,
+    `charging past the limit is what the flat tail exists to prevent, got ${charged} kWh`,
   );
 });

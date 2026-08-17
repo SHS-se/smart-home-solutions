@@ -71,24 +71,48 @@ export const DEFAULT_POOL_CURVE: UtilityCurve = {
 };
 
 /**
- * Vehicle range, in kilometres rather than percent (§8.3).
+ * Vehicle range, scaled to the range the customer actually asked for.
  *
- * Stating it in kilometres is what makes winter automatic: consumption per km
- * rises as temperature falls, so the same state of charge buys less range and
- * lands further up the steep part of this curve without any seasonal
- * parameter. The near-vertical first segment is range anxiety — being unable
- * to make an unplanned trip — and the flat tail is why charging to the limit
- * from the grid is rarely correct.
+ * Stating the curve in kilometres is what makes winter automatic: consumption
+ * per km rises as temperature falls, so the same state of charge buys less
+ * range and lands further up the steep part without any seasonal parameter.
+ *
+ * The levels come from the alternative, not from taste. A kilometre costs
+ * `kWh/km × price`, so at 0.16 kWh/km a kilometre is worth about 0.32 SEK when
+ * the fallback is importing at 2 SEK/kWh. An earlier default put the middle
+ * band at 0.08 SEK/km — roughly 0.46 SEK/kWh — which is *below* an ordinary
+ * export price, so a half-charged car declined free afternoon surplus and the
+ * energy was sold instead. That was the same order-of-magnitude error the pool
+ * curve had.
+ *
+ * The breakpoints are relative to the target because an absolute kilometre
+ * figure means nothing across vehicles: the customer's own charge limit is the
+ * statement of how much range they want, so "wanted" ends there and everything
+ * above it is worth very little.
+ *
+ *   - below a quarter of target: range anxiety. Worth more than any import
+ *     price, because being unable to make an unplanned trip is not a saving.
+ *   - up to target: worth roughly what charging later would cost, so surplus
+ *     and ordinary grid both clear it while a price spike does not.
+ *   - above target to full: worth almost nothing, which is why charging to the
+ *     limit from the grid is rarely correct.
  */
-export const DEFAULT_EV_CURVE: UtilityCurve = {
-  unit: "km",
-  points: [
-    { at: 80, sek_per_unit: 2.5 },
-    { at: 200, sek_per_unit: 0.35 },
-    { at: 320, sek_per_unit: 0.08 },
-    { at: 480, sek_per_unit: 0 },
-  ],
-};
+export function vehicleRangeCurve(targetRangeKm: number): UtilityCurve {
+  const target = Math.max(20, targetRangeKm);
+  return {
+    unit: "km",
+    points: [
+      { at: round2(target * 0.25), sek_per_unit: 2.0 },
+      { at: round2(target), sek_per_unit: 0.32 },
+      { at: round2(target * 1.3), sek_per_unit: 0.05 },
+    ],
+  };
+}
+
+const round2 = (value: number) => Math.round(value * 100) / 100;
+
+/** The shape for a vehicle whose target is not known: a nominal 400 km. */
+export const DEFAULT_EV_CURVE: UtilityCurve = vehicleRangeCurve(400);
 
 /**
  * Hot water, in litre-degrees above the temperature a draw is useful at.

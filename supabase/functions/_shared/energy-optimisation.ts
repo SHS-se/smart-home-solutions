@@ -29,6 +29,7 @@ import { batteryValueCurve } from "./store-value.ts";
 import {
   DEFAULT_VALUE_SETTINGS,
   resolveValueCurves,
+  vehicleRangeCurve,
 } from "./value-curves.ts";
 
 /**
@@ -1766,9 +1767,14 @@ function buildDispatchStores(
       } else {
         usage[count - 1] = 1;
       }
+      // Scale the curve to the range this customer asked for, so "enough" is
+      // their charge limit rather than an absolute kilometre figure that means
+      // nothing across vehicles.
+      const targetRangeKm = vehicle.departure_target_soc * vehicle.capacity_kwh /
+        perKm;
       stores.push({
         key: "ev",
-        curve: curves.ev.curve,
+        curve: vehicleRangeCurve(targetRangeKm),
         initial_state: vehicle.soc * vehicle.capacity_kwh / perKm,
         max_power_w: EV_PHASE_COUNT * EV_PHASE_VOLTAGE * 16,
         usage_weight: usage,
@@ -1919,11 +1925,54 @@ function scheduleServices(
         schedule.serviceCurrentsA[service.id] = [];
       }
     }
-    applyEvCurrentEnvelopes(
-      schedule,
-      slots,
-      snapshot.services.filter(isDispatchableService),
-    );
+    // The EV envelope has to come from the charger, not from whether a service
+    // happens to exist. `applyEvCurrentEnvelopes` derives it from the service
+    // schedule, so a dispatched car — which has no service block, and has none
+    // at all once it is above its old `required_kwh` — ended up with a current
+    // target and a zero envelope, and every such slot was reported infeasible.
+    if (schedule.dispatched.has("ev")) {
+      const control = snapshot.services
+        .filter(isDispatchableService)
+        .find(isDiscreteCurrentService)?.control;
+      const powerPerAmp = EV_PHASE_COUNT * EV_PHASE_VOLTAGE;
+      const minimumA = control?.min_current_a ?? 0;
+      const maximumA = control?.max_current_a ??
+        Math.floor(snapshot.grid.import_limit_w / powerPerAmp);
+      const stepA = control?.current_step_a ?? 1;
+      for (let index = 0; index < slots.length; index += 1) {
+        if (schedule.ev[index] <= 0) {
+          schedule.evTargetCurrentA[index] = 0;
+          schedule.evMinCurrentA[index] = 0;
+          schedule.evMaxCurrentA[index] = 0;
+          continue;
+        }
+        const raw = schedule.ev[index] / powerPerAmp;
+        const steps = Math.floor((raw - minimumA) / stepA + 1e-9);
+        const amps = Math.min(
+          maximumA,
+          Math.max(minimumA, minimumA + Math.max(0, steps) * stepA),
+        );
+        // Below the charger's own minimum a slot cannot be executed at all, so
+        // it is dropped rather than published as an unachievable request.
+        if (raw + 1e-9 < minimumA) {
+          schedule.ev[index] = 0;
+          schedule.evTargetCurrentA[index] = 0;
+          schedule.evMinCurrentA[index] = 0;
+          schedule.evMaxCurrentA[index] = 0;
+          continue;
+        }
+        schedule.ev[index] = round(amps * powerPerAmp, 2);
+        schedule.evTargetCurrentA[index] = amps;
+        schedule.evMinCurrentA[index] = minimumA;
+        schedule.evMaxCurrentA[index] = maximumA;
+      }
+    } else {
+      applyEvCurrentEnvelopes(
+        schedule,
+        slots,
+        snapshot.services.filter(isDispatchableService),
+      );
+    }
     return { schedule, errors };
   }
 
