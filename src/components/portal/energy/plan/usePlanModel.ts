@@ -101,40 +101,11 @@ export function usePlanModel(
       } else if (unplannedPriced) {
         unplannedCost += baseline.import_cost_sek - baseline.export_revenue_sek;
       }
-      // Published and modelled prices are separate series rather than one line
-      // that changes meaning halfway along. Nord Pool prices about a day of a
-      // 72-hour horizon, so most of this chart is the home's own measured price
-      // shape (§1.4.2) — readable only if it cannot be mistaken for a quote.
-      const published = slot.import_price_sek_per_kwh !== null &&
-        slot.export_price_sek_per_kwh !== null;
-      const next = plan.plans.priority.slots[index + 1];
-      const lastPublished = published && (
-        next === undefined ||
-        next.import_price_sek_per_kwh === null ||
-        next.export_price_sek_per_kwh === null
-      );
       return {
         i: index,
-        start: slot.start,
-        startMs: Date.parse(slot.start),
-        modelled: !published,
         label: new Date(slot.start).toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
         importPrice: slot.import_price_sek_per_kwh,
         exportPrice: slot.export_price_sek_per_kwh,
-        // The modelled series also carries the *last* published quarter, so the
-        // dashed line starts where the solid one ends instead of leaving a
-        // one-quarter hole at the day-ahead boundary. `connectNulls` is off —
-        // a line that bridged a genuine gap in the data would be worse.
-        shadowImportPrice: published && !lastPublished
-          ? null
-          : slot.shadow_import_sek_per_kwh ?? null,
-        shadowExportPrice: published && !lastPublished
-          ? null
-          : slot.shadow_export_sek_per_kwh ?? null,
-        solarW: slot.pv_w,
-        loadW: slot.load_w,
-        gridImportW: slot.grid_import_w,
-        gridExportW: slot.grid_export_w,
         plannedCost: plannedPriced ? plannedCost : null,
         unplannedCost: unplannedPriced ? unplannedCost : null,
         costDifference: plannedPriced && unplannedPriced

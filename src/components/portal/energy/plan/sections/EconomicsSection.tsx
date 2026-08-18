@@ -1,15 +1,21 @@
 // The Economics tab's chart.
 //
-// Split out of PlanView on 2026-08-13. Extended on 2026-08-18 to answer the
-// question it was always asked and never could: *which of these prices are
-// real?* Nord Pool publishes roughly one day of a 72-hour horizon, so two
-// thirds of every plan is decided against the home's own measured price shape
-// (§1.4.2). Those modelled prices existed only inside the planner, so the chart
-// simply stopped at the day-ahead boundary — leaving the impression that the
-// far half of the plan had no prices at all, rather than modelled ones.
+// Split out of PlanView on 2026-08-13, and rebuilt on 2026-08-18 onto the same
+// timeline the power chart uses. It used to read the plan alone, which meant a
+// historical day had no prices and no flows at all — the two tabs disagreed
+// about what a day even was. Both now read `TimelineRow`, so a past day shows
+// measured prices against measured flows and the future side shows planned
+// ones, with "now" marked between them.
 //
-// They are drawn as separate, dashed series on purpose. A single line that
-// silently changes meaning halfway along would be worse than not drawing it.
+// Two conventions are inherited from the power chart deliberately, because a
+// reader moving between tabs should not have to relearn the axes: energy
+// leaving the house is drawn negative, and every flow is a step rather than a
+// curve. Smoothing a line through quarter-hour setpoints invents values between
+// the samples that the plan never contained.
+//
+// The third is new. The price axis and the power axis share a zero: with export
+// drawn negative they would otherwise put "nothing" at two different heights,
+// and no comparison across the chart would be safe.
 
 import React, { useMemo } from 'react';
 import {
@@ -17,7 +23,8 @@ import {
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import { useLanguage } from '@/contexts/LanguageContext';
-import type { DayWindow } from '@/lib/energy-shift/energy-timeline';
+import type { DayWindow, TimelineRange, TimelineRow } from '@/lib/energy-shift/energy-timeline';
+import { alignedDomains } from '@/lib/energy-shift/chart-axes';
 import { COLORS } from '../types';
 import { DayWindowToggle, SeriesToggleLegend, useSeriesVisibility } from '../ui';
 import StoreDecisions from '../StoreDecisions';
@@ -29,16 +36,15 @@ const POWER_KEYS: EconomicsSeriesKey[] = ['solarW', 'loadW', 'gridImportW', 'gri
 
 const EconomicsSection: React.FC<{
   model: PlanModel;
+  rows: TimelineRow[];
+  range: TimelineRange;
   dayWindow: DayWindow;
   dayWindowOptions: DayWindow[];
   onDayWindowChange: (value: DayWindow) => void;
-  /** The same window the plan tab is showing, so the two tabs agree. */
-  windowStart: string | null;
-  windowEnd: string | null;
-}> = ({ model, dayWindow, dayWindowOptions, onDayWindowChange, windowStart, windowEnd }) => {
+}> = ({ model, rows, range, dayWindow, dayWindowOptions, onDayWindowChange }) => {
   const { t } = useLanguage();
   const economicsVisibility = useSeriesVisibility<EconomicsSeriesKey>();
-  const { economicsData, economicsSeries } = model;
+  const { economicsSeries } = model;
 
   // Looked up by key, never by position. Indexing this array by number is what
   // took the whole tab down when the cumulative-cost series were removed: the
@@ -47,17 +53,23 @@ const EconomicsSection: React.FC<{
   const labelOf = (key: EconomicsSeriesKey) =>
     economicsSeries.find(series => series.key === key)?.label ?? key;
 
-  // The plan covers issue time to +72 h, so a day earlier than that has no
-  // prices to explain. Re-indexed after filtering because the axis is drawn
-  // over positions rather than timestamps.
-  const windowed = useMemo(() => {
-    const from = windowStart ? Date.parse(windowStart) : null;
-    const to = windowEnd ? Date.parse(windowEnd) : null;
-    const rows = from === null || to === null
-      ? economicsData
-      : economicsData.filter(row => row.startMs >= from && row.startMs <= to);
-    return rows.map((row, index) => ({ ...row, i: index }));
-  }, [economicsData, windowEnd, windowStart]);
+  const windowed = useMemo(() => rows.slice(range.from, range.to).map((row, index) => ({
+    i: index,
+    startMs: row.startMs,
+    measured: row.measured,
+    label: new Date(row.startMs).toLocaleString([], {
+      month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+    }),
+    importPrice: row.importPriceSekPerKwh,
+    exportPrice: row.exportPriceSekPerKwh,
+    shadowImportPrice: row.shadowImportSekPerKwh,
+    shadowExportPrice: row.shadowExportSekPerKwh,
+    solarW: row.solarW,
+    loadW: row.loadW,
+    gridImportW: row.gridImportW,
+    // Already negative on the timeline, exactly as the power chart draws it.
+    gridExportW: row.gridExportW,
+  })), [range.from, range.to, rows]);
 
   const ticks = useMemo(
     () => windowed
@@ -70,18 +82,30 @@ const EconomicsSection: React.FC<{
     [dayWindow, windowed],
   );
 
-  // Where the published prices stop and the modelled ones take over, in this
-  // window's own coordinates.
-  const firstModelled = windowed.findIndex(row => row.modelled);
-  const anyPower = POWER_KEYS.some(key => economicsVisibility.visible(key));
+  const domains = useMemo(() => alignedDomains(windowed.flatMap(row => [
+    {
+      price: Math.max(row.importPrice ?? 0, row.shadowImportPrice ?? 0),
+      power: Math.max(row.solarW ?? 0, row.loadW ?? 0, row.gridImportW ?? 0),
+    },
+    { price: 0, power: Math.min(0, row.gridExportW ?? 0) },
+  ])), [windowed]);
+
+  // Where measured stops and planned begins, and where quoted prices give out.
+  const firstPlanned = windowed.findIndex(row => !row.measured);
+  const firstModelled = windowed.findIndex(row => row.shadowImportPrice !== null);
+  const windowStart = windowed[0]
+    ? new Date(windowed[0].startMs).toISOString()
+    : null;
+  const last = windowed.at(-1);
+  const windowEnd = last ? new Date(last.startMs).toISOString() : null;
 
   return (
     <>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <p className="text-xs text-muted-foreground">
           {t(
-            'Priser och flöden för den valda perioden.',
-            'Prices and flows for the selected period.',
+            'Priser och flöden för den valda perioden. Uppmätta kvartar visar verkliga tal, planerade visar planens.',
+            'Prices and flows for the selected period. Measured quarters show actuals; planned quarters show the plan.',
           )}
         </p>
         <DayWindowToggle value={dayWindow} options={dayWindowOptions} onChange={onDayWindowChange} />
@@ -89,10 +113,7 @@ const EconomicsSection: React.FC<{
 
       {windowed.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          {t(
-            'Den här perioden ligger före den aktuella planen, så den har inga planerade priser.',
-            'This period is before the current plan, so it carries no planned prices.',
-          )}
+          {t('Inga kvartar i den valda perioden.', 'No quarters in the selected period.')}
         </p>
       ) : (
         <>
@@ -100,31 +121,19 @@ const EconomicsSection: React.FC<{
             <ComposedChart data={windowed} margin={{ top: 8, right: 10, left: 0, bottom: 4 }}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-muted" vertical={false} />
               <XAxis dataKey="i" type="number" domain={[0, windowed.length - 1]} ticks={ticks} tickFormatter={index => windowed[index]?.label ?? ''} tick={{ fontSize: 11 }} interval={0} />
-              <YAxis yAxisId="price" tick={{ fontSize: 11 }} tickFormatter={value => Number(value).toFixed(2)} label={{ value: 'SEK/kWh', angle: -90, position: 'insideLeft', fontSize: 11 }} />
-              <YAxis yAxisId="power" orientation="right" tick={{ fontSize: 11 }} tickFormatter={value => `${(Number(value) / 1000).toFixed(1)}`} label={{ value: 'kW', angle: 90, position: 'insideRight', fontSize: 11 }} hide={!anyPower} />
-              {/*
-                A labelled boundary rather than a shaded band: the dash already
-                says "modelled", and this says exactly where the market stopped
-                quoting. A faint background wash said neither clearly.
-              */}
-              {firstModelled > 0 && (
-                <ReferenceLine
-                  yAxisId="price"
-                  x={firstModelled}
-                  stroke="currentColor"
-                  className="text-muted-foreground"
-                  strokeDasharray="3 3"
-                  label={{
-                    value: t('modellerat härifrån', 'modelled from here'),
-                    position: 'insideTopRight',
-                    fontSize: 10,
-                  }}
-                />
+              <YAxis yAxisId="price" domain={domains.price} tick={{ fontSize: 11 }} tickFormatter={value => Number(value).toFixed(2)} label={{ value: 'SEK/kWh', angle: -90, position: 'insideLeft', fontSize: 11 }} />
+              <YAxis yAxisId="power" orientation="right" domain={domains.power} tick={{ fontSize: 11 }} tickFormatter={value => `${(Number(value) / 1000).toFixed(1)}`} label={{ value: 'kW', angle: 90, position: 'insideRight', fontSize: 11 }} />
+              <ReferenceLine yAxisId="power" y={0} stroke="currentColor" className="text-muted-foreground" strokeOpacity={0.5} />
+              {firstPlanned > 0 && (
+                <ReferenceLine yAxisId="price" x={firstPlanned} stroke="currentColor" className="text-foreground" strokeOpacity={0.6} label={{ value: t('nu', 'now'), position: 'insideTopLeft', fontSize: 10 }} />
               )}
-              {economicsVisibility.visible('solarW') && <Area yAxisId="power" type="monotone" dataKey="solarW" name={labelOf('solarW')} stroke={COLORS.pv} fill={COLORS.pv} fillOpacity={0.16} dot={false} />}
-              {economicsVisibility.visible('loadW') && <Line yAxisId="power" type="monotone" dataKey="loadW" name={labelOf('loadW')} stroke={COLORS.base} strokeWidth={1.5} dot={false} />}
-              {economicsVisibility.visible('gridImportW') && <Line yAxisId="power" type="stepAfter" dataKey="gridImportW" name={labelOf('gridImportW')} stroke={COLORS.import} strokeWidth={1.5} strokeOpacity={0.55} dot={false} />}
-              {economicsVisibility.visible('gridExportW') && <Line yAxisId="power" type="stepAfter" dataKey="gridExportW" name={labelOf('gridExportW')} stroke={COLORS.export} strokeWidth={1.5} strokeOpacity={0.55} dot={false} />}
+              {firstModelled > 0 && (
+                <ReferenceLine yAxisId="price" x={firstModelled} stroke="currentColor" className="text-muted-foreground" strokeDasharray="3 3" label={{ value: t('modellerat härifrån', 'modelled from here'), position: 'insideTopRight', fontSize: 10 }} />
+              )}
+              {economicsVisibility.visible('solarW') && <Area yAxisId="power" type="stepAfter" dataKey="solarW" name={labelOf('solarW')} stroke={COLORS.pv} fill={COLORS.pv} fillOpacity={0.16} dot={false} connectNulls={false} />}
+              {economicsVisibility.visible('loadW') && <Line yAxisId="power" type="stepAfter" dataKey="loadW" name={labelOf('loadW')} stroke={COLORS.base} strokeWidth={1.5} dot={false} connectNulls={false} />}
+              {economicsVisibility.visible('gridImportW') && <Line yAxisId="power" type="stepAfter" dataKey="gridImportW" name={labelOf('gridImportW')} stroke={COLORS.import} strokeWidth={1.5} strokeOpacity={0.55} dot={false} connectNulls={false} />}
+              {economicsVisibility.visible('gridExportW') && <Line yAxisId="power" type="stepAfter" dataKey="gridExportW" name={labelOf('gridExportW')} stroke={COLORS.export} strokeWidth={1.5} strokeOpacity={0.55} dot={false} connectNulls={false} />}
               {economicsVisibility.visible('importPrice') && <Line yAxisId="price" type="stepAfter" dataKey="importPrice" name={labelOf('importPrice')} stroke={COLORS.import} strokeWidth={2} dot={false} connectNulls={false} />}
               {economicsVisibility.visible('exportPrice') && <Line yAxisId="price" type="stepAfter" dataKey="exportPrice" name={labelOf('exportPrice')} stroke={COLORS.export} strokeWidth={2} dot={false} connectNulls={false} />}
               {economicsVisibility.visible('shadowImportPrice') && <Line yAxisId="price" type="stepAfter" dataKey="shadowImportPrice" name={labelOf('shadowImportPrice')} stroke={COLORS.import} strokeWidth={2} strokeDasharray="5 4" dot={false} connectNulls={false} />}
@@ -149,8 +158,8 @@ const EconomicsSection: React.FC<{
           />
           <p className="mt-2 text-xs text-muted-foreground">
             {t(
-              'Heldragna prislinjer är publicerade marknadspriser. Streckade linjer, efter markeringen, är modellerade: Nord Pool publicerar bara ett dygn i taget, så resten av horisonten prissätts med husets egen uppmätta priskurva. Planeraren räknar i kronor hela vägen — men bara den heldragna delen är ett faktiskt marknadspris.',
-              'Solid price lines are published market prices. Dashed lines, past the marker, are modelled: Nord Pool publishes only a day at a time, so the rest of the horizon is priced from this home’s own measured price shape. The planner reasons in kronor throughout — but only the solid part is an actual quoted price.',
+              'Nätexport ritas negativt: energi som lämnar huset. Pris- och effektaxeln delar nollinje. Heldragna prislinjer är verkliga priser — uppmätta före "nu", publicerade av Nord Pool efter. Streckade linjer är modellerade: Nord Pool publicerar bara ett dygn i taget, så resten av horisonten prissätts med husets egen uppmätta priskurva.',
+              'Grid export is drawn negative: energy leaving the house. The price and power axes share a zero line. Solid price lines are real prices — measured before "now", published by Nord Pool after it. Dashed lines are modelled: Nord Pool publishes only a day at a time, so the rest of the horizon is priced from this home’s own measured price shape.',
             )}
           </p>
         </>
@@ -162,7 +171,7 @@ const EconomicsSection: React.FC<{
         answer is how the two halves of one decision came to live apart.
       */}
       <div className="mt-6 border-t pt-6">
-        <StoreDecisions model={model} windowStart={windowStart} windowEnd={windowEnd} />
+        <StoreDecisions model={model} rows={rows} range={range} />
       </div>
     </>
   );

@@ -50,6 +50,22 @@ export interface TimelineRow {
   evSoc: number | null;
   deviceW: Record<string, number>;
   costSek: number | null;
+  /**
+   * The all-in price for this quarter, measured or published.
+   *
+   * Carried so the economics chart can read the same rows the power chart does
+   * instead of the plan alone. Without it a historical day had flows but no
+   * prices, and the two tabs disagreed about what a day even was.
+   */
+  importPriceSekPerKwh: number | null;
+  exportPriceSekPerKwh: number | null;
+  /**
+   * What the planner valued an unpriced quarter at (§1.4.2), on the future
+   * side only. Null wherever a real price exists, so a modelled series can be
+   * drawn without ever overlapping a quoted one.
+   */
+  shadowImportSekPerKwh: number | null;
+  shadowExportSekPerKwh: number | null;
 }
 
 export interface PriceRow {
@@ -153,6 +169,13 @@ export const buildEnergyTimeline = ({
       costSek: importCost === null && exportCredit === null
         ? null
         : (importCost ?? 0) - (exportCredit ?? 0),
+      // A measured quarter's price is the archived all-in figure, which is a
+      // real price rather than a forecast — so it never feeds the modelled
+      // series.
+      importPriceSekPerKwh: price?.import_price_sek_per_kwh ?? null,
+      exportPriceSekPerKwh: price?.export_price_sek_per_kwh ?? null,
+      shadowImportSekPerKwh: null,
+      shadowExportSekPerKwh: null,
     });
   }
 
@@ -175,6 +198,14 @@ export const buildEnergyTimeline = ({
       deviceW: { ...slot.device_loads_w },
       costSek: slot.binding
         ? (slot.import_cost_sek ?? 0) - (slot.export_revenue_sek ?? 0)
+        : null,
+      importPriceSekPerKwh: slot.import_price_sek_per_kwh,
+      exportPriceSekPerKwh: slot.export_price_sek_per_kwh,
+      shadowImportSekPerKwh: slot.import_price_sek_per_kwh === null
+        ? slot.shadow_import_sek_per_kwh ?? null
+        : null,
+      shadowExportSekPerKwh: slot.export_price_sek_per_kwh === null
+        ? slot.shadow_export_sek_per_kwh ?? null
         : null,
     });
   }

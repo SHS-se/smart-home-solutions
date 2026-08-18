@@ -16,6 +16,7 @@ import React from 'react';
 import { AlertTriangle, Check, Minus } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useLanguage } from '@/contexts/LanguageContext';
+import type { TimelineRange, TimelineRow } from '@/lib/energy-shift/energy-timeline';
 import type { PlanModel } from './usePlanModel';
 
 interface GridFlow {
@@ -29,42 +30,53 @@ interface GridFlow {
 /**
  * What crossed the meter, and at what price.
  *
+ * Read from the timeline rather than the plan, so a past day reports what the
+ * meter actually recorded instead of what was once forecast for it, and the
+ * figures agree with the chart directly above them.
+ *
  * The stores explain what the house *kept*; this explains what it bought and
  * sold, which is the other half of the same decision. Every export is energy no
  * store bid above the price it earned, so the export price is the floor a bid
  * has to clear before keeping a kWh beats selling it — the comparison that
  * makes "why was 28 kWh exported" answerable at all.
  */
-function gridFlows(slots: PlanModel['executed']['slots']): {
+function gridFlows(rows: readonly TimelineRow[]): {
   imported: GridFlow;
   exported: GridFlow;
-  curtailedKwh: number;
   fullyPriced: boolean;
+  measuredShare: number;
 } {
   const empty = (): GridFlow => ({ kwh: 0, pricedKwh: 0, sek: 0, averageSekPerKwh: null });
   const imported = empty();
   const exported = empty();
-  let curtailedKwh = 0;
   let unpriced = 0;
-  for (const slot of slots) {
-    const inKwh = slot.grid_import_w / 4_000;
-    const outKwh = slot.grid_export_w / 4_000;
+  let measured = 0;
+  for (const row of rows) {
+    if (row.measured) measured += 1;
+    const inKwh = (row.gridImportW ?? 0) / 4_000;
+    // Export is stored negative — energy leaving the house — and read here as
+    // a positive quantity sold.
+    const outKwh = Math.abs(row.gridExportW ?? 0) / 4_000;
     imported.kwh += inKwh;
     exported.kwh += outKwh;
-    curtailedKwh += slot.curtailed_w / 4_000;
-    if (slot.import_cost_sek !== null && typeof slot.import_price_sek_per_kwh === 'number') {
+    if (row.importPriceSekPerKwh !== null) {
       imported.pricedKwh += inKwh;
-      imported.sek += slot.import_cost_sek;
+      imported.sek += inKwh * row.importPriceSekPerKwh;
     } else if (inKwh > 0) unpriced += 1;
-    if (slot.export_revenue_sek !== null && typeof slot.export_price_sek_per_kwh === 'number') {
+    if (row.exportPriceSekPerKwh !== null) {
       exported.pricedKwh += outKwh;
-      exported.sek += slot.export_revenue_sek;
+      exported.sek += outKwh * row.exportPriceSekPerKwh;
     } else if (outKwh > 0) unpriced += 1;
   }
   for (const flow of [imported, exported]) {
     flow.averageSekPerKwh = flow.pricedKwh > 0.0001 ? flow.sek / flow.pricedKwh : null;
   }
-  return { imported, exported, curtailedKwh, fullyPriced: unpriced === 0 };
+  return {
+    imported,
+    exported,
+    fullyPriced: unpriced === 0,
+    measuredShare: rows.length === 0 ? 0 : measured / rows.length,
+  };
 }
 
 /** Which per-slot column carries each store's scheduled power. */
@@ -198,27 +210,32 @@ const REASON_TEXT: Record<Reason, { sv: [string, string]; en: [string, string] }
 
 const StoreDecisions: React.FC<{
   model: PlanModel;
-  /** The window the chart above is showing, so the two agree. */
-  windowStart?: string | null;
-  windowEnd?: string | null;
-}> = ({ model, windowStart, windowEnd }) => {
+  /** The same timeline window the chart above is showing, so the two agree. */
+  rows: TimelineRow[];
+  range: TimelineRange;
+}> = ({ model, rows: timeline, range }) => {
   const { t, language } = useLanguage();
   const rows = (model.executed.store_diagnostics ?? []) as Row[];
 
-  // Plan slots inside the selected window. A day earlier than the plan's issue
-  // time has no overlap at all, which is not an empty result but a different
+  const windowRows = React.useMemo(
+    () => timeline.slice(range.from, range.to),
+    [range.from, range.to, timeline],
+  );
+
+  // Plan slots inside the same window. A day earlier than the plan's issue time
+  // has no overlap at all, which is not an empty result but a different
   // statement: what happened then was measured, not decided by this plan.
   const inWindow = React.useMemo(() => {
-    const from = windowStart ? Date.parse(windowStart) : null;
-    const to = windowEnd ? Date.parse(windowEnd) : null;
-    if (from === null || to === null) return model.executed.slots;
+    const first = windowRows[0]?.startMs;
+    const last = windowRows.at(-1)?.startMs;
+    if (first === undefined || last === undefined) return [];
     return model.executed.slots.filter(slot => {
       const at = Date.parse(slot.start);
-      return at >= from && at <= to;
+      return at >= first && at <= last;
     });
-  }, [model.executed.slots, windowEnd, windowStart]);
+  }, [model.executed.slots, windowRows]);
 
-  const grid = gridFlows(inWindow);
+  const grid = gridFlows(windowRows);
   const energy = windowedEnergy(inWindow);
   const partial = inWindow.length < model.executed.slots.length;
 
@@ -248,6 +265,9 @@ const StoreDecisions: React.FC<{
   });
   const unconsidered = ordered.filter(row => UNCONSIDERED.has(row.reason));
 
+  // A window with no planned quarters still bought and sold energy, and those
+  // are measured facts worth reporting. Only the *decisions* are absent, so
+  // only the bid table goes away.
   if (inWindow.length === 0) {
     return (
       <div className="space-y-3">
@@ -256,10 +276,11 @@ const StoreDecisions: React.FC<{
         </h3>
         <p className="text-sm text-muted-foreground">
           {t(
-            'Den här perioden ligger före den aktuella planen. Det som visas ovan är uppmätt, inte planerat — det finns inga beslut att förklara här.',
-            'This period is before the current plan begins. What is shown above is measured rather than planned, so there are no decisions to explain here.',
+            'Den här perioden ligger före den aktuella planen, så det finns inga beslut att förklara. Siffrorna nedan är uppmätta.',
+            'This period is before the current plan, so there are no decisions to explain. The figures below are measured.',
           )}
         </p>
+        <GridDecisions grid={grid} />
       </div>
     );
   }
@@ -373,7 +394,7 @@ const StoreDecisions: React.FC<{
  */
 const GridDecisions: React.FC<{ grid: ReturnType<typeof gridFlows> }> = ({ grid }) => {
   const { t } = useLanguage();
-  const { imported, exported, curtailedKwh, fullyPriced } = grid;
+  const { imported, exported, fullyPriced, measuredShare } = grid;
   /**
    * Quantity, then money — and never a price that fails to multiply.
    *
@@ -431,9 +452,9 @@ const GridDecisions: React.FC<{ grid: ReturnType<typeof gridFlows> }> = ({ grid 
             'Allt som säljs är energi ingen lagring värderade över säljpriset. De här kvartarna har ännu inget marknadspris, så golvet planeraren jämförde mot kommer från husets egen uppmätta priskurva.',
             'Everything sold is energy no store valued above the export price. These quarters have no market price yet, so the floor the planner compared against came from this home’s own measured price shape.',
           )}
-        {curtailedKwh > 0.05 && ` ${t(
-          `${curtailedKwh.toFixed(1)} kWh kapades — mer överskott än vad exportgränsen släpper igenom.`,
-          `${curtailedKwh.toFixed(1)} kWh was curtailed: more surplus than the export limit allows through.`,
+        {measuredShare > 0 && measuredShare < 1 && ` ${t(
+          'Perioden är delvis uppmätt och delvis planerad, så summorna blandar verkligt utfall med plan.',
+          'This period is part measured and part planned, so the totals mix real outturn with the plan.',
         )}`}
         {!fullyPriced && ` ${t(
           'Nord Pool publicerar bara ett dygn i taget, så resten av horisonten har inget marknadspris. Planeraren är inte blind där — den använder husets egen uppmätta priskurva — men kronorna ovan gäller bara de kvartar som har ett publicerat pris.',
