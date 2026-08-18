@@ -2699,6 +2699,59 @@ Heuristics 1, 4 and 7 are already reproduced as executable tests against
 reproduced against `store-models.ts`. That is the acceptance criterion in
 §8.12 being met at the unit level, not yet in a whole plan.
 
+#### 8.12.2 The objective has to be legible, not only correct (2026-08-18)
+
+Written after a live plan left a connected car below its own charge limit
+unplanned for two days while 66 kWh was exported, and answering *why* took a
+replay harness, the Home Assistant history API and most of an afternoon. The
+answer was a boolean the system already knew.
+
+**Silence was the defect, not the arithmetic.** `capabilities.ev` was false
+because the website had left the charging meter in base load, so no store was
+built, no bid was made and no diagnostic row was written. The plan reported
+`ready` with no errors and no missing inputs — indistinguishable from a
+household that owns no car. Four things follow, all now landed:
+
+| Piece | What it fixes |
+|---|---|
+| `unplanned_services()` in the integration | Telemetry configured per service and control routed per *meter* can disagree without either side looking wrong alone. Only comparing them makes it visible; it now raises a repair issue rather than nothing |
+| Vehicle state carried without the EV capability | State is a *measurement*; a capability is a *control contract*. Requiring them to agree made an unrouted car unrepresentable rather than merely unplanned — the pool already got this right |
+| `undispatchedStores()` and the widened `StoreDiagnostic` | A store that loses says what it was worth. A store never built said nothing, so "considered and declined" and "does not exist" looked identical. `marginal_value_sek_per_kwh` is now null rather than zero for a store that never bid, because those are different claims |
+| The store-decisions table in the plan view | `store_diagnostics` existed from the first marginal-value plan and was rendered nowhere |
+
+**And a curve nobody can state is not a customer input.** §8.10 requires the
+curves to be supplied once and left alone, which is worthless if stating one
+requires knowing that a 55 m³ pool takes about 14 kWh per degree. So the editor
+now asks for three thresholds in the unit the household thinks in — really want
+it below here, would like it around here, do not care above here — and
+`value-preferences.ts` supplies the levels from the physics, anchoring the
+comfortable point at exactly what the energy to reach it costs. The customer
+states *where*; the equipment states *what it is worth*.
+
+Two properties of that parameterisation are worth recording. The thresholds
+*are* the breakpoints, so opening the editor and saving without an edit cannot
+drift. And a curve the editor did not generate is never reverse-engineered: an
+earlier version inferred thresholds from the most valuable interior breakpoint,
+which reads the pool default correctly and the vehicle default wrongly, because
+the vehicle's second point ends the range-anxiety ramp rather than marking the
+wanted band. Defaults are now stated rather than inferred.
+
+Finally, a threshold stays abstract until it does something, so the editor
+re-solves the persisted snapshot with the edited curve and reports the
+difference in hours, kilowatt-hours, kronor and where each store ends up. It
+runs **the planner itself** in the browser — the snapshot every plan was built
+from is stored alongside the plan — rather than a second, prettier model free
+to disagree with the thing it claims to predict. Both sides of the comparison
+are solved locally so the difference is attributable to the one thing that
+changed.
+
+What this does *not* address, and remains the largest known defect in the
+objective: `batteryValueCurve` still prices the whole covering band at the
+dearest hour of the coming night and everything above it at the cheapest, a
+two-level step where §8.4 asks for the merit order of the imports the stored
+energy displaces. That is what makes the battery grid-charge in one burst and
+then refuse the following day's surplus.
+
 Replacing the scheduler core is blocked on inputs that do not exist yet, and
 none of them are solver work:
 

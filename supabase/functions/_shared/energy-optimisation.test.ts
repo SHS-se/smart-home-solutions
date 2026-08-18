@@ -1604,3 +1604,103 @@ Deno.test("a fitted pool model replaces the seeded loss and COP", () => {
     "a poorer pump lowers what a kWh is worth to the pool",
   );
 });
+
+Deno.test("a store the planner never saw says so instead of vanishing", () => {
+  // The failure this exists to stop: a car connected below its own charge
+  // limit, whose meter the website left in base load. `capabilities.ev` goes
+  // false, no store is built, no bid is made, and the plan reports "ready"
+  // with no errors — indistinguishable from a household that owns no car.
+  const snapshot = horizon({
+    capabilities: {
+      pv: true,
+      battery: true,
+      pool: true,
+      boiler: false,
+      ev: false,
+    },
+    pool: { water_temperature_c: 26.5, volume_m3: 55 },
+    ev_battery: {
+      name: "Model Y",
+      connected: true,
+      capacity_kwh: 76.87,
+      soc: 0.67,
+      departure_target_soc: 0.8,
+      charge_efficiency: 0.9,
+      available_from: "2026-08-10T08:00:00.000Z",
+      departure: null,
+      priority: 3,
+      source_entity_ids: {
+        connected: "binary_sensor.cable",
+        soc: "sensor.soc",
+        target_soc: "number.limit",
+        energy_remaining: null,
+        charge_current: null,
+      },
+    },
+  });
+
+  const plan = generateOptimisationPlan(snapshot, new Date(NOW));
+  const byKey = new Map(
+    plan.plans.priority.store_diagnostics.map((entry) => [entry.key, entry]),
+  );
+
+  const ev = byKey.get("ev");
+  assert(ev !== undefined, "a connected vehicle must appear in the diagnostics");
+  assertEquals(ev.reason, "not_controllable");
+  assertEquals(ev.planned_kwh, 0);
+  // Null rather than zero: never considered is not the same claim as worth
+  // nothing, and only one of them points at a setting to change.
+  assertEquals(ev.marginal_value_sek_per_kwh, null);
+  assert(ev.state !== null && ev.state > 0, "range is reported in the curve's units");
+
+  // The pool is routed, so it still reports a real comparison alongside it.
+  const pool = byKey.get("pool")!;
+  assertEquals(pool.reason, "scheduled");
+  assert(
+    pool.marginal_value_sek_per_kwh !== null,
+    "a routed store reports what it was worth",
+  );
+});
+
+Deno.test("an unplugged car is reported as unplugged, not as unwanted", () => {
+  const snapshot = horizon({
+    capabilities: { pv: true, battery: true, pool: false, boiler: false, ev: true },
+    ev_battery: {
+      name: "Model Y",
+      connected: false,
+      capacity_kwh: 76.87,
+      soc: 0.4,
+      departure_target_soc: 0.8,
+      charge_efficiency: 0.9,
+      available_from: null,
+      departure: null,
+      priority: 3,
+      source_entity_ids: {
+        connected: "binary_sensor.cable",
+        soc: "sensor.soc",
+        target_soc: "number.limit",
+        energy_remaining: null,
+        charge_current: null,
+      },
+    },
+  });
+
+  const ev = generateOptimisationPlan(snapshot, new Date(NOW))
+    .plans.priority.store_diagnostics.find((entry) => entry.key === "ev")!;
+  assertEquals(ev.reason, "disconnected");
+});
+
+Deno.test("a home without the equipment stays silent about it", () => {
+  // Evidence, not capability: no pool state and no vehicle means no rows, so
+  // the table never invents services a household does not own.
+  const keys = generateOptimisationPlan(
+    horizon({
+      capabilities: { pv: true, battery: true, pool: false, boiler: false, ev: false },
+      pool: null,
+      ev_battery: null,
+    }),
+    new Date(NOW),
+  ).plans.priority.store_diagnostics.map((entry) => entry.key);
+  assertEquals(keys.includes("pool"), false);
+  assertEquals(keys.includes("ev"), false);
+});

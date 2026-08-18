@@ -46,6 +46,7 @@ import PowerSection from './plan/sections/PowerSection';
 import ThermalSection from './plan/sections/ThermalSection';
 import EconomicsSection from './plan/sections/EconomicsSection';
 import ValueCurvesTab from './ValueCurvesTab';
+import StoreDecisions from './plan/StoreDecisions';
 
 import EmpiricalDeviceModelsCard, {
   type EmpiricalEnergyDevice,
@@ -525,6 +526,15 @@ const PlanView: React.FC<{
     return (vehicle.soc * vehicle.capacity_kwh) / 0.16;
   }, [plan]);
 
+  /** The range the customer's own charge limit asks for, which anchors the curve. */
+  const vehicleTargetRangeKm = useMemo(() => {
+    const vehicle = plan?.ev_battery;
+    if (!vehicle?.capacity_kwh || typeof vehicle.departure_target_soc !== 'number') {
+      return null;
+    }
+    return (vehicle.departure_target_soc * vehicle.capacity_kwh) / 0.16;
+  }, [plan]);
+
   const nextReplanAt = useMemo(() => {
     if (!plan?.valid_until) return null;
     const validUntil = Date.parse(plan.valid_until);
@@ -702,6 +712,14 @@ const PlanView: React.FC<{
             hasBattery={hasBattery}
             hasEvBattery={hasEvBattery}
           />
+          {/*
+            Under the chart rather than above it: the chart is what happened,
+            this is why. A reader who wonders where the pool went in an
+            afternoon of surplus looks straight down.
+          */}
+          <div className="mt-6 border-t pt-6">
+            <StoreDecisions model={model} />
+          </div>
           </>
           )}
 
@@ -729,6 +747,9 @@ const PlanView: React.FC<{
                   exportPriceSekPerKwh={livePrices.export}
                   poolTemperatureC={plan?.pool?.water_temperature_c ?? null}
                   vehicleRangeKm={vehicleRangeKm}
+                  vehicleTargetRangeKm={vehicleTargetRangeKm}
+                  poolVolumeM3={plan?.pool?.volume_m3 ?? null}
+                  vehicleChargeEfficiency={plan?.ev_battery?.charge_efficiency ?? null}
                 />
               </div>
             </>

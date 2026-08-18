@@ -543,20 +543,53 @@ interface Schedule {
 export interface StoreDiagnostic {
   key: string;
   unit: string;
-  state: number;
-  /** What one more kWh into this store is worth right now, in SEK. */
-  marginal_value_sek_per_kwh: number;
+  /** Measured state in the curve's units, or null when there was none to read. */
+  state: number | null;
+  /**
+   * What one more kWh into this store is worth right now, in SEK.
+   *
+   * Null when the store never reached the auction, which is a different
+   * statement from zero: zero means "considered and worth nothing", null means
+   * "never considered". Collapsing the two is exactly how a connected car
+   * disappeared from a plan that reported no errors.
+   */
+  marginal_value_sek_per_kwh: number | null;
   /** The cheapest energy available to it anywhere in the horizon, in SEK. */
-  cheapest_energy_sek_per_kwh: number;
+  cheapest_energy_sek_per_kwh: number | null;
   planned_kwh: number;
   returned_kwh: number;
+  /**
+   * Where the store ends up at the horizon edge, in its own units.
+   *
+   * Published because the schedule cannot answer the question a household
+   * actually asks — "so how warm is the pool on Wednesday?" — from watts per
+   * quarter. Null when the store never ran, so there was no trajectory.
+   */
+  end_state: number | null;
   reason:
     | "scheduled"
     | "state_above_curve"
     | "value_below_price"
     /** Cleared the cheapest price somewhere, but that energy went elsewhere. */
-    | "outbid";
+    | "outbid"
+    // Everything below this line means the store was never in the auction.
+    /** State is known, but no meter routes to this service (§3.2 capability). */
+    | "not_controllable"
+    /** The service is controllable, but nothing is plugged in to serve. */
+    | "disconnected"
+    /** Controllable, but the measured state the curve is over is missing. */
+    | "state_unavailable"
+    /** Nothing to price stored energy against, so no curve could be derived. */
+    | "no_price_reference";
 }
+
+/** Reasons that mean the store never bid, as opposed to bidding and losing. */
+export const UNCONSIDERED_STORE_REASONS = [
+  "not_controllable",
+  "disconnected",
+  "state_unavailable",
+  "no_price_reference",
+] as const;
 
 const finite = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value);
@@ -750,9 +783,13 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV5): string[] {
     }
   }
   const evBattery = snapshot?.ev_battery;
-  if (!snapshot?.capabilities?.ev && evBattery != null) {
-    errors.push("ev_battery must be null when the EV capability is disabled");
-  } else if (evBattery) {
+  // Vehicle state may be reported without the EV capability, exactly as pool
+  // state may. A capability is a *control contract* — "a meter is routed to
+  // this service" — while the state is a measurement, and requiring them to
+  // agree made an unrouted car unrepresentable rather than merely unplanned.
+  // The planner still refuses to dispatch what it may not control; it can now
+  // say what it declined to plan and why (§8.12.1).
+  if (evBattery) {
     const sourceIds = evBattery.source_entity_ids;
     if (
       !evBattery.name || !inRange(evBattery.capacity_kwh, 1, 500) ||
@@ -1956,6 +1993,102 @@ function buildDispatchStores(
   return stores.length > 0 ? stores : null;
 }
 
+/**
+ * Stores this home has evidence for that never entered the auction.
+ *
+ * A store that loses is visible: it holds a diagnostic row saying what it was
+ * worth and what it would have cost. A store that was never *built* held
+ * nothing at all, and an absent row is indistinguishable from a home that does
+ * not own the equipment. That gap hid a connected car below its own charge
+ * limit for two days behind a plan reporting "ready" with no errors, while the
+ * surplus it wanted was exported.
+ *
+ * The test applied here is evidence, not capability: a row is emitted only
+ * where the snapshot carries a measured state or a connected device. A house
+ * with no pool says nothing about pools.
+ */
+function undispatchedStores(
+  snapshot: OptimisationSnapshotV5,
+  dispatched: Set<string>,
+): StoreDiagnostic[] {
+  if (snapshot.schema_version < 6) return [];
+  const rows: StoreDiagnostic[] = [];
+  const skip = (
+    key: string,
+    unit: string,
+    state: number | null,
+    reason: StoreDiagnostic["reason"],
+  ) => {
+    rows.push({
+      key,
+      unit,
+      state: state === null ? null : round(state, 3),
+      marginal_value_sek_per_kwh: null,
+      cheapest_energy_sek_per_kwh: null,
+      planned_kwh: 0,
+      returned_kwh: 0,
+      end_state: null,
+      reason,
+    });
+  };
+
+  if (!dispatched.has("pool")) {
+    const pool = snapshot.pool;
+    if (pool) {
+      // A temperature is being measured, so the household has a pool. Whether
+      // the planner may act on it is the separate question this answers.
+      skip(
+        "pool",
+        "celsius",
+        pool.water_temperature_c,
+        snapshot.capabilities.pool ? "state_unavailable" : "not_controllable",
+      );
+    } else if (snapshot.capabilities.pool) {
+      skip("pool", "celsius", null, "state_unavailable");
+    }
+  }
+
+  if (!dispatched.has("ev")) {
+    const vehicle = snapshot.ev_battery;
+    if (vehicle) {
+      // Range rather than SOC, so the row reads in the curve's own units even
+      // when no curve was ever built for it.
+      const rangeKm = vehicle.soc * vehicle.capacity_kwh /
+        SEEDED_VEHICLE_KWH_PER_KM;
+      skip(
+        "ev",
+        "km",
+        rangeKm,
+        !snapshot.capabilities.ev
+          ? "not_controllable"
+          : vehicle.connected
+          ? "state_unavailable"
+          : "disconnected",
+      );
+    } else if (snapshot.capabilities.ev) {
+      skip("ev", "km", null, "state_unavailable");
+    }
+  }
+
+  if (!dispatched.has("battery") && snapshot.battery) {
+    // The battery's curve is derived from the price outlook rather than
+    // configured (§8.4), so the only way it goes missing is that the outlook
+    // had nothing to say.
+    skip(
+      "battery",
+      "kwh",
+      Math.max(
+        0,
+        (snapshot.battery.soc - snapshot.battery.min_soc) *
+          snapshot.battery.capacity_kwh,
+      ),
+      "no_price_reference",
+    );
+  }
+
+  return rows;
+}
+
 const EV_PHASE_COUNT = 3;
 const EV_PHASE_VOLTAGE = 230;
 
@@ -2009,6 +2142,7 @@ function scheduleServices(
           : slot.import_price_sek_per_kwh;
         return Math.min(lowest, price);
       }, Number.POSITIVE_INFINITY);
+      const trajectory = dispatched.state[store.key];
       schedule.storeDiagnostics.push({
         key: store.key,
         unit: store.curve.unit,
@@ -2017,6 +2151,9 @@ function scheduleServices(
         cheapest_energy_sek_per_kwh: round(cheapest, 4),
         planned_kwh: round(plannedKwh, 3),
         returned_kwh: round(returnedKwh, 3),
+        end_state: trajectory && trajectory.length > 0
+          ? round(trajectory[trajectory.length - 1], 3)
+          : null,
         reason: plannedKwh > 0
           ? "scheduled"
           : value <= 0
@@ -2112,8 +2249,18 @@ function scheduleServices(
         snapshot.services.filter(isDispatchableService),
       );
     }
+    schedule.storeDiagnostics.push(
+      ...undispatchedStores(snapshot, schedule.dispatched),
+    );
     return { schedule, errors };
   }
+
+  // The store model is in force from schema 6, so a home on it whose stores
+  // could not be built at all still has to say what it was holding and why —
+  // that case returns no dispatch, and used to return no explanation either.
+  schedule.storeDiagnostics.push(
+    ...undispatchedStores(snapshot, schedule.dispatched),
+  );
 
   const services = snapshot.services.filter(isDispatchableService).sort((
     a,
