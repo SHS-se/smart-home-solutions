@@ -67,6 +67,40 @@ function gridFlows(slots: PlanModel['executed']['slots']): {
   return { imported, exported, curtailedKwh, fullyPriced: unpriced === 0 };
 }
 
+/** Which per-slot column carries each store's scheduled power. */
+const POWER_FIELD: Record<string, 'pool_w' | 'ev_w' | 'battery_charge_w'> = {
+  pool: 'pool_w',
+  ev: 'ev_w',
+  battery: 'battery_charge_w',
+};
+
+/**
+ * What each store is scheduled to take inside the selected window.
+ *
+ * The diagnostics' own `planned_kwh` covers the whole horizon, because the
+ * decision was made once for all 72 hours. The *consequence* is per-day, and a
+ * table that reports a three-day total while the chart above it shows one
+ * Tuesday is telling the reader two different things at once.
+ */
+function windowedEnergy(
+  slots: PlanModel['executed']['slots'],
+): Record<string, { kwh: number; hours: number }> {
+  const totals: Record<string, { kwh: number; hours: number }> = {};
+  for (const [key, field] of Object.entries(POWER_FIELD)) {
+    let kwh = 0;
+    let running = 0;
+    for (const slot of slots) {
+      const watts = (slot[field] ?? 0) as number;
+      if (watts > 0) {
+        kwh += watts / 4_000;
+        running += 1;
+      }
+    }
+    totals[key] = { kwh, hours: running * 0.25 };
+  }
+  return totals;
+}
+
 type Reason =
   | 'scheduled'
   | 'state_above_curve'
@@ -162,10 +196,31 @@ const REASON_TEXT: Record<Reason, { sv: [string, string]; en: [string, string] }
   },
 };
 
-const StoreDecisions: React.FC<{ model: PlanModel }> = ({ model }) => {
+const StoreDecisions: React.FC<{
+  model: PlanModel;
+  /** The window the chart above is showing, so the two agree. */
+  windowStart?: string | null;
+  windowEnd?: string | null;
+}> = ({ model, windowStart, windowEnd }) => {
   const { t, language } = useLanguage();
   const rows = (model.executed.store_diagnostics ?? []) as Row[];
-  const grid = gridFlows(model.executed.slots);
+
+  // Plan slots inside the selected window. A day earlier than the plan's issue
+  // time has no overlap at all, which is not an empty result but a different
+  // statement: what happened then was measured, not decided by this plan.
+  const inWindow = React.useMemo(() => {
+    const from = windowStart ? Date.parse(windowStart) : null;
+    const to = windowEnd ? Date.parse(windowEnd) : null;
+    if (from === null || to === null) return model.executed.slots;
+    return model.executed.slots.filter(slot => {
+      const at = Date.parse(slot.start);
+      return at >= from && at <= to;
+    });
+  }, [model.executed.slots, windowEnd, windowStart]);
+
+  const grid = gridFlows(inWindow);
+  const energy = windowedEnergy(inWindow);
+  const partial = inWindow.length < model.executed.slots.length;
 
   // A plan with no dispatched stores still bought and sold energy, so the grid
   // half is rendered either way. Returning early here dropped it for every
@@ -193,6 +248,22 @@ const StoreDecisions: React.FC<{ model: PlanModel }> = ({ model }) => {
   });
   const unconsidered = ordered.filter(row => UNCONSIDERED.has(row.reason));
 
+  if (inWindow.length === 0) {
+    return (
+      <div className="space-y-3">
+        <h3 className="text-sm font-medium">
+          {t('Vad planen beslutade, och varför', 'What the plan decided, and why')}
+        </h3>
+        <p className="text-sm text-muted-foreground">
+          {t(
+            'Den här perioden ligger före den aktuella planen. Det som visas ovan är uppmätt, inte planerat — det finns inga beslut att förklara här.',
+            'This period is before the current plan begins. What is shown above is measured rather than planned, so there are no decisions to explain here.',
+          )}
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-3">
       <div>
@@ -204,6 +275,10 @@ const StoreDecisions: React.FC<{ model: PlanModel }> = ({ model }) => {
             'Varje lagring bjuder vad en kWh är värd för just den. Den som bjuder över priset får energin — det finns ingen fast prioritetsordning.',
             'Each store bids what a kWh is worth to it. Whichever bid beats the price gets the energy; there is no fixed priority order.',
           )}
+          {partial && ` ${t(
+            'Tillstånd, värde och pris gäller hela planen — beslutet fattades en gång för alla 72 timmarna. Planerat och nätet nedan gäller den valda perioden.',
+            'State, worth and price describe the whole plan: the decision was made once for all 72 hours. Planned, and the grid below, cover the selected period.',
+          )}`}
         </p>
       </div>
 
@@ -244,7 +319,14 @@ const StoreDecisions: React.FC<{ model: PlanModel }> = ({ model }) => {
                   {sek(row.cheapest_energy_sek_per_kwh)}
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
-                  {row.planned_kwh > 0 ? `${row.planned_kwh.toFixed(1)} kWh` : '—'}
+                  {(energy[row.key]?.kwh ?? 0) > 0.05
+                    ? `${energy[row.key].kwh.toFixed(1)} kWh`
+                    : '—'}
+                  {(energy[row.key]?.hours ?? 0) > 0 && (
+                    <span className="block text-[11px] text-muted-foreground">
+                      {energy[row.key].hours.toFixed(1)} {t('h', 'h')}
+                    </span>
+                  )}
                 </TableCell>
                 <TableCell>
                   <div className="flex items-start gap-1.5">
@@ -292,10 +374,27 @@ const StoreDecisions: React.FC<{ model: PlanModel }> = ({ model }) => {
 const GridDecisions: React.FC<{ grid: ReturnType<typeof gridFlows> }> = ({ grid }) => {
   const { t } = useLanguage();
   const { imported, exported, curtailedKwh, fullyPriced } = grid;
-  const priceOf = (flow: GridFlow) =>
-    flow.averageSekPerKwh === null
-      ? t('inget publicerat pris', 'no published price')
-      : `${flow.averageSekPerKwh.toFixed(2)} SEK/kWh ${t('i snitt', 'average')}`;
+  /**
+   * Quantity, then money — and never a price that fails to multiply.
+   *
+   * Nord Pool prices about a day of a three-day horizon, so most windows are
+   * part-priced. Printing the total kWh beside an average and a total that
+   * cover only the priced share reads as arithmetic and is not: 23.6 kWh at
+   * 2.44 SEK/kWh is 57 SEK, not the 21 SEK actually shown. The priced quantity
+   * has to appear next to the money it explains.
+   */
+  const moneyOf = (flow: GridFlow) => {
+    if (flow.averageSekPerKwh === null) {
+      return t('inget publicerat pris ännu', 'no published price yet');
+    }
+    const allPriced = flow.kwh - flow.pricedKwh < 0.05;
+    const priced = allPriced
+      ? `${flow.averageSekPerKwh.toFixed(2)} SEK/kWh ${t('i snitt', 'average')}`
+      : `${flow.pricedKwh.toFixed(1)} kWh ${t('prissatt till', 'priced at')} ${
+        flow.averageSekPerKwh.toFixed(2)
+      } SEK/kWh`;
+    return `${priced} · ${flow.sek.toFixed(2)} SEK`;
+  };
 
   return (
     <div className="rounded-md border bg-muted/20 p-3">
@@ -304,16 +403,13 @@ const GridDecisions: React.FC<{ grid: ReturnType<typeof gridFlows> }> = ({ grid 
         <div className="flex flex-wrap gap-x-2">
           <dt className="w-14 shrink-0 text-muted-foreground">{t('Köpt', 'Bought')}</dt>
           <dd className="tabular-nums">
-            {imported.kwh.toFixed(1)} kWh · {priceOf(imported)}
-            {imported.averageSekPerKwh !== null && ` · ${imported.sek.toFixed(2)} SEK`}
+            {imported.kwh.toFixed(1)} kWh · {moneyOf(imported)}
           </dd>
         </div>
         <div className="flex flex-wrap gap-x-2">
           <dt className="w-14 shrink-0 text-muted-foreground">{t('Sålt', 'Sold')}</dt>
           <dd className="tabular-nums">
-            {exported.kwh.toFixed(1)} kWh · {priceOf(exported)}
-            {exported.averageSekPerKwh !== null &&
-              ` · ${t('gav', 'earned')} ${exported.sek.toFixed(2)} SEK`}
+            {exported.kwh.toFixed(1)} kWh · {moneyOf(exported)}
           </dd>
         </div>
       </dl>
@@ -332,8 +428,8 @@ const GridDecisions: React.FC<{ grid: ReturnType<typeof gridFlows> }> = ({ grid 
           `${curtailedKwh.toFixed(1)} kWh was curtailed: more surplus than the export limit allows through.`,
         )}`}
         {!fullyPriced && ` ${t(
-          'Snittpriserna gäller bara de kvartar som har publicerat pris; resten av horisonten planeras mot den modellerade priskurvan.',
-          'The averages cover only the quarters with a published price; the rest of the horizon is planned against the modelled price shape.',
+          'Nord Pool publicerar bara ett dygn i taget, så resten av horisonten har inget marknadspris. Planeraren är inte blind där — den använder husets egen uppmätta priskurva — men kronorna ovan gäller bara de kvartar som har ett publicerat pris.',
+          'Nord Pool publishes only a day at a time, so the rest of the horizon has no market price. The planner is not blind there — it uses this home\u2019s own measured price shape — but the kronor above cover only the quarters with a published price.',
         )}`}
       </p>
     </div>

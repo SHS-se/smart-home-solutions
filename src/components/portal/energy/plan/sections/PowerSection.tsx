@@ -261,7 +261,11 @@ const PowerSection: React.FC<{
         working down the page wants the reason before the arithmetic.
       */}
       <div className="mt-6 border-t pt-6">
-        <StoreDecisions model={model} />
+        <StoreDecisions
+          model={model}
+          windowStart={windowed[0]?.start ?? null}
+          windowEnd={windowed[windowed.length - 1]?.start ?? null}
+        />
       </div>
       <div className="mt-6">
         <h3 className="text-sm font-medium">
