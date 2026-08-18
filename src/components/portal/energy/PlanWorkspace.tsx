@@ -724,7 +724,14 @@ const PlanView: React.FC<{
           )}
           {section === 'economics' && (
             <>
-              <EconomicsSection model={model} />
+              <EconomicsSection
+                model={model}
+                dayWindow={dayWindow}
+                dayWindowOptions={dayWindowOptions}
+                onDayWindowChange={onDayWindowChange}
+                windowStart={timeline[timelineRange.from]?.start ?? null}
+                windowEnd={timeline[timelineRange.to - 1]?.start ?? null}
+              />
               {/*
                 The curves sit under Economics because that is where the prices
                 they are compared against already are: a curve is only readable

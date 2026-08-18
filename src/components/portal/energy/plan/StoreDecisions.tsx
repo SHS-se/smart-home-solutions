@@ -414,14 +414,22 @@ const GridDecisions: React.FC<{ grid: ReturnType<typeof gridFlows> }> = ({ grid 
         </div>
       </dl>
       <p className="mt-2 text-[11px] text-muted-foreground">
-        {exported.kwh > 0.05 && exported.averageSekPerKwh !== null
+        {exported.kwh <= 0.05
+          ? t(
+            'Ingenting exporterades: varje kWh gick till huset eller till en lagring som värderade den högre än nätet.',
+            'Nothing was exported: every kWh went to the house or to a store that valued it above what the grid would pay.',
+          )
+          : exported.averageSekPerKwh !== null
           ? t(
             `Allt som säljs är energi ingen lagring bjöd över ${exported.averageSekPerKwh.toFixed(2)} SEK/kWh för. Säljpriset är alltså golvet varje bud måste klara innan det lönar sig att behålla en kWh i stället för att sälja den — solel är inte gratis så länge den kan säljas.`,
             `Everything sold is energy no store bid above ${exported.averageSekPerKwh.toFixed(2)} SEK/kWh for. The export price is therefore the floor every bid must clear before keeping a kWh beats selling it — solar is not free while it can be sold.`,
           )
+          // Exported, but into quarters the market has not priced yet. The
+          // floor still exists; it is modelled rather than quoted, so naming a
+          // figure here would dress an estimate up as a receipt.
           : t(
-            'Ingenting exporterades: varje kWh gick till huset eller till en lagring som värderade den högre än nätet.',
-            'Nothing was exported: every kWh went to the house or to a store that valued it above what the grid would pay.',
+            'Allt som säljs är energi ingen lagring värderade över säljpriset. De här kvartarna har ännu inget marknadspris, så golvet planeraren jämförde mot kommer från husets egen uppmätta priskurva.',
+            'Everything sold is energy no store valued above the export price. These quarters have no market price yet, so the floor the planner compared against came from this home’s own measured price shape.',
           )}
         {curtailedKwh > 0.05 && ` ${t(
           `${curtailedKwh.toFixed(1)} kWh kapades — mer överskott än vad exportgränsen släpper igenom.`,

@@ -385,6 +385,18 @@ export interface PlannedSlot {
   base_p90_w: number;
   import_price_sek_per_kwh: number | null;
   export_price_sek_per_kwh: number | null;
+  /**
+   * What the planner actually valued this quarter at, in SEK per kWh.
+   *
+   * Equal to the published price where the market set one, and the measured
+   * price shape times the recent level where it did not (§1.4.2). Nord Pool
+   * prices about a day of a 72-hour horizon, so two thirds of every plan is
+   * decided on these — and until they were published, nothing downstream could
+   * show what the far half of a plan was reasoning about, or distinguish a
+   * modelled price from a real one.
+   */
+  shadow_import_sek_per_kwh: number;
+  shadow_export_sek_per_kwh: number;
   pool_w: number;
   boiler_expected_w: number;
   boiler_permitted: boolean;
@@ -3017,6 +3029,8 @@ function simulate(
       base_p90_w: round(slot.base_load_p90_w, 2),
       import_price_sek_per_kwh: slot.import_price_sek_per_kwh,
       export_price_sek_per_kwh: slot.export_price_sek_per_kwh,
+      shadow_import_sek_per_kwh: round(slot.shadow_import_sek_per_kwh, 5),
+      shadow_export_sek_per_kwh: round(slot.shadow_export_sek_per_kwh, 5),
       pool_w: poolW,
       boiler_expected_w: round(boilerW, 2),
       boiler_permitted: schedule.boilerPermitted[slot.index],

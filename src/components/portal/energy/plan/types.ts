@@ -152,7 +152,13 @@ export type ThermalSeriesKey =
 // crashed the whole tab at run time instead of failing to compile.
 export type EconomicsSeriesKey =
   | 'importPrice'
-  | 'exportPrice';
+  | 'exportPrice'
+  | 'shadowImportPrice'
+  | 'shadowExportPrice'
+  | 'solarW'
+  | 'loadW'
+  | 'gridImportW'
+  | 'gridExportW';
 export type StorageSeriesKey =
   | 'homeSoc'
   | 'homeTarget'
