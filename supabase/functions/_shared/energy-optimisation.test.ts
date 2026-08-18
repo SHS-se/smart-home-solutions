@@ -1554,13 +1554,19 @@ Deno.test("the plan explains why each store bought what it did", () => {
   // falling off a step at 30 — so the honest reason is that what it is worth
   // does not clear the price, not that it is full.
   assertEquals(pool.reason, "value_below_price");
-  assert(pool.marginal_value_sek_per_kwh > 0);
-  assert(pool.marginal_value_sek_per_kwh < pool.cheapest_energy_sek_per_kwh);
+  assert(
+    pool.marginal_value_sek_per_kwh > 0,
+    "a pool just past its band is worth a little, not nothing",
+  );
+  assert(
+    pool.marginal_value_sek_per_kwh < pool.cheapest_energy_sek_per_kwh,
+    "a store declines when the cheapest energy costs more than it values",
+  );
 
   // And a car below its own charge limit says the opposite, in the same units.
   const ev = byKey.get("ev")!;
   assertEquals(ev.reason, "scheduled");
-  assert(ev.planned_kwh > 0);
+  assert(ev.planned_kwh > 0, "a car below its charge limit takes energy");
   assert(
     ev.marginal_value_sek_per_kwh > ev.cheapest_energy_sek_per_kwh,
     "a store buys when its value beats the cheapest energy it could have used",

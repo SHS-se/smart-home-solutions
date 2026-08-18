@@ -420,3 +420,102 @@ Deno.test("export from storage only happens when it is permitted", () => {
     "a 4 SEK export price must draw more discharge once export is allowed",
   );
 });
+
+Deno.test("a store is never asked to absorb more than it has room for", () => {
+  // The pack starts nearly full against a price cheap enough that the curve
+  // wants every kWh. Before the state-room bound the plan simply kept buying:
+  // `project` clamped the trajectory at max_state and threw the surplus away,
+  // so the schedule carried charge commands the inverter could not honour and
+  // the summary counted grid import that would never be drawn.
+  const slots = buildSlots([new Array(SLOTS_PER_DAY).fill(0)], {
+    importPrice: 0.2,
+    exportPrice: 0.05,
+  });
+  const store = batteryStore(slots.length, 16, 2.5);
+  const result = planDispatch(slots, [store], LIMITS);
+
+  const deliveredKwh = result.power_w.battery
+    .reduce((total, watts) => total + watts, 0) / 1_000 * 0.25;
+  const returnedKwh = result.discharge_w.battery
+    .reduce((total, watts) => total + watts, 0) / 1_000 * 0.25;
+  // Room above the starting state, plus whatever the pack gave back and has to
+  // replace. Both are state units; charging converts at units_per_kwh.
+  const roomKwh = (store.max_state! - store.initial_state) / 0.95 +
+    returnedKwh / 0.95 / 0.95;
+  assert(
+    deliveredKwh <= roomKwh + 1e-6,
+    `bought ${deliveredKwh.toFixed(2)} kWh into ${roomKwh.toFixed(2)} kWh of room`,
+  );
+  assert(
+    result.state.battery.every((value) => value <= store.max_state! + 1e-9),
+    "the projected state must never exceed the pack",
+  );
+});
+
+Deno.test("one slot never both charges and discharges the same store", () => {
+  // A single store cannot trigger this, which is why it went unnoticed: charge
+  // and discharge are never both profitable at one state, because the round
+  // trip separates them. It takes a *competing* store. The sink's allocations
+  // move `occupiedW` between iterations, so a slot the battery emptied earlier
+  // — on the state it held then — later presents a profitable charge, and the
+  // discharge itself raised `returnedW`, handing that charge the grid headroom
+  // to act on. The charge loop skipped only slots it had already charged, so
+  // both landed: importing at the full price to push energy straight back
+  // through the pack and pay the round trip for nothing.
+  const slots = buildSlots([solarDay(4_000)], {
+    importPrice: 1.0,
+    exportPrice: 0.05,
+  }).map((slot) => ({ ...slot, fixed_load_w: 800 }));
+
+  const sink: DispatchStore = {
+    key: "sink",
+    curve: {
+      unit: "u",
+      points: [{ at: 100, sek_per_unit: 2 }, { at: 200, sek_per_unit: 0 }],
+    },
+    initial_state: 0,
+    max_power_w: 6_000,
+    retention_per_slot: 1,
+    usage_weight: weightWindow(slots.length, slots.length - 1, slots.length),
+    units_per_kwh: () => 1,
+    drift: (state) => state,
+  };
+  const battery: DispatchStore = {
+    key: "battery",
+    curve: {
+      unit: "kwh",
+      points: [
+        { at: 6, sek_per_unit: 3.0 },
+        { at: 7, sek_per_unit: 0.4 },
+        { at: 18, sek_per_unit: 0.4 },
+      ],
+    },
+    initial_state: 8,
+    min_state: 1,
+    max_state: 18,
+    max_power_w: 8_800,
+    retention_per_slot: 1,
+    usage_weight: new Array(slots.length).fill(0),
+    terminal_weight: 1,
+    units_per_kwh: () => 0.95,
+    drift: (state) => state,
+    discharge: {
+      max_power_w: 9_600,
+      state_per_kwh_out: () => 1 / 0.95,
+      export_allowed: false,
+    },
+  };
+
+  const result = planDispatch(slots, [sink, battery], LIMITS);
+  const collisions = result.power_w.battery
+    .map((watts, index) => ({ index, watts, out: result.discharge_w.battery[index] }))
+    .filter((entry) => entry.watts > 0 && entry.out > 0)
+    .map((entry) => entry.index);
+  assertEquals(collisions, []);
+  // The pathology has to stay reachable, or the guard proves nothing.
+  assert(
+    result.power_w.battery.some((watts) => watts > 0) &&
+      result.discharge_w.battery.some((watts) => watts > 0),
+    "the fixture must exercise both directions",
+  );
+});

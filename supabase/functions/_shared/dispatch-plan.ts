@@ -198,6 +198,29 @@ function suffixBounds(state: number[]): { min: number[]; max: number[] } {
 }
 
 /**
+ * Charge power a store can still absorb, from the room left in its state.
+ *
+ * The binding state is the *highest* the trajectory still reaches, not the one
+ * standing in this slot: charging here raises every later slot too, so a store
+ * that fills up tomorrow afternoon has no room this morning either. That makes
+ * this the exact mirror of the suffix minimum the discharge side already
+ * checks, and its absence is why a pack with 6 kWh of room was issued a plan
+ * that bought 12 kWh from the grid — `project` clamped the state silently
+ * while the schedule kept the command, so the plan asked the inverter for
+ * charging it could not take and the summary counted imports never made.
+ */
+function chargeRoomW(
+  store: DispatchStore,
+  highestState: number,
+  unitsPerKwh: number,
+): number {
+  if (store.max_state === undefined) return Infinity;
+  const roomUnits = store.max_state - highestState;
+  if (roomUnits <= 0) return 0;
+  return roomUnits / unitsPerKwh / SLOT_HOURS * 1_000;
+}
+
+/**
  * Blended cost of adding `addedW` in one slot, in SEK per kWh.
  *
  * Surplus PV is charged at the **export** price, not zero: consuming it forgoes
@@ -290,17 +313,26 @@ export function planDispatch(
       const state = stateByKey[store.key];
       const retention = retentionByKey[store.key];
       const minRun = Math.max(1, store.min_run_slots ?? 1);
+      // Both directions read the same suffix extremes: charging is bounded by
+      // the highest state still to come, discharging by the lowest.
+      const bounds = suffixBounds(state);
       for (let index = 0; index < count; index += 1) {
-        if (schedule[index] > 0) continue;
+        // A slot already committed to discharge must not also charge. Only the
+        // discharge side used to check this, so whichever direction won the
+        // auction first could be joined by the other in the same slot — the
+        // plan then bought energy at the import price and paid the round trip
+        // to push it through the battery for nothing.
+        if (schedule[index] > 0 || dischargeByKey[index] > 0) continue;
         const slot = slots[index];
-        const fullW = Math.min(
-          store.max_power_w,
-          headroomW(slot, limits, occupiedW[index], returnedW[index]),
-        );
-        if (fullW <= 0) continue;
 
         const units = store.units_per_kwh(state[index], index);
         if (units <= 0) continue;
+        const fullW = Math.min(
+          store.max_power_w,
+          headroomW(slot, limits, occupiedW[index], returnedW[index]),
+          chargeRoomW(store, bounds.max[index], units),
+        );
+        if (fullW <= 0) continue;
         const value = marginalValue(store.curve, state[index]) * units *
           retention[index];
         if (value <= 0) continue;
@@ -351,7 +383,6 @@ export function planDispatch(
       // rather keep its charge simply loses to the sinks, and one whose charge is
       // worth less than tonight's import price wins.
       if (!store.discharge) continue;
-      const bounds = suffixBounds(state);
       for (let index = 0; index < count; index += 1) {
         if (schedule[index] > 0 || dischargeByKey[index] > 0) continue;
         const slot = slots[index];
@@ -418,6 +449,7 @@ export function planDispatch(
       for (let offset = 0; offset < minRun; offset += 1) {
         const index = best.index + offset;
         if (index >= count || schedule[index] > 0) continue;
+        if (discharge[index] > 0) continue;
         const available = Math.min(
           best.powerW,
           headroomW(slots[index], limits, occupiedW[index], returnedW[index]),
