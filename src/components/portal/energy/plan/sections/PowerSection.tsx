@@ -27,6 +27,7 @@ import { COLORS, DEVICE_COLORS } from '../types';
 import { DayWindowToggle, SeriesToggleLegend, useSeriesVisibility } from '../ui';
 import type { PlanModel } from '../usePlanModel';
 import DeviceEnergyTable from '../DeviceEnergyTable';
+import StoreDecisions from '../StoreDecisions';
 import EnergyPowerChart from '../EnergyPowerChart';
 
 const QUARTER_W_TO_KWH = 4_000;
@@ -254,6 +255,14 @@ const PowerSection: React.FC<{
           'The changed device role is shown immediately; schedule and cost calculations update with the next Home Assistant plan.',
         )}`}
       </p>
+      {/*
+        Above the per-device table on purpose. The device table says how much
+        each thing used; this says why the plan chose that at all, and a reader
+        working down the page wants the reason before the arithmetic.
+      */}
+      <div className="mt-6 border-t pt-6">
+        <StoreDecisions model={model} />
+      </div>
       <div className="mt-6">
         <h3 className="text-sm font-medium">
           {t('Förbrukning per enhet', 'Consumption by device')}

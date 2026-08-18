@@ -18,6 +18,55 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useLanguage } from '@/contexts/LanguageContext';
 import type { PlanModel } from './usePlanModel';
 
+interface GridFlow {
+  kwh: number;
+  pricedKwh: number;
+  sek: number;
+  /** Weighted average over the priced part only, or null when none is priced. */
+  averageSekPerKwh: number | null;
+}
+
+/**
+ * What crossed the meter, and at what price.
+ *
+ * The stores explain what the house *kept*; this explains what it bought and
+ * sold, which is the other half of the same decision. Every export is energy no
+ * store bid above the price it earned, so the export price is the floor a bid
+ * has to clear before keeping a kWh beats selling it — the comparison that
+ * makes "why was 28 kWh exported" answerable at all.
+ */
+function gridFlows(slots: PlanModel['executed']['slots']): {
+  imported: GridFlow;
+  exported: GridFlow;
+  curtailedKwh: number;
+  fullyPriced: boolean;
+} {
+  const empty = (): GridFlow => ({ kwh: 0, pricedKwh: 0, sek: 0, averageSekPerKwh: null });
+  const imported = empty();
+  const exported = empty();
+  let curtailedKwh = 0;
+  let unpriced = 0;
+  for (const slot of slots) {
+    const inKwh = slot.grid_import_w / 4_000;
+    const outKwh = slot.grid_export_w / 4_000;
+    imported.kwh += inKwh;
+    exported.kwh += outKwh;
+    curtailedKwh += slot.curtailed_w / 4_000;
+    if (slot.import_cost_sek !== null && typeof slot.import_price_sek_per_kwh === 'number') {
+      imported.pricedKwh += inKwh;
+      imported.sek += slot.import_cost_sek;
+    } else if (inKwh > 0) unpriced += 1;
+    if (slot.export_revenue_sek !== null && typeof slot.export_price_sek_per_kwh === 'number') {
+      exported.pricedKwh += outKwh;
+      exported.sek += slot.export_revenue_sek;
+    } else if (outKwh > 0) unpriced += 1;
+  }
+  for (const flow of [imported, exported]) {
+    flow.averageSekPerKwh = flow.pricedKwh > 0.0001 ? flow.sek / flow.pricedKwh : null;
+  }
+  return { imported, exported, curtailedKwh, fullyPriced: unpriced === 0 };
+}
+
 type Reason =
   | 'scheduled'
   | 'state_above_curve'
@@ -116,15 +165,22 @@ const REASON_TEXT: Record<Reason, { sv: [string, string]; en: [string, string] }
 const StoreDecisions: React.FC<{ model: PlanModel }> = ({ model }) => {
   const { t, language } = useLanguage();
   const rows = (model.executed.store_diagnostics ?? []) as Row[];
+  const grid = gridFlows(model.executed.slots);
 
+  // A plan with no dispatched stores still bought and sold energy, so the grid
+  // half is rendered either way. Returning early here dropped it for every
+  // schema 5 plan, which is exactly the reader who most needs it.
   if (rows.length === 0) {
     return (
-      <p className="text-sm text-muted-foreground">
-        {t(
-          'Den här planen dispatchar inga lagringar som fysiska tillstånd.',
-          'This plan dispatches no stores as physical states.',
-        )}
-      </p>
+      <div className="space-y-3">
+        <p className="text-sm text-muted-foreground">
+          {t(
+            'Den här planen styr inga lagringar som fysiska tillstånd, så det finns inga bud att visa.',
+            'This plan controls no stores as physical states, so there are no bids to show.',
+          )}
+        </p>
+        <GridDecisions grid={grid} />
+      </div>
     );
   }
 
@@ -209,6 +265,8 @@ const StoreDecisions: React.FC<{ model: PlanModel }> = ({ model }) => {
         </TableBody>
       </Table>
 
+      <GridDecisions grid={grid} />
+
       {unconsidered.length > 0 && (
         <p className="rounded-md border border-amber-300 bg-amber-50/70 p-2 text-[11px] text-amber-900 dark:border-amber-800 dark:bg-amber-950/25 dark:text-amber-200">
           {t(
@@ -217,6 +275,67 @@ const StoreDecisions: React.FC<{ model: PlanModel }> = ({ model }) => {
           )}
         </p>
       )}
+    </div>
+  );
+};
+
+/**
+ * The two decisions the store table cannot show.
+ *
+ * Buying and selling are not services with a curve, so they hold no row above —
+ * but they are the counterparty to every bid made there. Exported energy is
+ * precisely the energy no store outbid, which makes the export price the floor
+ * every bid has to clear before keeping a kWh beats selling it. Reading the
+ * store table without this leaves the obvious question — "why was all that
+ * exported?" — with no answer anywhere on the page.
+ */
+const GridDecisions: React.FC<{ grid: ReturnType<typeof gridFlows> }> = ({ grid }) => {
+  const { t } = useLanguage();
+  const { imported, exported, curtailedKwh, fullyPriced } = grid;
+  const priceOf = (flow: GridFlow) =>
+    flow.averageSekPerKwh === null
+      ? t('inget publicerat pris', 'no published price')
+      : `${flow.averageSekPerKwh.toFixed(2)} SEK/kWh ${t('i snitt', 'average')}`;
+
+  return (
+    <div className="rounded-md border bg-muted/20 p-3">
+      <h4 className="text-sm font-medium">{t('Och nätet', 'And the grid')}</h4>
+      <dl className="mt-2 space-y-1 text-sm">
+        <div className="flex flex-wrap gap-x-2">
+          <dt className="w-14 shrink-0 text-muted-foreground">{t('Köpt', 'Bought')}</dt>
+          <dd className="tabular-nums">
+            {imported.kwh.toFixed(1)} kWh · {priceOf(imported)}
+            {imported.averageSekPerKwh !== null && ` · ${imported.sek.toFixed(2)} SEK`}
+          </dd>
+        </div>
+        <div className="flex flex-wrap gap-x-2">
+          <dt className="w-14 shrink-0 text-muted-foreground">{t('Sålt', 'Sold')}</dt>
+          <dd className="tabular-nums">
+            {exported.kwh.toFixed(1)} kWh · {priceOf(exported)}
+            {exported.averageSekPerKwh !== null &&
+              ` · ${t('gav', 'earned')} ${exported.sek.toFixed(2)} SEK`}
+          </dd>
+        </div>
+      </dl>
+      <p className="mt-2 text-[11px] text-muted-foreground">
+        {exported.kwh > 0.05 && exported.averageSekPerKwh !== null
+          ? t(
+            `Allt som säljs är energi ingen lagring bjöd över ${exported.averageSekPerKwh.toFixed(2)} SEK/kWh för. Säljpriset är alltså golvet varje bud måste klara innan det lönar sig att behålla en kWh i stället för att sälja den — solel är inte gratis så länge den kan säljas.`,
+            `Everything sold is energy no store bid above ${exported.averageSekPerKwh.toFixed(2)} SEK/kWh for. The export price is therefore the floor every bid must clear before keeping a kWh beats selling it — solar is not free while it can be sold.`,
+          )
+          : t(
+            'Ingenting exporterades: varje kWh gick till huset eller till en lagring som värderade den högre än nätet.',
+            'Nothing was exported: every kWh went to the house or to a store that valued it above what the grid would pay.',
+          )}
+        {curtailedKwh > 0.05 && ` ${t(
+          `${curtailedKwh.toFixed(1)} kWh kapades — mer överskott än vad exportgränsen släpper igenom.`,
+          `${curtailedKwh.toFixed(1)} kWh was curtailed: more surplus than the export limit allows through.`,
+        )}`}
+        {!fullyPriced && ` ${t(
+          'Snittpriserna gäller bara de kvartar som har publicerat pris; resten av horisonten planeras mot den modellerade priskurvan.',
+          'The averages cover only the quarters with a published price; the rest of the horizon is planned against the modelled price shape.',
+        )}`}
+      </p>
     </div>
   );
 };

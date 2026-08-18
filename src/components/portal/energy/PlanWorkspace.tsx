@@ -46,7 +46,6 @@ import PowerSection from './plan/sections/PowerSection';
 import ThermalSection from './plan/sections/ThermalSection';
 import EconomicsSection from './plan/sections/EconomicsSection';
 import ValueCurvesTab from './ValueCurvesTab';
-import StoreDecisions from './plan/StoreDecisions';
 
 import EmpiricalDeviceModelsCard, {
   type EmpiricalEnergyDevice,
@@ -712,14 +711,6 @@ const PlanView: React.FC<{
             hasBattery={hasBattery}
             hasEvBattery={hasEvBattery}
           />
-          {/*
-            Under the chart rather than above it: the chart is what happened,
-            this is why. A reader who wonders where the pool went in an
-            afternoon of surplus looks straight down.
-          */}
-          <div className="mt-6 border-t pt-6">
-            <StoreDecisions model={model} />
-          </div>
           </>
           )}
 
