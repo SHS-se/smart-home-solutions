@@ -936,9 +936,23 @@ Properties that matter:
   price a January slot.
 - **Weekday and weekend are separate**, matching how the base-load profile is
   already built.
-- **Below a coverage floor there is no prior**, and the planner says so rather
-  than inventing one. A home with three days of archive has no business claiming
-  to know the shape of its price curve.
+- **Below a coverage floor the shape degrades rather than disappearing**
+  (revised 2026-08-18). This originally read "below a coverage floor there is no
+  prior, and the planner says so rather than inventing one", on the grounds that
+  a home with three days of archive has no business claiming to know its price
+  curve. That was half right. The half it missed is that the fallback was not
+  *no* claim — it was a **flat** tail, which asserts that a kWh at 03:00 is
+  worth exactly what a kWh at 18:00 is worth. That is the one thing three days
+  of archive reliably disproves, and it is a stronger and worse claim than the
+  weak one it was avoiding.
+
+  So there are two tiers. Fourteen distinct days per day type gives the
+  by-quarter median with weekday and weekend separated. Below that,
+  `recentShape` averages the last three days quarter by quarter, pooled across
+  day types because three days cannot support a split. Only a genuinely empty
+  archive yields no shape at all, and the plan now publishes which tier it used
+  in `price_outlook.basis` so a flat line can never again be mistaken for a
+  broken one.
 
 #### 1.4.4 Peak spreading survives the effektavgift being suspended
 

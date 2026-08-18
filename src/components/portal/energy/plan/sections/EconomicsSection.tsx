@@ -24,7 +24,7 @@ import {
 } from 'recharts';
 import { useLanguage } from '@/contexts/LanguageContext';
 import type { DayWindow, TimelineRange, TimelineRow } from '@/lib/energy-shift/energy-timeline';
-import { alignedDomains } from '@/lib/energy-shift/chart-axes';
+import { sharedZeroAxes } from '@/lib/energy-shift/chart-axes';
 import { COLORS } from '../types';
 import { DayWindowToggle, SeriesToggleLegend, useSeriesVisibility } from '../ui';
 import StoreDecisions from '../StoreDecisions';
@@ -82,13 +82,17 @@ const EconomicsSection: React.FC<{
     [dayWindow, windowed],
   );
 
-  const domains = useMemo(() => alignedDomains(windowed.flatMap(row => [
-    {
-      price: Math.max(row.importPrice ?? 0, row.shadowImportPrice ?? 0),
-      power: Math.max(row.solarW ?? 0, row.loadW ?? 0, row.gridImportW ?? 0),
-    },
-    { price: 0, power: Math.min(0, row.gridExportW ?? 0) },
-  ])), [windowed]);
+  const axes = useMemo(() => sharedZeroAxes({
+    priceMax: Math.max(
+      0,
+      ...windowed.map(row => Math.max(row.importPrice ?? 0, row.shadowImportPrice ?? 0)),
+    ),
+    powerMaxW: Math.max(
+      0,
+      ...windowed.map(row => Math.max(row.solarW ?? 0, row.loadW ?? 0, row.gridImportW ?? 0)),
+    ),
+    powerMinW: Math.min(0, ...windowed.map(row => row.gridExportW ?? 0)),
+  }), [windowed]);
 
   // Where measured stops and planned begins, and where quoted prices give out.
   const firstPlanned = windowed.findIndex(row => !row.measured);
@@ -121,8 +125,8 @@ const EconomicsSection: React.FC<{
             <ComposedChart data={windowed} margin={{ top: 8, right: 10, left: 0, bottom: 4 }}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-muted" vertical={false} />
               <XAxis dataKey="i" type="number" domain={[0, windowed.length - 1]} ticks={ticks} tickFormatter={index => windowed[index]?.label ?? ''} tick={{ fontSize: 11 }} interval={0} />
-              <YAxis yAxisId="price" domain={domains.price} tick={{ fontSize: 11 }} tickFormatter={value => Number(value).toFixed(2)} label={{ value: 'SEK/kWh', angle: -90, position: 'insideLeft', fontSize: 11 }} />
-              <YAxis yAxisId="power" orientation="right" domain={domains.power} tick={{ fontSize: 11 }} tickFormatter={value => `${(Number(value) / 1000).toFixed(1)}`} label={{ value: 'kW', angle: 90, position: 'insideRight', fontSize: 11 }} />
+              <YAxis yAxisId="price" domain={axes.price.domain} ticks={axes.price.ticks} interval={0} tick={{ fontSize: 11 }} tickFormatter={value => Number(value).toFixed(axes.price.decimals)} label={{ value: 'SEK/kWh', angle: -90, position: 'insideLeft', fontSize: 11 }} />
+              <YAxis yAxisId="power" orientation="right" domain={axes.power.domain} ticks={axes.power.ticks} interval={0} tick={{ fontSize: 11 }} tickFormatter={value => (Number(value) / 1000).toFixed(axes.power.decimals)} label={{ value: 'kW', angle: 90, position: 'insideRight', fontSize: 11 }} />
               <ReferenceLine yAxisId="power" y={0} stroke="currentColor" className="text-muted-foreground" strokeOpacity={0.5} />
               {firstPlanned > 0 && (
                 <ReferenceLine yAxisId="price" x={firstPlanned} stroke="currentColor" className="text-foreground" strokeOpacity={0.6} label={{ value: t('nu', 'now'), position: 'insideTopLeft', fontSize: 10 }} />
@@ -130,8 +134,8 @@ const EconomicsSection: React.FC<{
               {firstModelled > 0 && (
                 <ReferenceLine yAxisId="price" x={firstModelled} stroke="currentColor" className="text-muted-foreground" strokeDasharray="3 3" label={{ value: t('modellerat härifrån', 'modelled from here'), position: 'insideTopRight', fontSize: 10 }} />
               )}
-              {economicsVisibility.visible('solarW') && <Area yAxisId="power" type="stepAfter" dataKey="solarW" name={labelOf('solarW')} stroke={COLORS.pv} fill={COLORS.pv} fillOpacity={0.16} dot={false} connectNulls={false} />}
-              {economicsVisibility.visible('loadW') && <Line yAxisId="power" type="stepAfter" dataKey="loadW" name={labelOf('loadW')} stroke={COLORS.base} strokeWidth={1.5} dot={false} connectNulls={false} />}
+              {economicsVisibility.visible('solarW') && <Area yAxisId="power" type="monotone" dataKey="solarW" name={labelOf('solarW')} stroke={COLORS.pv} strokeWidth={1.5} fill={COLORS.pv} fillOpacity={0.22} dot={false} connectNulls={false} />}
+              {economicsVisibility.visible('loadW') && <Area yAxisId="power" type="stepAfter" dataKey="loadW" name={labelOf('loadW')} stroke={COLORS.base} strokeWidth={1.8} fill={COLORS.base} fillOpacity={0.28} dot={false} connectNulls={false} />}
               {economicsVisibility.visible('gridImportW') && <Line yAxisId="power" type="stepAfter" dataKey="gridImportW" name={labelOf('gridImportW')} stroke={COLORS.import} strokeWidth={1.5} strokeOpacity={0.55} dot={false} connectNulls={false} />}
               {economicsVisibility.visible('gridExportW') && <Line yAxisId="power" type="stepAfter" dataKey="gridExportW" name={labelOf('gridExportW')} stroke={COLORS.export} strokeWidth={1.5} strokeOpacity={0.55} dot={false} connectNulls={false} />}
               {economicsVisibility.visible('importPrice') && <Line yAxisId="price" type="stepAfter" dataKey="importPrice" name={labelOf('importPrice')} stroke={COLORS.import} strokeWidth={2} dot={false} connectNulls={false} />}

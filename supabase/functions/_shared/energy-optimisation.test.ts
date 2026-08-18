@@ -205,6 +205,7 @@ Deno.test("the unpriced tail prefers the hours the shape says are cheap", () => 
     },
     coverageDays: { weekday: 30, weekend: 30 },
     sampleCount: 30 * 96,
+    basis: "median" as const,
   };
   const snapshot = input({
     slots: base.slots.map((slot, index) => ({

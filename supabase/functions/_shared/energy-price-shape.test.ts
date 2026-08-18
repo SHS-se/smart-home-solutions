@@ -69,11 +69,60 @@ Deno.test("quarter index comes from local wall clock", () => {
   assert(weekend.dayType === "weekend", "13 June 2026 is a Saturday");
 });
 
-Deno.test("no shape is published below the coverage floor", () => {
+Deno.test("a young archive falls back to the last few days, never to flat", () => {
+  // This used to return nothing below the coverage floor, and the planner then
+  // priced two thirds of every horizon flat. Flat is not the absence of a
+  // claim: it asserts a kWh at 03:00 is worth exactly what one at 18:00 is
+  // worth, which the archive reliably shows to be false. A three-day mean is a
+  // weaker claim than a fortnight's median and a far better one than that.
   const shape = buildPriceShape(archive(MIN_SHAPE_COVERAGE_DAYS - 1));
-  // A home with a fortnight less one day does not know its price curve, and
-  // saying so is the point.
-  assert(shape === null, "expected no shape below the coverage floor");
+  assert(shape !== null, "a young archive must still produce a shape");
+  assert(shape!.basis === "recent", `expected the recent tier, got ${shape!.basis}`);
+  const weekday = shape!.byDayType.weekday;
+  // The fixture spikes 07:00 and 19:00; the fallback has to find them too.
+  assert(
+    weekday[7 * 4] > weekday[3 * 4] * 2,
+    `07:00 should stay dearer than 03:00, got ${weekday[7 * 4]} vs ${weekday[3 * 4]}`,
+  );
+  assert(
+    weekday[19 * 4] > weekday[3 * 4] * 2,
+    `19:00 should stay dearer than 03:00, got ${weekday[19 * 4]} vs ${weekday[3 * 4]}`,
+  );
+});
+
+Deno.test("a full archive still uses the median tier", () => {
+  // Coverage is counted per day type, so a fortnight of calendar days is not a
+  // fortnight of weekdays: four weeks is what clears the floor on both.
+  const shape = buildPriceShape(archive(28));
+  assert(shape !== null, "a full archive must produce a shape");
+  assert(shape!.basis === "median", `expected the median tier, got ${shape!.basis}`);
+});
+
+Deno.test("the fallback follows the days just gone, not the oldest ones", () => {
+  // Ordering matters for a young archive: a shape built from whatever happened
+  // to be collected first would lag the market by a week.
+  const old = [
+    day("2026-06-01", 1, { hours: [3], price: 9 }),
+    day("2026-06-02", 1, { hours: [3], price: 9 }),
+    day("2026-06-03", 1, { hours: [3], price: 9 }),
+  ].flat();
+  const recent = [
+    day("2026-06-10", 1, { hours: [19], price: 9 }),
+    day("2026-06-11", 1, { hours: [19], price: 9 }),
+    day("2026-06-12", 1, { hours: [19], price: 9 }),
+  ].flat();
+  const shape = buildPriceShape([...old, ...recent])!;
+  assert(shape.basis === "recent", "six days is still the fallback tier");
+  assert(
+    shape.byDayType.weekday[19 * 4] > shape.byDayType.weekday[3 * 4],
+    "the recent evening spike should outweigh the older small-hours one",
+  );
+});
+
+Deno.test("an empty archive is the one case with no shape at all", () => {
+  // Refusing to invent something from nothing is still right; the fallback only
+  // ever averages prices that were actually recorded.
+  assert(buildPriceShape([]) === null, "no archive means no shape");
 });
 
 Deno.test("a measured shape finds the peaks it was given", () => {

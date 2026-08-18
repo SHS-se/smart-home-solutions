@@ -10,6 +10,7 @@
 
 import {
   buildPriceOutlook,
+  type PriceOutlook,
   type PriceShape,
 } from "./energy-price-shape.ts";
 import {
@@ -480,6 +481,22 @@ export interface OptimisationPlanV5 {
   validation_errors: string[];
   sources: OptimisationSnapshotV5["sources"];
   pv_calibration: OptimisationSnapshotV5["pv_calibration"];
+  /**
+   * Where the prices past the day-ahead window came from.
+   *
+   * Published because a flat modelled price is indistinguishable from a broken
+   * one when all a reader sees is a flat line. `shaped` false means the archive
+   * has not yet reached `MIN_SHAPE_COVERAGE_DAYS`, so the tail is priced at the
+   * recent level with no time preference — correct behaviour, and worth saying
+   * out loud rather than drawing without comment (§1.4.3).
+   */
+  price_outlook: {
+    shaped: boolean;
+    /** "median" over a fortnight, "recent" over the last few days, or null. */
+    basis: "median" | "recent" | null;
+    coverage_days: number;
+    level_sek_per_kwh: number | null;
+  };
   policy: OptimisationSnapshotV5["policy"];
   battery: BatteryInput | null;
   ev_battery: EvBatteryInput | null;
@@ -1294,7 +1311,7 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV5): string[] {
 function preparedSlots(
   snapshot: OptimisationSnapshotV5,
   shape: PriceShape | null = null,
-): PreparedSlot[] {
+): { slots: PreparedSlot[]; outlook: PriceOutlook } {
   const captured = isoMs(snapshot.captured_at);
   const controlledCategories = new Set<string>();
   if (snapshot.capabilities.boiler) controlledCategories.add("hot_water");
@@ -1322,7 +1339,7 @@ function preparedSlots(
       publishedRatios.length
     : 0;
   let priceGapSeen = false;
-  return snapshot.slots.map((slot, index) => {
+  const slots = snapshot.slots.map((slot, index) => {
     const epoch = isoMs(slot.start);
     const leadDay = Math.max(
       0,
@@ -1357,6 +1374,7 @@ function preparedSlots(
         outlook.shadowImportSekPerKwh[index] * exportRatio,
     };
   });
+  return { slots, outlook };
 }
 
 const fixedLoadW = (slot: PreparedSlot) =>
@@ -3366,7 +3384,7 @@ export function generateOptimisationPlan(
   if (validationErrors.length > 0) {
     throw new Error(validationErrors.join("; "));
   }
-  const slots = preparedSlots(snapshot, priceShape);
+  const { slots, outlook } = preparedSlots(snapshot, priceShape);
   const { reservedW, protectedSoc } = batteryReservation(slots, snapshot);
   const baseline = buildPlan(
     "baseline",
@@ -3434,6 +3452,12 @@ export function generateOptimisationPlan(
     validation_errors: [...validationErrors, ...priorityErrors],
     sources: snapshot.sources,
     pv_calibration: snapshot.pv_calibration,
+    price_outlook: {
+      shaped: outlook.shaped,
+      basis: outlook.basis,
+      coverage_days: outlook.shapeCoverageDays,
+      level_sek_per_kwh: outlook.levelSekPerKwh,
+    },
     policy: snapshot.policy,
     battery: snapshot.battery,
     ev_battery: snapshot.ev_battery ?? null,

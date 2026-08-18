@@ -33,7 +33,26 @@ export interface PriceShape {
   byDayType: Record<DayType, number[]>;
   coverageDays: Record<DayType, number>;
   sampleCount: number;
+  /**
+   * How the shape was arrived at.
+   *
+   * `median` is the preferred form: a by-quarter median over a fortnight or
+   * more, with weekday and weekend kept apart. `recent` is the fallback for a
+   * young archive — a mean of the last few days, pooled across day types.
+   *
+   * The fallback exists because the alternative was worse. Below the coverage
+   * floor this module used to return nothing, and the planner then priced the
+   * whole unpriced tail flat. A flat price is not the absence of a claim: it
+   * asserts that a kWh at 03:00 is worth exactly what a kWh at 18:00 is worth,
+   * which is the one thing the archive reliably shows to be false. A three-day
+   * mean is a weaker claim than a fortnight's median and a far better one than
+   * that.
+   */
+  basis: "median" | "recent";
 }
+
+/** Days of archive the fallback averages over when the median tier cannot run. */
+export const RECENT_SHAPE_DAYS = 3;
 
 export interface PriceOutlook {
   /** Shadow import price in SEK/kWh for each slot, in slot order. */
@@ -43,6 +62,8 @@ export interface PriceOutlook {
   shapeCoverageDays: number;
   /** True when both a level and a measured shape were available. */
   shaped: boolean;
+  /** How that shape was derived, or null when the tail is priced flat. */
+  basis: PriceShape["basis"] | null;
 }
 
 interface LocalSlot {
@@ -161,10 +182,74 @@ export function buildPriceShape(
     published = true;
   }
 
-  if (!published) return null;
-  byDayType.weekday ??= byDayType.weekend;
-  byDayType.weekend ??= byDayType.weekday;
-  return { byDayType, coverageDays, sampleCount };
+  if (published) {
+    byDayType.weekday ??= byDayType.weekend;
+    byDayType.weekend ??= byDayType.weekday;
+    return { byDayType, coverageDays, sampleCount, basis: "median" };
+  }
+  return recentShape(rows, timeZone, coverageDays, sampleCount);
+}
+
+/**
+ * The young-archive fallback: the last few days, averaged quarter by quarter.
+ *
+ * Deliberately cruder than the median tier — no weekday and weekend split,
+ * because three days cannot support one, and a mean rather than a median
+ * because with three samples they are nearly the same and the mean does not
+ * throw away the only spike it has seen.
+ *
+ * Still refuses to invent something from nothing: with no archive at all there
+ * is no shape, and the caller falls back to a flat level knowing why.
+ */
+function recentShape(
+  rows: StoredPriceRow[],
+  timeZone: string,
+  coverageDays: Record<DayType, number>,
+  sampleCount: number,
+): PriceShape | null {
+  const byDay = new Map<string, Array<number[]>>();
+  for (const row of rows) {
+    const price = row.import_price_sek_per_kwh;
+    if (typeof price !== "number" || !Number.isFinite(price)) continue;
+    const startMs = Date.parse(row.start_ts);
+    if (!Number.isFinite(startMs)) continue;
+    const slot = localSlot(startMs, timeZone);
+    let day = byDay.get(slot.dayKey);
+    if (!day) {
+      day = Array.from({ length: QUARTERS_PER_DAY }, () => []);
+      byDay.set(slot.dayKey, day);
+    }
+    day[slot.quarter].push(price);
+  }
+  // Most recent first: a young archive should follow the days just gone rather
+  // than whatever happened to be collected first.
+  const recent = [...byDay.entries()]
+    .sort((left, right) => right[0].localeCompare(left[0]))
+    .slice(0, RECENT_SHAPE_DAYS)
+    .map(([, quarters]) => quarters);
+  if (recent.length === 0) return null;
+
+  const means = Array.from({ length: QUARTERS_PER_DAY }, (_value, quarter) => {
+    const values = recent.flatMap((day) => day[quarter]);
+    return values.length > 0
+      ? values.reduce((total, value) => total + value, 0) / values.length
+      : Number.NaN;
+  });
+  const known = means.filter((value) => Number.isFinite(value));
+  // Half a day of quarters, so a single partial day cannot define a shape.
+  if (known.length < QUARTERS_PER_DAY / 2) return null;
+  const mean = known.reduce((total, value) => total + value, 0) / known.length;
+  if (!Number.isFinite(mean) || Math.abs(mean) < MIN_LEVEL_SEK_PER_KWH) return null;
+
+  const shape = means.map((value) =>
+    Number.isFinite(value) ? value / mean : 1
+  );
+  return {
+    byDayType: { weekday: shape, weekend: shape },
+    coverageDays,
+    sampleCount,
+    basis: "recent",
+  };
 }
 
 export interface OutlookSlot {
@@ -198,6 +283,7 @@ export function buildPriceOutlook(
       levelSekPerKwh: null,
       shapeCoverageDays: 0,
       shaped: false,
+      basis: null,
     };
   }
 
@@ -244,5 +330,6 @@ export function buildPriceOutlook(
     levelSekPerKwh: level,
     shapeCoverageDays,
     shaped: shape !== null,
+    basis: shape?.basis ?? null,
   };
 }
