@@ -1704,3 +1704,109 @@ Deno.test("a home without the equipment stays silent about it", () => {
   assertEquals(keys.includes("pool"), false);
   assertEquals(keys.includes("ev"), false);
 });
+
+Deno.test("a single-phase charger is planned at the power its cable delivers", () => {
+  // The defect this pins: the planner assumed three 230 V phases regardless of
+  // what the installation declared, so a single-phase 16 A charger — 3.7 kW —
+  // was dispatched as an 11 kW load. Nothing failed; the plan was simply wrong
+  // about how fast the car could fill, and confidently so.
+  const vehicle = {
+    name: "Model Y",
+    connected: true,
+    capacity_kwh: 76.87,
+    soc: 0.3,
+    departure_target_soc: 0.8,
+    charge_efficiency: 0.9,
+    available_from: "2026-08-10T08:00:00.000Z",
+    departure: null,
+    priority: 3,
+    source_entity_ids: {
+      connected: "binary_sensor.cable",
+      soc: "sensor.soc",
+      target_soc: "number.limit",
+      energy_remaining: null,
+      charge_current: "number.current",
+    },
+  };
+  const service = (phases: number) => ({
+    id: "ev:2026-08-12",
+    device: "ev" as const,
+    earliest_start: "2026-08-10T08:00:00.000Z",
+    deadline: "2026-08-12T08:00:00.000Z",
+    required_kwh: 25,
+    control: {
+      type: "discrete_current" as const,
+      min_current_a: 6,
+      max_current_a: 16,
+      current_step_a: 1,
+      phase_count: phases,
+      voltage_v: 230,
+    },
+    min_run_slots: 1,
+    priority: 3,
+  });
+  const peak = (phases: number) => {
+    const plan = generateOptimisationPlan(
+      horizon({
+        capabilities: { pv: true, battery: true, pool: false, boiler: false, ev: true },
+        pool: null,
+        ev_battery: vehicle,
+        services: [service(phases)],
+      }),
+      new Date(NOW),
+    );
+    return Math.max(...plan.plans.priority.slots.map((slot) => slot.ev_w));
+  };
+
+  const single = peak(1);
+  const three = peak(3);
+  assert(single > 0, "a single-phase charger must still charge");
+  assert(
+    single <= 230 * 16 + 1,
+    `a single-phase 16 A cable delivers 3.7 kW, planned ${single} W`,
+  );
+  assert(
+    three > single * 2,
+    `three phases must plan more power than one: ${single} vs ${three}`,
+  );
+});
+
+Deno.test("the vehicle's own consumption decides what its charge is worth", () => {
+  // kWh/km converts state of charge into the range the curve is defined over,
+  // so a seeded figure is a guess about somebody else's car. A thirstier car
+  // has less range at the same SOC, which is worth more, not less.
+  const base = {
+    name: "Model Y",
+    connected: true,
+    capacity_kwh: 76.87,
+    soc: 0.5,
+    departure_target_soc: 0.8,
+    charge_efficiency: 0.9,
+    available_from: "2026-08-10T08:00:00.000Z",
+    departure: null,
+    priority: 3,
+    source_entity_ids: {
+      connected: "binary_sensor.cable",
+      soc: "sensor.soc",
+      target_soc: "number.limit",
+      energy_remaining: null,
+      charge_current: null,
+    },
+  };
+  const stateFor = (kwhPerKm: number) =>
+    generateOptimisationPlan(
+      horizon({
+        capabilities: { pv: true, battery: true, pool: false, boiler: false, ev: true },
+        pool: null,
+        ev_battery: { ...base, kwh_per_km: kwhPerKm },
+      }),
+      new Date(NOW),
+    ).plans.priority.store_diagnostics.find((entry) => entry.key === "ev")!;
+
+  const efficient = stateFor(0.14);
+  const thirsty = stateFor(0.24);
+  assert(
+    efficient.state! > thirsty.state!,
+    `the same charge is more range in the efficient car: ${efficient.state} vs ${thirsty.state}`,
+  );
+});

@@ -167,6 +167,15 @@ export interface EvBatteryInput {
   soc: number;
   departure_target_soc: number;
   charge_efficiency: number;
+  /**
+   * The vehicle's own kWh per kilometre, when the installation states one.
+   *
+   * Optional so an older integration keeps validating, but the seeded fallback
+   * is a guess about somebody else's car: it converts state of charge into the
+   * range the EV curve is defined over, so getting it wrong biases every
+   * comparison the vehicle takes part in.
+   */
+  kwh_per_km?: number | null;
   available_from: string | null;
   departure: string | null;
   priority: number;
@@ -623,6 +632,28 @@ const isDispatchableService = (
 
 const wattsPerAmp = (control: DiscreteCurrentControl) =>
   control.phase_count * control.voltage_v;
+
+/**
+ * The charger's declared current control, or null.
+ *
+ * Read rather than assumed. The phase count and voltage arrive from the
+ * installation's own configuration, and this planner used to ignore them in
+ * favour of a hard-coded three 230 V phases — which models a single-phase
+ * charger at three times the power it can deliver, and produces a confident
+ * plan rather than an error.
+ */
+const evCurrentControl = (
+  snapshot: OptimisationSnapshotV5,
+): DiscreteCurrentControl | null =>
+  snapshot.services
+    .filter(isDispatchableService)
+    .find(isDiscreteCurrentService)?.control ?? null;
+
+/** The vehicle's stated consumption, or the seeded fallback. */
+const vehicleKwhPerKm = (vehicle: EvBatteryInput): number =>
+  typeof vehicle.kwh_per_km === "number" && vehicle.kwh_per_km > 0
+    ? vehicle.kwh_per_km
+    : SEEDED_VEHICLE_KWH_PER_KM;
 
 const localDay = (iso: string, timezone: string) =>
   new Intl.DateTimeFormat("sv-SE", {
@@ -1858,7 +1889,8 @@ function buildDispatchStores(
       // nothing rather than blocking the whole dispatch path.
       if (!vehicle) return null;
     } else {
-      const perKm = SEEDED_VEHICLE_KWH_PER_KM;
+      const perKm = vehicleKwhPerKm(vehicle);
+      const control = evCurrentControl(snapshot);
       const departure = vehicle.departure ? isoMs(vehicle.departure) : null;
       const usage = new Array(count).fill(0);
       if (departure !== null) {
@@ -1886,7 +1918,12 @@ function buildDispatchStores(
         key: "ev",
         curve: vehicleRangeCurve(targetRangeKm),
         initial_state: vehicle.soc * vehicle.capacity_kwh / perKm,
-        max_power_w: EV_PHASE_COUNT * EV_PHASE_VOLTAGE * 16,
+        // The charger's own ceiling, not an assumed one. Without a declared
+        // control there is no cable to reason about, so the grid limit stands
+        // in rather than a three-phase guess.
+        max_power_w: control
+          ? wattsPerAmp(control) * control.max_current_a
+          : snapshot.grid.import_limit_w,
         usage_weight: usage,
         retention_per_slot: 1,
         units_per_kwh: () => vehicle.charge_efficiency / perKm,
@@ -2054,7 +2091,7 @@ function undispatchedStores(
       // Range rather than SOC, so the row reads in the curve's own units even
       // when no curve was ever built for it.
       const rangeKm = vehicle.soc * vehicle.capacity_kwh /
-        SEEDED_VEHICLE_KWH_PER_KM;
+        vehicleKwhPerKm(vehicle);
       skip(
         "ev",
         "km",
@@ -2178,8 +2215,11 @@ function scheduleServices(
         if (store.key === "pool") schedule.pool[index] = powerW;
         if (store.key === "ev") {
           schedule.ev[index] = powerW;
-          const amps = powerW / (EV_PHASE_COUNT * EV_PHASE_VOLTAGE);
-          schedule.evTargetCurrentA[index] = Math.round(amps);
+          const evControl = evCurrentControl(snapshot);
+          const perAmp = evControl
+            ? wattsPerAmp(evControl)
+            : EV_PHASE_COUNT * EV_PHASE_VOLTAGE;
+          schedule.evTargetCurrentA[index] = Math.round(powerW / perAmp);
         }
         occupiedW[index] += powerW;
       }
@@ -2207,10 +2247,10 @@ function scheduleServices(
     // at all once it is above its old `required_kwh` — ended up with a current
     // target and a zero envelope, and every such slot was reported infeasible.
     if (schedule.dispatched.has("ev")) {
-      const control = snapshot.services
-        .filter(isDispatchableService)
-        .find(isDiscreteCurrentService)?.control;
-      const powerPerAmp = EV_PHASE_COUNT * EV_PHASE_VOLTAGE;
+      const control = evCurrentControl(snapshot);
+      const powerPerAmp = control
+        ? wattsPerAmp(control)
+        : EV_PHASE_COUNT * EV_PHASE_VOLTAGE;
       const minimumA = control?.min_current_a ?? 0;
       const maximumA = control?.max_current_a ??
         Math.floor(snapshot.grid.import_limit_w / powerPerAmp);
