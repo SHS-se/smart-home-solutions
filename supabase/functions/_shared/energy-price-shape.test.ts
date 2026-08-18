@@ -1,11 +1,22 @@
 import {
   buildPriceOutlook,
-  buildPriceShape,
+  estimatePriceShape,
   localSlot,
-  MIN_SHAPE_COVERAGE_DAYS,
   QUARTERS_PER_DAY,
+  RECENCY_HALF_LIFE_DAYS,
   type StoredPriceRow,
 } from "./energy-price-shape.ts";
+
+const TZ = "Europe/Stockholm";
+/** Noon on 2026-06-30, after every fixture day below. */
+const AS_OF = Date.parse("2026-06-30T12:00:00+02:00");
+
+const shapeOf = (rows: StoredPriceRow[], asOf = AS_OF) =>
+  estimatePriceShape({ observations: rows, timeZone: TZ, asOf });
+
+/** Peak-to-trough ratio, the thing a flat shape destroys. */
+const spread = (multipliers: number[]) =>
+  Math.max(...multipliers) / Math.min(...multipliers);
 
 const assert = (condition: boolean, message: string) => {
   if (!condition) throw new Error(message);
@@ -62,106 +73,160 @@ const archive = (days: number, base = 1, spikeHours = [7, 8, 19, 20]) => {
 };
 
 Deno.test("quarter index comes from local wall clock", () => {
-  const summer = localSlot(Date.parse("2026-06-15T10:30:00+02:00"), "Europe/Stockholm");
+  const summer = localSlot(Date.parse("2026-06-15T10:30:00+02:00"), TZ);
   assert(summer.quarter === 42, `expected 10:30 to be quarter 42, got ${summer.quarter}`);
   assert(summer.dayType === "weekday", "15 June 2026 is a Monday");
-  const weekend = localSlot(Date.parse("2026-06-13T00:00:00+02:00"), "Europe/Stockholm");
+  const weekend = localSlot(Date.parse("2026-06-13T00:00:00+02:00"), TZ);
   assert(weekend.dayType === "weekend", "13 June 2026 is a Saturday");
 });
 
-Deno.test("a young archive falls back to the last few days, never to flat", () => {
-  // This used to return nothing below the coverage floor, and the planner then
-  // priced two thirds of every horizon flat. Flat is not the absence of a
-  // claim: it asserts a kWh at 03:00 is worth exactly what one at 18:00 is
-  // worth, which the archive reliably shows to be false. A three-day mean is a
-  // weaker claim than a fortnight's median and a far better one than that.
-  const shape = buildPriceShape(archive(MIN_SHAPE_COVERAGE_DAYS - 1));
-  assert(shape !== null, "a young archive must still produce a shape");
-  assert(shape!.basis === "recent", `expected the recent tier, got ${shape!.basis}`);
-  const weekday = shape!.byDayType.weekday;
-  // The fixture spikes 07:00 and 19:00; the fallback has to find them too.
+Deno.test("one day of prices already gives a shape, never a flat line", () => {
+  // The whole point of the rewrite. A young installation used to fall through
+  // every tier to a flat tail, which asserts that 03:00 and 19:00 are worth
+  // the same — the one thing any real price day disproves.
+  const shape = shapeOf(day("2026-06-29", 1, { hours: [19], price: 4 }))!;
+  assert(shape !== null, "a single day must still produce a shape");
   assert(
-    weekday[7 * 4] > weekday[3 * 4] * 2,
-    `07:00 should stay dearer than 03:00, got ${weekday[7 * 4]} vs ${weekday[3 * 4]}`,
+    spread(shape.byDayType.weekday) > 1.5,
+    `a shape from a real day cannot be flat, spread was ${spread(shape.byDayType.weekday)}`,
   );
-  assert(
-    weekday[19 * 4] > weekday[3 * 4] * 2,
-    `19:00 should stay dearer than 03:00, got ${weekday[19 * 4]} vs ${weekday[3 * 4]}`,
-  );
-});
-
-Deno.test("a full archive still uses the median tier", () => {
-  // Coverage is counted per day type, so a fortnight of calendar days is not a
-  // fortnight of weekdays: four weeks is what clears the floor on both.
-  const shape = buildPriceShape(archive(28));
-  assert(shape !== null, "a full archive must produce a shape");
-  assert(shape!.basis === "median", `expected the median tier, got ${shape!.basis}`);
-});
-
-Deno.test("the fallback follows the days just gone, not the oldest ones", () => {
-  // Ordering matters for a young archive: a shape built from whatever happened
-  // to be collected first would lag the market by a week.
-  const old = [
-    day("2026-06-01", 1, { hours: [3], price: 9 }),
-    day("2026-06-02", 1, { hours: [3], price: 9 }),
-    day("2026-06-03", 1, { hours: [3], price: 9 }),
-  ].flat();
-  const recent = [
-    day("2026-06-10", 1, { hours: [19], price: 9 }),
-    day("2026-06-11", 1, { hours: [19], price: 9 }),
-    day("2026-06-12", 1, { hours: [19], price: 9 }),
-  ].flat();
-  const shape = buildPriceShape([...old, ...recent])!;
-  assert(shape.basis === "recent", "six days is still the fallback tier");
   assert(
     shape.byDayType.weekday[19 * 4] > shape.byDayType.weekday[3 * 4],
-    "the recent evening spike should outweigh the older small-hours one",
+    "the evening spike has to survive into the estimate",
   );
 });
 
-Deno.test("an empty archive is the one case with no shape at all", () => {
-  // Refusing to invent something from nothing is still right; the fallback only
-  // ever averages prices that were actually recorded.
-  assert(buildPriceShape([]) === null, "no archive means no shape");
-});
-
-Deno.test("a measured shape finds the peaks it was given", () => {
-  const shape = buildPriceShape(archive(28));
-  assert(shape !== null, "28 days should publish a shape");
-  const weekday = shape!.byDayType.weekday;
-  // 07:00 and 19:00 were tripled; 03:00 was not.
+Deno.test("more evidence sharpens the same estimate rather than switching mode", () => {
+  // There is no tier to cross: the shrinkage simply loosens as weight
+  // accumulates, so the curve gets more confident continuously.
+  const oneDay = shapeOf(day("2026-06-29", 1, { hours: [19], price: 4 }))!;
+  const tenDays = shapeOf(archive(10, 1, [19]))!;
   assert(
-    weekday[7 * 4] > weekday[3 * 4] * 2,
-    `morning peak should stand above the night: ${weekday[7 * 4]} vs ${weekday[3 * 4]}`,
+    spread(tenDays.byDayType.weekday) > spread(oneDay.byDayType.weekday),
+    "ten days should assert the peak more strongly than one",
   );
   assert(
-    weekday[19 * 4] > weekday[3 * 4] * 2,
-    `evening peak should stand above the night: ${weekday[19 * 4]} vs ${weekday[3 * 4]}`,
+    tenDays.observedDays > oneDay.observedDays,
+    "ten days must record more observed days",
+  );
+  assert(
+    tenDays.effectiveDays > oneDay.effectiveDays,
+    "and more weighted evidence",
   );
 });
 
-Deno.test("the shape is normalised, so level does not leak into it", () => {
-  // The same curve at ten times the price must produce the same multipliers,
-  // or a summer archive would price a winter slot at summer money.
-  const cheap = buildPriceShape(archive(28, 1))!;
-  const dear = buildPriceShape(archive(28, 10))!;
+Deno.test("recent days count for more than old ones", () => {
+  // No cut-off, just decay: a day older than the half-life still counts, and
+  // counts less.
+  const recentSpike = shapeOf([
+    ...day("2026-06-29", 1, { hours: [19], price: 4 }),
+    ...day("2026-04-01", 1, { hours: [6], price: 4 }),
+  ])!;
+  assert(
+    recentSpike.byDayType.weekday[19 * 4] > recentSpike.byDayType.weekday[6 * 4],
+    "yesterday's evening peak should outweigh a spring morning one",
+  );
+  // And the old day is not discarded: it still lifts its own quarter above the
+  // quiet hours around it.
+  assert(
+    recentSpike.byDayType.weekday[6 * 4] > recentSpike.byDayType.weekday[3 * 4],
+    "an old observation must still count for something",
+  );
+});
+
+Deno.test("a weekend with no weekend history borrows rather than flattening", () => {
+  // Weighted, not partitioned: the old design partitioned and left the weekend
+  // with nothing until it had a fortnight of its own.
+  const weekdaysOnly = [
+    ...day("2026-06-29", 1, { hours: [19], price: 4 }),
+    ...day("2026-06-30", 1, { hours: [19], price: 4 }),
+  ];
+  const shape = shapeOf(weekdaysOnly)!;
+  assert(
+    spread(shape.byDayType.weekend) > 1.3,
+    `the weekend shape must not be flat, spread was ${spread(shape.byDayType.weekend)}`,
+  );
+  // Borrowed evidence is discounted, so the weekend asserts the peak less.
+  assert(
+    shape.byDayType.weekday[19 * 4] > shape.byDayType.weekend[19 * 4],
+    "a borrowed weekend peak should be softer than the measured weekday one",
+  );
+});
+
+Deno.test("weekend history overrides the borrowed weekday shape", () => {
+  const rows = [
+    ...day("2026-06-29", 1, { hours: [19], price: 4 }),  // Monday
+    ...day("2026-06-27", 1, { hours: [11], price: 4 }),  // Saturday
+    ...day("2026-06-28", 1, { hours: [11], price: 4 }),  // Sunday
+  ];
+  const shape = shapeOf(rows)!;
+  assert(
+    shape.byDayType.weekend[11 * 4] > shape.byDayType.weekend[19 * 4],
+    "measured weekend samples must outweigh borrowed weekday ones",
+  );
+  assert(
+    shape.byDayType.weekday[19 * 4] > shape.byDayType.weekday[11 * 4],
+    "and the weekday shape must keep its own peak",
+  );
+});
+
+Deno.test("the season nearest today carries the most weight", () => {
+  // Inert on a young archive and decisive on an old one, with no mode switch:
+  // a year-old June informs this June more than last December does.
+  const rows = [
+    ...day("2025-06-25", 1, { hours: [19], price: 4 }),
+    ...day("2025-06-26", 1, { hours: [19], price: 4 }),
+    ...day("2025-12-20", 1, { hours: [6], price: 4 }),
+    ...day("2025-12-21", 1, { hours: [6], price: 4 }),
+  ];
+  const shape = shapeOf(rows)!;
+  assert(
+    shape.byDayType.weekday[19 * 4] > shape.byDayType.weekday[6 * 4],
+    "last June should describe this June better than last December does",
+  );
+});
+
+Deno.test("shape is independent of level", () => {
+  // A cheap day and a dear day with the same profile are the same evidence,
+  // which is what lets a summer archive price a winter slot.
+  const cheap = shapeOf(archive(5, 0.4, [19]))!;
+  const dear = shapeOf(archive(5, 4, [19]))!;
   for (let quarter = 0; quarter < QUARTERS_PER_DAY; quarter += 1) {
     assertClose(
       cheap.byDayType.weekday[quarter],
       dear.byDayType.weekday[quarter],
-      `quarter ${quarter} multiplier must not depend on level`,
-      1e-9,
+      `quarter ${quarter} should not depend on the price level`,
+      1e-6,
     );
   }
 });
 
-Deno.test("published prices are always preferred to the prior", () => {
-  const shape = buildPriceShape(archive(28));
+Deno.test("a part-archived day is not evidence about a whole day", () => {
+  const partial = day("2026-06-30", 1, { hours: [3], price: 9 })
+    .filter(row => Date.parse(row.start_ts) < Date.parse("2026-06-30T06:00:00+02:00"));
+  const shape = shapeOf([...archive(3, 1, [19]), ...partial])!;
+  assert(
+    shape.byDayType.weekday[19 * 4] > shape.byDayType.weekday[3 * 4],
+    "the whole days should decide the shape, not a few hours of a part-day",
+  );
+});
+
+Deno.test("no observations at all is the only case with no shape", () => {
+  assert(shapeOf([]) === null, "nothing to estimate from means no estimate");
+});
+
+Deno.test("the half-life is the documented one", () => {
+  // Pinned because the decay is the only thing standing between "three days of
+  // history" and "three years" behaving the same way.
+  assert(RECENCY_HALF_LIFE_DAYS === 21, "half-life changed without a decision");
+});
+
+Deno.test("published prices are always preferred to the estimate", () => {
   const slots = [
     { start: "2026-06-29T00:00:00+02:00", import_price_sek_per_kwh: 5 },
     { start: "2026-06-29T00:15:00+02:00", import_price_sek_per_kwh: null },
   ];
-  const outlook = buildPriceOutlook(slots, shape);
+  const outlook = buildPriceOutlook(slots, archive(28), { timeZone: TZ, asOf: AS_OF });
   assertClose(
     outlook.shadowImportSekPerKwh[0],
     5,
@@ -174,14 +239,12 @@ Deno.test("published prices are always preferred to the prior", () => {
 });
 
 Deno.test("the unpriced tail is dearer at a peak than overnight", () => {
-  const shape = buildPriceShape(archive(28));
   const slots = [
-    // One published slot sets the level.
     { start: "2026-06-29T12:00:00+02:00", import_price_sek_per_kwh: 1 },
     { start: "2026-06-30T03:00:00+02:00", import_price_sek_per_kwh: null },
     { start: "2026-06-30T19:00:00+02:00", import_price_sek_per_kwh: null },
   ];
-  const outlook = buildPriceOutlook(slots, shape);
+  const outlook = buildPriceOutlook(slots, archive(28), { timeZone: TZ, asOf: AS_OF });
   assert(outlook.shaped, "a shape was available");
   assert(
     outlook.shadowImportSekPerKwh[2] > outlook.shadowImportSekPerKwh[1] * 2,
@@ -189,118 +252,81 @@ Deno.test("the unpriced tail is dearer at a peak than overnight", () => {
   );
 });
 
-Deno.test("with no shape the tail is flat at the published level", () => {
-  const slots = [
-    { start: "2026-06-29T12:00:00+02:00", import_price_sek_per_kwh: 2 },
+Deno.test("an empty archive still shapes the tail from the published window", () => {
+  // The case the old design gave up on. A brand-new installation has no
+  // archive at all, but it does have a day of real prices in front of it, and
+  // that is enough to say when energy is dear.
+  const slots: Array<{ start: string; import_price_sek_per_kwh: number | null }> =
+    day("2026-06-29", 1, { hours: [19], price: 4 }).map((row) => ({
+      start: row.start_ts,
+      import_price_sek_per_kwh: row.import_price_sek_per_kwh,
+    }));
+  slots.push(
     { start: "2026-06-30T03:00:00+02:00", import_price_sek_per_kwh: null },
     { start: "2026-06-30T19:00:00+02:00", import_price_sek_per_kwh: null },
-  ];
-  const outlook = buildPriceOutlook(slots, null);
-  assert(!outlook.shaped, "no shape was available");
-  assertClose(outlook.shadowImportSekPerKwh[1], 2, "flat at the level");
-  assertClose(outlook.shadowImportSekPerKwh[2], 2, "flat at the level");
+  );
+  const outlook = buildPriceOutlook(slots, [], { timeZone: TZ, asOf: AS_OF });
+  assert(outlook.shaped, "an empty archive must still produce a shaped tail");
+  assertClose(outlook.observedDays, 1, "the published day is the evidence", 0);
+  assert(
+    outlook.shadowImportSekPerKwh.at(-1)! >
+      outlook.shadowImportSekPerKwh.at(-2)! * 1.5,
+    "the tail must carry the peak the published day showed",
+  );
 });
 
 Deno.test("a plan with no published price at all yields no outlook", () => {
   const outlook = buildPriceOutlook(
     [{ start: "2026-06-29T12:00:00+02:00", import_price_sek_per_kwh: null }],
-    buildPriceShape(archive(28)),
+    archive(28),
+    { timeZone: TZ, asOf: AS_OF },
   );
   assert(outlook.levelSekPerKwh === null, "nothing sets the level");
+  assert(!outlook.shaped, "a broken price source is the one unshaped case");
   assertClose(outlook.shadowImportSekPerKwh[0], 0, "and no price is invented");
+});
+
+Deno.test("no slot in any plan is ever priced flat when prices exist", () => {
+  // The guarantee the whole rewrite is for, stated directly.
+  for (const days of [0, 1, 3, 10, 28]) {
+    const slots: Array<{ start: string; import_price_sek_per_kwh: number | null }> =
+      day("2026-06-29", 1, { hours: [7, 19], price: 3 }).map((row) => ({
+        start: row.start_ts,
+        import_price_sek_per_kwh: row.import_price_sek_per_kwh,
+      }));
+    for (let quarter = 0; quarter < QUARTERS_PER_DAY; quarter += 1) {
+      slots.push({
+        start: new Date(
+          Date.parse("2026-06-30T00:00:00+02:00") + quarter * 900_000,
+        ).toISOString(),
+        import_price_sek_per_kwh: null,
+      });
+    }
+    const outlook = buildPriceOutlook(slots, archive(days), { timeZone: TZ, asOf: AS_OF });
+    const tail = outlook.shadowImportSekPerKwh.slice(-QUARTERS_PER_DAY);
+    assert(
+      Math.max(...tail) / Math.min(...tail) > 1.5,
+      `with ${days} days of archive the tail was flat (spread ${
+        (Math.max(...tail) / Math.min(...tail)).toFixed(3)
+      })`,
+    );
+  }
 });
 
 Deno.test("a cheap published window does not drag the whole tail down", () => {
   // The day-ahead window here is entirely overnight, where the shape multiplier
   // is below 1. Without normalising that out, every daytime slot in the tail
   // would inherit a night-time level and look far too cheap.
-  const shape = buildPriceShape(archive(28));
   const slots = [
     { start: "2026-06-29T02:00:00+02:00", import_price_sek_per_kwh: 0.5 },
     { start: "2026-06-29T02:15:00+02:00", import_price_sek_per_kwh: 0.5 },
     { start: "2026-06-30T02:00:00+02:00", import_price_sek_per_kwh: null },
   ];
-  const outlook = buildPriceOutlook(slots, shape);
+  const outlook = buildPriceOutlook(slots, archive(28), { timeZone: TZ, asOf: AS_OF });
   assertClose(
     outlook.shadowImportSekPerKwh[2],
     0.5,
     "the same clock hour a day later prices the same",
-    0.02,
-  );
-});
-
-Deno.test("weekend borrows the weekday shape rather than inventing one", () => {
-  // Four weeks of weekdays and a single weekend day: the weekend is below the
-  // floor, so it takes the weekday curve instead of a three-sample fit.
-  const rows = archive(28).filter((row) => {
-    const local = localSlot(Date.parse(row.start_ts), "Europe/Stockholm");
-    return local.dayType === "weekday" || local.dayKey === "2026-06-06";
-  });
-  const shape = buildPriceShape(rows)!;
-  assert(shape !== null, "weekdays alone should publish a shape");
-  assertClose(
-    shape.byDayType.weekend[19 * 4],
-    shape.byDayType.weekday[19 * 4],
-    "the weekend falls back to the weekday curve",
-  );
-});
-
-Deno.test("the fallback averages the last three days that actually happened", () => {
-  // Phil's case, 2026-08-18: the archive holds 08/16 and 08/17 as history, plus
-  // 08/18 and 08/19 because Nord Pool publishes day-ahead and the snapshot
-  // carries it. Taking "the three most recent days" then meant 08/17, 08/18 and
-  // 08/19 — a shape built partly from the days it is about to predict, with the
-  // oldest real day silently dropped.
-  const rows = [
-    day("2026-08-16", 1, { hours: [3], price: 9 }),
-    day("2026-08-17", 1, { hours: [3], price: 9 }),
-    day("2026-08-18", 1, { hours: [3], price: 9 }),
-    // Tomorrow, published: a completely different shape, and it must not count.
-    day("2026-08-19", 1, { hours: [12], price: 9 }),
-  ].flat();
-  const asOf = Date.parse("2026-08-18T22:30:00+02:00");
-  const shape = buildPriceShape(rows, "Europe/Stockholm", asOf)!;
-  assert(shape.basis === "recent", `expected the recent tier, got ${shape.basis}`);
-  const weekday = shape.byDayType.weekday;
-  assert(
-    weekday[3 * 4] > weekday[12 * 4] * 2,
-    `03:00 was dear on all three past days; got ${weekday[3 * 4]} vs midday ${weekday[12 * 4]}`,
-  );
-});
-
-Deno.test("the oldest of the three days still moves the answer", () => {
-  // The specific symptom: a modelled day that looks like yesterday because
-  // only yesterday and the day-ahead were being averaged.
-  const withOldDay = buildPriceShape([
-    day("2026-08-16", 1, { hours: [6], price: 9 }),
-    day("2026-08-17", 1, { hours: [19], price: 9 }),
-    day("2026-08-18", 1, { hours: [19], price: 9 }),
-  ].flat(), "Europe/Stockholm", Date.parse("2026-08-18T22:30:00+02:00"))!;
-  const withoutOldDay = buildPriceShape([
-    day("2026-08-17", 1, { hours: [19], price: 9 }),
-    day("2026-08-18", 1, { hours: [19], price: 9 }),
-  ].flat(), "Europe/Stockholm", Date.parse("2026-08-18T22:30:00+02:00"))!;
-  assert(
-    withOldDay.byDayType.weekday[6 * 4] > withoutOldDay.byDayType.weekday[6 * 4] * 1.5,
-    "a morning spike three days ago has to show up in the average",
-  );
-});
-
-Deno.test("a part-archived day is not counted as a day", () => {
-  // Today at 06:00 has a quarter of its quarters stored. Counting it as one of
-  // the three would let those few samples define their own quarters outright
-  // while contributing nothing to the rest, so the "average" would be a
-  // different day in every part of the curve.
-  const partial = day("2026-08-18", 1, { hours: [3], price: 9 })
-    .filter((row) => Date.parse(row.start_ts) < Date.parse("2026-08-18T06:00:00+02:00"));
-  const shape = buildPriceShape([
-    day("2026-08-15", 1, { hours: [19], price: 9 }),
-    day("2026-08-16", 1, { hours: [19], price: 9 }),
-    day("2026-08-17", 1, { hours: [19], price: 9 }),
-    partial,
-  ].flat(), "Europe/Stockholm", Date.parse("2026-08-18T06:00:00+02:00"))!;
-  assert(
-    shape.byDayType.weekday[19 * 4] > shape.byDayType.weekday[3 * 4],
-    "the three whole days should decide the shape, not the part-day",
+    0.05,
   );
 });

@@ -196,17 +196,17 @@ Deno.test("the unpriced tail prefers the hours the shape says are cheap", () => 
   // Before §1.4 every unpriced slot scored `gridW / 100`, so 03:00 and 18:00
   // were indistinguishable and a deferrable load landed on the tie-break.
   const base = input();
-  const shape = {
-    byDayType: {
-      weekday: Array.from({ length: 96 }, (_, quarter) =>
-        // Expensive 06:00-09:00, cheap otherwise.
-        quarter >= 24 && quarter < 36 ? 3 : 0.5),
-      weekend: Array.from({ length: 96 }, () => 1),
-    },
-    coverageDays: { weekday: 30, weekend: 30 },
-    sampleCount: 30 * 96,
-    basis: "median" as const,
-  };
+  // Raw archive rather than a hand-built shape: there is one estimator and the
+  // planner owns it, so a test cannot assert against rules the planner does not
+  // use. Fourteen days, expensive 06:00-09:00 and cheap otherwise.
+  const archive = Array.from({ length: 14 }, (_day, offset) =>
+    Array.from({ length: 96 }, (_quarter, quarter) => ({
+      start_ts: new Date(
+        Date.parse("2026-07-27T00:00:00+02:00") + offset * 86_400_000 +
+          quarter * 900_000,
+      ).toISOString(),
+      import_price_sek_per_kwh: quarter >= 24 && quarter < 36 ? 3 : 0.5,
+    }))).flat();
   const snapshot = input({
     slots: base.slots.map((slot, index) => ({
       ...slot,
@@ -221,7 +221,7 @@ Deno.test("the unpriced tail prefers the hours the shape says are cheap", () => 
   const prepared = generateOptimisationPlan(
     snapshot,
     new Date("2026-08-10T07:55:00Z"),
-    shape,
+    archive,
   );
   const expensive = prepared.plans.priority.slots.filter((slot) => {
     const hour = new Date(slot.start).getUTCHours();

@@ -16,8 +16,7 @@ import {
   type OptimisationSnapshotV5,
 } from "../_shared/energy-optimisation.ts";
 import {
-  buildPriceShape,
-  type PriceShape,
+  type StoredPriceRow,
 } from "../_shared/energy-price-shape.ts";
 import {
   buildThermalProjection,
@@ -1389,7 +1388,7 @@ serve(async (req) => {
       // this those slots price flat and the planner has no reason to prefer one
       // hour over another (§1.4.3). A read failure is not fatal: no shape means
       // a flat tail, which is the behaviour before this existed.
-      let priceShape: PriceShape | null = null;
+      let priceArchive: StoredPriceRow[] = [];
       const shapeFrom = new Date(
         Date.now() - PRICE_SHAPE_WINDOW_DAYS * 86_400_000,
       ).toISOString();
@@ -1402,11 +1401,7 @@ serve(async (req) => {
       if (shapeError) {
         console.error("[ENERGY-OPTIMISATION] price shape read failed", shapeError);
       } else {
-        priceShape = buildPriceShape(
-          shapeRows ?? [],
-          snapshot.timezone,
-          Date.parse(snapshot.captured_at),
-        );
+        priceArchive = shapeRows ?? [];
       }
 
       // The home's own curves, if it has edited any. Resolved here rather than
@@ -1476,7 +1471,7 @@ serve(async (req) => {
         );
         snapshot = thermal.snapshot;
         thermalZones = thermal.zones;
-        generated = generateOptimisationPlan(snapshot, new Date(), priceShape);
+        generated = generateOptimisationPlan(snapshot, new Date(), priceArchive);
       } catch (error) {
         const detail = error instanceof Error
           ? error.message

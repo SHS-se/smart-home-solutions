@@ -24,7 +24,6 @@ import {
   generateOptimisationPlan,
   type OptimisationSnapshotV5,
 } from "../_shared/energy-optimisation.ts";
-import { buildPriceShape } from "../_shared/energy-price-shape.ts";
 import { resolveValueCurves } from "../_shared/value-curves.ts";
 
 const corsHeaders = {
@@ -126,14 +125,9 @@ serve(async (request) => {
       .eq("home_id", homeId)
       .gte("start_ts", shapeFrom)
       .order("start_ts");
-    // Anchored to the snapshot's own capture time, so the shape is built from
-    // the days that had happened when the plan was made rather than from
-    // whatever the clock says at replan.
-    const priceShape = buildPriceShape(
-      shapeRows ?? [],
-      stored.timezone,
-      Date.parse(stored.captured_at),
-    );
+    // Raw observations: the planner owns the one estimator, so nothing here
+    // can hand it a shape built on different rules.
+    const priceArchive = shapeRows ?? [];
 
     const snapshot: OptimisationSnapshotV5 = {
       ...stored,
@@ -145,7 +139,7 @@ serve(async (request) => {
 
     let generated;
     try {
-      generated = generateOptimisationPlan(snapshot, new Date(), priceShape);
+      generated = generateOptimisationPlan(snapshot, new Date(), priceArchive);
     } catch (error) {
       const detail = error instanceof Error ? error.message : "replan failed";
       // The commonest case by far: the snapshot has aged past the planner's

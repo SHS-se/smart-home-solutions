@@ -936,35 +936,45 @@ Properties that matter:
   price a January slot.
 - **Weekday and weekend are separate**, matching how the base-load profile is
   already built.
-- **Below a coverage floor the shape degrades rather than disappearing**
-  (revised 2026-08-18). This originally read "below a coverage floor there is no
-  prior, and the planner says so rather than inventing one", on the grounds that
-  a home with three days of archive has no business claiming to know its price
-  curve. That was half right. The half it missed is that the fallback was not
-  *no* claim — it was a **flat** tail, which asserts that a kWh at 03:00 is
-  worth exactly what a kWh at 18:00 is worth. That is the one thing three days
-  of archive reliably disproves, and it is a stronger and worse claim than the
-  weak one it was avoiding.
+- **One estimator, no tiers and no floor** (rewritten 2026-08-18). This
+  originally read "below a coverage floor there is no prior, and the planner
+  says so rather than inventing one", on the grounds that a home with three
+  days of archive has no business claiming to know its price curve. Both that
+  and the two-tier patch that briefly replaced it were wrong, for the same
+  reason: the fallback was never *no* claim. It was a **flat** tail, and since
+  the planner reasons entirely in shadow prices (`planDispatch` bids against
+  them, `batteryValueCurve` is built from them, export replacement cost and
+  thermal scoring read them), a flat tail deletes time preference from the
+  objective itself. That is a far stronger and worse claim than the weak one
+  the floor was protecting against, and it is what every young installation got.
 
-  Two things the fallback has to get right, both found by Phil reading the
-  chart on 2026-08-18. The archive holds **tomorrow's published day-ahead
-  prices** as well as history, because the snapshot carries them and they are
-  stored on ingest — so "the three most recent days" quietly meant yesterday,
-  today and *tomorrow*, a shape built partly from the days it was about to
-  predict, with the oldest real day dropped. And a day with a handful of
-  quarters archived counted as a whole day, letting those few samples define
-  their own quarters outright while contributing nothing to the rest. The shape
-  now takes an `asOf` (the snapshot's own capture time, not the wall clock),
-  drops everything after it, and requires a day to be at least nine tenths
-  archived before it counts as one.
+  There is now a single weighted estimate and no branch anywhere on how much
+  data exists. Every observation contributes with a weight:
 
-  So there are two tiers. Fourteen distinct days per day type gives the
-  by-quarter median with weekday and weekend separated. Below that,
-  `recentShape` averages the last three days quarter by quarter, pooled across
-  day types because three days cannot support a split. Only a genuinely empty
-  archive yields no shape at all, and the plan now publishes which tier it used
-  in `price_outlook.basis` so a flat line can never again be mistaken for a
-  broken one.
+  | Factor | Form | What it buys |
+  |---|---|---|
+  | Recency | Exponential, 21-day half-life | Three days and three years are the same computation; a tariff change works through in about a month |
+  | Day type | Same type 1.0, other type 0.35 | A home that has only seen weekdays still gets a weekend answer, softened, instead of a hole |
+  | Season | Gaussian over circular day-of-year, σ 45 days | Last February informs this February once the archive holds one, and is inert before that rather than a separate mode |
+
+  Each observation is divided by its own day's mean before it counts, which is
+  what keeps shape separable from level, and thinly sampled quarters shrink
+  toward a multiplier of 1 — "no opinion" — so a single day cannot spike.
+
+  The floor under all of it is that **the plan's own published day-ahead window
+  is an observation**. A home with an empty archive still has a day of real
+  prices in front of it, so a shape can always be estimated from something
+  measured. The only remaining unshaped case is a plan carrying no prices at
+  all, which is a broken price source rather than a young one.
+
+  Two traps this had to survive, both found by reading the live chart. The
+  archive holds *tomorrow's* published prices as well as history, because the
+  snapshot carries them and they are stored on ingest — so anything phrased as
+  "the most recent days" silently included the days it was about to predict.
+  And a part-archived day would let a handful of quarters define their own
+  slots outright while contributing nothing to the rest. Observations are
+  therefore aged against the snapshot's own capture time, never the wall clock,
+  and a day under half archived is dropped entirely.
 
 #### 1.4.4 Peak spreading survives the effektavgift being suspended
 

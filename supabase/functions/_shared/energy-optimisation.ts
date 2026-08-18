@@ -11,7 +11,7 @@
 import {
   buildPriceOutlook,
   type PriceOutlook,
-  type PriceShape,
+  type StoredPriceRow,
 } from "./energy-price-shape.ts";
 import {
   projectZoneTemperature,
@@ -491,10 +491,12 @@ export interface OptimisationPlanV5 {
    * out loud rather than drawing without comment (§1.4.3).
    */
   price_outlook: {
+    /** False only when the plan carries no published price at all. */
     shaped: boolean;
-    /** "median" over a fortnight, "recent" over the last few days, or null. */
-    basis: "median" | "recent" | null;
-    coverage_days: number;
+    /** Distinct days of price history behind the shape. */
+    observed_days: number;
+    /** The same evidence weighted by recency, day type and season. */
+    effective_days: number;
     level_sek_per_kwh: number | null;
   };
   policy: OptimisationSnapshotV5["policy"];
@@ -1310,7 +1312,7 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV5): string[] {
 
 function preparedSlots(
   snapshot: OptimisationSnapshotV5,
-  shape: PriceShape | null = null,
+  archive: StoredPriceRow[] = [],
 ): { slots: PreparedSlot[]; outlook: PriceOutlook } {
   const captured = isoMs(snapshot.captured_at);
   const controlledCategories = new Set<string>();
@@ -1320,7 +1322,10 @@ function preparedSlots(
   const thermalDeviceKeys = new Set(
     (snapshot.thermal_zones ?? []).flatMap((zone) => zone.device_keys),
   );
-  const outlook = buildPriceOutlook(snapshot.slots, shape, snapshot.timezone);
+  const outlook = buildPriceOutlook(snapshot.slots, archive, {
+    timeZone: snapshot.timezone,
+    asOf: isoMs(snapshot.captured_at),
+  });
   // Export is not shaped separately: the archive stores an import price, and
   // the spread between them is a supplier and tariff construct rather than
   // something the market shape says anything about. Holding the observed ratio
@@ -3366,12 +3371,15 @@ export function generateOptimisationPlan(
   snapshot: OptimisationSnapshotV5,
   now = new Date(),
   /**
-   * Measured price shape for this home, or null when the archive is too thin.
-   * Optional so every existing caller and contract test keeps working: with no
-   * shape the tail prices flat at the published level, which still prefers
-   * solar and a flat draw, just without time preference (§1.4.3).
+   * This home's archived prices, newest or oldest first, it does not matter.
+   *
+   * Raw observations rather than a pre-computed shape: there is one estimator
+   * and it lives in `energy-price-shape.ts`, so a caller cannot accidentally
+   * hand the planner a shape built on different rules. Empty is fine — the
+   * plan's own published day-ahead window is an observation too, so the tail
+   * is still shaped rather than flat (§1.4.3).
    */
-  priceShape: PriceShape | null = null,
+  priceArchive: StoredPriceRow[] = [],
 ): OptimisationPlanV5 {
   const validationErrors = validateSnapshot(snapshot);
   const snapshotAge = now.getTime() - isoMs(snapshot.captured_at);
@@ -3384,7 +3392,7 @@ export function generateOptimisationPlan(
   if (validationErrors.length > 0) {
     throw new Error(validationErrors.join("; "));
   }
-  const { slots, outlook } = preparedSlots(snapshot, priceShape);
+  const { slots, outlook } = preparedSlots(snapshot, priceArchive);
   const { reservedW, protectedSoc } = batteryReservation(slots, snapshot);
   const baseline = buildPlan(
     "baseline",
@@ -3454,8 +3462,8 @@ export function generateOptimisationPlan(
     pv_calibration: snapshot.pv_calibration,
     price_outlook: {
       shaped: outlook.shaped,
-      basis: outlook.basis,
-      coverage_days: outlook.shapeCoverageDays,
+      observed_days: outlook.observedDays,
+      effective_days: round(outlook.effectiveDays, 2),
       level_sek_per_kwh: outlook.levelSekPerKwh,
     },
     policy: snapshot.policy,
