@@ -132,7 +132,19 @@ const median = (values: number[]): number => {
 export function buildPriceShape(
   rows: StoredPriceRow[],
   timeZone = "Europe/Stockholm",
+  asOf: number = Date.now(),
 ): PriceShape | null {
+  // The archive holds tomorrow's published day-ahead prices as well as
+  // history — the snapshot carries them, so they are stored. A shape built
+  // from "the most recent days" would then be built partly from the days it is
+  // about to predict, which is both circular and not what anyone means by
+  // recent. Everything after today is dropped before either tier sees it.
+  const today = localSlot(asOf, timeZone).dayKey;
+  rows = rows.filter((row) => {
+    const startMs = Date.parse(row.start_ts);
+    return Number.isFinite(startMs) &&
+      localSlot(startMs, timeZone).dayKey <= today;
+  });
   const samples: Record<DayType, Array<number[]>> = {
     weekday: Array.from({ length: QUARTERS_PER_DAY }, () => []),
     weekend: Array.from({ length: QUARTERS_PER_DAY }, () => []),
@@ -221,9 +233,15 @@ function recentShape(
     }
     day[slot.quarter].push(price);
   }
-  // Most recent first: a young archive should follow the days just gone rather
-  // than whatever happened to be collected first.
+  // Whole days only, most recent first. A day with a handful of quarters
+  // archived is not a day: its few samples would define their own quarters
+  // outright while contributing nothing to the rest, so the "average" would be
+  // a different day in every part of the curve.
   const recent = [...byDay.entries()]
+    .filter(([, quarters]) =>
+      quarters.filter((values) => values.length > 0).length >=
+        QUARTERS_PER_DAY * 0.9
+    )
     .sort((left, right) => right[0].localeCompare(left[0]))
     .slice(0, RECENT_SHAPE_DAYS)
     .map(([, quarters]) => quarters);

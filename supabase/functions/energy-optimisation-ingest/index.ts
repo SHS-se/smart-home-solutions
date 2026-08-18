@@ -1402,7 +1402,11 @@ serve(async (req) => {
       if (shapeError) {
         console.error("[ENERGY-OPTIMISATION] price shape read failed", shapeError);
       } else {
-        priceShape = buildPriceShape(shapeRows ?? [], snapshot.timezone);
+        priceShape = buildPriceShape(
+          shapeRows ?? [],
+          snapshot.timezone,
+          Date.parse(snapshot.captured_at),
+        );
       }
 
       // The home's own curves, if it has edited any. Resolved here rather than

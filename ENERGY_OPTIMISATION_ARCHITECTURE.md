@@ -946,6 +946,18 @@ Properties that matter:
   of archive reliably disproves, and it is a stronger and worse claim than the
   weak one it was avoiding.
 
+  Two things the fallback has to get right, both found by Phil reading the
+  chart on 2026-08-18. The archive holds **tomorrow's published day-ahead
+  prices** as well as history, because the snapshot carries them and they are
+  stored on ingest — so "the three most recent days" quietly meant yesterday,
+  today and *tomorrow*, a shape built partly from the days it was about to
+  predict, with the oldest real day dropped. And a day with a handful of
+  quarters archived counted as a whole day, letting those few samples define
+  their own quarters outright while contributing nothing to the rest. The shape
+  now takes an `asOf` (the snapshot's own capture time, not the wall clock),
+  drops everything after it, and requires a day to be at least nine tenths
+  archived before it counts as one.
+
   So there are two tiers. Fourteen distinct days per day type gives the
   by-quarter median with weekday and weekend separated. Below that,
   `recentShape` averages the last three days quarter by quarter, pooled across

@@ -126,7 +126,14 @@ serve(async (request) => {
       .eq("home_id", homeId)
       .gte("start_ts", shapeFrom)
       .order("start_ts");
-    const priceShape = buildPriceShape(shapeRows ?? [], stored.timezone);
+    // Anchored to the snapshot's own capture time, so the shape is built from
+    // the days that had happened when the plan was made rather than from
+    // whatever the clock says at replan.
+    const priceShape = buildPriceShape(
+      shapeRows ?? [],
+      stored.timezone,
+      Date.parse(stored.captured_at),
+    );
 
     const snapshot: OptimisationSnapshotV5 = {
       ...stored,

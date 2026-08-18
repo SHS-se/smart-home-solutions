@@ -244,3 +244,63 @@ Deno.test("weekend borrows the weekday shape rather than inventing one", () => {
     "the weekend falls back to the weekday curve",
   );
 });
+
+Deno.test("the fallback averages the last three days that actually happened", () => {
+  // Phil's case, 2026-08-18: the archive holds 08/16 and 08/17 as history, plus
+  // 08/18 and 08/19 because Nord Pool publishes day-ahead and the snapshot
+  // carries it. Taking "the three most recent days" then meant 08/17, 08/18 and
+  // 08/19 — a shape built partly from the days it is about to predict, with the
+  // oldest real day silently dropped.
+  const rows = [
+    day("2026-08-16", 1, { hours: [3], price: 9 }),
+    day("2026-08-17", 1, { hours: [3], price: 9 }),
+    day("2026-08-18", 1, { hours: [3], price: 9 }),
+    // Tomorrow, published: a completely different shape, and it must not count.
+    day("2026-08-19", 1, { hours: [12], price: 9 }),
+  ].flat();
+  const asOf = Date.parse("2026-08-18T22:30:00+02:00");
+  const shape = buildPriceShape(rows, "Europe/Stockholm", asOf)!;
+  assert(shape.basis === "recent", `expected the recent tier, got ${shape.basis}`);
+  const weekday = shape.byDayType.weekday;
+  assert(
+    weekday[3 * 4] > weekday[12 * 4] * 2,
+    `03:00 was dear on all three past days; got ${weekday[3 * 4]} vs midday ${weekday[12 * 4]}`,
+  );
+});
+
+Deno.test("the oldest of the three days still moves the answer", () => {
+  // The specific symptom: a modelled day that looks like yesterday because
+  // only yesterday and the day-ahead were being averaged.
+  const withOldDay = buildPriceShape([
+    day("2026-08-16", 1, { hours: [6], price: 9 }),
+    day("2026-08-17", 1, { hours: [19], price: 9 }),
+    day("2026-08-18", 1, { hours: [19], price: 9 }),
+  ].flat(), "Europe/Stockholm", Date.parse("2026-08-18T22:30:00+02:00"))!;
+  const withoutOldDay = buildPriceShape([
+    day("2026-08-17", 1, { hours: [19], price: 9 }),
+    day("2026-08-18", 1, { hours: [19], price: 9 }),
+  ].flat(), "Europe/Stockholm", Date.parse("2026-08-18T22:30:00+02:00"))!;
+  assert(
+    withOldDay.byDayType.weekday[6 * 4] > withoutOldDay.byDayType.weekday[6 * 4] * 1.5,
+    "a morning spike three days ago has to show up in the average",
+  );
+});
+
+Deno.test("a part-archived day is not counted as a day", () => {
+  // Today at 06:00 has a quarter of its quarters stored. Counting it as one of
+  // the three would let those few samples define their own quarters outright
+  // while contributing nothing to the rest, so the "average" would be a
+  // different day in every part of the curve.
+  const partial = day("2026-08-18", 1, { hours: [3], price: 9 })
+    .filter((row) => Date.parse(row.start_ts) < Date.parse("2026-08-18T06:00:00+02:00"));
+  const shape = buildPriceShape([
+    day("2026-08-15", 1, { hours: [19], price: 9 }),
+    day("2026-08-16", 1, { hours: [19], price: 9 }),
+    day("2026-08-17", 1, { hours: [19], price: 9 }),
+    partial,
+  ].flat(), "Europe/Stockholm", Date.parse("2026-08-18T06:00:00+02:00"))!;
+  assert(
+    shape.byDayType.weekday[19 * 4] > shape.byDayType.weekday[3 * 4],
+    "the three whole days should decide the shape, not the part-day",
+  );
+});

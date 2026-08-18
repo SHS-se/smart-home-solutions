@@ -71,16 +71,33 @@ const EconomicsSection: React.FC<{
     gridExportW: row.gridExportW,
   })), [range.from, range.to, rows]);
 
+  // Over several days there is no room for a label per gridline, and stacking
+  // "08/19, 06:00 PM" every six hours produced an unreadable smear. Gridlines
+  // stay every six hours for the eye to measure against; only midnight carries
+  // a label, and it names the day rather than the minute.
+  const spanDays = dayWindow === 'all';
   const ticks = useMemo(
     () => windowed
       .filter(row => {
         const start = new Date(row.startMs);
         return start.getMinutes() === 0
-          && start.getHours() % (dayWindow === 'all' ? 6 : 3) === 0;
+          && start.getHours() % (spanDays ? 6 : 3) === 0;
       })
       .map(row => row.i),
-    [dayWindow, windowed],
+    [spanDays, windowed],
   );
+
+  const tickLabel = (index: number) => {
+    const row = windowed[index];
+    if (!row) return '';
+    const at = new Date(row.startMs);
+    if (!spanDays) {
+      return at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+    return at.getHours() === 0
+      ? at.toLocaleDateString([], { day: '2-digit', month: '2-digit' })
+      : '';
+  };
 
   const axes = useMemo(() => sharedZeroAxes({
     priceMax: Math.max(
@@ -124,7 +141,7 @@ const EconomicsSection: React.FC<{
           <ResponsiveContainer width="100%" height={360}>
             <ComposedChart data={windowed} margin={{ top: 8, right: 10, left: 0, bottom: 4 }}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-muted" vertical={false} />
-              <XAxis dataKey="i" type="number" domain={[0, windowed.length - 1]} ticks={ticks} tickFormatter={index => windowed[index]?.label ?? ''} tick={{ fontSize: 11 }} interval={0} />
+              <XAxis dataKey="i" type="number" domain={[0, windowed.length - 1]} ticks={ticks} tickFormatter={tickLabel} tick={{ fontSize: 11 }} interval={0} />
               <YAxis yAxisId="price" domain={axes.price.domain} ticks={axes.price.ticks} interval={0} tick={{ fontSize: 11 }} tickFormatter={value => Number(value).toFixed(axes.price.decimals)} label={{ value: 'SEK/kWh', angle: -90, position: 'insideLeft', fontSize: 11 }} />
               <YAxis yAxisId="power" orientation="right" domain={axes.power.domain} ticks={axes.power.ticks} interval={0} tick={{ fontSize: 11 }} tickFormatter={value => (Number(value) / 1000).toFixed(axes.power.decimals)} label={{ value: 'kW', angle: 90, position: 'insideRight', fontSize: 11 }} />
               <ReferenceLine yAxisId="power" y={0} stroke="currentColor" className="text-muted-foreground" strokeOpacity={0.5} />
