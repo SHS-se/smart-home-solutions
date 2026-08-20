@@ -4,26 +4,25 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { authenticateDevice } from "../_shared/ha-device-auth.ts";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-};
+import {
+  HA_API_CORS_HEADERS,
+  haApiResponse,
+  haRequestId,
+} from "../_shared/ha-api-contract.ts";
 
 const VALID_FUSES = new Set([16, 20, 25, 35, 50, 63]);
 
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
-  });
-
-const answerValue = (answer: { answer_value: unknown; answer_text: string | null } | undefined) =>
-  answer?.answer_value ?? answer?.answer_text ?? null;
+const answerValue = (
+  answer: { answer_value: unknown; answer_text: string | null } | undefined,
+) => answer?.answer_value ?? answer?.answer_text ?? null;
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  const requestId = haRequestId(req);
+  const json = (body: unknown, status = 200) =>
+    haApiResponse(requestId, body, status);
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: HA_API_CORS_HEADERS });
+  }
   if (req.method !== "GET") return json({ error: "method_not_allowed" }, 405);
 
   const supabase = createClient(
@@ -35,15 +34,22 @@ serve(async (req) => {
   try {
     const auth = await authenticateDevice(supabase, req);
     if (auth.ok === false) return json({ error: auth.error }, auth.status);
-    if (!auth.subscriptionActive) return json({ error: "subscription_inactive" }, 402);
+    if (!auth.subscriptionActive) {
+      return json({ error: "subscription_inactive" }, 402);
+    }
 
     const { data: settings, error: settingsError } = await supabase
       .from("energy_tariff_settings")
-      .select("profile_id, connection_type, grid_area, energy_tax_reduced, include_vat, export_vat_registered")
+      .select(
+        "profile_id, connection_type, grid_area, energy_tax_reduced, include_vat, export_vat_registered",
+      )
       .eq("id", true)
       .maybeSingle();
     if (settingsError) {
-      console.error("[INTEGRATION-TARIFF] settings lookup failed", settingsError);
+      console.error(
+        "[INTEGRATION-TARIFF] settings lookup failed",
+        settingsError,
+      );
       return json({ error: "tariff_lookup_failed" }, 500);
     }
 
@@ -55,26 +61,37 @@ serve(async (req) => {
         configuration: null,
         missing_inputs: ["central_tariff_settings"],
         missing_input_details: [
-          { key: "central_tariff_settings", question_sv: null, question_en: null },
+          {
+            key: "central_tariff_settings",
+            question_sv: null,
+            question_en: null,
+          },
         ],
         profiles: [],
       });
     }
 
-    const [{ data: profiles, error: profileError }, { data: versions, error: versionError }] =
-      await Promise.all([
-        supabase.from("energy_tariff_profiles")
-          .select("id, provider_key, tariff_key, provider_name, display_name, currency")
-          .eq("id", settings.profile_id),
-        supabase.from("energy_tariff_versions")
-          .select(
-            "id, profile_id, revision, valid_from, valid_to, calculation_model, definition, source_url, published_at",
-          )
-          .eq("profile_id", settings.profile_id)
-          .order("valid_from", { ascending: true }),
-      ]);
+    const [
+      { data: profiles, error: profileError },
+      { data: versions, error: versionError },
+    ] = await Promise.all([
+      supabase.from("energy_tariff_profiles")
+        .select(
+          "id, provider_key, tariff_key, provider_name, display_name, currency",
+        )
+        .eq("id", settings.profile_id),
+      supabase.from("energy_tariff_versions")
+        .select(
+          "id, profile_id, revision, valid_from, valid_to, calculation_model, definition, source_url, published_at",
+        )
+        .eq("profile_id", settings.profile_id)
+        .order("valid_from", { ascending: true }),
+    ]);
     if (profileError || versionError) {
-      console.error("[INTEGRATION-TARIFF] catalogue lookup failed", { profileError, versionError });
+      console.error("[INTEGRATION-TARIFF] catalogue lookup failed", {
+        profileError,
+        versionError,
+      });
       return json({ error: "tariff_lookup_failed" }, 500);
     }
 
@@ -89,7 +106,10 @@ serve(async (req) => {
         .select("id, semantic_key, question_text, question_text_en")
         .in("semantic_key", ["main_fuse_a", "has_solar"]);
       if (questionError) {
-        console.error("[INTEGRATION-TARIFF] question lookup failed", questionError);
+        console.error(
+          "[INTEGRATION-TARIFF] question lookup failed",
+          questionError,
+        );
         return json({ error: "tariff_lookup_failed" }, 500);
       }
 
@@ -103,7 +123,9 @@ serve(async (req) => {
         return json({ error: "tariff_lookup_failed" }, 500);
       }
 
-      const answersByQuestion = new Map((answers ?? []).map((answer) => [answer.question_id, answer]));
+      const answersByQuestion = new Map(
+        (answers ?? []).map((answer) => [answer.question_id, answer]),
+      );
       for (const question of questions ?? []) {
         if (!question.semantic_key) continue;
         questionText.set(question.semantic_key, {
@@ -117,8 +139,12 @@ serve(async (req) => {
       ]));
       const fuse = Number(values.main_fuse_a);
       if (VALID_FUSES.has(fuse)) mainFuseA = fuse;
-      if (values.has_solar === true || values.has_solar === "true") productionEnabled = true;
-      if (values.has_solar === false || values.has_solar === "false") productionEnabled = false;
+      if (values.has_solar === true || values.has_solar === "true") {
+        productionEnabled = true;
+      }
+      if (values.has_solar === false || values.has_solar === "false") {
+        productionEnabled = false;
+      }
     }
 
     const missingInputs: string[] = [];
@@ -137,21 +163,25 @@ serve(async (req) => {
       schema_version: 2,
       calculation_version: 2,
       timezone: "Europe/Stockholm",
-      configuration: missingInputs.length === 0 ? {
-        profile_id: settings.profile_id,
-        connection_type: "three_phase",
-        fuse_a: mainFuseA,
-        grid_area: settings.grid_area,
-        production_enabled: productionEnabled,
-        energy_tax_reduced: settings.energy_tax_reduced,
-        include_vat: settings.include_vat,
-        export_vat_registered: settings.export_vat_registered,
-      } : null,
+      configuration: missingInputs.length === 0
+        ? {
+          profile_id: settings.profile_id,
+          connection_type: "three_phase",
+          fuse_a: mainFuseA,
+          grid_area: settings.grid_area,
+          production_enabled: productionEnabled,
+          energy_tax_reduced: settings.energy_tax_reduced,
+          include_vat: settings.include_vat,
+          export_vat_registered: settings.export_vat_registered,
+        }
+        : null,
       missing_inputs: missingInputs,
       missing_input_details: missingInputDetails,
       profiles: (profiles ?? []).map((profile) => ({
         ...profile,
-        versions: (versions ?? []).filter((version) => version.profile_id === profile.id),
+        versions: (versions ?? []).filter((version) =>
+          version.profile_id === profile.id
+        ),
       })),
     });
   } catch (error) {

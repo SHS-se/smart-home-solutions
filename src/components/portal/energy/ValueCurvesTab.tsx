@@ -53,7 +53,7 @@ import {
   vehiclePreference,
   type StorePreference,
 } from '../../../../supabase/functions/_shared/value-preferences';
-import type { OptimisationSnapshotV5 } from '../../../../supabase/functions/_shared/energy-optimisation';
+import type { OptimisationSnapshot } from '../../../../supabase/functions/_shared/energy-optimisation';
 import { comparePreference, type PreviewComparison } from '@/lib/energy-shift/curve-preview';
 
 interface Props {
@@ -112,7 +112,7 @@ const ValueCurvesTab: React.FC<Props> = ({
   const [replanning, setReplanning] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [preview, setPreview] = useState<PreviewComparison | string | null>(null);
-  const [snapshot, setSnapshot] = useState<OptimisationSnapshotV5 | null>(null);
+  const [snapshot, setSnapshot] = useState<OptimisationSnapshot | null>(null);
 
   /**
    * How many physical units one kWh of electricity buys, on this home's kit.
@@ -272,7 +272,7 @@ const ValueCurvesTab: React.FC<Props> = ({
         ));
         return;
       }
-      source = data.snapshot as unknown as OptimisationSnapshotV5;
+      source = data.snapshot as unknown as OptimisationSnapshot;
       setSnapshot(source);
     }
     const edited: Partial<Record<ValueStoreKey, UtilityCurve>> = { ...stored };

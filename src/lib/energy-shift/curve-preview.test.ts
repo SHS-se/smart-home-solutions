@@ -3,7 +3,7 @@ import { comparePreference, solveWith } from './curve-preview.ts';
 import { curveFromPreference } from '../../../supabase/functions/_shared/value-preferences.ts';
 import { DEFAULT_VALUE_CURVES } from '../../../supabase/functions/_shared/value-curves.ts';
 import { WATER_KWH_PER_M3_K } from '../../../supabase/functions/_shared/store-models.ts';
-import type { OptimisationSnapshotV5 } from '../../../supabase/functions/_shared/energy-optimisation.ts';
+import type { OptimisationSnapshot } from '../../../supabase/functions/_shared/energy-optimisation.ts';
 
 const CAPTURED_AT = '2026-08-17T20:45:00.000Z';
 const START = Date.parse(CAPTURED_AT);
@@ -18,7 +18,7 @@ const provenance = (quality: string) => ({
 });
 
 /** Three sunny days at real Swedish August prices, and a pool below its band. */
-const snapshot = (): OptimisationSnapshotV5 => {
+const snapshot = (): OptimisationSnapshot => {
   const slots = Array.from({ length: 288 }, (_value, index) => {
     const ms = START + index * 900_000;
     const hour = ((index / 4) + 22.75) % 24;

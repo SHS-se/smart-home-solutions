@@ -14,7 +14,7 @@
 
 import { assert, assertEquals } from 'jsr:@std/assert@1';
 import { generateOptimisationPlan } from '../../../supabase/functions/_shared/energy-optimisation.ts';
-import type { OptimisationSnapshotV5 } from '../../../supabase/functions/_shared/energy-optimisation.ts';
+import type { OptimisationSnapshot } from '../../../supabase/functions/_shared/energy-optimisation.ts';
 import { buildEnergyTimeline } from './energy-timeline.ts';
 
 const CAPTURED_AT = '2026-08-18T20:45:00.000Z';
@@ -49,7 +49,7 @@ const hourAt = (ms: number) => {
 /** Day-ahead published for 26 hours, then nothing — the permanent situation. */
 const PRICED_UNTIL = START + 26 * 3_600_000;
 
-const snapshot = (): OptimisationSnapshotV5 => {
+const snapshot = (): OptimisationSnapshot => {
   const slots = Array.from({ length: 288 }, (_value, index) => {
     const ms = START + index * 900_000;
     const hour = hourAt(ms);

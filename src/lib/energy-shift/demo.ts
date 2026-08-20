@@ -1,10 +1,10 @@
 import {
   generateOptimisationPlan,
-  type OptimisationSnapshotV5,
+  type OptimisationSnapshot,
 } from '../../../supabase/functions/_shared/energy-optimisation';
 import type {
   ActualEnergySlot,
-  OptimisationPlanV5,
+  OptimisationPlan,
   PortalOptimisationPlan,
   ThermalFixtureSeason,
 } from './contracts';
@@ -102,7 +102,7 @@ export function createWebsiteDemoPlan(
       : 8;
   });
   const advancedHome = season !== 'ev_only';
-  const services: OptimisationSnapshotV5['services'] = [];
+  const services: OptimisationSnapshot['services'] = [];
   for (const dayStart of advancedHome ? [0, 96, 192] : []) {
     const dayEnd = Math.min(dayStart + 96, slots.length);
     services.push(
@@ -167,7 +167,7 @@ export function createWebsiteDemoPlan(
     quality,
     ...(location ? { location } : {}),
   });
-  const snapshot: OptimisationSnapshotV5 = {
+  const snapshot: OptimisationSnapshot = {
     schema_version: 5,
     mode: 'live',
     capabilities: {
@@ -285,7 +285,7 @@ export function createWebsiteDemoPlan(
         ? null
         : { ...value, provider: 'Built-in website example', quality: 'synthetic' as const },
     ]),
-  ) as OptimisationPlanV5['sources'];
+  ) as OptimisationPlan['sources'];
   return {
     ...generated,
     mode: 'demo',

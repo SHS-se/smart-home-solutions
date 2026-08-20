@@ -7,7 +7,7 @@ import { AlertTriangle, CheckCircle2, Clock3 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useLanguage } from '@/contexts/LanguageContext';
-import type { OptimisationPlanV5 } from '@/lib/energy-shift/contracts';
+import type { OptimisationPlan } from '@/lib/energy-shift/contracts';
 import {
   assessThermalReadiness,
   THERMAL_TRAINING_SLOTS,
@@ -53,7 +53,7 @@ const ThermalReadinessRow: React.FC<{
 
 const ThermalReadinessPanel: React.FC<{
   devices: EmpiricalEnergyDevice[];
-  planDevices: OptimisationPlanV5['device_models'];
+  planDevices: OptimisationPlan['device_models'];
   observations: ThermalObservationSummary;
   zoneModels: ThermalZoneModelSummary[];
 }> = ({ devices, planDevices, observations, zoneModels }) => {

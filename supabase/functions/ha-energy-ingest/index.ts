@@ -6,12 +6,11 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { authenticateDevice } from "../_shared/ha-device-auth.ts";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-};
+import {
+  HA_API_CORS_HEADERS,
+  haApiResponse,
+  haRequestId,
+} from "../_shared/ha-api-contract.ts";
 
 const CATEGORIES = new Set([
   "heating",
@@ -48,12 +47,6 @@ const COMPONENT_CATEGORIES = new Set([
 ]);
 
 const COMPONENT_UNITS = new Set(["month", "kWh", "kW"]);
-
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
-  });
 
 interface IncomingReading {
   date: string;
@@ -103,7 +96,8 @@ interface IncomingCalculation {
 const isValidDate = (value: string) => {
   if (!DATE_RE.test(value)) return false;
   const date = new Date(`${value}T00:00:00Z`);
-  return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 10) === value;
+  return !Number.isNaN(date.valueOf()) &&
+    date.toISOString().slice(0, 10) === value;
 };
 
 const round = (value: number, decimals: number) => {
@@ -112,8 +106,11 @@ const round = (value: number, decimals: number) => {
 };
 
 serve(async (req) => {
+  const requestId = haRequestId(req);
+  const json = (body: unknown, status = 200) =>
+    haApiResponse(requestId, body, status);
   if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
+    return new Response(null, { headers: HA_API_CORS_HEADERS });
   }
   if (req.method !== "POST") {
     return json({ error: "method_not_allowed" }, 405);
@@ -137,14 +134,20 @@ serve(async (req) => {
     let supplierCosts: IncomingSupplierCost[] = [];
     try {
       const body = await req.json();
-      if (body === null || typeof body !== "object") throw new Error("invalid body");
+      if (body === null || typeof body !== "object") {
+        throw new Error("invalid body");
+      }
       if (body.readings !== undefined && !Array.isArray(body.readings)) {
         throw new Error("invalid readings");
       }
-      if (body.calculations !== undefined && !Array.isArray(body.calculations)) {
+      if (
+        body.calculations !== undefined && !Array.isArray(body.calculations)
+      ) {
         throw new Error("invalid calculations");
       }
-      if (body.supplier_costs !== undefined && !Array.isArray(body.supplier_costs)) {
+      if (
+        body.supplier_costs !== undefined && !Array.isArray(body.supplier_costs)
+      ) {
         throw new Error("invalid supplier costs");
       }
       readings = body.readings ?? [];
@@ -185,7 +188,10 @@ serve(async (req) => {
         return json({ error: "invalid_category", detail: category }, 400);
       }
       if (!Number.isFinite(kwh) || kwh < 0 || kwh > MAX_KWH_PER_READING) {
-        return json({ error: "invalid_kwh", detail: `${category} ${date}` }, 400);
+        return json(
+          { error: "invalid_kwh", detail: `${category} ${date}` },
+          400,
+        );
       }
       const readingKey = `${date}:${category}`;
       if (readingKeys.has(readingKey)) {
@@ -239,10 +245,13 @@ serve(async (req) => {
       }
       supplierDates.add(date);
       if (
-        !Number.isFinite(importKwh) || importKwh < 0 || importKwh > MAX_KWH_PER_READING ||
-        !Number.isFinite(exportKwh) || exportKwh < 0 || exportKwh > MAX_KWH_PER_READING ||
+        !Number.isFinite(importKwh) || importKwh < 0 ||
+        importKwh > MAX_KWH_PER_READING ||
+        !Number.isFinite(exportKwh) || exportKwh < 0 ||
+        exportKwh > MAX_KWH_PER_READING ||
         !Number.isFinite(importCost) || Math.abs(importCost) > MAX_AMOUNT_SEK ||
-        !Number.isFinite(exportCredit) || Math.abs(exportCredit) > MAX_AMOUNT_SEK ||
+        !Number.isFinite(exportCredit) ||
+        Math.abs(exportCredit) > MAX_AMOUNT_SEK ||
         !Number.isInteger(pricedHours) || pricedHours < 0 || pricedHours > 25
       ) {
         return json({ error: "invalid_supplier_cost", detail: date }, 400);
@@ -265,7 +274,10 @@ serve(async (req) => {
         .upsert(supplierRows, { onConflict: "customer_id,cost_date" });
 
       if (supplierError) {
-        console.error("[HA-ENERGY-INGEST] supplier cost upsert failed", supplierError);
+        console.error(
+          "[HA-ENERGY-INGEST] supplier cost upsert failed",
+          supplierError,
+        );
         return json({ error: "storage_failed" }, 500);
       }
     }
@@ -307,14 +319,22 @@ serve(async (req) => {
         !coverageEnd.startsWith(`${monthPrefix}-`) ||
         coverageEnd > today
       ) {
-        return json({ error: "invalid_calculation_period", detail: billingMonth }, 400);
+        return json({
+          error: "invalid_calculation_period",
+          detail: billingMonth,
+        }, 400);
       }
-      const [billingYear, billingMonthNumber] = monthPrefix.split("-").map(Number);
+      const [billingYear, billingMonthNumber] = monthPrefix.split("-").map(
+        Number,
+      );
       const expectedMonthEnd = new Date(
         Date.UTC(billingYear, billingMonthNumber, 0),
       ).toISOString().slice(0, 10);
       if (typeof calculation?.is_complete !== "boolean") {
-        return json({ error: "invalid_calculation_completeness", detail: billingMonth }, 400);
+        return json({
+          error: "invalid_calculation_completeness",
+          detail: billingMonth,
+        }, 400);
       }
       // Days the meter was down for part of the hour range. Older integration
       // builds never send the field, and a month without gaps sends [].
@@ -332,7 +352,10 @@ serve(async (req) => {
             day > coverageEnd,
         )
       ) {
-        return json({ error: "invalid_missing_days", detail: billingMonth }, 400);
+        return json(
+          { error: "invalid_missing_days", detail: billingMonth },
+          400,
+        );
       }
       // Spanning the month is not the same as having metered it: a month with
       // a hole in the middle must never be stored as the final figure, because
@@ -341,10 +364,16 @@ serve(async (req) => {
         coverageEnd === expectedMonthEnd &&
         missingDays.length === 0;
       if (calculation.is_complete !== coversWholeMonth) {
-        return json({ error: "inconsistent_calculation_completeness", detail: billingMonth }, 400);
+        return json({
+          error: "inconsistent_calculation_completeness",
+          detail: billingMonth,
+        }, 400);
       }
       if (calculationMonths.has(billingMonth)) {
-        return json({ error: "duplicate_calculation", detail: billingMonth }, 400);
+        return json(
+          { error: "duplicate_calculation", detail: billingMonth },
+          400,
+        );
       }
       calculationMonths.add(billingMonth);
       if (
@@ -352,18 +381,26 @@ serve(async (req) => {
         calculation?.calculation_model !== "se_grid_v1" ||
         calculation?.calculation_version !== 2
       ) {
-        return json({ error: "unsupported_calculation", detail: billingMonth }, 400);
+        return json(
+          { error: "unsupported_calculation", detail: billingMonth },
+          400,
+        );
       }
       if (
         !Array.isArray(calculation?.tariff_revisions) ||
         calculation.tariff_revisions.length === 0 ||
         calculation.tariff_revisions.length > 12 ||
-        new Set(calculation.tariff_revisions).size !== calculation.tariff_revisions.length ||
+        new Set(calculation.tariff_revisions).size !==
+          calculation.tariff_revisions.length ||
         calculation.tariff_revisions.some(
-          (revision) => typeof revision !== "string" || !REVISION_RE.test(revision),
+          (revision) =>
+            typeof revision !== "string" || !REVISION_RE.test(revision),
         )
       ) {
-        return json({ error: "invalid_tariff_revisions", detail: billingMonth }, 400);
+        return json(
+          { error: "invalid_tariff_revisions", detail: billingMonth },
+          400,
+        );
       }
       if (!HASH_RE.test(String(calculation?.input_hash ?? ""))) {
         return json({ error: "invalid_input_hash", detail: billingMonth }, 400);
@@ -383,11 +420,15 @@ serve(async (req) => {
         gridExportKwh < 0 ||
         gridExportKwh > MAX_MONTHLY_KWH ||
         (peakDemandKw !== null &&
-          (!Number.isFinite(peakDemandKw) || peakDemandKw < 0 || peakDemandKw > MAX_MONTHLY_KWH)) ||
+          (!Number.isFinite(peakDemandKw) || peakDemandKw < 0 ||
+            peakDemandKw > MAX_MONTHLY_KWH)) ||
         !Number.isFinite(totalAmountSek) ||
         Math.abs(totalAmountSek) > MAX_AMOUNT_SEK
       ) {
-        return json({ error: "invalid_calculation_totals", detail: billingMonth }, 400);
+        return json({
+          error: "invalid_calculation_totals",
+          detail: billingMonth,
+        }, 400);
       }
 
       if (
@@ -405,8 +446,12 @@ serve(async (req) => {
         const category = String(component?.category ?? "");
         const label = String(component?.label ?? "").trim();
         const amountSek = Number(component?.amount_sek);
-        const quantity = component?.quantity === null ? null : Number(component?.quantity);
-        const unit = component?.unit === null ? null : String(component?.unit ?? "");
+        const quantity = component?.quantity === null
+          ? null
+          : Number(component?.quantity);
+        const unit = component?.unit === null
+          ? null
+          : String(component?.unit ?? "");
         const unitPriceSek = component?.unit_price_sek === null
           ? null
           : Number(component?.unit_price_sek);
@@ -422,10 +467,12 @@ serve(async (req) => {
           !Number.isFinite(amountSek) ||
           Math.abs(amountSek) > MAX_AMOUNT_SEK ||
           (quantity !== null &&
-            (!Number.isFinite(quantity) || quantity < 0 || quantity > MAX_MONTHLY_KWH)) ||
+            (!Number.isFinite(quantity) || quantity < 0 ||
+              quantity > MAX_MONTHLY_KWH)) ||
           (unit !== null && !COMPONENT_UNITS.has(unit)) ||
           (unitPriceSek !== null &&
-            (!Number.isFinite(unitPriceSek) || Math.abs(unitPriceSek) > MAX_AMOUNT_SEK)) ||
+            (!Number.isFinite(unitPriceSek) ||
+              Math.abs(unitPriceSek) > MAX_AMOUNT_SEK)) ||
           !isValidDate(periodStart) ||
           !isValidDate(periodEnd) ||
           periodStart < billingMonth ||
@@ -437,7 +484,10 @@ serve(async (req) => {
           !REVISION_RE.test(tariffRevision) ||
           !calculation.tariff_revisions.includes(tariffRevision)
         ) {
-          return json({ error: "invalid_component", detail: `${billingMonth} ${category}` }, 400);
+          return json({
+            error: "invalid_component",
+            detail: `${billingMonth} ${category}`,
+          }, 400);
         }
 
         const roundedAmount = round(amountSek, 2);
@@ -456,8 +506,13 @@ serve(async (req) => {
         });
       }
 
-      if (Math.abs(round(componentTotal, 2) - round(totalAmountSek, 2)) > 0.02) {
-        return json({ error: "component_total_mismatch", detail: billingMonth }, 400);
+      if (
+        Math.abs(round(componentTotal, 2) - round(totalAmountSek, 2)) > 0.02
+      ) {
+        return json(
+          { error: "component_total_mismatch", detail: billingMonth },
+          400,
+        );
       }
 
       calculationRows.push({
@@ -487,7 +542,10 @@ serve(async (req) => {
         .upsert(calculationRows, { onConflict: "customer_id,billing_month" });
 
       if (calculationError) {
-        console.error("[HA-ENERGY-INGEST] calculation upsert failed", calculationError);
+        console.error(
+          "[HA-ENERGY-INGEST] calculation upsert failed",
+          calculationError,
+        );
         return json({ error: "storage_failed" }, 500);
       }
     }

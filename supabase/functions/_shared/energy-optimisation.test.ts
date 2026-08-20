@@ -1,6 +1,6 @@
 import {
   generateOptimisationPlan,
-  type OptimisationSnapshotV5,
+  type OptimisationSnapshot,
   validateSnapshot,
 } from "./energy-optimisation.ts";
 import { projectZoneTemperature } from "./thermal-model.ts";
@@ -17,8 +17,8 @@ const assert: (condition: boolean, message: string) => asserts condition = (
 };
 
 const input = (
-  overrides: Partial<OptimisationSnapshotV5> = {},
-): OptimisationSnapshotV5 => {
+  overrides: Partial<OptimisationSnapshot> = {},
+): OptimisationSnapshot => {
   const start = Date.parse("2026-08-10T08:00:00.000Z");
   const slots = Array.from({ length: 64 }, (_, index) => ({
     start: new Date(start + index * 15 * 60_000).toISOString(),
@@ -156,9 +156,9 @@ const input = (
  * shorter than a single night. Planner behaviour belongs here.
  */
 const horizon = (
-  overrides: Partial<OptimisationSnapshotV5> = {},
+  overrides: Partial<OptimisationSnapshot> = {},
   { peakPvW = 9_000, baseLoadW = 1_000, pricedSlots = 96 } = {},
-): OptimisationSnapshotV5 => {
+): OptimisationSnapshot => {
   const base = input();
   const start = Date.parse("2026-08-10T08:00:00.000Z");
   const slots = Array.from({ length: 288 }, (_value, index) => {
@@ -192,6 +192,27 @@ const horizon = (
   });
 };
 
+/** A routed charger remains a control contract even when required_kwh is zero. */
+const routedEvService = (snapshot: OptimisationSnapshot) => ({
+  id: "ev:horizon",
+  device: "ev" as const,
+  earliest_start: snapshot.slots[0].start,
+  deadline: new Date(
+    Date.parse(snapshot.slots.at(-1)!.start) + 15 * 60_000,
+  ).toISOString(),
+  required_kwh: 0,
+  control: {
+    type: "discrete_current" as const,
+    min_current_a: 5,
+    max_current_a: 16,
+    current_step_a: 1,
+    phase_count: 3,
+    voltage_v: 230,
+  },
+  min_run_slots: 2,
+  priority: 3,
+});
+
 Deno.test("the unpriced tail prefers the hours the shape says are cheap", () => {
   // Before §1.4 every unpriced slot scored `gridW / 100`, so 03:00 and 18:00
   // were indistinguishable and a deferrable load landed on the tie-break.
@@ -199,14 +220,17 @@ Deno.test("the unpriced tail prefers the hours the shape says are cheap", () => 
   // Raw archive rather than a hand-built shape: there is one estimator and the
   // planner owns it, so a test cannot assert against rules the planner does not
   // use. Fourteen days, expensive 06:00-09:00 and cheap otherwise.
-  const archive = Array.from({ length: 14 }, (_day, offset) =>
-    Array.from({ length: 96 }, (_quarter, quarter) => ({
-      start_ts: new Date(
-        Date.parse("2026-07-27T00:00:00+02:00") + offset * 86_400_000 +
-          quarter * 900_000,
-      ).toISOString(),
-      import_price_sek_per_kwh: quarter >= 24 && quarter < 36 ? 3 : 0.5,
-    }))).flat();
+  const archive = Array.from(
+    { length: 14 },
+    (_day, offset) =>
+      Array.from({ length: 96 }, (_quarter, quarter) => ({
+        start_ts: new Date(
+          Date.parse("2026-07-27T00:00:00+02:00") + offset * 86_400_000 +
+            quarter * 900_000,
+        ).toISOString(),
+        import_price_sek_per_kwh: quarter >= 24 && quarter < 36 ? 3 : 0.5,
+      })),
+  ).flat();
   const snapshot = input({
     slots: base.slots.map((slot, index) => ({
       ...slot,
@@ -505,11 +529,13 @@ Deno.test("room comfort is reached by the first comfort quarter and preheat is s
     sample_count: 1_000,
   };
   const slotCount = base.slots.length;
-  const minimum = Array.from({ length: slotCount }, (_, index) =>
-    index < 4 ? 18 : 20
+  const minimum = Array.from(
+    { length: slotCount },
+    (_, index) => index < 4 ? 18 : 20,
   );
-  const unplanned = Array.from({ length: slotCount }, (_, index) =>
-    index === 2 || index === 3 ? 4_000 : 0
+  const unplanned = Array.from(
+    { length: slotCount },
+    (_, index) => index === 2 || index === 3 ? 4_000 : 0,
   );
   const device = (key: string, name: string) => ({
     key,
@@ -600,12 +626,20 @@ Deno.test("room comfort is reached by the first comfort quarter and preheat is s
       `${roomKey} was ${temperatures[4]} C when Comfort began`,
     );
   }
-  const peak = (slots: typeof baseline) => Math.max(...slots.map((slot) =>
-    Object.values(slot.room_heating_w).reduce((sum, watts) => sum + watts, 0)
-  ));
+  const peak = (slots: typeof baseline) =>
+    Math.max(
+      ...slots.map((slot) =>
+        Object.values(slot.room_heating_w).reduce(
+          (sum, watts) => sum + watts,
+          0,
+        )
+      ),
+    );
   assert(
     peak(priority) < peak(baseline),
-    `priority did not spread the room peak (${peak(priority)} vs ${peak(baseline)} W)`,
+    `priority did not spread the room peak (${peak(priority)} vs ${
+      peak(baseline)
+    } W)`,
   );
 });
 
@@ -624,12 +658,17 @@ Deno.test("snapshot device series must be explicitly controllable", () => {
     profile_sample_count: 960,
     forecast_w_by_slot: snapshot.slots.map(() => 250),
   }];
-  assert(validateSnapshot(snapshot).length === 0, "controllable model was rejected");
+  assert(
+    validateSnapshot(snapshot).length === 0,
+    "controllable model was rejected",
+  );
 
   (snapshot.device_models[0] as unknown as { planning_role: string })
     .planning_role = "base_load";
   assert(
-    validateSnapshot(snapshot).some((error) => error.includes("device_models[0]")),
+    validateSnapshot(snapshot).some((error) =>
+      error.includes("device_models[0]")
+    ),
     "base-load device leaked into the explicit model list",
   );
 });
@@ -846,7 +885,10 @@ Deno.test("existing EV snapshots remain executable while telemetry rolls forward
   });
   delete snapshot.ev_battery;
 
-  assert(validateSnapshot(snapshot).length === 0, "legacy EV snapshot was rejected");
+  assert(
+    validateSnapshot(snapshot).length === 0,
+    "legacy EV snapshot was rejected",
+  );
   const result = generateOptimisationPlan(
     snapshot,
     new Date("2026-08-10T07:55:00Z"),
@@ -1028,7 +1070,12 @@ Deno.test("surplus solar makes stored energy free to replace", () => {
   // energy would otherwise have been exported or curtailed regardless.
   const base = input();
   const snapshot = input({
-    battery: { ...base.battery!, soc: 1, charge_max_w: 0, discharge_max_w: 4_000 },
+    battery: {
+      ...base.battery!,
+      soc: 1,
+      charge_max_w: 0,
+      discharge_max_w: 4_000,
+    },
     slots: base.slots.map((slot, index) => ({
       ...slot,
       // Far more surplus than the battery can hold, later in the horizon.
@@ -1179,12 +1226,12 @@ Deno.test("stale snapshots and unpriced first slots fail closed", () => {
 Deno.test("ingestion snapshots are live and never synthetic", () => {
   const demo = input() as unknown as {
     mode: string;
-    sources: OptimisationSnapshotV5["sources"];
+    sources: OptimisationSnapshot["sources"];
   };
   demo.mode = "demo";
   demo.sources.base_load.quality = "synthetic";
 
-  const errors = validateSnapshot(demo as OptimisationSnapshotV5);
+  const errors = validateSnapshot(demo as OptimisationSnapshot);
   assert(errors.includes("mode must be live"), "demo snapshot was accepted");
   assert(
     errors.some((error) => error.includes("sources.base_load is incomplete")),
@@ -1335,7 +1382,10 @@ Deno.test("schema 6 without pool state falls back rather than guessing", () => {
 
   // No measured state means no store, so the whole plan stays on the model it
   // can actually support rather than mixing a temperature with a budget.
-  assertEquals(plan.plans.priority.service_slots["pool:2026-08-10"].length > 0, true);
+  assertEquals(
+    plan.plans.priority.service_slots["pool:2026-08-10"].length > 0,
+    true,
+  );
 });
 
 Deno.test("schema 6 lets the dispatch own the battery, and simulate follows", () => {
@@ -1428,7 +1478,9 @@ Deno.test("a full battery spends into a dear evening and refills from surplus", 
     "the pack must be spent through the dear evening, not held at full",
   );
   assert(
-    firstEvening.every((slot) => slot.grid_import_w < 1 || slot.battery_soc <= 0.66),
+    firstEvening.every((slot) =>
+      slot.grid_import_w < 1 || slot.battery_soc <= 0.66
+    ),
     "importing while a nearly full battery sits idle is the defect",
   );
 });
@@ -1470,11 +1522,15 @@ Deno.test("the battery only grid-charges the import spike and leaves room for so
 
   assert(
     gridChargeKwh > 0 && gridChargeKwh <= 0.35,
-    `the 0.25 kWh spike caused ${gridChargeKwh.toFixed(2)} kWh of grid charging`,
+    `the 0.25 kWh spike caused ${
+      gridChargeKwh.toFixed(2)
+    } kWh of grid charging`,
   );
   assert(
     solarChargeKwh > 5,
-    `only ${solarChargeKwh.toFixed(2)} kWh of the following surplus reached the battery`,
+    `only ${
+      solarChargeKwh.toFixed(2)
+    } kWh of the following surplus reached the battery`,
   );
 });
 
@@ -1505,6 +1561,7 @@ Deno.test("a half-charged car takes surplus rather than letting it be exported",
         charge_current: "number.charge_current",
       },
     },
+    services: [routedEvService(base)],
   });
 
   const plan = generateOptimisationPlan(snapshot, new Date(NOW));
@@ -1518,6 +1575,47 @@ Deno.test("a half-charged car takes surplus rather than letting it be exported",
     charged > 2,
     `a car below its own charge limit must take free surplus, got ${charged} kWh`,
   );
+});
+
+Deno.test("schema 6 never invents a charger control for a connected EV", () => {
+  const base = horizon();
+  const snapshot = horizon({
+    pool: { water_temperature_c: 31, volume_m3: 55 },
+    capabilities: { ...base.capabilities, ev: true, pool: true },
+    ev_battery: {
+      name: "Legacy EV",
+      connected: true,
+      capacity_kwh: 75,
+      soc: 0.55,
+      departure_target_soc: 0.8,
+      charge_efficiency: 0.92,
+      available_from: base.slots[0].start,
+      departure: null,
+      priority: 3,
+      source_entity_ids: {
+        connected: "binary_sensor.charge_cable",
+        soc: "sensor.battery_level",
+        target_soc: "number.charge_limit",
+        energy_remaining: null,
+        charge_current: "number.charge_current",
+      },
+    },
+    services: [],
+  });
+
+  const plan = generateOptimisationPlan(snapshot, new Date(NOW));
+
+  assertEquals(plan.status, "ready");
+  for (const scenario of Object.values(plan.plans)) {
+    assertEquals(scenario.dispatched_devices.includes("ev"), false);
+    assertEquals(scenario.slots.some((slot) => slot.ev_w > 0), false);
+    assertEquals(
+      scenario.slots.some((slot) =>
+        slot.ev_min_current_a > 0 || slot.ev_max_current_a > 0
+      ),
+      false,
+    );
+  }
 });
 
 Deno.test("a car past its charge limit leaves the surplus alone", () => {
@@ -1543,6 +1641,7 @@ Deno.test("a car past its charge limit leaves the surplus alone", () => {
         charge_current: "number.charge_current",
       },
     },
+    services: [routedEvService(base)],
   });
 
   const plan = generateOptimisationPlan(snapshot, new Date(NOW));
@@ -1584,6 +1683,7 @@ Deno.test("the plan explains why each store bought what it did", () => {
         charge_current: "number.current",
       },
     },
+    services: [routedEvService(base)],
   });
 
   const plan = generateOptimisationPlan(snapshot, new Date(NOW));
@@ -1634,7 +1734,7 @@ Deno.test("a fitted pool model replaces the seeded loss and COP", () => {
 
   const poolKwh = (plan: typeof seededPlan) =>
     plan.plans.priority.slots.reduce((total, slot) => total + slot.pool_w, 0) /
-      4_000;
+    4_000;
 
   assert(
     Math.abs(poolKwh(fittedPlan) - poolKwh(seededPlan)) > 0.5,
@@ -1644,7 +1744,7 @@ Deno.test("a fitted pool model replaces the seeded loss and COP", () => {
   // fewer SEK per kWh of electricity.
   const value = (plan: typeof seededPlan) =>
     plan.plans.priority.store_diagnostics
-      .find(entry => entry.key === 'pool')!.marginal_value_sek_per_kwh;
+      .find((entry) => entry.key === "pool")!.marginal_value_sek_per_kwh;
   assert(
     value(fittedPlan) < value(seededPlan),
     "a poorer pump lowers what a kWh is worth to the pool",
@@ -1691,13 +1791,19 @@ Deno.test("a store the planner never saw says so instead of vanishing", () => {
   );
 
   const ev = byKey.get("ev");
-  assert(ev !== undefined, "a connected vehicle must appear in the diagnostics");
+  assert(
+    ev !== undefined,
+    "a connected vehicle must appear in the diagnostics",
+  );
   assertEquals(ev.reason, "not_controllable");
   assertEquals(ev.planned_kwh, 0);
   // Null rather than zero: never considered is not the same claim as worth
   // nothing, and only one of them points at a setting to change.
   assertEquals(ev.marginal_value_sek_per_kwh, null);
-  assert(ev.state !== null && ev.state > 0, "range is reported in the curve's units");
+  assert(
+    ev.state !== null && ev.state > 0,
+    "range is reported in the curve's units",
+  );
 
   // The pool is routed, so it still reports a real comparison alongside it.
   const pool = byKey.get("pool")!;
@@ -1710,7 +1816,13 @@ Deno.test("a store the planner never saw says so instead of vanishing", () => {
 
 Deno.test("an unplugged car is reported as unplugged, not as unwanted", () => {
   const snapshot = horizon({
-    capabilities: { pv: true, battery: true, pool: false, boiler: false, ev: true },
+    capabilities: {
+      pv: true,
+      battery: true,
+      pool: false,
+      boiler: false,
+      ev: true,
+    },
     ev_battery: {
       name: "Model Y",
       connected: false,
@@ -1741,7 +1853,13 @@ Deno.test("a home without the equipment stays silent about it", () => {
   // the table never invents services a household does not own.
   const keys = generateOptimisationPlan(
     horizon({
-      capabilities: { pv: true, battery: true, pool: false, boiler: false, ev: false },
+      capabilities: {
+        pv: true,
+        battery: true,
+        pool: false,
+        boiler: false,
+        ev: false,
+      },
       pool: null,
       ev_battery: null,
     }),
@@ -1794,7 +1912,13 @@ Deno.test("a single-phase charger is planned at the power its cable delivers", (
   const peak = (phases: number) => {
     const plan = generateOptimisationPlan(
       horizon({
-        capabilities: { pv: true, battery: true, pool: false, boiler: false, ev: true },
+        capabilities: {
+          pv: true,
+          battery: true,
+          pool: false,
+          boiler: false,
+          ev: true,
+        },
         pool: null,
         ev_battery: vehicle,
         services: [service(phases)],
@@ -1842,7 +1966,13 @@ Deno.test("the vehicle's own consumption decides what its charge is worth", () =
   const stateFor = (kwhPerKm: number) =>
     generateOptimisationPlan(
       horizon({
-        capabilities: { pv: true, battery: true, pool: false, boiler: false, ev: true },
+        capabilities: {
+          pv: true,
+          battery: true,
+          pool: false,
+          boiler: false,
+          ev: true,
+        },
         pool: null,
         ev_battery: { ...base, kwh_per_km: kwhPerKm },
       }),

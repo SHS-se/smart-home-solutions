@@ -107,6 +107,9 @@ verify_jwt = false
 [functions.energy-optimisation-ingest]
 verify_jwt = false
 
+[functions.energy-optimisation-plan-ack]
+verify_jwt = false
+
 [functions.integration-status]
 verify_jwt = false
 

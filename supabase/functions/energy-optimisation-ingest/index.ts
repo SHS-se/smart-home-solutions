@@ -9,15 +9,19 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { authenticateDevice, sha256Hex } from "../_shared/ha-device-auth.ts";
 import {
+  HA_API_CORS_HEADERS,
+  haApiResponse,
+  haRequestId,
+  validatePlanningNegotiation,
+} from "../_shared/ha-api-contract.ts";
+import {
   type DeviceControlType,
   type DeviceLoadType,
   type DevicePlanningRole,
   generateOptimisationPlan,
-  type OptimisationSnapshotV5,
+  type OptimisationSnapshot,
 } from "../_shared/energy-optimisation.ts";
-import {
-  type StoredPriceRow,
-} from "../_shared/energy-price-shape.ts";
+import { type StoredPriceRow } from "../_shared/energy-price-shape.ts";
 import {
   buildThermalProjection,
   fitZones,
@@ -38,12 +42,6 @@ import {
   summerHeatingLockoutForStarts,
   type ZoneComfortSchedule,
 } from "../_shared/comfort-schedule.ts";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-};
 
 const MAX_ACTUAL_SLOTS_PER_PUSH = 288;
 const MAX_THERMAL_SLOTS_PER_PUSH = 288;
@@ -161,7 +159,10 @@ const hasRoomMappingMetadata = (
 };
 
 const roomMapping = (
-  device: Pick<IncomingDevice, "mapping_status" | "mapped_control_type" | "mapping_summary">,
+  device: Pick<
+    IncomingDevice,
+    "mapping_status" | "mapped_control_type" | "mapping_summary"
+  >,
 ): RoomMapping | null => {
   if (
     device.mapping_status !== "ready" ||
@@ -199,7 +200,9 @@ const storedDeviceFromRow = (row: Record<string, unknown>): StoredDevice => ({
   load_type_override: row.load_type_override as DeviceLoadType,
   suggested_planning_role: row.suggested_planning_role as DevicePlanningRole,
   planning_role_override: row.planning_role_override as DevicePlanningRole,
-  suggested_control_type: row.suggested_control_type as DeviceControlType | null,
+  suggested_control_type: row.suggested_control_type as
+    | DeviceControlType
+    | null,
   control_type_override: row.control_type_override as DeviceControlType | null,
   active_power_w: row.active_power_w === null
     ? null
@@ -228,12 +231,6 @@ const ENERGY_FIELDS = [
 // fields because they are levels rather than quantities: they are bounded 0..1
 // and a slot carrying only a battery level has measured no energy at all.
 const FRACTION_FIELDS = ["battery_soc", "ev_soc"] as const;
-
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
-  });
 
 const round = (value: number, decimals = 6) => {
   const multiplier = 10 ** decimals;
@@ -278,7 +275,7 @@ const compactPlanSummary = (
 });
 
 interface PreparedThermalPlanning {
-  snapshot: OptimisationSnapshotV5;
+  snapshot: OptimisationSnapshot;
   zones: ProjectionZoneInput[];
 }
 
@@ -346,7 +343,10 @@ async function refitPoolModel(
   for (const row of deviceRows ?? []) {
     if (!poolDeviceKeys.includes(String(row.device_key))) continue;
     const at = Date.parse(String(row.start_ts));
-    heaterByStart.set(at, (heaterByStart.get(at) ?? 0) + Number(row.energy_kwh));
+    heaterByStart.set(
+      at,
+      (heaterByStart.get(at) ?? 0) + Number(row.energy_kwh),
+    );
   }
 
   const water = (waterRows ?? []).map((row: Record<string, unknown>) => ({
@@ -403,10 +403,12 @@ async function prepareThermalPlanning(
   supabase: any,
   customerId: string,
   homeId: string,
-  snapshot: OptimisationSnapshotV5,
+  snapshot: OptimisationSnapshot,
   storedDevices: StoredDevice[],
 ): Promise<PreparedThermalPlanning> {
-  const storedByKey = new Map(storedDevices.map((device) => [device.key, device]));
+  const storedByKey = new Map(
+    storedDevices.map((device) => [device.key, device]),
+  );
   const roomModels = snapshot.device_models.filter((model) => {
     if (model.control_type === "setpoint") return true;
     if (model.control_type !== "switch_schedule") return false;
@@ -437,7 +439,9 @@ async function prepareThermalPlanning(
     const stored = storedByKey.get(model.key);
     const room = stored ? roomMapping(stored) : null;
     if (!stored || !room) {
-      throw new Error(`${model.name}: a ready Home Assistant room mapping is required`);
+      throw new Error(
+        `${model.name}: a ready Home Assistant room mapping is required`,
+      );
     }
     const grouped = rooms.get(room.key) ?? {
       key: room.key,
@@ -547,48 +551,58 @@ async function prepareThermalPlanning(
       )
       .eq("home_id", homeId),
   ]);
-  for (const result of [
-    trainedResult,
-    latestResult,
-    scheduleResult,
-  ]) {
+  for (
+    const result of [
+      trainedResult,
+      latestResult,
+      scheduleResult,
+    ]
+  ) {
     if (result.error) throw result.error;
   }
 
   const trainedByRoom = new Map<string, Record<string, unknown>>(
-    (trainedResult.data ?? []).map((model: Record<string, unknown>) => [
-      model.room_key as string,
-      model,
-    ] as const),
+    (trainedResult.data ?? []).map((model: Record<string, unknown>) =>
+      [
+        model.room_key as string,
+        model,
+      ] as const
+    ),
   );
   const latestByRoom = new Map<string, Record<string, unknown>>();
   for (const row of latestResult.data ?? []) {
     if (!latestByRoom.has(row.room_key)) latestByRoom.set(row.room_key, row);
   }
   const scheduleByRoom = new Map<string, Record<string, unknown>>(
-    (scheduleResult.data ?? []).map((schedule: Record<string, unknown>) => [
-      schedule.room_key as string,
-      schedule,
-    ] as const),
+    (scheduleResult.data ?? []).map((schedule: Record<string, unknown>) =>
+      [
+        schedule.room_key as string,
+        schedule,
+      ] as const
+    ),
   );
   const forecasts = new Map<string, number[]>();
 
   const zones: ProjectionZoneInput[] = [];
-  const planningZones: NonNullable<OptimisationSnapshotV5["thermal_zones"]> = [];
+  const planningZones: NonNullable<OptimisationSnapshot["thermal_zones"]> = [];
   for (const room of rooms.values()) {
     const fitted = trainedByRoom.get(room.key);
     if (!fitted) {
       throw new Error(`${room.name}: no trained thermal model is available`);
     }
     const observation = latestByRoom.get(room.key);
-    if (!observation || !Number.isFinite(Number(observation.room_temperature_c))) {
+    if (
+      !observation || !Number.isFinite(Number(observation.room_temperature_c))
+    ) {
       throw new Error(`${room.name}: no recent room temperature is available`);
     }
     const rawSchedule = scheduleByRoom.get(room.key);
     const schedule: ZoneComfortSchedule | null = rawSchedule
       ? {
-        weekday_modes: rawSchedule.weekday_modes as ZoneComfortSchedule["weekday_modes"],
-        weekend_modes: rawSchedule.weekend_modes as ZoneComfortSchedule["weekend_modes"],
+        weekday_modes: rawSchedule
+          .weekday_modes as ZoneComfortSchedule["weekday_modes"],
+        weekend_modes: rawSchedule
+          .weekend_modes as ZoneComfortSchedule["weekend_modes"],
         off_temperature_c: Number(rawSchedule.off_temperature_c),
         low_temperature_c: Number(rawSchedule.low_temperature_c),
         high_temperature_c: Number(rawSchedule.high_temperature_c),
@@ -618,9 +632,11 @@ async function prepareThermalPlanning(
       sample_count: Number(fitted.sample_count),
       residual_std_c: Number(fitted.residual_std_c),
     };
-    if (Object.entries(thermalModel).some(([key, value]) =>
-      key !== "heating_rate_c_per_h" && !Number.isFinite(value)
-    )) {
+    if (
+      Object.entries(thermalModel).some(([key, value]) =>
+        key !== "heating_rate_c_per_h" && !Number.isFinite(value)
+      )
+    ) {
       throw new Error(`${room.name}: fitted thermal model is incomplete`);
     }
     const forecast = buildComfortForecast(
@@ -674,7 +690,8 @@ async function prepareThermalPlanning(
         forecast_method: forecasts.has(model.key)
           ? "thermal_comfort_schedule_v1"
           : model.forecast_method ?? "empirical_recent_history",
-        forecast_w_by_slot: forecasts.get(model.key) ?? model.forecast_w_by_slot,
+        forecast_w_by_slot: forecasts.get(model.key) ??
+          model.forecast_w_by_slot,
       })),
       thermal_zones: planningZones,
     },
@@ -683,8 +700,11 @@ async function prepareThermalPlanning(
 }
 
 serve(async (req) => {
+  const requestId = haRequestId(req);
+  const json = (body: unknown, status = 200) =>
+    haApiResponse(requestId, body, status);
   if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
+    return new Response(null, { headers: HA_API_CORS_HEADERS });
   }
   if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
 
@@ -706,8 +726,9 @@ serve(async (req) => {
     let devices: IncomingDevice[] = [];
     let thermals: IncomingThermalSlot[] = [];
     let pools: IncomingPoolSlot[] = [];
-    let snapshot: OptimisationSnapshotV5 | null = null;
+    let snapshot: OptimisationSnapshot | null = null;
     let deviceInventoryComplete = false;
+    let integrationVersion: string | null = null;
     try {
       const declaredLength = Number(req.headers.get("content-length") ?? 0);
       if (declaredLength > MAX_REQUEST_BYTES) {
@@ -757,6 +778,24 @@ serve(async (req) => {
       pools = body.pool_slots ?? [];
       snapshot = body.snapshot ?? null;
       deviceInventoryComplete = body.device_inventory_complete ?? false;
+      integrationVersion = typeof body.integration_version === "string"
+        ? body.integration_version
+        : null;
+      if (snapshot !== null) {
+        const negotiationError = validatePlanningNegotiation(
+          body,
+          snapshot.schema_version,
+        );
+        if (negotiationError) {
+          return json({
+            error: negotiationError.code,
+            message: negotiationError.message,
+            path: negotiationError.path,
+            details: negotiationError.details,
+            retryable: negotiationError.retryable,
+          }, 426);
+        }
+      }
     } catch {
       return json({ error: "invalid_body" }, 400);
     }
@@ -842,7 +881,7 @@ serve(async (req) => {
           (!controlTypes.has(device.mapped_control_type as DeviceControlType) ||
             device.mapping_error !== null ||
             ((device.mapped_control_type === "setpoint" ||
-                hasRoomMappingMetadata(device)) &&
+              hasRoomMappingMetadata(device)) &&
               roomMapping(device) === null))) ||
         (device.mapping_status === "invalid" &&
           (!controlTypes.has(device.mapped_control_type as DeviceControlType) ||
@@ -900,7 +939,10 @@ serve(async (req) => {
         .eq("home_id", auth.homeId)
         .is("retired_at", null);
       if (activeError) {
-        console.error("[ENERGY-OPTIMISATION] device inventory read failed", activeError);
+        console.error(
+          "[ENERGY-OPTIMISATION] device inventory read failed",
+          activeError,
+        );
         return json({ error: "storage_failed" }, 500);
       }
       const staleIds = (activeRows ?? [])
@@ -914,7 +956,10 @@ serve(async (req) => {
           .update({ retired_at: new Date().toISOString() })
           .in("id", staleIds);
         if (retireError) {
-          console.error("[ENERGY-OPTIMISATION] device retirement failed", retireError);
+          console.error(
+            "[ENERGY-OPTIMISATION] device retirement failed",
+            retireError,
+          );
           return json({ error: "storage_failed" }, 500);
         }
       }
@@ -926,7 +971,10 @@ serve(async (req) => {
       .eq("home_id", auth.homeId)
       .is("retired_at", null);
     if (storedError) {
-      console.error("[ENERGY-OPTIMISATION] device inventory load failed", storedError);
+      console.error(
+        "[ENERGY-OPTIMISATION] device inventory load failed",
+        storedError,
+      );
       return json({ error: "storage_failed" }, 500);
     }
     const storedDevices = (storedRows ?? []).map(storedDeviceFromRow);
@@ -1015,7 +1063,10 @@ serve(async (req) => {
           row[field] = null;
           continue;
         }
-        if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
+        if (
+          typeof value !== "number" || !Number.isFinite(value) || value < 0 ||
+          value > 1
+        ) {
           return json({
             error: "invalid_actual_soc",
             detail: `actual_slots[${index}].${field}`,
@@ -1243,8 +1294,7 @@ serve(async (req) => {
       }
       for (const [roomKey, observation] of Object.entries(observations)) {
         const storedRoom = storedRoomByKey.get(roomKey);
-        const detail =
-          `thermal_slots[${index}].zone_observations.${roomKey}`;
+        const detail = `thermal_slots[${index}].zone_observations.${roomKey}`;
         if (!storedRoom || !observation || typeof observation !== "object") {
           return json({ error: "invalid_zone_observations", detail }, 400);
         }
@@ -1359,9 +1409,13 @@ serve(async (req) => {
       ? new Date(Math.max(...thermalStarts) + SLOT_MS).toISOString()
       : null;
 
-    let generated: (ReturnType<typeof generateOptimisationPlan> & {
-      thermal_projection?: NonNullable<ReturnType<typeof buildThermalProjection>>;
-    }) | null = null;
+    let generated:
+      | (ReturnType<typeof generateOptimisationPlan> & {
+        thermal_projection?: NonNullable<
+          ReturnType<typeof buildThermalProjection>
+        >;
+      })
+      | null = null;
     if (snapshot !== null) {
       const models = new Map(
         snapshot.device_models.map((model) => [model.key, model]),
@@ -1399,7 +1453,10 @@ serve(async (req) => {
         .gte("start_ts", shapeFrom)
         .order("start_ts");
       if (shapeError) {
-        console.error("[ENERGY-OPTIMISATION] price shape read failed", shapeError);
+        console.error(
+          "[ENERGY-OPTIMISATION] price shape read failed",
+          shapeError,
+        );
       } else {
         priceArchive = shapeRows ?? [];
       }
@@ -1471,7 +1528,11 @@ serve(async (req) => {
         );
         snapshot = thermal.snapshot;
         thermalZones = thermal.zones;
-        generated = generateOptimisationPlan(snapshot, new Date(), priceArchive);
+        generated = generateOptimisationPlan(
+          snapshot,
+          new Date(),
+          priceArchive,
+        );
       } catch (error) {
         const detail = error instanceof Error
           ? error.message
@@ -1504,6 +1565,14 @@ serve(async (req) => {
         home_id: auth.homeId,
         customer_id: auth.customerId,
         snapshot_id: snapshot.snapshot_id,
+        plan_id: generated.plan_id,
+        generation_request_id: requestId,
+        plan_schema_version: generated.schema_version,
+        ha_ack_status: "pending",
+        ha_acknowledged_at: null,
+        ha_integration_version: integrationVersion,
+        ha_ack_request_id: null,
+        ha_ack_error: null,
         input_hash: inputHash,
         captured_at: snapshot.captured_at,
         issued_at: generated.issued_at,
@@ -1533,6 +1602,13 @@ serve(async (req) => {
           customer_id: auth.customerId,
           home_id: auth.homeId,
           snapshot_id: snapshot.snapshot_id,
+          generation_request_id: requestId,
+          plan_schema_version: generated.schema_version,
+          ha_ack_status: "pending",
+          ha_acknowledged_at: null,
+          ha_integration_version: integrationVersion,
+          ha_ack_request_id: null,
+          ha_ack_error: null,
           input_hash: inputHash,
           issued_at: generated.issued_at,
           status: generated.status,
@@ -1620,6 +1696,8 @@ serve(async (req) => {
       thermal_slots_accepted: thermalRows.length,
       thermal_slots_accepted_until: thermalAcceptedUntil,
       price_slots_accepted: priceRows.length,
+      plan_id: generated?.plan_id ?? null,
+      snapshot_id: generated?.snapshot_id ?? null,
       plan: generated,
       device_configuration: storedDevices.map((device) => ({
         key: device.key,

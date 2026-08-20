@@ -11,6 +11,19 @@ export interface CurrentRow {
   plan: PortalOptimisationPlan;
   captured_at: string;
   updated_at: string;
+  plan_id: string | null;
+  generation_request_id: string | null;
+  plan_schema_version: number | null;
+  ha_ack_status: 'pending' | 'accepted' | 'rejected';
+  ha_acknowledged_at: string | null;
+  ha_integration_version: string | null;
+  ha_ack_request_id: string | null;
+  ha_ack_error: {
+    code?: string;
+    message?: string;
+    path?: string | null;
+    details?: unknown;
+  } | null;
 }
 
 // A refused fit is usually seasonal rather than faulty, so each reason gets
@@ -179,4 +192,3 @@ export interface PlanChartSeries {
 export const DEVICE_COLORS = ['#0ea5e9', '#8b5cf6', '#22c55e', '#eab308', '#f97316', '#ec4899', '#06b6d4', '#84cc16'];
 
 export type ReadinessState = 'ready' | 'blocked' | 'waiting';
-

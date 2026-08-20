@@ -22,7 +22,7 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import {
   generateOptimisationPlan,
-  type OptimisationSnapshotV5,
+  type OptimisationSnapshot,
 } from "../_shared/energy-optimisation.ts";
 import { resolveValueCurves } from "../_shared/value-curves.ts";
 
@@ -46,7 +46,9 @@ serve(async (request) => {
   if (request.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
-  if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
+  if (request.method !== "POST") {
+    return json({ error: "method_not_allowed" }, 405);
+  }
 
   // Everything is inside one guard so a fault is reported rather than escaping
   // as an opaque runtime envelope. The first failure of this endpoint returned
@@ -108,7 +110,7 @@ serve(async (request) => {
     }
     if (!current?.snapshot) return json({ error: "no_snapshot" }, 404);
 
-    const stored = current.snapshot as OptimisationSnapshotV5;
+    const stored = current.snapshot as OptimisationSnapshot;
 
     const { data: curveRows } = await service
       .from("energy_optimisation_value_curves")
@@ -129,7 +131,7 @@ serve(async (request) => {
     // can hand it a shape built on different rules.
     const priceArchive = shapeRows ?? [];
 
-    const snapshot: OptimisationSnapshotV5 = {
+    const snapshot: OptimisationSnapshot = {
       ...stored,
       value_curves: {
         pool: resolved.curves.pool.curve,
@@ -155,6 +157,14 @@ serve(async (request) => {
       .from("energy_optimisation_current")
       .update({
         plan: generated,
+        plan_id: generated.plan_id,
+        generation_request_id: `portal:${crypto.randomUUID()}`,
+        plan_schema_version: generated.schema_version,
+        ha_ack_status: "pending",
+        ha_acknowledged_at: null,
+        ha_integration_version: null,
+        ha_ack_request_id: null,
+        ha_ack_error: null,
         issued_at: generated.issued_at,
         valid_until: generated.valid_until,
         binding_until: generated.binding_until,

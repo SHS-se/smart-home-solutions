@@ -4,7 +4,7 @@ import type {
   DeviceLoadType,
   DevicePlanningRole,
   EmpiricalDeviceModelInput,
-  OptimisationPlanV5,
+  OptimisationPlan,
   PlanKey,
   PlanSummary,
   PlannedSlot,
@@ -16,7 +16,7 @@ export type {
   DeviceLoadType,
   DevicePlanningRole,
   EmpiricalDeviceModelInput,
-  OptimisationPlanV5,
+  OptimisationPlan,
   PlanKey,
   PlanSummary,
   PlannedSlot,
@@ -65,7 +65,7 @@ export interface ThermalProjection {
   zones: ThermalZoneProjection[];
 }
 
-export type PortalOptimisationPlan = OptimisationPlanV5 & {
+export type PortalOptimisationPlan = OptimisationPlan & {
   thermal_projection?: ThermalProjection;
 };
 
@@ -84,7 +84,7 @@ export const effectiveControlType = (
 
 export function isOptimisationPlan(value: unknown): value is PortalOptimisationPlan {
   if (!value || typeof value !== 'object') return false;
-  const plan = value as Partial<OptimisationPlanV5>;
+  const plan = value as Partial<OptimisationPlan>;
   // Both live schemas are readable. Schema 6 adds pool state to the snapshot
   // and marginal-value dispatch to the plan; every field this reader touches is
   // unchanged, so pinning to one version only breaks the portal on a rollout.

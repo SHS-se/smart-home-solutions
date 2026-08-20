@@ -1,0 +1,652 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Smart Home Solutions private Home Assistant API",
+    "version": "1.0.0",
+    "description": "Private device client API. Supabase /functions/v1 is a gateway path and is not this contract version."
+  },
+  "x-shs-versioning": {
+    "api_version": 1,
+    "supported_snapshot_schema_versions": [5, 6],
+    "supported_plan_schema_versions": [5, 6],
+    "minimum_snapshot_schema_version": 5,
+    "minimum_plan_schema_version": 5
+  },
+  "servers": [{ "url": "https://{project}.supabase.co/functions/v1" }],
+  "paths": {
+    "/pair-device": {
+      "post": {
+        "operationId": "pairDevice",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/PairDeviceRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Paired",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PairDeviceResponse" }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/integration-status": {
+      "get": {
+        "operationId": "getIntegrationStatus",
+        "security": [{ "deviceToken": [] }],
+        "responses": {
+          "200": {
+            "description": "Subscription and compatibility discovery",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntegrationStatusResponse"
+                }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/integration-tariff": {
+      "get": {
+        "operationId": "getIntegrationTariff",
+        "security": [{ "deviceToken": [] }],
+        "responses": {
+          "200": {
+            "description": "Effective tariff catalogue",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObjectSuccessResponse"
+                }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/integration-prices": {
+      "get": {
+        "operationId": "getIntegrationPrices",
+        "security": [{ "deviceToken": [] }],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "schema": { "type": "string", "format": "date" }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "schema": { "type": "string", "format": "date" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "All-in supplier prices",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObjectSuccessResponse"
+                }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/ha-energy-ingest": {
+      "post": {
+        "operationId": "ingestDailyEnergy",
+        "security": [{ "deviceToken": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DailyEnergyIngestRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Accepted rows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObjectSuccessResponse"
+                }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/energy-optimisation-ingest": {
+      "post": {
+        "operationId": "ingestEnergyOptimisation",
+        "security": [{ "deviceToken": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OptimisationIngestRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Accepted telemetry and optional generated plan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OptimisationIngestResponse"
+                }
+              }
+            }
+          },
+          "426": { "$ref": "#/components/responses/Error" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/energy-optimisation-plan-ack": {
+      "post": {
+        "operationId": "acknowledgeEnergyOptimisationPlan",
+        "security": [{ "deviceToken": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanAcknowledgementRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Acknowledged",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObjectSuccessResponse"
+                }
+              }
+            }
+          },
+          "409": { "$ref": "#/components/responses/Error" },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "deviceToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "shs_<64 hex>"
+      }
+    },
+    "responses": {
+      "Error": {
+        "description": "Versioned machine-readable error",
+        "headers": { "X-Request-ID": { "schema": { "type": "string" } } },
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "RequestId": { "type": "string", "minLength": 8, "maxLength": 128 },
+      "ApiSuccess": {
+        "type": "object",
+        "required": ["api_version", "request_id", "ok", "data"],
+        "properties": {
+          "api_version": { "const": 1 },
+          "request_id": { "$ref": "#/components/schemas/RequestId" },
+          "ok": { "const": true },
+          "data": {}
+        },
+        "additionalProperties": true,
+        "description": "Top-level data aliases are temporarily accepted during the documented reader-first rollout."
+      },
+      "ErrorInfo": {
+        "type": "object",
+        "required": ["code", "message", "path", "details", "retryable"],
+        "properties": {
+          "code": { "type": "string", "pattern": "^[a-z][a-z0-9_]+$" },
+          "message": { "type": "string", "minLength": 1 },
+          "path": { "type": ["string", "null"] },
+          "details": {},
+          "retryable": { "type": "boolean" }
+        },
+        "additionalProperties": false
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "required": ["api_version", "request_id", "ok", "error", "error_info"],
+        "properties": {
+          "api_version": { "const": 1 },
+          "request_id": { "$ref": "#/components/schemas/RequestId" },
+          "ok": { "const": false },
+          "error": {
+            "type": "string",
+            "description": "Temporary v0 alias for error_info.code."
+          },
+          "error_info": { "$ref": "#/components/schemas/ErrorInfo" }
+        },
+        "additionalProperties": true
+      },
+      "PairDeviceRequest": {
+        "type": "object",
+        "required": ["code", "device_name"],
+        "properties": {
+          "code": { "type": "string", "pattern": "^[A-Z2-9]{8}$" },
+          "device_name": { "type": "string", "minLength": 1, "maxLength": 100 }
+        },
+        "additionalProperties": false
+      },
+      "PairDeviceData": {
+        "type": "object",
+        "required": ["device_token", "customer_id", "home_id"],
+        "properties": {
+          "device_token": { "type": "string", "pattern": "^shs_[0-9a-f]{64}$" },
+          "customer_id": { "type": "string", "format": "uuid" },
+          "home_id": { "type": "string", "format": "uuid" }
+        },
+        "additionalProperties": true
+      },
+      "PairDeviceResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/ApiSuccess" },
+          {
+            "type": "object",
+            "properties": {
+              "data": { "$ref": "#/components/schemas/PairDeviceData" }
+            }
+          }
+        ]
+      },
+      "IntegrationStatusData": {
+        "type": "object",
+        "required": [
+          "api_version",
+          "supported_snapshot_schema_versions",
+          "supported_plan_schema_versions",
+          "minimum_snapshot_schema_version",
+          "minimum_plan_schema_version",
+          "latest_plan_request_id",
+          "subscription_active",
+          "home_id",
+          "server_time"
+        ],
+        "properties": {
+          "api_version": { "const": 1 },
+          "supported_snapshot_schema_versions": { "const": [5, 6] },
+          "supported_plan_schema_versions": { "const": [5, 6] },
+          "minimum_snapshot_schema_version": { "const": 5 },
+          "minimum_plan_schema_version": { "const": 5 },
+          "latest_plan_request_id": {
+            "oneOf": [
+              { "$ref": "#/components/schemas/RequestId" },
+              { "type": "null" }
+            ]
+          },
+          "subscription_active": { "type": "boolean" },
+          "subscription_expires_at": {
+            "type": ["string", "null"],
+            "format": "date-time"
+          },
+          "customer_name": { "type": ["string", "null"] },
+          "home_id": { "type": "string", "format": "uuid" },
+          "server_time": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "IntegrationStatusResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/ApiSuccess" },
+          {
+            "type": "object",
+            "properties": {
+              "data": { "$ref": "#/components/schemas/IntegrationStatusData" }
+            }
+          }
+        ]
+      },
+      "ObjectSuccessResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/ApiSuccess" },
+          { "type": "object", "properties": { "data": { "type": "object" } } }
+        ]
+      },
+      "DailyEnergyIngestRequest": {
+        "type": "object",
+        "required": ["readings", "calculations", "supplier_costs"],
+        "properties": {
+          "readings": {
+            "type": "array",
+            "maxItems": 500,
+            "items": { "type": "object" }
+          },
+          "calculations": {
+            "type": "array",
+            "maxItems": 240,
+            "items": { "type": "object" }
+          },
+          "supplier_costs": { "type": "array", "items": { "type": "object" } }
+        },
+        "additionalProperties": false
+      },
+      "SnapshotCommon": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "mode",
+          "capabilities",
+          "snapshot_id",
+          "captured_at",
+          "timezone",
+          "slot_minutes",
+          "slots",
+          "sources",
+          "pv_calibration",
+          "battery",
+          "grid",
+          "policy",
+          "device_models",
+          "services",
+          "service_requirement_sample_days"
+        ],
+        "properties": {
+          "schema_version": { "type": "integer" },
+          "mode": { "const": "live" },
+          "snapshot_id": { "type": "string", "format": "uuid" },
+          "captured_at": { "type": "string", "format": "date-time" },
+          "timezone": { "type": "string", "minLength": 1 },
+          "slot_minutes": { "const": 15 },
+          "capabilities": { "type": "object" },
+          "slots": {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 288,
+            "items": { "type": "object" }
+          },
+          "sources": { "type": "object" },
+          "pv_calibration": { "type": "object" },
+          "battery": { "type": ["object", "null"] },
+          "ev_battery": { "type": ["object", "null"] },
+          "pool": { "type": ["object", "null"] },
+          "grid": { "type": "object" },
+          "policy": { "type": "object" },
+          "device_models": {
+            "type": "array",
+            "maxItems": 100,
+            "items": { "type": "object" }
+          },
+          "services": { "type": "array", "items": { "type": "object" } },
+          "service_requirement_sample_days": {
+            "type": "object",
+            "additionalProperties": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "additionalProperties": true
+      },
+      "SnapshotV5": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SnapshotCommon" },
+          {
+            "type": "object",
+            "properties": { "schema_version": { "const": 5 } }
+          }
+        ]
+      },
+      "SnapshotV6": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SnapshotCommon" },
+          {
+            "type": "object",
+            "properties": { "schema_version": { "const": 6 } }
+          }
+        ]
+      },
+      "OptimisationIngestRequest": {
+        "type": "object",
+        "properties": {
+          "api_version": { "const": 1 },
+          "accepted_plan_schema_versions": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "enum": [5, 6] }
+          },
+          "integration_version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "actual_slots": {
+            "type": "array",
+            "maxItems": 288,
+            "items": { "type": "object" }
+          },
+          "devices": {
+            "type": "array",
+            "maxItems": 100,
+            "items": { "type": "object" }
+          },
+          "thermal_slots": {
+            "type": "array",
+            "maxItems": 288,
+            "items": { "type": "object" }
+          },
+          "price_slots": {
+            "type": "array",
+            "maxItems": 2880,
+            "items": { "type": "object" }
+          },
+          "pool_slots": {
+            "type": "array",
+            "maxItems": 288,
+            "items": { "type": "object" }
+          },
+          "device_inventory_complete": { "type": "boolean" },
+          "snapshot": {
+            "oneOf": [
+              { "$ref": "#/components/schemas/SnapshotV5" },
+              { "$ref": "#/components/schemas/SnapshotV6" }
+            ]
+          }
+        },
+        "dependentRequired": {
+          "api_version": [
+            "accepted_plan_schema_versions",
+            "integration_version"
+          ],
+          "accepted_plan_schema_versions": [
+            "api_version",
+            "integration_version"
+          ],
+          "integration_version": [
+            "api_version",
+            "accepted_plan_schema_versions"
+          ]
+        },
+        "additionalProperties": false
+      },
+      "PlanCommon": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "mode",
+          "model_version",
+          "plan_id",
+          "snapshot_id",
+          "issued_at",
+          "valid_until",
+          "binding_until",
+          "slot_minutes",
+          "status",
+          "services",
+          "device_models",
+          "plans"
+        ],
+        "properties": {
+          "schema_version": { "type": "integer" },
+          "mode": { "const": "live" },
+          "model_version": { "type": "string", "minLength": 1 },
+          "plan_id": { "type": "string", "format": "uuid" },
+          "snapshot_id": { "type": "string", "format": "uuid" },
+          "issued_at": { "type": "string", "format": "date-time" },
+          "valid_until": { "type": "string", "format": "date-time" },
+          "binding_until": { "type": "string", "format": "date-time" },
+          "slot_minutes": { "const": 15 },
+          "status": { "enum": ["ready", "incomplete", "infeasible"] },
+          "services": { "type": "array", "items": { "type": "object" } },
+          "device_models": { "type": "array", "items": { "type": "object" } },
+          "plans": {
+            "type": "object",
+            "required": ["baseline", "priority", "cost"]
+          }
+        },
+        "additionalProperties": true
+      },
+      "PlanV5": {
+        "allOf": [
+          { "$ref": "#/components/schemas/PlanCommon" },
+          {
+            "type": "object",
+            "properties": { "schema_version": { "const": 5 } }
+          }
+        ]
+      },
+      "PlanV6": {
+        "allOf": [
+          { "$ref": "#/components/schemas/PlanCommon" },
+          {
+            "type": "object",
+            "properties": { "schema_version": { "const": 6 } }
+          }
+        ]
+      },
+      "OptimisationIngestData": {
+        "type": "object",
+        "required": [
+          "actual_slots_accepted",
+          "thermal_slots_accepted",
+          "price_slots_accepted",
+          "plan_id",
+          "snapshot_id",
+          "plan",
+          "device_configuration"
+        ],
+        "properties": {
+          "actual_slots_accepted": { "type": "integer", "minimum": 0 },
+          "thermal_slots_accepted": { "type": "integer", "minimum": 0 },
+          "price_slots_accepted": { "type": "integer", "minimum": 0 },
+          "plan_id": { "type": ["string", "null"], "format": "uuid" },
+          "snapshot_id": { "type": ["string", "null"], "format": "uuid" },
+          "plan": {
+            "oneOf": [
+              { "$ref": "#/components/schemas/PlanV5" },
+              { "$ref": "#/components/schemas/PlanV6" },
+              { "type": "null" }
+            ]
+          },
+          "device_configuration": {
+            "type": "array",
+            "items": { "type": "object" }
+          }
+        },
+        "additionalProperties": true
+      },
+      "OptimisationIngestResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/ApiSuccess" },
+          {
+            "type": "object",
+            "properties": {
+              "data": { "$ref": "#/components/schemas/OptimisationIngestData" }
+            }
+          }
+        ]
+      },
+      "PlanRejection": {
+        "type": "object",
+        "required": ["code", "message", "path", "details"],
+        "properties": {
+          "code": { "type": "string", "pattern": "^[a-z][a-z0-9_]+$" },
+          "message": { "type": "string", "minLength": 1 },
+          "path": { "type": ["string", "null"] },
+          "details": {}
+        },
+        "additionalProperties": false
+      },
+      "PlanAcknowledgementRequest": {
+        "type": "object",
+        "required": [
+          "api_version",
+          "plan_id",
+          "snapshot_id",
+          "plan_schema_version",
+          "integration_version",
+          "outcome",
+          "error"
+        ],
+        "properties": {
+          "api_version": { "const": 1 },
+          "plan_id": { "type": "string", "format": "uuid" },
+          "snapshot_id": { "type": "string", "format": "uuid" },
+          "plan_schema_version": { "enum": [5, 6] },
+          "integration_version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "outcome": { "enum": ["accepted", "rejected"] },
+          "error": {
+            "oneOf": [
+              { "$ref": "#/components/schemas/PlanRejection" },
+              { "type": "null" }
+            ]
+          }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "outcome": { "const": "accepted" } } },
+            "then": { "properties": { "error": { "type": "null" } } }
+          },
+          {
+            "if": { "properties": { "outcome": { "const": "rejected" } } },
+            "then": {
+              "properties": {
+                "error": { "$ref": "#/components/schemas/PlanRejection" }
+              }
+            }
+          }
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+}

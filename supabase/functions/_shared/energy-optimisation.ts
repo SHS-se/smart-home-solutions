@@ -17,10 +17,7 @@ import {
   projectZoneTemperature,
   type ThermalZoneModel,
 } from "./thermal-model.ts";
-import {
-  type DispatchStore,
-  planDispatch,
-} from "./dispatch-plan.ts";
+import { type DispatchStore, planDispatch } from "./dispatch-plan.ts";
 import {
   poolCop,
   stepPoolTemperature,
@@ -293,7 +290,7 @@ export interface ThermalZonePlanningInput {
   unplanned_power_w: number[];
 }
 
-export interface OptimisationSnapshotV5 {
+export interface OptimisationSnapshot {
   schema_version: 5 | 6;
   // Only Home Assistant live snapshots cross the ingestion boundary. The
   // website's promotional demo is a client-side plan fixture, not a snapshot.
@@ -376,6 +373,19 @@ export interface OptimisationSnapshotV5 {
   /** Injected and validated by the planning edge, never supplied by the app. */
   thermal_zones?: ThermalZonePlanningInput[];
 }
+
+/** Exact snapshot contracts; the discriminator never spans versions. */
+export type OptimisationSnapshotV5 =
+  & Omit<OptimisationSnapshot, "schema_version">
+  & {
+    schema_version: 5;
+  };
+
+export type OptimisationSnapshotV6 =
+  & Omit<OptimisationSnapshot, "schema_version">
+  & {
+    schema_version: 6;
+  };
 
 export interface PlannedSlot {
   start: string;
@@ -466,7 +476,7 @@ export interface GeneratedPlan {
   store_diagnostics: StoreDiagnostic[];
 }
 
-export interface OptimisationPlanV5 {
+export interface OptimisationPlan {
   schema_version: 5 | 6;
   mode: PlanMode;
   capabilities: OptimisationCapabilities;
@@ -480,8 +490,8 @@ export interface OptimisationPlanV5 {
   slot_minutes: 15;
   status: "ready" | "incomplete" | "infeasible";
   validation_errors: string[];
-  sources: OptimisationSnapshotV5["sources"];
-  pv_calibration: OptimisationSnapshotV5["pv_calibration"];
+  sources: OptimisationSnapshot["sources"];
+  pv_calibration: OptimisationSnapshot["pv_calibration"];
   /**
    * Where the prices past the day-ahead window came from.
    *
@@ -500,17 +510,26 @@ export interface OptimisationPlanV5 {
     effective_days: number;
     level_sek_per_kwh: number | null;
   };
-  policy: OptimisationSnapshotV5["policy"];
+  policy: OptimisationSnapshot["policy"];
   battery: BatteryInput | null;
   ev_battery: EvBatteryInput | null;
   /** Echoed like the batteries, so a reader can see the state it was planned from. */
   pool: PoolStateInput | null;
-  grid: OptimisationSnapshotV5["grid"];
+  grid: OptimisationSnapshot["grid"];
   device_models: EmpiricalDeviceModelInput[];
   services: ServiceInput[];
   service_requirement_sample_days: Record<string, number>;
   plans: Record<PlanKey, GeneratedPlan>;
 }
+
+/** Exact plan contracts; model names are deliberately independent. */
+export type OptimisationPlanV5 = Omit<OptimisationPlan, "schema_version"> & {
+  schema_version: 5;
+};
+
+export type OptimisationPlanV6 = Omit<OptimisationPlan, "schema_version"> & {
+  schema_version: 6;
+};
 
 interface PreparedSlot extends ForecastSlotInput {
   index: number;
@@ -675,7 +694,7 @@ const wattsPerAmp = (control: DiscreteCurrentControl) =>
  * plan rather than an error.
  */
 const evCurrentControl = (
-  snapshot: OptimisationSnapshotV5,
+  snapshot: OptimisationSnapshot,
 ): DiscreteCurrentControl | null =>
   snapshot.services
     .filter(isDispatchableService)
@@ -722,7 +741,7 @@ function completedLocalDays(
   );
 }
 
-export function validateSnapshot(snapshot: OptimisationSnapshotV5): string[] {
+export function validateSnapshot(snapshot: OptimisationSnapshot): string[] {
   const errors: string[] = [];
   if (
     !SUPPORTED_SNAPSHOT_VERSIONS.includes(
@@ -890,7 +909,9 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV5): string[] {
       !evBattery.connected &&
       (evBattery.available_from !== null || evBattery.departure !== null)
     ) {
-      errors.push("disconnected ev_battery must not declare an availability window");
+      errors.push(
+        "disconnected ev_battery must not declare an availability window",
+      );
     }
   }
   const pool = snapshot?.pool;
@@ -1312,7 +1333,7 @@ export function validateSnapshot(snapshot: OptimisationSnapshotV5): string[] {
 }
 
 function preparedSlots(
-  snapshot: OptimisationSnapshotV5,
+  snapshot: OptimisationSnapshot,
   archive: StoredPriceRow[] = [],
 ): { slots: PreparedSlot[]; outlook: PriceOutlook } {
   const captured = isoMs(snapshot.captured_at);
@@ -1545,7 +1566,7 @@ function serviceCost(
  */
 function replacementCostSekPerKwh(
   slots: PreparedSlot[],
-  snapshot: OptimisationSnapshotV5,
+  snapshot: OptimisationSnapshot,
   fromIndex: number,
 ): number {
   const battery = snapshot.battery;
@@ -1603,7 +1624,7 @@ function peakPenalty(
 function discreteCurrentCandidate(
   key: PlanKey,
   slots: PreparedSlot[],
-  snapshot: OptimisationSnapshotV5,
+  snapshot: OptimisationSnapshot,
   service: DiscreteCurrentServiceInput,
   shape: ServiceShape,
   start: number,
@@ -1768,7 +1789,7 @@ function wouldExceedInhibitLimit(
 function applyDutyCycleServices(
   key: PlanKey,
   slots: PreparedSlot[],
-  snapshot: OptimisationSnapshotV5,
+  snapshot: OptimisationSnapshot,
   services: DutyCycleServiceInput[],
   occupiedW: number[],
   schedule: Schedule,
@@ -1867,7 +1888,7 @@ const SEEDED_VEHICLE_KWH_PER_KM = 0.16;
  */
 function buildDispatchStores(
   slots: PreparedSlot[],
-  snapshot: OptimisationSnapshotV5,
+  snapshot: OptimisationSnapshot,
 ): DispatchStore[] | null {
   if (snapshot.schema_version < 6) return null;
   const stores: DispatchStore[] = [];
@@ -1927,50 +1948,52 @@ function buildDispatchStores(
     } else {
       const perKm = vehicleKwhPerKm(vehicle);
       const control = evCurrentControl(snapshot);
-      const departure = vehicle.departure ? isoMs(vehicle.departure) : null;
-      const usage = new Array(count).fill(0);
-      if (departure !== null) {
-        // A declared departure is a point in time, but the weight is still a
-        // distribution: it is the slot before leaving that matters, and a
-        // learned spread replaces this without changing anything downstream.
-        let placed = false;
-        for (let index = count - 1; index >= 0; index -= 1) {
-          if (slots[index].epoch_ms <= departure) {
-            usage[index] = 1;
-            placed = true;
-            break;
+      // A capability is a concrete actuator contract, not permission to
+      // invent one. Legacy snapshots could omit the EV service once its
+      // required energy reached zero; in that case keep the measured car
+      // visible as undispatched until the real charger control is supplied.
+      if (control) {
+        const departure = vehicle.departure ? isoMs(vehicle.departure) : null;
+        const usage = new Array(count).fill(0);
+        if (departure !== null) {
+          // A declared departure is a point in time, but the weight is still a
+          // distribution: it is the slot before leaving that matters, and a
+          // learned spread replaces this without changing anything downstream.
+          let placed = false;
+          for (let index = count - 1; index >= 0; index -= 1) {
+            if (slots[index].epoch_ms <= departure) {
+              usage[index] = 1;
+              placed = true;
+              break;
+            }
           }
+          if (!placed) usage[count - 1] = 1;
+        } else {
+          usage[count - 1] = 1;
         }
-        if (!placed) usage[count - 1] = 1;
-      } else {
-        usage[count - 1] = 1;
+        // Scale the curve to the range this customer asked for, so "enough" is
+        // their charge limit rather than an absolute kilometre figure that means
+        // nothing across vehicles.
+        const targetRangeKm = vehicle.departure_target_soc *
+          vehicle.capacity_kwh / perKm;
+        stores.push({
+          key: "ev",
+          curve: vehicleRangeCurve(targetRangeKm),
+          initial_state: vehicle.soc * vehicle.capacity_kwh / perKm,
+          max_power_w: wattsPerAmp(control) * control.max_current_a,
+          usage_weight: usage,
+          retention_per_slot: 1,
+          units_per_kwh: () => vehicle.charge_efficiency / perKm,
+          drift: (state) => state,
+        });
       }
-      // Scale the curve to the range this customer asked for, so "enough" is
-      // their charge limit rather than an absolute kilometre figure that means
-      // nothing across vehicles.
-      const targetRangeKm = vehicle.departure_target_soc * vehicle.capacity_kwh /
-        perKm;
-      stores.push({
-        key: "ev",
-        curve: vehicleRangeCurve(targetRangeKm),
-        initial_state: vehicle.soc * vehicle.capacity_kwh / perKm,
-        // The charger's own ceiling, not an assumed one. Without a declared
-        // control there is no cable to reason about, so the grid limit stands
-        // in rather than a three-phase guess.
-        max_power_w: control
-          ? wattsPerAmp(control) * control.max_current_a
-          : snapshot.grid.import_limit_w,
-        usage_weight: usage,
-        retention_per_slot: 1,
-        units_per_kwh: () => vehicle.charge_efficiency / perKm,
-        drift: (state) => state,
-      });
     }
   }
 
   const battery = snapshot.battery;
   if (battery) {
-    const usableKwh = (battery.max_soc - battery.min_soc) * battery.capacity_kwh;
+    const usableKwh = (battery.max_soc - battery.min_soc) *
+      battery.capacity_kwh;
     const remainingSurplusKwh = slots.reduce((total, slot) => {
       const surplusW = slot.pv_w - fixedLoadW(slot);
       return total + (surplusW > 0 ? surplusW / 1_000 * SLOT_HOURS : 0);
@@ -2032,7 +2055,8 @@ function buildDispatchStores(
       futureSurplusKwh: remainingSurplusKwh,
       usableKwh,
       roundTrip: battery.charge_efficiency * battery.discharge_efficiency,
-      degradationSekPerKwh: DEFAULT_VALUE_SETTINGS.battery_degradation_sek_per_kwh,
+      degradationSekPerKwh:
+        DEFAULT_VALUE_SETTINGS.battery_degradation_sek_per_kwh,
       expectedDrawKwh: expectedDrawKwh / battery.discharge_efficiency,
     });
     if (curve.points.length > 0) {
@@ -2090,7 +2114,7 @@ function buildDispatchStores(
  * with no pool says nothing about pools.
  */
 function undispatchedStores(
-  snapshot: OptimisationSnapshotV5,
+  snapshot: OptimisationSnapshot,
   dispatched: Set<string>,
 ): StoreDiagnostic[] {
   if (snapshot.schema_version < 6) return [];
@@ -2171,13 +2195,10 @@ function undispatchedStores(
   return rows;
 }
 
-const EV_PHASE_COUNT = 3;
-const EV_PHASE_VOLTAGE = 230;
-
 function scheduleServices(
   key: PlanKey,
   slots: PreparedSlot[],
-  snapshot: OptimisationSnapshotV5,
+  snapshot: OptimisationSnapshot,
   reservedW: number[],
 ): { schedule: Schedule; errors: string[] } {
   const schedule = emptySchedule(slots.length);
@@ -2261,9 +2282,10 @@ function scheduleServices(
         if (store.key === "ev") {
           schedule.ev[index] = powerW;
           const evControl = evCurrentControl(snapshot);
-          const perAmp = evControl
-            ? wattsPerAmp(evControl)
-            : EV_PHASE_COUNT * EV_PHASE_VOLTAGE;
+          if (!evControl) {
+            throw new Error("dispatched EV has no charger control");
+          }
+          const perAmp = wattsPerAmp(evControl);
           schedule.evTargetCurrentA[index] = Math.round(powerW / perAmp);
         }
         occupiedW[index] += powerW;
@@ -2293,13 +2315,11 @@ function scheduleServices(
     // target and a zero envelope, and every such slot was reported infeasible.
     if (schedule.dispatched.has("ev")) {
       const control = evCurrentControl(snapshot);
-      const powerPerAmp = control
-        ? wattsPerAmp(control)
-        : EV_PHASE_COUNT * EV_PHASE_VOLTAGE;
-      const minimumA = control?.min_current_a ?? 0;
-      const maximumA = control?.max_current_a ??
-        Math.floor(snapshot.grid.import_limit_w / powerPerAmp);
-      const stepA = control?.current_step_a ?? 1;
+      if (!control) throw new Error("dispatched EV has no charger control");
+      const powerPerAmp = wattsPerAmp(control);
+      const minimumA = control.min_current_a;
+      const maximumA = control.max_current_a;
+      const stepA = control.current_step_a;
       for (let index = 0; index < slots.length; index += 1) {
         if (schedule.ev[index] <= 0) {
           schedule.evTargetCurrentA[index] = 0;
@@ -2471,9 +2491,9 @@ function thermalSlotScore(
     ? THERMAL_PRIORITY_PEAK_WEIGHT_SEK_PER_KW2
     : PEAK_WEIGHT_SEK_PER_KW2;
   let score = SLOT_HOURS / 1_000 * (
-    importW * slot.shadow_import_sek_per_kwh -
-    exportW * slot.shadow_export_sek_per_kwh
-  ) + peakWeight * (importW / 1_000) ** 2;
+        importW * slot.shadow_import_sek_per_kwh -
+        exportW * slot.shadow_export_sek_per_kwh
+      ) + peakWeight * (importW / 1_000) ** 2;
   // In Priority, battery target reservations outrank discretionary preheat.
   if (key === "priority" && reservedW > 0) {
     score += occupiedW * 1_000;
@@ -2491,7 +2511,7 @@ function thermalSlotScore(
 function optimiseRoomPreheating(
   key: Exclude<PlanKey, "baseline">,
   slots: PreparedSlot[],
-  snapshot: OptimisationSnapshotV5,
+  snapshot: OptimisationSnapshot,
   schedule: Schedule,
   reservedW: number[],
 ): void {
@@ -2505,9 +2525,11 @@ function optimiseRoomPreheating(
   );
   const batterySupportW = snapshot.battery?.discharge_max_w ?? 0;
 
-  for (const zone of [...(snapshot.thermal_zones ?? [])].sort((a, b) =>
-    a.key.localeCompare(b.key)
-  )) {
+  for (
+    const zone of [...(snapshot.thermal_zones ?? [])].sort((a, b) =>
+      a.key.localeCompare(b.key)
+    )
+  ) {
     const powers = schedule.roomHeating[zone.key];
     const alpha = 1 - zone.model.cooling_constant_per_h * SLOT_HOURS;
     const heatGain = zone.model.gain_c_per_wh * SLOT_HOURS;
@@ -2565,7 +2587,7 @@ function optimiseRoomPreheating(
             occupiedW[candidate] + addW;
           if (
             candidateDemandW > snapshot.grid.import_limit_w +
-              slots[candidate].pv_w + batterySupportW + 0.01
+                slots[candidate].pv_w + batterySupportW + 0.01
           ) continue;
 
           const before = thermalSlotScore(
@@ -2619,7 +2641,7 @@ function optimiseRoomPreheating(
 function scheduleRoomHeating(
   key: PlanKey,
   slots: PreparedSlot[],
-  snapshot: OptimisationSnapshotV5,
+  snapshot: OptimisationSnapshot,
   schedule: Schedule,
   reservedW: number[],
 ): string[] {
@@ -2671,7 +2693,7 @@ function scheduleRoomHeating(
 
 function batteryReservation(
   slots: PreparedSlot[],
-  snapshot: OptimisationSnapshotV5,
+  snapshot: OptimisationSnapshot,
 ): { reservedW: number[]; protectedSoc: (number | null)[] } {
   const reservedW = new Array(slots.length).fill(0);
   const protectedSoc: (number | null)[] = new Array(slots.length).fill(null);
@@ -2759,7 +2781,7 @@ function batteryReservation(
 }
 
 function empiricalDeviceLoads(
-  snapshot: OptimisationSnapshotV5,
+  snapshot: OptimisationSnapshot,
   index: number,
   controlled: Record<string, number>,
   roomHeating: Record<string, number>,
@@ -2831,7 +2853,7 @@ function empiricalDeviceLoads(
 function simulate(
   key: PlanKey,
   slots: PreparedSlot[],
-  snapshot: OptimisationSnapshotV5,
+  snapshot: OptimisationSnapshot,
   schedule: Schedule,
   protectedSoc: (number | null)[],
 ): { slots: PlannedSlot[]; summary: PlanSummary; errors: string[] } {
@@ -2980,7 +3002,10 @@ function simulate(
     // reasons within an hour.
     const dispatchOwnsBattery = schedule.dispatched.has("battery");
     if (dispatchOwnsBattery) {
-      batteryChargeW = Math.min(schedule.batteryChargeW[slot.index], maxChargeW);
+      batteryChargeW = Math.min(
+        schedule.batteryChargeW[slot.index],
+        maxChargeW,
+      );
       batteryDischargeW = Math.min(
         schedule.batteryDischargeW[slot.index],
         maxDischargeW,
@@ -3039,7 +3064,7 @@ function simulate(
       evSoc = Math.min(
         1,
         evSoc + evW * snapshot.ev_battery.charge_efficiency / 1_000 *
-          SLOT_HOURS / snapshot.ev_battery.capacity_kwh,
+            SLOT_HOURS / snapshot.ev_battery.capacity_kwh,
       );
     }
 
@@ -3172,22 +3197,26 @@ function simulate(
     return sum + indices.length * service.control.power_w / 1_000 * SLOT_HOURS;
   }, 0);
   const thermalKwh = Object.values(schedule.roomHeating).reduce(
-    (total, powers) => total + powers.reduce(
-      (sum, watts) => sum + watts / 1_000 * SLOT_HOURS,
-      0,
-    ),
+    (total, powers) =>
+      total + powers.reduce(
+        (sum, watts) => sum + watts / 1_000 * SLOT_HOURS,
+        0,
+      ),
     0,
   );
   const dispatchedKwh = slots.reduce(
     (total, slot) =>
       total +
-      (schedule.dispatched.has("pool") ? schedule.pool[slot.index] : 0) / 1_000 *
+      (schedule.dispatched.has("pool") ? schedule.pool[slot.index] : 0) /
+        1_000 *
         SLOT_HOURS +
       (schedule.dispatched.has("ev") ? schedule.ev[slot.index] : 0) / 1_000 *
         SLOT_HOURS,
     0,
   );
-  if (Math.abs(flexibleKwh - thermalKwh - dispatchedKwh - deliveredKwh) > 1e-6) {
+  if (
+    Math.abs(flexibleKwh - thermalKwh - dispatchedKwh - deliveredKwh) > 1e-6
+  ) {
     errors.push(
       `simulated service load ${
         round(flexibleKwh - thermalKwh - dispatchedKwh, 3)
@@ -3251,7 +3280,10 @@ function simulate(
   // A hard SOC target is meaningless once the battery bids by marginal value:
   // the trade-off is priced rather than switched (§8.4), and enforcing a target
   // on top would override the very comparison that replaced it.
-  if (snapshot.policy.battery_target_is_hard && !schedule.dispatched.has("battery")) {
+  if (
+    snapshot.policy.battery_target_is_hard &&
+    !schedule.dispatched.has("battery")
+  ) {
     for (const [day, endSoc] of Object.entries(endOfSolar)) {
       if (endSoc + 1e-6 < snapshot.policy.battery_end_of_solar_target_soc) {
         errors.push(
@@ -3329,7 +3361,7 @@ function simulate(
 function buildPlan(
   key: PlanKey,
   slots: PreparedSlot[],
-  snapshot: OptimisationSnapshotV5,
+  snapshot: OptimisationSnapshot,
   reservedW: number[],
   protectedSoc: (number | null)[],
 ): GeneratedPlan {
@@ -3378,7 +3410,7 @@ function buildPlan(
 }
 
 export function generateOptimisationPlan(
-  snapshot: OptimisationSnapshotV5,
+  snapshot: OptimisationSnapshot,
   now = new Date(),
   /**
    * This home's archived prices, newest or oldest first, it does not matter.
@@ -3390,7 +3422,7 @@ export function generateOptimisationPlan(
    * is still shaped rather than flat (§1.4.3).
    */
   priceArchive: StoredPriceRow[] = [],
-): OptimisationPlanV5 {
+): OptimisationPlan {
   const validationErrors = validateSnapshot(snapshot);
   const snapshotAge = now.getTime() - isoMs(snapshot.captured_at);
   if (

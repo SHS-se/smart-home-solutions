@@ -15,7 +15,7 @@
 
 import {
   generateOptimisationPlan,
-  type OptimisationSnapshotV5,
+  type OptimisationSnapshot,
 } from '../../../supabase/functions/_shared/energy-optimisation';
 import type { UtilityCurve } from '../../../supabase/functions/_shared/store-value';
 import type { ValueStoreKey } from '../../../supabase/functions/_shared/value-curves';
@@ -52,7 +52,7 @@ const POWER_FIELD: Record<string, 'pool_w' | 'ev_w' | 'battery_charge_w'> = {
  * being run against one that has been sitting in a table.
  */
 export function solveWith(
-  snapshot: OptimisationSnapshotV5,
+  snapshot: OptimisationSnapshot,
   curves: Partial<Record<ValueStoreKey, UtilityCurve>>,
 ): PlanOutcome | string {
   let plan;
@@ -116,7 +116,7 @@ export interface PreviewComparison {
  * to the one thing that changed.
  */
 export function comparePreference(
-  snapshot: OptimisationSnapshotV5,
+  snapshot: OptimisationSnapshot,
   current: Partial<Record<ValueStoreKey, UtilityCurve>>,
   edited: Partial<Record<ValueStoreKey, UtilityCurve>>,
 ): PreviewComparison | string {

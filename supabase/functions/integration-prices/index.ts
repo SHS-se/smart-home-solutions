@@ -5,29 +5,19 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { authenticateDevice } from "../_shared/ha-device-auth.ts";
 import {
+  HA_API_CORS_HEADERS,
+  haApiResponse,
+  haRequestId,
+} from "../_shared/ha-api-contract.ts";
+import {
   calculateSupplierPrice,
   parseSpotPriceIntervals,
   SUPPLIER_PRICE_SCHEMA_VERSION,
   type SupplierPriceInterval,
 } from "../_shared/energy-supplier-pricing.ts";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-};
 const AREAS = new Set(["SE1", "SE2", "SE3", "SE4"]);
 const SPOT_SOURCE = "https://www.elprisetjustnu.se/api/v1/prices";
-
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      ...corsHeaders,
-      "Content-Type": "application/json",
-      "Cache-Control": "private, max-age=300",
-    },
-  });
 
 const dateInStockholm = (date: Date) => {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -92,8 +82,13 @@ const answerValue = (
 ) => answer?.answer_value ?? answer?.answer_text ?? null;
 
 serve(async (req) => {
+  const requestId = haRequestId(req);
+  const json = (body: unknown, status = 200) =>
+    haApiResponse(requestId, body, status, {
+      "Cache-Control": "private, max-age=300",
+    });
   if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
+    return new Response(null, { headers: HA_API_CORS_HEADERS });
   }
   if (req.method !== "GET") return json({ error: "method_not_allowed" }, 405);
 

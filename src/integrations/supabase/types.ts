@@ -2446,11 +2446,19 @@ export type Database = {
           binding_until: string
           captured_at: string
           customer_id: string
+          generation_request_id: string | null
+          ha_ack_error: Json | null
+          ha_ack_request_id: string | null
+          ha_ack_status: string
+          ha_acknowledged_at: string | null
+          ha_integration_version: string | null
           home_id: string
           input_hash: string
           issued_at: string
           model_version: string
           plan: Json
+          plan_id: string | null
+          plan_schema_version: number | null
           snapshot: Json
           snapshot_id: string
           status: string
@@ -2461,11 +2469,19 @@ export type Database = {
           binding_until: string
           captured_at: string
           customer_id: string
+          generation_request_id?: string | null
+          ha_ack_error?: Json | null
+          ha_ack_request_id?: string | null
+          ha_ack_status?: string
+          ha_acknowledged_at?: string | null
+          ha_integration_version?: string | null
           home_id: string
           input_hash: string
           issued_at: string
           model_version: string
           plan: Json
+          plan_id?: string | null
+          plan_schema_version?: number | null
           snapshot: Json
           snapshot_id: string
           status: string
@@ -2476,11 +2492,19 @@ export type Database = {
           binding_until?: string
           captured_at?: string
           customer_id?: string
+          generation_request_id?: string | null
+          ha_ack_error?: Json | null
+          ha_ack_request_id?: string | null
+          ha_ack_status?: string
+          ha_acknowledged_at?: string | null
+          ha_integration_version?: string | null
           home_id?: string
           input_hash?: string
           issued_at?: string
           model_version?: string
           plan?: Json
+          plan_id?: string | null
+          plan_schema_version?: number | null
           snapshot?: Json
           snapshot_id?: string
           status?: string
@@ -2507,11 +2531,18 @@ export type Database = {
       energy_optimisation_plan_runs: {
         Row: {
           customer_id: string
+          generation_request_id: string | null
+          ha_ack_error: Json | null
+          ha_ack_request_id: string | null
+          ha_ack_status: string
+          ha_acknowledged_at: string | null
+          ha_integration_version: string | null
           home_id: string
           id: string
           input_hash: string
           issued_at: string
           model_version: string
+          plan_schema_version: number | null
           snapshot_id: string
           status: string
           summary: Json
@@ -2519,11 +2550,18 @@ export type Database = {
         }
         Insert: {
           customer_id: string
+          generation_request_id?: string | null
+          ha_ack_error?: Json | null
+          ha_ack_request_id?: string | null
+          ha_ack_status?: string
+          ha_acknowledged_at?: string | null
+          ha_integration_version?: string | null
           home_id: string
           id: string
           input_hash: string
           issued_at: string
           model_version: string
+          plan_schema_version?: number | null
           snapshot_id: string
           status: string
           summary: Json
@@ -2531,11 +2569,18 @@ export type Database = {
         }
         Update: {
           customer_id?: string
+          generation_request_id?: string | null
+          ha_ack_error?: Json | null
+          ha_ack_request_id?: string | null
+          ha_ack_status?: string
+          ha_acknowledged_at?: string | null
+          ha_integration_version?: string | null
           home_id?: string
           id?: string
           input_hash?: string
           issued_at?: string
           model_version?: string
+          plan_schema_version?: number | null
           snapshot_id?: string
           status?: string
           summary?: Json

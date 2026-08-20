@@ -12,22 +12,18 @@ import {
   randomHex,
   sha256Hex,
 } from "../_shared/ha-device-auth.ts";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-};
-
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
-  });
+import {
+  HA_API_CORS_HEADERS,
+  haApiResponse,
+  haRequestId,
+} from "../_shared/ha-api-contract.ts";
 
 serve(async (req) => {
+  const requestId = haRequestId(req);
+  const json = (body: unknown, status = 200) =>
+    haApiResponse(requestId, body, status);
   if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
+    return new Response(null, { headers: HA_API_CORS_HEADERS });
   }
   if (req.method !== "POST") {
     return json({ error: "method_not_allowed" }, 405);
