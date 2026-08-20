@@ -188,8 +188,14 @@ export function valueOfMove(
 // ---------------------------------------------------------------------------
 
 export interface StoredEnergyValueInput {
-  /** Shadow import prices for the remaining horizon, cheapest first is fine. */
+  /** Shadow import prices of the covering window, in any order. */
   futureImportSekPerKwh: number[];
+  /**
+   * Stored-energy equivalent of the residual load at each price, kWh. The
+   * curve takes the dearest kWh first — the merit order of the imports stored
+   * energy displaces.
+   */
+  futureImportKwh: number[];
   /** Forecast surplus PV, in kWh, over the same remaining horizon. */
   futureSurplusKwh: number;
   /** Usable capacity between min and max SOC, kWh. */
@@ -214,17 +220,22 @@ export interface StoredEnergyValueInput {
  * - "export above X SEK" becomes "export when the price beats the curve";
  * - "reserve Y%" becomes the steep first segment, which nothing outbids.
  *
- * The shape is two segments and a tail. Energy up to the expected overnight
- * draw is worth the *expensive* end of the coming prices, because that is what
- * it displaces. Energy beyond that is worth progressively less, and energy the
- * sun will replace tomorrow anyway is worth nothing at all — which is precisely
- * when exporting into a high price is correct.
+ * The covering band is the merit order of the imports stored energy displaces:
+ * the first kWh is worth the dearest hour of the coming night, the last kWh of
+ * covering is worth the cheapest of the hours it actually avoids. Pricing the
+ * whole band at the peak — the two-level step this replaced — made the battery
+ * grid-charge overnight in one burst (every covering kWh looked like the
+ * spike) and then refuse the next day's surplus (the pack was already full,
+ * and the room above covering was worth nothing). Energy the sun will replace
+ * tomorrow anyway is still worth nothing at all, which is when exporting into
+ * a high price is correct.
  */
 export function batteryValueCurve(
   input: StoredEnergyValueInput,
 ): UtilityCurve {
   const {
     futureImportSekPerKwh,
+    futureImportKwh,
     futureSurplusKwh,
     usableKwh,
     roundTrip,
@@ -234,11 +245,34 @@ export function batteryValueCurve(
   if (usableKwh <= 0 || futureImportSekPerKwh.length === 0) {
     return { unit: "kwh", points: [] };
   }
+  if (futureImportKwh.length !== futureImportSekPerKwh.length) {
+    throw new Error(
+      "futureImportKwh must have one residual-load value per import price",
+    );
+  }
+  if (
+    futureImportSekPerKwh.some((value) => !Number.isFinite(value)) ||
+    futureImportKwh.some((value) => !Number.isFinite(value) || value < 0)
+  ) {
+    throw new Error(
+      "future import prices and residual-load values must be finite",
+    );
+  }
+  const weightedDrawKwh = futureImportKwh.reduce(
+    (total, value) => total + value,
+    0,
+  );
+  if (Math.abs(weightedDrawKwh - expectedDrawKwh) > 1e-6) {
+    throw new Error(
+      "futureImportKwh must sum to expectedDrawKwh",
+    );
+  }
   const efficiency = Math.max(0.05, roundTrip);
   const sorted = [...futureImportSekPerKwh].sort((a, b) => b - a);
-  const dear = sorted[0];
   const median = sorted[Math.floor(sorted.length / 2)];
   const cheapest = sorted[sorted.length - 1];
+  const netValue = (sek: number) =>
+    Math.max(0, sek / efficiency - degradationSekPerKwh);
 
   // The energy that covers the draw before the next surplus arrives. This
   // segment survives however sunny tomorrow is, and an earlier version of this
@@ -250,50 +284,85 @@ export function batteryValueCurve(
   const coveringKwh = Math.max(0, Math.min(expectedDrawKwh, usableKwh));
 
   const points: { at: number; sek_per_unit: number }[] = [];
-  if (coveringKwh > 0) {
-    // Displacing the dearest import ahead, less the wear of the cycle.
-    points.push({
-      at: coveringKwh,
-      sek_per_unit: Math.max(0, dear / efficiency - degradationSekPerKwh),
-    });
+  const slices = futureImportSekPerKwh
+    .map((sek, index) => ({
+      sek,
+      kwh: futureImportKwh[index],
+    }))
+    .filter((slice) => slice.kwh > 0 && Number.isFinite(slice.sek))
+    .sort((a, b) => b.sek - a.sek || b.kwh - a.kwh);
+
+  if (coveringKwh > 0 && slices.length > 0) {
+    let filled = 0;
+    for (const slice of slices) {
+      if (filled >= coveringKwh - 1e-12) break;
+      const take = Math.min(slice.kwh, coveringKwh - filled);
+      if (take <= 1e-12) continue;
+      filled += take;
+      appendBand(points, filled, netValue(slice.sek));
+    }
   }
-  if (usableKwh > coveringKwh) {
+
+  const filledTo = points.length > 0 ? points[points.length - 1].at : 0;
+  if (usableKwh > filledTo + 1e-12) {
     // Everything above the covering band. If the forecast says the sun will
     // refill this room anyway, holding it displaces nothing and it is worth the
     // cheapest price ahead at most — often nothing, which is exactly when
     // exporting into a spike is right.
-    const remainingKwh = usableKwh - coveringKwh;
+    const remainingKwh = usableKwh - filledTo;
     const refilledBySun = futureSurplusKwh >= remainingKwh;
     const level = (refilledBySun ? cheapest : median) / efficiency;
+    // Cap at the *last* covering value, not the first: remaining used to be
+    // compared to the dearest hour, which with a two-level step was the only
+    // covering value. Under merit order that would let remaining rise above
+    // the cheap end of covering and break concavity.
+    const lastCovering = points[points.length - 1]?.sek_per_unit ??
+      Number.POSITIVE_INFINITY;
     const top = Math.max(
       0,
-      Math.min(
-        level - degradationSekPerKwh,
-        points[0]?.sek_per_unit ?? Number.POSITIVE_INFINITY,
-      ),
+      Math.min(level - degradationSekPerKwh, lastCovering),
     );
-    // A short transition, then flat.
-    //
-    // Marginal value is interpolated between breakpoints, which is right for a
-    // household's own preference — warmth and range decline smoothly. The
-    // battery's curve is derived rather than stated, and its two regimes are
-    // genuinely separate: energy below the expected draw displaces tonight's
-    // import, energy above it is refilled by tomorrow's sun. Sloping straight
-    // between them would price the kWh just above the covering band as though
-    // it were half of tonight's, and the battery would hold charge it should
-    // have sold.
-    const transition = Math.min(
-      usableKwh,
-      coveringKwh + Math.max(0.01, usableKwh * 0.1),
-    );
-    if (transition > coveringKwh) {
-      points.push({ at: transition, sek_per_unit: top });
-    }
-    if (usableKwh > transition) {
-      points.push({ at: usableKwh, sek_per_unit: top });
-    }
+    appendBand(points, usableKwh, top);
   }
   return { unit: "kwh", points };
+}
+
+/**
+ * Append a concave band: a short drop to `value`, then flat through `at`.
+ *
+ * Marginal value is interpolated between breakpoints, which is right for a
+ * household's own preference — warmth and range decline smoothly. The
+ * battery's curve is derived rather than stated, and neighbouring prices in
+ * the merit order are genuinely separate hours: sloping across a whole cheap
+ * band would price kWh that only displace that band as though they were still
+ * part of the spike, which is the two-level step in miniature. A short
+ * transition keeps the interpolation honest without a true discontinuity.
+ */
+function appendBand(
+  points: { at: number; sek_per_unit: number }[],
+  at: number,
+  value: number,
+): void {
+  if (at <= 0 || !Number.isFinite(at) || !Number.isFinite(value)) return;
+  const sek = Math.max(0, value);
+  if (points.length === 0) {
+    points.push({ at, sek_per_unit: sek });
+    return;
+  }
+  const previous = points[points.length - 1];
+  if (at <= previous.at + 1e-12) return;
+  if (sek >= previous.sek_per_unit - 1e-12) {
+    previous.at = at;
+    return;
+  }
+  const span = at - previous.at;
+  const transitionAt = previous.at + Math.min(0.01, span);
+  if (transitionAt > previous.at + 1e-12) {
+    points.push({ at: transitionAt, sek_per_unit: sek });
+  }
+  if (at > transitionAt + 1e-12) {
+    points.push({ at, sek_per_unit: sek });
+  }
 }
 
 // ---------------------------------------------------------------------------

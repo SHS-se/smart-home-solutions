@@ -61,9 +61,10 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6] as const;
  * Bump it whenever the *decisions* change, not merely the code: the ROI page
  * medians over runs, and two planners sharing a label make that median
  * meaningless. v8 makes comfort schedules room-temperature constraints and
- * moves preheating inside the shared electrical objective.
+ * moves preheating inside the shared electrical objective. v10 replaces the
+ * battery's peak-price step with the weighted merit order of displaced import.
  */
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v9";
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v10";
 /** The planner a schema 5 snapshot still receives, unchanged. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v8";
 export const SLOT_MINUTES = 15;
@@ -1988,42 +1989,51 @@ function buildDispatchStores(
     // that is the same quantity whatever time of day the plan is built.
     let expectedDrawKwh = 0;
     let runKwh = 0;
-    let runPrices: number[] = [];
-    let windowPrices: number[] = [];
+    let runDraw: { sek_per_kwh: number; kwh: number }[] = [];
+    let windowDraw: { sek_per_kwh: number; kwh: number }[] = [];
     for (const slot of slots) {
       const netW = slot.pv_w - fixedLoadW(slot);
       if (netW < 0) {
-        runKwh += -netW / 1_000 * SLOT_HOURS;
-        runPrices.push(slot.shadow_import_sek_per_kwh);
+        const kwh = -netW / 1_000 * SLOT_HOURS;
+        runKwh += kwh;
+        runDraw.push({ sek_per_kwh: slot.shadow_import_sek_per_kwh, kwh });
       } else {
         if (runKwh > expectedDrawKwh) {
           expectedDrawKwh = runKwh;
-          windowPrices = runPrices;
+          windowDraw = runDraw;
         }
         runKwh = 0;
-        runPrices = [];
+        runDraw = [];
       }
     }
     if (runKwh > expectedDrawKwh) {
       expectedDrawKwh = runKwh;
-      windowPrices = runPrices;
+      windowDraw = runDraw;
     }
-    if (windowPrices.length === 0) {
-      windowPrices = slots.map((slot) => slot.shadow_import_sek_per_kwh);
+    if (windowDraw.length === 0) {
+      windowDraw = slots.map((slot) => ({
+        sek_per_kwh: slot.shadow_import_sek_per_kwh,
+        kwh: 0,
+      }));
     }
 
     // Derived every solve from the forecast, never configured (§8.4). This is
     // what replaces the end-of-solar SOC target and the export floor price.
     const curve = batteryValueCurve({
-      // Prices from the covering window, not the whole horizon: what the
-      // stored energy displaces is tonight's import, not the dearest quarter
-      // three days out.
-      futureImportSekPerKwh: windowPrices,
+      // Prices and kWh from the covering window, not the whole horizon: what
+      // the stored energy displaces is tonight's import, in merit order, not
+      // the dearest quarter three days out and not the whole night at that
+      // quarter's price. The curve's state is stored DC energy, so each AC-load
+      // slice includes the battery energy lost on discharge.
+      futureImportSekPerKwh: windowDraw.map((slice) => slice.sek_per_kwh),
+      futureImportKwh: windowDraw.map((slice) =>
+        slice.kwh / battery.discharge_efficiency
+      ),
       futureSurplusKwh: remainingSurplusKwh,
       usableKwh,
       roundTrip: battery.charge_efficiency * battery.discharge_efficiency,
       degradationSekPerKwh: DEFAULT_VALUE_SETTINGS.battery_degradation_sek_per_kwh,
-      expectedDrawKwh,
+      expectedDrawKwh: expectedDrawKwh / battery.discharge_efficiency,
     });
     if (curve.points.length > 0) {
       stores.push({

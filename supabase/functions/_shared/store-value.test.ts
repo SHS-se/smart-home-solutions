@@ -1,4 +1,9 @@
-import { assert, assertAlmostEquals, assertEquals } from "jsr:@std/assert@1";
+import {
+  assert,
+  assertAlmostEquals,
+  assertEquals,
+  assertThrows,
+} from "jsr:@std/assert@1";
 import {
   batteryValueCurve,
   marginalValue,
@@ -21,6 +26,7 @@ const battery = (
 ): UtilityCurve =>
   batteryValueCurve({
     futureImportSekPerKwh: prices,
+    futureImportKwh: prices.map(() => 2),
     futureSurplusKwh,
     usableKwh: 10,
     roundTrip: ROUND_TRIP,
@@ -77,9 +83,9 @@ Deno.test("§8.12 #1 — a dark week makes the same price worth refusing", () =>
   // Same battery, same 0.9 SEK export price, no surplus ahead. Nothing about
   // the settings changed; only the forecast did.
   const curve = battery(0, [0.4, 1.1, 2.0]);
-  const store: StoreState = { key: "battery", curve, at: 3, unitsPerKwh: 1 };
+  const store: StoreState = { key: "battery", curve, at: 1, unitsPerKwh: 1 };
 
-  assert(marginalValue(curve, 3) > 0.9);
+  assert(marginalValue(curve, store.at) > 0.9);
   assertEquals(
     worthExporting(store, 0.9),
     false,
@@ -106,6 +112,7 @@ Deno.test("§8.12 #7 — grid charging needs the spread to beat losses and wear"
   // has to make it a refusal.
   const tight = batteryValueCurve({
     futureImportSekPerKwh: [0.85, 0.92, 1.0],
+    futureImportKwh: [2, 2, 2],
     futureSurplusKwh: 0,
     usableKwh: 10,
     roundTrip: ROUND_TRIP,
@@ -208,5 +215,103 @@ Deno.test("a sunny forecast must not zero the charge that covers tonight", () =>
     marginalValue(curve, 9),
     0,
     "while the room the sun will refill is still worth nothing to hold",
+  );
+});
+
+Deno.test("§8.4 — covering follows the merit order of displaced imports", () => {
+  // The two-level step priced the whole 6 kWh covering band at 2.4 SEK, so a
+  // 0.6 SEK night looked like a bargain for every kWh of tonight's draw. Only
+  // the first 2 kWh actually displace the spike.
+  const curve = batteryValueCurve({
+    futureImportSekPerKwh: [0.5, 1.0, 2.4],
+    futureImportKwh: [2, 2, 2],
+    futureSurplusKwh: 0,
+    usableKwh: 10,
+    roundTrip: ROUND_TRIP,
+    degradationSekPerKwh: DEGRADATION,
+    expectedDrawKwh: 6,
+  });
+  const dear = 2.4 / ROUND_TRIP - DEGRADATION;
+
+  assertEquals(validateCurve(curve), null);
+  assertAlmostEquals(marginalValue(curve, 0.5), dear, 0.05);
+  assert(
+    marginalValue(curve, 0.5) - marginalValue(curve, 5.5) > 1,
+    "the last covering kWh is not worth the dearest hour",
+  );
+  assert(
+    marginalValue(curve, 5.5) < 0.5,
+    "cheap-hour covering energy is not worth a mid-price cycle",
+  );
+});
+
+Deno.test("§8.4 — a modest overnight spread only buys the expensive tail", () => {
+  const curve = batteryValueCurve({
+    futureImportSekPerKwh: [0.5, 1.0, 2.4],
+    futureImportKwh: [2, 2, 2],
+    futureSurplusKwh: 20,
+    usableKwh: 10,
+    roundTrip: ROUND_TRIP,
+    degradationSekPerKwh: DEGRADATION,
+    expectedDrawKwh: 6,
+  });
+  const storeAt = (at: number): StoreState => ({
+    key: "battery",
+    curve,
+    at,
+    unitsPerKwh: 1,
+  });
+  const nightPrice = 0.6;
+
+  assert(
+    worthBuying(storeAt(0.5), nightPrice),
+    "the kWh that displaces the 2.4 SEK hour is worth buying at 0.6",
+  );
+  assertEquals(
+    worthBuying(storeAt(5.5), nightPrice),
+    false,
+    "the kWh that displaces a 0.5 SEK hour is not worth a cycle at 0.6",
+  );
+  assertEquals(
+    worthBuying(storeAt(8), nightPrice),
+    false,
+    "and the room the sun will refill is still worth nothing to buy",
+  );
+});
+
+Deno.test("§8.4 — covering takes the dearest kWh first when weights are given", () => {
+  // A 1 kWh spike and a 5 kWh cheap night. Equal-share would have split the
+  // covering band in half; merit order keeps the spike as a one-kWh nose.
+  const curve = batteryValueCurve({
+    futureImportSekPerKwh: [2.4, 0.5],
+    futureImportKwh: [1, 5],
+    futureSurplusKwh: 0,
+    usableKwh: 10,
+    roundTrip: ROUND_TRIP,
+    degradationSekPerKwh: DEGRADATION,
+    expectedDrawKwh: 6,
+  });
+  const dear = 2.4 / ROUND_TRIP - DEGRADATION;
+  const cheap = Math.max(0, 0.5 / ROUND_TRIP - DEGRADATION);
+
+  assertEquals(validateCurve(curve), null);
+  assertAlmostEquals(marginalValue(curve, 0.5), dear, 0.05);
+  assertAlmostEquals(marginalValue(curve, 4), cheap, 0.05);
+});
+
+Deno.test("§8.4 — every covering price requires an explicit kWh weight", () => {
+  assertThrows(
+    () =>
+      batteryValueCurve({
+        futureImportSekPerKwh: [2.4, 0.5],
+        futureImportKwh: [6],
+        futureSurplusKwh: 0,
+        usableKwh: 10,
+        roundTrip: ROUND_TRIP,
+        degradationSekPerKwh: DEGRADATION,
+        expectedDrawKwh: 6,
+      }),
+    Error,
+    "one residual-load value per import price",
   );
 });

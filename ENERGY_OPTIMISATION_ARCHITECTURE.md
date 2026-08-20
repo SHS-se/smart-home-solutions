@@ -2781,12 +2781,20 @@ to disagree with the thing it claims to predict. Both sides of the comparison
 are solved locally so the difference is attributable to the one thing that
 changed.
 
-What this does *not* address, and remains the largest known defect in the
-objective: `batteryValueCurve` still prices the whole covering band at the
-dearest hour of the coming night and everything above it at the cheapest, a
-two-level step where §8.4 asks for the merit order of the imports the stored
-energy displaces. That is what makes the battery grid-charge in one burst and
-then refuse the following day's surplus.
+**Fixed 2026-08-20 in `marginal-value-planner-v10`.** `batteryValueCurve` now
+sorts the covering window's residual imports by shadow price and gives each one
+its own stored-energy-equivalent kWh band. The first kWh therefore displaces the
+dearest import, while later kWh fall through the actual merit order instead of
+inheriting the peak price. The dispatcher also bids at those curve breakpoints
+and values the whole proposed move by the integral of the curve; otherwise a
+full 15-minute inverter interval could still be priced as though every kWh in
+it were the first, dearest one.
+
+The whole-plan regression is the original failure in miniature: one expensive
+quarter inside a cheap deficit run followed by a solar day. The planner buys
+only the stored energy needed for that quarter and leaves enough capacity for
+more than 5 kWh of the following surplus. This pins both symptoms rather than
+only the curve's shape in isolation.
 
 Replacing the scheduler core is blocked on inputs that do not exist yet, and
 none of them are solver work:

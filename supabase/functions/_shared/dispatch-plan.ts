@@ -32,6 +32,7 @@ import {
   marginalValue,
   marginalValueHeld,
   type UtilityCurve,
+  valueOfMove,
 } from "./store-value.ts";
 
 export const SLOT_HOURS = 0.25;
@@ -333,26 +334,39 @@ export function planDispatch(
           chargeRoomW(store, bounds.max[index], units),
         );
         if (fullW <= 0) continue;
-        const value = marginalValue(store.curve, state[index]) * units *
-          retention[index];
-        if (value <= 0) continue;
-
-        // Two power levels are worth evaluating, because the cost of energy is
-        // a step: the free surplus is charged at the export price and anything
-        // beyond it at the much dearer import price. Offering only full power
-        // conflates the two and makes the planner refuse a slot whose surplus
-        // alone was clearly worth taking — the case where a store is worth
-        // topping up from the sun but not worth buying from the grid.
+        // Candidate levels stop at both kinds of economic boundary: where free
+        // surplus turns into grid import, and—on a terminal store—where the
+        // marginal value changes. Without the curve boundaries a 0.25 kWh
+        // price spike could only bid for a full 1.25 kWh battery interval;
+        // valuing that whole interval at its first kWh caused a charge/discharge
+        // cycle through the cheap band and filled the pack from the grid.
         const surplusW = Math.max(
           0,
           Math.min(fullW, slot.pv_w - slot.fixed_load_w - occupiedW[index]),
         );
-        const candidatePowers = surplusW > 0 && surplusW < fullW
-          ? [surplusW, fullW]
-          : [fullW];
+        const candidatePowers = [fullW];
+        if (surplusW > 0 && surplusW < fullW) candidatePowers.push(surplusW);
+        if ((store.terminal_weight ?? 0) > 0) {
+          for (const point of store.curve.points) {
+            const toPointW = (point.at - state[index]) / units / SLOT_HOURS *
+              1_000;
+            if (toPointW > 1e-9 && toPointW < fullW - 1e-9) {
+              candidatePowers.push(toPointW);
+            }
+          }
+        }
 
-        for (const powerLevel of candidatePowers) {
+        for (const powerLevel of new Set(candidatePowers)) {
           const kwh = powerLevel / 1_000 * SLOT_HOURS;
+          const value = (store.terminal_weight ?? 0) > 0
+            ? valueOfMove(
+              store.curve,
+              state[index],
+              state[index] + kwh * units,
+            ) / kwh * retention[index]
+            : marginalValue(store.curve, state[index]) * units *
+              retention[index];
+          if (value <= 0) continue;
           let cost = energyCostSekPerKwh(slot, occupiedW[index], powerLevel) +
             (store.wear_sek_per_kwh ?? 0);
           // Starting a run costs something real, so an isolated slot has to
@@ -412,8 +426,14 @@ export function planDispatch(
           ) continue;
           // The sell side of the curve: what the charge being given up is
           // worth, not what the next unit would be worth to buy.
-          const givenUp = marginalValueHeld(store.curve, state[index]) *
-            (spent / Math.max(kwh, 1e-9)) * retention[index];
+          const givenUp = (store.terminal_weight ?? 0) > 0
+            ? -valueOfMove(
+              store.curve,
+              state[index],
+              state[index] - spent,
+            ) / kwh * retention[index]
+            : marginalValueHeld(store.curve, state[index]) *
+              (spent / Math.max(kwh, 1e-9)) * retention[index];
           const gained = price - (store.wear_sek_per_kwh ?? 0);
           const surplus = (gained - givenUp) * kwh;
           if (surplus <= 1e-9) continue;

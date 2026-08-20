@@ -1287,7 +1287,7 @@ Deno.test("schema 6 with pool state dispatches by temperature, not by budget", (
   const plan = generateOptimisationPlan(snapshot, new Date(NOW));
 
   assertEquals(plan.schema_version, 6);
-  assertEquals(plan.model_version, "marginal-value-planner-v9");
+  assertEquals(plan.model_version, "marginal-value-planner-v10");
   // Asserted explicitly: an earlier version of this test checked the pool
   // energy but not the status, and so passed while every schema 6 plan was
   // reported infeasible by validations that still assumed fixed blocks.
@@ -1430,6 +1430,51 @@ Deno.test("a full battery spends into a dear evening and refills from surplus", 
   assert(
     firstEvening.every((slot) => slot.grid_import_w < 1 || slot.battery_soc <= 0.66),
     "importing while a nearly full battery sits idle is the defect",
+  );
+});
+
+Deno.test("the battery only grid-charges the import spike and leaves room for solar", () => {
+  // One expensive quarter sits inside a long cheap deficit run before the next
+  // solar day. The old two-level curve valued the whole run at that quarter's
+  // price: it filled the pack from the grid, then had no room for the sun. The
+  // merit-order curve should buy only the energy needed for the spike and stop.
+  const base = horizon();
+  const firstSolarSlot = 80;
+  const spikeSlot = 40;
+  const slots = base.slots.map((slot, index) => ({
+    ...slot,
+    pv_forecast_w: index < firstSolarSlot ? 0 : slot.pv_forecast_w,
+    import_price_sek_per_kwh: index === spikeSlot ? 2.4 : 0.6,
+    export_price_sek_per_kwh: 0.1,
+  }));
+  const snapshot = horizon({
+    slots,
+    pool: { water_temperature_c: 31, volume_m3: 55 },
+    battery: { ...base.battery!, soc: base.battery!.min_soc },
+  });
+
+  const plan = generateOptimisationPlan(snapshot, new Date(NOW));
+  assertEquals(plan.status, "ready");
+  assertEquals(plan.validation_errors, []);
+  const planned = plan.plans.priority.slots;
+  const kwh = (values: number[]) =>
+    values.reduce((sum, watts) => sum + watts, 0) / 4_000;
+  const gridChargeKwh = kwh(
+    planned.slice(0, firstSolarSlot).map((slot) => slot.battery_charge_w),
+  );
+  const solarChargeKwh = kwh(
+    planned.slice(firstSolarSlot).map((slot) =>
+      Math.min(slot.battery_charge_w, Math.max(0, slot.pv_w - slot.load_w))
+    ),
+  );
+
+  assert(
+    gridChargeKwh > 0 && gridChargeKwh <= 0.35,
+    `the 0.25 kWh spike caused ${gridChargeKwh.toFixed(2)} kWh of grid charging`,
+  );
+  assert(
+    solarChargeKwh > 5,
+    `only ${solarChargeKwh.toFixed(2)} kWh of the following surplus reached the battery`,
   );
 });
 
