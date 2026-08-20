@@ -17,7 +17,12 @@ import {
   projectZoneTemperature,
   type ThermalZoneModel,
 } from "./thermal-model.ts";
-import { type DispatchStore, planDispatch } from "./dispatch-plan.ts";
+import {
+  type DispatchResult,
+  type DispatchSlot,
+  type DispatchStore,
+  planDispatch,
+} from "./dispatch-plan.ts";
 import {
   poolCop,
   stepPoolTemperature,
@@ -534,6 +539,8 @@ export type OptimisationPlanV6 = Omit<OptimisationPlan, "schema_version"> & {
 interface PreparedSlot extends ForecastSlotInput {
   index: number;
   epoch_ms: number;
+  local_day: string;
+  local_minute_of_day: number;
   pv_raw_w: number;
   pv_w: number;
   uncontrolled_device_w: number;
@@ -706,38 +713,43 @@ const vehicleKwhPerKm = (vehicle: EvBatteryInput): number =>
     ? vehicle.kwh_per_km
     : SEEDED_VEHICLE_KWH_PER_KM;
 
-const localDay = (iso: string, timezone: string) =>
-  new Intl.DateTimeFormat("sv-SE", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date(iso));
+const localTimeFormatters = new Map<string, Intl.DateTimeFormat>();
 
-const localMinuteOfDay = (iso: string, timezone: string) => {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: timezone,
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(new Date(iso));
-  const hour = Number(parts.find((part) => part.type === "hour")?.value);
-  const minute = Number(parts.find((part) => part.type === "minute")?.value);
-  return hour * 60 + minute;
+/** Resolve a slot's local calendar coordinates with one cached ICU formatter. */
+const localSlotTime = (epochMs: number, timezone: string) => {
+  let formatter = localTimeFormatters.get(timezone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    });
+    localTimeFormatters.set(timezone, formatter);
+  }
+  const values: Record<string, string> = {};
+  for (const part of formatter.formatToParts(new Date(epochMs))) {
+    if (part.type !== "literal") values[part.type] = part.value;
+  }
+  return {
+    day: `${values.year}-${values.month}-${values.day}`,
+    minuteOfDay: Number(values.hour) * 60 + Number(values.minute),
+  };
 };
 
 function completedLocalDays(
   slots: PreparedSlot[],
   timezone: string,
 ): Set<string> {
-  const horizonEnd = new Date(
+  const endDay = localSlotTime(
     slots[slots.length - 1].epoch_ms + SLOT_MS,
-  ).toISOString();
-  const endDay = localDay(horizonEnd, timezone);
+    timezone,
+  ).day;
   return new Set(
-    slots.map((slot) => localDay(slot.start, timezone)).filter((day) =>
-      day < endDay
-    ),
+    slots.map((slot) => slot.local_day).filter((day) => day < endDay),
   );
 }
 
@@ -1368,6 +1380,7 @@ function preparedSlots(
   let priceGapSeen = false;
   const slots = snapshot.slots.map((slot, index) => {
     const epoch = isoMs(slot.start);
+    const local = localSlotTime(epoch, snapshot.timezone);
     const leadDay = Math.max(
       0,
       Math.min(
@@ -1384,6 +1397,8 @@ function preparedSlots(
       ...slot,
       index,
       epoch_ms: epoch,
+      local_day: local.day,
+      local_minute_of_day: local.minuteOfDay,
       pv_raw_w: slot.pv_forecast_w,
       pv_w: Math.max(0, slot.pv_forecast_w * factor),
       uncontrolled_device_w: snapshot.device_models.reduce(
@@ -1564,37 +1579,39 @@ function serviceCost(
  * make: the same 2 SEK spike is a good trade before a sunny day and a poor one
  * before a dark, expensive week (§1.4.5).
  */
-function replacementCostSekPerKwh(
+function replacementCostsBySlot(
   slots: PreparedSlot[],
   snapshot: OptimisationSnapshot,
-  fromIndex: number,
-): number {
+): number[] {
   const battery = snapshot.battery;
-  if (!battery) return Number.POSITIVE_INFINITY;
-  const remaining = slots.slice(fromIndex + 1);
-  if (remaining.length === 0) return Number.POSITIVE_INFINITY;
-
-  const surplusKwh = remaining.reduce((total, slot) => {
-    const surplusW = slot.pv_w - fixedLoadW(slot);
-    return total + (surplusW > 0 ? (surplusW / 1_000) * SLOT_HOURS : 0);
-  }, 0);
+  if (!battery) return new Array(slots.length).fill(Number.POSITIVE_INFINITY);
   const headroomKwh = Math.max(
     0,
     (battery.max_soc - battery.min_soc) * battery.capacity_kwh,
   );
-  if (surplusKwh >= headroomKwh) return 0;
-
   const roundTrip = Math.max(
     0.05,
     battery.charge_efficiency * battery.discharge_efficiency,
   );
-  const cheapest = remaining.reduce(
-    (lowest, slot) => Math.min(lowest, slot.shadow_import_sek_per_kwh),
-    Number.POSITIVE_INFINITY,
-  );
-  return Number.isFinite(cheapest)
-    ? cheapest / roundTrip
-    : Number.POSITIVE_INFINITY;
+  const costs = new Array<number>(slots.length);
+  let remainingCount = 0;
+  let surplusKwh = 0;
+  let cheapest = Number.POSITIVE_INFINITY;
+  for (let index = slots.length - 1; index >= 0; index -= 1) {
+    costs[index] = remainingCount === 0
+      ? Number.POSITIVE_INFINITY
+      : surplusKwh >= headroomKwh
+      ? 0
+      : Number.isFinite(cheapest)
+      ? cheapest / roundTrip
+      : Number.POSITIVE_INFINITY;
+    const slot = slots[index];
+    const surplusW = slot.pv_w - fixedLoadW(slot);
+    if (surplusW > 0) surplusKwh += surplusW / 1_000 * SLOT_HOURS;
+    cheapest = Math.min(cheapest, slot.shadow_import_sek_per_kwh);
+    remainingCount += 1;
+  }
+  return costs;
 }
 
 /**
@@ -2195,11 +2212,18 @@ function undispatchedStores(
   return rows;
 }
 
+interface DispatchBundle {
+  stores: DispatchStore[];
+  slots: DispatchSlot[];
+  result: DispatchResult;
+}
+
 function scheduleServices(
   key: PlanKey,
   slots: PreparedSlot[],
   snapshot: OptimisationSnapshot,
   reservedW: number[],
+  dispatchCache: Map<string, DispatchBundle | null>,
 ): { schedule: Schedule; errors: string[] } {
   const schedule = emptySchedule(slots.length);
   const occupiedW = new Array(slots.length).fill(0);
@@ -2209,27 +2233,41 @@ function scheduleServices(
   // instead of placing fixed-energy blocks. The boiler keeps its duty-cycle
   // permission contract below, because the house has no tank sensor and so no
   // state to value (§1.6.4).
-  const dispatchStores = buildDispatchStores(slots, snapshot);
-  if (dispatchStores) {
-    const dispatched = planDispatch(
-      slots.map((slot, index) => ({
+  // Baseline and cost use the same electrical inputs, and priority does too
+  // whenever there is no hard reservation. The store auction is deterministic
+  // and independent of the scenario label, so solve each distinct input once
+  // per generated plan rather than spending most of the Edge Function's CPU
+  // solving the same 288-quarter problem two or three times.
+  const dispatchKey = reservedW.every((watts) => Math.abs(watts) < 1e-9)
+    ? "unreserved"
+    : reservedW.join(",");
+  let dispatchBundle = dispatchCache.get(dispatchKey);
+  if (!dispatchCache.has(dispatchKey)) {
+    const stores = buildDispatchStores(slots, snapshot);
+    if (stores) {
+      const dispatchSlots = slots.map((slot, index) => ({
         pv_w: slot.pv_w,
         fixed_load_w: fixedLoadW(slot) + reservedW[index],
         import_price_sek_per_kwh: slot.shadow_import_sek_per_kwh,
         export_price_sek_per_kwh: slot.shadow_export_sek_per_kwh,
-      })),
-      dispatchStores,
-      {
-        grid_import_limit_w: snapshot.grid.import_limit_w,
-        grid_export_limit_w: snapshot.grid.export_limit_w,
-      },
-    );
-    const dispatchSlots = slots.map((slot, index) => ({
-      pv_w: slot.pv_w,
-      fixed_load_w: fixedLoadW(slot) + reservedW[index],
-      import_price_sek_per_kwh: slot.shadow_import_sek_per_kwh,
-      export_price_sek_per_kwh: slot.shadow_export_sek_per_kwh,
-    }));
+      }));
+      dispatchBundle = {
+        stores,
+        slots: dispatchSlots,
+        result: planDispatch(dispatchSlots, stores, {
+          grid_import_limit_w: snapshot.grid.import_limit_w,
+          grid_export_limit_w: snapshot.grid.export_limit_w,
+        }),
+      };
+    } else {
+      dispatchBundle = null;
+    }
+    dispatchCache.set(dispatchKey, dispatchBundle);
+  }
+  if (dispatchBundle) {
+    const dispatchStores = dispatchBundle.stores;
+    const dispatched = dispatchBundle.result;
+    const dispatchSlots = dispatchBundle.slots;
     for (const store of dispatchStores) {
       // Record the comparison that decided this store, whichever way it went.
       const plannedKwh = dispatched.power_w[store.key]
@@ -2540,8 +2578,13 @@ function optimiseRoomPreheating(
       outdoor,
       powers,
     );
+    const retentionByLag = Array.from(
+      { length: powers.length + 1 },
+      (_value, lag) => alpha ** lag,
+    );
 
     for (let source = powers.length - 1; source > 0; source -= 1) {
+      let movedFromSource = false;
       while (powers[source] > 0.01) {
         let best: {
           candidate: number;
@@ -2553,28 +2596,34 @@ function optimiseRoomPreheating(
           0,
           source - THERMAL_SHIFT_LOOKBACK_SLOTS,
         );
+        // For candidate c, the comfort constraint is
+        //   min(headroom[t] / (gain * alpha^(t-c-1))), t=c+1..source.
+        // Walking backwards gives that same bound in O(window) instead of
+        // rescanning the whole c..source interval for every candidate.
+        const comfortHeadroomW = new Array<number>(source);
+        let laterLimitW = Number.POSITIVE_INFINITY;
+        for (
+          let candidate = source - 1;
+          candidate >= firstCandidate;
+          candidate -= 1
+        ) {
+          const headroomC = zone.comfort_max_c[candidate + 1] -
+            temperatures[candidate + 1];
+          const immediateLimitW = headroomC <= 0 ? 0 : headroomC / heatGain;
+          laterLimitW = Math.min(immediateLimitW, laterLimitW / alpha);
+          comfortHeadroomW[candidate] = laterLimitW;
+        }
         for (
           let candidate = firstCandidate;
           candidate < source;
           candidate += 1
         ) {
-          const retention = alpha ** (source - candidate);
+          const retention = retentionByLag[source - candidate];
           if (!(retention > 1e-6)) continue;
-          let maxAddW = zone.maximum_power_w_by_slot[candidate] -
-            powers[candidate];
-          if (maxAddW <= 0.01) continue;
-
-          // Extra warmth may appear only between the new and old quarters;
-          // from source + 1 onward the added and removed effects cancel.
-          for (let at = candidate + 1; at <= source; at += 1) {
-            const influence = heatGain * alpha ** (at - candidate - 1);
-            const headroomC = zone.comfort_max_c[at] - temperatures[at];
-            if (headroomC <= 0 || influence <= 0) {
-              maxAddW = 0;
-              break;
-            }
-            maxAddW = Math.min(maxAddW, headroomC / influence);
-          }
+          const maxAddW = Math.min(
+            zone.maximum_power_w_by_slot[candidate] - powers[candidate],
+            comfortHeadroomW[candidate],
+          );
           if (maxAddW <= 0.01) continue;
           const removeW = Math.min(
             powers[source],
@@ -2627,6 +2676,19 @@ function optimiseRoomPreheating(
         powers[best.candidate] += best.addW;
         occupiedW[source] -= best.removeW;
         occupiedW[best.candidate] += best.addW;
+        // Extra warmth exists only through `source`; one quarter later the
+        // earlier addition and removed source power cancel exactly. Updating
+        // that interval avoids a full 72-hour projection after every 100 W
+        // move while preserving the same trajectory.
+        for (let at = best.candidate + 1; at <= source; at += 1) {
+          temperatures[at] += best.addW * heatGain *
+            retentionByLag[at - best.candidate - 1];
+        }
+        movedFromSource = true;
+      }
+      // Re-anchor once per source so round-off cannot accumulate across the
+      // horizon; the previous implementation reprojected after every move.
+      if (movedFromSource) {
         temperatures = projectZoneTemperature(
           zone.model,
           zone.start_temperature_c,
@@ -2706,7 +2768,7 @@ function batteryReservation(
   const completedDays = completedLocalDays(slots, snapshot.timezone);
   const byDay = new Map<string, number[]>();
   for (const slot of slots) {
-    const day = localDay(slot.start, snapshot.timezone);
+    const day = slot.local_day;
     if (!byDay.has(day)) byDay.set(day, []);
     byDay.get(day)!.push(slot.index);
   }
@@ -2780,6 +2842,108 @@ function batteryReservation(
   return { reservedW, protectedSoc };
 }
 
+type DeviceLoadRule =
+  | { key: string; kind: "fixed"; forecastW: number[] }
+  | {
+    key: string;
+    kind: "controlled";
+    service: "boiler" | "pool" | "ev";
+    shareBySlot: number[];
+  }
+  | { key: string; kind: "room"; roomKey: string; share: number };
+
+const deviceLoadRuleCache = new WeakMap<
+  OptimisationSnapshot,
+  DeviceLoadRule[]
+>();
+
+/** Compile device allocation coefficients once for all three simulations. */
+function deviceLoadRules(snapshot: OptimisationSnapshot): DeviceLoadRule[] {
+  const cached = deviceLoadRuleCache.get(snapshot);
+  if (cached) return cached;
+
+  const rules: DeviceLoadRule[] = [];
+  const thermalDeviceKeys = new Set(
+    (snapshot.thermal_zones ?? []).flatMap((zone) => zone.device_keys),
+  );
+  const controlledServiceByCategory = new Map<
+    string,
+    "boiler" | "pool" | "ev"
+  >();
+  if (snapshot.capabilities.boiler) {
+    controlledServiceByCategory.set("hot_water", "boiler");
+  }
+  if (snapshot.capabilities.pool) {
+    controlledServiceByCategory.set("pool_heating", "pool");
+  }
+  if (snapshot.capabilities.ev) {
+    controlledServiceByCategory.set("ev_charging", "ev");
+  }
+
+  for (const model of snapshot.device_models) {
+    if (thermalDeviceKeys.has(model.key)) continue;
+    const service = controlledServiceByCategory.get(model.category);
+    if (!service) {
+      rules.push({
+        key: model.key,
+        kind: "fixed",
+        forecastW: model.forecast_w_by_slot,
+      });
+      continue;
+    }
+    // A category can contain both a service meter and a room heater. Thermal
+    // meters are excluded here and receive their room allocation below.
+    const categoryModels = snapshot.device_models.filter((candidate) =>
+      candidate.category === model.category &&
+      !thermalDeviceKeys.has(candidate.key)
+    );
+    const activeTotal = categoryModels.reduce(
+      (sum, candidate) => sum + (candidate.active_power_w ?? 0),
+      0,
+    );
+    const forecastTotalBySlot = snapshot.slots.map((_slot, index) =>
+      categoryModels.reduce(
+        (sum, candidate) => sum + candidate.forecast_w_by_slot[index],
+        0,
+      )
+    );
+    rules.push({
+      key: model.key,
+      kind: "controlled",
+      service,
+      shareBySlot: forecastTotalBySlot.map((forecastTotal, index) =>
+        forecastTotal > 0
+          ? model.forecast_w_by_slot[index] / forecastTotal
+          : activeTotal > 0
+          ? (model.active_power_w ?? 0) / activeTotal
+          : 1 / categoryModels.length
+      ),
+    });
+  }
+  const modelByKey = new Map(
+    snapshot.device_models.map((model) => [model.key, model]),
+  );
+  for (const zone of snapshot.thermal_zones ?? []) {
+    const models = zone.device_keys.map((key) => modelByKey.get(key)!);
+    const activeTotal = models.reduce(
+      (sum, model) => sum + (model.active_power_w ?? 0),
+      0,
+    );
+    for (const model of models) {
+      rules.push({
+        key: model.key,
+        kind: "room",
+        roomKey: zone.key,
+        share: activeTotal > 0
+          ? (model.active_power_w ?? 0) / activeTotal
+          : 1 / models.length,
+      });
+    }
+  }
+  deviceLoadRuleCache.set(snapshot, rules);
+  return rules;
+}
+
 function empiricalDeviceLoads(
   snapshot: OptimisationSnapshot,
   index: number,
@@ -2787,64 +2951,19 @@ function empiricalDeviceLoads(
   roomHeating: Record<string, number>,
 ): Record<string, number> {
   const result: Record<string, number> = {};
-  const controlledCategory = new Map<string, number>();
-  if (snapshot.capabilities.boiler) {
-    controlledCategory.set("hot_water", controlled.boiler);
-  }
-  if (snapshot.capabilities.pool) {
-    controlledCategory.set("pool_heating", controlled.pool);
-  }
-  if (snapshot.capabilities.ev) {
-    controlledCategory.set("ev_charging", controlled.ev);
-  }
-  const thermalDeviceKeys = new Set(
-    (snapshot.thermal_zones ?? []).flatMap((zone) => zone.device_keys),
-  );
-  for (const model of snapshot.device_models) {
-    if (thermalDeviceKeys.has(model.key)) continue;
-    if (!controlledCategory.has(model.category)) {
-      result[model.key] = round(model.forecast_w_by_slot[index], 2);
-      continue;
-    }
-    // A category can hold both a deferrable service and a room heater — a pool
-    // meter and the pool room's floor heater, say. Sharing the service across
-    // the room's meter too would leave part of the service load unaccounted
-    // for, since the thermal pass overwrites that meter below.
-    const categoryModels = snapshot.device_models.filter((candidate) =>
-      candidate.category === model.category &&
-      !thermalDeviceKeys.has(candidate.key)
-    );
-    const forecastTotal = categoryModels.reduce(
-      (sum, candidate) => sum + candidate.forecast_w_by_slot[index],
-      0,
-    );
-    const activeTotal = categoryModels.reduce(
-      (sum, candidate) => sum + (candidate.active_power_w ?? 0),
-      0,
-    );
-    const share = forecastTotal > 0
-      ? model.forecast_w_by_slot[index] / forecastTotal
-      : activeTotal > 0
-      ? (model.active_power_w ?? 0) / activeTotal
-      : 1 / categoryModels.length;
-    result[model.key] = round(
-      controlledCategory.get(model.category)! * share,
-      2,
-    );
-  }
-  for (const zone of snapshot.thermal_zones ?? []) {
-    const models = zone.device_keys.map((key) =>
-      snapshot.device_models.find((model) => model.key === key)!
-    );
-    const activeTotal = models.reduce(
-      (sum, model) => sum + (model.active_power_w ?? 0),
-      0,
-    );
-    for (const model of models) {
-      const share = activeTotal > 0
-        ? (model.active_power_w ?? 0) / activeTotal
-        : 1 / models.length;
-      result[model.key] = round((roomHeating[zone.key] ?? 0) * share, 2);
+  for (const rule of deviceLoadRules(snapshot)) {
+    if (rule.kind === "fixed") {
+      result[rule.key] = round(rule.forecastW[index], 2);
+    } else if (rule.kind === "controlled") {
+      result[rule.key] = round(
+        (controlled[rule.service] ?? 0) * rule.shareBySlot[index],
+        2,
+      );
+    } else {
+      result[rule.key] = round(
+        (roomHeating[rule.roomKey] ?? 0) * rule.share,
+        2,
+      );
     }
   }
   return result;
@@ -2876,14 +2995,10 @@ function simulate(
   const completedDays = completedLocalDays(slots, snapshot.timezone);
   const endMarkerByDay = new Map<string, number>();
   for (const day of completedDays) {
-    const daySlots = slots.filter((slot) =>
-      localDay(slot.start, snapshot.timezone) === day
-    );
+    const daySlots = slots.filter((slot) => slot.local_day === day);
     const solarSlots = daySlots.filter((slot) => slot.pv_w > 50);
     const marker = solarSlots.at(-1) ??
-      (localMinuteOfDay(daySlots[0].start, snapshot.timezone) === 0
-        ? daySlots.at(-1)
-        : undefined);
+      (daySlots[0].local_minute_of_day === 0 ? daySlots.at(-1) : undefined);
     if (marker) endMarkerByDay.set(day, marker.index);
   }
 
@@ -2906,6 +3021,10 @@ function simulate(
   const evDeparture = snapshot.ev_battery?.departure == null
     ? slots.at(-1)!.epoch_ms + SLOT_MS
     : isoMs(snapshot.ev_battery.departure);
+  const dispatchOwnsBattery = schedule.dispatched.has("battery");
+  const replacementCosts = dispatchOwnsBattery
+    ? null
+    : replacementCostsBySlot(slots, snapshot);
 
   for (const slot of slots) {
     const poolW = schedule.pool[slot.index];
@@ -2972,11 +3091,8 @@ function simulate(
     // beneath the comparison: a trade that beats a cheap tomorrow can still be
     // a bad trade outright. Still requires a published price — exporting the
     // battery on a guess is not a trade worth making.
-    const replacementCost = replacementCostSekPerKwh(
-      slots,
-      snapshot,
-      slot.index,
-    );
+    const replacementCost = replacementCosts?.[slot.index] ??
+      Number.POSITIVE_INFINITY;
     const deliberateExport = key !== "baseline" &&
       snapshot.policy.battery_export_enabled === true && slot.binding &&
       slot.export_price_sek_per_kwh! >=
@@ -3000,7 +3116,6 @@ function simulate(
     // must follow it rather than re-deciding: two mechanisms choosing the same
     // flow is how a plan comes to charge and discharge for contradictory
     // reasons within an hour.
-    const dispatchOwnsBattery = schedule.dispatched.has("battery");
     if (dispatchOwnsBattery) {
       batteryChargeW = Math.min(
         schedule.batteryChargeW[slot.index],
@@ -3159,7 +3274,7 @@ function simulate(
     ) {
       errors.push(`${slot.start}: EV current target is outside its envelope`);
     }
-    const day = localDay(slot.start, snapshot.timezone);
+    const day = slot.local_day;
     if (endMarkerByDay.get(day) === slot.index) endOfSolar[day] = round(soc, 6);
   }
 
@@ -3364,12 +3479,14 @@ function buildPlan(
   snapshot: OptimisationSnapshot,
   reservedW: number[],
   protectedSoc: (number | null)[],
+  dispatchCache: Map<string, DispatchBundle | null>,
 ): GeneratedPlan {
   const scheduled = scheduleServices(
     key,
     slots,
     snapshot,
     key === "priority" ? reservedW : new Array(slots.length).fill(0),
+    dispatchCache,
   );
   const thermalErrors = scheduleRoomHeating(
     key,
@@ -3436,12 +3553,14 @@ export function generateOptimisationPlan(
   }
   const { slots, outlook } = preparedSlots(snapshot, priceArchive);
   const { reservedW, protectedSoc } = batteryReservation(slots, snapshot);
+  const dispatchCache = new Map<string, DispatchBundle | null>();
   const baseline = buildPlan(
     "baseline",
     slots,
     snapshot,
     reservedW,
     protectedSoc,
+    dispatchCache,
   );
   const priority = buildPlan(
     "priority",
@@ -3449,8 +3568,16 @@ export function generateOptimisationPlan(
     snapshot,
     reservedW,
     protectedSoc,
+    dispatchCache,
   );
-  const cost = buildPlan("cost", slots, snapshot, reservedW, protectedSoc);
+  const cost = buildPlan(
+    "cost",
+    slots,
+    snapshot,
+    reservedW,
+    protectedSoc,
+    dispatchCache,
+  );
   const plans = { baseline, priority, cost };
 
   // Dispatchable jobs must carry equal workloads. Duty-cycle devices are

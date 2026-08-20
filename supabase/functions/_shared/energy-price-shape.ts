@@ -148,17 +148,19 @@ const WEEKEND = new Set(["Sat", "Sun"]);
  */
 export const localSlot = (startMs: number, timeZone: string): LocalSlot => {
   const parts = formatterFor(timeZone).formatToParts(new Date(startMs));
-  const value = (type: string) =>
-    parts.find((part) => part.type === type)?.value ?? "";
-  const hour = Number(value("hour")) % 24;
-  const minute = Number(value("minute"));
-  const year = Number(value("year"));
-  const month = Number(value("month"));
-  const day = Number(value("day"));
+  const values: Record<string, string> = {};
+  for (const part of parts) {
+    if (part.type !== "literal") values[part.type] = part.value;
+  }
+  const hour = Number(values.hour) % 24;
+  const minute = Number(values.minute);
+  const year = Number(values.year);
+  const month = Number(values.month);
+  const day = Number(values.day);
   return {
-    dayType: WEEKEND.has(value("weekday")) ? "weekend" : "weekday",
+    dayType: WEEKEND.has(values.weekday) ? "weekend" : "weekday",
     quarter: hour * 4 + Math.floor(minute / 15),
-    dayKey: `${value("year")}-${value("month")}-${value("day")}`,
+    dayKey: `${values.year}-${values.month}-${values.day}`,
     dayOfYear: Math.round(
       (Date.UTC(year, month - 1, day) - Date.UTC(year, 0, 1)) / 86_400_000,
     ),
@@ -194,7 +196,10 @@ function observationsFrom(
   timeZone: string,
   asOfMs: number,
 ): Observation[] {
-  const byDay = new Map<string, Array<{ slot: LocalSlot; price: number; ms: number }>>();
+  const byDay = new Map<
+    string,
+    Array<{ slot: LocalSlot; price: number; ms: number }>
+  >();
   for (const row of rows) {
     const price = row.import_price_sek_per_kwh;
     if (typeof price !== "number" || !Number.isFinite(price) || price < 0) {

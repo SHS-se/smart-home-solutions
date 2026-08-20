@@ -48,11 +48,60 @@ export interface CurveRejection {
 
 const finite = (value: number) => Number.isFinite(value);
 
+interface CompiledCurve {
+  /** Total utility at each corresponding curve breakpoint. */
+  utilityAtPoint: number[];
+}
+
+// Curves are immutable planning inputs. Dispatch asks for their value many
+// thousands of times, so compile the integral once instead of rescanning every
+// preceding segment for every candidate. A WeakMap keeps the cache scoped to
+// the curve's lifetime and cannot retain completed plans.
+const compiledCurves = new WeakMap<UtilityCurve, CompiledCurve>();
+
+const compileCurve = (curve: UtilityCurve): CompiledCurve => {
+  const cached = compiledCurves.get(curve);
+  if (cached) return cached;
+  const utilityAtPoint: number[] = [];
+  const points = curve.points;
+  if (points.length > 0) {
+    utilityAtPoint[0] = Math.max(0, points[0].at) * points[0].sek_per_unit;
+    for (let index = 1; index < points.length; index += 1) {
+      const previous = points[index - 1];
+      const next = points[index];
+      utilityAtPoint[index] = utilityAtPoint[index - 1] +
+        (next.at - previous.at) *
+          (previous.sek_per_unit + next.sek_per_unit) / 2;
+    }
+  }
+  const compiled = { utilityAtPoint };
+  compiledCurves.set(curve, compiled);
+  return compiled;
+};
+
+/** Index of the first breakpoint at or above `at`, or points.length. */
+const breakpointAtOrAbove = (
+  points: UtilityCurve["points"],
+  at: number,
+): number => {
+  let low = 0;
+  let high = points.length;
+  while (low < high) {
+    const middle = low + Math.floor((high - low) / 2);
+    if (points[middle].at < at) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+};
+
 /** Validate concavity and ordering; a bad curve must never reach the solver. */
 export function validateCurve(curve: UtilityCurve): CurveRejection | null {
   const points = curve.points;
   if (points.length === 0) {
-    return { reason: "no_points", detail: "a curve needs at least one segment" };
+    return {
+      reason: "no_points",
+      detail: "a curve needs at least one segment",
+    };
   }
   for (const point of points) {
     if (!finite(point.at) || !finite(point.sek_per_unit)) {
@@ -75,10 +124,9 @@ export function validateCurve(curve: UtilityCurve): CurveRejection | null {
     if (points[index].sek_per_unit > points[index - 1].sek_per_unit + 1e-12) {
       return {
         reason: "not_concave",
-        detail:
-          `marginal value rises from ${points[index - 1].sek_per_unit} to ${
-            points[index].sek_per_unit
-          }`,
+        detail: `marginal value rises from ${
+          points[index - 1].sek_per_unit
+        } to ${points[index].sek_per_unit}`,
       };
     }
   }
@@ -107,18 +155,15 @@ export function marginalValue(curve: UtilityCurve, at: number): number {
   // Flat below the first breakpoint: the first unit into an empty store is
   // worth what the curve says, and there is nothing below it to interpolate to.
   if (at <= points[0].at) return points[0].sek_per_unit;
-  for (let index = 1; index < points.length; index += 1) {
-    const previous = points[index - 1];
-    const next = points[index];
-    if (at <= next.at) {
-      const span = next.at - previous.at;
-      if (span <= 0) return next.sek_per_unit;
-      const ratio = (at - previous.at) / span;
-      return previous.sek_per_unit +
-        (next.sek_per_unit - previous.sek_per_unit) * ratio;
-    }
-  }
-  return 0;
+  const index = breakpointAtOrAbove(points, at);
+  if (index >= points.length) return 0;
+  const previous = points[index - 1];
+  const next = points[index];
+  const span = next.at - previous.at;
+  if (span <= 0) return next.sek_per_unit;
+  const ratio = (at - previous.at) / span;
+  return previous.sek_per_unit +
+    (next.sek_per_unit - previous.sek_per_unit) * ratio;
 }
 
 /**
@@ -148,23 +193,21 @@ export function marginalValueHeld(curve: UtilityCurve, at: number): number {
 export function totalUtility(curve: UtilityCurve, at: number): number {
   const points = curve.points;
   if (points.length === 0 || at <= 0) return 0;
-  // Rectangle below the first breakpoint, then trapezoids between them, because
-  // the marginal value is now a sloped line rather than a flat step.
-  let total = 0;
   const first = points[0];
-  const flatTo = Math.min(at, first.at);
-  if (flatTo > 0) total += flatTo * first.sek_per_unit;
-  for (let index = 1; index < points.length; index += 1) {
-    const previous = points[index - 1];
-    const next = points[index];
-    if (at <= previous.at) break;
-    const upper = Math.min(at, next.at);
-    const span = upper - previous.at;
-    if (span <= 0) continue;
-    const valueAtUpper = marginalValue(curve, upper);
-    total += span * (previous.sek_per_unit + valueAtUpper) / 2;
-  }
-  return total;
+  if (at <= first.at) return at * first.sek_per_unit;
+
+  const { utilityAtPoint } = compileCurve(curve);
+  const index = breakpointAtOrAbove(points, at);
+  if (index >= points.length) return utilityAtPoint[points.length - 1];
+  const previous = points[index - 1];
+  const next = points[index];
+  const span = at - previous.at;
+  if (span <= 0) return utilityAtPoint[index - 1];
+  const valueAtUpper = previous.sek_per_unit +
+    (next.sek_per_unit - previous.sek_per_unit) *
+      (span / (next.at - previous.at));
+  return utilityAtPoint[index - 1] +
+    span * (previous.sek_per_unit + valueAtUpper) / 2;
 }
 
 /**
