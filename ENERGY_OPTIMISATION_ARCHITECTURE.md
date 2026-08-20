@@ -1,11 +1,13 @@
 # Energy optimisation architecture
 
-Status: **schema-v5 controllable-device selection, empirical history, room-keyed comfort planning and duty-cycle permit path implemented; energy-performance correction and cold-start priors in progress; deployment, live commissioning and device executors remain**
+Status: **schema-v6 state-dispatched battery, pool and EV planning, empirical history, room-keyed comfort planning and duty-cycle permit path implemented; private API contract hardening and live commissioning are next; device executors remain**
 
-Date: **2026-08-14**
+Date: **2026-08-20**
 
 Latest decisions: **§1.5** (Home Assistant room identity, exact comfort
-deadlines, shared preheating optimisation, live device-inventory reconciliation).
+deadlines, shared preheating optimisation, live device-inventory reconciliation)
+and **§5.7** (normative private API contract, compatibility negotiation,
+plan acknowledgement and cross-repository release gates).
 
 Source material: `ENERGY_OPTIMISATION_NOTES.md`, the current portal implementation in
 this repository, the current `shs_energy` Home Assistant integration in
@@ -1930,12 +1932,17 @@ Each solve receives:
 - plan-versus-actual state from the preceding slot; and
 - the terminal assumptions used beyond the binding horizon.
 
-Schema 3 carries `mode`, an explicit capability map, nullable PV and battery
-provenance, a nullable battery model, and a typed service control. A fixed load
+The deployed boundary accepts snapshot schemas 5 and 6. Schema 5 is the legacy
+fixed-block planning contract. Schema 6 adds measured pool state and plans the
+battery, connected EV and pool as stateful stores under the shared marginal-value
+dispatcher; each generated scenario names those stores in `dispatched_devices`.
+Both schemas carry `mode`, an explicit capability map, nullable PV and battery
+provenance, a nullable battery model, and typed service controls. A fixed load
 declares `fixed_power`; a modulating EV declares `discrete_current` with
 minimum/maximum/step amperes, phase count and per-phase voltage. Disabled
 capabilities must contribute zero power and cannot appear in a service request.
-Demo sources are marked `synthetic` and are accepted only when `mode=demo`.
+Only `mode=live` crosses the Home Assistant API. The promotional demo is a
+browser-local fixture and is never uploaded or stored as a live plan.
 
 Only snapshot data needed for the solve is uploaded. High-frequency reactive
 control remains local; the backend receives 15-minute actuals and discrete
@@ -2056,6 +2063,196 @@ an `off` that held for the remaining fourteen. A climate entity's `hvac_action`
 is authoritative over its mode: a thermostat left in `heat` all night is not a
 heater that ran all night.
 
+### 5.7 Private Home Assistant API contract
+
+The Home Assistant boundary is a private client–server API. More precisely,
+`shs_energy` is a device client of the SHS backend: Supabase Edge Functions are
+the authenticated facade, the planner and database are server components, and
+the browser portal is a second client over server-owned state. Home Assistant
+does not call the React website, and the website must not be open for planning
+to continue.
+
+The current routes are operation-oriented JSON endpoints (`pair-device`,
+`integration-status`, `integration-tariff`, `integration-prices`,
+`ha-energy-ingest`, and `energy-optimisation-ingest`). That RPC-style shape is
+appropriate for one private client; REST resource purity and public service
+discovery are not goals. The `/functions/v1` segment in the deployed URL is a
+Supabase gateway version, not an SHS API contract version.
+
+The current implementation is not a sufficient contract boundary. TypeScript
+interfaces and server validators, the portal's reader, and the integration's
+Python validator independently describe the same documents. A schema number
+does not prevent those implementations from disagreeing. In particular, a
+change can be valid according to the planner's schema-6 tests and still be
+refused by a schema-6 integration because no release gate has exercised the
+real generated document through the real consumer. Architecture prose and
+hand-built examples are useful explanations, but neither is a normative or
+executable contract.
+
+The rules in this section are release constraints, not optional future
+hardening. No new Home Assistant-facing plan semantics may be deployed until
+the canonical schemas and the provider–consumer gate below exist.
+
+#### 5.7.1 One normative contract source
+
+Maintain one versioned OpenAPI 3.1 document with JSON Schema components for
+every Home Assistant request, success response and error response. It may stay
+private in the source repository or a private contract package; serving public
+API documentation is unnecessary. Generated reference documentation is a
+view of that source, never a second definition.
+
+The canonical source must define distinct types such as `SnapshotV5`,
+`SnapshotV6`, `PlanV5` and `PlanV6`. A type named `V5` whose discriminator
+accepts both 5 and 6 hides the exact differences the version is meant to make
+visible. The contract must specify required and optional fields, enums, units,
+ranges, nullability, timestamp forms, omission-versus-empty semantics, maximum
+sizes and whether unknown fields are accepted.
+
+Generate TypeScript types and structural runtime validators for the edge and
+portal, and Python types and structural validators for `shs_energy`, from that
+source. Domain invariants which JSON Schema cannot express—contiguous UTC
+slots, electrical balance, aligned charger increments, equal scenario horizons
+and state transitions—remain explicit semantic validators. They must consume
+the generated types and run against the shared contract corpus; they must not
+silently recreate the structural schema.
+
+#### 5.7.2 Independent version axes and negotiation
+
+Keep four independent identifiers:
+
+- `api_version` versions endpoint envelopes, common errors and acknowledgement
+  behaviour;
+- `snapshot_schema_version` identifies exactly what Home Assistant sent;
+- `plan_schema_version` identifies exactly what Home Assistant must interpret
+  and execute; and
+- `model_version` identifies the algorithm and decision behaviour for replay
+  and comparison, but never acts as a transport compatibility gate.
+
+The integration release version is diagnostic metadata, not the compatibility
+decision. Each planning request must declare its snapshot schema and the exact
+plan schemas it accepts, for example `accepted_plan_schema_versions: [5, 6]`.
+The server must return only one of those versions. The ability to produce a
+snapshot version must not be treated as proof that the client understands every
+later interpretation of a plan carrying the same number.
+
+A new optional descriptive field with unchanged meaning may remain in the same
+schema when readers are required to ignore unknown fields. A new required
+field, a changed invariant, or any changed execution meaning requires a new
+schema version even when the JSON shape could technically remain unchanged.
+An algorithm-only change increments `model_version`, not the plan schema.
+
+`integration-status` must report the server API version, supported snapshot and
+plan schemas, the most recent request ID, and any minimum supported contract.
+This is compatibility and diagnostics discovery, not a public API catalogue.
+When no mutually supported contract exists, return a structured
+`client_upgrade_required` response (HTTP 426) instead of emitting a document
+the client will later refuse.
+
+#### 5.7.3 Plan lifecycle and acknowledgement
+
+Plan generation, persistence and local acceptance are different states and
+must never be collapsed into one "current plan" flag:
+
+1. Home Assistant submits a versioned snapshot and requests a plan.
+2. The server validates the snapshot, generates a plan, stores the generated
+   run and returns it with `request_id`, `plan_id` and `snapshot_id`.
+3. Home Assistant validates the structural and semantic contract.
+4. Home Assistant acknowledges `accepted` or `rejected` for that exact plan.
+   A rejection carries stable error codes and field paths, not only prose.
+5. Only an accepted, unexpired plan is described as executable. The latest
+   generated plan may still be displayed for diagnosis, but it is not labelled
+   as the plan Home Assistant is executing.
+
+The server therefore records both the latest generated plan and the latest
+Home Assistant acknowledgement. The portal must distinguish at least:
+
+- no plan request has arrived;
+- the latest ingest or generation failed;
+- a plan was generated and is awaiting acknowledgement;
+- Home Assistant rejected the generated plan, including its reason;
+- Home Assistant accepted the plan and it is executable; and
+- the latest generated or accepted plan expired without replacement.
+
+Today the server stores a generated plan before the integration validates the
+response, so a local rejection does not itself delete or expire the portal's
+copy. Conversely, the portal cannot currently know that Home Assistant rejected
+it. An expired stored plan means no later generation successfully replaced it;
+an ingest/gateway failure and a client contract rejection are separate faults
+and must remain separate in both storage and UI. The portal wording must say
+that Home Assistant *requests* plans, the server generates them, and Home
+Assistant accepts and executes compatible plans.
+
+#### 5.7.4 Common success and error envelopes
+
+Every endpoint returns the same versioned outer envelope. Errors carry:
+
+- a stable machine-readable `code`;
+- a safe human-readable `message`;
+- a JSON field `path` where applicable;
+- structured `details` for multiple independent failures;
+- `retryable`, so the integration can distinguish configuration, compatibility
+  and transient infrastructure failures; and
+- a `request_id` present in the integration log, portal diagnostics and edge
+  logs.
+
+HTTP status still communicates the broad class. The body carries the durable
+product meaning. A proxy response without a valid envelope is reported as an
+upstream transport failure with its request/correlation headers; it must not be
+presented as a planner validation error. Subscription, authentication,
+validation, conflict, upgrade-required, rate-limit and internal failures use
+documented codes consistently across routes.
+
+#### 5.7.5 Provider–consumer verification and release order
+
+Contract CI must cross the repository boundary. For every supported schema:
+
+1. the real TypeScript planner generates canonical success, incomplete and
+   infeasible plans from fixed snapshots;
+2. the server validates every emitted response against the canonical schema;
+3. the real Python `shs_energy` reader validates those exact generated plans;
+4. mutation cases prove that both sides reject the same missing fields, wrong
+   units, invalid enums and semantic violations; and
+5. the portal reads the same corpus and presents the same generated,
+   acknowledged, rejected and expired states.
+
+The corpus must cover every control shape and lifecycle branch, including a
+dispatched pool, a dispatched EV with zero charge, a dispatched EV charging at
+valid minimum/target/maximum current steps, battery charge and discharge,
+duty-cycle inhibition, room heating, stale provenance, an expired plan and an
+explicit HA rejection. Hand-written consumer fixtures alone are insufficient:
+at least one fixture per branch must be produced by the shipping provider.
+
+Publishing or deploying an edge function that changes an HA-bound schema is
+blocked unless the provider suite and the pinned integration consumer suite
+both pass. Rollout order is reader first, writer second:
+
+1. publish the canonical contract and generated readers;
+2. release an integration that advertises and accepts the new plan schema;
+3. observe supported versions from active installations;
+4. allow the server to emit the new schema only to clients that advertised it;
+5. retain the preceding schema for the declared upgrade window; and
+6. retire it deliberately once telemetry shows that the supported population
+   has moved, returning `client_upgrade_required` to anything older.
+
+#### 5.7.6 Endpoint cohesion and migration
+
+First describe and test the existing endpoints without changing their runtime
+behaviour; mixing a contract migration with a transport redesign would create
+another untestable rollout. Once the shared contract and compatibility gate are
+live, separate the multiplexed `energy-optimisation-ingest` operation into
+cohesive contracts for:
+
+- device-inventory reconciliation and website-owned planning requests;
+- quarter-hour telemetry and upload watermarks;
+- snapshot-to-plan generation; and
+- plan acknowledgement.
+
+Daily billing aggregates, tariff catalogues, supplier prices, pairing and status
+remain separate operations. Splitting is justified by retry and ownership
+boundaries, not REST aesthetics: a telemetry retry must not accidentally change
+device configuration, and a plan rejection must not discard accepted telemetry
+watermarks.
+
 ## 6. Planned-control scenario
 
 ### 6.1 Cadence
@@ -2086,10 +2283,12 @@ sequenceDiagram
     HA->>API: Submit home-scoped, versioned snapshot
     API->>Solver: Validate and compile model
     Solver-->>API: Return plan plus binding/expiry metadata
-    API->>DB: Overwrite current full plan; append compact summary
-    API-->>HA: Authorised plan response
-    HA->>HA: Validate slots, units, home, version, freshness
-    HA->>Ctrl: Publish current advisory request / bounded target
+    API->>DB: Store generated plan and append compact summary
+    API-->>HA: Versioned plan response with request and plan IDs
+    HA->>HA: Validate structure, semantics, units and freshness
+    HA->>API: Acknowledge accepted or rejected plan ID
+    API->>DB: Record HA acknowledgement and rejection details
+    HA->>Ctrl: Publish accepted advisory request / bounded target
     Ctrl->>Ctrl: Apply overrides, safety, thermostat, and interlocks
     Ctrl-->>HA: Confirm actual state or report fault
     HA->>API: Upload 15-minute actuals and control events
@@ -3308,20 +3507,32 @@ Required invariants include:
 
 ## 15. Immediate next actions
 
-1. Deploy the migration, edge functions and portal to the test environment;
+1. Freeze new Home Assistant-facing plan semantics except for correcting the
+   current rejected-plan defect. Capture the six existing Home Assistant
+   endpoints in the normative OpenAPI/JSON Schema source defined by §5.7,
+   including the generated-plan and Home Assistant acknowledgement lifecycle.
+2. Generate the TypeScript and Python structural readers, build the shared
+   provider-produced contract corpus, and make both repositories' CI required
+   deployment gates. The first regression fixture must be a schema-6 dispatched
+   EV charging at valid minimum/target/maximum current steps.
+3. Add explicit accepted-plan-version negotiation, the common error envelope
+   and request IDs before the next plan-schema change. Then add plan
+   acknowledgement so the portal can distinguish generation failure, HA
+   rejection and ordinary expiry.
+4. Deploy the migration, edge functions and portal to the test environment;
    install the matching integration build and pair it to the intended home.
-2. Install integration `0.6.0-beta.2`, run **Live / automatic**, then apply the
-   two explicit installed ratings that discovery cannot infer while equipment
-   is off: 3.0 kW boiler and the confirmed pool rating if its commissioning
-   measurement is unavailable.
-3. Keep the 80% end-of-solar target as a priced preference during shadow mode;
+5. Install the current matching integration build, run **Live / automatic**,
+   then apply the two explicit installed ratings that discovery cannot infer
+   while equipment is off: 3.0 kW boiler and the confirmed pool rating if its
+   commissioning measurement is unavailable.
+6. Keep the 80% end-of-solar target as a priced preference during shadow mode;
    make it hard only after replay demonstrates that the resulting displaced
    loads and imports match the intended customer promise.
-4. Obtain a fresh Node-RED export and create one visible, confirmation-aware
+7. Obtain a fresh Node-RED export and create one visible, confirmation-aware
    executor per device that consumes the planned and reactive request entities.
-5. Capture at least 30 observe-only days, reconcile the model against HA's
+8. Capture at least 30 observe-only days, reconcile the model against HA's
    Energy dashboard, and publish forecast-versus-actual error by source.
-6. Build and replay the seasonal/condition fixtures in section 10 before fitting
+9. Build and replay the seasonal/condition fixtures in section 10 before fitting
    thermal, pool, boiler or weather-sensitive parameters or enabling control.
 
 The central architectural principle is: **the server decides what energy is
