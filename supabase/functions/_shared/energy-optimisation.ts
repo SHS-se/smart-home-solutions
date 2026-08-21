@@ -2437,6 +2437,11 @@ function scheduleServices(
         fixed_load_w: fixedLoadW(slot) + reservedW[index] + dutyCycleW[index],
         import_price_sek_per_kwh: slot.shadow_import_sek_per_kwh,
         export_price_sek_per_kwh: slot.shadow_export_sek_per_kwh,
+        // Which quarters the plan commits to, and which of them the market has
+        // actually quoted. The battery may reason about the shaped prior all it
+        // likes, but it may not spend committed money on it.
+        binding: slot.binding,
+        published_price: slot.import_price_sek_per_kwh !== null,
       }));
       dispatchBundle = {
         stores,

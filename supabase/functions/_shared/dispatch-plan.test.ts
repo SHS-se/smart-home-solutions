@@ -247,6 +247,58 @@ Deno.test("settling never leaves a compressor run below its minimum", () => {
   }
 });
 
+Deno.test("the battery will not buy binding energy against an unpublished sell leg", () => {
+  // Nord Pool publishes one day ahead and the rest of the horizon is a shaped
+  // prior. The prior is flatter than any real day and never as cheap, so the
+  // last published quarters always look like the bargain of the week: one
+  // deployed plan bought at a published 0.905-0.968 SEK/kWh to discharge into
+  // a modelled 1.75-1.98. The buy leg is binding and real, the sell leg is a
+  // forecast. Export already refuses to act without a published price; buying
+  // has to hold the same line.
+  const dark = new Array(SLOTS_PER_DAY).fill(0);
+  const build = (dearPublishedEvening: boolean) =>
+    [...dark, ...dark].map((pv_w, index): DispatchSlot => {
+      const published = index < SLOTS_PER_DAY;
+      // Cheap all through the published day, except optionally at its end.
+      const price = published
+        ? (dearPublishedEvening && index >= SLOTS_PER_DAY - 8 ? 3.0 : 0.9)
+        : 1.9; // the flat modelled prior
+      return {
+        pv_w,
+        fixed_load_w: 600,
+        import_price_sek_per_kwh: price,
+        export_price_sek_per_kwh: 0.2,
+        // Binding and published are the same window here, as they are in a
+        // real plan: the day-ahead prices are what the plan commits against.
+        binding: published,
+        published_price: published,
+      };
+    });
+
+  const gridCharged = (slots: DispatchSlot[]) => {
+    const store = batteryStore(slots.length, 2, 2.1);
+    const result = planDispatch(slots, [store], LIMITS);
+    let watts = 0;
+    for (let index = 0; index < SLOTS_PER_DAY; index += 1) {
+      const part = result.allocations[index].find((entry) =>
+        entry.store_key === "battery" && entry.direction === "charge"
+      );
+      watts += part?.grid_w ?? 0;
+    }
+    return watts;
+  };
+
+  assertEquals(
+    gridCharged(build(false)) > 1,
+    false,
+    "nothing published is dearer than the cheap hours, so the only reason to buy is the prior",
+  );
+  assert(
+    gridCharged(build(true)) > 1,
+    "a published dear evening is a real sell leg, and buying for it must still work",
+  );
+});
+
 Deno.test("a full car stops bidding and the energy is exported", () => {
   const slots = buildSlots([solarDay(8_000)]);
   const ev = evStore(slots.length, 500, slots.length - 1);

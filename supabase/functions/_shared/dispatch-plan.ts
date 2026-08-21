@@ -38,6 +38,15 @@ export interface DispatchSlot {
   fixed_load_w: number;
   import_price_sek_per_kwh: number;
   export_price_sek_per_kwh: number;
+  /**
+   * Whether this quarter is inside the window the plan commits to.
+   *
+   * Absent means the caller is not distinguishing, and every quarter is treated
+   * as indicative — which is what the dispatch tests want.
+   */
+  binding?: boolean;
+  /** Whether the market has actually published this quarter's price. */
+  published_price?: boolean;
 }
 
 export interface DispatchStore {
@@ -308,6 +317,34 @@ function headroomW(
 }
 
 /**
+ * Whether a store may buy grid energy in this quarter to sell back later.
+ *
+ * Nord Pool publishes one day ahead and the rest of the horizon is a shaped
+ * prior. The prior is flatter than any real day and never as cheap, so the last
+ * published quarters always look like the bargain of the week — one deployed
+ * plan bought at a published 0.905 SEK/kWh to discharge into a modelled 1.8,
+ * spending inside its binding window against a forecast. Export already refuses
+ * to act without a published price; buying holds the same line.
+ *
+ * Outside the binding window the plan is indicative and will be regenerated, so
+ * it may reason about the prior freely. Inside it, the round trip needs a sell
+ * leg the market has actually quoted.
+ */
+function sellLegIsPublished(
+  slots: DispatchSlot[],
+  index: number,
+  roundTrip: number,
+): boolean {
+  if (slots[index].binding !== true) return true;
+  const needed = slots[index].import_price_sek_per_kwh / Math.max(1e-9, roundTrip);
+  for (let ahead = index + 1; ahead < slots.length; ahead += 1) {
+    if (slots[ahead].published_price !== true) continue;
+    if (slots[ahead].import_price_sek_per_kwh > needed) return true;
+  }
+  return false;
+}
+
+/**
  * Allocate energy to the stores that value it above its cost.
  *
  * Greedy on the best (value − cost) surplus across every store and every slot
@@ -543,18 +580,36 @@ export function planDispatch(
           )
         ) continue;
 
+        // Only a store that sells its charge back is doing arbitrage. A pool
+        // buys warmth and a car buys range; neither is betting on a price.
+        const roundTrip = store.discharge
+          ? store.units_per_kwh(state[index], index) /
+            Math.max(1e-9, store.discharge.state_per_kwh_out(state[index], index))
+          : 0;
         const fullW = Math.min(
           store.max_power_w,
           ...indices.map((slotIndex) => {
             const units = store.units_per_kwh(state[slotIndex], slotIndex);
-            return units <= 0 ? 0 : Math.min(
+            if (units <= 0) return 0;
+            const slot = slots[slotIndex];
+            const gridBarred = store.discharge !== undefined &&
+              !sellLegIsPublished(slots, slotIndex, roundTrip);
+            return Math.min(
               headroomW(
-                slots[slotIndex],
+                slot,
                 limits,
                 occupiedW[slotIndex],
                 returnedW[slotIndex],
               ),
               chargeRoomW(store, suffixMax[slotIndex], units),
+              // Barred from the grid, it may still take what the roof is
+              // giving away: that energy costs no committed money.
+              gridBarred
+                ? Math.max(
+                  0,
+                  slot.pv_w - slot.fixed_load_w - occupiedW[slotIndex],
+                )
+                : Infinity,
             );
           }),
         );
