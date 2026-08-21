@@ -138,6 +138,69 @@ Deno.test("charging is spread across slots, not one contiguous block", () => {
   assert(runs.length >= 2, `expected several runs, got ${runs.length}`);
 });
 
+Deno.test("spare solar is shared by draw, not claimed by whoever bid first", () => {
+  // Each bid was priced against the occupancy at the moment it was evaluated,
+  // so whichever store won a sunny quarter first booked the whole surplus at
+  // the export price, and a store that won the same quarter later paid import
+  // for all of it. Nothing re-priced the first once the second arrived. One
+  // observed quarter charged the battery with 1106 W booked at 0.846 SEK/kWh
+  // while the house imported at 1.852, flipping that charge from a gain of
+  // 0.83 SEK/kWh to a loss of 0.17 — decided by allocation order alone.
+  const slots = buildSlots([solarDay(2_600), solarDay(2_600)]);
+  const stores = [
+    evStore(slots.length, 90, slots.length - 1),
+    poolStore(slots.length, 26),
+    batteryStore(slots.length, 4, 2.4),
+  ];
+
+  const result = planDispatch(slots, stores, LIMITS);
+
+  const misquoted: string[] = [];
+  let shared = 0;
+  for (const [index, slot] of slots.entries()) {
+    const charges = result.allocations[index].filter((part) =>
+      part.direction === "charge"
+    );
+    if (charges.length === 0) continue;
+    if (charges.length > 1) shared += 1;
+
+    const chargeW = charges.reduce((sum, part) => sum + part.power_w, 0);
+    const returnedW = stores.reduce(
+      (sum, store) => sum + result.discharge_w[store.key][index],
+      0,
+    );
+    // The quarter's spare PV is one pool of energy, and no store has a claim on
+    // it beyond its share of the draw. Splitting it pro-rata is the only
+    // division that does not depend on bid order and still adds back up to the
+    // quarter's real grid cost.
+    const spareW = Math.max(0, slot.pv_w + returnedW - slot.fixed_load_w);
+    const solarShare = chargeW > 0 ? Math.min(1, spareW / chargeW) : 0;
+
+    for (const part of charges) {
+      const fromSolarW = part.power_w * solarShare;
+      const fromGridW = part.power_w - fromSolarW;
+      const owed = (fromSolarW * slot.export_price_sek_per_kwh +
+        fromGridW * slot.import_price_sek_per_kwh) / part.power_w;
+      if (Math.abs(owed - part.energy_cost_sek_per_kwh) > 1e-6) {
+        misquoted.push(
+          `slot ${index} ${part.store_key}: booked ${
+            part.energy_cost_sek_per_kwh.toFixed(4)
+          }, its ${(solarShare * 100).toFixed(0)}% share of ${
+            spareW.toFixed(0)
+          } W spare says ${owed.toFixed(4)}`,
+        );
+      }
+    }
+  }
+
+  assert(shared > 0, "no quarter had two stores charging, so nothing was tested");
+  assertEquals(
+    misquoted.slice(0, 3),
+    [],
+    "a charge must be costed by its share of the quarter, not by bid order",
+  );
+});
+
 Deno.test("a full car stops bidding and the energy is exported", () => {
   const slots = buildSlots([solarDay(8_000)]);
   const ev = evStore(slots.length, 500, slots.length - 1);

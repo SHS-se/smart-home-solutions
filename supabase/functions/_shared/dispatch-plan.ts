@@ -821,6 +821,44 @@ export function planDispatch(
   const partAt = (store: DispatchStore, index: number) =>
     allocations[index].find((part) => part.store_key === store.key);
 
+  /**
+   * Re-price one quarter's charges against the company they ended up keeping.
+   *
+   * The auction quotes each bid against the occupancy at the moment it is
+   * evaluated, so whichever store wins a sunny quarter first books the whole
+   * surplus at the export price and a store that wins the same quarter later
+   * pays import for all of it. Nothing re-prices the first once the second
+   * arrives, and one observed quarter charged the battery with 1106 W booked
+   * at 0.846 SEK/kWh while the house imported at 1.852 — the sign of that
+   * decision settled by allocation order alone.
+   *
+   * The quarter's spare PV is one pool of energy and no store has a claim on it
+   * beyond its share of the draw. Splitting it pro-rata is the only division
+   * that does not depend on bid order and still adds back up to what the
+   * quarter really costs.
+   */
+  const recostSlot = (index: number): void => {
+    const slot = slots[index];
+    const charges = allocations[index].filter((part) =>
+      part.direction === "charge"
+    );
+    if (charges.length === 0) return;
+    const chargeW = charges.reduce((sum, part) => sum + part.power_w, 0);
+    if (chargeW <= 0) return;
+    const spareW = Math.max(
+      0,
+      slot.pv_w + returnedW[index] - slot.fixed_load_w,
+    );
+    const solarShare = Math.min(1, spareW / chargeW);
+    for (const part of charges) {
+      part.solar_w = part.power_w * solarShare;
+      part.grid_w = part.power_w - part.solar_w;
+      part.energy_cost_sek_per_kwh =
+        (part.solar_w * slot.export_price_sek_per_kwh +
+          part.grid_w * slot.import_price_sek_per_kwh) / part.power_w;
+    }
+  };
+
   /** Net worth of one committed part where the executed trajectory puts it. */
   const settledNet = (store: DispatchStore, index: number): number => {
     const part = partAt(store, index);
@@ -867,10 +905,15 @@ export function planDispatch(
     project(store, powerW[store.key], dischargeW[store.key], 0, stateByKey[store.key]);
   };
 
-  for (const store of stores) {
-    // A minimum-run block cleared its cost as a block and is released as one,
-    // or the schedule would keep a compressor start it no longer pays for.
-    for (let pass = 0; pass <= count; pass += 1) {
+  // Every store settles in the same loop, because releasing one store's charge
+  // frees surplus that re-prices another's in the same quarter. Settling them
+  // one after another would leave whichever went first holding a price the
+  // rest of the pass had already moved.
+  //
+  // A minimum-run block cleared its cost as a block and is released as one, or
+  // the schedule would keep a compressor start it no longer pays for.
+  for (let pass = 0; pass <= count * stores.length; pass += 1) {
+    for (const store of stores) {
       project(
         store,
         powerW[store.key],
@@ -878,8 +921,15 @@ export function planDispatch(
         0,
         stateByKey[store.key],
       );
+    }
+    for (let index = 0; index < count; index += 1) recostSlot(index);
+
+    let starved: { store: DispatchStore; indices: number[] } | null = null;
+    let worst: { store: DispatchStore; indices: number[]; net: number } | null =
+      null;
+    for (const store of stores) {
       const runs = new Map<string, { indices: number[]; net: number }>();
-      let starved: string | null = null;
+      let starvedKey: string | null = null;
       for (let index = 0; index < count; index += 1) {
         const part = partAt(store, index);
         if (!part) continue;
@@ -888,23 +938,26 @@ export function planDispatch(
         run.indices.push(index);
         run.net += settledNet(store, index);
         runs.set(key, run);
-        if (starved === null && overdrawn(store, index)) starved = key;
+        if (starvedKey === null && overdrawn(store, index)) starvedKey = key;
       }
       // Resolve the run only once the scan has collected all of its slots.
-      if (starved !== null) {
-        releaseRun(store, runs.get(starved)!.indices);
-        continue;
+      if (starvedKey !== null && starved === null) {
+        starved = { store, indices: runs.get(starvedKey)!.indices };
       }
-      let worst: { indices: number[]; net: number } | null = null;
       for (const run of runs.values()) {
         if (run.net < -1e-9 && (worst === null || run.net < worst.net)) {
-          worst = run;
+          worst = { store, indices: run.indices, net: run.net };
         }
       }
-      if (worst === null) break;
-      releaseRun(store, worst.indices);
     }
+    // An unsupplied discharge is a feasibility failure, not a price call, so
+    // it goes before anything that is merely unprofitable.
+    const target = starved ?? worst;
+    if (target === null) break;
+    releaseRun(target.store, target.indices);
+  }
 
+  for (const store of stores) {
     // Publish the settled arithmetic. The allocation's own record and the
     // executed trajectory used to disagree, which is what hid all of this.
     const runNet = new Map<number, number>();
