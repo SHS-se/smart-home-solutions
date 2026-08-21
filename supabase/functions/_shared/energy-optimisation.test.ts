@@ -345,6 +345,180 @@ Deno.test("duty-cycle boiler is inhibited around planned loads without invented 
   );
 });
 
+Deno.test("the battery covers the boiler too, not just the base load", () => {
+  // The battery sized every discharge against `fixed_load_w + occupiedW - pv`,
+  // and the duty-cycle boiler is in none of those terms — it is written into
+  // the schedule after the auction has closed. So the battery covered the
+  // house and stopped, and the grid covered the hot water at any price. One
+  // observed quarter discharged 149 W (exactly base minus PV) while importing
+  // the boiler's 1969 W at 3.281 SEK/kWh with 14.4 kWh in the battery.
+  const base = input();
+  const start = Date.parse("2026-08-10T08:00:00.000Z");
+  const slots = Array.from({ length: 288 }, (_value, index) => ({
+    start: new Date(start + index * 15 * 60_000).toISOString(),
+    pv_forecast_w: 0,
+    base_load_forecast_w: 800,
+    base_load_p10_w: 600,
+    base_load_p90_w: 1_100,
+    // Dear now against a cheap replacement later, which is what makes the
+    // stored energy worth spending rather than holding.
+    import_price_sek_per_kwh: index < 96 ? (index < 40 ? 3.3 : 0.5) : null,
+    export_price_sek_per_kwh: index < 96 ? (index < 40 ? 0.4 : 0.1) : null,
+  }));
+  const snapshot = input({
+    schema_version: 6,
+    slots,
+    outdoor_temperature_c: slots.map(() => 22),
+    capabilities: { pv: false, battery: true, pool: false, boiler: true, ev: false },
+    battery: { ...base.battery, soc: 0.95 },
+    pool: null,
+    sources: { ...base.sources, pv: null },
+    pv_calibration: {
+      correction_factor_by_lead_day: [1, 1, 1, 1],
+      sample_count_by_lead_day: [0, 0, 0, 0],
+    },
+    service_requirement_sample_days: {},
+    services: [
+      {
+        id: "boiler:horizon",
+        device: "boiler" as const,
+        earliest_start: slots[0].start,
+        deadline: new Date(start + 96 * 15 * 60_000).toISOString(),
+        required_kwh: 6,
+        priority: 1,
+        control: {
+          type: "duty_cycle" as const,
+          rated_power_w: 3_000,
+          expected_power_w_by_slot: slots.map(() => 900),
+          max_consecutive_inhibit_slots: 20,
+        },
+      },
+    ],
+  });
+
+  const plan = generateOptimisationPlan(snapshot, new Date(NOW));
+  assertEquals(plan.validation_errors, []);
+
+  // A battery may stop part way through a quarter because the charge it still
+  // holds is worth more than the price — that is the curve doing its job. What
+  // it may not do is stop exactly at the base load every time, which is the
+  // fingerprint of sizing against a deficit the boiler was never in.
+  const cappedAtBase: string[] = [];
+  let coversBoiler = 0;
+  for (const slot of plan.plans.priority.slots) {
+    if (slot.boiler_expected_w <= 1 || slot.battery_discharge_w <= 1) continue;
+    const houseOnlyW = slot.base_w - slot.pv_w;
+    if (Math.abs(slot.battery_discharge_w - houseOnlyW) < 1) {
+      cappedAtBase.push(
+        `${slot.start}: discharged ${slot.battery_discharge_w.toFixed(0)} W, ` +
+          `exactly base minus PV, while importing the boiler's ${
+            slot.grid_import_w.toFixed(0)
+          } W`,
+      );
+    }
+    if (slot.battery_discharge_w > houseOnlyW + 1) coversBoiler += 1;
+  }
+  assertEquals(
+    cappedAtBase.slice(0, 3),
+    [],
+    "a discharge must not stop at the base load while the grid takes the boiler",
+  );
+  assert(
+    coversBoiler > 0,
+    "no quarter had the battery reach past the base load into the boiler",
+  );
+});
+
+Deno.test("the stores leave the connection the services still need", () => {
+  // The auction spends the grid import limit before the duty-cycle pass runs,
+  // so a service that arrives afterwards can find nothing left. One observed
+  // quarter filled the connection to the watt — pool, then car, then the
+  // battery topping up last — and dropped the boiler's demand as unserved.
+  const base = input();
+  const start = Date.parse("2026-08-10T08:00:00.000Z");
+  const slots = Array.from({ length: 288 }, (_value, index) => ({
+    start: new Date(start + index * 15 * 60_000).toISOString(),
+    pv_forecast_w: 0,
+    base_load_forecast_w: 800,
+    base_load_p10_w: 600,
+    base_load_p90_w: 1_100,
+    // Cheap enough that every store wants all of it at once.
+    import_price_sek_per_kwh: index < 96 ? 0.35 : null,
+    export_price_sek_per_kwh: index < 96 ? 0.1 : null,
+  }));
+  const snapshot = input({
+    schema_version: 6,
+    slots,
+    outdoor_temperature_c: slots.map(() => 22),
+    capabilities: { pv: false, battery: true, pool: true, boiler: true, ev: true },
+    battery: { ...base.battery, soc: 0.1 },
+    pool: { water_temperature_c: 26, volume_m3: 55 },
+    sources: { ...base.sources, pv: null },
+    pv_calibration: {
+      correction_factor_by_lead_day: [1, 1, 1, 1],
+      sample_count_by_lead_day: [0, 0, 0, 0],
+    },
+    // A connection barely wider than the car alone.
+    grid: { import_limit_w: 12_000, export_limit_w: 12_000 },
+    ev_battery: {
+      name: "Tesla Model Y",
+      connected: true,
+      capacity_kwh: 77.25,
+      soc: 0.3,
+      departure_target_soc: 0.9,
+      charge_efficiency: 0.92,
+      available_from: slots[0].start,
+      departure: null,
+      priority: 3,
+      source_entity_ids: {
+        connected: "binary_sensor.cable",
+        soc: "sensor.level",
+        target_soc: "number.limit",
+        energy_remaining: null,
+        charge_current: "number.current",
+      },
+    },
+    service_requirement_sample_days: {},
+    services: [
+      {
+        id: "boiler:horizon",
+        device: "boiler" as const,
+        earliest_start: slots[0].start,
+        deadline: new Date(start + 96 * 15 * 60_000).toISOString(),
+        required_kwh: 6,
+        priority: 1,
+        control: {
+          type: "duty_cycle" as const,
+          rated_power_w: 3_000,
+          expected_power_w_by_slot: slots.map(() => 900),
+          max_consecutive_inhibit_slots: 20,
+        },
+      },
+      routedEvService(input({ slots })),
+    ],
+  });
+
+  const plan = generateOptimisationPlan(snapshot, new Date(NOW));
+  // Every scenario, not only the dispatched one: baseline never inhibits the
+  // boiler, so it is where an unreserved connection shows first.
+  for (const key of ["baseline", "cost", "priority"] as const) {
+    const scenario = plan.plans[key];
+    const starved = scenario.slots
+      .filter((slot) => slot.unserved_w > 1)
+      .map((slot) =>
+        `${key} ${slot.start}: ${slot.unserved_w.toFixed(1)} W unserved, ${
+          slot.battery_charge_w.toFixed(0)
+        } W went to the battery`
+      );
+    assertEquals(
+      starved.slice(0, 3),
+      [],
+      "a store may not spend connection a service needs",
+    );
+    assertEquals(scenario.validation_errors, []);
+  }
+});
+
 Deno.test("deferred hot water comes back at the cheapest hours, not the quietest", () => {
   // The recovery ranking sorted on residual load with no price term, so the
   // catch-up landed in the quietest quarter — quiet precisely because PV was

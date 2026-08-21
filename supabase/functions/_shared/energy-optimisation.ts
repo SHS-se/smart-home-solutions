@@ -2403,6 +2403,28 @@ function scheduleServices(
   // and independent of the scenario label, so solve each distinct input once
   // per generated plan rather than spending most of the Edge Function's CPU
   // solving the same 288-quarter problem two or three times.
+  // The duty-cycle services are load whether or not they are stores. Leaving
+  // them out of the auction's inputs cost twice over: the battery sized every
+  // discharge against a deficit that excluded the boiler, so the grid covered
+  // the hot water at any price, and the stores were free to spend a connection
+  // the boiler still needed, so its demand was dropped as unserved. The
+  // expected profile is what the thermostat draws if nothing interferes, and
+  // it is the same in every scenario, so it belongs in `fixed_load_w` beside
+  // the base load. Inhibiting or deferring a quarter later only ever frees
+  // room the auction had already reserved.
+  const dutyCycleW = new Array(slots.length).fill(0);
+  for (const service of snapshot.services.filter(isDutyCycleService)) {
+    const earliest = isoMs(service.earliest_start);
+    const deadline = isoMs(service.deadline);
+    for (const slot of slots) {
+      if (slot.epoch_ms < earliest || slot.epoch_ms + SLOT_MS > deadline) {
+        continue;
+      }
+      dutyCycleW[slot.index] +=
+        service.control.expected_power_w_by_slot[slot.index] ?? 0;
+    }
+  }
+
   const dispatchKey = reservedW.every((watts) => Math.abs(watts) < 1e-9)
     ? "unreserved"
     : reservedW.join(",");
@@ -2412,7 +2434,7 @@ function scheduleServices(
     if (stores) {
       const dispatchSlots = slots.map((slot, index) => ({
         pv_w: slot.pv_w,
-        fixed_load_w: fixedLoadW(slot) + reservedW[index],
+        fixed_load_w: fixedLoadW(slot) + reservedW[index] + dutyCycleW[index],
         import_price_sek_per_kwh: slot.shadow_import_sek_per_kwh,
         export_price_sek_per_kwh: slot.shadow_export_sek_per_kwh,
       }));
