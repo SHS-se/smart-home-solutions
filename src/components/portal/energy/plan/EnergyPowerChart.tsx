@@ -7,6 +7,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import type { Axis } from '@/lib/energy-shift/chart-axes';
 import { SIGNIFICANT_POWER_W } from '@/lib/energy-shift/energy-timeline';
 
 interface EnergyChartRow {
@@ -19,6 +20,14 @@ const CHART_MARGIN = { top: 22, right: 10, left: 0, bottom: 4 };
 
 /** Series drawn against the right-hand percentage axis rather than kW. */
 const PERCENT_SERIES = new Set(['homeSoc', 'evSoc']);
+
+/** Prices are small numbers, not watts; never discard them as chart noise. */
+const PRICE_SERIES = new Set([
+  'allInImportPrice',
+  'allInExportPrice',
+  'modelledImportPrice',
+  'modelledExportPrice',
+]);
 
 /** Only the real range is labelled; the domain may reach below zero. */
 const SOC_TICKS = [0, 25, 50, 75, 100];
@@ -50,7 +59,7 @@ const ChartTooltip: React.FC<{
   const entries = (payload ?? []).filter(entry => {
     const value = Number(entry.value);
     if (!Number.isFinite(value)) return false;
-    return PERCENT_SERIES.has(String(entry.dataKey))
+    return PERCENT_SERIES.has(String(entry.dataKey)) || PRICE_SERIES.has(String(entry.dataKey))
       ? true
       : Math.abs(value) >= SIGNIFICANT_POWER_W;
   });
@@ -65,7 +74,9 @@ const ChartTooltip: React.FC<{
             <span className="tabular-nums">
               {PERCENT_SERIES.has(String(entry.dataKey))
                 ? `${Number(entry.value).toFixed(0)} %`
-                : `${(Number(entry.value) / 1_000).toFixed(2)} kW`}
+                : PRICE_SERIES.has(String(entry.dataKey))
+                  ? `${Number(entry.value).toFixed(3)} SEK/kWh`
+                  : `${(Number(entry.value) / 1_000).toFixed(2)} kW`}
             </span>
           </div>
         ))}
@@ -77,6 +88,7 @@ const EnergyPowerChart = <Row extends EnergyChartRow>({
   data,
   ticks,
   showPercentAxis = false,
+  priceAxis,
   powerDomain,
   socDomain,
   children,
@@ -85,6 +97,8 @@ const EnergyPowerChart = <Row extends EnergyChartRow>({
   ticks: number[];
   /** State of charge shares the chart but not the unit. */
   showPercentAxis?: boolean;
+  /** Present only while the grouped price overlay is visible. */
+  priceAxis?: Axis;
   /** Both domains are fixed by the caller so their zeros coincide. */
   powerDomain?: [number, number];
   socDomain?: [number, number];
@@ -119,6 +133,20 @@ const EnergyPowerChart = <Row extends EnergyChartRow>({
           allowDataOverflow
           tick={{ fontSize: 11 }}
           tickFormatter={value => `${Number(value).toFixed(0)}%`}
+        />
+      )}
+      {priceAxis && (
+        <YAxis
+          yAxisId="price"
+          orientation="right"
+          domain={priceAxis.domain}
+          ticks={priceAxis.ticks}
+          interval={0}
+          allowDataOverflow
+          width={58}
+          tick={{ fontSize: 11 }}
+          tickFormatter={value => Number(value).toFixed(priceAxis.decimals)}
+          label={{ value: 'SEK/kWh', angle: 90, position: 'insideRight', fontSize: 11 }}
         />
       )}
       {children}

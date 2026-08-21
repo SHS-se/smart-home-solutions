@@ -158,20 +158,6 @@ export type ThermalSeriesKey =
   | 'thermalPower'
   | `zoneTemperature:${string}`
   | `zoneTarget:${string}`;
-// Prices only. The cumulative-cost lines were removed because they plotted
-// running SEK against SEK/kWh on a shared chart, which made neither readable.
-// The union is narrowed rather than left permissive on purpose: the chart
-// referenced its series by array index, so a key that no longer has a series
-// crashed the whole tab at run time instead of failing to compile.
-export type EconomicsSeriesKey =
-  | 'importPrice'
-  | 'exportPrice'
-  | 'shadowImportPrice'
-  | 'shadowExportPrice'
-  | 'solarW'
-  | 'loadW'
-  | 'gridImportW'
-  | 'gridExportW';
 export type StorageSeriesKey =
   | 'homeSoc'
   | 'homeTarget'

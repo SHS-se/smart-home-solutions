@@ -46,6 +46,8 @@ const decimalsFor = (step: number) =>
  * to read even once the domains matched.
  */
 export function sharedZeroAxes(input: {
+  /** Lowest displayed price; all-in prices can occasionally be negative. */
+  priceMin?: number;
   priceMax: number;
   /** Watts; negative for energy leaving the house. */
   powerMinW: number;
@@ -56,6 +58,7 @@ export function sharedZeroAxes(input: {
   const target = input.divisionsAbove ?? 4;
   const powerMaxKw = Math.max(0, input.powerMaxW) / 1_000;
   const powerMinKw = Math.min(0, input.powerMinW) / 1_000;
+  const priceMin = Math.min(0, input.priceMin ?? 0);
   const priceMax = Math.max(0, input.priceMax);
 
   // The price axis leads, because it is the one whose numbers a reader is
@@ -67,7 +70,13 @@ export function sharedZeroAxes(input: {
 
   // Whole kilowatts, with enough headroom for `above` of them to cover the day.
   const powerStep = niceStep(powerMaxKw / above, 1, POWER_STEPS);
-  const below = Math.max(0, Math.ceil(-powerMinKw / powerStep));
+  // One shared count below zero keeps both axes aligned while still covering
+  // an unusual negative market price as well as negative export power.
+  const below = Math.max(
+    0,
+    Math.ceil(-powerMinKw / powerStep),
+    Math.ceil(-priceMin / priceStep),
+  );
 
   const axis = (step: number, scale: number): Axis => ({
     domain: [-below * step * scale, above * step * scale],

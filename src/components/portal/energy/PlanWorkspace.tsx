@@ -44,7 +44,6 @@ import {
 import { usePlanModel } from './plan/usePlanModel';
 import PowerSection from './plan/sections/PowerSection';
 import ThermalSection from './plan/sections/ThermalSection';
-import EconomicsSection from './plan/sections/EconomicsSection';
 import ValueCurvesTab from './ValueCurvesTab';
 
 import EmpiricalDeviceModelsCard, {
@@ -781,34 +780,17 @@ const PlanView: React.FC<{
             />
           )}
           {section === 'economics' && (
-            <>
-              <EconomicsSection
-                model={model}
-                rows={timeline}
-                range={timelineRange}
-                dayWindow={dayWindow}
-                dayWindowOptions={dayWindowOptions}
-                onDayWindowChange={onDayWindowChange}
-              />
-              {/*
-                The curves sit under Economics because that is where the prices
-                they are compared against already are: a curve is only readable
-                next to the import and export price it has to beat.
-              */}
-              <div className="mt-6">
-                <ValueCurvesTab
-                  customerId={customerId}
-                  homeId={homeId}
-                  importPriceSekPerKwh={livePrices.import}
-                  exportPriceSekPerKwh={livePrices.export}
-                  poolTemperatureC={plan?.pool?.water_temperature_c ?? null}
-                  vehicleRangeKm={vehicleRangeKm}
-                  vehicleTargetRangeKm={vehicleTargetRangeKm}
-                  poolVolumeM3={plan?.pool?.volume_m3 ?? null}
-                  vehicleChargeEfficiency={plan?.ev_battery?.charge_efficiency ?? null}
-                />
-              </div>
-            </>
+            <ValueCurvesTab
+              customerId={customerId}
+              homeId={homeId}
+              importPriceSekPerKwh={livePrices.import}
+              exportPriceSekPerKwh={livePrices.export}
+              poolTemperatureC={plan?.pool?.water_temperature_c ?? null}
+              vehicleRangeKm={vehicleRangeKm}
+              vehicleTargetRangeKm={vehicleTargetRangeKm}
+              poolVolumeM3={plan?.pool?.volume_m3 ?? null}
+              vehicleChargeEfficiency={plan?.ev_battery?.charge_efficiency ?? null}
+            />
           )}
         </CardContent>
       </Card>

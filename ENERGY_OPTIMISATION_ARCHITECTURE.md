@@ -3022,6 +3022,43 @@ Swedish winter days routinely clear that and mild ones do not, so the correct
 answer is "on some days", computed per day — which is the point. It is an output
 of the model, not a parameter of it.
 
+#### 8.12.3 The plan view is the audit surface (2026-08-21)
+
+Price, power and explanation are one decision and must be readable on one time
+axis. The separate Economics composite chart duplicated the plan's flows,
+duplicated its decision summary and made a reader mentally align two selected
+windows. It is removed. The Plan chart owns an explicit **Show prices** overlay:
+all-in import/export prices share the quarter grid with PV, load, storage and
+grid flow. Solid prices are measured or published; dashed prices are the exact
+shadow series used beyond the published day-ahead window. Economics retains the
+value-curve editor, which is configuration rather than a second account of the
+plan.
+
+The labels must state what the numbers are. Import is the §8.8 all-in **variable
+per-kWh** price, not spot alone; fixed monthly charges are excluded because no
+schedule can change them. A store's `cheapest_energy_sek_per_kwh` is not
+necessarily an import price at all: it is the lowest supply opportunity cost
+over the full 72-hour solve—either all-in import where demand exceeds PV, or
+forgone all-in export revenue where surplus PV is available. Its initial
+marginal bid is also a whole-horizon diagnostic. Neither number is an average
+tariff and neither may be presented beside a selected-day quantity as though
+the two multiply.
+
+The aggregate “And the grid” prose is replaced by a chronological 15-minute
+ledger for the selected planned period. Every row shows PV and demand before the
+battery, scheduled actions, the resulting import/export, both objective prices
+with published/modelled provenance, and the causal explanation. The wording
+must preserve the model's actual order: the optimiser evaluates candidates
+across all 72 hours; the grid does not independently decide to import in each
+quarter, it balances what remains after the accepted schedule and battery
+dispatch. Explanations may state only facts carried by the plan or guaranteed
+by that balance. If exact per-allocation bids are needed later, they must be
+added as versioned descriptive contract data rather than reconstructed in the
+browser. The ledger follows the currently selected With plan/Without plan
+comparison, and the latter is labelled explicitly as counterfactual; Home
+Assistant's executable schedule must never be implied to change with that UI
+toggle.
+
 ## 9. Parameter model
 
 ### 9.1 Parameter classes and ownership

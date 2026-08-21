@@ -1,16 +1,9 @@
-// Why each store got what it got, in one table.
+// A readable audit of the 72-hour solve.
 //
-// ENERGY_OPTIMISATION_ARCHITECTURE.md §8.9: priority is an *output*, obtained
-// by sorting marginal values, so the only way to read a plan is to see what
-// every store was worth against what its energy cost. The planner has always
-// published exactly that in `store_diagnostics` and nothing rendered it, which
-// is how a connected car below its own charge limit sat unplanned for two days
-// behind a plan reporting "ready" with no errors.
-//
-// The table's second job is the one that failure actually needed: **an absent
-// store must occupy a row**. A store that loses says what it was worth; a store
-// that was never built used to say nothing at all, and "considered and
-// declined" looked identical to "this household owns no car".
+// The store table explains the horizon-wide auction. The quarter table then
+// shows its chronological consequence without pretending that the grid made a
+// second decision: import and export are the residual balance after forecast
+// PV, planned demand and battery dispatch.
 
 import React from 'react';
 import { AlertTriangle, Check, Minus } from 'lucide-react';
@@ -19,96 +12,53 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import type { TimelineRange, TimelineRow } from '@/lib/energy-shift/energy-timeline';
 import type { PlanModel } from './usePlanModel';
 
-interface GridFlow {
-  kwh: number;
-  pricedKwh: number;
-  sek: number;
-  /** Weighted average over the priced part only, or null when none is priced. */
-  averageSekPerKwh: number | null;
-}
+const ACTIVE_W = 10;
+const CONTROLLED_ACTION_CATEGORIES = new Set([
+  'pool_heating',
+  'ev_charging',
+  'hot_water',
+  'heating',
+  'cooling',
+]);
 
-/**
- * What crossed the meter, and at what price.
- *
- * Read from the timeline rather than the plan, so a past day reports what the
- * meter actually recorded instead of what was once forecast for it, and the
- * figures agree with the chart directly above them.
- *
- * The stores explain what the house *kept*; this explains what it bought and
- * sold, which is the other half of the same decision. Every export is energy no
- * store bid above the price it earned, so the export price is the floor a bid
- * has to clear before keeping a kWh beats selling it — the comparison that
- * makes "why was 28 kWh exported" answerable at all.
- */
-function gridFlows(rows: readonly TimelineRow[]): {
-  imported: GridFlow;
-  exported: GridFlow;
-  fullyPriced: boolean;
-  measuredShare: number;
-} {
-  const empty = (): GridFlow => ({ kwh: 0, pricedKwh: 0, sek: 0, averageSekPerKwh: null });
-  const imported = empty();
-  const exported = empty();
-  let unpriced = 0;
-  let measured = 0;
-  for (const row of rows) {
-    if (row.measured) measured += 1;
-    const inKwh = (row.gridImportW ?? 0) / 4_000;
-    // Export is stored negative — energy leaving the house — and read here as
-    // a positive quantity sold.
-    const outKwh = Math.abs(row.gridExportW ?? 0) / 4_000;
-    imported.kwh += inKwh;
-    exported.kwh += outKwh;
-    if (row.importPriceSekPerKwh !== null) {
-      imported.pricedKwh += inKwh;
-      imported.sek += inKwh * row.importPriceSekPerKwh;
-    } else if (inKwh > 0) unpriced += 1;
-    if (row.exportPriceSekPerKwh !== null) {
-      exported.pricedKwh += outKwh;
-      exported.sek += outKwh * row.exportPriceSekPerKwh;
-    } else if (outKwh > 0) unpriced += 1;
-  }
-  for (const flow of [imported, exported]) {
-    flow.averageSekPerKwh = flow.pricedKwh > 0.0001 ? flow.sek / flow.pricedKwh : null;
-  }
-  return {
-    imported,
-    exported,
-    fullyPriced: unpriced === 0,
-    measuredShare: rows.length === 0 ? 0 : measured / rows.length,
-  };
-}
-
-/** Which per-slot column carries each store's scheduled power. */
+/** Which per-slot column carries each stateful store's scheduled input. */
 const POWER_FIELD: Record<string, 'pool_w' | 'ev_w' | 'battery_charge_w'> = {
   pool: 'pool_w',
   ev: 'ev_w',
   battery: 'battery_charge_w',
 };
 
-/**
- * What each store is scheduled to take inside the selected window.
- *
- * The diagnostics' own `planned_kwh` covers the whole horizon, because the
- * decision was made once for all 72 hours. The *consequence* is per-day, and a
- * table that reports a three-day total while the chart above it shows one
- * Tuesday is telling the reader two different things at once.
- */
 function windowedEnergy(
-  slots: PlanModel['executed']['slots'],
-): Record<string, { kwh: number; hours: number }> {
-  const totals: Record<string, { kwh: number; hours: number }> = {};
+  slots: PlanModel['active']['slots'],
+): Record<string, { inputKwh: number; outputKwh: number; inputHours: number; outputHours: number }> {
+  const totals: Record<string, {
+    inputKwh: number;
+    outputKwh: number;
+    inputHours: number;
+    outputHours: number;
+  }> = {};
   for (const [key, field] of Object.entries(POWER_FIELD)) {
-    let kwh = 0;
-    let running = 0;
+    let inputKwh = 0;
+    let outputKwh = 0;
+    let inputSlots = 0;
+    let outputSlots = 0;
     for (const slot of slots) {
-      const watts = (slot[field] ?? 0) as number;
-      if (watts > 0) {
-        kwh += watts / 4_000;
-        running += 1;
+      const watts = Number(slot[field] ?? 0);
+      if (watts > ACTIVE_W) {
+        inputKwh += watts / 4_000;
+        inputSlots += 1;
+      }
+      if (key === 'battery' && slot.battery_discharge_w > ACTIVE_W) {
+        outputKwh += slot.battery_discharge_w / 4_000;
+        outputSlots += 1;
       }
     }
-    totals[key] = { kwh, hours: running * 0.25 };
+    totals[key] = {
+      inputKwh,
+      outputKwh,
+      inputHours: inputSlots * 0.25,
+      outputHours: outputSlots * 0.25,
+    };
   }
   return totals;
 }
@@ -134,7 +84,6 @@ interface Row {
   reason: Reason;
 }
 
-/** Reasons that mean the store never entered the auction at all. */
 const UNCONSIDERED: ReadonlySet<Reason> = new Set<Reason>([
   'not_controllable',
   'disconnected',
@@ -149,12 +98,6 @@ const STORE_LABEL: Record<string, [string, string]> = {
   hot_water: ['Varmvatten', 'Hot water'],
 };
 
-/**
- * How each state is written, in the unit the household thinks in.
- *
- * The curve's own unit, never kWh: a pool is a temperature and a car is a
- * range. Converting them to energy here would undo the whole point of §8.3.
- */
 const formatState = (unit: string, state: number | null): string => {
   if (state === null) return '—';
   if (unit === 'celsius') return `${state.toFixed(1)} °C`;
@@ -164,31 +107,24 @@ const formatState = (unit: string, state: number | null): string => {
 };
 
 const sek = (value: number | null): string =>
-  value === null ? '—' : value.toFixed(2);
+  value === null ? '—' : `${value.toFixed(2)} SEK/kWh`;
 
-/**
- * The sentence a household should read, plus what to do about it.
- *
- * The four "never considered" reasons each name a different thing to change,
- * which is the entire value of separating them: an unplugged car and an
- * unrouted charger look the same in a schedule and need opposite responses.
- */
 const REASON_TEXT: Record<Reason, { sv: [string, string]; en: [string, string] }> = {
   scheduled: {
-    sv: ['Schemalagd', 'Värd mer än energin kostar'],
-    en: ['Scheduled', 'Worth more than the energy costs'],
+    sv: ['Schemalagd', 'Minst en kvart vann sin värde–kostnadsjämförelse över 72 timmar'],
+    en: ['Scheduled', 'At least one quarter won its value-versus-cost comparison across 72 hours'],
   },
   state_above_curve: {
-    sv: ['Redan mättad', 'Ytterligare energi är värd noll här'],
-    en: ['Already satisfied', 'Another kWh is worth nothing at this state'],
+    sv: ['Redan mättad', 'Ytterligare energi är värd noll vid starttillståndet'],
+    en: ['Already satisfied', 'Another kWh is worth nothing at the initial state'],
   },
   value_below_price: {
-    sv: ['Avstod', 'Värd mindre än den billigaste energin i perioden'],
-    en: ['Declined', 'Worth less than the cheapest energy in the horizon'],
+    sv: ['Avstod', 'Startbudet låg under varje tillgänglig energikostnad i horisonten'],
+    en: ['Declined', 'The initial bid was below every available energy cost in the horizon'],
   },
   outbid: {
-    sv: ['Överbjuden', 'En annan lagring värderade samma energi högre'],
-    en: ['Outbid', 'Another store valued the same energy more highly'],
+    sv: ['Överbjuden', 'Startbudet klarade bottenpriset, men tid, gränser eller en annan allokering hindrade ett vinnande drag'],
+    en: ['Outbid', 'The initial bid cleared the floor, but timing, limits or another allocation prevented a winning move'],
   },
   not_controllable: {
     sv: ['Planeras inte', 'Ingen mätare är satt till styrbar för den här tjänsten'],
@@ -199,13 +135,18 @@ const REASON_TEXT: Record<Reason, { sv: [string, string]; en: [string, string] }
     en: ['Not connected', 'Nothing is plugged in to charge'],
   },
   state_unavailable: {
-    sv: ['Saknar mätvärde', 'Sensorn som kurvan mäts mot saknas eller är otillgänglig'],
-    en: ['No measured state', 'The sensor the curve is defined over is missing'],
+    sv: ['Saknar mätvärde', 'Sensorn som värdekurvan använder saknas eller är otillgänglig'],
+    en: ['No measured state', 'The sensor used by the value curve is missing or unavailable'],
   },
   no_price_reference: {
-    sv: ['Inget prisunderlag', 'Inga priser att värdera lagrad energi mot'],
-    en: ['No price reference', 'No prices to value stored energy against'],
+    sv: ['Inget prisunderlag', 'Inga priser fanns att värdera lagrad energi mot'],
+    en: ['No price reference', 'No prices were available to value stored energy against'],
   },
+};
+
+const joinNatural = (values: string[], conjunction: string): string => {
+  if (values.length <= 1) return values[0] ?? '';
+  return `${values.slice(0, -1).join(', ')} ${conjunction} ${values.at(-1)}`;
 };
 
 const StoreDecisions: React.FC<{
@@ -215,252 +156,331 @@ const StoreDecisions: React.FC<{
   range: TimelineRange;
 }> = ({ model, rows: timeline, range }) => {
   const { t, language } = useLanguage();
-  const rows = (model.executed.store_diagnostics ?? []) as Row[];
-
+  const rows = (model.active.store_diagnostics ?? []) as Row[];
   const windowRows = React.useMemo(
     () => timeline.slice(range.from, range.to),
     [range.from, range.to, timeline],
   );
-
-  // Plan slots inside the same window. A day earlier than the plan's issue time
-  // has no overlap at all, which is not an empty result but a different
-  // statement: what happened then was measured, not decided by this plan.
   const inWindow = React.useMemo(() => {
     const first = windowRows[0]?.startMs;
     const last = windowRows.at(-1)?.startMs;
     if (first === undefined || last === undefined) return [];
-    return model.executed.slots.filter(slot => {
+    return model.active.slots.filter(slot => {
       const at = Date.parse(slot.start);
       return at >= first && at <= last;
     });
-  }, [model.executed.slots, windowRows]);
-
-  const grid = gridFlows(windowRows);
+  }, [model.active.slots, windowRows]);
   const energy = windowedEnergy(inWindow);
-  const partial = inWindow.length < model.executed.slots.length;
 
-  // A plan with no dispatched stores still bought and sold energy, so the grid
-  // half is rendered either way. Returning early here dropped it for every
-  // schema 5 plan, which is exactly the reader who most needs it.
-  if (rows.length === 0) {
-    return (
-      <div className="space-y-3">
-        <p className="text-sm text-muted-foreground">
-          {t(
-            'Den här planen styr inga lagringar som fysiska tillstånd, så det finns inga bud att visa.',
-            'This plan controls no stores as physical states, so there are no bids to show.',
-          )}
-        </p>
-        <GridDecisions grid={grid} />
-      </div>
-    );
-  }
-
-  // Scheduled first, then declined, then everything that never bid — which is
-  // the order a reader wants: what happened, what was weighed, what was absent.
   const ordered = [...rows].sort((left, right) => {
     const rank = (row: Row) =>
       row.reason === 'scheduled' ? 0 : UNCONSIDERED.has(row.reason) ? 2 : 1;
     return rank(left) - rank(right) || left.key.localeCompare(right.key);
   });
   const unconsidered = ordered.filter(row => UNCONSIDERED.has(row.reason));
+  const modelByKey = new Map(model.deviceRoleView.visibleModels.map(device => [device.key, device]));
 
-  // A window with no planned quarters still bought and sold energy, and those
-  // are measured facts worth reporting. Only the *decisions* are absent, so
-  // only the bid table goes away.
+  const actionNames = (slot: PlanModel['active']['slots'][number]) => {
+    const values: string[] = [];
+    const represented = new Set<string>();
+    for (const [key, watts] of Object.entries(slot.device_loads_w)) {
+      if (watts <= ACTIVE_W) continue;
+      const device = modelByKey.get(key);
+      // A device moved to base load since this plan was issued is part of the
+      // situation, not an action. The refreshed plan will fold it into base.
+      if (!device) continue;
+      // Other empirical device rows are forecasts the plan has to serve, not
+      // controls it chose. Calling an oven forecast a plan action would make
+      // the causal ledger as misleading as the aggregate it replaces.
+      if (!CONTROLLED_ACTION_CATEGORIES.has(device.category)) {
+        continue;
+      }
+      represented.add(device.category);
+      values.push(`${device.name} ${(watts / 1_000).toFixed(2)} kW`);
+    }
+    if (!represented.has('pool_heating') && slot.pool_w > ACTIVE_W) {
+      values.push(`${t('Pool', 'Pool')} ${(slot.pool_w / 1_000).toFixed(2)} kW`);
+    }
+    if (!represented.has('ev_charging') && slot.ev_w > ACTIVE_W) {
+      values.push(`${t('Bil', 'EV')} ${(slot.ev_w / 1_000).toFixed(2)} kW`);
+    }
+    if (!represented.has('hot_water') && slot.boiler_expected_w > ACTIVE_W) {
+      values.push(`${t('Varmvatten', 'Hot water')} ${(slot.boiler_expected_w / 1_000).toFixed(2)} kW`);
+    }
+    const roomW = Object.values(slot.room_heating_w).reduce((sum, watts) => sum + watts, 0);
+    const roomRepresented = represented.has('heating') || represented.has('cooling');
+    if (!roomRepresented && roomW > ACTIVE_W) {
+      values.push(`${t('Rumsvärme', 'Space heating')} ${(roomW / 1_000).toFixed(2)} kW`);
+    }
+    if (slot.battery_charge_w > ACTIVE_W) {
+      values.push(`${t('Batteriladdning', 'Battery charge')} ${(slot.battery_charge_w / 1_000).toFixed(2)} kW`);
+    }
+    if (slot.battery_discharge_w > ACTIVE_W) {
+      values.push(`${t('Batteriurladdning', 'Battery discharge')} ${(slot.battery_discharge_w / 1_000).toFixed(2)} kW`);
+    }
+    return values;
+  };
+
+  const why = (slot: PlanModel['active']['slots'][number]) => {
+    const parts: string[] = [];
+    const economicAction = slot.pool_w > ACTIVE_W
+      || slot.ev_w > ACTIVE_W
+      || slot.battery_charge_w > ACTIVE_W;
+    const requiredAction = slot.boiler_expected_w > ACTIVE_W
+      || Object.values(slot.room_heating_w).some(watts => watts > ACTIVE_W);
+
+    if (economicAction && model.plan.schema_version >= 6) {
+      parts.push(t(
+        'Lagringen vann en värde–kostnadsjämförelse som gjordes över hela 72-timmarshorisonten.',
+        'The store won a value-versus-cost comparison made across the full 72-hour horizon.',
+      ));
+    } else if (economicAction) {
+      parts.push(t(
+        'Den flexibla lasten placerades i denna kvart av planens horisontschema.',
+        'The flexible load was placed in this quarter by the horizon schedule.',
+      ));
+    }
+    if (requiredAction) {
+      parts.push(t(
+        'Värme eller varmvatten körs för att uppfylla sitt service- eller komfortkrav.',
+        'Heating or hot water runs to meet its service or comfort requirement.',
+      ));
+    }
+    if (slot.battery_discharge_w > ACTIVE_W && model.plan.schema_version >= 6) {
+      parts.push(t(
+        'Batteriet urladdas eftersom värdet av att undvika import eller sälja energin översteg värdet av att behålla den.',
+        'The battery discharges because avoiding import or selling the energy was worth more than retaining it.',
+      ));
+    } else if (slot.battery_discharge_w > ACTIVE_W) {
+      parts.push(t(
+        'Batteriet täcker underskott enligt den äldre planmodellens batteriregel.',
+        'The battery covers the shortfall under the older plan model’s battery rule.',
+      ));
+    }
+    if (slot.grid_import_w > ACTIVE_W) {
+      parts.push(t(
+        `Efter sol och batteri återstod ${(slot.grid_import_w / 1_000).toFixed(2)} kW av den planerade lasten. Nätet balanserar resten; importen är inte ett separat ja/nej-beslut.`,
+        `After solar and battery dispatch, ${(slot.grid_import_w / 1_000).toFixed(2)} kW of planned demand remained. The grid balances the remainder; import is not a separate yes/no decision.`,
+      ));
+    } else if (slot.grid_export_w > ACTIVE_W) {
+      parts.push(t(
+        `Efter last och laddning återstod ${(slot.grid_export_w / 1_000).toFixed(2)} kW. Ingen ytterligare lagringsallokering accepterades, så resten säljs.`,
+        `After load and charging, ${(slot.grid_export_w / 1_000).toFixed(2)} kW remained. No further store allocation was accepted, so the remainder is sold.`,
+      ));
+    } else if (slot.curtailed_w > ACTIVE_W) {
+      parts.push(t(
+        'Exportgränsen nåddes, så återstående överskott begränsas.',
+        'The export limit was reached, so the remaining surplus is curtailed.',
+      ));
+    } else {
+      parts.push(t(
+        'Sol, last och batteri balanserar inom huset, så inget nätflöde återstår.',
+        'Solar, demand and battery balance within the home, leaving no grid flow.',
+      ));
+    }
+    if (slot.unserved_w > ACTIVE_W) {
+      parts.push(t(
+        `${(slot.unserved_w / 1_000).toFixed(2)} kW kunde inte levereras eftersom importgränsen nåddes.`,
+        `${(slot.unserved_w / 1_000).toFixed(2)} kW could not be served because the import limit was reached.`,
+      ));
+    }
+    return parts.join(' ');
+  };
+
   if (inWindow.length === 0) {
     return (
-      <div className="space-y-3">
+      <div className="space-y-2">
         <h3 className="text-sm font-medium">
-          {t('Vad planen beslutade, och varför', 'What the plan decided, and why')}
+          {model.planView === 'planned'
+            ? t('Vad planen beslutade, och varför', 'What the plan decided, and why')
+            : t('Vad jämförelsen utan plan gör', 'What the without-plan comparison does')}
         </h3>
         <p className="text-sm text-muted-foreground">
           {t(
-            'Den här perioden ligger före den aktuella planen, så det finns inga beslut att förklara. Siffrorna nedan är uppmätta.',
-            'This period is before the current plan, so there are no decisions to explain. The figures below are measured.',
+            'Den valda perioden ligger före den aktuella planen. Grafen visar uppmätta värden där, men den här planen fattade inga beslut för perioden.',
+            'The selected period is before the current plan. The chart shows measured values there, but this plan made no decisions for that period.',
           )}
         </p>
-        <GridDecisions grid={grid} />
       </div>
     );
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <div>
         <h3 className="text-sm font-medium">
-          {t('Vad planen beslutade, och varför', 'What the plan decided, and why')}
+          {model.planView === 'planned'
+            ? t('Vad planen beslutade, och varför', 'What the plan decided, and why')
+            : t('Vad jämförelsen utan plan gör', 'What the without-plan comparison does')}
         </h3>
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           {t(
-            'Varje lagring bjuder vad en kWh är värd för just den. Den som bjuder över priset får energin — det finns ingen fast prioritetsordning.',
-            'Each store bids what a kWh is worth to it. Whichever bid beats the price gets the energy; there is no fixed priority order.',
+            'Planeraren löser alla 72 timmar samtidigt. Den provar lagringsåtgärder i 15-minuterskvartar; nätimport och nätexport är sedan bara balansen som återstår efter sol, last och batteri. Tabellen längst ned visar den exakta följden och båda totalpriserna som användes i varje planerad kvart.',
+            'The planner solves all 72 hours together. It tests store actions in 15-minute quarters; grid import and export are then only the balance left after solar, demand and battery dispatch. The table below shows the exact sequence and both all-in prices used in every planned quarter.',
           )}
-          {partial && ` ${t(
-            'Tillstånd, värde och pris gäller hela planen — beslutet fattades en gång för alla 72 timmarna. Planerat och nätet nedan gäller den valda perioden.',
-            'State, worth and price describe the whole plan: the decision was made once for all 72 hours. Planned, and the grid below, cover the selected period.',
+          {model.planView === 'unplanned' && ` ${t(
+            'Detta är motfaktiska värden från vyn Utan plan; Home Assistant kör vyn Med plan.',
+            'These are counterfactual values from the Without plan view; Home Assistant executes the With plan view.',
           )}`}
         </p>
       </div>
 
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>{t('Lagring', 'Store')}</TableHead>
-            <TableHead className="text-right">{t('Tillstånd', 'State')}</TableHead>
-            <TableHead className="text-right">{t('Värd', 'Worth')}</TableHead>
-            <TableHead className="text-right">{t('Billigaste energi', 'Cheapest energy')}</TableHead>
-            <TableHead className="text-right">{t('Planerat', 'Planned')}</TableHead>
-            <TableHead>{t('Utfall', 'Outcome')}</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {ordered.map(row => {
-            const text = REASON_TEXT[row.reason] ?? REASON_TEXT.outbid;
-            const [headline, detail] = language === 'sv' ? text.sv : text.en;
-            const absent = UNCONSIDERED.has(row.reason);
-            const label = STORE_LABEL[row.key] ?? [row.key, row.key];
-            return (
-              <TableRow key={row.key} className={absent ? 'bg-amber-50/60 dark:bg-amber-950/20' : undefined}>
-                <TableCell className="font-medium">
-                  {language === 'sv' ? label[0] : label[1]}
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {formatState(row.unit, row.state)}
-                </TableCell>
-                {/*
-                  Both prices are SEK per kWh of *electricity*, which is the
-                  only footing on which a pool degree, a kilometre of range and
-                  a stored kWh can be compared at all.
-                */}
-                <TableCell className="text-right tabular-nums">
-                  {sek(row.marginal_value_sek_per_kwh)}
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {sek(row.cheapest_energy_sek_per_kwh)}
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {(energy[row.key]?.kwh ?? 0) > 0.05
-                    ? `${energy[row.key].kwh.toFixed(1)} kWh`
-                    : '—'}
-                  {(energy[row.key]?.hours ?? 0) > 0 && (
-                    <span className="block text-[11px] text-muted-foreground">
-                      {energy[row.key].hours.toFixed(1)} {t('h', 'h')}
-                    </span>
-                  )}
-                </TableCell>
-                <TableCell>
-                  <div className="flex items-start gap-1.5">
-                    {absent
-                      ? <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-500" aria-hidden />
-                      : row.reason === 'scheduled'
-                        ? <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-500" aria-hidden />
-                        : <Minus className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />}
-                    <span>
-                      <span className="font-medium">{headline}</span>
-                      <span className="block text-[11px] text-muted-foreground">{detail}</span>
-                    </span>
-                  </div>
-                </TableCell>
+      {ordered.length > 0 ? (
+        <>
+          <div>
+            <h4 className="text-sm font-medium">{t('Lagringarnas 72-timmarsbeslut', 'The stores’ 72-hour decision')}</h4>
+            <p className="text-[11px] text-muted-foreground">
+              {t(
+                'Startbud och lägsta tillgängliga kostnad gäller hela horisonten. Den lägsta kostnaden är totalt köppris när energi måste köpas, eller förlorat totalt säljpris när prognosen har solelöverskott. Den är alltså varken ett genomsnittligt köppris eller enbart elbörspriset. Planerat gäller den valda perioden.',
+                'Initial bid and lowest available cost cover the full horizon. Lowest cost is the all-in import price when energy must be bought, or the forgone all-in export price when forecast solar is in surplus. It is therefore neither an average import tariff nor the wholesale electricity price alone. Planned covers the selected period.',
+              )}
+            </p>
+          </div>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{t('Lagring', 'Store')}</TableHead>
+                <TableHead className="text-right">{t('Starttillstånd', 'Initial state')}</TableHead>
+                <TableHead className="text-right">{t('Startbud', 'Initial bid')}</TableHead>
+                <TableHead className="text-right">{t('Lägsta tillgängliga kostnad', 'Lowest available cost')}</TableHead>
+                <TableHead className="text-right">{t('Planerat i perioden', 'Planned in window')}</TableHead>
+                <TableHead>{t('Utfall', 'Outcome')}</TableHead>
               </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
-
-      <GridDecisions grid={grid} />
+            </TableHeader>
+            <TableBody>
+              {ordered.map(row => {
+                const text = REASON_TEXT[row.reason] ?? REASON_TEXT.outbid;
+                const [headline, detail] = language === 'sv' ? text.sv : text.en;
+                const absent = UNCONSIDERED.has(row.reason);
+                const label = STORE_LABEL[row.key] ?? [row.key, row.key];
+                const flow = energy[row.key];
+                return (
+                  <TableRow key={row.key} className={absent ? 'bg-amber-50/60 dark:bg-amber-950/20' : undefined}>
+                    <TableCell className="font-medium">{language === 'sv' ? label[0] : label[1]}</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatState(row.unit, row.state)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{sek(row.marginal_value_sek_per_kwh)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{sek(row.cheapest_energy_sek_per_kwh)}</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {(flow?.inputKwh ?? 0) > 0.05 && (
+                        <span className="block">
+                          {flow.inputKwh.toFixed(1)} kWh {t('in', 'in')}
+                          <span className="block text-[11px] text-muted-foreground">{flow.inputHours.toFixed(1)} h</span>
+                        </span>
+                      )}
+                      {(flow?.outputKwh ?? 0) > 0.05 && (
+                        <span className="block">
+                          {flow.outputKwh.toFixed(1)} kWh {t('ut', 'out')}
+                          <span className="block text-[11px] text-muted-foreground">{flow.outputHours.toFixed(1)} h</span>
+                        </span>
+                      )}
+                      {(flow?.inputKwh ?? 0) <= 0.05 && (flow?.outputKwh ?? 0) <= 0.05 && '—'}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-start gap-1.5">
+                        {absent
+                          ? <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-500" aria-hidden />
+                          : row.reason === 'scheduled'
+                            ? <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-500" aria-hidden />
+                            : <Minus className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />}
+                        <span>
+                          <span className="font-medium">{headline}</span>
+                          <span className="block text-[11px] text-muted-foreground">{detail}</span>
+                        </span>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          {t(
+            'Den här planen har inga fysiska lagringsbud. Kvartsföljden visar ändå hur planerad last och sol gav nätflödet.',
+            'This plan has no physical-store bids. The quarter sequence still shows how planned demand and solar produced the grid flow.',
+          )}
+        </p>
+      )}
 
       {unconsidered.length > 0 && (
         <p className="rounded-md border border-amber-300 bg-amber-50/70 p-2 text-[11px] text-amber-900 dark:border-amber-800 dark:bg-amber-950/25 dark:text-amber-200">
           {t(
-            'Markerade rader deltog aldrig i avvägningen. De vann alltså inte "för lite värde" — de fanns inte med alls, och det är en inställning att rätta snarare än ett utfall att acceptera.',
-            'Highlighted rows never entered the trade-off at all. They did not lose on value — they were not present, which is a setting to correct rather than an outcome to accept.',
+            'Markerade rader deltog aldrig i avvägningen. De förlorade inte på värde; en mappning, anslutning eller sensor måste rättas.',
+            'Highlighted rows never entered the trade-off. They did not lose on value; a mapping, connection or sensor must be corrected.',
           )}
         </p>
       )}
-    </div>
-  );
-};
 
-/**
- * The two decisions the store table cannot show.
- *
- * Buying and selling are not services with a curve, so they hold no row above —
- * but they are the counterparty to every bid made there. Exported energy is
- * precisely the energy no store outbid, which makes the export price the floor
- * every bid has to clear before keeping a kWh beats selling it. Reading the
- * store table without this leaves the obvious question — "why was all that
- * exported?" — with no answer anywhere on the page.
- */
-const GridDecisions: React.FC<{ grid: ReturnType<typeof gridFlows> }> = ({ grid }) => {
-  const { t } = useLanguage();
-  const { imported, exported, fullyPriced, measuredShare } = grid;
-  /**
-   * Quantity, then money — and never a price that fails to multiply.
-   *
-   * Nord Pool prices about a day of a three-day horizon, so most windows are
-   * part-priced. Printing the total kWh beside an average and a total that
-   * cover only the priced share reads as arithmetic and is not: 23.6 kWh at
-   * 2.44 SEK/kWh is 57 SEK, not the 21 SEK actually shown. The priced quantity
-   * has to appear next to the money it explains.
-   */
-  const moneyOf = (flow: GridFlow) => {
-    if (flow.averageSekPerKwh === null) {
-      return t('inget publicerat pris ännu', 'no published price yet');
-    }
-    const allPriced = flow.kwh - flow.pricedKwh < 0.05;
-    const priced = allPriced
-      ? `${flow.averageSekPerKwh.toFixed(2)} SEK/kWh ${t('i snitt', 'average')}`
-      : `${flow.pricedKwh.toFixed(1)} kWh ${t('prissatt till', 'priced at')} ${
-        flow.averageSekPerKwh.toFixed(2)
-      } SEK/kWh`;
-    return `${priced} · ${flow.sek.toFixed(2)} SEK`;
-  };
-
-  return (
-    <div className="rounded-md border bg-muted/20 p-3">
-      <h4 className="text-sm font-medium">{t('Och nätet', 'And the grid')}</h4>
-      <dl className="mt-2 space-y-1 text-sm">
-        <div className="flex flex-wrap gap-x-2">
-          <dt className="w-14 shrink-0 text-muted-foreground">{t('Köpt', 'Bought')}</dt>
-          <dd className="tabular-nums">
-            {imported.kwh.toFixed(1)} kWh · {moneyOf(imported)}
-          </dd>
-        </div>
-        <div className="flex flex-wrap gap-x-2">
-          <dt className="w-14 shrink-0 text-muted-foreground">{t('Sålt', 'Sold')}</dt>
-          <dd className="tabular-nums">
-            {exported.kwh.toFixed(1)} kWh · {moneyOf(exported)}
-          </dd>
-        </div>
-      </dl>
-      <p className="mt-2 text-[11px] text-muted-foreground">
-        {exported.kwh <= 0.05
-          ? t(
-            'Ingenting exporterades: varje kWh gick till huset eller till en lagring som värderade den högre än nätet.',
-            'Nothing was exported: every kWh went to the house or to a store that valued it above what the grid would pay.',
-          )
-          : exported.averageSekPerKwh !== null
-          ? t(
-            `Allt som säljs är energi ingen lagring bjöd över ${exported.averageSekPerKwh.toFixed(2)} SEK/kWh för. Säljpriset är alltså golvet varje bud måste klara innan det lönar sig att behålla en kWh i stället för att sälja den — solel är inte gratis så länge den kan säljas.`,
-            `Everything sold is energy no store bid above ${exported.averageSekPerKwh.toFixed(2)} SEK/kWh for. The export price is therefore the floor every bid must clear before keeping a kWh beats selling it — solar is not free while it can be sold.`,
-          )
-          // Exported, but into quarters the market has not priced yet. The
-          // floor still exists; it is modelled rather than quoted, so naming a
-          // figure here would dress an estimate up as a receipt.
-          : t(
-            'Allt som säljs är energi ingen lagring värderade över säljpriset. De här kvartarna har ännu inget marknadspris, så golvet planeraren jämförde mot kommer från husets egen uppmätta priskurva.',
-            'Everything sold is energy no store valued above the export price. These quarters have no market price yet, so the floor the planner compared against came from this home’s own measured price shape.',
+      <div>
+        <h4 className="text-sm font-medium">{t('Beslutsföljd per 15 minuter', '15-minute decision sequence')}</h4>
+        <p className="mb-2 text-[11px] text-muted-foreground">
+          {t(
+            'Köp och sälj visar totalpriset som objektivet använde. Publicerat betyder verkligt dag-före-pris; modellerat betyder husets prisprognos efter den publicerade perioden.',
+            'Buy and sell show the all-in prices used by the objective. Published means an actual day-ahead price; modelled means this home’s price forecast beyond the published period.',
           )}
-        {measuredShare > 0 && measuredShare < 1 && ` ${t(
-          'Perioden är delvis uppmätt och delvis planerad, så summorna blandar verkligt utfall med plan.',
-          'This period is part measured and part planned, so the totals mix real outturn with the plan.',
-        )}`}
-        {!fullyPriced && ` ${t(
-          'Nord Pool publicerar bara ett dygn i taget, så resten av horisonten har inget marknadspris. Planeraren är inte blind där — den använder husets egen uppmätta priskurva — men kronorna ovan gäller bara de kvartar som har ett publicerat pris.',
-          'Nord Pool publishes only a day at a time, so the rest of the horizon has no market price. The planner is not blind there — it uses this home\u2019s own measured price shape — but the kronor above cover only the quarters with a published price.',
-        )}`}
-      </p>
+        </p>
+        <div className="[&>div]:max-h-[38rem] [&>div]:rounded-md [&>div]:border">
+          <Table className="min-w-[1100px]">
+            <TableHeader className="sticky top-0 z-10 bg-background">
+              <TableRow>
+                <TableHead>{t('Kvart', 'Quarter')}</TableHead>
+                <TableHead>{t('Situation före batteriet', 'Before battery')}</TableHead>
+                <TableHead>{t('Planåtgärder', 'Plan actions')}</TableHead>
+                <TableHead>{t('Nätresultat', 'Grid result')}</TableHead>
+                <TableHead>{t('Totalpriser använda', 'All-in prices used')}</TableHead>
+                <TableHead className="min-w-[360px]">{t('Varför', 'Why')}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {inWindow.map(slot => {
+                const balanceW = slot.pv_w - slot.load_w;
+                const actions = actionNames(slot);
+                const published = slot.import_price_sek_per_kwh !== null
+                  && slot.export_price_sek_per_kwh !== null;
+                const grid = slot.grid_import_w > ACTIVE_W
+                  ? `${t('Import', 'Import')} ${(slot.grid_import_w / 1_000).toFixed(2)} kW`
+                  : slot.grid_export_w > ACTIVE_W
+                    ? `${t('Export', 'Export')} ${(slot.grid_export_w / 1_000).toFixed(2)} kW`
+                    : t('Inget nätflöde', 'No grid flow');
+                return (
+                  <TableRow key={slot.start}>
+                    <TableCell className="whitespace-nowrap align-top tabular-nums">
+                      {new Date(slot.start).toLocaleString([], {
+                        month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+                      })}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap align-top tabular-nums">
+                      <span className="block">{t('Sol', 'PV')} {(slot.pv_w / 1_000).toFixed(2)} · {t('last', 'demand')} {(slot.load_w / 1_000).toFixed(2)} kW</span>
+                      <span className="block text-[11px] text-muted-foreground">
+                        {Math.abs(balanceW) <= ACTIVE_W
+                          ? t('i balans', 'balanced')
+                          : balanceW > 0
+                            ? `${(balanceW / 1_000).toFixed(2)} kW ${t('överskott', 'surplus')}`
+                            : `${(-balanceW / 1_000).toFixed(2)} kW ${t('underskott', 'shortfall')}`}
+                      </span>
+                    </TableCell>
+                    <TableCell className="align-top">
+                      {actions.length > 0
+                        ? joinNatural(actions, t('och', 'and'))
+                        : <span className="text-muted-foreground">{t('Ingen flexibel eller batteriåtgärd', 'No flexible or battery action')}</span>}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap align-top font-medium tabular-nums">{grid}</TableCell>
+                    <TableCell className="whitespace-nowrap align-top tabular-nums">
+                      <span className="block">{t('Köp', 'Buy')} {slot.shadow_import_sek_per_kwh.toFixed(3)} SEK/kWh</span>
+                      <span className="block">{t('Sälj', 'Sell')} {slot.shadow_export_sek_per_kwh.toFixed(3)} SEK/kWh</span>
+                      <span className="block text-[11px] text-muted-foreground">
+                        {published ? t('publicerat', 'published') : t('modellerat', 'modelled')}
+                      </span>
+                    </TableCell>
+                    <TableCell className="align-top text-xs text-muted-foreground">{why(slot)}</TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+      </div>
     </div>
   );
 };

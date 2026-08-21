@@ -45,8 +45,9 @@ Deno.test('power gridlines land on whole kilowatts', () => {
 });
 
 Deno.test('the domains still cover the data they were built from', () => {
-  const axes = sharedZeroAxes({ priceMax: 3.8, powerMinW: -9_000, powerMaxW: 6_000 });
+  const axes = sharedZeroAxes({ priceMin: -1.2, priceMax: 3.8, powerMinW: -9_000, powerMaxW: 6_000 });
   assert(axes.power.domain[0] <= -9_000 && axes.power.domain[1] >= 6_000);
+  assert(axes.price.domain[0] <= -1.2);
   assert(axes.price.domain[1] >= 3.8);
 });
 

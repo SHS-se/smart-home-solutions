@@ -84,36 +84,6 @@ export function usePlanModel(
       ])),
     };
   }), [active, deviceRoleView, plan.ev_battery, plan.policy.battery_end_of_solar_target_soc]);
-  const economicsData = useMemo(() => {
-    let plannedCost = 0;
-    let unplannedCost = 0;
-    let plannedPriced = true;
-    let unplannedPriced = true;
-    return plan.plans.priority.slots.map((slot, index) => {
-      const baseline = plan.plans.baseline.slots[index];
-      if (slot.import_cost_sek === null || slot.export_revenue_sek === null) {
-        plannedPriced = false;
-      } else if (plannedPriced) {
-        plannedCost += slot.import_cost_sek - slot.export_revenue_sek;
-      }
-      if (baseline.import_cost_sek === null || baseline.export_revenue_sek === null) {
-        unplannedPriced = false;
-      } else if (unplannedPriced) {
-        unplannedCost += baseline.import_cost_sek - baseline.export_revenue_sek;
-      }
-      return {
-        i: index,
-        label: new Date(slot.start).toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
-        importPrice: slot.import_price_sek_per_kwh,
-        exportPrice: slot.export_price_sek_per_kwh,
-        plannedCost: plannedPriced ? plannedCost : null,
-        unplannedCost: unplannedPriced ? unplannedCost : null,
-        costDifference: plannedPriced && unplannedPriced
-          ? plannedCost - unplannedCost
-          : null,
-      };
-    });
-  }, [plan]);
   const thermalProjection = plan.thermal_projection;
   const thermalData = useMemo(() => thermalProjection?.starts.map((start, index) => ({
     i: index,
@@ -195,22 +165,6 @@ export function usePlanModel(
       },
     ]) ?? []),
   ];
-  // Prices only. The three cumulative-cost lines that used to sit here plotted
-  // running SEK on a second axis against SEK/kWh on the first, so the shapes
-  // were not comparable and the numbers they implied were not readable off
-  // either axis. The headline cost figures already state the same thing
-  // exactly, and the value curves below say what the prices are being compared
-  // against, which is the question this chart is actually asked.
-  const economicsSeries = [
-    { key: 'importPrice' as const, label: t('Köppris', 'Import price'), color: COLORS.import },
-    { key: 'exportPrice' as const, label: t('Säljpris', 'Export price'), color: COLORS.export },
-    { key: 'shadowImportPrice' as const, label: t('Köppris (modellerat)', 'Import price (modelled)'), color: COLORS.import },
-    { key: 'shadowExportPrice' as const, label: t('Säljpris (modellerat)', 'Export price (modelled)'), color: COLORS.export },
-    { key: 'solarW' as const, label: t('Solproduktion', 'Solar production'), color: COLORS.pv },
-    { key: 'loadW' as const, label: t('Total förbrukning', 'Total consumption'), color: COLORS.base },
-    { key: 'gridImportW' as const, label: t('Nätimport', 'Grid import'), color: COLORS.import },
-    { key: 'gridExportW' as const, label: t('Nätexport', 'Grid export'), color: COLORS.export },
-  ];
   const storageSeries = [
     ...(hasBattery ? [
       { key: 'homeSoc' as const, label: t('Hembatteri SOC', 'Home battery SOC'), color: COLORS.soc },
@@ -252,7 +206,6 @@ export function usePlanModel(
     comparison,
     deviceRoleView,
     chartData,
-    economicsData,
     thermalProjection,
     thermalData,
     bindingIndex,
@@ -271,7 +224,6 @@ export function usePlanModel(
     showEvAggregate,
     planChartSeries,
     thermalSeries,
-    economicsSeries,
     storageSeries,
     evConnectedStart,
     evConnectedEnd,
