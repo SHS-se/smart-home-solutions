@@ -99,7 +99,11 @@ Deno.test("one day of prices already gives a shape, never a flat line", () => {
 Deno.test("more evidence sharpens the same estimate rather than switching mode", () => {
   // There is no tier to cross: the shrinkage simply loosens as weight
   // accumulates, so the curve gets more confident continuously.
-  const oneDay = shapeOf(day("2026-06-29", 1, { hours: [19], price: 4 }))!;
+  // Same spike either side: `archive` builds its days at three times base, so
+  // the single day has to as well or this compares spike sizes rather than
+  // evidence. It used to pass at four times only because the shrinkage held
+  // the sharper day back harder than it held back ten milder ones.
+  const oneDay = shapeOf(day("2026-06-29", 1, { hours: [19], price: 3 }))!;
   const tenDays = shapeOf(archive(10, 1, [19]))!;
   assert(
     spread(tenDays.byDayType.weekday) > spread(oneDay.byDayType.weekday),
@@ -183,6 +187,73 @@ Deno.test("the season nearest today carries the most weight", () => {
   assert(
     shape.byDayType.weekday[19 * 4] > shape.byDayType.weekday[6 * 4],
     "last June should describe this June better than last December does",
+  );
+});
+
+Deno.test("the estimate keeps the depth of a real day, not the average of days", () => {
+  // Averaging is what flattens: a trough that moves between days lands in
+  // different quarters and partly cancels, and the shrinkage pulls every
+  // quarter further toward 1. The result keeps the timing and loses the depth.
+  // A deployed plan showed it plainly — the modelled days spanned 1.49 to 2.57
+  // SEK/kWh where the published day spanned 0.905 to 2.705, a floor 0.6 above
+  // anything real, so the last published quarters always looked like the
+  // bargain of the week and the battery bought against a forecast.
+  const rows: StoredPriceRow[] = [];
+  const perDay: number[] = [];
+  for (let offset = 0; offset < 12; offset += 1) {
+    const date = new Date(Date.UTC(2026, 5, 1) + offset * 86_400_000);
+    // The evening peak wanders by up to an hour, as real prices do.
+    const shift = (offset % 5) - 2;
+    const rowsToday = day(
+      date.toISOString().slice(0, 10),
+      1,
+      { hours: [19 + shift, 20 + shift], price: 3 },
+    );
+    rows.push(...rowsToday);
+    const mean = rowsToday.reduce((t, r) => t + r.import_price_sek_per_kwh, 0) /
+      rowsToday.length;
+    const ratios = rowsToday.map((r) => r.import_price_sek_per_kwh / mean);
+    perDay.push(Math.max(...ratios) - Math.min(...ratios));
+  }
+  const typical = perDay.reduce((t, v) => t + v, 0) / perDay.length;
+
+  const shape = shapeOf(rows, Date.parse("2026-06-14T12:00:00+02:00"))!;
+  const multipliers = shape.byDayType.weekday;
+
+  // Dispersion is the honest measure. Peak-to-trough would demand the estimate
+  // put the full height back at every hour the peak was ever seen, which is a
+  // claim about timing the observations do not support — the smearing is real
+  // uncertainty about when, not lost depth.
+  const rms = (values: number[]) =>
+    Math.sqrt(
+      values.reduce((total, value) => total + (value - 1) ** 2, 0) /
+        values.length,
+    );
+  const observedRms = rows.reduce((total, _row, index) => {
+    if (index % QUARTERS_PER_DAY !== 0) return total;
+    const today = rows.slice(index, index + QUARTERS_PER_DAY);
+    const mean = today.reduce((t, r) => t + r.import_price_sek_per_kwh, 0) /
+      today.length;
+    return total + rms(today.map((r) => r.import_price_sek_per_kwh / mean));
+  }, 0) / 12;
+
+  assert(
+    rms(multipliers) > observedRms * 0.75,
+    `the modelled day must depart from its mean about as far as a real one: ${
+      rms(multipliers).toFixed(3)
+    } against ${observedRms.toFixed(3)}`,
+  );
+  const estimated = Math.max(...multipliers) - Math.min(...multipliers);
+  assert(
+    estimated > typical * 0.6,
+    `and keep most of the peak-to-trough: kept ${
+      (estimated / typical * 100).toFixed(0)
+    }% of a ${typical.toFixed(3)} spread`,
+  );
+  // And never so deep that a quarter implies energy is free.
+  assert(
+    Math.min(...shape.byDayType.weekday) > 0,
+    "no quarter may be scaled to a non-positive multiplier",
   );
 });
 

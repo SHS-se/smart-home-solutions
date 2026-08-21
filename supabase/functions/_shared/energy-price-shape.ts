@@ -82,6 +82,16 @@ export const SEASON_SIGMA_DAYS = 45;
  */
 export const SHRINKAGE = 1.5;
 
+/**
+ * Floor on a shape multiplier once the amplitude is restored.
+ *
+ * Restoring depth is a rescale about the daily mean, and a large enough gain
+ * would push the cheapest quarter through zero and out the other side. A
+ * multiplier this small already says "as good as free"; nothing below it means
+ * anything a planner can act on, and negative would mean the opposite.
+ */
+export const MIN_SHAPE_MULTIPLIER = 0.05;
+
 export interface PriceShape {
   /** Multiplier per quarter of local day, mean 1 across the day. */
   byDayType: Record<DayType, number[]>;
@@ -272,6 +282,11 @@ export function estimatePriceShape(input: ShapeInput): PriceShape | null {
   for (const dayType of dayTypes) {
     const weighted = new Array(QUARTERS_PER_DAY).fill(0);
     const weights = new Array(QUARTERS_PER_DAY).fill(0);
+    // How far a real day departs from its own mean, under the same weights.
+    // Each day's ratios are centred on 1 by construction, so this is exactly
+    // the within-day dispersion the observations show.
+    let observedSquares = 0;
+    let observedWeight = 0;
     for (const observation of observations) {
       const recency = 2 ** (-observation.ageDays / RECENCY_HALF_LIFE_DAYS);
       const typeMatch = observation.dayType === dayType
@@ -285,6 +300,8 @@ export function estimatePriceShape(input: ShapeInput): PriceShape | null {
       if (!(weight > 0)) continue;
       weighted[observation.quarter] += weight * observation.ratio;
       weights[observation.quarter] += weight;
+      observedSquares += weight * (observation.ratio - 1) ** 2;
+      observedWeight += weight;
     }
     // Shrink toward 1 — "no opinion" — in proportion to how little was seen.
     const estimate = weighted.map((sum, quarter) =>
@@ -295,9 +312,44 @@ export function estimatePriceShape(input: ShapeInput): PriceShape | null {
     // level, which the outlook sets from published prices.
     const mean = estimate.reduce((total, value) => total + value, 0) /
       QUARTERS_PER_DAY;
-    byDayType[dayType] = mean > 0.05
+    const centred = mean > 0.05
       ? estimate.map((value) => value / mean)
       : estimate;
+
+    // Averaging keeps the timing and loses the depth. A trough that moves an
+    // hour between days lands in different quarters and partly cancels, and
+    // the shrinkage pulls every quarter further toward 1 on top of that — a
+    // twelve-day archive of a wandering evening peak kept barely a third of
+    // the spread a single day of it shows. That is not a display problem: a
+    // shallow prior never gets as cheap as a real night, so the last published
+    // quarters look like the bargain of the week and the planner buys against
+    // a forecast. Stretch the shape about its own mean until it is as deep as
+    // the days it was estimated from, which moves no peak and invents no hour.
+    const observedVariance = observedWeight > 0
+      ? observedSquares / observedWeight
+      : 0;
+    const shapeVariance = centred.reduce(
+      (total, value) => total + (value - 1) ** 2,
+      0,
+    ) / QUARTERS_PER_DAY;
+    const deepest = Math.min(...centred);
+    // Never past the point where a quarter would imply energy is free.
+    const ceiling = deepest < 1
+      ? (1 - MIN_SHAPE_MULTIPLIER) / (1 - deepest)
+      : Number.POSITIVE_INFINITY;
+    // Thin evidence must not assert a deep day either. The same pseudo-count
+    // that shrinks a lightly-seen quarter toward "no opinion" also holds the
+    // restoration back, so one unusual day is damped and a fortnight is not —
+    // and more evidence still sharpens the estimate rather than flattening it.
+    const evidenceDays = observedWeight / QUARTERS_PER_DAY;
+    const confidence = evidenceDays / (evidenceDays + SHRINKAGE);
+    const matched = shapeVariance > 1e-9
+      ? Math.sqrt(observedVariance / shapeVariance)
+      : 1;
+    const gain = Math.min(1 + (matched - 1) * confidence, ceiling);
+    byDayType[dayType] = gain > 1
+      ? centred.map((value) => 1 + (value - 1) * gain)
+      : centred;
   }
 
   return {
