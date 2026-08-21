@@ -1931,23 +1931,61 @@ function applyDutyCycleServices(
         (sum, index) => sum + expected[index],
         0,
       );
+      //
+      // Where it goes is a price decision. Ranking on residual load alone put
+      // the catch-up in the quietest quarter — quiet precisely because PV was
+      // covering the base load and the pool and car had just finished, which
+      // is also when the evening price peaks. One observed plan parked 1690 W
+      // into the dearest quarter of its window at 3.281 SEK/kWh while
+      // 2.07 SEK/kWh quarters sat idle later the same night. Cost keeps what
+      // the residual ranking was reaching for: surplus PV is charged at the
+      // export price it forgoes, so a sunny quarter is still cheap, and the
+      // convex peak term still separates two quarters at the same price.
       const firstInhibited = inhibited[0] ?? Number.POSITIVE_INFINITY;
       const recovery = indices.filter((index) =>
         index > firstInhibited && schedule.boilerPermitted[index]
-      ).sort((left, right) =>
-        fixedLoadW(slots[left]) + occupiedW[left] - slots[left].pv_w -
-          (fixedLoadW(slots[right]) + occupiedW[right] - slots[right].pv_w) ||
-        left - right
       );
-      for (const index of recovery) {
-        if (deferredW <= 1e-6) break;
-        const roomW = Math.max(
+      // Room is bounded by the connection as well as by the element. A quarter
+      // the stores have already filled cannot take the catch-up, and putting it
+      // there anyway is how deferred water ends up unserved.
+      const roomFor = (index: number) =>
+        Math.max(
           0,
-          service.control.rated_power_w - schedule.boiler[index],
+          Math.min(
+            service.control.rated_power_w - schedule.boiler[index],
+            snapshot.grid.import_limit_w + Math.max(0, slots[index].pv_w) -
+              fixedLoadW(slots[index]) - occupiedW[index] -
+              schedule.boiler[index],
+          ),
         );
-        const recoveredW = Math.min(roomW, deferredW);
-        schedule.boiler[index] += recoveredW;
-        deferredW -= recoveredW;
+      const costOf = (index: number, powerW: number) => {
+        const slot = slots[index];
+        const takenW = occupiedW[index] + schedule.boiler[index];
+        const surplusW = Math.max(0, slot.pv_w - fixedLoadW(slot) - takenW);
+        const solarW = Math.min(powerW, surplusW);
+        const gridW = powerW - solarW;
+        return (solarW / 1_000) * SLOT_HOURS * slot.shadow_export_sek_per_kwh +
+          (gridW / 1_000) * SLOT_HOURS * slot.shadow_import_sek_per_kwh +
+          peakPenalty(slot, gridW, takenW, 0);
+      };
+      // Ties fall to the earliest quarter, which is the order `recovery` is
+      // already in — a thermostat catches up as soon as it is allowed to.
+      while (deferredW > 1e-6) {
+        let cheapest: number | null = null;
+        let bestRate = Number.POSITIVE_INFINITY;
+        for (const index of recovery) {
+          const takeW = Math.min(roomFor(index), deferredW);
+          if (takeW <= 1e-6) continue;
+          const rate = costOf(index, takeW) / takeW;
+          if (rate < bestRate - 1e-12) {
+            bestRate = rate;
+            cheapest = index;
+          }
+        }
+        if (cheapest === null) break;
+        const takeW = Math.min(roomFor(cheapest), deferredW);
+        schedule.boiler[cheapest] += takeW;
+        deferredW -= takeW;
       }
     }
 

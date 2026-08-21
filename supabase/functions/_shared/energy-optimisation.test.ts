@@ -345,6 +345,122 @@ Deno.test("duty-cycle boiler is inhibited around planned loads without invented 
   );
 });
 
+Deno.test("deferred hot water comes back at the cheapest hours, not the quietest", () => {
+  // The recovery ranking sorted on residual load with no price term, so the
+  // catch-up landed in the quietest quarter — quiet precisely because PV was
+  // covering the base load, which is also when the evening price peaks. One
+  // observed plan parked 1690 W into the single dearest quarter of its window
+  // at 3.281 SEK/kWh while 2.07 SEK/kWh quarters sat idle later that night.
+  //
+  // The shape below is that trap in miniature: quarter 20 is all but silent
+  // and the dearest hour of the day; quarters 30-45 draw a full kilowatt from
+  // the grid and cost a third as much.
+  const base = input();
+  const start = Date.parse("2026-08-10T08:00:00.000Z");
+  const quiet = 20;
+  const slots = Array.from({ length: 288 }, (_value, index) => {
+    // A heavy stretch up front is what defers the water in the first place:
+    // the boiler is inhibited whenever the rest of the house is already
+    // drawing more than 65% of the connection.
+    const heavy = index < 12;
+    const priced = index < 96;
+    const price = index === quiet ? 3.3 : heavy ? 2.0 : 1.2;
+    return {
+      start: new Date(start + index * 15 * 60_000).toISOString(),
+      pv_forecast_w: index === quiet ? 990 : 0,
+      base_load_forecast_w: heavy ? 9_000 : 1_000,
+      base_load_p10_w: heavy ? 7_000 : 800,
+      base_load_p90_w: heavy ? 11_000 : 1_400,
+      import_price_sek_per_kwh: priced ? price : null,
+      export_price_sek_per_kwh: priced ? 0.4 : null,
+    };
+  });
+  const snapshot = input({
+    schema_version: 6,
+    slots,
+    outdoor_temperature_c: slots.map(() => 22),
+    capabilities: {
+      pv: true,
+      battery: false,
+      pool: false,
+      boiler: true,
+      ev: false,
+    },
+    battery: null,
+    pool: null,
+    sources: { ...base.sources, battery: null },
+    policy: {
+      battery_end_of_solar_target_soc: 0,
+      battery_target_is_hard: false,
+      terminal_soc_min: 0,
+      terminal_energy_value_sek_per_kwh: 0,
+      battery_export_enabled: false,
+      battery_export_reserve_soc: 0,
+      battery_export_min_price_sek_per_kwh: 0,
+    },
+    service_requirement_sample_days: {},
+    services: [
+      {
+        id: "boiler:horizon",
+        device: "boiler" as const,
+        earliest_start: slots[0].start,
+        deadline: new Date(start + 96 * 15 * 60_000).toISOString(),
+        required_kwh: 6,
+        priority: 1,
+        control: {
+          type: "duty_cycle" as const,
+          rated_power_w: 3_000,
+          expected_power_w_by_slot: slots.map(() => 400),
+          max_consecutive_inhibit_slots: 20,
+        },
+      },
+    ],
+  });
+
+  const plan = generateOptimisationPlan(snapshot, new Date(NOW));
+  assertEquals(plan.validation_errors, []);
+  const priority = plan.plans.priority;
+  assert(
+    priority.service_inhibited_slots["boiler:horizon"].length > 0,
+    "nothing was deferred, so nothing recovered",
+  );
+
+  // Recovery is whatever priority runs above the untouched baseline shape.
+  const recovered = priority.slots.slice(0, 96)
+    .map((slot, index) =>
+      slot.boiler_expected_w - plan.plans.baseline.slots[index].boiler_expected_w
+    );
+  const total = recovered.reduce(
+    (sum, extraW) => sum + Math.max(0, extraW),
+    0,
+  );
+  assert(total > 100, `expected a real catch-up, got ${total} W`);
+
+  assertEquals(
+    recovered[quiet] > 1e-6,
+    false,
+    `the quietest quarter is the dearest one here, so nothing belongs in it: ${
+      recovered[quiet].toFixed(0)
+    } W landed at ${priority.slots[quiet].shadow_import_sek_per_kwh} SEK/kWh`,
+  );
+
+  // And what did come back must be at the cheap end of what was available.
+  let cost = 0;
+  let kwh = 0;
+  for (const [index, extraW] of recovered.entries()) {
+    if (extraW <= 1e-6) continue;
+    const slotKwh = extraW / 1_000 * 0.25;
+    kwh += slotKwh;
+    cost += slotKwh * priority.slots[index].shadow_import_sek_per_kwh;
+  }
+  assert(
+    cost / kwh < 1.3,
+    `deferred energy must come back at the 1.2 SEK quarters, paid ${
+      (cost / kwh).toFixed(3)
+    } SEK/kWh`,
+  );
+});
+
 Deno.test("empirical device forecasts participate in the energy balance", () => {
   const snapshot = input();
   snapshot.capabilities = {
