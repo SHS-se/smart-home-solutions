@@ -877,6 +877,31 @@ export function planDispatch(
       : value + (part.average_value_sek_per_kwh - wear) * kwh;
   };
 
+  /**
+   * A charge block too short for the compressor that has to run it.
+   *
+   * The auction only ever starts a run at its full minimum length and then
+   * grows it a slot at a time, so each extension records itself as its own
+   * one-slot run. Releasing by that record can cut a contiguous block in half
+   * and strand the remainder: a deployed plan scheduled the pool heat pump for
+   * a single quarter at 04:30 against a four-quarter minimum. Contiguity is
+   * what the contract is about, so contiguity is what has to be repaired.
+   */
+  const shortBlock = (store: DispatchStore): number[] | null => {
+    const minRun = Math.max(1, store.min_run_slots ?? 1);
+    if (minRun <= 1) return null;
+    let block: number[] = [];
+    for (let index = 0; index <= count; index += 1) {
+      if (index < count && powerW[store.key][index] > 0) {
+        block.push(index);
+        continue;
+      }
+      if (block.length > 0 && block.length < minRun) return block;
+      block = [];
+    }
+    return null;
+  };
+
   /** A discharge the released charge can no longer supply is not a price call. */
   const overdrawn = (store: DispatchStore, index: number): boolean => {
     const low = store.min_state;
@@ -925,9 +950,14 @@ export function planDispatch(
     for (let index = 0; index < count; index += 1) recostSlot(index);
 
     let starved: { store: DispatchStore; indices: number[] } | null = null;
+    let stranded: { store: DispatchStore; indices: number[] } | null = null;
     let worst: { store: DispatchStore; indices: number[]; net: number } | null =
       null;
     for (const store of stores) {
+      if (stranded === null) {
+        const block = shortBlock(store);
+        if (block !== null) stranded = { store, indices: block };
+      }
       const runs = new Map<string, { indices: number[]; net: number }>();
       let starvedKey: string | null = null;
       for (let index = 0; index < count; index += 1) {
@@ -950,9 +980,9 @@ export function planDispatch(
         }
       }
     }
-    // An unsupplied discharge is a feasibility failure, not a price call, so
-    // it goes before anything that is merely unprofitable.
-    const target = starved ?? worst;
+    // Neither an unsupplied discharge nor a run the hardware cannot execute is
+    // a price call, so both go before anything that is merely unprofitable.
+    const target = starved ?? stranded ?? worst;
     if (target === null) break;
     releaseRun(target.store, target.indices);
   }

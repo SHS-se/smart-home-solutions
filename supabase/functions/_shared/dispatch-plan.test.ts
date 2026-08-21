@@ -201,6 +201,52 @@ Deno.test("spare solar is shared by draw, not claimed by whoever bid first", () 
   );
 });
 
+Deno.test("settling never leaves a compressor run below its minimum", () => {
+  // The auction only ever starts a run at its full minimum length, and then
+  // grows it a slot at a time — so each extension records itself as its own
+  // one-slot run. Releasing by that record can therefore cut a contiguous
+  // block in half and strand the remainder. Observed in a deployed plan: a
+  // pool heat pump scheduled for a single quarter at 04:30, and again at
+  // 03:45, against a four-quarter minimum.
+  // A pool near the top of its own curve is the case that bites: parts of a
+  // run clear their cost and parts do not, so settling reaches inside one.
+  const sun = solarDay(2_600);
+  const slots: DispatchSlot[] = sun.map((pv_w, index) => ({
+    pv_w,
+    fixed_load_w: 600,
+    import_price_sek_per_kwh: index / 4 >= 17 ? 2.4 : 1.2,
+    export_price_sek_per_kwh: 0.35,
+  }));
+  const stores = [
+    poolStore(slots.length, 29),
+    batteryStore(slots.length, 4, 2.4),
+  ];
+
+  const result = planDispatch(slots, stores, LIMITS);
+
+  for (const store of stores) {
+    const minRun = store.min_run_slots ?? 1;
+    if (minRun <= 1) continue;
+    const short: string[] = [];
+    let block: number[] = [];
+    for (let index = 0; index <= slots.length; index += 1) {
+      if (index < slots.length && result.power_w[store.key][index] > 0) {
+        block.push(index);
+        continue;
+      }
+      if (block.length > 0 && block.length < minRun) {
+        short.push(`${store.key} runs ${block.length} slots from ${block[0]}`);
+      }
+      block = [];
+    }
+    assertEquals(
+      short.slice(0, 3),
+      [],
+      `${store.key} must never be scheduled for less than ${minRun} slots`,
+    );
+  }
+});
+
 Deno.test("a full car stops bidding and the energy is exported", () => {
   const slots = buildSlots([solarDay(8_000)]);
   const ev = evStore(slots.length, 500, slots.length - 1);
