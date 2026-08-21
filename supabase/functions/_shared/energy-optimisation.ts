@@ -2179,6 +2179,14 @@ function buildDispatchStores(
           // persisted curve preview changed while the live planner ignored it.
           curve: curves.ev,
           initial_state: vehicle.soc * vehicle.capacity_kwh / perKm,
+          // The vehicle refuses charge above its own limit, so this is a
+          // hardware bound and not a preference the curve may outbid. Without
+          // it `chargeRoomW` returns Infinity and the auction keeps buying
+          // range the car cannot take: three consecutive replays planned the
+          // Model Y to 160% SOC, 49.9 kWh of it undeliverable. The published
+          // `ev_soc` clamps at 1, so only the km state showed it.
+          max_state: vehicle.departure_target_soc * vehicle.capacity_kwh /
+            perKm,
           max_power_w: wattsPerAmp(control) * control.max_current_a,
           min_power_w: wattsPerAmp(control) * control.min_current_a,
           power_step_w: wattsPerAmp(control) * control.current_step_a,

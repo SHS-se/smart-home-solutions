@@ -1618,6 +1618,60 @@ Deno.test("schema 6 never invents a charger control for a connected EV", () => {
   }
 });
 
+Deno.test("the car's own charge limit caps what the plan buys for it", () => {
+  // Observed at 160% planned SOC across three consecutive replays: the store
+  // had no ceiling, so `chargeRoomW` returned Infinity and the auction kept
+  // buying range the car will refuse. `ev_soc` clamps at 1 in the energy
+  // balance, so the fault was invisible in the published series — only the
+  // km state and the charging power showed it.
+  const base = horizon();
+  const snapshot = horizon({
+    pool: { water_temperature_c: 31, volume_m3: 55 },
+    capabilities: { ...base.capabilities, ev: true, pool: true },
+    ev_battery: {
+      name: "Model Y",
+      connected: true,
+      capacity_kwh: 75,
+      soc: 0.55,
+      departure_target_soc: 0.8,
+      charge_efficiency: 0.92,
+      available_from: base.slots[0].start,
+      departure: null,
+      priority: 3,
+      source_entity_ids: {
+        connected: "binary_sensor.charge_cable",
+        soc: "sensor.battery_level",
+        target_soc: "number.charge_limit",
+        energy_remaining: null,
+        charge_current: "number.charge_current",
+      },
+    },
+    services: [routedEvService(base)],
+  });
+
+  const plan = generateOptimisationPlan(snapshot, new Date(NOW));
+  assertEquals(plan.validation_errors, []);
+  const charged = plan.plans.priority.slots.reduce(
+    (total, slot) => total + slot.ev_w,
+    0,
+  ) / 4_000;
+  // Wall energy that reaches 80% from 55%: 0.25 * 75 / 0.92.
+  const deliverable = 0.25 * 75 / 0.92;
+
+  assert(
+    charged <= deliverable + 1e-6,
+    `the car stops accepting charge at its limit, so the plan must not buy past ${
+      deliverable.toFixed(2)
+    } kWh, got ${charged.toFixed(2)} kWh`,
+  );
+  assert(
+    charged > deliverable - 1,
+    `a limit is a ceiling, not a reason to decline cheap energy, got ${
+      charged.toFixed(2)
+    } kWh`,
+  );
+});
+
 Deno.test("a car past its charge limit leaves the surplus alone", () => {
   const base = horizon();
   const snapshot = horizon({
@@ -1652,7 +1706,7 @@ Deno.test("a car past its charge limit leaves the surplus alone", () => {
 
   assert(
     charged < 0.5,
-    `charging past the limit is what the flat tail exists to prevent, got ${charged} kWh`,
+    `a car already past its limit has no room left to sell into, got ${charged} kWh`,
   );
 });
 
