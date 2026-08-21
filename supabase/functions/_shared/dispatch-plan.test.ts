@@ -316,7 +316,10 @@ Deno.test("the battery discharges to cover load worth more than its charge", () 
   const result = planDispatch(slots, [battery], LIMITS);
   const discharged = result.discharge_w.battery.reduce((a, b) => a + b, 0);
 
-  assert(discharged > 0, "2.5 SEK import against 0.4 SEK charge must discharge");
+  assert(
+    discharged > 0,
+    "2.5 SEK import against 0.4 SEK charge must discharge",
+  );
   assert(
     result.import_w.reduce((a, b) => a + b, 0) <
       slots.length * slots[0].fixed_load_w,
@@ -378,12 +381,18 @@ Deno.test("§8.12 #2 — the battery competes with the sinks, not against them",
   };
   const withEmptyCar = planDispatch(
     slots,
-    [batteryStore(slots.length, 9, 0.5), evStore(slots.length, 60, slots.length - 1)],
+    [
+      batteryStore(slots.length, 9, 0.5),
+      evStore(slots.length, 60, slots.length - 1),
+    ],
     scarce,
   );
   const withFullCar = planDispatch(
     slots,
-    [batteryStore(slots.length, 9, 0.5), evStore(slots.length, 500, slots.length - 1)],
+    [
+      batteryStore(slots.length, 9, 0.5),
+      evStore(slots.length, 500, slots.length - 1),
+    ],
     scarce,
   );
 
@@ -444,7 +453,9 @@ Deno.test("a store is never asked to absorb more than it has room for", () => {
     returnedKwh / 0.95 / 0.95;
   assert(
     deliveredKwh <= roomKwh + 1e-6,
-    `bought ${deliveredKwh.toFixed(2)} kWh into ${roomKwh.toFixed(2)} kWh of room`,
+    `bought ${deliveredKwh.toFixed(2)} kWh into ${
+      roomKwh.toFixed(2)
+    } kWh of room`,
   );
   assert(
     result.state.battery.every((value) => value <= store.max_state! + 1e-9),
@@ -462,7 +473,7 @@ Deno.test("one slot never both charges and discharges the same store", () => {
   // to act on. The charge loop skipped only slots it had already charged, so
   // both landed: importing at the full price to push energy straight back
   // through the pack and pay the round trip for nothing.
-  const slots = buildSlots([solarDay(4_000)], {
+  const slots = buildSlots([solarDay(9_000)], {
     importPrice: 1.0,
     exportPrice: 0.05,
   }).map((slot) => ({ ...slot, fixed_load_w: 800 }));
@@ -508,14 +519,122 @@ Deno.test("one slot never both charges and discharges the same store", () => {
 
   const result = planDispatch(slots, [sink, battery], LIMITS);
   const collisions = result.power_w.battery
-    .map((watts, index) => ({ index, watts, out: result.discharge_w.battery[index] }))
+    .map((watts, index) => ({
+      index,
+      watts,
+      out: result.discharge_w.battery[index],
+    }))
     .filter((entry) => entry.watts > 0 && entry.out > 0)
     .map((entry) => entry.index);
   assertEquals(collisions, []);
   // The pathology has to stay reachable, or the guard proves nothing.
+  const charged = result.power_w.battery.some((watts) => watts > 0);
+  const discharged = result.discharge_w.battery.some((watts) => watts > 0);
   assert(
-    result.power_w.battery.some((watts) => watts > 0) &&
-      result.discharge_w.battery.some((watts) => watts > 0),
-    "the fixture must exercise both directions",
+    charged && discharged,
+    `the fixture must exercise both directions (charge=${charged}, discharge=${discharged})`,
   );
+});
+
+Deno.test("a sizeable move is priced by the full curve integral", () => {
+  const slots: DispatchSlot[] = [{
+    pv_w: 0,
+    fixed_load_w: 0,
+    import_price_sek_per_kwh: 1.2,
+    export_price_sek_per_kwh: 0.1,
+  }];
+  const store: DispatchStore = {
+    key: "steep-store",
+    curve: {
+      unit: "kwh",
+      points: [
+        { at: 0, sek_per_unit: 2 },
+        { at: 1, sek_per_unit: 0 },
+      ],
+    },
+    initial_state: 0,
+    max_power_w: 8_000,
+    retention_per_slot: 1,
+    usage_weight: [0],
+    terminal_weight: 1,
+    units_per_kwh: () => 1,
+    drift: (state) => state,
+  };
+
+  const result = planDispatch(slots, [store], LIMITS);
+
+  assertEquals(result.power_w[store.key], [0]);
+  assertEquals(result.allocations[0], []);
+});
+
+Deno.test("a discrete charger chooses the best complete current setpoint", () => {
+  const slots: DispatchSlot[] = [{
+    pv_w: 0,
+    fixed_load_w: 0,
+    import_price_sek_per_kwh: 1,
+    export_price_sek_per_kwh: 0.1,
+  }];
+  const store: DispatchStore = {
+    key: "charger",
+    curve: { unit: "kwh", points: [{ at: 100, sek_per_unit: 2 }] },
+    initial_state: 0,
+    min_power_w: 1_000,
+    power_step_w: 1_000,
+    max_power_w: 4_000,
+    retention_per_slot: 1,
+    usage_weight: [0],
+    terminal_weight: 1,
+    units_per_kwh: () => 1,
+    drift: (value) => value,
+  };
+
+  const result = planDispatch(slots, [store], LIMITS);
+
+  assertEquals(result.power_w.charger, [4_000]);
+});
+
+Deno.test("a compressor minimum run must clear its complete block cost", () => {
+  const prices = [0.1, 10, 10, 10];
+  const slots: DispatchSlot[] = prices.map((price) => ({
+    pv_w: 0,
+    fixed_load_w: 0,
+    import_price_sek_per_kwh: price,
+    export_price_sek_per_kwh: 0.1,
+  }));
+  const store: DispatchStore = {
+    key: "compressor",
+    curve: {
+      unit: "kwh",
+      points: [{ at: 100, sek_per_unit: 2 }],
+    },
+    initial_state: 0,
+    max_power_w: 1_000,
+    min_run_slots: 4,
+    retention_per_slot: 1,
+    usage_weight: new Array(slots.length).fill(0),
+    terminal_weight: 1,
+    units_per_kwh: () => 1,
+    drift: (state) => state,
+  };
+
+  const result = planDispatch(slots, [store], LIMITS);
+
+  assertEquals(result.power_w[store.key], [0, 0, 0, 0]);
+});
+
+Deno.test("load-cover discharge is valued at import, never export", () => {
+  const slots: DispatchSlot[] = [{
+    pv_w: 0,
+    fixed_load_w: 600,
+    import_price_sek_per_kwh: 1,
+    export_price_sek_per_kwh: 5,
+  }];
+  const battery = batteryStore(slots.length, 10, 2);
+  battery.max_state = 10;
+  const result = planDispatch(slots, [battery], LIMITS);
+
+  assertEquals(result.discharge_w.battery, [0]);
+  assertEquals(result.battery[0]?.reason, "retained_value_exceeds_import");
+  assertEquals(result.battery[0]?.comparison_price_sek_per_kwh, 1);
+  assertEquals(result.battery[0]?.comparison_power_w, 600);
 });

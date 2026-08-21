@@ -1334,7 +1334,7 @@ Deno.test("schema 6 with pool state dispatches by temperature, not by budget", (
   const plan = generateOptimisationPlan(snapshot, new Date(NOW));
 
   assertEquals(plan.schema_version, 6);
-  assertEquals(plan.model_version, "marginal-value-planner-v10");
+  assertEquals(plan.model_version, "marginal-value-planner-v11");
   // Asserted explicitly: an earlier version of this test checked the pool
   // energy but not the status, and so passed while every schema 6 plan was
   // reported infeasible by validations that still assumed fixed blocks.
@@ -1985,4 +1985,89 @@ Deno.test("the vehicle's own consumption decides what its charge is worth", () =
     efficient.state! > thirsty.state!,
     `the same charge is more range in the efficient car: ${efficient.state} vs ${thirsty.state}`,
   );
+});
+
+Deno.test("the live EV dispatch uses the configured demand-value curve", () => {
+  const vehicle = {
+    name: "Model Y",
+    connected: true,
+    capacity_kwh: 76.87,
+    soc: 0.2,
+    departure_target_soc: 0.8,
+    charge_efficiency: 0.9,
+    kwh_per_km: 0.18,
+    available_from: "2026-08-10T08:00:00.000Z",
+    departure: null,
+    priority: 3,
+    source_entity_ids: {
+      connected: "binary_sensor.cable",
+      soc: "sensor.soc",
+      target_soc: "number.limit",
+      energy_remaining: null,
+      charge_current: "number.current",
+    },
+  };
+  const base = horizon({
+    capabilities: {
+      pv: true,
+      battery: true,
+      pool: false,
+      boiler: false,
+      ev: true,
+    },
+    pool: null,
+    ev_battery: vehicle,
+  });
+  const service = routedEvService(base);
+  const scheduled = (value_curves?: OptimisationSnapshot["value_curves"]) =>
+    generateOptimisationPlan(
+      { ...base, services: [service], value_curves },
+      new Date(NOW),
+    ).plans.priority.slots.reduce((sum, slot) => sum + slot.ev_w, 0);
+
+  assert(
+    scheduled() > 0,
+    "the default curve must charge an empty connected car",
+  );
+  assertEquals(
+    scheduled({
+      ev: {
+        unit: "km",
+        points: [{ at: 1_000, sek_per_unit: 0 }],
+      },
+    }),
+    0,
+  );
+});
+
+Deno.test("every planned quarter records decision evidence and exact grid arithmetic", () => {
+  const snapshot = horizon({
+    capabilities: {
+      pv: true,
+      battery: true,
+      pool: false,
+      boiler: false,
+      ev: false,
+    },
+    pool: null,
+  });
+  const plan = generateOptimisationPlan(snapshot, new Date(NOW));
+  const slots = plan.plans.priority.slots;
+
+  assertEquals(plan.decision_diagnostics_version, 1);
+  assert(
+    slots.some((slot) => slot.decision.store_allocations.length > 0),
+    "the fixture must expose at least one accepted curve allocation",
+  );
+  for (const slot of slots) {
+    assertEquals(slot.decision.schema_version, 1);
+    assert(slot.decision.battery !== null, "battery evidence is required");
+    const balance = slot.decision.grid_balance;
+    const residual = balance.load_w + balance.battery_charge_w - balance.pv_w -
+      balance.battery_discharge_w;
+    assert(
+      Math.abs(residual - balance.residual_w) < 0.05,
+      `${slot.start}: recorded residual does not match its operands`,
+    );
+  }
 });

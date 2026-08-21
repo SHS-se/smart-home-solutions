@@ -1,153 +1,32 @@
-// A readable audit of the 72-hour solve.
+// The quarter ledger is the plan's audit surface.
 //
-// The store table explains the horizon-wide auction. The quarter table then
-// shows its chronological consequence without pretending that the grid made a
-// second decision: import and export are the residual balance after forecast
-// PV, planned demand and battery dispatch.
+// It deliberately renders evidence recorded by the optimiser. Reconstructing
+// a plausible explanation from final power flows produced confident but false
+// prose whenever a later scheduling stage changed the load.
 
 import React from 'react';
-import { AlertTriangle, Check, Minus } from 'lucide-react';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useLanguage } from '@/contexts/LanguageContext';
+import type { PlannedSlot } from '@/lib/energy-shift/contracts';
 import type { TimelineRange, TimelineRow } from '@/lib/energy-shift/energy-timeline';
 import type { PlanModel } from './usePlanModel';
 
 const ACTIVE_W = 10;
-const CONTROLLED_ACTION_CATEGORIES = new Set([
-  'pool_heating',
-  'ev_charging',
-  'hot_water',
-  'heating',
-  'cooling',
-]);
 
-/** Which per-slot column carries each stateful store's scheduled input. */
-const POWER_FIELD: Record<string, 'pool_w' | 'ev_w' | 'battery_charge_w'> = {
-  pool: 'pool_w',
-  ev: 'ev_w',
-  battery: 'battery_charge_w',
-};
+type Allocation = PlannedSlot['decision']['store_allocations'][number];
+type BatteryDecision = NonNullable<PlannedSlot['decision']['battery']>;
 
-function windowedEnergy(
-  slots: PlanModel['active']['slots'],
-): Record<string, { inputKwh: number; outputKwh: number; inputHours: number; outputHours: number }> {
-  const totals: Record<string, {
-    inputKwh: number;
-    outputKwh: number;
-    inputHours: number;
-    outputHours: number;
-  }> = {};
-  for (const [key, field] of Object.entries(POWER_FIELD)) {
-    let inputKwh = 0;
-    let outputKwh = 0;
-    let inputSlots = 0;
-    let outputSlots = 0;
-    for (const slot of slots) {
-      const watts = Number(slot[field] ?? 0);
-      if (watts > ACTIVE_W) {
-        inputKwh += watts / 4_000;
-        inputSlots += 1;
-      }
-      if (key === 'battery' && slot.battery_discharge_w > ACTIVE_W) {
-        outputKwh += slot.battery_discharge_w / 4_000;
-        outputSlots += 1;
-      }
-    }
-    totals[key] = {
-      inputKwh,
-      outputKwh,
-      inputHours: inputSlots * 0.25,
-      outputHours: outputSlots * 0.25,
-    };
-  }
-  return totals;
-}
+const rowId = (start: string) => `decision-row-${Date.parse(start)}`;
+const kw = (watts: number) => `${(watts / 1_000).toFixed(2)} kW`;
+const price = (value: number | null) => value === null ? '—' : `${value.toFixed(3)} SEK/kWh`;
+const money = (value: number) => `${value >= 0 ? '+' : ''}${value.toFixed(3)} SEK`;
 
-type Reason =
-  | 'scheduled'
-  | 'state_above_curve'
-  | 'value_below_price'
-  | 'outbid'
-  | 'not_controllable'
-  | 'disconnected'
-  | 'state_unavailable'
-  | 'no_price_reference';
-
-interface Row {
-  key: string;
-  unit: string;
-  state: number | null;
-  marginal_value_sek_per_kwh: number | null;
-  cheapest_energy_sek_per_kwh: number | null;
-  planned_kwh: number;
-  returned_kwh: number;
-  reason: Reason;
-}
-
-const UNCONSIDERED: ReadonlySet<Reason> = new Set<Reason>([
-  'not_controllable',
-  'disconnected',
-  'state_unavailable',
-  'no_price_reference',
-]);
-
-const STORE_LABEL: Record<string, [string, string]> = {
-  pool: ['Pool', 'Pool'],
-  ev: ['Bil', 'Car'],
-  battery: ['Hembatteri', 'Home battery'],
-  hot_water: ['Varmvatten', 'Hot water'],
-};
-
-const formatState = (unit: string, state: number | null): string => {
-  if (state === null) return '—';
-  if (unit === 'celsius') return `${state.toFixed(1)} °C`;
-  if (unit === 'km') return `${Math.round(state)} km`;
-  if (unit === 'kwh') return `${state.toFixed(1)} kWh`;
-  return String(state);
-};
-
-const sek = (value: number | null): string =>
-  value === null ? '—' : `${value.toFixed(2)} SEK/kWh`;
-
-const REASON_TEXT: Record<Reason, { sv: [string, string]; en: [string, string] }> = {
-  scheduled: {
-    sv: ['Schemalagd', 'Minst en kvart vann sin värde–kostnadsjämförelse över 72 timmar'],
-    en: ['Scheduled', 'At least one quarter won its value-versus-cost comparison across 72 hours'],
-  },
-  state_above_curve: {
-    sv: ['Redan mättad', 'Ytterligare energi är värd noll vid starttillståndet'],
-    en: ['Already satisfied', 'Another kWh is worth nothing at the initial state'],
-  },
-  value_below_price: {
-    sv: ['Avstod', 'Startbudet låg under varje tillgänglig energikostnad i horisonten'],
-    en: ['Declined', 'The initial bid was below every available energy cost in the horizon'],
-  },
-  outbid: {
-    sv: ['Överbjuden', 'Startbudet klarade bottenpriset, men tid, gränser eller en annan allokering hindrade ett vinnande drag'],
-    en: ['Outbid', 'The initial bid cleared the floor, but timing, limits or another allocation prevented a winning move'],
-  },
-  not_controllable: {
-    sv: ['Planeras inte', 'Ingen mätare är satt till styrbar för den här tjänsten'],
-    en: ['Not planned', 'No meter is set to controllable for this service'],
-  },
-  disconnected: {
-    sv: ['Inte ansluten', 'Ingenting är inkopplat att ladda'],
-    en: ['Not connected', 'Nothing is plugged in to charge'],
-  },
-  state_unavailable: {
-    sv: ['Saknar mätvärde', 'Sensorn som värdekurvan använder saknas eller är otillgänglig'],
-    en: ['No measured state', 'The sensor used by the value curve is missing or unavailable'],
-  },
-  no_price_reference: {
-    sv: ['Inget prisunderlag', 'Inga priser fanns att värdera lagrad energi mot'],
-    en: ['No price reference', 'No prices were available to value stored energy against'],
-  },
-};
-
-const joinNatural = (values: string[], conjunction: string): string => {
-  if (values.length <= 1) return values[0] ?? '';
-  return `${values.slice(0, -1).join(', ')} ${conjunction} ${values.at(-1)}`;
+const state = (value: number, unit: string) => {
+  if (unit === 'celsius') return `${value.toFixed(2)} °C`;
+  if (unit === 'km') return `${value.toFixed(1)} km`;
+  if (unit === 'kwh') return `${value.toFixed(2)} kWh`;
+  return `${value.toFixed(2)} ${unit}`;
 };
 
 const StoreDecisions: React.FC<{
@@ -155,9 +34,13 @@ const StoreDecisions: React.FC<{
   /** The same timeline window the chart above is showing, so the two agree. */
   rows: TimelineRow[];
   range: TimelineRange;
-}> = ({ model, rows: timeline, range }) => {
-  const { t, language } = useLanguage();
-  const rows = (model.active.store_diagnostics ?? []) as Row[];
+  /** A chart click selects the exact planned quarter represented by this row. */
+  selectedStart?: string | null;
+  selectionRequest?: number;
+  onSelectedStartChange?: (start: string) => void;
+}> = ({ model, rows: timeline, range, selectedStart, selectionRequest, onSelectedStartChange }) => {
+  const { t } = useLanguage();
+  const [openItem, setOpenItem] = React.useState<string>('');
   const windowRows = React.useMemo(
     () => timeline.slice(range.from, range.to),
     [range.from, range.to, timeline],
@@ -171,305 +54,281 @@ const StoreDecisions: React.FC<{
       return at >= first && at <= last;
     });
   }, [model.active.slots, windowRows]);
-  const energy = windowedEnergy(inWindow);
+  const indexByStart = React.useMemo(
+    () => new Map(model.active.slots.map((slot, index) => [Date.parse(slot.start), index])),
+    [model.active.slots],
+  );
+  const selectedMs = selectedStart ? Date.parse(selectedStart) : null;
+  const diagnosticsVersion = (model.plan as { decision_diagnostics_version?: number })
+    .decision_diagnostics_version;
+  const hasEvidence = diagnosticsVersion === 1 && inWindow.every(slot =>
+    (slot as PlannedSlot & { decision?: PlannedSlot['decision'] }).decision?.schema_version === 1);
 
-  const ordered = [...rows].sort((left, right) => {
-    const rank = (row: Row) =>
-      row.reason === 'scheduled' ? 0 : UNCONSIDERED.has(row.reason) ? 2 : 1;
-    return rank(left) - rank(right) || left.key.localeCompare(right.key);
-  });
-  const unconsidered = ordered.filter(row => UNCONSIDERED.has(row.reason));
-  const modelByKey = new Map(model.deviceRoleView.visibleModels.map(device => [device.key, device]));
+  React.useEffect(() => {
+    if (!selectedStart || !inWindow.some(slot => Date.parse(slot.start) === selectedMs)) return;
+    setOpenItem('sequence');
+    let secondFrame = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => {
+        document.getElementById(rowId(selectedStart))?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'center',
+        });
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      if (secondFrame) window.cancelAnimationFrame(secondFrame);
+    };
+  }, [inWindow, selectedMs, selectedStart, selectionRequest]);
 
-  const actionNames = (slot: PlanModel['active']['slots'][number]) => {
-    const values: string[] = [];
-    const represented = new Set<string>();
-    for (const [key, watts] of Object.entries(slot.device_loads_w)) {
-      if (watts <= ACTIVE_W) continue;
-      const device = modelByKey.get(key);
-      // A device moved to base load since this plan was issued is part of the
-      // situation, not an action. The refreshed plan will fold it into base.
-      if (!device) continue;
-      // Other empirical device rows are forecasts the plan has to serve, not
-      // controls it chose. Calling an oven forecast a plan action would make
-      // the causal ledger as misleading as the aggregate it replaces.
-      if (!CONTROLLED_ACTION_CATEGORIES.has(device.category)) {
-        continue;
-      }
-      represented.add(device.category);
-      values.push(`${device.name} ${(watts / 1_000).toFixed(2)} kW`);
-    }
-    if (!represented.has('pool_heating') && slot.pool_w > ACTIVE_W) {
-      values.push(`${t('Pool', 'Pool')} ${(slot.pool_w / 1_000).toFixed(2)} kW`);
-    }
-    if (!represented.has('ev_charging') && slot.ev_w > ACTIVE_W) {
-      values.push(`${t('Bil', 'EV')} ${(slot.ev_w / 1_000).toFixed(2)} kW`);
-    }
-    if (!represented.has('hot_water') && slot.boiler_expected_w > ACTIVE_W) {
-      values.push(`${t('Varmvatten', 'Hot water')} ${(slot.boiler_expected_w / 1_000).toFixed(2)} kW`);
-    }
-    const roomW = Object.values(slot.room_heating_w).reduce((sum, watts) => sum + watts, 0);
-    const roomRepresented = represented.has('heating') || represented.has('cooling');
-    if (!roomRepresented && roomW > ACTIVE_W) {
-      values.push(`${t('Rumsvärme', 'Space heating')} ${(roomW / 1_000).toFixed(2)} kW`);
-    }
-    if (slot.battery_charge_w > ACTIVE_W) {
-      values.push(`${t('Batteriladdning', 'Battery charge')} ${(slot.battery_charge_w / 1_000).toFixed(2)} kW`);
-    }
-    if (slot.battery_discharge_w > ACTIVE_W) {
-      values.push(`${t('Batteriurladdning', 'Battery discharge')} ${(slot.battery_discharge_w / 1_000).toFixed(2)} kW`);
-    }
-    return values;
+  const storeLabel = (key: string) => {
+    if (key === 'pool') return t('Pool', 'Pool');
+    if (key === 'ev') return model.plan.ev_battery?.name ?? t('Bil', 'EV');
+    if (key === 'battery') return t('Hembatteri', 'Home battery');
+    return key.replace(/_/g, ' ');
   };
 
-  const why = (slot: PlanModel['active']['slots'][number]) => {
-    const parts: string[] = [];
-    const economicAction = slot.pool_w > ACTIVE_W
-      || slot.ev_w > ACTIVE_W
-      || slot.battery_charge_w > ACTIVE_W;
-    const requiredAction = slot.boiler_expected_w > ACTIVE_W
-      || Object.values(slot.room_heating_w).some(watts => watts > ACTIVE_W);
+  const sourceText = (allocation: Allocation) => {
+    const sources: string[] = [];
+    if (allocation.solar_w > ACTIVE_W) {
+      sources.push(`${kw(allocation.solar_w)} ${t('sol', 'solar')}`);
+    }
+    if (allocation.grid_w > ACTIVE_W) {
+      sources.push(`${kw(allocation.grid_w)} ${t('nät', 'grid')}`);
+    }
+    return sources.join(' + ');
+  };
 
-    if (economicAction && model.plan.schema_version >= 6) {
-      parts.push(t(
-        'Lagringen vann en värde–kostnadsjämförelse som gjordes över hela 72-timmarshorisonten.',
-        'The store won a value-versus-cost comparison made across the full 72-hour horizon.',
-      ));
-    } else if (economicAction) {
-      parts.push(t(
-        'Den flexibla lasten placerades i denna kvart av planens horisontschema.',
-        'The flexible load was placed in this quarter by the horizon schedule.',
-      ));
+  const demandDecision = (allocation: Allocation, slotIndex: number) => {
+    const moveKwh = allocation.power_w / 4_000;
+    const runQuarter = slotIndex - allocation.run_start_index + 1;
+    const runText = allocation.run_slots > 1
+      ? allocation.trigger === 'minimum_run_continuation'
+        ? t(
+          `Obligatorisk kvart ${runQuarter} av ${allocation.run_slots} i minimikörningen; hela körningen gav ${money(allocation.run_net_value_sek)}.`,
+          `Required quarter ${runQuarter} of ${allocation.run_slots} in the minimum run; the complete run returned ${money(allocation.run_net_value_sek)}.`,
+        )
+        : t(
+          `Startar en minimikörning på ${allocation.run_slots} kvart; hela körningen gav ${money(allocation.run_net_value_sek)}.`,
+          `Starts a ${allocation.run_slots}-quarter minimum run; the complete run returned ${money(allocation.run_net_value_sek)}.`,
+        )
+      : '';
+    const source = sourceText(allocation);
+    return (
+      <div key={`${allocation.store_key}:${allocation.direction}:${allocation.allocation_order}`} className="space-y-1">
+        <div className="font-medium">
+          {storeLabel(allocation.store_key)} · {kw(allocation.power_w)} · {moveKwh.toFixed(2)} kWh
+        </div>
+        <div>
+          {t('Auktionstillstånd', 'Auction state')}: {state(allocation.state_before, allocation.state_unit)} → {state(allocation.state_after, allocation.state_unit)}
+        </div>
+        <div>
+          {t('Kurvintegral efter tidsförlust', 'Curve integral after timing loss')}{' '}
+          <span className="font-medium text-foreground">{price(allocation.average_value_sek_per_kwh)}</span>
+          {' '}({(allocation.retention_factor * 100).toFixed(1)}% {t('kvar vid användning', 'retained at use')})
+          {' '}{t('mot total energikostnad', 'versus all-in energy cost')}{' '}
+          <span className="font-medium text-foreground">{price(allocation.energy_cost_sek_per_kwh)}</span>
+          {allocation.wear_cost_sek_per_kwh > 0
+            ? ` + ${price(allocation.wear_cost_sek_per_kwh)} ${t('slitage', 'wear')}`
+            : ''}.
+        </div>
+        {allocation.start_cost_sek > 0 && (
+          <div>{t('Startkostnadsandel', 'Start-cost share')}: {allocation.start_cost_sek.toFixed(3)} SEK.</div>
+        )}
+        {source && <div>{t('Källa', 'Source')}: {source}.</div>}
+        <div>
+          {t('Nettovärde för kvarten', 'Quarter net value')}{' '}
+          <span className={allocation.net_value_sek >= 0 ? 'font-medium text-emerald-700 dark:text-emerald-400' : 'font-medium text-destructive'}>
+            {money(allocation.net_value_sek)}
+          </span>
+          {' '}· {t('allokeringsordning', 'allocation order')} #{allocation.allocation_order}.
+        </div>
+        {runText && <div className="font-medium text-foreground">{runText}</div>}
+      </div>
+    );
+  };
+
+  const batteryText = (
+    decision: BatteryDecision | null,
+    allocation: Allocation | undefined,
+  ) => {
+    if (!decision) return <span className="text-muted-foreground">{t('Inget hembatteri i planen.', 'No home battery in this plan.')}</span>;
+    const comparedPower = kw(decision.comparison_power_w);
+    const beforeAfter = `${state(decision.state_before, decision.state_unit)} → ${state(decision.state_after, decision.state_unit)}`;
+    const net = decision.net_value_sek === null ? null : money(decision.net_value_sek);
+
+    if (decision.action === 'charge') {
+      const source = allocation ? sourceText(allocation) : '';
+      return (
+        <div className="space-y-1">
+          <div className="font-medium">{t('Ladda', 'Charge')} {kw(decision.power_w)} · {beforeAfter}</div>
+          <div>{t('Lagrad kurvvärde', 'Stored curve value')} {price(decision.stored_value_sek_per_kwh)} {t('mot energikostnad', 'versus energy cost')} {price(decision.comparison_price_sek_per_kwh)}{decision.wear_cost_sek_per_kwh > 0 ? ` + ${price(decision.wear_cost_sek_per_kwh)} ${t('slitage', 'wear')}` : ''}.</div>
+          {source && <div>{t('Källa', 'Source')}: {source}.</div>}
+          {net && <div>{t('Nettovärde', 'Net value')} <span className="font-medium text-emerald-700 dark:text-emerald-400">{net}</span>.</div>}
+        </div>
+      );
     }
-    if (requiredAction) {
-      parts.push(t(
-        'Värme eller varmvatten körs för att uppfylla sitt service- eller komfortkrav.',
-        'Heating or hot water runs to meet its service or comfort requirement.',
-      ));
+    if (decision.action === 'discharge') {
+      const destination = allocation?.discharge_destination === 'export'
+        ? t('export', 'export')
+        : allocation?.discharge_destination === 'mixed'
+          ? t('last och export', 'load and export')
+          : t('husets last', 'home demand');
+      return (
+        <div className="space-y-1">
+          <div className="font-medium">{t('Ladda ur', 'Discharge')} {kw(decision.power_w)} {t('till', 'to')} {destination} · {beforeAfter}</div>
+          <div>{t('Undviken import/försäljning', 'Avoided import/sale')} {price(decision.comparison_price_sek_per_kwh)} {t('mot behållet kurvvärde', 'versus retained curve value')} {price(decision.stored_value_sek_per_kwh)}{decision.wear_cost_sek_per_kwh > 0 ? ` + ${price(decision.wear_cost_sek_per_kwh)} ${t('slitage', 'wear')}` : ''}.</div>
+          {net && <div>{t('Nettovärde', 'Net value')} <span className="font-medium text-emerald-700 dark:text-emerald-400">{net}</span>.</div>}
+        </div>
+      );
     }
-    if (slot.battery_discharge_w > ACTIVE_W && model.plan.schema_version >= 6) {
-      parts.push(t(
-        'Batteriet urladdas eftersom värdet av att undvika import eller sälja energin översteg värdet av att behålla den.',
-        'The battery discharges because avoiding import or selling the energy was worth more than retaining it.',
-      ));
-    } else if (slot.battery_discharge_w > ACTIVE_W) {
-      parts.push(t(
-        'Batteriet täcker underskott enligt den äldre planmodellens batteriregel.',
-        'The battery covers the shortfall under the older plan model’s battery rule.',
-      ));
+
+    if (decision.reason === 'retained_value_exceeds_import') {
+      return (
+        <div className="space-y-1">
+          <div className="font-medium">{t('Behåll laddningen', 'Hold charge')} · {beforeAfter}</div>
+          <div>{t(`Testade att ladda ur ${comparedPower}.`, `Tested discharging ${comparedPower}.`)} {t('Undviken import', 'Avoided import')} {price(decision.comparison_price_sek_per_kwh)} {t('var lägre än behållet kurvvärde', 'was below retained curve value')} {price(decision.stored_value_sek_per_kwh)}{decision.wear_cost_sek_per_kwh > 0 ? ` + ${price(decision.wear_cost_sek_per_kwh)} ${t('slitage', 'wear')}` : ''}. {net && `${t('Nettot för urladdning', 'Discharge net')} ${net}.`}</div>
+        </div>
+      );
     }
-    if (slot.grid_import_w > ACTIVE_W) {
-      parts.push(t(
-        `Efter sol och batteri återstod ${(slot.grid_import_w / 1_000).toFixed(2)} kW av den planerade lasten. Nätet balanserar resten; importen är inte ett separat ja/nej-beslut.`,
-        `After solar and battery dispatch, ${(slot.grid_import_w / 1_000).toFixed(2)} kW of planned demand remained. The grid balances the remainder; import is not a separate yes/no decision.`,
-      ));
-    } else if (slot.grid_export_w > ACTIVE_W) {
-      parts.push(t(
-        `Efter last och laddning återstod ${(slot.grid_export_w / 1_000).toFixed(2)} kW. Ingen ytterligare lagringsallokering accepterades, så resten säljs.`,
-        `After load and charging, ${(slot.grid_export_w / 1_000).toFixed(2)} kW remained. No further store allocation was accepted, so the remainder is sold.`,
-      ));
-    } else if (slot.curtailed_w > ACTIVE_W) {
-      parts.push(t(
-        'Exportgränsen nåddes, så återstående överskott begränsas.',
-        'The export limit was reached, so the remaining surplus is curtailed.',
-      ));
-    } else {
-      parts.push(t(
-        'Sol, last och batteri balanserar inom huset, så inget nätflöde återstår.',
-        'Solar, demand and battery balance within the home, leaving no grid flow.',
-      ));
+    if (decision.reason === 'charge_value_below_export') {
+      return (
+        <div className="space-y-1">
+          <div className="font-medium">{t('Ladda inte', 'Do not charge')} · {beforeAfter}</div>
+          <div>{t(`Testade att lagra ${comparedPower}.`, `Tested storing ${comparedPower}.`)} {t('Kurvvärde', 'Curve value')} {price(decision.stored_value_sek_per_kwh)} {t('var lägre än exportvärdet', 'was below export value')} {price(decision.comparison_price_sek_per_kwh)}{decision.wear_cost_sek_per_kwh > 0 ? ` + ${price(decision.wear_cost_sek_per_kwh)} ${t('slitage', 'wear')}` : ''}. {net && `${t('Nettot för laddning', 'Charge net')} ${net}.`}</div>
+        </div>
+      );
     }
-    if (slot.unserved_w > ACTIVE_W) {
-      parts.push(t(
-        `${(slot.unserved_w / 1_000).toFixed(2)} kW kunde inte levereras eftersom importgränsen nåddes.`,
-        `${(slot.unserved_w / 1_000).toFixed(2)} kW could not be served because the import limit was reached.`,
-      ));
+    if (decision.reason === 'load_added_after_dispatch') {
+      return (
+        <div className="space-y-1 text-amber-800 dark:text-amber-300">
+          <div className="font-medium">{t('Last tillkom efter batteriauktionen', 'Load was added after the battery auction')}</div>
+          <div>{t(
+            'Batteriet såg inget underskott när det fattade sitt beslut. Komfort- eller driftcykellast lades till senare, så den slutliga importen jämfördes aldrig mot urladdning. Detta är schemaläggningsordning, inte ett värdekurvebeslut.',
+            'The battery saw no shortfall when it made its decision. Comfort or duty-cycle demand was added later, so the final import was never compared with discharge. This is scheduler ordering, not a value-curve decision.',
+          )}</div>
+        </div>
+      );
     }
-    return parts.join(' ');
+    if (decision.reason === 'state_floor' || decision.reason === 'state_ceiling') {
+      return <span>{decision.reason === 'state_floor' ? t('Behåll: batteriet är vid sin nedre tillståndsgräns.', 'Hold: the battery is at its lower state limit.') : t('Behåll: batteriet är vid sin övre tillståndsgräns.', 'Hold: the battery is at its upper state limit.')} {beforeAfter}</span>;
+    }
+    if (decision.reason === 'future_state_constraint') {
+      return <span>{t('Behåll: ett drag här skulle bryta en senare fysisk tillståndsgräns.', 'Hold: acting here would violate a later physical state bound.')} {beforeAfter}</span>;
+    }
+    return <span>{t('Ingen laddnings- eller urladdningsmöjlighet återstod efter lagringsauktionen.', 'No charge or discharge opportunity remained after the store auction.')} {beforeAfter}</span>;
+  };
+
+  const gridText = (slot: PlannedSlot) => {
+    const balance = slot.decision.grid_balance;
+    const signed = balance.residual_w >= 0 ? `+${kw(balance.residual_w)}` : `−${kw(Math.abs(balance.residual_w))}`;
+    const result = balance.direction === 'import'
+      ? `${t('Nätimport', 'Grid import')} ${kw(balance.power_w)}`
+      : balance.direction === 'export'
+        ? `${t('Nätexport', 'Grid export')} ${kw(balance.power_w)}`
+        : t('Inget nätflöde', 'No grid flow');
+    return (
+      <div className="space-y-1 tabular-nums">
+        <div>{t('Last', 'Demand')} {kw(balance.load_w)} + {t('batteriladdning', 'battery charge')} {kw(balance.battery_charge_w)}</div>
+        <div>− {t('sol', 'solar')} {kw(balance.pv_w)} − {t('batteriurladdning', 'battery discharge')} {kw(balance.battery_discharge_w)}</div>
+        <div className="font-medium">= {signed} · {result}</div>
+        {balance.reason === 'import_limit' && <div className="text-destructive">{t(`Importgränsen ${kw(balance.limit_w)} binder; ${kw(slot.unserved_w)} kan inte levereras.`, `The ${kw(balance.limit_w)} import limit binds; ${kw(slot.unserved_w)} is unserved.`)}</div>}
+        {balance.reason === 'export_limit' && <div className="text-amber-700 dark:text-amber-400">{t(`Exportgränsen ${kw(balance.limit_w)} binder; ${kw(slot.curtailed_w)} begränsas.`, `The ${kw(balance.limit_w)} export limit binds; ${kw(slot.curtailed_w)} is curtailed.`)}</div>}
+      </div>
+    );
   };
 
   if (inWindow.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">
         {t(
-          'Den valda perioden ligger före den aktuella planen. Grafen visar uppmätta värden där, men den här planen fattade inga beslut för perioden.',
-          'The selected period is before the current plan. The chart shows measured values there, but this plan made no decisions for that period.',
+          'Den valda perioden ligger före den aktuella planen. Grafen visar uppmätta värden där, men planen har inga beslut för perioden.',
+          'The selected period predates the current plan. The chart shows measurements there, but the plan has no decisions for this period.',
         )}
       </p>
     );
   }
 
   return (
-    <Accordion type="multiple" className="w-full">
-      <AccordionItem value="stores">
-        <AccordionTrigger className="py-3 text-sm hover:no-underline">
-          {t('Lagringarnas 72-timmarsbeslut', 'The stores’ 72-hour decision')}
-        </AccordionTrigger>
-        <AccordionContent className="space-y-3">
-          <p className="text-[11px] text-muted-foreground">
-            {t(
-              'Startbud och lägsta tillgängliga kostnad gäller hela horisonten. Den lägsta kostnaden är totalt köppris när energi måste köpas, eller förlorat totalt säljpris när prognosen har solelöverskott. Den är alltså varken ett genomsnittligt köppris eller enbart elbörspriset. Planerat gäller den valda perioden.',
-              'Initial bid and lowest available cost cover the full horizon. Lowest cost is the all-in import price when energy must be bought, or the forgone all-in export price when forecast solar is in surplus. It is therefore neither an average import tariff nor the wholesale electricity price alone. Planned covers the selected period.',
-            )}
-          </p>
-          {model.planView === 'unplanned' && (
-            <p className="text-[11px] text-muted-foreground">
-              {t(
-                'Detta är motfaktiska värden från vyn Utan plan; Home Assistant kör vyn Med plan.',
-                'These are counterfactual values from the Without plan view; Home Assistant executes the With plan view.',
-              )}
-            </p>
-          )}
-
-          {ordered.length > 0 ? (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t('Lagring', 'Store')}</TableHead>
-                  <TableHead className="text-right">{t('Starttillstånd', 'Initial state')}</TableHead>
-                  <TableHead className="text-right">{t('Startbud', 'Initial bid')}</TableHead>
-                  <TableHead className="text-right">{t('Lägsta tillgängliga kostnad', 'Lowest available cost')}</TableHead>
-                  <TableHead className="text-right">{t('Planerat i perioden', 'Planned in window')}</TableHead>
-                  <TableHead>{t('Utfall', 'Outcome')}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {ordered.map(row => {
-                  const text = REASON_TEXT[row.reason] ?? REASON_TEXT.outbid;
-                  const [headline, detail] = language === 'sv' ? text.sv : text.en;
-                  const absent = UNCONSIDERED.has(row.reason);
-                  const label = STORE_LABEL[row.key] ?? [row.key, row.key];
-                  const flow = energy[row.key];
-                  return (
-                    <TableRow key={row.key} className={absent ? 'bg-amber-50/60 dark:bg-amber-950/20' : undefined}>
-                      <TableCell className="font-medium">{language === 'sv' ? label[0] : label[1]}</TableCell>
-                      <TableCell className="text-right tabular-nums">{formatState(row.unit, row.state)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{sek(row.marginal_value_sek_per_kwh)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{sek(row.cheapest_energy_sek_per_kwh)}</TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {(flow?.inputKwh ?? 0) > 0.05 && (
-                          <span className="block">
-                            {flow.inputKwh.toFixed(1)} kWh {t('in', 'in')}
-                            <span className="block text-[11px] text-muted-foreground">{flow.inputHours.toFixed(1)} h</span>
-                          </span>
-                        )}
-                        {(flow?.outputKwh ?? 0) > 0.05 && (
-                          <span className="block">
-                            {flow.outputKwh.toFixed(1)} kWh {t('ut', 'out')}
-                            <span className="block text-[11px] text-muted-foreground">{flow.outputHours.toFixed(1)} h</span>
-                          </span>
-                        )}
-                        {(flow?.inputKwh ?? 0) <= 0.05 && (flow?.outputKwh ?? 0) <= 0.05 && '—'}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-start gap-1.5">
-                          {absent
-                            ? <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-500" aria-hidden />
-                            : row.reason === 'scheduled'
-                              ? <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-500" aria-hidden />
-                              : <Minus className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />}
-                          <span>
-                            <span className="font-medium">{headline}</span>
-                            <span className="block text-[11px] text-muted-foreground">{detail}</span>
-                          </span>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              {t(
-                'Den här planen har inga fysiska lagringsbud. Kvartsföljden visar ändå hur planerad last och sol gav nätflödet.',
-                'This plan has no physical-store bids. The quarter sequence still shows how planned demand and solar produced the grid flow.',
-              )}
-            </p>
-          )}
-
-          {unconsidered.length > 0 && (
-            <p className="rounded-md border border-amber-300 bg-amber-50/70 p-2 text-[11px] text-amber-900 dark:border-amber-800 dark:bg-amber-950/25 dark:text-amber-200">
-              {t(
-                'Markerade rader deltog aldrig i avvägningen. De förlorade inte på värde; en mappning, anslutning eller sensor måste rättas.',
-                'Highlighted rows never entered the trade-off. They did not lose on value; a mapping, connection or sensor must be corrected.',
-              )}
-            </p>
-          )}
-        </AccordionContent>
-      </AccordionItem>
-
+    <Accordion type="single" collapsible value={openItem} onValueChange={setOpenItem} className="w-full">
       <AccordionItem value="sequence">
         <AccordionTrigger className="py-3 text-sm hover:no-underline">
           {t('Beslutsföljd per 15 minuter', '15-minute decision sequence')}
         </AccordionTrigger>
         <AccordionContent>
-          <p className="mb-2 text-[11px] text-muted-foreground">
-            {t(
-              'Köp och sälj visar totalpriset som objektivet använde. Publicerat betyder verkligt dag-före-pris; modellerat betyder husets prisprognos efter den publicerade perioden.',
-              'Buy and sell show the all-in prices used by the objective. Published means an actual day-ahead price; modelled means this home’s price forecast beyond the published period.',
-            )}
-          </p>
-          <div className="[&>div]:max-h-[38rem] [&>div]:rounded-md [&>div]:border">
-            <Table className="min-w-[1100px]">
-            <TableHeader className="sticky top-0 z-10 bg-background">
-              <TableRow>
-                <TableHead>{t('Kvart', 'Quarter')}</TableHead>
-                <TableHead>{t('Situation före batteriet', 'Before battery')}</TableHead>
-                <TableHead>{t('Planåtgärder', 'Plan actions')}</TableHead>
-                <TableHead>{t('Nätresultat', 'Grid result')}</TableHead>
-                <TableHead>{t('Totalpriser använda', 'All-in prices used')}</TableHead>
-                <TableHead className="min-w-[360px]">{t('Varför', 'Why')}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {inWindow.map(slot => {
-                const balanceW = slot.pv_w - slot.load_w;
-                const actions = actionNames(slot);
-                const published = slot.import_price_sek_per_kwh !== null
-                  && slot.export_price_sek_per_kwh !== null;
-                const grid = slot.grid_import_w > ACTIVE_W
-                  ? `${t('Import', 'Import')} ${(slot.grid_import_w / 1_000).toFixed(2)} kW`
-                  : slot.grid_export_w > ACTIVE_W
-                    ? `${t('Export', 'Export')} ${(slot.grid_export_w / 1_000).toFixed(2)} kW`
-                    : t('Inget nätflöde', 'No grid flow');
-                return (
-                  <TableRow key={slot.start}>
-                    <TableCell className="whitespace-nowrap align-top tabular-nums">
-                      {new Date(slot.start).toLocaleString([], {
-                        month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
-                      })}
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap align-top tabular-nums">
-                      <span className="block">{t('Sol', 'PV')} {(slot.pv_w / 1_000).toFixed(2)} · {t('last', 'demand')} {(slot.load_w / 1_000).toFixed(2)} kW</span>
-                      <span className="block text-[11px] text-muted-foreground">
-                        {Math.abs(balanceW) <= ACTIVE_W
-                          ? t('i balans', 'balanced')
-                          : balanceW > 0
-                            ? `${(balanceW / 1_000).toFixed(2)} kW ${t('överskott', 'surplus')}`
-                            : `${(-balanceW / 1_000).toFixed(2)} kW ${t('underskott', 'shortfall')}`}
-                      </span>
-                    </TableCell>
-                    <TableCell className="align-top">
-                      {actions.length > 0
-                        ? joinNatural(actions, t('och', 'and'))
-                        : <span className="text-muted-foreground">{t('Ingen flexibel eller batteriåtgärd', 'No flexible or battery action')}</span>}
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap align-top font-medium tabular-nums">{grid}</TableCell>
-                    <TableCell className="whitespace-nowrap align-top tabular-nums">
-                      <span className="block">{t('Köp', 'Buy')} {slot.shadow_import_sek_per_kwh.toFixed(3)} SEK/kWh</span>
-                      <span className="block">{t('Sälj', 'Sell')} {slot.shadow_export_sek_per_kwh.toFixed(3)} SEK/kWh</span>
-                      <span className="block text-[11px] text-muted-foreground">
-                        {published ? t('publicerat', 'published') : t('modellerat', 'modelled')}
-                      </span>
-                    </TableCell>
-                    <TableCell className="align-top text-xs text-muted-foreground">{why(slot)}</TableCell>
+          {!hasEvidence ? (
+            <div className="rounded-md border border-amber-300 bg-amber-50/70 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/25 dark:text-amber-200">
+              {t(
+                'Den här äldre planen innehåller inte versionsstyrda beslutsbevis. Portalen kommer inte att gissa en förklaring; invänta nästa plan från marginal-value-planner-v11.',
+                'This older plan does not contain versioned decision evidence. The portal will not guess an explanation; wait for the next marginal-value-planner-v11 plan.',
+              )}
+            </div>
+          ) : (
+            <div className="[&>div]:max-h-[42rem] [&>div]:rounded-md [&>div]:border">
+              <Table className="min-w-[1450px]">
+                <TableHeader className="sticky top-0 z-10 bg-background">
+                  <TableRow>
+                    <TableHead>{t('Kvart', 'Quarter')}</TableHead>
+                    <TableHead className="min-w-[390px]">{t('Beslut från efterfrågekurvor', 'Demand-value curve decisions')}</TableHead>
+                    <TableHead className="min-w-[390px]">{t('Hembatteriets beslut', 'Home-battery decision')}</TableHead>
+                    <TableHead className="min-w-[330px]">{t('Exakt nätbalans', 'Exact grid balance')}</TableHead>
+                    <TableHead>{t('Totalpriser', 'All-in prices')}</TableHead>
                   </TableRow>
-                );
-              })}
-            </TableBody>
-            </Table>
-          </div>
+                </TableHeader>
+                <TableBody>
+                  {inWindow.map(slot => {
+                    const plannedSlot = slot as PlannedSlot;
+                    const slotIndex = indexByStart.get(Date.parse(slot.start)) ?? 0;
+                    const allocations = plannedSlot.decision.store_allocations;
+                    const demandAllocations = allocations.filter(allocation => allocation.store_key !== 'battery');
+                    const batteryAllocation = allocations.find(allocation => allocation.store_key === 'battery');
+                    const selected = selectedMs === Date.parse(slot.start);
+                    const hasLateLoad = plannedSlot.decision.battery?.reason === 'load_added_after_dispatch';
+                    return (
+                      <TableRow
+                        id={rowId(slot.start)}
+                        key={slot.start}
+                        aria-current={selected || undefined}
+                        onClick={() => onSelectedStartChange?.(slot.start)}
+                        className={selected
+                          ? 'bg-sky-100/80 ring-1 ring-inset ring-sky-500 dark:bg-sky-950/40'
+                          : hasLateLoad
+                            ? 'bg-amber-50/60 dark:bg-amber-950/20'
+                            : onSelectedStartChange
+                              ? 'cursor-pointer'
+                              : undefined}
+                      >
+                        <TableCell className="whitespace-nowrap align-top tabular-nums">
+                          {new Date(slot.start).toLocaleString([], {
+                            month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+                          })}
+                        </TableCell>
+                        <TableCell className="align-top text-xs text-muted-foreground">
+                          {demandAllocations.length > 0
+                            ? <div className="space-y-3">{demandAllocations.map(allocation => demandDecision(allocation, slotIndex))}</div>
+                            : <span>{t('Ingen pool- eller billaddning vann en kurv–kostnadsjämförelse denna kvart.', 'No pool or EV allocation cleared its curve-versus-cost comparison this quarter.')}</span>}
+                        </TableCell>
+                        <TableCell className="align-top text-xs text-muted-foreground">
+                          {batteryText(plannedSlot.decision.battery, batteryAllocation)}
+                        </TableCell>
+                        <TableCell className="align-top text-xs">{gridText(plannedSlot)}</TableCell>
+                        <TableCell className="whitespace-nowrap align-top text-xs tabular-nums">
+                          <span className="block">{t('Köp', 'Buy')} {price(slot.shadow_import_sek_per_kwh)}</span>
+                          <span className="block">{t('Sälj', 'Sell')} {price(slot.shadow_export_sek_per_kwh)}</span>
+                          <span className="block text-muted-foreground">
+                            {slot.import_price_sek_per_kwh !== null && slot.export_price_sek_per_kwh !== null
+                              ? t('publicerat', 'published')
+                              : t('modellerat', 'modelled')}
+                          </span>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
         </AccordionContent>
       </AccordionItem>
     </Accordion>

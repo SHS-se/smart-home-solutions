@@ -515,6 +515,10 @@
           "schema_version": { "type": "integer" },
           "mode": { "const": "live" },
           "model_version": { "type": "string", "minLength": 1 },
+          "decision_diagnostics_version": {
+            "const": 1,
+            "description": "Independent version of additive, non-executable quarter decision evidence. Absent on plans issued before marginal-value-planner-v11."
+          },
           "plan_id": { "type": "string", "format": "uuid" },
           "snapshot_id": { "type": "string", "format": "uuid" },
           "issued_at": { "type": "string", "format": "date-time" },
@@ -526,10 +530,139 @@
           "device_models": { "type": "array", "items": { "type": "object" } },
           "plans": {
             "type": "object",
-            "required": ["baseline", "priority", "cost"]
+            "required": ["baseline", "priority", "cost"],
+            "properties": {
+              "baseline": { "$ref": "#/components/schemas/GeneratedPlan" },
+              "priority": { "$ref": "#/components/schemas/GeneratedPlan" },
+              "cost": { "$ref": "#/components/schemas/GeneratedPlan" }
+            }
           }
         },
         "additionalProperties": true
+      },
+      "GeneratedPlan": {
+        "type": "object",
+        "required": ["slots"],
+        "properties": {
+          "slots": {
+            "type": "array",
+            "maxItems": 288,
+            "items": { "$ref": "#/components/schemas/PlannedSlot" }
+          }
+        },
+        "additionalProperties": true
+      },
+      "PlannedSlot": {
+        "type": "object",
+        "properties": {
+          "decision": { "$ref": "#/components/schemas/QuarterDecisionV1" }
+        },
+        "additionalProperties": true
+      },
+      "QuarterDecisionV1": {
+        "type": "object",
+        "required": ["schema_version", "store_allocations", "battery", "grid_balance"],
+        "properties": {
+          "schema_version": { "const": 1 },
+          "store_allocations": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/DispatchAllocationDiagnosticV1" }
+          },
+          "battery": {
+            "oneOf": [
+              { "$ref": "#/components/schemas/BatteryDecisionDiagnosticV1" },
+              { "type": "null" }
+            ]
+          },
+          "grid_balance": { "$ref": "#/components/schemas/GridBalanceDiagnosticV1" }
+        },
+        "additionalProperties": false
+      },
+      "DispatchAllocationDiagnosticV1": {
+        "type": "object",
+        "required": [
+          "store_key", "direction", "trigger", "allocation_order",
+          "run_start_index", "run_slots", "power_w", "state_before",
+          "state_after", "state_unit", "retention_factor",
+          "average_value_sek_per_kwh", "energy_cost_sek_per_kwh",
+          "wear_cost_sek_per_kwh", "start_cost_sek", "net_value_sek",
+          "run_net_value_sek", "solar_w", "grid_w", "discharge_destination"
+        ],
+        "properties": {
+          "store_key": { "type": "string", "minLength": 1 },
+          "direction": { "enum": ["charge", "discharge"] },
+          "trigger": { "enum": ["economic_winner", "minimum_run_continuation"] },
+          "allocation_order": { "type": "integer", "minimum": 1 },
+          "run_start_index": { "type": "integer", "minimum": 0, "maximum": 287 },
+          "run_slots": { "type": "integer", "minimum": 1, "maximum": 288 },
+          "power_w": { "type": "number", "minimum": 0 },
+          "state_before": { "type": "number" },
+          "state_after": { "type": "number" },
+          "state_unit": { "type": "string", "minLength": 1 },
+          "retention_factor": { "type": "number", "minimum": 0 },
+          "average_value_sek_per_kwh": { "type": "number" },
+          "energy_cost_sek_per_kwh": { "type": "number" },
+          "wear_cost_sek_per_kwh": { "type": "number", "minimum": 0 },
+          "start_cost_sek": { "type": "number", "minimum": 0 },
+          "net_value_sek": { "type": "number" },
+          "run_net_value_sek": { "type": "number" },
+          "solar_w": { "type": "number", "minimum": 0 },
+          "grid_w": { "type": "number", "minimum": 0 },
+          "discharge_destination": {
+            "type": ["string", "null"],
+            "enum": ["load", "export", "mixed", null]
+          }
+        },
+        "additionalProperties": false
+      },
+      "BatteryDecisionDiagnosticV1": {
+        "type": "object",
+        "required": [
+          "action", "reason", "state_before", "state_after", "state_unit",
+          "comparison_power_w", "power_w", "comparison_price_sek_per_kwh",
+          "stored_value_sek_per_kwh", "wear_cost_sek_per_kwh", "net_value_sek"
+        ],
+        "properties": {
+          "action": { "enum": ["charge", "discharge", "hold"] },
+          "reason": {
+            "enum": [
+              "profitable_charge", "profitable_discharge",
+              "retained_value_exceeds_import", "charge_value_below_export",
+              "state_floor", "state_ceiling", "future_state_constraint",
+              "load_added_after_dispatch", "balanced"
+            ]
+          },
+          "state_before": { "type": "number" },
+          "state_after": { "type": "number" },
+          "state_unit": { "type": "string", "minLength": 1 },
+          "comparison_power_w": { "type": "number", "minimum": 0 },
+          "power_w": { "type": "number", "minimum": 0 },
+          "comparison_price_sek_per_kwh": { "type": ["number", "null"] },
+          "stored_value_sek_per_kwh": { "type": ["number", "null"] },
+          "wear_cost_sek_per_kwh": { "type": "number", "minimum": 0 },
+          "net_value_sek": { "type": ["number", "null"] }
+        },
+        "additionalProperties": false
+      },
+      "GridBalanceDiagnosticV1": {
+        "type": "object",
+        "required": [
+          "load_w", "pv_w", "battery_charge_w", "battery_discharge_w",
+          "residual_w", "direction", "power_w", "limit_w", "limit_binding", "reason"
+        ],
+        "properties": {
+          "load_w": { "type": "number", "minimum": 0 },
+          "pv_w": { "type": "number", "minimum": 0 },
+          "battery_charge_w": { "type": "number", "minimum": 0 },
+          "battery_discharge_w": { "type": "number", "minimum": 0 },
+          "residual_w": { "type": "number" },
+          "direction": { "enum": ["import", "export", "balanced"] },
+          "power_w": { "type": "number", "minimum": 0 },
+          "limit_w": { "type": "number", "minimum": 0 },
+          "limit_binding": { "type": "boolean" },
+          "reason": { "enum": ["residual_after_dispatch", "import_limit", "export_limit", "balanced"] }
+        },
+        "additionalProperties": false
       },
       "PlanV5": {
         "allOf": [

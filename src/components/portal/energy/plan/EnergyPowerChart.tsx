@@ -91,6 +91,7 @@ const EnergyPowerChart = <Row extends EnergyChartRow>({
   priceAxis,
   powerDomain,
   socDomain,
+  onQuarterClick,
   children,
 }: {
   data: Row[];
@@ -102,10 +103,20 @@ const EnergyPowerChart = <Row extends EnergyChartRow>({
   /** Both domains are fixed by the caller so their zeros coincide. */
   powerDomain?: [number, number];
   socDomain?: [number, number];
+  onQuarterClick?: (row: Row) => void;
   children: React.ReactNode;
 }) => (
   <ResponsiveContainer width="100%" height={360}>
-    <ComposedChart data={data} margin={CHART_MARGIN}>
+    <ComposedChart
+      data={data}
+      margin={CHART_MARGIN}
+      className={onQuarterClick ? 'cursor-pointer' : undefined}
+      onClick={onQuarterClick ? chartState => {
+        const index = Number(chartState?.activeTooltipIndex ?? chartState?.activeLabel);
+        const row = data[index];
+        if (row) onQuarterClick(row);
+      } : undefined}
+    >
       <CartesianGrid strokeDasharray="3 3" className="stroke-muted" vertical={false} />
       <XAxis
         dataKey="i"

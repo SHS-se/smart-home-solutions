@@ -18,6 +18,8 @@ import {
   type ThermalZoneModel,
 } from "./thermal-model.ts";
 import {
+  type DispatchAllocationDiagnostic,
+  type DispatchBatteryDiagnostic,
   type DispatchResult,
   type DispatchSlot,
   type DispatchStore,
@@ -37,7 +39,6 @@ import {
   DEFAULT_VALUE_CURVES,
   DEFAULT_VALUE_SETTINGS,
   type ValueStoreKey,
-  vehicleRangeCurve,
 } from "./value-curves.ts";
 
 /**
@@ -65,8 +66,10 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6] as const;
  * meaningless. v8 makes comfort schedules room-temperature constraints and
  * moves preheating inside the shared electrical objective. v10 replaces the
  * battery's peak-price step with the weighted merit order of displaced import.
+ * v11 integrates every sizeable curve move, applies configured EV curves,
+ * prices minimum runs as complete blocks and records exact quarter evidence.
  */
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v10";
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v11";
 /** The planner a schema 5 snapshot still receives, unchanged. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v8";
 export const SLOT_MINUTES = 15;
@@ -392,6 +395,30 @@ export type OptimisationSnapshotV6 =
     schema_version: 6;
   };
 
+export interface QuarterGridBalanceDiagnostic {
+  load_w: number;
+  pv_w: number;
+  battery_charge_w: number;
+  battery_discharge_w: number;
+  residual_w: number;
+  direction: "import" | "export" | "balanced";
+  power_w: number;
+  limit_w: number;
+  limit_binding: boolean;
+  reason:
+    | "residual_after_dispatch"
+    | "import_limit"
+    | "export_limit"
+    | "balanced";
+}
+
+export interface QuarterDecisionDiagnostic {
+  schema_version: 1;
+  store_allocations: DispatchAllocationDiagnostic[];
+  battery: DispatchBatteryDiagnostic | null;
+  grid_balance: QuarterGridBalanceDiagnostic;
+}
+
 export interface PlannedSlot {
   start: string;
   binding: boolean;
@@ -436,6 +463,8 @@ export interface PlannedSlot {
   unserved_w: number;
   import_cost_sek: number | null;
   export_revenue_sek: number | null;
+  /** Recorded planner arithmetic; the portal must not reconstruct decisions. */
+  decision: QuarterDecisionDiagnostic;
 }
 
 export interface PlanSummary {
@@ -486,6 +515,8 @@ export interface OptimisationPlan {
   mode: PlanMode;
   capabilities: OptimisationCapabilities;
   model_version: string;
+  /** Independent version for descriptive, non-executable decision evidence. */
+  decision_diagnostics_version: 1;
   plan_id: string;
   snapshot_id: string;
   issued_at: string;
@@ -591,6 +622,9 @@ interface Schedule {
   dispatched: Set<string>;
   batteryChargeW: number[];
   batteryDischargeW: number[];
+  dispatchAllocations: DispatchAllocationDiagnostic[][];
+  dispatchBattery: (DispatchBatteryDiagnostic | null)[];
+  dispatchImportW: number[];
   storeDiagnostics: StoreDiagnostic[];
 }
 
@@ -1527,6 +1561,9 @@ function emptySchedule(length: number): Schedule {
     dispatched: new Set<string>(),
     batteryChargeW: new Array(length).fill(0),
     batteryDischargeW: new Array(length).fill(0),
+    dispatchAllocations: Array.from({ length }, () => []),
+    dispatchBattery: new Array(length).fill(null),
+    dispatchImportW: new Array(length).fill(0),
     storeDiagnostics: [],
   };
 }
@@ -1988,16 +2025,16 @@ function buildDispatchStores(
         } else {
           usage[count - 1] = 1;
         }
-        // Scale the curve to the range this customer asked for, so "enough" is
-        // their charge limit rather than an absolute kilometre figure that means
-        // nothing across vehicles.
-        const targetRangeKm = vehicle.departure_target_soc *
-          vehicle.capacity_kwh / perKm;
         stores.push({
           key: "ev",
-          curve: vehicleRangeCurve(targetRangeKm),
+          // This is the resolved customer/default curve supplied by the edge.
+          // Rebuilding a fresh default here made the editor a placebo: the
+          // persisted curve preview changed while the live planner ignored it.
+          curve: curves.ev,
           initial_state: vehicle.soc * vehicle.capacity_kwh / perKm,
           max_power_w: wattsPerAmp(control) * control.max_current_a,
+          min_power_w: wattsPerAmp(control) * control.min_current_a,
+          power_step_w: wattsPerAmp(control) * control.current_step_a,
           usage_weight: usage,
           retention_per_slot: 1,
           units_per_kwh: () => vehicle.charge_efficiency / perKm,
@@ -2268,6 +2305,9 @@ function scheduleServices(
     const dispatchStores = dispatchBundle.stores;
     const dispatched = dispatchBundle.result;
     const dispatchSlots = dispatchBundle.slots;
+    if (dispatched.stopped_because === "iteration_cap") {
+      errors.push("store dispatch reached its iteration cap");
+    }
     for (const store of dispatchStores) {
       // Record the comparison that decided this store, whichever way it went.
       const plannedKwh = dispatched.power_w[store.key]
@@ -2329,6 +2369,9 @@ function scheduleServices(
         occupiedW[index] += powerW;
       }
     }
+    schedule.dispatchAllocations = dispatched.allocations;
+    schedule.dispatchBattery = dispatched.battery;
+    schedule.dispatchImportW = dispatched.import_w;
     applyDutyCycleServices(
       key,
       slots,
@@ -3192,6 +3235,93 @@ function simulate(
       ? slotExportKwh * slot.export_price_sek_per_kwh!
       : null;
 
+    const storeAllocations = schedule.dispatchAllocations[slot.index].map(
+      (allocation) => ({
+        ...allocation,
+        power_w: round(allocation.power_w, 2),
+        state_before: round(allocation.state_before, 4),
+        state_after: round(allocation.state_after, 4),
+        retention_factor: round(allocation.retention_factor, 6),
+        average_value_sek_per_kwh: round(
+          allocation.average_value_sek_per_kwh,
+          5,
+        ),
+        energy_cost_sek_per_kwh: round(
+          allocation.energy_cost_sek_per_kwh,
+          5,
+        ),
+        wear_cost_sek_per_kwh: round(
+          allocation.wear_cost_sek_per_kwh,
+          5,
+        ),
+        start_cost_sek: round(allocation.start_cost_sek, 5),
+        net_value_sek: round(allocation.net_value_sek, 5),
+        run_net_value_sek: round(allocation.run_net_value_sek, 5),
+        solar_w: round(allocation.solar_w, 2),
+        grid_w: round(allocation.grid_w, 2),
+      }),
+    );
+    let batteryDecision = schedule.dispatchBattery[slot.index];
+    if (
+      batteryDecision?.action === "hold" &&
+      batteryDecision.reason === "balanced" &&
+      gridImportW > 10 && schedule.dispatchImportW[slot.index] <= 10
+    ) {
+      // Duty-cycle and room comfort loads are installed after the store
+      // auction. Do not fabricate a battery comparison the optimiser never
+      // made; publish that ordering explicitly so it can be seen and fixed.
+      batteryDecision = {
+        ...batteryDecision,
+        reason: "load_added_after_dispatch",
+      };
+    }
+    const batteryEvidence = batteryDecision === null ? null : {
+      ...batteryDecision,
+      state_before: round(batteryDecision.state_before, 4),
+      state_after: round(batteryDecision.state_after, 4),
+      comparison_power_w: round(batteryDecision.comparison_power_w, 2),
+      power_w: round(batteryDecision.power_w, 2),
+      comparison_price_sek_per_kwh:
+        batteryDecision.comparison_price_sek_per_kwh === null
+          ? null
+          : round(batteryDecision.comparison_price_sek_per_kwh, 5),
+      stored_value_sek_per_kwh:
+        batteryDecision.stored_value_sek_per_kwh === null
+          ? null
+          : round(batteryDecision.stored_value_sek_per_kwh, 5),
+      wear_cost_sek_per_kwh: round(
+        batteryDecision.wear_cost_sek_per_kwh,
+        5,
+      ),
+      net_value_sek: batteryDecision.net_value_sek === null
+        ? null
+        : round(batteryDecision.net_value_sek, 5),
+    };
+    const residualW = loadW + batteryChargeW - slot.pv_w -
+      batteryDischargeW;
+    const gridDirection = gridImportW > 10
+      ? "import" as const
+      : gridExportW > 10
+      ? "export" as const
+      : "balanced" as const;
+    const gridPowerW = gridDirection === "import"
+      ? gridImportW
+      : gridDirection === "export"
+      ? gridExportW
+      : 0;
+    const gridLimitW = gridDirection === "import"
+      ? snapshot.grid.import_limit_w
+      : gridDirection === "export"
+      ? snapshot.grid.export_limit_w
+      : 0;
+    const gridReason: QuarterGridBalanceDiagnostic["reason"] = unservedW > 1
+      ? "import_limit"
+      : curtailedW > 1
+      ? "export_limit"
+      : gridDirection === "balanced"
+      ? "balanced"
+      : "residual_after_dispatch";
+
     output.push({
       start: slot.start,
       binding: slot.binding,
@@ -3233,6 +3363,23 @@ function simulate(
       export_revenue_sek: exportRevenueSek === null
         ? null
         : round(exportRevenueSek),
+      decision: {
+        schema_version: 1,
+        store_allocations: storeAllocations,
+        battery: batteryEvidence,
+        grid_balance: {
+          load_w: round(loadW, 2),
+          pv_w: round(slot.pv_w, 2),
+          battery_charge_w: round(batteryChargeW, 2),
+          battery_discharge_w: round(batteryDischargeW, 2),
+          residual_w: round(residualW, 2),
+          direction: gridDirection,
+          power_w: round(gridPowerW, 2),
+          limit_w: round(gridLimitW, 2),
+          limit_binding: unservedW > 1 || curtailedW > 1,
+          reason: gridReason,
+        },
+      },
     });
 
     loadKwh += loadW / 1_000 * SLOT_HOURS;
@@ -3616,6 +3763,7 @@ export function generateOptimisationPlan(
     model_version: snapshot.schema_version >= 6
       ? OPTIMISATION_MODEL_VERSION
       : LEGACY_MODEL_VERSION,
+    decision_diagnostics_version: 1,
     // One snapshot produces one deterministic plan identity, so retries cannot
     // append duplicate run-history rows.
     plan_id: snapshot.snapshot_id,

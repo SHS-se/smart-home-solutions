@@ -74,6 +74,8 @@ const PowerSection: React.FC<{
   const { t } = useLanguage();
   const visibility = useSeriesVisibility<SeriesKey>();
   const [showPrices, setShowPrices] = useState(false);
+  const [selectedQuarterStart, setSelectedQuarterStart] = useState<string | null>(null);
+  const [selectionRequest, setSelectionRequest] = useState(0);
 
   const scheduled = useMemo(() => activeDeviceKeys(rows, range), [range, rows]);
   // Bottom of the stack first. Recharts draws stacked areas in render order,
@@ -156,6 +158,13 @@ const PowerSection: React.FC<{
   const hasPlan = divider < windowed.length;
   const firstModelled = windowed.findIndex(row =>
     row.modelledImportPrice !== null || row.modelledExportPrice !== null);
+  const selectedQuarterIndex = selectedQuarterStart === null
+    ? -1
+    : windowed.findIndex(row => Date.parse(row.start) === Date.parse(selectedQuarterStart));
+  const plannedStarts = useMemo(
+    () => new Set(model.active.slots.map(slot => Date.parse(slot.start))),
+    [model.active.slots],
+  );
 
   const deviceSeries = useMemo(
     () => deviceKeys.map((key, index) => ({
@@ -288,6 +297,12 @@ const PowerSection: React.FC<{
         priceAxis={priceAxes?.price}
         powerDomain={powerDomain}
         socDomain={socDomain}
+        onQuarterClick={row => {
+          if (plannedStarts.has(Date.parse(row.start))) {
+            setSelectedQuarterStart(row.start);
+            setSelectionRequest(current => current + 1);
+          }
+        }}
       >
         {/* Everything right of the divider is forecast rather than measured. */}
         {hasPlan && hasHistory && (
@@ -320,6 +335,15 @@ const PowerSection: React.FC<{
             connectNulls={false}
           />
         ))}
+        {selectedQuarterIndex >= 0 && (
+          <ReferenceLine
+            yAxisId="power"
+            x={selectedQuarterIndex}
+            stroke="#0284c7"
+            strokeWidth={3}
+            strokeOpacity={0.7}
+          />
+        )}
         <ReferenceLine yAxisId="power" y={0} stroke="currentColor" className="text-muted-foreground" strokeWidth={1} />
         {hasPlan && hasHistory && (
           <ReferenceLine
@@ -354,7 +378,14 @@ const PowerSection: React.FC<{
         working down the page wants the reason before the arithmetic.
       */}
       <div className="mt-6 border-t pt-6">
-        <StoreDecisions model={model} rows={rows} range={range} />
+        <StoreDecisions
+          model={model}
+          rows={rows}
+          range={range}
+          selectedStart={selectedQuarterStart}
+          selectionRequest={selectionRequest}
+          onSelectedStartChange={setSelectedQuarterStart}
+        />
       </div>
       <div className="mt-6">
         <h3 className="text-sm font-medium">

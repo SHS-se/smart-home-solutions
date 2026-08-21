@@ -1,13 +1,12 @@
 # Energy optimisation architecture
 
-Status: **schema-v6 state-dispatched battery, pool and EV planning, empirical history, room-keyed comfort planning and duty-cycle permit path implemented; private API contract hardening and live commissioning are next; device executors remain**
+Status: **schema-v6 / marginal-value-planner-v11 state dispatch and versioned quarter-by-quarter decision evidence implemented; private API contract hardening and live commissioning are next; device executors remain**
 
-Date: **2026-08-20**
+Date: **2026-08-21**
 
-Latest decisions: **§1.5** (Home Assistant room identity, exact comfort
-deadlines, shared preheating optimisation, live device-inventory reconciliation)
-and **§5.7** (normative private API contract, compatibility negotiation,
-plan acknowledgement and cross-repository release gates).
+Latest decisions: **§1.5** (Home Assistant room identity and shared preheating),
+**§5.7** (normative private API contract and acknowledgement) and **§8.12.3**
+(the plan view as a versioned, quarter-by-quarter audit surface).
 
 Source material: `ENERGY_OPTIMISATION_NOTES.md`, the current portal implementation in
 this repository, the current `shs_energy` Home Assistant integration in
@@ -2924,9 +2923,9 @@ a modelling error or a correction to the heuristic — both are findings.
 |---|---|
 | Base load and device forecasts per weekday (§1.6.4) | **Landed.** Integration `0.7.0-beta.17` |
 | Forecast archive as issued (§8.11 run 2) | **Landed.** Collecting from first deploy |
-| Pool and vehicle as physical state (`store-models.ts`) | **Landed**, pure and tested, not yet wired |
-| Utility curves and marginal value (`store-value.ts`) | **Landed**, pure and tested, not yet wired |
-| Scheduler consuming them | **Blocked**, see below |
+| Pool and vehicle as physical state (`store-models.ts`) | **Landed and wired in schema 6** |
+| Utility curves, integrals and marginal value (`store-value.ts`) | **Landed and wired in `marginal-value-planner-v11`** |
+| Scheduler consuming them | **Landed; exact quarter evidence is published** |
 | Capacity-charge state (§8.5) | Not started; waits on the published tariff |
 
 Heuristics 1, 4 and 7 are already reproduced as executable tests against
@@ -2995,24 +2994,12 @@ only the stored energy needed for that quarter and leaves enough capacity for
 more than 5 kWh of the following surplus. This pins both symptoms rather than
 only the curve's shape in isolation.
 
-Replacing the scheduler core is blocked on inputs that do not exist yet, and
-none of them are solver work:
-
-1. **Telemetry.** The snapshot carries no pool water temperature and no vehicle
-   efficiency. `sensor.filtered_pool_water_temperature` and
-   `sensor.pool_heater_cop` exist in the house and are unmapped; the integration
-   needs options for both, and the vehicle needs a fitted kWh/km.
-2. **Configuration.** The five utility curves have nowhere to live — no table,
-   no portal editor. They are the only customer input the new objective takes,
-   so they cannot be defaulted away silently.
-3. **Contract.** Carrying state and curves is a schema 6 snapshot, and the
-   integration's tolerated-version set has to accept the new planner before the
-   server can publish it (§3.2's sequencing constraint).
-
-Until those land the old `required_kwh` scheduler stays in place. It is wrong in
-the ways §1.6.1 records, but it is coherent, and a half-migrated planner that
-reads a state for one store and an energy budget for another would be worse
-than either.
+**Blockers resolved 2026-08-20.** Schema 6 now carries pool state and vehicle
+efficiency, the portal persists and previews the customer utility curves, and
+integration 0.8 accepts the schema-6 execution contract. Pool, EV and battery
+therefore run through the state dispatcher; the remaining boiler duty-cycle and
+room-comfort paths are called out separately wherever their later scheduling
+order affects the battery (§8.12.3).
 
 Test 7 also answers the open question about winter battery value quantitatively.
 At an 85% round trip the price ratio must exceed about 1.18 on energy alone;
@@ -3045,29 +3032,64 @@ tariff and neither may be presented beside a selected-day quantity as though
 the two multiply.
 
 The aggregate “And the grid” prose is replaced by a chronological 15-minute
-ledger for the selected planned period. Every row shows PV and demand before the
-battery, scheduled actions, the resulting import/export, both objective prices
-with published/modelled provenance, and the causal explanation. The wording
-must preserve the model's actual order: the optimiser evaluates candidates
-across all 72 hours; the grid does not independently decide to import in each
-quarter, it balances what remains after the accepted schedule and battery
-dispatch. Explanations may state only facts carried by the plan or guaranteed
-by that balance. If exact per-allocation bids are needed later, they must be
-added as versioned descriptive contract data rather than reconstructed in the
-browser. The ledger follows the currently selected With plan/Without plan
-comparison, and the latter is labelled explicitly as counterfactual; Home
-Assistant's executable schedule must never be implied to change with that UI
-toggle.
+ledger for the selected planned period. The separate whole-horizon store table
+is removed: an initial marginal bid beside a horizon-wide floor cannot explain
+which part of a declining curve a sizeable quarter crossed. The ledger is the
+single audit surface. A click on a planned chart quarter opens it, scrolls to the
+matching ledger row and highlights it.
 
-The audit surface is dense, so the whole-horizon store table and the 15-minute
-ledger are collapsed independently until requested. The chart legend is derived
-from the selected window: a series with no plotted values is not advertised,
-including published/modelled price segments outside that window. Solar, both
-all-in prices, both grid directions, battery charging and both SOC lines own
-reserved semantic colours; the rotating device palette must not reuse them.
-The total-consumption overlay is intentionally omitted because the stacked load
-already carries it. Battery discharge remains an explicit positive flow because
-it is necessary to audit when stored energy is supplying the plan.
+Browser-written causal prose is forbidden. `decision_diagnostics_version = 1`
+on the plan and `decision.schema_version = 1` on every `PlannedSlot` version the
+descriptive evidence independently of executable plan schema 6. Each row now
+carries:
+
+- every accepted store allocation, including state before/after, the integral
+  curve value of the complete move after timing loss, all-in source cost,
+  solar/grid split, wear/start cost, net SEK, allocation order and complete
+  minimum-run result;
+- the battery's accepted charge/discharge comparison or its exact hold reason,
+  including the power tested, retained stored value, avoided import/export
+  value and physical bounds;
+- the final identity `load + battery charge - PV - battery discharge`, its
+  residual import/export and any binding grid limit.
+
+The data is additive descriptive contract data (§5.7.2): Home Assistant ignores
+it and continues to validate the schema-6 execution envelope, while the portal
+refuses to invent an explanation for an older plan without evidence. One
+explicit diagnostic, `load_added_after_dispatch`, records the current ordering
+defect where comfort or duty-cycle demand is installed after the store auction;
+it says that the resulting import was never offered to the battery rather than
+claiming that a battery comparison occurred.
+
+`marginal-value-planner-v11` also fixes four objective defects exposed by making
+the evidence concrete:
+
+1. the EV store uses the customer's resolved EV demand-value curve; the live
+   planner no longer rebuilds and substitutes a default target curve;
+2. every sizeable pool, EV and battery move is valued by the exact curve
+   integral, not the first marginal value multiplied by the whole move;
+3. a compressor start wins only when the complete minimum-run block clears its
+   complete energy and start cost—no unevaluated continuation quarters are
+   appended after a single cheap winner;
+4. battery discharge covering household load is valued at avoided all-in import,
+   while any simultaneous export portion uses the correctly weighted
+   import/export value. Export price can no longer make a load-only discharge
+   look profitable.
+
+Candidates are ranked by net welfare per kWh with total welfare as the tie-break,
+so an 11 kW EV action no longer wins merely because its physical block is larger.
+A stale multi-quarter cache entry and sub-microwatt rounding loop that could run
+the auction to its iteration cap are fixed; reaching that cap now makes the plan
+infeasible instead of publishing a partial answer.
+
+The chart legend is derived from the selected window: a series with no plotted
+values is not advertised, including published/modelled price segments outside
+that window. Solar, both all-in prices, both grid directions, battery charging
+and both SOC lines own reserved semantic colours; the rotating device palette
+must not reuse them. The total-consumption overlay is intentionally omitted
+because the stacked load already carries it. Battery discharge remains an
+explicit positive flow because it is necessary to audit when stored energy is
+supplying the plan.
 
 ## 9. Parameter model
 
