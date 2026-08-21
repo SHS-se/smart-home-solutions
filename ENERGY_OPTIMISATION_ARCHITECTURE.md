@@ -3065,9 +3065,9 @@ from the selected window: a series with no plotted values is not advertised,
 including published/modelled price segments outside that window. Solar, both
 all-in prices, both grid directions, battery charging and both SOC lines own
 reserved semantic colours; the rotating device palette must not reuse them.
-Total-consumption and battery-discharge overlays are intentionally omitted
-because their information is already present in the stacked load and balance
-traces and they obscure the decision signals.
+The total-consumption overlay is intentionally omitted because the stacked load
+already carries it. Battery discharge remains an explicit positive flow because
+it is necessary to audit when stored energy is supplying the plan.
 
 ## 9. Parameter model
 

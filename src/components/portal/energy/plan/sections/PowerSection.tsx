@@ -44,7 +44,7 @@ const FLOW_STROKE_WIDTH = 2.5;
 
 type SeriesKey =
   | 'solar' | 'base' | 'gridImport' | 'gridExport'
-  | 'batteryCharge'
+  | 'batteryCharge' | 'batteryDischarge'
   | 'homeSoc' | 'evSoc'
   | 'allInImportPrice' | 'allInExportPrice'
   | 'modelledImportPrice' | 'modelledExportPrice'
@@ -97,6 +97,7 @@ const PowerSection: React.FC<{
     gridImport: row.gridImportW,
     gridExport: row.gridExportW,
     batteryCharge: row.batteryChargeW,
+    batteryDischarge: row.batteryDischargeW,
     homeSoc: row.batterySoc === null ? null : row.batterySoc * 100,
     evSoc: row.evSoc === null ? null : row.evSoc * 100,
     allInImportPrice: row.importPriceSekPerKwh,
@@ -124,6 +125,7 @@ const PowerSection: React.FC<{
     row.gridImport,
     row.gridExport,
     row.batteryCharge,
+    row.batteryDischarge,
     // The stack total, not its parts: that is what reaches the top.
     deviceKeys.reduce(
       (total, _key, index) => total + Number(row[`device${index}`] ?? 0),
@@ -173,7 +175,14 @@ const PowerSection: React.FC<{
 
   const availableSeries = useMemo(() => {
     const available = new Set<SeriesKey>(deviceSeries.map(series => series.key));
-    const powerKeys = ['solar', 'base', 'gridImport', 'gridExport', 'batteryCharge'] as const;
+    const powerKeys = [
+      'solar',
+      'base',
+      'gridImport',
+      'gridExport',
+      'batteryCharge',
+      'batteryDischarge',
+    ] as const;
     for (const key of powerKeys) {
       if (windowed.some(row => {
         const value = row[key];
@@ -206,6 +215,7 @@ const PowerSection: React.FC<{
     { key: 'gridImport' as SeriesKey, label: t('Nätimport', 'Grid import'), color: COLORS.import },
     { key: 'gridExport' as SeriesKey, label: t('Nätexport (negativ)', 'Grid export (negative)'), color: COLORS.export },
     { key: 'batteryCharge' as SeriesKey, label: t('Batteriladdning (negativ)', 'Battery charge (negative)'), color: COLORS.batteryCharge },
+    { key: 'batteryDischarge' as SeriesKey, label: t('Batteriurladdning', 'Battery discharge'), color: COLORS.batteryDischarge },
     ...(hasBattery ? [{ key: 'homeSoc' as SeriesKey, label: t('Hembatteri SOC', 'Home battery SOC'), color: COLORS.soc }] : []),
     ...(hasEvBattery ? [{ key: 'evSoc' as SeriesKey, label: t('Bilbatteri SOC', 'EV battery SOC'), color: COLORS.evSoc }] : []),
     ...(showPrices ? priceSeries : []),
@@ -291,6 +301,7 @@ const PowerSection: React.FC<{
         {seriesVisible('gridImport') && <Line yAxisId="power" type="stepAfter" dataKey="gridImport" name={t('Nätimport', 'Grid import')} stroke={COLORS.import} strokeWidth={FLOW_STROKE_WIDTH} dot={false} connectNulls />}
         {seriesVisible('gridExport') && <Line yAxisId="power" type="stepAfter" dataKey="gridExport" name={t('Nätexport (negativ)', 'Grid export (negative)')} stroke={COLORS.export} strokeWidth={FLOW_STROKE_WIDTH} dot={false} connectNulls />}
         {seriesVisible('batteryCharge') && <Line yAxisId="power" type="stepAfter" dataKey="batteryCharge" name={t('Batteriladdning (negativ)', 'Battery charge (negative)')} stroke={COLORS.batteryCharge} strokeWidth={FLOW_STROKE_WIDTH} dot={false} connectNulls />}
+        {seriesVisible('batteryDischarge') && <Line yAxisId="power" type="stepAfter" dataKey="batteryDischarge" name={t('Batteriurladdning', 'Battery discharge')} stroke={COLORS.batteryDischarge} strokeWidth={FLOW_STROKE_WIDTH} dot={false} connectNulls />}
         {/* SOC is a percentage, so it rides the right-hand axis. It exists
             only on the planned side; history carries no state of charge. */}
         {seriesVisible('homeSoc') && <Line yAxisId="soc" type="monotone" dataKey="homeSoc" name={t('Hembatteri SOC', 'Home battery SOC')} stroke={COLORS.soc} strokeWidth={1.5} dot={false} connectNulls={false} />}
