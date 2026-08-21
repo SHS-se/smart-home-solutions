@@ -70,6 +70,7 @@ const StoreDecisions: React.FC<{
   const { toast } = useToast();
   const [openItem, setOpenItem] = React.useState<string>('sequence');
   const [replayLoading, setReplayLoading] = React.useState<string | null>(null);
+  const completedSelectionRequest = React.useRef(0);
   const windowRows = React.useMemo(
     () => timeline.slice(range.from, range.to),
     [range.from, range.to, timeline],
@@ -94,12 +95,23 @@ const StoreDecisions: React.FC<{
     (slot as PlannedSlot & { decision?: PlannedSlot['decision'] }).decision?.schema_version === 1);
 
   React.useEffect(() => {
-    if (!selectedStart || !inWindow.some(slot => Date.parse(slot.start) === selectedMs)) return;
+    if (
+      !selectionRequest ||
+      selectionRequest <= completedSelectionRequest.current ||
+      !selectedStart ||
+      !inWindow.some(slot => Date.parse(slot.start) === selectedMs)
+    ) return;
     setOpenItem('sequence');
     let secondFrame = 0;
     const firstFrame = window.requestAnimationFrame(() => {
       secondFrame = window.requestAnimationFrame(() => {
-        document.getElementById(rowId(selectedStart))?.scrollIntoView({
+        const target = document.getElementById(rowId(selectedStart));
+        if (!target) return;
+        // Timeline/model objects are replaced by each portal poll. Remember
+        // the click request itself so those refreshes cannot pull the reader
+        // back after this one navigation has completed.
+        completedSelectionRequest.current = selectionRequest;
+        target.scrollIntoView({
           behavior: 'smooth',
           block: 'center',
         });
