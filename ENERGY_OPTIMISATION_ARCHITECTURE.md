@@ -3038,9 +3038,11 @@ which part of a declining curve a sizeable quarter crossed. The ledger is the
 single audit surface. A click on a planned chart quarter opens it, scrolls to the
 matching ledger row and highlights it.
 
-Browser-written causal prose is forbidden. `decision_diagnostics_version = 1`
+Browser-written causal prose is forbidden. `decision_diagnostics_version = 2`
 on the plan and `decision.schema_version = 1` on every `PlannedSlot` version the
-descriptive evidence independently of executable plan schema 6. Each row now
+descriptive evidence independently of executable plan schema 6. Version 2 adds
+the exact derived home-battery value curve; the quarter arithmetic remains
+version 1. Each row now
 carries:
 
 - every accepted store allocation, including state before/after, the integral
@@ -3090,6 +3092,27 @@ must not reuse them. The total-consumption overlay is intentionally omitted
 because the stacked load already carries it. Battery discharge remains an
 explicit positive flow because it is necessary to audit when stored energy is
 supplying the plan.
+
+The home-battery curve is no longer an invisible planner intermediate. Every
+solve publishes its exact breakpoints, usable-energy origin, starting state,
+longest-deficit covering window, forecast surplus, round-trip efficiency and
+degradation input. It is read-only and is graphed in **Economics**, beside the
+customer-owned pool and EV value curves; it is deliberately not another series
+on the Plan power graph. Publishing the derived curve does not turn it into a
+customer setting.
+
+Every quarter row ends with a replay download. A quarter cannot be solved by
+itself—the auction optimises all 72 hours—so the JSON contains the complete
+resolved snapshot, the exact `Date` supplied to `generateOptimisationPlan`, the
+exact unrounded 288-quarter shadow-price vector produced by the price-shape
+estimator, the generation request identity, the selected scenario and quarter,
+and the complete expected planner output. The JSON records the required ISO
+string-to-`Date` conversion explicitly. Replaying injects that resolved vector rather than recomputing it from a
+price archive that may since have grown. The snapshot is fetched only when the
+button is clicked; the portal's 30-second poll must not repeatedly transfer it.
+Old current rows are not reconstructed from later database state: replay remains
+unavailable until the next solve rolls the row forward, because an approximate
+capsule would defeat the purpose of deterministic diagnosis.
 
 ## 9. Parameter model
 

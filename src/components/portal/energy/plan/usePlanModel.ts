@@ -198,6 +198,7 @@ export function usePlanModel(
   )];
 
   return {
+    current,
     plan,
     planView,
     setPlanView,

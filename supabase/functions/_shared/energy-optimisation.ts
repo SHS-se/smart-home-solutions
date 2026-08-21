@@ -33,6 +33,7 @@ import {
 import {
   batteryValueCurve,
   marginalValue,
+  type StoredEnergyValueInput,
   type UtilityCurve,
 } from "./store-value.ts";
 import {
@@ -382,6 +383,28 @@ export interface OptimisationSnapshot {
   thermal_zones?: ThermalZonePlanningInput[];
 }
 
+/** The read-only curve the planner derived for usable home-battery energy. */
+export interface BatteryValueCurveDiagnostic {
+  schema_version: 1;
+  curve: UtilityCurve;
+  state_basis: "usable_kwh_above_min_soc";
+  initial_state_kwh: number;
+  usable_capacity_kwh: number;
+  covering_window: Array<{
+    start: string;
+    import_price_sek_per_kwh: number;
+    residual_load_ac_kwh: number;
+    battery_energy_kwh: number;
+  }>;
+  curve_input: {
+    future_surplus_kwh: number;
+    usable_kwh: number;
+    round_trip_efficiency: number;
+    degradation_sek_per_kwh: number;
+    expected_draw_kwh: number;
+  };
+}
+
 /** Exact snapshot contracts; the discriminator never spans versions. */
 export type OptimisationSnapshotV5 =
   & Omit<OptimisationSnapshot, "schema_version">
@@ -516,7 +539,7 @@ export interface OptimisationPlan {
   capabilities: OptimisationCapabilities;
   model_version: string;
   /** Independent version for descriptive, non-executable decision evidence. */
-  decision_diagnostics_version: 1;
+  decision_diagnostics_version: 2;
   plan_id: string;
   snapshot_id: string;
   issued_at: string;
@@ -545,7 +568,11 @@ export interface OptimisationPlan {
     /** The same evidence weighted by recency, day type and season. */
     effective_days: number;
     level_sek_per_kwh: number | null;
+    /** Exact unrounded series used by the solve and by deterministic replay. */
+    shadow_import_sek_per_kwh: number[];
   };
+  /** Exact derived home-battery curve used by every scenario in this solve. */
+  battery_value_curve: BatteryValueCurveDiagnostic | null;
   policy: OptimisationSnapshot["policy"];
   battery: BatteryInput | null;
   ev_battery: EvBatteryInput | null;
@@ -1381,6 +1408,7 @@ export function validateSnapshot(snapshot: OptimisationSnapshot): string[] {
 function preparedSlots(
   snapshot: OptimisationSnapshot,
   archive: StoredPriceRow[] = [],
+  resolvedPriceOutlook?: OptimisationPlan["price_outlook"],
 ): { slots: PreparedSlot[]; outlook: PriceOutlook } {
   const captured = isoMs(snapshot.captured_at);
   const controlledCategories = new Set<string>();
@@ -1390,10 +1418,25 @@ function preparedSlots(
   const thermalDeviceKeys = new Set(
     (snapshot.thermal_zones ?? []).flatMap((zone) => zone.device_keys),
   );
-  const outlook = buildPriceOutlook(snapshot.slots, archive, {
-    timeZone: snapshot.timezone,
-    asOf: isoMs(snapshot.captured_at),
-  });
+  const outlook: PriceOutlook = resolvedPriceOutlook
+    ? {
+      shadowImportSekPerKwh:
+        resolvedPriceOutlook.shadow_import_sek_per_kwh,
+      levelSekPerKwh: resolvedPriceOutlook.level_sek_per_kwh,
+      observedDays: resolvedPriceOutlook.observed_days,
+      effectiveDays: resolvedPriceOutlook.effective_days,
+      shaped: resolvedPriceOutlook.shaped,
+    }
+    : buildPriceOutlook(snapshot.slots, archive, {
+      timeZone: snapshot.timezone,
+      asOf: isoMs(snapshot.captured_at),
+    });
+  if (
+    outlook.shadowImportSekPerKwh.length !== snapshot.slots.length ||
+    outlook.shadowImportSekPerKwh.some((value) => !finite(value))
+  ) {
+    throw new Error("resolved price outlook must contain one finite value per slot");
+  }
   // Export is not shaped separately: the archive stores an import price, and
   // the spread between them is a supplier and tariff construct rather than
   // something the market shape says anything about. Holding the observed ratio
@@ -1930,6 +1973,109 @@ const SEEDED_POOL_HEAT_PUMP = {
 /** Until a fitted kWh/km exists, a mid-size EV at a mild temperature. */
 const SEEDED_VEHICLE_KWH_PER_KM = 0.16;
 
+interface DerivedBatteryValueCurve {
+  curve: UtilityCurve;
+  diagnostic: BatteryValueCurveDiagnostic;
+}
+
+/** Build the battery curve once and retain the exact evidence behind it. */
+function deriveBatteryValueCurve(
+  slots: PreparedSlot[],
+  snapshot: OptimisationSnapshot,
+): DerivedBatteryValueCurve | null {
+  const battery = snapshot.battery;
+  if (!battery) return null;
+
+  const usableKwh = (battery.max_soc - battery.min_soc) *
+    battery.capacity_kwh;
+  const remainingSurplusKwh = slots.reduce((total, slot) => {
+    const surplusW = slot.pv_w - fixedLoadW(slot);
+    return total + (surplusW > 0 ? surplusW / 1_000 * SLOT_HOURS : 0);
+  }, 0);
+
+  // The covering band is the longest single deficit run in the horizon: the
+  // battery must carry one night, rather than every deficit in three days.
+  let expectedDrawKwh = 0;
+  let runKwh = 0;
+  let runDraw: Array<{
+    start: string;
+    sek_per_kwh: number;
+    ac_kwh: number;
+  }> = [];
+  let windowDraw: typeof runDraw = [];
+  for (const slot of slots) {
+    const netW = slot.pv_w - fixedLoadW(slot);
+    if (netW < 0) {
+      const acKwh = -netW / 1_000 * SLOT_HOURS;
+      runKwh += acKwh;
+      runDraw.push({
+        start: slot.start,
+        sek_per_kwh: slot.shadow_import_sek_per_kwh,
+        ac_kwh: acKwh,
+      });
+    } else {
+      if (runKwh > expectedDrawKwh) {
+        expectedDrawKwh = runKwh;
+        windowDraw = runDraw;
+      }
+      runKwh = 0;
+      runDraw = [];
+    }
+  }
+  if (runKwh > expectedDrawKwh) {
+    expectedDrawKwh = runKwh;
+    windowDraw = runDraw;
+  }
+  if (windowDraw.length === 0) {
+    windowDraw = slots.map((slot) => ({
+      start: slot.start,
+      sek_per_kwh: slot.shadow_import_sek_per_kwh,
+      ac_kwh: 0,
+    }));
+  }
+
+  const storedDrawKwh = windowDraw.map((slice) =>
+    slice.ac_kwh / battery.discharge_efficiency
+  );
+  const curveInput: StoredEnergyValueInput = {
+    futureImportSekPerKwh: windowDraw.map((slice) => slice.sek_per_kwh),
+    futureImportKwh: storedDrawKwh,
+    futureSurplusKwh: remainingSurplusKwh,
+    usableKwh,
+    roundTrip: battery.charge_efficiency * battery.discharge_efficiency,
+    degradationSekPerKwh:
+      DEFAULT_VALUE_SETTINGS.battery_degradation_sek_per_kwh,
+    expectedDrawKwh: expectedDrawKwh / battery.discharge_efficiency,
+  };
+  const curve = batteryValueCurve(curveInput);
+  return {
+    curve,
+    diagnostic: {
+      schema_version: 1,
+      curve,
+      state_basis: "usable_kwh_above_min_soc",
+      initial_state_kwh: Math.max(
+        0,
+        (battery.soc - battery.min_soc) * battery.capacity_kwh,
+      ),
+      usable_capacity_kwh: usableKwh,
+      covering_window: windowDraw.map((slice, index) => ({
+        start: slice.start,
+        import_price_sek_per_kwh: slice.sek_per_kwh,
+        residual_load_ac_kwh: slice.ac_kwh,
+        battery_energy_kwh: storedDrawKwh[index],
+      })),
+      curve_input: {
+        future_surplus_kwh: curveInput.futureSurplusKwh,
+        usable_kwh: curveInput.usableKwh,
+        round_trip_efficiency: curveInput.roundTrip,
+        degradation_sek_per_kwh: curveInput.degradationSekPerKwh,
+        expected_draw_kwh: curveInput.expectedDrawKwh,
+      },
+    },
+  };
+}
+
 /**
  * Build the stores the marginal-value planner dispatches, or null.
  *
@@ -1943,6 +2089,7 @@ const SEEDED_VEHICLE_KWH_PER_KM = 0.16;
 function buildDispatchStores(
   slots: PreparedSlot[],
   snapshot: OptimisationSnapshot,
+  derivedBatteryValue: DerivedBatteryValueCurve | null,
 ): DispatchStore[] | null {
   if (snapshot.schema_version < 6) return null;
   const stores: DispatchStore[] = [];
@@ -2045,74 +2192,8 @@ function buildDispatchStores(
   }
 
   const battery = snapshot.battery;
-  if (battery) {
-    const usableKwh = (battery.max_soc - battery.min_soc) *
-      battery.capacity_kwh;
-    const remainingSurplusKwh = slots.reduce((total, slot) => {
-      const surplusW = slot.pv_w - fixedLoadW(slot);
-      return total + (surplusW > 0 ? surplusW / 1_000 * SLOT_HOURS : 0);
-    }, 0);
-    // The covering band: the draw of the longest single deficit run in the
-    // horizon — one night — and the prices during it.
-    //
-    // Two earlier attempts got this wrong in opposite directions. Summing the
-    // deficit over the whole horizon made the band swallow the entire pack, so
-    // every stored kWh was priced at the dearest import in three days and the
-    // battery hoarded through expensive evenings. Walking forward until enough
-    // surplus had arrived to refill the pack fixed that, but when a plan is
-    // issued in the morning that window closes before the night even begins, so
-    // the band collapsed to nothing and the battery never charged for the night
-    // at all. What the battery actually has to carry is one deficit run, and
-    // that is the same quantity whatever time of day the plan is built.
-    let expectedDrawKwh = 0;
-    let runKwh = 0;
-    let runDraw: { sek_per_kwh: number; kwh: number }[] = [];
-    let windowDraw: { sek_per_kwh: number; kwh: number }[] = [];
-    for (const slot of slots) {
-      const netW = slot.pv_w - fixedLoadW(slot);
-      if (netW < 0) {
-        const kwh = -netW / 1_000 * SLOT_HOURS;
-        runKwh += kwh;
-        runDraw.push({ sek_per_kwh: slot.shadow_import_sek_per_kwh, kwh });
-      } else {
-        if (runKwh > expectedDrawKwh) {
-          expectedDrawKwh = runKwh;
-          windowDraw = runDraw;
-        }
-        runKwh = 0;
-        runDraw = [];
-      }
-    }
-    if (runKwh > expectedDrawKwh) {
-      expectedDrawKwh = runKwh;
-      windowDraw = runDraw;
-    }
-    if (windowDraw.length === 0) {
-      windowDraw = slots.map((slot) => ({
-        sek_per_kwh: slot.shadow_import_sek_per_kwh,
-        kwh: 0,
-      }));
-    }
-
-    // Derived every solve from the forecast, never configured (§8.4). This is
-    // what replaces the end-of-solar SOC target and the export floor price.
-    const curve = batteryValueCurve({
-      // Prices and kWh from the covering window, not the whole horizon: what
-      // the stored energy displaces is tonight's import, in merit order, not
-      // the dearest quarter three days out and not the whole night at that
-      // quarter's price. The curve's state is stored DC energy, so each AC-load
-      // slice includes the battery energy lost on discharge.
-      futureImportSekPerKwh: windowDraw.map((slice) => slice.sek_per_kwh),
-      futureImportKwh: windowDraw.map((slice) =>
-        slice.kwh / battery.discharge_efficiency
-      ),
-      futureSurplusKwh: remainingSurplusKwh,
-      usableKwh,
-      roundTrip: battery.charge_efficiency * battery.discharge_efficiency,
-      degradationSekPerKwh:
-        DEFAULT_VALUE_SETTINGS.battery_degradation_sek_per_kwh,
-      expectedDrawKwh: expectedDrawKwh / battery.discharge_efficiency,
-    });
+  if (battery && derivedBatteryValue) {
+    const { curve } = derivedBatteryValue;
     if (curve.points.length > 0) {
       stores.push({
         key: "battery",
@@ -2127,7 +2208,7 @@ function buildDispatchStores(
           (battery.soc - battery.min_soc) * battery.capacity_kwh,
         ),
         min_state: 0,
-        max_state: usableKwh,
+        max_state: derivedBatteryValue.diagnostic.usable_capacity_kwh,
         max_power_w: battery.charge_max_w,
         // No `wear_sek_per_kwh` here: `batteryValueCurve` already subtracts
         // degradation from what stored energy is worth. Charging it a second
@@ -2261,6 +2342,7 @@ function scheduleServices(
   snapshot: OptimisationSnapshot,
   reservedW: number[],
   dispatchCache: Map<string, DispatchBundle | null>,
+  derivedBatteryValue: DerivedBatteryValueCurve | null,
 ): { schedule: Schedule; errors: string[] } {
   const schedule = emptySchedule(slots.length);
   const occupiedW = new Array(slots.length).fill(0);
@@ -2280,7 +2362,7 @@ function scheduleServices(
     : reservedW.join(",");
   let dispatchBundle = dispatchCache.get(dispatchKey);
   if (!dispatchCache.has(dispatchKey)) {
-    const stores = buildDispatchStores(slots, snapshot);
+    const stores = buildDispatchStores(slots, snapshot, derivedBatteryValue);
     if (stores) {
       const dispatchSlots = slots.map((slot, index) => ({
         pv_w: slot.pv_w,
@@ -3627,6 +3709,7 @@ function buildPlan(
   reservedW: number[],
   protectedSoc: (number | null)[],
   dispatchCache: Map<string, DispatchBundle | null>,
+  derivedBatteryValue: DerivedBatteryValueCurve | null,
 ): GeneratedPlan {
   const scheduled = scheduleServices(
     key,
@@ -3634,6 +3717,7 @@ function buildPlan(
     snapshot,
     key === "priority" ? reservedW : new Array(slots.length).fill(0),
     dispatchCache,
+    derivedBatteryValue,
   );
   const thermalErrors = scheduleRoomHeating(
     key,
@@ -3686,6 +3770,8 @@ export function generateOptimisationPlan(
    * is still shaped rather than flat (§1.4.3).
    */
   priceArchive: StoredPriceRow[] = [],
+  /** Exact resolved price vector from a replay capsule, bypassing estimation. */
+  resolvedPriceOutlook?: OptimisationPlan["price_outlook"],
 ): OptimisationPlan {
   const validationErrors = validateSnapshot(snapshot);
   const snapshotAge = now.getTime() - isoMs(snapshot.captured_at);
@@ -3698,8 +3784,15 @@ export function generateOptimisationPlan(
   if (validationErrors.length > 0) {
     throw new Error(validationErrors.join("; "));
   }
-  const { slots, outlook } = preparedSlots(snapshot, priceArchive);
+  const { slots, outlook } = preparedSlots(
+    snapshot,
+    priceArchive,
+    resolvedPriceOutlook,
+  );
   const { reservedW, protectedSoc } = batteryReservation(slots, snapshot);
+  const derivedBatteryValue = snapshot.schema_version >= 6
+    ? deriveBatteryValueCurve(slots, snapshot)
+    : null;
   const dispatchCache = new Map<string, DispatchBundle | null>();
   const baseline = buildPlan(
     "baseline",
@@ -3708,6 +3801,7 @@ export function generateOptimisationPlan(
     reservedW,
     protectedSoc,
     dispatchCache,
+    derivedBatteryValue,
   );
   const priority = buildPlan(
     "priority",
@@ -3716,6 +3810,7 @@ export function generateOptimisationPlan(
     reservedW,
     protectedSoc,
     dispatchCache,
+    derivedBatteryValue,
   );
   const cost = buildPlan(
     "cost",
@@ -3724,8 +3819,15 @@ export function generateOptimisationPlan(
     reservedW,
     protectedSoc,
     dispatchCache,
+    derivedBatteryValue,
   );
   const plans = { baseline, priority, cost };
+  const batteryCurveWasUsed = [...dispatchCache.values()].some((bundle) =>
+    bundle?.stores.some((store) => store.key === "battery")
+  );
+  const derivedBatteryValueCurve = batteryCurveWasUsed
+    ? derivedBatteryValue?.diagnostic ?? null
+    : null;
 
   // Dispatchable jobs must carry equal workloads. Duty-cycle devices are
   // intentionally different: the plan controls only permission to run, and
@@ -3763,7 +3865,7 @@ export function generateOptimisationPlan(
     model_version: snapshot.schema_version >= 6
       ? OPTIMISATION_MODEL_VERSION
       : LEGACY_MODEL_VERSION,
-    decision_diagnostics_version: 1,
+    decision_diagnostics_version: 2,
     // One snapshot produces one deterministic plan identity, so retries cannot
     // append duplicate run-history rows.
     plan_id: snapshot.snapshot_id,
@@ -3782,7 +3884,9 @@ export function generateOptimisationPlan(
       observed_days: outlook.observedDays,
       effective_days: round(outlook.effectiveDays, 2),
       level_sek_per_kwh: outlook.levelSekPerKwh,
+      shadow_import_sek_per_kwh: outlook.shadowImportSekPerKwh,
     },
+    battery_value_curve: derivedBatteryValueCurve,
     policy: snapshot.policy,
     battery: snapshot.battery,
     ev_battery: snapshot.ev_battery ?? null,

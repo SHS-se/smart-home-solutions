@@ -9,6 +9,7 @@ import type { ThermalObservationSummary } from '@/lib/energy-shift/thermal-readi
 
 export interface CurrentRow {
   plan: PortalOptimisationPlan;
+  home_id: string | null;
   captured_at: string;
   updated_at: string;
   plan_id: string | null;

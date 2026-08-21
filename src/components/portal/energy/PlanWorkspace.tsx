@@ -114,7 +114,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
       ] = await Promise.all([
         supabase
           .from('energy_optimisation_current')
-          .select('plan, captured_at, updated_at, plan_id, generation_request_id, plan_schema_version, ha_ack_status, ha_acknowledged_at, ha_integration_version, ha_ack_request_id, ha_ack_error')
+          .select('home_id, plan, captured_at, updated_at, plan_id, generation_request_id, plan_schema_version, ha_ack_status, ha_acknowledged_at, ha_integration_version, ha_ack_request_id, ha_ack_error')
           .eq('customer_id', customerId)
           .eq('home_id', homeId)
           .maybeSingle(),
@@ -271,6 +271,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
     const plan = createWebsiteDemoPlan(demoReferenceTime, demoSeason);
     return {
       plan,
+      home_id: null,
       captured_at: plan.issued_at,
       updated_at: plan.issued_at,
       plan_id: plan.plan_id,
@@ -790,6 +791,7 @@ const PlanView: React.FC<{
               vehicleTargetRangeKm={vehicleTargetRangeKm}
               poolVolumeM3={plan?.pool?.volume_m3 ?? null}
               vehicleChargeEfficiency={plan?.ev_battery?.charge_efficiency ?? null}
+              batteryValueCurve={plan.battery_value_curve}
             />
           )}
         </CardContent>

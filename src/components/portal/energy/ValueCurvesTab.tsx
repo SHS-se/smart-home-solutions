@@ -55,6 +55,7 @@ import {
 } from '../../../../supabase/functions/_shared/value-preferences';
 import type { OptimisationSnapshot } from '../../../../supabase/functions/_shared/energy-optimisation';
 import { comparePreference, type PreviewComparison } from '@/lib/energy-shift/curve-preview';
+import type { BatteryValueCurveDiagnostic } from '@/lib/energy-shift/contracts';
 
 interface Props {
   customerId: string | null;
@@ -70,6 +71,8 @@ interface Props {
   /** Reviewed installation figures, so the physics is this home's own. */
   poolVolumeM3?: number | null;
   vehicleChargeEfficiency?: number | null;
+  /** Exact read-only curve published by the current planner solve. */
+  batteryValueCurve?: BatteryValueCurveDiagnostic | null;
 }
 
 const EDITABLE: ValueStoreKey[] = ['pool', 'ev'];
@@ -102,6 +105,7 @@ const ValueCurvesTab: React.FC<Props> = ({
   vehicleTargetRangeKm,
   poolVolumeM3,
   vehicleChargeEfficiency,
+  batteryValueCurve,
 }) => {
   const { t } = useLanguage();
   const { toast } = useToast();
@@ -331,6 +335,24 @@ const ValueCurvesTab: React.FC<Props> = ({
       from.indifferent_above !== draft.preference.indifferent_above
     );
   });
+  const batteryChart = batteryValueCurve?.curve.points.length
+    ? [
+      {
+        at: 0,
+        sekPerStoredKwh: batteryValueCurve.curve.points[0].sek_per_unit,
+      },
+      ...batteryValueCurve.curve.points.map(point => ({
+        at: point.at,
+        sekPerStoredKwh: point.sek_per_unit,
+      })),
+    ]
+    : [];
+  const coveringStart = batteryValueCurve?.covering_window.find(
+    slice => slice.residual_load_ac_kwh > 0,
+  )?.start ?? null;
+  const coveringEndStart = [...(batteryValueCurve?.covering_window ?? [])]
+    .reverse()
+    .find(slice => slice.residual_load_ac_kwh > 0)?.start ?? null;
 
   return (
     <div className="space-y-4">
@@ -358,6 +380,121 @@ const ValueCurvesTab: React.FC<Props> = ({
 
       {preview !== null && (
         <PreviewPanel preview={preview} dirty={dirty} />
+      )}
+
+      {batteryValueCurve && (
+        <Card>
+          <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0">
+            <div>
+              <CardTitle className="text-base">
+                {t('Hembatteriets härledda värdekurva', 'Derived home-battery value curve')}
+              </CardTitle>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {t(
+                  'Tillståndet är användbar lagrad energi över minsta SOC. Punkterna är de exakta brytpunkter som den aktuella planen använde.',
+                  'State is usable stored energy above minimum SOC. The points are the exact breakpoints used by the current plan.',
+                )}
+              </p>
+            </div>
+            <Badge variant="outline">{t('Skrivskyddad', 'Read-only')}</Badge>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-4">
+              <div className="rounded-md border p-2">
+                <div className="text-muted-foreground">{t('Starttillstånd', 'Initial state')}</div>
+                <div className="font-semibold tabular-nums">{batteryValueCurve.initial_state_kwh.toFixed(3)} kWh</div>
+              </div>
+              <div className="rounded-md border p-2">
+                <div className="text-muted-foreground">{t('Användbar kapacitet', 'Usable capacity')}</div>
+                <div className="font-semibold tabular-nums">{batteryValueCurve.usable_capacity_kwh.toFixed(3)} kWh</div>
+              </div>
+              <div className="rounded-md border p-2">
+                <div className="text-muted-foreground">{t('Dimensionerande underskott', 'Covering requirement')}</div>
+                <div className="font-semibold tabular-nums">{batteryValueCurve.curve_input.expected_draw_kwh.toFixed(3)} kWh</div>
+                {coveringStart && coveringEndStart && (
+                  <div className="text-[10px] text-muted-foreground">
+                    {new Date(coveringStart).toLocaleString()} – {new Date(Date.parse(coveringEndStart) + 15 * 60_000).toLocaleString()}
+                  </div>
+                )}
+              </div>
+              <div className="rounded-md border p-2">
+                <div className="text-muted-foreground">{t('Kurvans antaganden', 'Curve inputs')}</div>
+                <div className="font-semibold tabular-nums">
+                  {(batteryValueCurve.curve_input.round_trip_efficiency * 100).toFixed(1)}% {t('rundverkningsgrad', 'round trip')}
+                </div>
+                <div className="text-[10px] text-muted-foreground">
+                  {batteryValueCurve.curve_input.future_surplus_kwh.toFixed(2)} kWh {t('prognostiserat överskott', 'forecast surplus')} · {batteryValueCurve.curve_input.degradation_sek_per_kwh.toFixed(3)} SEK/kWh {t('slitage', 'degradation')}
+                </div>
+              </div>
+            </div>
+
+            {batteryChart.length > 0 ? (
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={batteryChart} margin={{ top: 12, right: 16, bottom: 12, left: 4 }}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                    <XAxis
+                      dataKey="at"
+                      type="number"
+                      domain={[0, batteryValueCurve.usable_capacity_kwh]}
+                      tick={{ fontSize: 11 }}
+                      label={{ value: t('Användbar lagrad energi (kWh)', 'Usable stored energy (kWh)'), position: 'insideBottom', offset: -8, fontSize: 11 }}
+                    />
+                    <YAxis
+                      tick={{ fontSize: 11 }}
+                      width={60}
+                      label={{ value: 'SEK/kWh', angle: -90, position: 'insideLeft', fontSize: 11 }}
+                    />
+                    <ChartTooltip
+                      formatter={(value: number) => [`${value.toFixed(3)} SEK/kWh`, t('Behållet värde', 'Retained value')]}
+                      labelFormatter={(label: number) => `${Number(label).toFixed(3)} kWh`}
+                    />
+                    <ReferenceLine
+                      x={batteryValueCurve.initial_state_kwh}
+                      stroke="#64748b"
+                      strokeDasharray="4 4"
+                      label={{ value: t('Start', 'Initial'), fontSize: 10, position: 'top' }}
+                    />
+                    <Line
+                      type="linear"
+                      dataKey="sekPerStoredKwh"
+                      name={t('Behållet värde', 'Retained value')}
+                      stroke="#7c3aed"
+                      strokeWidth={2.5}
+                      dot={{ r: 3, fill: '#7c3aed' }}
+                      activeDot={{ r: 5 }}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                {t('Planeraren kunde inte härleda någon batterivärdekurva.', 'The planner could not derive a battery value curve.')}
+              </p>
+            )}
+
+            <div className="overflow-x-auto rounded-md border">
+              <table className="w-full min-w-[420px] text-xs">
+                <thead className="bg-muted/70 text-left">
+                  <tr>
+                    <th className="px-3 py-2 font-medium">#</th>
+                    <th className="px-3 py-2 font-medium">{t('Brytpunkt', 'Breakpoint')}</th>
+                    <th className="px-3 py-2 font-medium">{t('Marginalvärde', 'Marginal value')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {batteryValueCurve.curve.points.map((point, index) => (
+                    <tr key={`${point.at}:${index}`} className="border-t">
+                      <td className="px-3 py-2 tabular-nums text-muted-foreground">{index + 1}</td>
+                      <td className="px-3 py-2 tabular-nums">{point.at.toFixed(4)} kWh</td>
+                      <td className="px-3 py-2 font-medium tabular-nums">{point.sek_per_unit.toFixed(4)} SEK/kWh</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {EDITABLE.map(key => {

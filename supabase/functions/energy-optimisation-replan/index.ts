@@ -25,6 +25,7 @@ import {
   type OptimisationSnapshot,
 } from "../_shared/energy-optimisation.ts";
 import { resolveValueCurves } from "../_shared/value-curves.ts";
+import { sha256Hex } from "../_shared/ha-device-auth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -140,8 +141,9 @@ serve(async (request) => {
     };
 
     let generated;
+    const solveTime = new Date();
     try {
-      generated = generateOptimisationPlan(snapshot, new Date(), priceArchive);
+      generated = generateOptimisationPlan(snapshot, solveTime, priceArchive);
     } catch (error) {
       const detail = error instanceof Error ? error.message : "replan failed";
       // The commonest case by far: the snapshot has aged past the planner's
@@ -153,9 +155,12 @@ serve(async (request) => {
       );
     }
 
+    const inputHash = await sha256Hex(JSON.stringify(snapshot));
     const { error: writeError } = await service
       .from("energy_optimisation_current")
       .update({
+        snapshot,
+        input_hash: inputHash,
         plan: generated,
         plan_id: generated.plan_id,
         generation_request_id: `portal:${crypto.randomUUID()}`,

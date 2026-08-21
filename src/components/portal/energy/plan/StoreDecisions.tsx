@@ -2,11 +2,13 @@
 // by the optimiser; it never reconstructs explanations from final power flows.
 
 import React from 'react';
-import { Download } from 'lucide-react';
+import { Download, FileJson, Loader2 } from 'lucide-react';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useToast } from '@/hooks/use-toast';
+import { supabase } from '@/integrations/supabase/client';
 import type { PlannedSlot } from '@/lib/energy-shift/contracts';
 import type { TimelineRange, TimelineRow } from '@/lib/energy-shift/energy-timeline';
 import type { PlanModel } from './usePlanModel';
@@ -42,6 +44,7 @@ const HEADER = {
   battery: 'border-r border-emerald-300 bg-emerald-200/95 text-emerald-950 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-100',
   grid: 'border-r border-sky-300 bg-sky-200/95 text-sky-950 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-100',
   prices: 'border-r border-violet-300 bg-violet-200/95 text-violet-950 dark:border-violet-800 dark:bg-violet-950 dark:text-violet-100',
+  replay: 'border-l-2 border-slate-300 bg-slate-200/95 text-slate-950 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100',
 } as const;
 
 const BODY = {
@@ -50,6 +53,7 @@ const BODY = {
   battery: 'border-r border-emerald-200 bg-emerald-50/65 group-hover:bg-emerald-100/75 dark:border-emerald-900 dark:bg-emerald-950/25 dark:group-hover:bg-emerald-950/45',
   grid: 'border-r border-sky-200 bg-sky-50/70 group-hover:bg-sky-100/80 dark:border-sky-900 dark:bg-sky-950/25 dark:group-hover:bg-sky-950/45',
   prices: 'border-r border-violet-200 bg-violet-50/60 group-hover:bg-violet-100/75 dark:border-violet-900 dark:bg-violet-950/25 dark:group-hover:bg-violet-950/45',
+  replay: 'border-l-2 border-slate-200 bg-slate-50/95 group-hover:bg-slate-100/90 dark:border-slate-800 dark:bg-slate-950/90 dark:group-hover:bg-slate-900',
 } as const;
 
 const StoreDecisions: React.FC<{
@@ -63,7 +67,9 @@ const StoreDecisions: React.FC<{
   onSelectedStartChange?: (start: string) => void;
 }> = ({ model, rows: timeline, range, selectedStart, selectionRequest, onSelectedStartChange }) => {
   const { t } = useLanguage();
+  const { toast } = useToast();
   const [openItem, setOpenItem] = React.useState<string>('sequence');
+  const [replayLoading, setReplayLoading] = React.useState<string | null>(null);
   const windowRows = React.useMemo(
     () => timeline.slice(range.from, range.to),
     [range.from, range.to, timeline],
@@ -84,7 +90,7 @@ const StoreDecisions: React.FC<{
   const selectedMs = selectedStart ? Date.parse(selectedStart) : null;
   const diagnosticsVersion = (model.plan as { decision_diagnostics_version?: number })
     .decision_diagnostics_version;
-  const hasEvidence = diagnosticsVersion === 1 && inWindow.every(slot =>
+  const hasEvidence = typeof diagnosticsVersion === 'number' && diagnosticsVersion >= 1 && inWindow.every(slot =>
     (slot as PlannedSlot & { decision?: PlannedSlot['decision'] }).decision?.schema_version === 1);
 
   React.useEffect(() => {
@@ -246,6 +252,83 @@ const StoreDecisions: React.FC<{
     URL.revokeObjectURL(url);
   };
 
+  const canReplay = Boolean(
+    model.current.home_id &&
+    model.current.generation_request_id &&
+    Array.isArray(model.plan.price_outlook.shadow_import_sek_per_kwh) &&
+    model.plan.price_outlook.shadow_import_sek_per_kwh.length === model.active.slots.length,
+  );
+
+  const downloadReplay = async (slot: PlannedSlot, slotIndex: number) => {
+    if (!model.current.home_id || !model.current.generation_request_id || !canReplay) return;
+    setReplayLoading(slot.start);
+    try {
+      // Snapshot is deliberately lazy: it and the plan are the two large JSON
+      // values, and the workspace otherwise polls every 30 seconds.
+      const { data, error } = await supabase
+        .from('energy_optimisation_current')
+        .select('snapshot, input_hash, plan_id')
+        .eq('home_id', model.current.home_id)
+        .eq('plan_id', model.plan.plan_id)
+        .eq('generation_request_id', model.current.generation_request_id)
+        .maybeSingle();
+      if (error || !data?.snapshot) {
+        throw new Error(error?.message ?? t(
+          'Planen ersattes innan replaydata kunde hämtas.',
+          'The plan was replaced before its replay data could be fetched.',
+        ));
+      }
+      const { thermal_projection: thermalProjection, ...plannerOutput } = model.plan;
+      const bundle = {
+        format: 'shs-energy-optimisation-quarter-replay',
+        schema_version: 1,
+        entrypoint: {
+          module: 'supabase/functions/_shared/energy-optimisation.ts',
+          export: 'generateOptimisationPlan',
+          argument_order: ['snapshot', 'now', 'price_archive', 'resolved_price_outlook'],
+          invocation: 'generateOptimisationPlan(arguments.snapshot, new Date(arguments.now), arguments.price_archive, arguments.resolved_price_outlook)',
+          arguments: {
+            snapshot: data.snapshot,
+            now: model.plan.issued_at,
+            price_archive: [],
+            resolved_price_outlook: model.plan.price_outlook,
+          },
+        },
+        input_hash: data.input_hash,
+        generation_request_id: model.current.generation_request_id,
+        selection: {
+          scenario: model.active.key,
+          quarter_index: slotIndex,
+          quarter_start: slot.start,
+        },
+        expected: {
+          planner_output: plannerOutput,
+          thermal_projection: thermalProjection ?? null,
+          selected_quarter: slot,
+        },
+      };
+      const url = URL.createObjectURL(new Blob(
+        [`${JSON.stringify(bundle, null, 2)}\n`],
+        { type: 'application/json;charset=utf-8' },
+      ));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `plan-replay-${model.plan.plan_id}-${slot.start.replace(/[:.]/g, '-')}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      toast({
+        title: t('Kunde inte skapa replayfilen', 'Could not create replay file'),
+        description: error instanceof Error ? error.message : String(error),
+        variant: 'destructive',
+      });
+    } finally {
+      setReplayLoading(null);
+    }
+  };
+
   if (inWindow.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">
@@ -283,7 +366,7 @@ const StoreDecisions: React.FC<{
                 </Button>
               </div>
               <div className="[&>div]:max-h-[46rem] [&>div]:overscroll-contain [&>div]:rounded-md [&>div]:border">
-                <Table className="min-w-[2600px] border-separate border-spacing-0 text-xs">
+                <Table className="min-w-[2720px] border-separate border-spacing-0 text-xs">
                   <TableHeader>
                     <TableRow className="hover:bg-transparent">
                       <TableHead
@@ -304,6 +387,13 @@ const StoreDecisions: React.FC<{
                       </TableHead>
                       <TableHead colSpan={2} scope="colgroup" className={`sticky top-0 z-30 h-9 px-3 font-semibold ${HEADER.prices}`}>
                         {t('Totalpriser', 'All-in prices')}
+                      </TableHead>
+                      <TableHead
+                        rowSpan={2}
+                        scope="col"
+                        className={`sticky right-0 top-0 z-40 h-20 min-w-[110px] align-middle font-semibold ${HEADER.replay}`}
+                      >
+                        {t('Repris', 'Replay')}
                       </TableHead>
                     </TableRow>
                     <TableRow className="hover:bg-transparent">
@@ -546,6 +636,27 @@ const StoreDecisions: React.FC<{
                                 <TableCell rowSpan={rowSpan} className={`p-2 align-top tabular-nums ${BODY.prices}`}>
                                   <div className="font-semibold">{price(slot.shadow_export_sek_per_kwh)}</div>
                                   <div className="text-muted-foreground">{slot.export_price_sek_per_kwh === null ? t('modellerat', 'modelled') : t('publicerat', 'published')}</div>
+                                </TableCell>
+                                <TableCell rowSpan={rowSpan} className={`sticky right-0 z-10 p-2 align-top ${BODY.replay}`}>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={!canReplay || replayLoading !== null}
+                                    title={!canReplay
+                                      ? t('Nästa plan kommer att innehålla exakta replaydata.', 'The next plan will contain exact replay data.')
+                                      : t('Ladda ned alla indata och det förväntade resultatet.', 'Download every input and the expected result.')}
+                                    aria-label={`${t('Ladda ned JSON-repris för', 'Download JSON replay for')} ${new Date(slot.start).toLocaleString()}`}
+                                    onClick={event => {
+                                      event.stopPropagation();
+                                      void downloadReplay(plannedSlot, slotIndex);
+                                    }}
+                                  >
+                                    {replayLoading === slot.start
+                                      ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                                      : <FileJson className="mr-1.5 h-4 w-4" />}
+                                    JSON
+                                  </Button>
                                 </TableCell>
                               </>
                             )}

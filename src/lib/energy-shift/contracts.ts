@@ -1,22 +1,26 @@
 import type {
+  BatteryValueCurveDiagnostic,
   GeneratedPlan,
   DeviceControlType,
   DeviceLoadType,
   DevicePlanningRole,
   EmpiricalDeviceModelInput,
   OptimisationPlan,
+  OptimisationSnapshot,
   PlanKey,
   PlanSummary,
   PlannedSlot,
 } from '../../../supabase/functions/_shared/energy-optimisation';
 
 export type {
+  BatteryValueCurveDiagnostic,
   GeneratedPlan,
   DeviceControlType,
   DeviceLoadType,
   DevicePlanningRole,
   EmpiricalDeviceModelInput,
   OptimisationPlan,
+  OptimisationSnapshot,
   PlanKey,
   PlanSummary,
   PlannedSlot,

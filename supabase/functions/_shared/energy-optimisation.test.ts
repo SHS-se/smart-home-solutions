@@ -2051,10 +2051,35 @@ Deno.test("every planned quarter records decision evidence and exact grid arithm
     },
     pool: null,
   });
-  const plan = generateOptimisationPlan(snapshot, new Date(NOW));
+  const archiveStart = Date.parse("2026-08-08T22:00:00.000Z");
+  const archive = Array.from({ length: 96 }, (_value, index) => ({
+    start_ts: new Date(archiveStart + index * 15 * 60_000).toISOString(),
+    import_price_sek_per_kwh: index >= 68 && index < 80 ? 4.2 : 0.7,
+  }));
+  const plan = generateOptimisationPlan(snapshot, new Date(NOW), archive);
   const slots = plan.plans.priority.slots;
 
-  assertEquals(plan.decision_diagnostics_version, 1);
+  assertEquals(plan.decision_diagnostics_version, 2);
+  const batteryCurve = plan.battery_value_curve;
+  assert(batteryCurve !== null, "the derived battery curve must be published");
+  assertEquals(batteryCurve.schema_version, 1);
+  assertEquals(batteryCurve.state_basis, "usable_kwh_above_min_soc");
+  assertEquals(batteryCurve.curve.unit, "kwh");
+  assert(batteryCurve.curve.points.length > 2, "curve breakpoints are required");
+  assert(
+    Math.abs(
+      batteryCurve.covering_window.reduce(
+        (sum, slice) => sum + slice.battery_energy_kwh,
+        0,
+      ) - batteryCurve.curve_input.expected_draw_kwh,
+    ) < 1e-6,
+    "published covering slices must reproduce the curve input",
+  );
+  assertEquals(
+    generateOptimisationPlan(snapshot, new Date(NOW), [], plan.price_outlook),
+    plan,
+    "snapshot, solve time and resolved outlook must replay bit for bit",
+  );
   assert(
     slots.some((slot) => slot.decision.store_allocations.length > 0),
     "the fixture must expose at least one accepted curve allocation",

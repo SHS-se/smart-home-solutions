@@ -500,6 +500,7 @@
           "schema_version",
           "mode",
           "model_version",
+          "decision_diagnostics_version",
           "plan_id",
           "snapshot_id",
           "issued_at",
@@ -507,6 +508,8 @@
           "binding_until",
           "slot_minutes",
           "status",
+          "price_outlook",
+          "battery_value_curve",
           "services",
           "device_models",
           "plans"
@@ -516,8 +519,8 @@
           "mode": { "const": "live" },
           "model_version": { "type": "string", "minLength": 1 },
           "decision_diagnostics_version": {
-            "const": 1,
-            "description": "Independent version of additive, non-executable quarter decision evidence. Absent on plans issued before marginal-value-planner-v11."
+            "const": 2,
+            "description": "Independent version of additive, non-executable decision evidence. Version 2 adds the exact derived home-battery curve; absent on plans issued before marginal-value-planner-v11."
           },
           "plan_id": { "type": "string", "format": "uuid" },
           "snapshot_id": { "type": "string", "format": "uuid" },
@@ -528,6 +531,13 @@
           "status": { "enum": ["ready", "incomplete", "infeasible"] },
           "services": { "type": "array", "items": { "type": "object" } },
           "device_models": { "type": "array", "items": { "type": "object" } },
+          "price_outlook": { "$ref": "#/components/schemas/ResolvedPriceOutlookV1" },
+          "battery_value_curve": {
+            "oneOf": [
+              { "$ref": "#/components/schemas/BatteryValueCurveDiagnosticV1" },
+              { "type": "null" }
+            ]
+          },
           "plans": {
             "type": "object",
             "required": ["baseline", "priority", "cost"],
@@ -539,6 +549,94 @@
           }
         },
         "additionalProperties": true
+      },
+      "ResolvedPriceOutlookV1": {
+        "type": "object",
+        "required": [
+          "shaped", "observed_days", "effective_days",
+          "level_sek_per_kwh", "shadow_import_sek_per_kwh"
+        ],
+        "properties": {
+          "shaped": { "type": "boolean" },
+          "observed_days": { "type": "integer", "minimum": 0 },
+          "effective_days": { "type": "number", "minimum": 0 },
+          "level_sek_per_kwh": { "type": ["number", "null"] },
+          "shadow_import_sek_per_kwh": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 288,
+            "items": { "type": "number" },
+            "description": "Exact unrounded all-in import value used for each horizon quarter; supplying it as the fourth planner argument bypasses price-shape estimation for deterministic replay."
+          }
+        },
+        "additionalProperties": false
+      },
+      "BatteryValueCurveDiagnosticV1": {
+        "type": "object",
+        "required": [
+          "schema_version", "curve", "state_basis", "initial_state_kwh",
+          "usable_capacity_kwh", "covering_window", "curve_input"
+        ],
+        "properties": {
+          "schema_version": { "const": 1 },
+          "curve": {
+            "type": "object",
+            "required": ["unit", "points"],
+            "properties": {
+              "unit": { "const": "kwh" },
+              "points": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["at", "sek_per_unit"],
+                  "properties": {
+                    "at": { "type": "number", "minimum": 0 },
+                    "sek_per_unit": { "type": "number", "minimum": 0 }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          "state_basis": { "const": "usable_kwh_above_min_soc" },
+          "initial_state_kwh": { "type": "number", "minimum": 0 },
+          "usable_capacity_kwh": { "type": "number", "minimum": 0 },
+          "covering_window": {
+            "type": "array",
+            "maxItems": 288,
+            "items": {
+              "type": "object",
+              "required": [
+                "start", "import_price_sek_per_kwh",
+                "residual_load_ac_kwh", "battery_energy_kwh"
+              ],
+              "properties": {
+                "start": { "type": "string", "format": "date-time" },
+                "import_price_sek_per_kwh": { "type": "number" },
+                "residual_load_ac_kwh": { "type": "number", "minimum": 0 },
+                "battery_energy_kwh": { "type": "number", "minimum": 0 }
+              },
+              "additionalProperties": false
+            }
+          },
+          "curve_input": {
+            "type": "object",
+            "required": [
+              "future_surplus_kwh", "usable_kwh", "round_trip_efficiency",
+              "degradation_sek_per_kwh", "expected_draw_kwh"
+            ],
+            "properties": {
+              "future_surplus_kwh": { "type": "number", "minimum": 0 },
+              "usable_kwh": { "type": "number", "minimum": 0 },
+              "round_trip_efficiency": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+              "degradation_sek_per_kwh": { "type": "number", "minimum": 0 },
+              "expected_draw_kwh": { "type": "number", "minimum": 0 }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
       },
       "GeneratedPlan": {
         "type": "object",
