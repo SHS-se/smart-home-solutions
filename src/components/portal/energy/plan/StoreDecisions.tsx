@@ -1,11 +1,10 @@
-// The quarter ledger is the plan's audit surface.
-//
-// It deliberately renders evidence recorded by the optimiser. Reconstructing
-// a plausible explanation from final power flows produced confident but false
-// prose whenever a later scheduling stage changed the load.
+// The quarter ledger is the plan's audit surface. It renders evidence recorded
+// by the optimiser; it never reconstructs explanations from final power flows.
 
 import React from 'react';
+import { Download } from 'lucide-react';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
+import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useLanguage } from '@/contexts/LanguageContext';
 import type { PlannedSlot } from '@/lib/energy-shift/contracts';
@@ -13,12 +12,14 @@ import type { TimelineRange, TimelineRow } from '@/lib/energy-shift/energy-timel
 import type { PlanModel } from './usePlanModel';
 
 const ACTIVE_W = 10;
+const DEMAND_COLUMNS = 7;
 
 type Allocation = PlannedSlot['decision']['store_allocations'][number];
 type BatteryDecision = NonNullable<PlannedSlot['decision']['battery']>;
 
 const rowId = (start: string) => `decision-row-${Date.parse(start)}`;
 const kw = (watts: number) => `${(watts / 1_000).toFixed(2)} kW`;
+const signedKw = (watts: number) => `${watts >= 0 ? '+' : '−'}${kw(Math.abs(watts))}`;
 const price = (value: number | null) => value === null ? '—' : `${value.toFixed(3)} SEK/kWh`;
 const money = (value: number) => `${value >= 0 ? '+' : ''}${value.toFixed(3)} SEK`;
 
@@ -28,6 +29,28 @@ const state = (value: number, unit: string) => {
   if (unit === 'kwh') return `${value.toFixed(2)} kWh`;
   return `${value.toFixed(2)} ${unit}`;
 };
+
+const csvCell = (value: unknown) => {
+  if (value === null || value === undefined) return '';
+  const text = String(value);
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+};
+
+const HEADER = {
+  quarter: 'border-r-2 border-rose-300 bg-rose-200/95 text-rose-950 dark:border-rose-800 dark:bg-rose-950 dark:text-rose-100',
+  demand: 'border-r border-amber-300 bg-amber-200/95 text-amber-950 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100',
+  battery: 'border-r border-emerald-300 bg-emerald-200/95 text-emerald-950 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-100',
+  grid: 'border-r border-sky-300 bg-sky-200/95 text-sky-950 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-100',
+  prices: 'border-r border-violet-300 bg-violet-200/95 text-violet-950 dark:border-violet-800 dark:bg-violet-950 dark:text-violet-100',
+} as const;
+
+const BODY = {
+  quarter: 'border-r-2 border-rose-200 bg-rose-50/95 group-hover:bg-rose-100/90 dark:border-rose-900 dark:bg-rose-950/45 dark:group-hover:bg-rose-950/65',
+  demand: 'border-r border-amber-200 bg-amber-50/65 group-hover:bg-amber-100/75 dark:border-amber-900 dark:bg-amber-950/25 dark:group-hover:bg-amber-950/45',
+  battery: 'border-r border-emerald-200 bg-emerald-50/65 group-hover:bg-emerald-100/75 dark:border-emerald-900 dark:bg-emerald-950/25 dark:group-hover:bg-emerald-950/45',
+  grid: 'border-r border-sky-200 bg-sky-50/70 group-hover:bg-sky-100/80 dark:border-sky-900 dark:bg-sky-950/25 dark:group-hover:bg-sky-950/45',
+  prices: 'border-r border-violet-200 bg-violet-50/60 group-hover:bg-violet-100/75 dark:border-violet-900 dark:bg-violet-950/25 dark:group-hover:bg-violet-950/45',
+} as const;
 
 const StoreDecisions: React.FC<{
   model: PlanModel;
@@ -40,7 +63,7 @@ const StoreDecisions: React.FC<{
   onSelectedStartChange?: (start: string) => void;
 }> = ({ model, rows: timeline, range, selectedStart, selectionRequest, onSelectedStartChange }) => {
   const { t } = useLanguage();
-  const [openItem, setOpenItem] = React.useState<string>('');
+  const [openItem, setOpenItem] = React.useState<string>('sequence');
   const windowRows = React.useMemo(
     () => timeline.slice(range.from, range.to),
     [range.from, range.to, timeline],
@@ -91,152 +114,136 @@ const StoreDecisions: React.FC<{
 
   const sourceText = (allocation: Allocation) => {
     const sources: string[] = [];
-    if (allocation.solar_w > ACTIVE_W) {
-      sources.push(`${kw(allocation.solar_w)} ${t('sol', 'solar')}`);
-    }
-    if (allocation.grid_w > ACTIVE_W) {
-      sources.push(`${kw(allocation.grid_w)} ${t('nät', 'grid')}`);
-    }
-    return sources.join(' + ');
+    if (allocation.solar_w > ACTIVE_W) sources.push(`${kw(allocation.solar_w)} ${t('sol', 'solar')}`);
+    if (allocation.grid_w > ACTIVE_W) sources.push(`${kw(allocation.grid_w)} ${t('nät', 'grid')}`);
+    return sources.join(' + ') || '—';
   };
 
-  const demandDecision = (allocation: Allocation, slotIndex: number) => {
-    const moveKwh = allocation.power_w / 4_000;
-    const runQuarter = slotIndex - allocation.run_start_index + 1;
-    const runText = allocation.run_slots > 1
-      ? allocation.trigger === 'minimum_run_continuation'
-        ? t(
-          `Obligatorisk kvart ${runQuarter} av ${allocation.run_slots} i minimikörningen; hela körningen gav ${money(allocation.run_net_value_sek)}.`,
-          `Required quarter ${runQuarter} of ${allocation.run_slots} in the minimum run; the complete run returned ${money(allocation.run_net_value_sek)}.`,
-        )
-        : t(
-          `Startar en minimikörning på ${allocation.run_slots} kvart; hela körningen gav ${money(allocation.run_net_value_sek)}.`,
-          `Starts a ${allocation.run_slots}-quarter minimum run; the complete run returned ${money(allocation.run_net_value_sek)}.`,
-        )
-      : '';
-    const source = sourceText(allocation);
-    return (
-      <div key={`${allocation.store_key}:${allocation.direction}:${allocation.allocation_order}`} className="space-y-1">
-        <div className="font-medium">
-          {storeLabel(allocation.store_key)} · {kw(allocation.power_w)} · {moveKwh.toFixed(2)} kWh
-        </div>
-        <div>
-          {t('Auktionstillstånd', 'Auction state')}: {state(allocation.state_before, allocation.state_unit)} → {state(allocation.state_after, allocation.state_unit)}
-        </div>
-        <div>
-          {t('Kurvintegral efter tidsförlust', 'Curve integral after timing loss')}{' '}
-          <span className="font-medium text-foreground">{price(allocation.average_value_sek_per_kwh)}</span>
-          {' '}({(allocation.retention_factor * 100).toFixed(1)}% {t('kvar vid användning', 'retained at use')})
-          {' '}{t('mot total energikostnad', 'versus all-in energy cost')}{' '}
-          <span className="font-medium text-foreground">{price(allocation.energy_cost_sek_per_kwh)}</span>
-          {allocation.wear_cost_sek_per_kwh > 0
-            ? ` + ${price(allocation.wear_cost_sek_per_kwh)} ${t('slitage', 'wear')}`
-            : ''}.
-        </div>
-        {allocation.start_cost_sek > 0 && (
-          <div>{t('Startkostnadsandel', 'Start-cost share')}: {allocation.start_cost_sek.toFixed(3)} SEK.</div>
-        )}
-        {source && <div>{t('Källa', 'Source')}: {source}.</div>}
-        <div>
-          {t('Nettovärde för kvarten', 'Quarter net value')}{' '}
-          <span className={allocation.net_value_sek >= 0 ? 'font-medium text-emerald-700 dark:text-emerald-400' : 'font-medium text-destructive'}>
-            {money(allocation.net_value_sek)}
-          </span>
-          {' '}· {t('allokeringsordning', 'allocation order')} #{allocation.allocation_order}.
-        </div>
-        {runText && <div className="font-medium text-foreground">{runText}</div>}
-      </div>
-    );
+  const batteryReason = (decision: BatteryDecision) => {
+    switch (decision.reason) {
+      case 'profitable_charge': return t('Lagrat värde översteg kostnaden', 'Stored value exceeded source cost');
+      case 'profitable_discharge': return t('Undviken nätkostnad översteg behållet värde', 'Avoided grid cost exceeded retained value');
+      case 'retained_value_exceeds_import': return t('Behållet värde översteg undviken import', 'Retained value exceeded avoided import');
+      case 'charge_value_below_export': return t('Exportvärdet översteg lagringsvärdet', 'Export value exceeded stored value');
+      case 'state_floor': return t('Nedre tillståndsgräns', 'Lower state bound');
+      case 'state_ceiling': return t('Övre tillståndsgräns', 'Upper state bound');
+      case 'future_state_constraint': return t('Senare tillståndsgräns', 'Later state constraint');
+      case 'load_added_after_dispatch': return t('Last tillkom efter batteribeslutet', 'Load added after battery decision');
+      case 'balanced': return t('Ingen återstående handel', 'No remaining trade');
+    }
   };
 
-  const batteryText = (
-    decision: BatteryDecision | null,
-    allocation: Allocation | undefined,
-  ) => {
-    if (!decision) return <span className="text-muted-foreground">{t('Inget hembatteri i planen.', 'No home battery in this plan.')}</span>;
-    const comparedPower = kw(decision.comparison_power_w);
-    const beforeAfter = `${state(decision.state_before, decision.state_unit)} → ${state(decision.state_after, decision.state_unit)}`;
-    const net = decision.net_value_sek === null ? null : money(decision.net_value_sek);
-
-    if (decision.action === 'charge') {
-      const source = allocation ? sourceText(allocation) : '';
-      return (
-        <div className="space-y-1">
-          <div className="font-medium">{t('Ladda', 'Charge')} {kw(decision.power_w)} · {beforeAfter}</div>
-          <div>{t('Lagrad kurvvärde', 'Stored curve value')} {price(decision.stored_value_sek_per_kwh)} {t('mot energikostnad', 'versus energy cost')} {price(decision.comparison_price_sek_per_kwh)}{decision.wear_cost_sek_per_kwh > 0 ? ` + ${price(decision.wear_cost_sek_per_kwh)} ${t('slitage', 'wear')}` : ''}.</div>
-          {source && <div>{t('Källa', 'Source')}: {source}.</div>}
-          {net && <div>{t('Nettovärde', 'Net value')} <span className="font-medium text-emerald-700 dark:text-emerald-400">{net}</span>.</div>}
-        </div>
-      );
-    }
-    if (decision.action === 'discharge') {
-      const destination = allocation?.discharge_destination === 'export'
-        ? t('export', 'export')
-        : allocation?.discharge_destination === 'mixed'
-          ? t('last och export', 'load and export')
-          : t('husets last', 'home demand');
-      return (
-        <div className="space-y-1">
-          <div className="font-medium">{t('Ladda ur', 'Discharge')} {kw(decision.power_w)} {t('till', 'to')} {destination} · {beforeAfter}</div>
-          <div>{t('Undviken import/försäljning', 'Avoided import/sale')} {price(decision.comparison_price_sek_per_kwh)} {t('mot behållet kurvvärde', 'versus retained curve value')} {price(decision.stored_value_sek_per_kwh)}{decision.wear_cost_sek_per_kwh > 0 ? ` + ${price(decision.wear_cost_sek_per_kwh)} ${t('slitage', 'wear')}` : ''}.</div>
-          {net && <div>{t('Nettovärde', 'Net value')} <span className="font-medium text-emerald-700 dark:text-emerald-400">{net}</span>.</div>}
-        </div>
-      );
-    }
-
-    if (decision.reason === 'retained_value_exceeds_import') {
-      return (
-        <div className="space-y-1">
-          <div className="font-medium">{t('Behåll laddningen', 'Hold charge')} · {beforeAfter}</div>
-          <div>{t(`Testade att ladda ur ${comparedPower}.`, `Tested discharging ${comparedPower}.`)} {t('Undviken import', 'Avoided import')} {price(decision.comparison_price_sek_per_kwh)} {t('var lägre än behållet kurvvärde', 'was below retained curve value')} {price(decision.stored_value_sek_per_kwh)}{decision.wear_cost_sek_per_kwh > 0 ? ` + ${price(decision.wear_cost_sek_per_kwh)} ${t('slitage', 'wear')}` : ''}. {net && `${t('Nettot för urladdning', 'Discharge net')} ${net}.`}</div>
-        </div>
-      );
-    }
-    if (decision.reason === 'charge_value_below_export') {
-      return (
-        <div className="space-y-1">
-          <div className="font-medium">{t('Ladda inte', 'Do not charge')} · {beforeAfter}</div>
-          <div>{t(`Testade att lagra ${comparedPower}.`, `Tested storing ${comparedPower}.`)} {t('Kurvvärde', 'Curve value')} {price(decision.stored_value_sek_per_kwh)} {t('var lägre än exportvärdet', 'was below export value')} {price(decision.comparison_price_sek_per_kwh)}{decision.wear_cost_sek_per_kwh > 0 ? ` + ${price(decision.wear_cost_sek_per_kwh)} ${t('slitage', 'wear')}` : ''}. {net && `${t('Nettot för laddning', 'Charge net')} ${net}.`}</div>
-        </div>
-      );
-    }
-    if (decision.reason === 'load_added_after_dispatch') {
-      return (
-        <div className="space-y-1 text-amber-800 dark:text-amber-300">
-          <div className="font-medium">{t('Last tillkom efter batteriauktionen', 'Load was added after the battery auction')}</div>
-          <div>{t(
-            'Batteriet såg inget underskott när det fattade sitt beslut. Komfort- eller driftcykellast lades till senare, så den slutliga importen jämfördes aldrig mot urladdning. Detta är schemaläggningsordning, inte ett värdekurvebeslut.',
-            'The battery saw no shortfall when it made its decision. Comfort or duty-cycle demand was added later, so the final import was never compared with discharge. This is scheduler ordering, not a value-curve decision.',
-          )}</div>
-        </div>
-      );
-    }
-    if (decision.reason === 'state_floor' || decision.reason === 'state_ceiling') {
-      return <span>{decision.reason === 'state_floor' ? t('Behåll: batteriet är vid sin nedre tillståndsgräns.', 'Hold: the battery is at its lower state limit.') : t('Behåll: batteriet är vid sin övre tillståndsgräns.', 'Hold: the battery is at its upper state limit.')} {beforeAfter}</span>;
-    }
-    if (decision.reason === 'future_state_constraint') {
-      return <span>{t('Behåll: ett drag här skulle bryta en senare fysisk tillståndsgräns.', 'Hold: acting here would violate a later physical state bound.')} {beforeAfter}</span>;
-    }
-    return <span>{t('Ingen laddnings- eller urladdningsmöjlighet återstod efter lagringsauktionen.', 'No charge or discharge opportunity remained after the store auction.')} {beforeAfter}</span>;
+  const batteryAction = (decision: BatteryDecision) => {
+    if (decision.action === 'charge') return t('Ladda', 'Charge');
+    if (decision.action === 'discharge') return t('Ladda ur', 'Discharge');
+    return t('Behåll', 'Hold');
   };
 
-  const gridText = (slot: PlannedSlot) => {
-    const balance = slot.decision.grid_balance;
-    const signed = balance.residual_w >= 0 ? `+${kw(balance.residual_w)}` : `−${kw(Math.abs(balance.residual_w))}`;
-    const result = balance.direction === 'import'
-      ? `${t('Nätimport', 'Grid import')} ${kw(balance.power_w)}`
-      : balance.direction === 'export'
-        ? `${t('Nätexport', 'Grid export')} ${kw(balance.power_w)}`
-        : t('Inget nätflöde', 'No grid flow');
-    return (
-      <div className="space-y-1 tabular-nums">
-        <div>{t('Last', 'Demand')} {kw(balance.load_w)} + {t('batteriladdning', 'battery charge')} {kw(balance.battery_charge_w)}</div>
-        <div>− {t('sol', 'solar')} {kw(balance.pv_w)} − {t('batteriurladdning', 'battery discharge')} {kw(balance.battery_discharge_w)}</div>
-        <div className="font-medium">= {signed} · {result}</div>
-        {balance.reason === 'import_limit' && <div className="text-destructive">{t(`Importgränsen ${kw(balance.limit_w)} binder; ${kw(slot.unserved_w)} kan inte levereras.`, `The ${kw(balance.limit_w)} import limit binds; ${kw(slot.unserved_w)} is unserved.`)}</div>}
-        {balance.reason === 'export_limit' && <div className="text-amber-700 dark:text-amber-400">{t(`Exportgränsen ${kw(balance.limit_w)} binder; ${kw(slot.curtailed_w)} begränsas.`, `The ${kw(balance.limit_w)} export limit binds; ${kw(slot.curtailed_w)} is curtailed.`)}</div>}
-      </div>
-    );
+  const batteryComparison = (decision: BatteryDecision) => {
+    if (decision.action === 'charge' || decision.reason === 'charge_value_below_export') {
+      return t('Källkostnad/exportvärde', 'Source cost/export value');
+    }
+    return t('Undviken import/försäljning', 'Avoided import/sale');
+  };
+
+  const batteryRoute = (allocation: Allocation | undefined) => {
+    if (!allocation) return '—';
+    if (allocation.direction === 'charge') return sourceText(allocation);
+    if (allocation.discharge_destination === 'export') return t('Till export', 'To export');
+    if (allocation.discharge_destination === 'mixed') return t('Till last + export', 'To load + export');
+    return t('Till husets last', 'To home demand');
+  };
+
+  const exportCsv = () => {
+    const headers = [
+      'quarter_start', 'quarter_local',
+      'store', 'allocation_direction', 'allocation_trigger', 'allocation_power_kw', 'allocation_energy_kwh',
+      'allocation_state_before', 'allocation_state_after', 'allocation_state_unit',
+      'curve_value_sek_per_kwh', 'retention_pct', 'energy_cost_sek_per_kwh',
+      'wear_cost_sek_per_kwh', 'start_cost_sek', 'source_solar_kw', 'source_grid_kw',
+      'allocation_net_value_sek', 'allocation_order', 'run_start_index', 'run_slots', 'run_net_value_sek',
+      'battery_action', 'battery_reason', 'battery_power_kw', 'battery_comparison_power_kw',
+      'battery_state_before', 'battery_state_after', 'battery_state_unit',
+      'battery_comparison_price_sek_per_kwh', 'battery_stored_value_sek_per_kwh',
+      'battery_wear_cost_sek_per_kwh', 'battery_net_value_sek', 'battery_route',
+      'grid_demand_kw', 'grid_battery_charge_kw', 'grid_battery_discharge_kw', 'grid_solar_kw',
+      'grid_residual_kw', 'grid_direction', 'grid_power_kw', 'grid_limit_kw', 'grid_limit_binding',
+      'unserved_kw', 'curtailed_kw', 'all_in_import_price_sek_per_kwh', 'import_price_basis',
+      'all_in_export_price_sek_per_kwh', 'export_price_basis',
+    ];
+    const records = inWindow.flatMap(slot => {
+      const plannedSlot = slot as PlannedSlot;
+      const allocations = plannedSlot.decision.store_allocations;
+      const demandAllocations = allocations.filter(allocation => allocation.store_key !== 'battery');
+      const displayedAllocations: (Allocation | null)[] = demandAllocations.length > 0
+        ? demandAllocations
+        : [null];
+      const batteryAllocation = allocations.find(allocation => allocation.store_key === 'battery');
+      const battery = plannedSlot.decision.battery;
+      const balance = plannedSlot.decision.grid_balance;
+      return displayedAllocations.map(allocation => [
+        slot.start,
+        new Date(slot.start).toLocaleString(),
+        allocation ? storeLabel(allocation.store_key) : '',
+        allocation?.direction,
+        allocation?.trigger,
+        allocation ? allocation.power_w / 1_000 : null,
+        allocation ? allocation.power_w / 4_000 : null,
+        allocation?.state_before,
+        allocation?.state_after,
+        allocation?.state_unit,
+        allocation?.average_value_sek_per_kwh,
+        allocation ? allocation.retention_factor * 100 : null,
+        allocation?.energy_cost_sek_per_kwh,
+        allocation?.wear_cost_sek_per_kwh,
+        allocation?.start_cost_sek,
+        allocation ? allocation.solar_w / 1_000 : null,
+        allocation ? allocation.grid_w / 1_000 : null,
+        allocation?.net_value_sek,
+        allocation?.allocation_order,
+        allocation?.run_start_index,
+        allocation?.run_slots,
+        allocation?.run_net_value_sek,
+        battery?.action,
+        battery?.reason,
+        battery ? battery.power_w / 1_000 : null,
+        battery ? battery.comparison_power_w / 1_000 : null,
+        battery?.state_before,
+        battery?.state_after,
+        battery?.state_unit,
+        battery?.comparison_price_sek_per_kwh,
+        battery?.stored_value_sek_per_kwh,
+        battery?.wear_cost_sek_per_kwh,
+        battery?.net_value_sek,
+        batteryRoute(batteryAllocation),
+        balance.load_w / 1_000,
+        balance.battery_charge_w / 1_000,
+        balance.battery_discharge_w / 1_000,
+        balance.pv_w / 1_000,
+        balance.residual_w / 1_000,
+        balance.direction,
+        balance.power_w / 1_000,
+        balance.limit_w / 1_000,
+        balance.limit_binding,
+        slot.unserved_w / 1_000,
+        slot.curtailed_w / 1_000,
+        slot.shadow_import_sek_per_kwh,
+        slot.import_price_sek_per_kwh === null ? 'modelled' : 'published',
+        slot.shadow_export_sek_per_kwh,
+        slot.export_price_sek_per_kwh === null ? 'modelled' : 'published',
+      ]);
+    });
+    const csv = [headers, ...records].map(record => record.map(csvCell).join(',')).join('\r\n');
+    const first = inWindow[0]?.start.slice(0, 10) ?? 'plan';
+    const last = inWindow.at(-1)?.start.slice(0, 10) ?? first;
+    const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `plan-decisions-${first}-to-${last}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
   };
 
   if (inWindow.length === 0) {
@@ -265,68 +272,290 @@ const StoreDecisions: React.FC<{
               )}
             </div>
           ) : (
-            <div className="[&>div]:max-h-[42rem] [&>div]:rounded-md [&>div]:border">
-              <Table className="min-w-[1450px]">
-                <TableHeader className="sticky top-0 z-10 bg-background">
-                  <TableRow>
-                    <TableHead>{t('Kvart', 'Quarter')}</TableHead>
-                    <TableHead className="min-w-[390px]">{t('Beslut från efterfrågekurvor', 'Demand-value curve decisions')}</TableHead>
-                    <TableHead className="min-w-[390px]">{t('Hembatteriets beslut', 'Home-battery decision')}</TableHead>
-                    <TableHead className="min-w-[330px]">{t('Exakt nätbalans', 'Exact grid balance')}</TableHead>
-                    <TableHead>{t('Totalpriser', 'All-in prices')}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {inWindow.map(slot => {
-                    const plannedSlot = slot as PlannedSlot;
-                    const slotIndex = indexByStart.get(Date.parse(slot.start)) ?? 0;
-                    const allocations = plannedSlot.decision.store_allocations;
-                    const demandAllocations = allocations.filter(allocation => allocation.store_key !== 'battery');
-                    const batteryAllocation = allocations.find(allocation => allocation.store_key === 'battery');
-                    const selected = selectedMs === Date.parse(slot.start);
-                    const hasLateLoad = plannedSlot.decision.battery?.reason === 'load_added_after_dispatch';
-                    return (
-                      <TableRow
-                        id={rowId(slot.start)}
-                        key={slot.start}
-                        aria-current={selected || undefined}
-                        onClick={() => onSelectedStartChange?.(slot.start)}
-                        className={selected
-                          ? 'bg-sky-100/80 ring-1 ring-inset ring-sky-500 dark:bg-sky-950/40'
-                          : hasLateLoad
-                            ? 'bg-amber-50/60 dark:bg-amber-950/20'
-                            : onSelectedStartChange
-                              ? 'cursor-pointer'
-                              : undefined}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-xs tabular-nums text-muted-foreground">
+                  {inWindow.length} {t('kvartar i vald period', 'quarters in selected period')}
+                </span>
+                <Button type="button" variant="outline" size="sm" onClick={exportCsv}>
+                  <Download className="mr-2 h-4 w-4" />
+                  {t('Exportera CSV', 'Export CSV')}
+                </Button>
+              </div>
+              <div className="[&>div]:max-h-[46rem] [&>div]:overscroll-contain [&>div]:rounded-md [&>div]:border">
+                <Table className="min-w-[2600px] border-separate border-spacing-0 text-xs">
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead
+                        rowSpan={2}
+                        scope="col"
+                        className={`sticky left-0 top-0 z-40 h-20 min-w-[150px] align-middle font-semibold ${HEADER.quarter}`}
                       >
-                        <TableCell className="whitespace-nowrap align-top tabular-nums">
-                          {new Date(slot.start).toLocaleString([], {
-                            month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
-                          })}
-                        </TableCell>
-                        <TableCell className="align-top text-xs text-muted-foreground">
-                          {demandAllocations.length > 0
-                            ? <div className="space-y-3">{demandAllocations.map(allocation => demandDecision(allocation, slotIndex))}</div>
-                            : <span>{t('Ingen pool- eller billaddning vann en kurv–kostnadsjämförelse denna kvart.', 'No pool or EV allocation cleared its curve-versus-cost comparison this quarter.')}</span>}
-                        </TableCell>
-                        <TableCell className="align-top text-xs text-muted-foreground">
-                          {batteryText(plannedSlot.decision.battery, batteryAllocation)}
-                        </TableCell>
-                        <TableCell className="align-top text-xs">{gridText(plannedSlot)}</TableCell>
-                        <TableCell className="whitespace-nowrap align-top text-xs tabular-nums">
-                          <span className="block">{t('Köp', 'Buy')} {price(slot.shadow_import_sek_per_kwh)}</span>
-                          <span className="block">{t('Sälj', 'Sell')} {price(slot.shadow_export_sek_per_kwh)}</span>
-                          <span className="block text-muted-foreground">
-                            {slot.import_price_sek_per_kwh !== null && slot.export_price_sek_per_kwh !== null
-                              ? t('publicerat', 'published')
-                              : t('modellerat', 'modelled')}
-                          </span>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
+                        {t('Kvart', 'Quarter')}
+                      </TableHead>
+                      <TableHead colSpan={DEMAND_COLUMNS} scope="colgroup" className={`sticky top-0 z-30 h-9 px-3 font-semibold ${HEADER.demand}`}>
+                        {t('Beslut från efterfrågekurvor', 'Demand-value curve decisions')}
+                      </TableHead>
+                      <TableHead colSpan={5} scope="colgroup" className={`sticky top-0 z-30 h-9 px-3 font-semibold ${HEADER.battery}`}>
+                        {t('Hembatteriets beslut', 'Home-battery decision')}
+                      </TableHead>
+                      <TableHead colSpan={4} scope="colgroup" className={`sticky top-0 z-30 h-9 px-3 font-semibold ${HEADER.grid}`}>
+                        {t('Exakt nätbalans', 'Exact grid balance')}
+                      </TableHead>
+                      <TableHead colSpan={2} scope="colgroup" className={`sticky top-0 z-30 h-9 px-3 font-semibold ${HEADER.prices}`}>
+                        {t('Totalpriser', 'All-in prices')}
+                      </TableHead>
+                    </TableRow>
+                    <TableRow className="hover:bg-transparent">
+                      {[
+                        t('Lager', 'Store'),
+                        t('Energi', 'Energy'),
+                        t('Auktionstillstånd', 'Auction state'),
+                        t('Kurvvärde', 'Curve value'),
+                        t('Total kostnad', 'All-in cost'),
+                        t('Källa', 'Source'),
+                        t('Nettovärde', 'Net value'),
+                      ].map((label, index) => (
+                        <TableHead
+                          key={label}
+                          scope="col"
+                          className={`sticky top-9 z-30 h-11 whitespace-normal px-2 py-1.5 text-[11px] font-semibold leading-tight ${HEADER.demand} ${index === 2 ? 'min-w-[170px]' : 'min-w-[120px]'}`}
+                        >
+                          {label}
+                        </TableHead>
+                      ))}
+                      {[
+                        t('Åtgärd', 'Action'),
+                        t('Tillstånd', 'State'),
+                        t('Marknadsjämförelse', 'Market comparison'),
+                        t('Lagrat värde', 'Stored value'),
+                        t('Netto / orsak', 'Net / reason'),
+                      ].map((label, index) => (
+                        <TableHead
+                          key={label}
+                          scope="col"
+                          className={`sticky top-9 z-30 h-11 whitespace-normal px-2 py-1.5 text-[11px] font-semibold leading-tight ${HEADER.battery} ${index === 4 ? 'min-w-[190px]' : 'min-w-[145px]'}`}
+                        >
+                          {label}
+                        </TableHead>
+                      ))}
+                      {[
+                        t('Efterfrågan', 'Demand'),
+                        t('Batteri', 'Battery'),
+                        t('Sol', 'Solar'),
+                        t('Nätresultat', 'Grid result'),
+                      ].map((label, index) => (
+                        <TableHead
+                          key={label}
+                          scope="col"
+                          className={`sticky top-9 z-30 h-11 whitespace-normal px-2 py-1.5 text-[11px] font-semibold leading-tight ${HEADER.grid} ${index === 3 ? 'min-w-[150px]' : 'min-w-[100px]'}`}
+                        >
+                          {label}
+                        </TableHead>
+                      ))}
+                      {[t('Köp', 'Buy'), t('Sälj', 'Sell')].map(label => (
+                        <TableHead
+                          key={label}
+                          scope="col"
+                          className={`sticky top-9 z-30 h-11 min-w-[130px] whitespace-normal px-2 py-1.5 text-[11px] font-semibold leading-tight ${HEADER.prices}`}
+                        >
+                          {label}
+                        </TableHead>
+                      ))}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {inWindow.flatMap(slot => {
+                      const plannedSlot = slot as PlannedSlot;
+                      const slotIndex = indexByStart.get(Date.parse(slot.start)) ?? 0;
+                      const allocations = plannedSlot.decision.store_allocations;
+                      const demandAllocations = allocations.filter(allocation => allocation.store_key !== 'battery');
+                      const displayedAllocations: (Allocation | null)[] = demandAllocations.length > 0
+                        ? demandAllocations
+                        : [null];
+                      const rowSpan = displayedAllocations.length;
+                      const batteryAllocation = allocations.find(allocation => allocation.store_key === 'battery');
+                      const battery = plannedSlot.decision.battery;
+                      const balance = plannedSlot.decision.grid_balance;
+                      const selected = selectedMs === Date.parse(slot.start);
+                      const hasLateLoad = battery?.reason === 'load_added_after_dispatch';
+
+                      return displayedAllocations.map((allocation, allocationIndex) => {
+                        const firstAllocation = allocationIndex === 0;
+                        const runQuarter = allocation
+                          ? slotIndex - allocation.run_start_index + 1
+                          : 0;
+                        const rowClass = [
+                          'group',
+                          firstAllocation ? 'border-t-2 border-t-border' : '',
+                          selected ? 'outline outline-2 -outline-offset-2 outline-sky-500' : '',
+                          onSelectedStartChange ? 'cursor-pointer' : '',
+                        ].filter(Boolean).join(' ');
+
+                        return (
+                          <TableRow
+                            id={firstAllocation ? rowId(slot.start) : undefined}
+                            key={`${slot.start}:${allocation?.store_key ?? 'none'}:${allocation?.allocation_order ?? 0}`}
+                            aria-current={selected || undefined}
+                            data-state={selected ? 'selected' : undefined}
+                            onClick={() => onSelectedStartChange?.(slot.start)}
+                            className={rowClass}
+                          >
+                            {firstAllocation && (
+                              <TableCell
+                                rowSpan={rowSpan}
+                                className={`sticky left-0 z-10 whitespace-nowrap p-2 align-top font-medium tabular-nums ${BODY.quarter}`}
+                              >
+                                {new Date(slot.start).toLocaleString([], {
+                                  month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+                                })}
+                              </TableCell>
+                            )}
+                            {allocation ? (
+                              <>
+                                <TableCell className={`p-2 align-top ${BODY.demand}`}>
+                                  <div className="font-semibold text-foreground">{storeLabel(allocation.store_key)}</div>
+                                  <div className="mt-1 text-[10px] leading-tight text-muted-foreground">
+                                    {allocation.trigger === 'minimum_run_continuation'
+                                      ? t('Fortsatt minimikörning', 'Minimum-run continuation')
+                                      : t('Accepterat bud', 'Accepted bid')}
+                                  </div>
+                                </TableCell>
+                                <TableCell className={`p-2 align-top tabular-nums ${BODY.demand}`}>
+                                  <div className="font-semibold">{(allocation.power_w / 4_000).toFixed(2)} kWh</div>
+                                  <div className="text-muted-foreground">{kw(allocation.power_w)}</div>
+                                </TableCell>
+                                <TableCell className={`p-2 align-top tabular-nums ${BODY.demand}`}>
+                                  <div>{state(allocation.state_before, allocation.state_unit)}</div>
+                                  <div className="text-muted-foreground">→ {state(allocation.state_after, allocation.state_unit)}</div>
+                                </TableCell>
+                                <TableCell className={`p-2 align-top tabular-nums ${BODY.demand}`}>
+                                  <div className="font-semibold">{price(allocation.average_value_sek_per_kwh)}</div>
+                                  <div className="text-muted-foreground">{(allocation.retention_factor * 100).toFixed(1)}% {t('behållet', 'retained')}</div>
+                                </TableCell>
+                                <TableCell className={`p-2 align-top tabular-nums ${BODY.demand}`}>
+                                  <div className="font-semibold">{price(allocation.energy_cost_sek_per_kwh)}</div>
+                                  {allocation.wear_cost_sek_per_kwh > 0 && <div className="text-muted-foreground">+ {allocation.wear_cost_sek_per_kwh.toFixed(3)} {t('slitage', 'wear')}</div>}
+                                  {allocation.start_cost_sek > 0 && <div className="text-muted-foreground">+ {allocation.start_cost_sek.toFixed(3)} SEK {t('start', 'start')}</div>}
+                                </TableCell>
+                                <TableCell className={`p-2 align-top tabular-nums ${BODY.demand}`}>
+                                  {sourceText(allocation)}
+                                </TableCell>
+                                <TableCell className={`p-2 align-top tabular-nums ${BODY.demand}`}>
+                                  <div className={allocation.net_value_sek >= 0 ? 'font-semibold text-emerald-700 dark:text-emerald-400' : 'font-semibold text-destructive'}>
+                                    {money(allocation.net_value_sek)}
+                                  </div>
+                                  <div className="text-muted-foreground">#{allocation.allocation_order}</div>
+                                  {allocation.run_slots > 1 && (
+                                    <div className="mt-1 text-[10px] leading-tight text-muted-foreground">
+                                      {t('Körning', 'Run')} {runQuarter}/{allocation.run_slots} · {money(allocation.run_net_value_sek)}
+                                    </div>
+                                  )}
+                                </TableCell>
+                              </>
+                            ) : (
+                              <TableCell colSpan={DEMAND_COLUMNS} className={`p-2 text-muted-foreground ${BODY.demand}`}>
+                                {t('Ingen pool- eller billaddning accepterades.', 'No Pool or EV allocation was accepted.')}
+                              </TableCell>
+                            )}
+
+                            {firstAllocation && (
+                              <>
+                                <TableCell rowSpan={rowSpan} className={`p-2 align-top ${BODY.battery}`}>
+                                  {battery ? (
+                                    <>
+                                      <div className="font-semibold text-foreground">{batteryAction(battery)} {battery.action === 'hold' ? '' : kw(battery.power_w)}</div>
+                                      {battery.action === 'hold' && battery.comparison_power_w > ACTIVE_W && (
+                                        <div className="text-muted-foreground">{t('Test', 'Test')} {kw(battery.comparison_power_w)}</div>
+                                      )}
+                                      <div className="mt-1 text-[10px] leading-tight text-muted-foreground">{batteryRoute(batteryAllocation)}</div>
+                                    </>
+                                  ) : '—'}
+                                </TableCell>
+                                <TableCell rowSpan={rowSpan} className={`p-2 align-top tabular-nums ${BODY.battery}`}>
+                                  {battery ? (
+                                    <>
+                                      <div>{state(battery.state_before, battery.state_unit)}</div>
+                                      <div className="text-muted-foreground">→ {state(battery.state_after, battery.state_unit)}</div>
+                                    </>
+                                  ) : '—'}
+                                </TableCell>
+                                <TableCell rowSpan={rowSpan} className={`p-2 align-top tabular-nums ${BODY.battery}`}>
+                                  {battery ? (
+                                    <>
+                                      <div className="font-semibold">{price(battery.comparison_price_sek_per_kwh)}</div>
+                                      <div className="text-[10px] leading-tight text-muted-foreground">{batteryComparison(battery)}</div>
+                                    </>
+                                  ) : '—'}
+                                </TableCell>
+                                <TableCell rowSpan={rowSpan} className={`p-2 align-top tabular-nums ${BODY.battery}`}>
+                                  {battery ? (
+                                    <>
+                                      <div className="font-semibold">{price(battery.stored_value_sek_per_kwh)}</div>
+                                      {battery.wear_cost_sek_per_kwh > 0 && <div className="text-muted-foreground">+ {battery.wear_cost_sek_per_kwh.toFixed(3)} {t('slitage', 'wear')}</div>}
+                                    </>
+                                  ) : '—'}
+                                </TableCell>
+                                <TableCell rowSpan={rowSpan} className={`p-2 align-top tabular-nums ${BODY.battery}`}>
+                                  {battery ? (
+                                    <>
+                                      <div className={battery.net_value_sek === null
+                                        ? 'font-semibold'
+                                        : battery.net_value_sek >= 0
+                                          ? 'font-semibold text-emerald-700 dark:text-emerald-400'
+                                          : 'font-semibold text-destructive'}>
+                                        {battery.net_value_sek === null ? '—' : money(battery.net_value_sek)}
+                                      </div>
+                                      <div className={`mt-1 text-[10px] leading-tight ${hasLateLoad ? 'font-medium text-amber-800 dark:text-amber-300' : 'text-muted-foreground'}`}>
+                                        {batteryReason(battery)}
+                                      </div>
+                                    </>
+                                  ) : t('Inget batteri', 'No battery')}
+                                </TableCell>
+
+                                <TableCell rowSpan={rowSpan} className={`p-2 align-top font-semibold tabular-nums ${BODY.grid}`}>
+                                  +{kw(balance.load_w)}
+                                </TableCell>
+                                <TableCell rowSpan={rowSpan} className={`p-2 align-top tabular-nums ${BODY.grid}`}>
+                                  {signedKw(balance.battery_charge_w - balance.battery_discharge_w)}
+                                  <div className="text-[10px] leading-tight text-muted-foreground">+{t('laddning', 'charge')} / −{t('urladdning', 'discharge')}</div>
+                                </TableCell>
+                                <TableCell rowSpan={rowSpan} className={`p-2 align-top tabular-nums ${BODY.grid}`}>
+                                  −{kw(balance.pv_w)}
+                                </TableCell>
+                                <TableCell rowSpan={rowSpan} className={`p-2 align-top tabular-nums ${BODY.grid}`}>
+                                  <div className="font-semibold">{signedKw(balance.residual_w)}</div>
+                                  <div className="text-muted-foreground">
+                                    {balance.direction === 'import'
+                                      ? t('import', 'import')
+                                      : balance.direction === 'export'
+                                        ? t('export', 'export')
+                                        : t('balans', 'balanced')}
+                                  </div>
+                                  {balance.limit_binding && (
+                                    <div className="mt-1 text-[10px] leading-tight text-destructive">
+                                      {t('Gräns', 'Limit')} {kw(balance.limit_w)} · {slot.unserved_w > ACTIVE_W ? `${kw(slot.unserved_w)} ${t('ej levererat', 'unserved')}` : `${kw(slot.curtailed_w)} ${t('begränsat', 'curtailed')}`}
+                                    </div>
+                                  )}
+                                </TableCell>
+
+                                <TableCell rowSpan={rowSpan} className={`p-2 align-top tabular-nums ${BODY.prices}`}>
+                                  <div className="font-semibold">{price(slot.shadow_import_sek_per_kwh)}</div>
+                                  <div className="text-muted-foreground">{slot.import_price_sek_per_kwh === null ? t('modellerat', 'modelled') : t('publicerat', 'published')}</div>
+                                </TableCell>
+                                <TableCell rowSpan={rowSpan} className={`p-2 align-top tabular-nums ${BODY.prices}`}>
+                                  <div className="font-semibold">{price(slot.shadow_export_sek_per_kwh)}</div>
+                                  <div className="text-muted-foreground">{slot.export_price_sek_per_kwh === null ? t('modellerat', 'modelled') : t('publicerat', 'published')}</div>
+                                </TableCell>
+                              </>
+                            )}
+                          </TableRow>
+                        );
+                      });
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
             </div>
           )}
         </AccordionContent>
