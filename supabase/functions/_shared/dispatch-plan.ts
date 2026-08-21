@@ -316,6 +316,12 @@ function headroomW(
  * order is what lets a cheap sunny slot two days out lose to an expensive slot
  * today when the store needs the energy sooner — or win when it does not.
  *
+ * What greedy alone does not give is a self-consistent result: each bid is
+ * priced against the state trajectory as it stood at the time, and later
+ * allocations move that trajectory. The settling pass after the auction
+ * re-prices every commitment where it actually lands and releases what no
+ * longer pays, so the plan that ships is the plan that was priced.
+ *
  * Priority is nowhere in this function, because priority is an output. What the
  * old scheduler encoded as a fixed order — pool before car, both before
  * battery — falls out of comparing marginal values, and reverses on its own
@@ -770,6 +776,171 @@ export function planDispatch(
     }
   }
   if (iterations >= maxIterations) stopped = "iteration_cap";
+
+  // ---------------------------------------------------------------------
+  // Settle the books against the trajectory the plan will execute.
+  //
+  // The auction values every move against the state as it stood when that
+  // move won, and each later allocation shifts the trajectory underneath the
+  // earlier ones. With a concave curve the error has a direction: an
+  // allocation is booked at the marginal value of an emptier store than the
+  // plan ever runs, so the greedy keeps buying energy it has already stopped
+  // valuing. One observed plan booked +19.69 SEK of battery charging that was
+  // worth -4.28 SEK where it landed, 40 of its 75 charges losing money.
+  //
+  // Re-price each committed run where it actually sits, release what no longer
+  // pays for itself, and repeat until the schedule is self-consistent. Only
+  // removal happens here: releasing a charge lowers the states after it, which
+  // raises what the remaining energy is worth, so nothing is made worse by
+  // settling and the pass terminates.
+  // ---------------------------------------------------------------------
+  const movedValue = (
+    store: DispatchStore,
+    index: number,
+    inW: number,
+    outW: number,
+  ): { after: number; value: number } => {
+    const state = stateByKey[store.key];
+    const before = state[index];
+    // Drift belongs to the slot, not to the allocation, so the move is valued
+    // before it — exactly as the candidate that won was.
+    const gained = inW / 1_000 * SLOT_HOURS *
+      store.units_per_kwh(before, index);
+    const spent = outW > 0
+      ? outW / 1_000 * SLOT_HOURS *
+        (store.discharge?.state_per_kwh_out(before, index) ?? 0)
+      : 0;
+    const after = before + gained - spent;
+    return {
+      after,
+      value: valueOfMove(store.curve, before, after) *
+        retentionByKey[store.key][index],
+    };
+  };
+
+  const partAt = (store: DispatchStore, index: number) =>
+    allocations[index].find((part) => part.store_key === store.key);
+
+  /** Net worth of one committed part where the executed trajectory puts it. */
+  const settledNet = (store: DispatchStore, index: number): number => {
+    const part = partAt(store, index);
+    if (!part) return 0;
+    const wear = store.wear_sek_per_kwh ?? 0;
+    const kwh = part.power_w / 1_000 * SLOT_HOURS;
+    const charging = part.direction === "charge";
+    const { value } = movedValue(
+      store,
+      index,
+      charging ? part.power_w : 0,
+      charging ? 0 : part.power_w,
+    );
+    return charging
+      ? value - (part.energy_cost_sek_per_kwh + wear) * kwh - part.start_cost_sek
+      : value + (part.average_value_sek_per_kwh - wear) * kwh;
+  };
+
+  /** A discharge the released charge can no longer supply is not a price call. */
+  const overdrawn = (store: DispatchStore, index: number): boolean => {
+    const low = store.min_state;
+    if (low === undefined) return false;
+    const outW = dischargeW[store.key][index];
+    if (outW <= 0) return false;
+    return movedValue(store, index, powerW[store.key][index], outW).after <
+      low - 1e-9;
+  };
+
+  const releaseRun = (store: DispatchStore, indices: number[]): void => {
+    for (const index of indices) {
+      const at = allocations[index].findIndex((part) =>
+        part.store_key === store.key
+      );
+      if (at < 0) continue;
+      const [part] = allocations[index].splice(at, 1);
+      if (part.direction === "charge") {
+        powerW[store.key][index] = 0;
+        occupiedW[index] = Math.max(0, occupiedW[index] - part.power_w);
+      } else {
+        dischargeW[store.key][index] = 0;
+        returnedW[index] = Math.max(0, returnedW[index] - part.power_w);
+      }
+    }
+    project(store, powerW[store.key], dischargeW[store.key], 0, stateByKey[store.key]);
+  };
+
+  for (const store of stores) {
+    // A minimum-run block cleared its cost as a block and is released as one,
+    // or the schedule would keep a compressor start it no longer pays for.
+    for (let pass = 0; pass <= count; pass += 1) {
+      project(
+        store,
+        powerW[store.key],
+        dischargeW[store.key],
+        0,
+        stateByKey[store.key],
+      );
+      const runs = new Map<string, { indices: number[]; net: number }>();
+      let starved: string | null = null;
+      for (let index = 0; index < count; index += 1) {
+        const part = partAt(store, index);
+        if (!part) continue;
+        const key = `${part.direction}:${part.run_start_index}`;
+        const run = runs.get(key) ?? { indices: [], net: 0 };
+        run.indices.push(index);
+        run.net += settledNet(store, index);
+        runs.set(key, run);
+        if (starved === null && overdrawn(store, index)) starved = key;
+      }
+      // Resolve the run only once the scan has collected all of its slots.
+      if (starved !== null) {
+        releaseRun(store, runs.get(starved)!.indices);
+        continue;
+      }
+      let worst: { indices: number[]; net: number } | null = null;
+      for (const run of runs.values()) {
+        if (run.net < -1e-9 && (worst === null || run.net < worst.net)) {
+          worst = run;
+        }
+      }
+      if (worst === null) break;
+      releaseRun(store, worst.indices);
+    }
+
+    // Publish the settled arithmetic. The allocation's own record and the
+    // executed trajectory used to disagree, which is what hid all of this.
+    const runNet = new Map<number, number>();
+    for (let index = 0; index < count; index += 1) {
+      const part = partAt(store, index);
+      if (!part) continue;
+      const wear = store.wear_sek_per_kwh ?? 0;
+      const kwh = part.power_w / 1_000 * SLOT_HOURS;
+      const charging = part.direction === "charge";
+      const { after, value } = movedValue(
+        store,
+        index,
+        charging ? part.power_w : 0,
+        charging ? 0 : part.power_w,
+      );
+      part.state_before = stateByKey[store.key][index];
+      part.state_after = after;
+      part.retention_factor = retentionByKey[store.key][index];
+      if (charging) {
+        part.average_value_sek_per_kwh = kwh > 0 ? value / kwh : 0;
+      } else {
+        part.energy_cost_sek_per_kwh = kwh > 0 ? -value / kwh : 0;
+      }
+      part.net_value_sek = settledNet(store, index);
+      runNet.set(
+        part.run_start_index,
+        (runNet.get(part.run_start_index) ?? 0) + part.net_value_sek,
+      );
+    }
+    for (let index = 0; index < count; index += 1) {
+      const part = partAt(store, index);
+      if (part) {
+        part.run_net_value_sek = runNet.get(part.run_start_index) ?? 0;
+      }
+    }
+  }
 
   const importW = new Array(count).fill(0);
   const exportW = new Array(count).fill(0);

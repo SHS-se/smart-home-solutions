@@ -1710,6 +1710,87 @@ Deno.test("a car past its charge limit leaves the surplus alone", () => {
   );
 });
 
+Deno.test("every allocation is priced where it lands, and none of them loses", () => {
+  // The auction values each move against the trajectory as it stood when that
+  // move won, and every later allocation shifts the trajectory underneath it.
+  // Two things must hold once the plan is settled: the state an allocation
+  // records is the state the plan executes, and nothing survives that does not
+  // pay for itself there. Observed failing: a battery charge booked at
+  // 1.648 SEK/kWh against a projected 1.01 kWh state, executed at 6.09 kWh
+  // where the same energy is worth 0.695, bought at 1.169.
+  const base = horizon();
+  const snapshot = horizon({
+    pool: { water_temperature_c: 28.4, volume_m3: 55 },
+    capabilities: { ...base.capabilities, ev: true, pool: true },
+    ev_battery: {
+      name: "Tesla Model Y",
+      connected: true,
+      capacity_kwh: 77.25,
+      soc: 0.56,
+      departure_target_soc: 0.8,
+      charge_efficiency: 0.92,
+      available_from: base.slots[0].start,
+      departure: null,
+      priority: 3,
+      source_entity_ids: {
+        connected: "binary_sensor.cable",
+        soc: "sensor.level",
+        target_soc: "number.limit",
+        energy_remaining: null,
+        charge_current: "number.current",
+      },
+    },
+    services: [routedEvService(base)],
+  });
+
+  const plan = generateOptimisationPlan(snapshot, new Date(NOW));
+  assertEquals(plan.validation_errors, []);
+
+  const losing: string[] = [];
+  const misstated: string[] = [];
+  let allocations = 0;
+  for (const slot of plan.plans.priority.slots) {
+    const battery = slot.decision.battery;
+    for (const part of slot.decision.store_allocations) {
+      allocations += 1;
+      // A minimum-run block clears its cost as a block: a heat pump that must
+      // run four quarters cannot stop three in, so the run is the unit that
+      // has to pay, not every quarter inside it.
+      if (part.run_net_value_sek < -1e-6) {
+        losing.push(
+          `${part.store_key} ${part.direction} run from ${part.run_start_index}: ${
+            part.run_net_value_sek.toFixed(4)
+          } SEK`,
+        );
+      }
+      // The battery publishes the executed trajectory beside the allocation's
+      // own record, so the two disagreeing is the defect made visible.
+      if (
+        part.store_key === "battery" && battery &&
+        Math.abs(part.state_before - battery.state_before) > 1e-6
+      ) {
+        misstated.push(
+          `${slot.start}: booked at ${part.state_before.toFixed(4)} kWh, ran at ${
+            battery.state_before.toFixed(4)
+          } kWh`,
+        );
+      }
+    }
+  }
+
+  assert(allocations > 20, `expected a busy plan, got ${allocations} allocations`);
+  assertEquals(
+    misstated.slice(0, 3),
+    [],
+    "an allocation must record the state the plan executes",
+  );
+  assertEquals(
+    losing.slice(0, 3),
+    [],
+    "a settled plan holds nothing that loses money where it lands",
+  );
+});
+
 Deno.test("the plan explains why each store bought what it did", () => {
   // A pool one degree above the top of its own curve is right to do nothing.
   // Establishing that previously meant querying the database for the snapshot
