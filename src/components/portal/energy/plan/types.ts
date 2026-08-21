@@ -115,8 +115,11 @@ export const COLORS = {
   ev: '#a78bfa',
   pv: '#f59e0b',
   soc: '#f43f5e',
+  evSoc: '#06b6d4',
   import: '#dc2626',
   export: '#0f766e',
+  importPrice: '#a855f7',
+  exportPrice: '#65a30d',
   actual: '#111827',
   batteryCharge: '#2563eb',
   batteryDischarge: '#7c3aed',
@@ -175,6 +178,7 @@ export interface PlanChartSeries {
   dataKey?: string;
 }
 
-export const DEVICE_COLORS = ['#0ea5e9', '#8b5cf6', '#22c55e', '#eab308', '#f97316', '#ec4899', '#06b6d4', '#84cc16'];
+/** Muted device fills leave the saturated semantic colours above unambiguous. */
+export const DEVICE_COLORS = ['#7c8da6', '#9b8aa5', '#6f9a85', '#b49a63', '#b07f65', '#a77f91', '#6f9399', '#879467'];
 
 export type ReadinessState = 'ready' | 'blocked' | 'waiting';

@@ -7,6 +7,7 @@
 
 import React from 'react';
 import { AlertTriangle, Check, Minus } from 'lucide-react';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useLanguage } from '@/contexts/LanguageContext';
 import type { TimelineRange, TimelineRow } from '@/lib/energy-shift/energy-timeline';
@@ -289,139 +290,128 @@ const StoreDecisions: React.FC<{
 
   if (inWindow.length === 0) {
     return (
-      <div className="space-y-2">
-        <h3 className="text-sm font-medium">
-          {model.planView === 'planned'
-            ? t('Vad planen beslutade, och varför', 'What the plan decided, and why')
-            : t('Vad jämförelsen utan plan gör', 'What the without-plan comparison does')}
-        </h3>
-        <p className="text-sm text-muted-foreground">
-          {t(
-            'Den valda perioden ligger före den aktuella planen. Grafen visar uppmätta värden där, men den här planen fattade inga beslut för perioden.',
-            'The selected period is before the current plan. The chart shows measured values there, but this plan made no decisions for that period.',
-          )}
-        </p>
-      </div>
+      <p className="text-sm text-muted-foreground">
+        {t(
+          'Den valda perioden ligger före den aktuella planen. Grafen visar uppmätta värden där, men den här planen fattade inga beslut för perioden.',
+          'The selected period is before the current plan. The chart shows measured values there, but this plan made no decisions for that period.',
+        )}
+      </p>
     );
   }
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h3 className="text-sm font-medium">
-          {model.planView === 'planned'
-            ? t('Vad planen beslutade, och varför', 'What the plan decided, and why')
-            : t('Vad jämförelsen utan plan gör', 'What the without-plan comparison does')}
-        </h3>
-        <p className="text-xs text-muted-foreground">
-          {t(
-            'Planeraren löser alla 72 timmar samtidigt. Den provar lagringsåtgärder i 15-minuterskvartar; nätimport och nätexport är sedan bara balansen som återstår efter sol, last och batteri. Tabellen längst ned visar den exakta följden och båda totalpriserna som användes i varje planerad kvart.',
-            'The planner solves all 72 hours together. It tests store actions in 15-minute quarters; grid import and export are then only the balance left after solar, demand and battery dispatch. The table below shows the exact sequence and both all-in prices used in every planned quarter.',
-          )}
-          {model.planView === 'unplanned' && ` ${t(
-            'Detta är motfaktiska värden från vyn Utan plan; Home Assistant kör vyn Med plan.',
-            'These are counterfactual values from the Without plan view; Home Assistant executes the With plan view.',
-          )}`}
-        </p>
-      </div>
-
-      {ordered.length > 0 ? (
-        <>
-          <div>
-            <h4 className="text-sm font-medium">{t('Lagringarnas 72-timmarsbeslut', 'The stores’ 72-hour decision')}</h4>
+    <Accordion type="multiple" className="w-full">
+      <AccordionItem value="stores">
+        <AccordionTrigger className="py-3 text-sm hover:no-underline">
+          {t('Lagringarnas 72-timmarsbeslut', 'The stores’ 72-hour decision')}
+        </AccordionTrigger>
+        <AccordionContent className="space-y-3">
+          <p className="text-[11px] text-muted-foreground">
+            {t(
+              'Startbud och lägsta tillgängliga kostnad gäller hela horisonten. Den lägsta kostnaden är totalt köppris när energi måste köpas, eller förlorat totalt säljpris när prognosen har solelöverskott. Den är alltså varken ett genomsnittligt köppris eller enbart elbörspriset. Planerat gäller den valda perioden.',
+              'Initial bid and lowest available cost cover the full horizon. Lowest cost is the all-in import price when energy must be bought, or the forgone all-in export price when forecast solar is in surplus. It is therefore neither an average import tariff nor the wholesale electricity price alone. Planned covers the selected period.',
+            )}
+          </p>
+          {model.planView === 'unplanned' && (
             <p className="text-[11px] text-muted-foreground">
               {t(
-                'Startbud och lägsta tillgängliga kostnad gäller hela horisonten. Den lägsta kostnaden är totalt köppris när energi måste köpas, eller förlorat totalt säljpris när prognosen har solelöverskott. Den är alltså varken ett genomsnittligt köppris eller enbart elbörspriset. Planerat gäller den valda perioden.',
-                'Initial bid and lowest available cost cover the full horizon. Lowest cost is the all-in import price when energy must be bought, or the forgone all-in export price when forecast solar is in surplus. It is therefore neither an average import tariff nor the wholesale electricity price alone. Planned covers the selected period.',
+                'Detta är motfaktiska värden från vyn Utan plan; Home Assistant kör vyn Med plan.',
+                'These are counterfactual values from the Without plan view; Home Assistant executes the With plan view.',
               )}
             </p>
-          </div>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{t('Lagring', 'Store')}</TableHead>
-                <TableHead className="text-right">{t('Starttillstånd', 'Initial state')}</TableHead>
-                <TableHead className="text-right">{t('Startbud', 'Initial bid')}</TableHead>
-                <TableHead className="text-right">{t('Lägsta tillgängliga kostnad', 'Lowest available cost')}</TableHead>
-                <TableHead className="text-right">{t('Planerat i perioden', 'Planned in window')}</TableHead>
-                <TableHead>{t('Utfall', 'Outcome')}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {ordered.map(row => {
-                const text = REASON_TEXT[row.reason] ?? REASON_TEXT.outbid;
-                const [headline, detail] = language === 'sv' ? text.sv : text.en;
-                const absent = UNCONSIDERED.has(row.reason);
-                const label = STORE_LABEL[row.key] ?? [row.key, row.key];
-                const flow = energy[row.key];
-                return (
-                  <TableRow key={row.key} className={absent ? 'bg-amber-50/60 dark:bg-amber-950/20' : undefined}>
-                    <TableCell className="font-medium">{language === 'sv' ? label[0] : label[1]}</TableCell>
-                    <TableCell className="text-right tabular-nums">{formatState(row.unit, row.state)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{sek(row.marginal_value_sek_per_kwh)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{sek(row.cheapest_energy_sek_per_kwh)}</TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {(flow?.inputKwh ?? 0) > 0.05 && (
-                        <span className="block">
-                          {flow.inputKwh.toFixed(1)} kWh {t('in', 'in')}
-                          <span className="block text-[11px] text-muted-foreground">{flow.inputHours.toFixed(1)} h</span>
-                        </span>
-                      )}
-                      {(flow?.outputKwh ?? 0) > 0.05 && (
-                        <span className="block">
-                          {flow.outputKwh.toFixed(1)} kWh {t('ut', 'out')}
-                          <span className="block text-[11px] text-muted-foreground">{flow.outputHours.toFixed(1)} h</span>
-                        </span>
-                      )}
-                      {(flow?.inputKwh ?? 0) <= 0.05 && (flow?.outputKwh ?? 0) <= 0.05 && '—'}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-start gap-1.5">
-                        {absent
-                          ? <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-500" aria-hidden />
-                          : row.reason === 'scheduled'
-                            ? <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-500" aria-hidden />
-                            : <Minus className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />}
-                        <span>
-                          <span className="font-medium">{headline}</span>
-                          <span className="block text-[11px] text-muted-foreground">{detail}</span>
-                        </span>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </>
-      ) : (
-        <p className="text-sm text-muted-foreground">
-          {t(
-            'Den här planen har inga fysiska lagringsbud. Kvartsföljden visar ändå hur planerad last och sol gav nätflödet.',
-            'This plan has no physical-store bids. The quarter sequence still shows how planned demand and solar produced the grid flow.',
           )}
-        </p>
-      )}
 
-      {unconsidered.length > 0 && (
-        <p className="rounded-md border border-amber-300 bg-amber-50/70 p-2 text-[11px] text-amber-900 dark:border-amber-800 dark:bg-amber-950/25 dark:text-amber-200">
-          {t(
-            'Markerade rader deltog aldrig i avvägningen. De förlorade inte på värde; en mappning, anslutning eller sensor måste rättas.',
-            'Highlighted rows never entered the trade-off. They did not lose on value; a mapping, connection or sensor must be corrected.',
+          {ordered.length > 0 ? (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>{t('Lagring', 'Store')}</TableHead>
+                  <TableHead className="text-right">{t('Starttillstånd', 'Initial state')}</TableHead>
+                  <TableHead className="text-right">{t('Startbud', 'Initial bid')}</TableHead>
+                  <TableHead className="text-right">{t('Lägsta tillgängliga kostnad', 'Lowest available cost')}</TableHead>
+                  <TableHead className="text-right">{t('Planerat i perioden', 'Planned in window')}</TableHead>
+                  <TableHead>{t('Utfall', 'Outcome')}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {ordered.map(row => {
+                  const text = REASON_TEXT[row.reason] ?? REASON_TEXT.outbid;
+                  const [headline, detail] = language === 'sv' ? text.sv : text.en;
+                  const absent = UNCONSIDERED.has(row.reason);
+                  const label = STORE_LABEL[row.key] ?? [row.key, row.key];
+                  const flow = energy[row.key];
+                  return (
+                    <TableRow key={row.key} className={absent ? 'bg-amber-50/60 dark:bg-amber-950/20' : undefined}>
+                      <TableCell className="font-medium">{language === 'sv' ? label[0] : label[1]}</TableCell>
+                      <TableCell className="text-right tabular-nums">{formatState(row.unit, row.state)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{sek(row.marginal_value_sek_per_kwh)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{sek(row.cheapest_energy_sek_per_kwh)}</TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {(flow?.inputKwh ?? 0) > 0.05 && (
+                          <span className="block">
+                            {flow.inputKwh.toFixed(1)} kWh {t('in', 'in')}
+                            <span className="block text-[11px] text-muted-foreground">{flow.inputHours.toFixed(1)} h</span>
+                          </span>
+                        )}
+                        {(flow?.outputKwh ?? 0) > 0.05 && (
+                          <span className="block">
+                            {flow.outputKwh.toFixed(1)} kWh {t('ut', 'out')}
+                            <span className="block text-[11px] text-muted-foreground">{flow.outputHours.toFixed(1)} h</span>
+                          </span>
+                        )}
+                        {(flow?.inputKwh ?? 0) <= 0.05 && (flow?.outputKwh ?? 0) <= 0.05 && '—'}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-start gap-1.5">
+                          {absent
+                            ? <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-500" aria-hidden />
+                            : row.reason === 'scheduled'
+                              ? <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-500" aria-hidden />
+                              : <Minus className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />}
+                          <span>
+                            <span className="font-medium">{headline}</span>
+                            <span className="block text-[11px] text-muted-foreground">{detail}</span>
+                          </span>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              {t(
+                'Den här planen har inga fysiska lagringsbud. Kvartsföljden visar ändå hur planerad last och sol gav nätflödet.',
+                'This plan has no physical-store bids. The quarter sequence still shows how planned demand and solar produced the grid flow.',
+              )}
+            </p>
           )}
-        </p>
-      )}
 
-      <div>
-        <h4 className="text-sm font-medium">{t('Beslutsföljd per 15 minuter', '15-minute decision sequence')}</h4>
-        <p className="mb-2 text-[11px] text-muted-foreground">
-          {t(
-            'Köp och sälj visar totalpriset som objektivet använde. Publicerat betyder verkligt dag-före-pris; modellerat betyder husets prisprognos efter den publicerade perioden.',
-            'Buy and sell show the all-in prices used by the objective. Published means an actual day-ahead price; modelled means this home’s price forecast beyond the published period.',
+          {unconsidered.length > 0 && (
+            <p className="rounded-md border border-amber-300 bg-amber-50/70 p-2 text-[11px] text-amber-900 dark:border-amber-800 dark:bg-amber-950/25 dark:text-amber-200">
+              {t(
+                'Markerade rader deltog aldrig i avvägningen. De förlorade inte på värde; en mappning, anslutning eller sensor måste rättas.',
+                'Highlighted rows never entered the trade-off. They did not lose on value; a mapping, connection or sensor must be corrected.',
+              )}
+            </p>
           )}
-        </p>
-        <div className="[&>div]:max-h-[38rem] [&>div]:rounded-md [&>div]:border">
-          <Table className="min-w-[1100px]">
+        </AccordionContent>
+      </AccordionItem>
+
+      <AccordionItem value="sequence">
+        <AccordionTrigger className="py-3 text-sm hover:no-underline">
+          {t('Beslutsföljd per 15 minuter', '15-minute decision sequence')}
+        </AccordionTrigger>
+        <AccordionContent>
+          <p className="mb-2 text-[11px] text-muted-foreground">
+            {t(
+              'Köp och sälj visar totalpriset som objektivet använde. Publicerat betyder verkligt dag-före-pris; modellerat betyder husets prisprognos efter den publicerade perioden.',
+              'Buy and sell show the all-in prices used by the objective. Published means an actual day-ahead price; modelled means this home’s price forecast beyond the published period.',
+            )}
+          </p>
+          <div className="[&>div]:max-h-[38rem] [&>div]:rounded-md [&>div]:border">
+            <Table className="min-w-[1100px]">
             <TableHeader className="sticky top-0 z-10 bg-background">
               <TableRow>
                 <TableHead>{t('Kvart', 'Quarter')}</TableHead>
@@ -478,10 +468,11 @@ const StoreDecisions: React.FC<{
                 );
               })}
             </TableBody>
-          </Table>
-        </div>
-      </div>
-    </div>
+            </Table>
+          </div>
+        </AccordionContent>
+      </AccordionItem>
+    </Accordion>
   );
 };
 

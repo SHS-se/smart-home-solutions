@@ -18,6 +18,7 @@ import {
   activeDeviceKeys,
   nowDividerIndex,
   powerAxisDomain,
+  SIGNIFICANT_POWER_W,
   socAxisDomain,
   stackOrder,
   type DayWindow,
@@ -42,8 +43,8 @@ const QUARTER_W_TO_KWH = 4_000;
 const FLOW_STROKE_WIDTH = 2.5;
 
 type SeriesKey =
-  | 'solar' | 'base' | 'totalLoad' | 'gridImport' | 'gridExport'
-  | 'batteryCharge' | 'batteryDischarge'
+  | 'solar' | 'base' | 'gridImport' | 'gridExport'
+  | 'batteryCharge'
   | 'homeSoc' | 'evSoc'
   | 'allInImportPrice' | 'allInExportPrice'
   | 'modelledImportPrice' | 'modelledExportPrice'
@@ -73,7 +74,6 @@ const PowerSection: React.FC<{
   const { t } = useLanguage();
   const visibility = useSeriesVisibility<SeriesKey>();
   const [showPrices, setShowPrices] = useState(false);
-  const { deviceRoleView } = model;
 
   const scheduled = useMemo(() => activeDeviceKeys(rows, range), [range, rows]);
   // Bottom of the stack first. Recharts draws stacked areas in render order,
@@ -94,11 +94,9 @@ const PowerSection: React.FC<{
     }),
     solar: row.solarW,
     base: row.baseW,
-    totalLoad: row.loadW,
     gridImport: row.gridImportW,
     gridExport: row.gridExportW,
     batteryCharge: row.batteryChargeW,
-    batteryDischarge: row.batteryDischargeW,
     homeSoc: row.batterySoc === null ? null : row.batterySoc * 100,
     evSoc: row.evSoc === null ? null : row.evSoc * 100,
     allInImportPrice: row.importPriceSekPerKwh,
@@ -123,11 +121,9 @@ const PowerSection: React.FC<{
   );
   const rawPowerDomain = useMemo(() => powerAxisDomain(windowed.flatMap(row => [
     row.solar,
-    row.totalLoad,
     row.gridImport,
     row.gridExport,
     row.batteryCharge,
-    row.batteryDischarge,
     // The stack total, not its parts: that is what reaches the top.
     deviceKeys.reduce(
       (total, _key, index) => total + Number(row[`device${index}`] ?? 0),
@@ -142,9 +138,10 @@ const PowerSection: React.FC<{
       row.modelledImportPrice,
       row.modelledExportPrice,
     ]).filter((value): value is number => value !== null && Number.isFinite(value));
+    if (prices.length === 0) return null;
     return sharedZeroAxes({
-      priceMin: prices.length > 0 ? Math.min(...prices) : 0,
-      priceMax: prices.length > 0 ? Math.max(...prices) : 0,
+      priceMin: Math.min(...prices),
+      priceMax: Math.max(...prices),
       powerMinW: rawPowerDomain[0],
       powerMaxW: rawPowerDomain[1],
     });
@@ -155,7 +152,8 @@ const PowerSection: React.FC<{
   const divider = nowDividerIndex(rows, range);
   const hasHistory = divider > 0;
   const hasPlan = divider < windowed.length;
-  const firstModelled = windowed.findIndex(row => row.modelledImportPrice !== null);
+  const firstModelled = windowed.findIndex(row =>
+    row.modelledImportPrice !== null || row.modelledExportPrice !== null);
 
   const deviceSeries = useMemo(
     () => deviceKeys.map((key, index) => ({
@@ -167,27 +165,54 @@ const PowerSection: React.FC<{
     [deviceKeys, deviceNameByKey],
   );
   const priceSeries = useMemo(() => [
-    { key: 'allInImportPrice' as const, label: t('Totalt köppris', 'All-in import price'), color: COLORS.import, modelled: false },
-    { key: 'allInExportPrice' as const, label: t('Totalt säljpris', 'All-in export price'), color: COLORS.export, modelled: false },
-    { key: 'modelledImportPrice' as const, label: t('Totalt köppris (modellerat)', 'All-in import price (modelled)'), color: COLORS.import, modelled: true },
-    { key: 'modelledExportPrice' as const, label: t('Totalt säljpris (modellerat)', 'All-in export price (modelled)'), color: COLORS.export, modelled: true },
+    { key: 'allInImportPrice' as const, label: t('Totalt köppris', 'All-in import price'), color: COLORS.importPrice, modelled: false },
+    { key: 'allInExportPrice' as const, label: t('Totalt säljpris', 'All-in export price'), color: COLORS.exportPrice, modelled: false },
+    { key: 'modelledImportPrice' as const, label: t('Totalt köppris (modellerat)', 'All-in import price (modelled)'), color: COLORS.importPrice, modelled: true },
+    { key: 'modelledExportPrice' as const, label: t('Totalt säljpris (modellerat)', 'All-in export price (modelled)'), color: COLORS.exportPrice, modelled: true },
   ], [t]);
+
+  const availableSeries = useMemo(() => {
+    const available = new Set<SeriesKey>(deviceSeries.map(series => series.key));
+    const powerKeys = ['solar', 'base', 'gridImport', 'gridExport', 'batteryCharge'] as const;
+    for (const key of powerKeys) {
+      if (windowed.some(row => {
+        const value = row[key];
+        return value !== null && Number.isFinite(value) && Math.abs(value) >= SIGNIFICANT_POWER_W;
+      })) available.add(key);
+    }
+    if (hasBattery && windowed.some(row => row.homeSoc !== null && Number.isFinite(row.homeSoc))) {
+      available.add('homeSoc');
+    }
+    if (hasEvBattery && windowed.some(row => row.evSoc !== null && Number.isFinite(row.evSoc))) {
+      available.add('evSoc');
+    }
+    const priceKeys = [
+      'allInImportPrice',
+      'allInExportPrice',
+      'modelledImportPrice',
+      'modelledExportPrice',
+    ] as const;
+    for (const key of priceKeys) {
+      if (windowed.some(row => row[key] !== null && Number.isFinite(row[key]))) available.add(key);
+    }
+    return available;
+  }, [deviceSeries, hasBattery, hasEvBattery, windowed]);
+
   const legendSeries = useMemo(() => [
     { key: 'solar' as SeriesKey, label: t('Solproduktion', 'Solar production'), color: COLORS.pv },
     // Same order as the stack, bottom to top, so the two agree.
     ...deviceSeries,
     { key: 'base' as SeriesKey, label: t('Baslast', 'Base load'), color: COLORS.base },
-    { key: 'totalLoad' as SeriesKey, label: t('Total förbrukning', 'Total consumption'), color: COLORS.base },
     { key: 'gridImport' as SeriesKey, label: t('Nätimport', 'Grid import'), color: COLORS.import },
     { key: 'gridExport' as SeriesKey, label: t('Nätexport (negativ)', 'Grid export (negative)'), color: COLORS.export },
     { key: 'batteryCharge' as SeriesKey, label: t('Batteriladdning (negativ)', 'Battery charge (negative)'), color: COLORS.batteryCharge },
-    { key: 'batteryDischarge' as SeriesKey, label: t('Batteriurladdning', 'Battery discharge'), color: COLORS.batteryDischarge },
     ...(hasBattery ? [{ key: 'homeSoc' as SeriesKey, label: t('Hembatteri SOC', 'Home battery SOC'), color: COLORS.soc }] : []),
-    ...(hasEvBattery ? [{ key: 'evSoc' as SeriesKey, label: t('Bilbatteri SOC', 'EV battery SOC'), color: COLORS.ev }] : []),
+    ...(hasEvBattery ? [{ key: 'evSoc' as SeriesKey, label: t('Bilbatteri SOC', 'EV battery SOC'), color: COLORS.evSoc }] : []),
     ...(showPrices ? priceSeries : []),
-  ], [deviceSeries, hasBattery, hasEvBattery, priceSeries, showPrices, t]);
+  ].filter(series => availableSeries.has(series.key)), [availableSeries, deviceSeries, hasBattery, hasEvBattery, priceSeries, showPrices, t]);
 
-  const idleDeviceCount = Math.max(0, deviceNameByKey.size - deviceKeys.length);
+  const seriesVisible = (key: SeriesKey): boolean =>
+    availableSeries.has(key) && visibility.visible(key);
 
   const attribution = useMemo(() => {
     const slots: SupplySlotInput[] = rows.slice(range.from, range.to).map(row => ({
@@ -249,7 +274,7 @@ const PowerSection: React.FC<{
       <EnergyPowerChart
         data={windowed}
         ticks={ticks}
-        showPercentAxis={hasBattery || hasEvBattery}
+        showPercentAxis={availableSeries.has('homeSoc') || availableSeries.has('evSoc')}
         priceAxis={priceAxes?.price}
         powerDomain={powerDomain}
         socDomain={socDomain}
@@ -258,21 +283,19 @@ const PowerSection: React.FC<{
         {hasPlan && hasHistory && (
           <ReferenceArea yAxisId="power" x1={divider} x2={windowed.length - 1} fill="currentColor" className="text-muted" fillOpacity={0.16} />
         )}
-        {visibility.visible('solar') && <Area yAxisId="power" type="monotone" dataKey="solar" name={t('Solproduktion', 'Solar production')} stroke={COLORS.pv} fill={COLORS.pv} fillOpacity={0.14} dot={false} connectNulls />}
-        {deviceSeries.map(series => visibility.visible(series.key) && (
+        {seriesVisible('solar') && <Area yAxisId="power" type="monotone" dataKey="solar" name={t('Solproduktion', 'Solar production')} stroke={COLORS.pv} fill={COLORS.pv} fillOpacity={0.14} dot={false} connectNulls />}
+        {deviceSeries.map(series => seriesVisible(series.key) && (
           <Area key={series.key} yAxisId="power" type="stepAfter" dataKey={series.dataKey} stackId="load" name={series.label} fill={series.color} stroke={series.color} fillOpacity={0.65} strokeWidth={1} />
         ))}
-        {visibility.visible('base') && <Area yAxisId="power" type="stepAfter" dataKey="base" stackId="load" name={t('Baslast', 'Base load')} fill={COLORS.base} strokeWidth={0} />}
-        {visibility.visible('totalLoad') && <Line yAxisId="power" type="stepAfter" dataKey="totalLoad" name={t('Total förbrukning', 'Total consumption')} stroke={COLORS.base} strokeWidth={1.8} dot={false} connectNulls={false} />}
-        {visibility.visible('gridImport') && <Line yAxisId="power" type="stepAfter" dataKey="gridImport" name={t('Nätimport', 'Grid import')} stroke={COLORS.import} strokeWidth={FLOW_STROKE_WIDTH} dot={false} connectNulls />}
-        {visibility.visible('gridExport') && <Line yAxisId="power" type="stepAfter" dataKey="gridExport" name={t('Nätexport (negativ)', 'Grid export (negative)')} stroke={COLORS.export} strokeWidth={FLOW_STROKE_WIDTH} dot={false} connectNulls />}
-        {visibility.visible('batteryCharge') && <Line yAxisId="power" type="stepAfter" dataKey="batteryCharge" name={t('Batteriladdning (negativ)', 'Battery charge (negative)')} stroke={COLORS.batteryCharge} strokeWidth={FLOW_STROKE_WIDTH} dot={false} connectNulls />}
-        {visibility.visible('batteryDischarge') && <Line yAxisId="power" type="stepAfter" dataKey="batteryDischarge" name={t('Batteriurladdning', 'Battery discharge')} stroke={COLORS.batteryDischarge} strokeWidth={FLOW_STROKE_WIDTH} dot={false} connectNulls />}
+        {seriesVisible('base') && <Area yAxisId="power" type="stepAfter" dataKey="base" stackId="load" name={t('Baslast', 'Base load')} fill={COLORS.base} strokeWidth={0} />}
+        {seriesVisible('gridImport') && <Line yAxisId="power" type="stepAfter" dataKey="gridImport" name={t('Nätimport', 'Grid import')} stroke={COLORS.import} strokeWidth={FLOW_STROKE_WIDTH} dot={false} connectNulls />}
+        {seriesVisible('gridExport') && <Line yAxisId="power" type="stepAfter" dataKey="gridExport" name={t('Nätexport (negativ)', 'Grid export (negative)')} stroke={COLORS.export} strokeWidth={FLOW_STROKE_WIDTH} dot={false} connectNulls />}
+        {seriesVisible('batteryCharge') && <Line yAxisId="power" type="stepAfter" dataKey="batteryCharge" name={t('Batteriladdning (negativ)', 'Battery charge (negative)')} stroke={COLORS.batteryCharge} strokeWidth={FLOW_STROKE_WIDTH} dot={false} connectNulls />}
         {/* SOC is a percentage, so it rides the right-hand axis. It exists
             only on the planned side; history carries no state of charge. */}
-        {hasBattery && visibility.visible('homeSoc') && <Line yAxisId="soc" type="monotone" dataKey="homeSoc" name={t('Hembatteri SOC', 'Home battery SOC')} stroke={COLORS.soc} strokeWidth={1.5} dot={false} connectNulls={false} />}
-        {hasEvBattery && visibility.visible('evSoc') && <Line yAxisId="soc" type="monotone" dataKey="evSoc" name={t('Bilbatteri SOC', 'EV battery SOC')} stroke={COLORS.ev} strokeWidth={1.5} dot={false} connectNulls={false} />}
-        {showPrices && priceSeries.map(series => visibility.visible(series.key) && (
+        {seriesVisible('homeSoc') && <Line yAxisId="soc" type="monotone" dataKey="homeSoc" name={t('Hembatteri SOC', 'Home battery SOC')} stroke={COLORS.soc} strokeWidth={1.5} dot={false} connectNulls={false} />}
+        {seriesVisible('evSoc') && <Line yAxisId="soc" type="monotone" dataKey="evSoc" name={t('Bilbatteri SOC', 'EV battery SOC')} stroke={COLORS.evSoc} strokeWidth={1.5} dot={false} connectNulls={false} />}
+        {showPrices && priceSeries.map(series => seriesVisible(series.key) && (
           <Line
             key={series.key}
             yAxisId="price"
@@ -314,30 +337,6 @@ const PowerSection: React.FC<{
         onToggle={visibility.toggle}
         ariaLabel={t('Effektserier', 'Power series')}
       />
-      <p className="mt-2 text-xs text-muted-foreground">
-        {hasHistory && hasPlan
-          ? t('Till vänster om linjen är uppmätt, till höger planerat.', 'Left of the line is measured; right of it is planned.')
-          : hasHistory
-            ? t('Hela dagen är uppmätt.', 'The whole day is measured.')
-            : t('Hela dagen är planerad.', 'The whole day is planned.')}
-        {' '}
-        {t(
-          'Fyllda staplar visar förbrukningens delar och den grå linjen visar deras exakta total. Nätimport, nätexport, batteriladdning och batteriurladdning är flöden över husets gräns; export och laddning är negativa. Laddningsnivåer läses av på den högra axeln.',
-          'Filled bars show the parts of consumption and the grey line shows their exact total. Grid import, grid export, battery charging and battery discharge are flows across the home boundary; export and charging are negative. State of charge reads on the right-hand axis.',
-        )}
-        {showPrices && ` ${t(
-          'Köppriset är hela den rörliga kostnaden per kWh som planen kan påverka: leverantörens spotpris och påslag, nätöverföring, energiskatt och moms. Fasta månadsavgifter ingår inte eftersom tidpunkten inte ändrar dem. Säljpriset är leverantörsersättning plus nätnytta utan moms. Heldraget är uppmätt eller publicerat; streckat är planerarens modell efter den publicerade prisperioden.',
-          'The import price contains every variable per-kWh cost the plan can affect: supplier spot price and terms, grid transfer, energy tax and VAT. Fixed monthly charges are excluded because timing cannot change them. The export price is supplier payment plus grid compensation, without VAT. Solid lines are measured or published; dashed lines are the planner’s model beyond the published price period.',
-        )}`}
-        {idleDeviceCount > 0 && ` ${t(
-          `${idleDeviceCount} enheter är dolda eftersom de aldrig drar effekt i den här perioden.`,
-          `${idleDeviceCount} device${idleDeviceCount === 1 ? '' : 's'} ${idleDeviceCount === 1 ? 'is' : 'are'} hidden because ${idleDeviceCount === 1 ? 'it draws' : 'they draw'} no power in this period.`,
-        )}`}
-        {deviceRoleView.requiresPlanRefresh && ` ${t(
-          'Den ändrade enhetsrollen visas direkt; schema- och kostnadsberäkningarna uppdateras vid nästa Home Assistant-plan.',
-          'The changed device role is shown immediately; schedule and cost calculations update with the next Home Assistant plan.',
-        )}`}
-      </p>
       {/*
         Above the per-device table on purpose. The device table says how much
         each thing used; this says why the plan chose that at all, and a reader

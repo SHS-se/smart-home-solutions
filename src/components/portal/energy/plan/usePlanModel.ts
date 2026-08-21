@@ -174,7 +174,7 @@ export function usePlanModel(
       { key: 'homeExport' as const, label: t('Batteriexport till nätet', 'Battery-to-grid export'), color: COLORS.batteryExport },
     ] : []),
     ...(hasEvBattery ? [
-      { key: 'evSoc' as const, label: t('Bilbatteri SOC', 'EV battery SOC'), color: COLORS.ev },
+      { key: 'evSoc' as const, label: t('Bilbatteri SOC', 'EV battery SOC'), color: COLORS.evSoc },
       { key: 'evTarget' as const, label: t('Bilens SOC-mål', 'EV target SOC'), color: '#c084fc' },
       { key: 'evCharge' as const, label: t('Billaddning', 'EV charge'), color: '#7c3aed' },
     ] : []),

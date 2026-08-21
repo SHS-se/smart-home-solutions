@@ -3059,6 +3059,16 @@ comparison, and the latter is labelled explicitly as counterfactual; Home
 Assistant's executable schedule must never be implied to change with that UI
 toggle.
 
+The audit surface is dense, so the whole-horizon store table and the 15-minute
+ledger are collapsed independently until requested. The chart legend is derived
+from the selected window: a series with no plotted values is not advertised,
+including published/modelled price segments outside that window. Solar, both
+all-in prices, both grid directions, battery charging and both SOC lines own
+reserved semantic colours; the rotating device palette must not reuse them.
+Total-consumption and battery-discharge overlays are intentionally omitted
+because their information is already present in the stacked load and balance
+traces and they obscure the decision signals.
+
 ## 9. Parameter model
 
 ### 9.1 Parameter classes and ownership
