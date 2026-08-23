@@ -2129,6 +2129,25 @@ function buildDispatchStores(
   snapshot: OptimisationSnapshot,
   derivedBatteryValue: DerivedBatteryValueCurve | null,
 ): DispatchStore[] | null {
+  // The snapshot declares a minimum run per service, and it means the same
+  // thing whether the device is planned as a block or dispatched as a store:
+  // the hardware cannot be cycled faster than this. Schema 6 was reading
+  // neither — the pool's was hard-coded and the car's dropped — so a charger
+  // contract asking for half an hour got quarter-hour cycling, and a deployed
+  // plan switched the car on and off thirteen times in one evening.
+  const declaredMinRun = (device: ServiceInput["device"]): number | undefined => {
+    for (const service of snapshot.services) {
+      if (service.device !== device) continue;
+      const declared = "min_run_slots" in service
+        ? service.min_run_slots
+        : undefined;
+      if (typeof declared === "number" && declared >= 1) {
+        return Math.round(declared);
+      }
+    }
+    return undefined;
+  };
+
   if (snapshot.schema_version < 6) return null;
   const stores: DispatchStore[] = [];
   const count = slots.length;
@@ -2160,7 +2179,10 @@ function buildDispatchStores(
       curve: curves.pool,
       initial_state: pool.water_temperature_c,
       max_power_w: SEEDED_POOL_HEAT_PUMP.rated_power_w,
-      min_run_slots: 4,
+      // Four quarters where the installation states nothing: a heat pump that
+      // short-cycles wears out, and that is a property of the hardware rather
+      // than of this plan.
+      min_run_slots: declaredMinRun("pool") ?? 4,
       start_cost_sek: 0.5,
       // Warmth is wanted whenever somebody might swim, so the weight spreads
       // across the horizon rather than landing on a deadline. Replacing this
@@ -2217,6 +2239,7 @@ function buildDispatchStores(
           // persisted curve preview changed while the live planner ignored it.
           curve: curves.ev,
           initial_state: vehicle.soc * vehicle.capacity_kwh / perKm,
+          min_run_slots: declaredMinRun("ev"),
           // The vehicle refuses charge above its own limit, so this is a
           // hardware bound and not a preference the curve may outbid. Without
           // it `chargeRoomW` returns Infinity and the auction keeps buying

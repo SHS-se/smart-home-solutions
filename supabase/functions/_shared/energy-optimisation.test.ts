@@ -1824,6 +1824,72 @@ Deno.test("the battery only grid-charges the import spike and leaves room for so
   );
 });
 
+Deno.test("a store runs for as long as its service says it must", () => {
+  // The snapshot declares a minimum run per service, and schema 6 dispatches
+  // the pool and the car as stores rather than as service blocks — where the
+  // pool's minimum was hard-coded and the car's was dropped entirely. So a
+  // charger contract asking for half an hour got quarter-hour cycling, and a
+  // deployed plan switched the car on and off thirteen times in an evening.
+  // A price that alternates quarter by quarter is what a car chases: without a
+  // minimum the cheapest half of the evening is a comb, not a session.
+  const base = horizon();
+  const jagged = base.slots.map((slot, index) => ({
+    ...slot,
+    import_price_sek_per_kwh: slot.import_price_sek_per_kwh === null
+      ? null
+      : (index % 2 === 0 ? 1.1 : 2.3),
+  }));
+  const evService = { ...routedEvService(base), min_run_slots: 4 };
+  const snapshot = horizon({
+    slots: jagged,
+    pool: { water_temperature_c: 28.4, volume_m3: 55 },
+    capabilities: { ...base.capabilities, ev: true, pool: true },
+    ev_battery: {
+      name: "Tesla Model Y",
+      connected: true,
+      capacity_kwh: 77.25,
+      soc: 0.4,
+      departure_target_soc: 0.8,
+      charge_efficiency: 0.92,
+      available_from: base.slots[0].start,
+      departure: null,
+      priority: 3,
+      source_entity_ids: {
+        connected: "binary_sensor.cable",
+        soc: "sensor.level",
+        target_soc: "number.limit",
+        energy_remaining: null,
+        charge_current: "number.current",
+      },
+    },
+    services: [evService],
+  });
+
+  const plan = generateOptimisationPlan(snapshot, new Date(NOW));
+  assertEquals(plan.validation_errors, []);
+
+  const short: string[] = [];
+  let block = 0;
+  let charged = 0;
+  for (const [index, slot] of plan.plans.priority.slots.entries()) {
+    if (slot.ev_w > 0) {
+      block += 1;
+      charged += slot.ev_w;
+      continue;
+    }
+    if (block > 0 && block < 4) short.push(`${block} slots ending at ${index}`);
+    block = 0;
+  }
+  if (block > 0 && block < 4) short.push(`${block} slots at the horizon end`);
+
+  assert(charged > 0, "the car never charged, so nothing was tested");
+  assertEquals(
+    short.slice(0, 3),
+    [],
+    "a charger asked for four slots must not be cycled in one",
+  );
+});
+
 Deno.test("a half-charged car takes surplus rather than letting it be exported", () => {
   // Observed in a real plan: a Model Y at 55% declined every kWh of a sunny
   // 72-hour forecast and 30 kWh a day was exported instead. The car was not
