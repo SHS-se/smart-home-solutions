@@ -692,6 +692,77 @@ Deno.test("empirical device forecasts participate in the energy balance", () => 
   );
 });
 
+Deno.test("a device is never credited with more power than it can draw", () => {
+  // The per-device breakdown splits a controlled service across the meters in
+  // its category by their share of the empirical forecast. In a quarter where
+  // one meter's history is zero and the other's is not, the whole dispatched
+  // load lands on whichever one happens to have run before — a deployed plan
+  // showed 3500 W against a pool pump whose measured draw is 412 W, eight and
+  // a half times what it can take, for fourteen quarters.
+  const snapshot = input();
+  // Pump: switched, so its measured draw is a ceiling. It ran overnight in the
+  // history; the heater did not, which is the whole trap.
+  snapshot.device_models = [
+    {
+      key: "pool-pump",
+      name: "Pool pump",
+      statistic_id: "sensor.pool_pump_energy",
+      category: "pool_heating",
+      suggested_load_type: "fixed_full_load",
+      load_type: "fixed_full_load",
+      planning_role: "controllable",
+      control_type: "switch_schedule",
+      active_power_w: 412,
+      profile_sample_count: 828,
+      forecast_w_by_slot: snapshot.slots.map(() => 66),
+    },
+    {
+      key: "pool-heater",
+      name: "Pool heater",
+      statistic_id: "sensor.pool_heater_energy",
+      category: "pool_heating",
+      suggested_load_type: "duty_cycle",
+      load_type: "duty_cycle",
+      planning_role: "controllable",
+      control_type: "switch_schedule",
+      active_power_w: 3_439,
+      profile_sample_count: 960,
+      forecast_w_by_slot: snapshot.slots.map(() => 0),
+    },
+  ];
+
+  const plan = generateOptimisationPlan(snapshot, new Date(NOW));
+  const overdrawn: string[] = [];
+  const miscounted: string[] = [];
+  for (const slot of plan.plans.priority.slots) {
+    if (slot.pool_w <= 1) continue;
+    const pump = slot.device_loads_w["pool-pump"] ?? 0;
+    const heater = slot.device_loads_w["pool-heater"] ?? 0;
+    if (pump > 412 + 1e-6) {
+      overdrawn.push(
+        `${slot.start}: pump credited ${pump.toFixed(0)} W of a ${
+          slot.pool_w.toFixed(0)
+        } W run, against 412 W of measured draw`,
+      );
+    }
+    // The split may never change what the house is using.
+    if (Math.abs(pump + heater - slot.pool_w) > 0.05) {
+      miscounted.push(
+        `${slot.start}: ${pump.toFixed(1)} + ${heater.toFixed(1)} != ${
+          slot.pool_w.toFixed(1)
+        }`,
+      );
+    }
+  }
+
+  assertEquals(miscounted.slice(0, 3), [], "the breakdown must still sum to the run");
+  assertEquals(
+    overdrawn.slice(0, 3),
+    [],
+    "a switched device cannot be credited past its measured draw",
+  );
+});
+
 Deno.test("a controlled empirical device is replaced rather than double counted", () => {
   const snapshot = input();
   snapshot.device_models = [{

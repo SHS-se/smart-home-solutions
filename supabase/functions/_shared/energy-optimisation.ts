@@ -3070,6 +3070,8 @@ type DeviceLoadRule =
     kind: "controlled";
     service: "boiler" | "pool" | "ev";
     shareBySlot: number[];
+    /** What this device can physically be credited with; Infinity when unbounded. */
+    ceilingW: number;
   }
   | { key: string; kind: "room"; roomKey: string; share: number };
 
@@ -3139,6 +3141,13 @@ function deviceLoadRules(snapshot: OptimisationSnapshot): DeviceLoadRule[] {
           ? (model.active_power_w ?? 0) / activeTotal
           : 1 / categoryModels.length
       ),
+      // A switched device is on at its measured draw or it is off, so that
+      // figure is a ceiling on what it can be credited with. A variable-power
+      // one has no such ceiling here: its measured draw is a typical value,
+      // not a rating, and the charger's own envelope already bounds it.
+      ceilingW: model.control_type === "variable_power"
+        ? Number.POSITIVE_INFINITY
+        : Math.max(0, model.active_power_w ?? 0) || Number.POSITIVE_INFINITY,
     });
   }
   const modelByKey = new Map(
@@ -3172,14 +3181,17 @@ function empiricalDeviceLoads(
   roomHeating: Record<string, number>,
 ): Record<string, number> {
   const result: Record<string, number> = {};
+  // Controlled meters share one dispatched run, so they are allocated together
+  // rather than one at a time: a device that cannot take its share has to hand
+  // the remainder to one that can.
+  const byService = new Map<string, Array<Extract<DeviceLoadRule, { kind: "controlled" }>>>();
   for (const rule of deviceLoadRules(snapshot)) {
     if (rule.kind === "fixed") {
       result[rule.key] = round(rule.forecastW[index], 2);
     } else if (rule.kind === "controlled") {
-      result[rule.key] = round(
-        (controlled[rule.service] ?? 0) * rule.shareBySlot[index],
-        2,
-      );
+      const group = byService.get(rule.service);
+      if (group) group.push(rule);
+      else byService.set(rule.service, [rule]);
     } else {
       result[rule.key] = round(
         (roomHeating[rule.roomKey] ?? 0) * rule.share,
@@ -3187,7 +3199,90 @@ function empiricalDeviceLoads(
       );
     }
   }
+  for (const [service, rules] of byService) {
+    for (const [key, watts] of allocateWithinCeilings(
+      controlled[service] ?? 0,
+      rules.map((rule) => ({
+        key: rule.key,
+        share: rule.shareBySlot[index],
+        ceilingW: rule.ceilingW,
+      })),
+    )) {
+      result[key] = round(watts, 2);
+    }
+  }
   return result;
+}
+
+/**
+ * Split one dispatched run across the meters that make it up.
+ *
+ * The share comes from what each meter has historically drawn in this quarter,
+ * which is the right instinct and the wrong number on its own: in a quarter
+ * where the heater's history is zero and the pump's is not, the pump's share is
+ * one, and the breakdown credits a 412 W pump with the pool's whole 3500 W run.
+ * A deployed plan did exactly that for fourteen quarters, and reading the chart
+ * it looked like the pump ran on for hours after the heating stopped.
+ *
+ * So the share decides the order of preference and the ceiling decides what can
+ * actually land. Whatever a device cannot take passes to the ones that can, and
+ * the total is preserved either way — the breakdown is what the house is doing,
+ * so changing its sum would change the plan.
+ */
+function allocateWithinCeilings(
+  totalW: number,
+  parts: Array<{ key: string; share: number; ceilingW: number }>,
+): Array<[string, number]> {
+  const out = new Map(parts.map((part) => [part.key, 0]));
+  if (parts.length === 0) return [];
+  let remaining = totalW;
+  const open = new Set(parts.map((part) => part.key));
+  const byKey = new Map(parts.map((part) => [part.key, part]));
+
+  for (let pass = 0; pass <= parts.length && remaining > 1e-9; pass += 1) {
+    const openParts = [...open].map((key) => byKey.get(key)!);
+    if (openParts.length === 0) break;
+    const shareTotal = openParts.reduce(
+      (sum, part) => sum + Math.max(0, part.share),
+      0,
+    );
+    let capped = false;
+    for (const part of openParts) {
+      const want = shareTotal > 0
+        ? remaining * Math.max(0, part.share) / shareTotal
+        : remaining / openParts.length;
+      if (want > part.ceilingW + 1e-9) {
+        out.set(part.key, part.ceilingW);
+        remaining -= part.ceilingW;
+        open.delete(part.key);
+        capped = true;
+      }
+    }
+    if (capped) continue;
+    for (const part of openParts) {
+      const want = shareTotal > 0
+        ? remaining * Math.max(0, part.share) / shareTotal
+        : remaining / openParts.length;
+      out.set(part.key, (out.get(part.key) ?? 0) + want);
+    }
+    remaining = 0;
+  }
+
+  // Every ceiling reached and power still to place: the meters cannot explain
+  // the run. Spread it rather than lose it, because the sum is load-bearing.
+  if (remaining > 1e-9) {
+    const ceilingTotal = parts.reduce(
+      (sum, part) => sum + (Number.isFinite(part.ceilingW) ? part.ceilingW : 0),
+      0,
+    );
+    for (const part of parts) {
+      const weight = ceilingTotal > 0
+        ? (Number.isFinite(part.ceilingW) ? part.ceilingW : 0) / ceilingTotal
+        : 1 / parts.length;
+      out.set(part.key, (out.get(part.key) ?? 0) + remaining * weight);
+    }
+  }
+  return [...out];
 }
 
 function simulate(
