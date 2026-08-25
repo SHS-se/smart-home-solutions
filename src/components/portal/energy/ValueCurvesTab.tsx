@@ -592,7 +592,7 @@ const ValueCurvesTab: React.FC<Props> = ({
               {chart.length > 0 && (
                 <div className="h-48">
                   <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={chart} margin={{ top: 8, right: 8, bottom: 4, left: 0 }}>
+                    <LineChart data={chart} margin={{ top: 20, right: 60, bottom: 4, left: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
                       <XAxis
                         dataKey="at"
@@ -607,13 +607,13 @@ const ValueCurvesTab: React.FC<Props> = ({
                       />
                       <Line type="linear" dataKey="sekPerKwh" stroke="#2563eb" dot={false} strokeWidth={2} />
                       {typeof importPriceSekPerKwh === 'number' && (
-                        <ReferenceLine y={importPriceSekPerKwh} stroke="#dc2626" strokeDasharray="4 4" label={{ value: t('Köppris', 'Import'), fontSize: 10, position: 'right' }} />
+                        <ReferenceLine y={importPriceSekPerKwh} stroke="#dc2626" strokeDasharray="4 4" label={{ value: t('Köppris', 'Import'), fontSize: 11, fill: '#dc2626', position: 'right' }} />
                       )}
                       {typeof exportPriceSekPerKwh === 'number' && (
-                        <ReferenceLine y={exportPriceSekPerKwh} stroke="#059669" strokeDasharray="4 4" label={{ value: t('Säljpris', 'Export'), fontSize: 10, position: 'right' }} />
+                        <ReferenceLine y={exportPriceSekPerKwh} stroke="#059669" strokeDasharray="4 4" label={{ value: t('Säljpris', 'Export'), fontSize: 11, fill: '#059669', position: 'right' }} />
                       )}
                       {typeof state === 'number' && (
-                        <ReferenceLine x={state} stroke="#64748b" label={{ value: t('Nu', 'Now'), fontSize: 10, position: 'top' }} />
+                        <ReferenceLine x={state} stroke="#64748b" label={{ value: `${t('Nu', 'Now')} ${state.toFixed(1)} ${unitSuffix}`, fontSize: 11, fill: '#475569', position: 'top' }} />
                       )}
                     </LineChart>
                   </ResponsiveContainer>
