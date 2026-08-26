@@ -13,7 +13,7 @@ import {
   NOW_INDEX, SCREENSHOT_TOTALS, GROUPS,
 } from './data.mjs';
 import {
-  panelsChart, mirrorChart, repairedChart, decisionChart, matrixChart,
+  targetChart, panelsChart, mirrorChart, repairedChart, decisionChart, matrixChart,
 } from './charts.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -47,6 +47,7 @@ let running = 0;
 quarters.forEach((rec, i) => { running += rows[i].costSek; rec.cum = q(running); });
 
 const charts = {
+  target: targetChart(rows, NOW_INDEX),
   panels: panelsChart(rows, NOW_INDEX),
   mirror: mirrorChart(rows, NOW_INDEX),
   repaired: repairedChart(rows, NOW_INDEX),
@@ -86,6 +87,29 @@ const VOCAB = [
 ];
 
 const ALTERNATIVES = [
+  {
+    id: 'target',
+    tag: 'T',
+    target: true,
+    name: 'Refined target',
+    lede: "A's panels, D's cost curve, and a price line that shows what it costs.",
+    body: `Five panels over one time axis, read top to bottom as a sentence: what a
+    kilowatt-hour cost, where the power came from, what used it, what was left in store,
+    and what the whole thing added up to. Everything below <em>now</em> is drawn once, in
+    one place, so a moment in time is a column rather than a hunt.
+    <br><br>The price line is the change you asked for. Instead of one ink stroke it is
+    coloured along its length by how dear that quarter is — deep blue at the cheapest
+    quarter of the window, neutral through the middle, deep red at the dearest — with the
+    same ramp washed underneath and thin rules at the 25th and 75th percentiles. The two
+    horizontal lines are the answer to "is this a cheap hour?"; the colour is the answer
+    to "how cheap?".
+    <br><br>Blue↔red rather than Tibber's green→yellow→red. A three-hue rainbow has no
+    meaningful middle, and green versus red is exactly the pair a red-green reader cannot
+    separate — which here would be the pair carrying the entire message.`,
+    fixes: ['One unit per panel; no dual axis anywhere', 'Price magnitude readable without looking at the axis', 'The cost curve answers "was the plan worth it?" in the same column'],
+    costs: ['The tallest card of the six, around 670 px', 'The price ramp is one more scale to learn — hence its key in the panel'],
+    verdict: 'The target. Everything below is how it got here.',
+  },
   {
     id: 'panels',
     tag: 'A',
@@ -205,6 +229,13 @@ const FLOWS = [['Solar', '--c-solar'], ['Battery', '--c-battery'], ['Grid', '--c
 const LOADS = GROUPS.map(g => [g.label, `--c-${g.key}`]);
 
 const LEGENDS = {
+  target: [
+    ['Flows', FLOWS],
+    ['Loads', LOADS],
+    ['Lines', [['Buy price, cheap → dear', null, 'ramp'], ['Sell price', '--ink-muted', 'line'],
+      ['Solar', '--c-solar', 'dot'], ['Home SOC', '--c-battery', 'line'],
+      ['Car SOC', '--c-ev', 'line'], ['Cost to date', '--ink', 'line']]],
+  ],
   panels: [
     ['Flows', FLOWS],
     ['Loads', LOADS],
@@ -233,7 +264,9 @@ const LEGENDS = {
   ],
 };
 
-const legendMark = (cssVar, kind) => kind === 'line'
+const legendMark = (cssVar, kind) => kind === 'ramp'
+  ? '<span class="mk mk-ramp"></span>'
+  : kind === 'line'
   ? `<span class="mk mk-line" style="background:var(${cssVar})"></span>`
   : kind === 'dot'
     ? `<span class="mk mk-dot" style="background:repeating-linear-gradient(90deg,var(${cssVar}) 0 2px,transparent 2px 5px)"></span>`
@@ -248,7 +281,7 @@ const legendFor = id => `<div class="legend">${LEGENDS[id].map(([heading, items]
 const chartCard = alt => `
 <article class="alt" id="alt-${alt.id}">
   <header class="alt-head">
-    <div class="alt-tag">${alt.tag}</div>
+    <div class="alt-tag${alt.target ? ' is-target' : ''}">${alt.tag}</div>
     <div>
       <h2>${alt.name}</h2>
       <p class="lede">${alt.lede}</p>
@@ -308,6 +341,9 @@ const html = `<meta charset="utf-8">
   --cell-0: #f4f6f8; --cell-1: #dde3e9; --cell-2: #bcc7d2; --cell-3: #93a3b3;
   --cell-4: #6a7d90; --cell-5: #42566b; --cell-6: #1d2c3c;
 
+  --price-1: #1b5aa8; --price-2: #4a8ed6; --price-3: #9dc0e2; --price-4: #b9bcc0;
+  --price-5: #eda893; --price-6: #d4634f; --price-7: #a92e22;
+
   --font-sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-cond: "IBM Plex Sans Condensed", "IBM Plex Sans", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -347,6 +383,9 @@ const html = `<meta charset="utf-8">
 
     --cell-0: #171c22; --cell-1: #28313b; --cell-2: #3c4854; --cell-3: #56646f;
     --cell-4: #78868f; --cell-5: #a2adb5; --cell-6: #d5dde3;
+
+    --price-1: #8fc3f5; --price-2: #5f9fe8; --price-3: #3d78b8; --price-4: #7c828b;
+    --price-5: #c06a54; --price-6: #e07a63; --price-7: #f5a58e;
   }
 }
 :root[data-theme="dark"] {
@@ -383,6 +422,9 @@ const html = `<meta charset="utf-8">
 
   --cell-0: #171c22; --cell-1: #28313b; --cell-2: #3c4854; --cell-3: #56646f;
   --cell-4: #78868f; --cell-5: #a2adb5; --cell-6: #d5dde3;
+
+  --price-1: #8fc3f5; --price-2: #5f9fe8; --price-3: #3d78b8; --price-4: #7c828b;
+  --price-5: #c06a54; --price-6: #e07a63; --price-7: #f5a58e;
 }
 
 * { box-sizing: border-box; }
@@ -471,6 +513,8 @@ section.card, article.alt {
   display: grid; place-items: center;
   background: var(--ink); color: var(--surface);
 }
+.alt-tag.is-target { background: var(--accent); color: #ffffff; }
+article.alt:has(.is-target) { border-color: var(--accent); }
 .lede { color: var(--ink-soft); font-size: 16px; margin-top: 3px; }
 .alt-body { max-width: 76ch; color: var(--ink-soft); font-size: 14.5px; }
 
@@ -492,6 +536,13 @@ section.card, article.alt {
 .mk-box { width: 11px; height: 11px; border-radius: 2px; }
 .mk-line { width: 14px; height: 2.5px; border-radius: 2px; }
 .mk-dot { width: 14px; height: 2.5px; border-radius: 1px; }
+.mk-ramp {
+  width: 56px; height: 9px; border-radius: 2px;
+  background: linear-gradient(90deg,
+    var(--price-1) 0 14.28%, var(--price-2) 14.28% 28.57%, var(--price-3) 28.57% 42.85%,
+    var(--price-4) 42.85% 57.14%, var(--price-5) 57.14% 71.42%, var(--price-6) 71.42% 85.71%,
+    var(--price-7) 85.71% 100%);
+}
 
 .tip {
   position: absolute; z-index: 5; pointer-events: none;
@@ -568,9 +619,9 @@ details.tables > summary:focus-visible { outline: 2px solid var(--accent); outli
       The chart is hard to read, and it is not really the colours. It is trying to be
       four charts at once — kilowatts, per cent, kronor per kilowatt-hour and nineteen
       device meters — inside one box with three y-axes. Below: six concrete faults, then
-      five alternatives that each attack them from a different direction. All five are
-      drawn from the same dataset in the same colour vocabulary, so the only thing that
-      differs between them is the arrangement.
+      the <em>refined target</em> we landed on, followed by the five alternatives it was
+      assembled from. All six are drawn from the same dataset in the same colour
+      vocabulary, so the only thing that differs between them is the arrangement.
     </p>
     <div class="meta">
       <span><b>36 hours</b> · 144 quarters</span>
@@ -621,20 +672,20 @@ details.tables > summary:focus-visible { outline: 2px solid var(--accent); outli
   <section class="card close">
     <div>
       <p class="eyebrow">Recommendation</p>
-      <h2>C now, A as the destination, E as its own tab</h2>
+      <h2>Build T, keep E for the detail</h2>
       <p style="margin-top:14px;color:var(--ink-soft)">
-        <em>C</em> is the same chart with four changes and could be in production this
-        week: group the devices, move price and state of charge out to their own strips,
-        collapse the four flow lines into two signed ones. That removes every structural
-        fault without asking anyone to relearn the chart.
+        <em>T</em> is the one to build: A's panel stack, D's cumulative cost, and a price
+        line coloured by how dear the quarter is. It removes every structural fault at
+        once and it is the only version where the money question and the power question
+        share a time axis.
       </p>
       <p style="color:var(--ink-soft)">
-        <em>A</em> is where the form should land when there is time — it is the only one
-        that never forces two units to share a box, and it keeps working when the next
-        quantity needs a home. <em>E</em> solves a different problem: per-device detail
-        does not belong in the main chart at all, and as a matrix it becomes better than
-        it ever was as a stack. <em>B</em> and <em>D</em> are specialists — B for checking
-        that the numbers add up, D for showing a customer why the car charged at two.
+        <em>E</em> stays worth building separately. Per-device detail does not belong in
+        the main chart at all — nineteen meters cannot share eight colours — and as a
+        matrix it becomes better than it ever was as a stack. <em>B</em> and <em>D</em>
+        remain useful as specialists: B to check that the numbers add up, D to show a
+        customer why the car charged at two. <em>C</em> is the fallback if T turns out
+        too tall for the page it has to live on.
       </p>
     </div>
     <div class="runbox">
@@ -675,6 +726,9 @@ details.tables > summary:focus-visible { outline: 2px solid var(--accent); outli
   }
 
   var RENDER = {
+    target: function (rec) {
+      return RENDER.full(rec) + row('Cost so far', rec.cum.toFixed(2), 'kr');
+    },
     full: function (rec) {
       var groupRows = G.filter(function (g) { return rec.g[g[0]] >= 0.02; })
         .map(function (g) { return row(g[1], rec.g[g[0]].toFixed(2), 'kW'); }).join('');

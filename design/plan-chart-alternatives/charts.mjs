@@ -127,6 +127,224 @@ const endLabel = (value, x, y, colour, textValue) => group({}, [
 ]);
 
 // ===========================================================================
+// 0 — Refined target: A's panels, D's cost curve, and a priced price line
+// ===========================================================================
+
+/** Steps in the diverging cheap↔dear ramp. Odd, so there is a true middle. */
+const PRICE_STEPS = 7;
+
+/**
+ * Price colour is a *scale*, not a series: a diverging ramp with a neutral
+ * middle, binned linearly across the window's own range so the reader is
+ * always told "cheap or dear compared with the rest of what you can see".
+ *
+ * Blue↔red rather than Tibber's green→yellow→red: a three-hue rainbow has no
+ * meaningful midpoint, and green and red are the one pair a red-green reader
+ * cannot separate — which is precisely the pair carrying the whole message.
+ */
+const priceBinner = values => {
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+  return {
+    min,
+    max,
+    bin: value => Math.min(PRICE_STEPS, Math.max(1,
+      Math.ceil(((value - min) / span) * PRICE_STEPS) || 1)),
+  };
+};
+
+/** Hard-edged gradient: two stops per quarter, so the ramp steps like the data. */
+const priceGradient = (id, values, binner, x, n) => el('defs', {}, el('linearGradient', {
+  id,
+  gradientUnits: 'userSpaceOnUse',
+  x1: x(0), y1: 0, x2: x(n), y2: 0,
+}, values.flatMap((value, i) => {
+  const colour = `var(--price-${binner.bin(value)})`;
+  return [
+    el('stop', { offset: `${round((i / n) * 100)}%`, 'stop-color': colour }),
+    el('stop', { offset: `${round(((i + 1) / n) * 100)}%`, 'stop-color': colour }),
+  ];
+}).join('')));
+
+/** The ramp's own key, so a colour on the line can be turned back into a price. */
+const priceScaleKey = (binner, right, y) => group({}, [
+  text(`${binner.min.toFixed(2)}`, {
+    ...AXIS.label, x: right - PRICE_STEPS * 14 - 44, y: y + 8, 'text-anchor': 'end',
+  }),
+  ...Array.from({ length: PRICE_STEPS }, (_, i) => el('rect', {
+    x: right - PRICE_STEPS * 14 - 38 + i * 14, y, width: 13, height: 9,
+    fill: `var(--price-${i + 1})`,
+  })),
+  text(`${binner.max.toFixed(2)} SEK`, {
+    ...AXIS.label, x: right - PRICE_STEPS * 14 - 32 + PRICE_STEPS * 14, y: y + 8,
+  }),
+]);
+
+export const targetChart = (rows, nowIndex) => {
+  const n = rows.length;
+  const x = scale([0, n], [ML, ML + PLOT_W]);
+  const groups = groupSeries(rows);
+  const right = ML + PLOT_W;
+
+  const priceTop = 30;
+  const priceH = 66;
+  const flowTop = priceTop + priceH + 36;
+  const flowH = 122;
+  const loadTop = flowTop + flowH + 36;
+  const loadH = 136;
+  const socTop = loadTop + loadH + 36;
+  const socH = 60;
+  const costTop = socTop + socH + 36;
+  const costH = 72;
+  const axisY = costTop + costH;
+  const height = axisY + 40;
+
+  // --- Price, coloured by how dear it is ----------------------------------
+  const buy = rows.map(r => r.importPriceSekPerKwh);
+  const sell = rows.map(r => r.exportPriceSekPerKwh);
+  const binner = priceBinner(buy);
+  const priceY = scale([0, Math.max(...buy) * 1.14], [priceTop + priceH, priceTop]);
+  const sorted = [...buy].sort((a, b) => a - b);
+  const cheap = sorted[Math.floor(sorted.length * 0.25)];
+  const dear = sorted[Math.floor(sorted.length * 0.75)];
+
+  // --- Flows ---------------------------------------------------------------
+  const supplyBands = stackBands([
+    rows.map(r => Math.max(0, r.solarW - r.gridExportW - r.batteryChargeW)),
+    rows.map(r => r.batteryDischargeW),
+    rows.map(r => r.gridImportW),
+  ]);
+  const disposalBands = stackBands([
+    rows.map(r => r.batteryChargeW),
+    rows.map(r => r.gridExportW),
+  ]);
+  const flowMax = kW(Math.max(...supplyBands[2].map(p => p[1]))) * 1.12;
+  const flowMin = -kW(Math.max(...disposalBands[1].map(p => p[1]), 500)) * 1.1;
+  const flowY = scale([flowMin, flowMax], [flowTop + flowH, flowTop]);
+  const flowTicks = powerTicks(flowMin, flowMax, 4);
+
+  // --- Load ----------------------------------------------------------------
+  const loadBands = stackBands(groups.map(g => g.values.map(kW)));
+  const loadMax = Math.max(...loadBands[loadBands.length - 1].map(p => p[1])) * 1.1;
+  const loadY = scale([0, loadMax], [loadTop + loadH, loadTop]);
+
+  // --- Storage -------------------------------------------------------------
+  const socY = scale([0, 100], [socTop + socH, socTop]);
+
+  // --- Cost ----------------------------------------------------------------
+  let running = 0;
+  const cumulative = rows.map(r => { running += r.costSek; return running; });
+  const costMin = Math.min(0, ...cumulative);
+  const costMax = Math.max(...cumulative) * 1.18;
+  const costY = scale([costMin, costMax], [costTop + costH, costTop]);
+
+  const children = [
+    priceGradient('target-price-ramp', buy, binner, x, n),
+    planWash(x, nowIndex, n, priceTop - 12, axisY - priceTop + 12),
+
+    // Price -----------------------------------------------------------------
+    panelTitle('Price', 'SEK/kWh · buy, coloured cheap → dear', priceTop - 12),
+    priceScaleKey(binner, right, priceTop - 20),
+    ...powerTicks(0, Math.max(...buy) * 1.14, 3).map(t => group({}, [
+      el('line', { ...AXIS.grid, x1: ML, x2: right, y1: priceY(t), y2: priceY(t) }),
+      text(t.toFixed(1), { ...AXIS.label, x: ML - 8, y: priceY(t) + 3, 'text-anchor': 'end' }),
+    ])),
+    el('path', { d: stepArea(buy, x, priceY, 0), fill: 'url(#target-price-ramp)', 'fill-opacity': 0.2 }),
+    ...[cheap, dear].map(level => el('line', {
+      x1: ML, x2: right, y1: priceY(level), y2: priceY(level),
+      stroke: 'var(--ink-muted)', 'stroke-width': 1, 'stroke-opacity': 0.55,
+    })),
+    el('path', { d: stepLine(sell, x, priceY), fill: 'none', stroke: 'var(--ink-muted)', 'stroke-width': 1.25 }),
+    el('path', {
+      d: stepLine(buy, x, priceY), fill: 'none', stroke: 'url(#target-price-ramp)',
+      'stroke-width': 3, 'stroke-linejoin': 'round',
+    }),
+    text('buy', { x: right + 6, y: priceY(buy[n - 1]) + 3, fill: 'var(--ink)', 'font-size': 10, 'font-family': 'var(--font-mono)' }),
+    text('sell', { x: right + 6, y: priceY(sell[n - 1]) + 3, fill: 'var(--ink-muted)', 'font-size': 10, 'font-family': 'var(--font-mono)' }),
+
+    // Flows -----------------------------------------------------------------
+    panelTitle('Power flows', 'kW  ·  above zero = into the house, below = out of it', flowTop - 12),
+    ...flowTicks.map(t => group({}, [
+      el('line', { ...AXIS.grid, x1: ML, x2: right, y1: flowY(t), y2: flowY(t) }),
+      text(fmtKw(t), { ...AXIS.label, x: ML - 8, y: flowY(t) + 3, 'text-anchor': 'end' }),
+    ])),
+    ...[SOLAR, BATTERY, GRID].map((colour, i) => el('path', {
+      d: bandArea(supplyBands[i].map(p => [kW(p[0]), kW(p[1])]), x, flowY),
+      fill: colour, 'fill-opacity': 0.9,
+    })),
+    ...[BATTERY, GRID].map((colour, i) => el('path', {
+      d: bandArea(disposalBands[i].map(p => [-kW(p[0]), -kW(p[1])]), x, flowY),
+      fill: colour, 'fill-opacity': 0.42,
+    })),
+    bandSeparators(supplyBands.map(b => b.map(p => [kW(p[0]), kW(p[1])])), x, flowY),
+    el('line', { x1: ML, x2: right, y1: flowY(0), y2: flowY(0), stroke: 'var(--ink)', 'stroke-width': 1.25 }),
+    insideLabel(supplyBands[0].map(p => [kW(p[0]), kW(p[1])]), x, flowY, 'Solar'),
+    insideLabel(supplyBands[1].map(p => [kW(p[0]), kW(p[1])]), x, flowY, 'Battery out'),
+    insideLabel(supplyBands[2].map(p => [kW(p[0]), kW(p[1])]), x, flowY, 'Grid in'),
+    insideLabel(disposalBands[0].map(p => [-kW(p[0]), -kW(p[1])]), x, flowY, 'Battery in'),
+
+    // Consumption -----------------------------------------------------------
+    panelTitle('Consumption', 'kW  ·  six kinds of load, stacked', loadTop - 12),
+    ...powerTicks(0, loadMax, 3).map(t => group({}, [
+      el('line', { ...AXIS.grid, x1: ML, x2: right, y1: loadY(t), y2: loadY(t) }),
+      text(fmtKw(t), { ...AXIS.label, x: ML - 8, y: loadY(t) + 3, 'text-anchor': 'end' }),
+    ])),
+    ...loadBands.map((band, i) => el('path', {
+      d: bandArea(band, x, loadY), fill: GROUP_VAR[groups[i].key], 'fill-opacity': 0.92,
+    })),
+    bandSeparators(loadBands, x, loadY),
+    ...loadBands.map((band, i) => insideLabel(band, x, loadY, groups[i].short)),
+    el('path', {
+      d: stepLine(rows.map(r => kW(r.solarW)), x, loadY), fill: 'none', stroke: SOLAR,
+      'stroke-width': 2, 'stroke-dasharray': '1 3', 'stroke-linecap': 'round',
+    }),
+    text('solar', {
+      x: right + 6, y: loadY(kW(rows[n - 1].solarW)) + 3, fill: SOLAR,
+      'font-size': 10, 'font-family': 'var(--font-mono)',
+    }),
+
+    // Storage ---------------------------------------------------------------
+    panelTitle('Storage', '%', socTop - 12),
+    ...[0, 50, 100].map(t => group({}, [
+      el('line', { ...AXIS.grid, x1: ML, x2: right, y1: socY(t), y2: socY(t) }),
+      text(String(t), { ...AXIS.label, x: ML - 8, y: socY(t) + 3, 'text-anchor': 'end' }),
+    ])),
+    el('path', { d: stepArea(rows.map(r => r.homeSoc * 100), x, socY, 0), fill: BATTERY, 'fill-opacity': 0.22 }),
+    el('path', { d: stepLine(rows.map(r => r.homeSoc * 100), x, socY), fill: 'none', stroke: BATTERY, 'stroke-width': 2 }),
+    el('path', { d: smoothLine(rows.map(r => r.evSoc * 100), x, socY), fill: 'none', stroke: GROUP_VAR.ev, 'stroke-width': 2 }),
+    endLabel(0, right, socY(rows[n - 1].homeSoc * 100), BATTERY, `home ${Math.round(rows[n - 1].homeSoc * 100)}%`),
+    endLabel(0, right, socY(rows[n - 1].evSoc * 100), GROUP_VAR.ev, `car ${Math.round(rows[n - 1].evSoc * 100)}%`),
+
+    // Cost ------------------------------------------------------------------
+    panelTitle('What it costs', 'SEK, cumulative · import minus export payment', costTop - 12),
+    ...powerTicks(costMin, costMax, 4).map(t => group({}, [
+      el('line', { ...AXIS.grid, x1: ML, x2: right, y1: costY(t), y2: costY(t) }),
+      text(t.toFixed(0), { ...AXIS.label, x: ML - 8, y: costY(t) + 3, 'text-anchor': 'end' }),
+    ])),
+    el('path', { d: stepArea(cumulative, x, costY, 0), fill: 'var(--cost-wash)' }),
+    el('path', { d: stepLine(cumulative, x, costY), fill: 'none', stroke: 'var(--ink)', 'stroke-width': 2 }),
+    el('circle', { cx: x(nowIndex), cy: costY(cumulative[nowIndex]), r: 3.5, fill: 'var(--ink)', stroke: SURFACE, 'stroke-width': 2 }),
+    text(`${fmtSek(cumulative[nowIndex])} kr so far`, {
+      x: x(nowIndex) - 8, y: costY(cumulative[nowIndex]) - 8, 'text-anchor': 'end',
+      fill: 'var(--ink)', 'font-size': 10.5, 'font-family': 'var(--font-mono)', 'font-weight': 600,
+    }),
+    endLabel(0, right, costY(cumulative[n - 1]), 'var(--ink)', `${fmtSek(cumulative[n - 1])} kr`),
+
+    xAxis(rows, x, axisY),
+    nowLabel(x, nowIndex, priceTop - 12),
+  ];
+
+  return {
+    svg: svgRoot({
+      width: W, height, id: 'chart-target', children,
+      plot: { x0: ML, x1: right, y0: priceTop - 12, y1: axisY, n, fields: 'target' },
+    }),
+    height,
+  };
+};
+
+// ===========================================================================
 // 1 — Stacked panels
 // ===========================================================================
 
@@ -732,5 +950,5 @@ export const matrixChart = (rows, nowIndex) => {
   };
 };
 
-export const CHARTS = [panelsChart, mirrorChart, repairedChart, decisionChart, matrixChart];
+export const CHARTS = [targetChart, panelsChart, mirrorChart, repairedChart, decisionChart, matrixChart];
 export { GROUP_VAR, W, ML, PLOT_W };
