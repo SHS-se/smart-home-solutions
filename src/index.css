@@ -60,6 +60,40 @@
     --sidebar-accent-foreground: 210 11% 15%;
     --sidebar-border: 210 20% 91%;
     --sidebar-ring: 207 52% 37%;
+
+    /* Plan chart.
+       Plain hex rather than the HSL triples above, because these are read
+       straight into SVG fill/stroke and never go through Tailwind.
+
+       One colour per thing, held across every panel of the chart and never
+       recycled for a second meaning. Chosen as a set: each pair clears the
+       colour-vision-deficiency separation threshold (deutan, protan, tritan)
+       against the card surface, which is why the sun is orange rather than the
+       obvious yellow — yellow beside orange is a pair full-colour vision
+       cannot reliably split either. */
+    --plan-solar: #eb6834;
+    --plan-grid: #2a78d6;
+    --plan-battery: #1baf7a;
+    --plan-ev: #4a3aa7;
+    --plan-wash: rgba(42, 120, 214, 0.06);
+
+    /* Buy price, cheap to dear: a diverging ramp with a neutral middle. */
+    --plan-price-1: #1b5aa8;
+    --plan-price-2: #4a8ed6;
+    --plan-price-3: #9dc0e2;
+    --plan-price-4: #b9bcc0;
+    --plan-price-5: #eda893;
+    --plan-price-6: #d4634f;
+    --plan-price-7: #a92e22;
+
+    /* Device matrix, nothing to full power: one hue, light to dark. */
+    --plan-cell-0: #f4f6f8;
+    --plan-cell-1: #dde3e9;
+    --plan-cell-2: #bcc7d2;
+    --plan-cell-3: #93a3b3;
+    --plan-cell-4: #6a7d90;
+    --plan-cell-5: #42566b;
+    --plan-cell-6: #1d2c3c;
   }
 }
 
