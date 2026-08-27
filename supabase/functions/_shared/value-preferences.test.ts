@@ -3,6 +3,7 @@ import {
   curveFromPreference,
   DEFAULT_POOL_PREFERENCE,
   DEFAULT_REFERENCE_SEK_PER_KWH,
+  horizonReferenceSekPerKwh,
   preferenceFromCurve,
   validatePreference,
   vehiclePreference,
@@ -197,5 +198,61 @@ Deno.test("a curve too short to carry three thresholds is not guessed at", () =>
   assertEquals(
     preferenceFromCurve({ unit: "kwh", points: [{ at: 5, sek_per_unit: 1 }] }),
     null,
+  );
+});
+
+Deno.test("the reference is what cheap energy costs, not the middle of the day", () => {
+  // Nine ordinary quarters and one cheap one: the cheap one is the answer,
+  // because the comfortable threshold is defined as the price a store will
+  // still pay and an expensive hour is the thing it must decline.
+  const prices = [2, 2, 2, 2, 2, 2, 2, 2, 2, 0.5];
+  assertEquals(horizonReferenceSekPerKwh(prices), 0.5);
+});
+
+Deno.test("a horizon with no cheap window anchors high, so a store buys anyway", () => {
+  // The self-correcting half: waiting is only worth it when there is something
+  // to wait for, and nothing here says there is.
+  const flat = new Array(48).fill(1.8);
+  assertEquals(horizonReferenceSekPerKwh(flat), 1.8);
+});
+
+Deno.test("prices that are not prices are ignored rather than averaged in", () => {
+  const prices = [Number.NaN, -1, 0, 1.2, 1.4, 1.6];
+  assertEquals(horizonReferenceSekPerKwh(prices), 1.2);
+});
+
+Deno.test("a horizon with no usable price falls back rather than returning zero", () => {
+  // A zero reference collapses the whole curve, so every threshold would be
+  // worth nothing and the store would never bid at any price.
+  assertEquals(horizonReferenceSekPerKwh([], 1.75), 1.75);
+  assertEquals(horizonReferenceSekPerKwh([Number.NaN]), 2);
+});
+
+Deno.test("re-anchoring moves the level and leaves the thresholds alone", () => {
+  const preference = {
+    urgent_below: 28,
+    comfortable: 30,
+    indifferent_above: 32,
+  };
+  const scale = { units_per_kwh: 0.0704, reference_sek_per_kwh: 2.506 };
+  const stored = curveFromPreference(preference, "celsius", scale);
+  const anchored = curveFromPreference(preference, "celsius", {
+    ...scale,
+    reference_sek_per_kwh: horizonReferenceSekPerKwh([0.93, 1.5, 2.2, 2.8]),
+  });
+
+  assertEquals(preferenceFromCurve(stored), preference);
+  assertEquals(preferenceFromCurve(anchored), preference);
+  assert(
+    anchored.points[0].sek_per_unit < stored.points[0].sek_per_unit,
+    "a cheaper horizon must lower what a degree is worth paying for",
+  );
+  // And the shape is untouched: urgent stays exactly URGENT_MULTIPLE times
+  // comfortable, whatever the level.
+  assertEquals(
+    Math.round(
+      anchored.points[0].sek_per_unit / anchored.points[1].sek_per_unit,
+    ),
+    Math.round(stored.points[0].sek_per_unit / stored.points[1].sek_per_unit),
   );
 });

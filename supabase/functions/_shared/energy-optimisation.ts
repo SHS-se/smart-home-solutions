@@ -41,6 +41,11 @@ import {
   DEFAULT_VALUE_SETTINGS,
   type ValueStoreKey,
 } from "./value-curves.ts";
+import {
+  curveFromPreference,
+  horizonReferenceSekPerKwh,
+  preferenceFromCurve,
+} from "./value-preferences.ts";
 
 /**
  * Snapshot versions this planner can read, and the plan version it emits.
@@ -67,10 +72,14 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6] as const;
  * meaningless. v8 makes comfort schedules room-temperature constraints and
  * moves preheating inside the shared electrical objective. v10 replaces the
  * battery's peak-price step with the weighted merit order of displaced import.
+ * v12 re-states the pool's stored preference curve against the horizon's own
+ * prices and values its heat as state carried to the horizon edge rather than
+ * by how much of the horizon remains, which is what lets it decline a dear day
+ * and bank a sunny one (§8.13).
  * v11 integrates every sizeable curve move, applies configured EV curves,
  * prices minimum runs as complete blocks and records exact quarter evidence.
  */
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v11";
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v12";
 /** The planner a schema 5 snapshot still receives, unchanged. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v8";
 export const SLOT_MINUTES = 15;
@@ -2148,10 +2157,57 @@ function buildDispatchStores(
     return undefined;
   };
 
+  /**
+   * The fixed power the installation states its pool heat pump draws.
+   *
+   * Same argument as `declaredMinRun` above: a hard-coded seed is a guess about
+   * hardware the snapshot already describes. `fixed_power` is also a statement
+   * that the device has one power and no other, which is what makes the store's
+   * minimum equal to its maximum below.
+   */
+  const declaredFixedPowerW = (
+    device: ServiceInput["device"],
+  ): number | undefined => {
+    for (const service of snapshot.services) {
+      if (service.device !== device) continue;
+      if (service.control?.type !== "fixed_power") continue;
+      const declared = service.control.power_w;
+      if (typeof declared === "number" && declared > 0) return declared;
+    }
+    return undefined;
+  };
+
   if (snapshot.schema_version < 6) return null;
   const stores: DispatchStore[] = [];
   const count = slots.length;
   const outdoor = snapshot.outdoor_temperature_c as number[] | null;
+  /**
+   * Re-state a stored preference curve against this horizon's own prices.
+   *
+   * The customer states *where* their thresholds are and the arithmetic states
+   * what they are worth (§8.10). The editor did both, once, against whatever
+   * price was showing at the time, and froze the result — so the levels went on
+   * describing a week that had already happened. Rebuilding them here keeps the
+   * thresholds exactly as stated and lets only the level move.
+   *
+   * Only a curve this system generated is re-anchored. `preferenceFromCurve`
+   * returns null for any other shape, and a hand-written curve is a statement
+   * in absolute money that nobody asked us to reinterpret.
+   */
+  const anchorToHorizon = (
+    stored: UtilityCurve,
+    unitsPerKwh: number,
+  ): UtilityCurve => {
+    const preference = preferenceFromCurve(stored);
+    if (!preference || !(unitsPerKwh > 0)) return stored;
+    return curveFromPreference(preference, stored.unit, {
+      units_per_kwh: unitsPerKwh,
+      reference_sek_per_kwh: horizonReferenceSekPerKwh(
+        slots.map((slot) => slot.shadow_import_sek_per_kwh),
+      ),
+    });
+  };
+
   const curves = {
     pool: snapshot.value_curves?.pool ?? DEFAULT_VALUE_CURVES.pool,
     ev: snapshot.value_curves?.ev ?? DEFAULT_VALUE_CURVES.ev,
@@ -2174,21 +2230,44 @@ function buildDispatchStores(
     };
     const capacityKwhPerK = pool.volume_m3 * WATER_KWH_PER_M3_K;
     const airAt = (index: number) => outdoor?.[index] ?? 15;
+    const poolPowerW = declaredFixedPowerW("pool") ??
+      SEEDED_POOL_HEAT_PUMP.rated_power_w;
+    // The COP at the pool's current state is what converts a price into a value
+    // per degree, and it is the same conversion the editor showed.
+    const poolUnitsPerKwh =
+      poolCop(model.heat_pump, airAt(0), pool.water_temperature_c) /
+      capacityKwhPerK;
     stores.push({
       key: "pool",
-      curve: curves.pool,
+      curve: anchorToHorizon(curves.pool, poolUnitsPerKwh),
       initial_state: pool.water_temperature_c,
-      max_power_w: SEEDED_POOL_HEAT_PUMP.rated_power_w,
+      max_power_w: poolPowerW,
+      // A `fixed_power` heat pump has one power and off, so the auction may
+      // only bid that. Without a floor `executablePowerLevels` treats zero as
+      // the minimum and bids any fraction of it: while the pool's curve outbids
+      // every price the winner is always full power and nothing shows, but the
+      // moment it stops dominating the plan schedules 38 W, 59 W and 340 W
+      // tracking PV — a modulation the relay does not have (§8.13).
+      min_power_w: poolPowerW,
       // Four quarters where the installation states nothing: a heat pump that
       // short-cycles wears out, and that is a property of the hardware rather
       // than of this plan.
       min_run_slots: declaredMinRun("pool") ?? 4,
       start_cost_sek: 0.5,
-      // Warmth is wanted whenever somebody might swim, so the weight spreads
-      // across the horizon rather than landing on a deadline. Replacing this
-      // with observed pool use — the swim counter already exists — is what
-      // turns a guess about the household into evidence about it.
-      usage_weight: new Array(count).fill(1 / Math.max(1, count)),
+      // Heat is valued as state carried to the horizon edge, discounted by
+      // what leaks on the way — the same construction as the battery below,
+      // with a real decay instead of one.
+      //
+      // The previous weighting spread usage uniformly across the horizon and
+      // ended it there, which made `retentionBySlot` count *remaining
+      // occasions*: 0.81 at the start against 0.08 at the end. That is a
+      // tenfold tax on waiting, larger than any price difference in the
+      // horizon, and it is levied on exactly the decision §8.13 needs the pool
+      // to be able to make. A pool at 27.4 °C — below the household's own
+      // "really want heat" threshold — refused 30 kWh of surplus on the
+      // sunniest day of a plan and the house exported it instead.
+      usage_weight: new Array(count).fill(0),
+      terminal_weight: 1,
       retention_per_slot: Math.max(
         0.9,
         1 - model.loss_kw_per_k * SLOT_HOURS / capacityKwhPerK,

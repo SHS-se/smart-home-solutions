@@ -1695,7 +1695,7 @@ Deno.test("schema 6 with pool state dispatches by temperature, not by budget", (
   const plan = generateOptimisationPlan(snapshot, new Date(NOW));
 
   assertEquals(plan.schema_version, 6);
-  assertEquals(plan.model_version, "marginal-value-planner-v11");
+  assertEquals(plan.model_version, "marginal-value-planner-v12");
   // Asserted explicitly: an earlier version of this test checked the pool
   // energy but not the status, and so passed while every schema 6 plan was
   // reported infeasible by validations that still assumed fixed blocks.
@@ -2223,9 +2223,18 @@ Deno.test("the plan explains why each store bought what it did", () => {
   // Establishing that previously meant querying the database for the snapshot
   // and re-running the planner locally, because the plan said only that it was
   // valid. It now carries the comparison that produced the outcome.
+  //
+  // The air is held at the water temperature so the pool neither gains nor
+  // loses, which is what isolates the subject. Over the fixture's 72 hours a
+  // pool losing heat to 22 °C air falls about 3.4 °C — well into the steep part
+  // of its curve — and buying cheap surplus now to prevent that is correct, not
+  // a defect. It only looked like one while `retentionBySlot` discounted the
+  // far end of the horizon to nothing (§8.13). What is under test here is the
+  // marginal-value comparison, not the decay, so the fixture removes the decay.
   const base = horizon();
   const snapshot = horizon({
     pool: { water_temperature_c: 30.15, volume_m3: 55 },
+    outdoor_temperature_c: base.slots.map(() => 30.15),
     capabilities: { ...base.capabilities, ev: true, pool: true },
     ev_battery: {
       name: "Tesla Model Y",
@@ -2745,5 +2754,126 @@ Deno.test("the plan prices pool heat at COP(air), not at the meter", () => {
     seededCop(24) / seededCop(12),
     1e-3,
     "a warm day must buy proportionally more pool heat per kilowatt-hour",
+  );
+});
+
+/**
+ * A dear, sunless first day followed by two cheap sunny ones, with the pool
+ * carrying the reference home's *stored* curve — the one the editor anchored at
+ * 2.51 SEK/kWh, whose urgent threshold is 7.52 and whose comfortable threshold
+ * is 2.51, both above every price in this horizon.
+ *
+ * That curve is the point. Left as stored it outbids the whole board and the
+ * pool heats through the dearest quarters available; re-anchored to what cheap
+ * energy actually costs here, the same three thresholds and the same
+ * `URGENT_MULTIPLE` put urgent at 3.0 and the dear day stops clearing.
+ */
+const splitHorizon = (
+  dearFirstDaySekPerKwh: number,
+  overrides: Partial<OptimisationSnapshot> = {},
+  exportSekPerKwh = 0.5,
+): OptimisationSnapshot => {
+  const start = Date.parse("2026-08-10T08:00:00.000Z");
+  const slots = Array.from({ length: 288 }, (_value, index) => {
+    const hour = ((index / 4) + 10) % 24;
+    const firstDay = index < 96;
+    const pv = !firstDay && hour >= 6 && hour <= 18
+      ? Math.round(9_000 * Math.sin(((hour - 6) / 12) * Math.PI))
+      : 0;
+    return {
+      start: new Date(start + index * 15 * 60_000).toISOString(),
+      pv_forecast_w: pv,
+      base_load_forecast_w: 1_000,
+      base_load_p10_w: 800,
+      base_load_p90_w: 1_400,
+      import_price_sek_per_kwh: firstDay ? dearFirstDaySekPerKwh : 1.0,
+      export_price_sek_per_kwh: exportSekPerKwh,
+    };
+  });
+  return input({
+    schema_version: 6,
+    slots,
+    outdoor_temperature_c: slots.map(() => 20),
+    services: [],
+    service_requirement_sample_days: {},
+    pool: { water_temperature_c: 27, volume_m3: 55 },
+    value_curves: {
+      pool: {
+        unit: "celsius",
+        points: [
+          { at: 28, sek_per_unit: 104.56 },
+          { at: 30, sek_per_unit: 34.85 },
+          { at: 32, sek_per_unit: 0 },
+        ],
+      },
+    },
+    ...overrides,
+  });
+};
+
+const poolKwhBetween = (
+  plan: ReturnType<typeof generateOptimisationPlan>,
+  from: number,
+  to: number,
+) =>
+  plan.plans.priority.slots.slice(from, to).reduce(
+    (total, slot) => total + slot.pool_w / 1_000 * 0.25,
+    0,
+  );
+
+// §8.12 acceptance test 8.
+Deno.test("a dear day is skipped when the forecast carries the sun to replace it", () => {
+  const plan = generateOptimisationPlan(splitHorizon(3.5), new Date(NOW));
+
+  assertEquals(plan.status, "ready");
+  assertEquals(plan.validation_errors, []);
+  const dearDay = poolKwhBetween(plan, 0, 96);
+  const sunnyDays = poolKwhBetween(plan, 96, 288);
+
+  assert(sunnyDays > 5, `the pool still has to heat, got ${sunnyDays} kWh`);
+  assert(
+    dearDay < sunnyDays * 0.05,
+    `a 3.5 SEK/kWh day with two sunny 1.0 SEK/kWh days behind it must be ` +
+      `skipped, took ${dearDay} kWh against ${sunnyDays}`,
+  );
+});
+
+// §8.12 acceptance test 9, and the other direction of the same comparison: the
+// pool is not being asked to want heat less, only to want it where it is cheap.
+//
+// The contrast is the export price, because that is the actual question. A pool
+// inside its band values a kilowatt-hour of heat at about 1.9 SEK here, so
+// surplus at 0.5 is worth banking and surplus at 3.0 is worth selling, and the
+// planner has to reach opposite conclusions from the same physics. Contrasting
+// a warm pool against a full one does not work: over 72 hours against 20 °C air
+// a pool at 32 °C loses 4.7 °C and is hungry again well before the horizon ends,
+// which is a fact about the store rather than about the price.
+Deno.test("surplus is banked while the pool values it above what it would fetch", () => {
+  const warmPool = { pool: { water_temperature_c: 29, volume_m3: 55 } };
+  const cheapExport = generateOptimisationPlan(
+    splitHorizon(1.0, warmPool, 0.5),
+    new Date(NOW),
+  );
+  const dearExport = generateOptimisationPlan(
+    splitHorizon(1.0, warmPool, 3.0),
+    new Date(NOW),
+  );
+
+  const poolKwh = (plan: ReturnType<typeof generateOptimisationPlan>) =>
+    poolKwhBetween(plan, 0, plan.plans.priority.slots.length);
+
+  assert(
+    poolKwh(cheapExport) > 5,
+    `surplus worth 0.5 belongs in the pool, got ${poolKwh(cheapExport)} kWh`,
+  );
+  assert(
+    poolKwh(dearExport) < poolKwh(cheapExport),
+    `surplus worth 3.0 is worth more sold: ${poolKwh(dearExport)} kWh against ` +
+      `${poolKwh(cheapExport)}`,
+  );
+  assert(
+    cheapExport.plans.priority.summary.grid_export_kwh <
+      dearExport.plans.priority.summary.grid_export_kwh,
+    "and the energy the pool kept is energy that was not sold",
   );
 });

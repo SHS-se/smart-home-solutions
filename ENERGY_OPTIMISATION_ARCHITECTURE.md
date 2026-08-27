@@ -3336,6 +3336,69 @@ Both are whole-plan tests. Heuristic #3 is currently reproduced only at the unit
 level against `store-models.ts` (§8.12.1), which is why a plan contradicting it
 in both directions shipped without a failing test.
 
+#### Implementation status (2026-08-27), and what the fix actually was
+
+`marginal-value-planner-v12`. Three changes, none of them the derived curve this
+section asked for.
+
+| Piece | State |
+|---|---|
+| Findings 2 and 3, the value model | **Landed.** The stored preference curve is re-stated against the horizon's own prices at plan time, and pool heat is valued as state carried to the horizon edge instead of by how much of the horizon remains |
+| The pool's power contract | **Landed.** `min_power_w` equals `max_power_w`, and both come from the service's declared `fixed_power` rather than a seeded constant |
+| Finding 1, a curve derived on the §8.4 pattern | **Not landed.** See below — the anchoring is a cheaper approximation and its limit is known |
+| `recostSlot` counting battery discharge as spare PV | Not started |
+| `StoreDiagnostic.reason` for a store at its state cap | Not started |
+| The EV carrying the same defect | Not started |
+
+Against capsule `1bdbb1b1`, all four quarters:
+
+| | Pool | Ends at | Pool energy cost | House import | House export | 27 Aug (dearest) | 30 Aug (sunniest) |
+|---|---|---|---|---|---|---|---|
+| v11 | 90.1 kWh | 27.36 °C | 111.6 SEK | 86.4 kWh | 15.0 kWh | 20.1 kWh | 0 |
+| v12 | 124.8 kWh | **29.48 °C** | 119.6 SEK | 101.7 kWh | **1.9 kWh** | **0** | **43.2 kWh** (26.2 solar) |
+
+Both halves of §8.12 #3 now appear. The plan buys *more* pool energy and ends
+2.1 °C warmer, which is the point: the objective was never to heat less, only to
+heat where it is cheap. Whole-plan net cost falls from 97.3 SEK to 68.7.
+
+**What the fix was.** Not a new value function — a correction to where an
+existing one is evaluated. `curveFromPreference` already converts three
+thresholds into money using a reference price, and §8.10's rule is that the
+customer states where the thresholds are and the arithmetic states what they are
+worth. The arithmetic was being done once, in the browser, against whatever price
+was showing when the editor was last opened, and frozen into the stored curve.
+Doing it at plan time against the horizon makes the same three thresholds and the
+same `URGENT_MULTIPLE` land where they were always meant to: urgent moves from
+7.52 SEK/kWh, nearly three times the dearest quarter on the board, to 2.78, which
+is what "clears the dearest hour a household would ever face" means.
+
+The reference is the cheapest tenth of the horizon rather than its middle,
+because `curveFromPreference` defines the comfortable threshold as the price a
+store will still pay while declining an expensive hour. That is the price of
+cheap grid, and a low quantile is where it lives.
+
+**The limit of doing it this way.** The anchor reads the *price* of cheap energy
+and not *how much* of it there is, so a horizon with one cheap quarter and a
+horizon with fifty anchor identically. A curve built the way `deriveBatteryValueCurve`
+builds one — over the merit order of the energy actually available — would not
+have that blind spot, and finding 1 still stands. `CHEAP_PRICE_QUANTILE = 0.1` is
+also calibrated against a single horizon; the two acceptance tests below hold it
+in place, but a quantile is a weaker thing than a merit order and should be
+replaced by one rather than tuned.
+
+**Two existing tests changed, and neither was adjusted to pass.**
+
+The fixture in "the plan explains why each store bought what it did" held its air
+at 22 °C against 30.15 °C water, so over 72 hours the pool lost 3.4 °C into the
+steep part of its curve. Buying cheap surplus to prevent that is correct, and the
+test only ever passed because `retentionBySlot` discounted the far end of the
+horizon to nothing. Its subject is the diagnostic, so the air now sits at the
+water temperature and the decay it was never testing is gone.
+
+Acceptance tests 8 and 9 from the table above are added, both whole-plan, both
+carrying the reference home's actual stored curve so that what they exercise is
+the anchoring rather than a convenient fixture.
+
 ### 8.14 The pool heat pump changes type, and the model must tier rather than move (2026-08-27)
 
 The reference installation's pool heat pump is being replaced: air-to-water out,

@@ -199,3 +199,57 @@ export function validatePreference(
 }
 
 const round = (value: number) => Math.round(value * 1e6) / 1e6;
+
+/**
+ * The share of a horizon's prices that counts as "cheap energy here".
+ *
+ * A tenth. `curveFromPreference` pins the comfortable threshold at exactly what
+ * the energy costs, and the operational reading of that — stated where the
+ * function is defined — is that a store sitting at its comfortable level "will
+ * take surplus and cheap grid but decline an expensive hour". So the reference
+ * has to be the price of *cheap grid*, which is a low quantile of the horizon,
+ * not the middle of it and not a long-run average.
+ */
+export const CHEAP_PRICE_QUANTILE = 0.1;
+
+/**
+ * What cheap energy costs over one planning horizon.
+ *
+ * The reference price is the whole level of a preference curve: the comfortable
+ * threshold sits at it and the urgent threshold at `URGENT_MULTIPLE` times it.
+ * Taking it from the horizon rather than from a stored figure is what makes the
+ * curve answer a question about *these three days* instead of about a typical
+ * week, and it is the smaller half of §8.13: a curve whose levels sit above
+ * every price in the horizon can express whether to heat but never when.
+ *
+ * The reference the editor used was the home's typical all-in import price,
+ * frozen into the stored curve when someone last opened it. For one reference
+ * home that was 2.51 SEK/kWh against a horizon topping out at 2.87, which put
+ * the urgent threshold at 7.52 — nearly three times the dearest quarter on the
+ * board — and the pool ran twenty-four hours a day without ever consulting a
+ * price. Re-anchored, the same three thresholds and the same `URGENT_MULTIPLE`
+ * put urgent at 2.78, which is what "clears the dearest hour a household would
+ * ever face" was always supposed to mean.
+ *
+ * It is self-correcting in both directions, which is why no rule about cloudy
+ * days is needed anywhere: a horizon with a cheap window anchors low and the
+ * store waits for it, and a flat expensive week anchors high and the store buys,
+ * because there is nothing to wait for.
+ */
+export function horizonReferenceSekPerKwh(
+  pricesSekPerKwh: readonly number[],
+  fallbackSekPerKwh = DEFAULT_REFERENCE_SEK_PER_KWH,
+): number {
+  const usable = pricesSekPerKwh
+    .filter((price) => Number.isFinite(price) && price > 0)
+    .sort((a, b) => a - b);
+  if (usable.length === 0) return fallbackSekPerKwh;
+  // The last price inside the cheapest tenth, zero-indexed. `Math.floor` here
+  // names the one *after* it, which on a ten-price horizon returns the second
+  // cheapest and calls it the tenth percentile.
+  const at = Math.min(
+    usable.length - 1,
+    Math.max(0, Math.ceil(CHEAP_PRICE_QUANTILE * usable.length) - 1),
+  );
+  return usable[at];
+}
