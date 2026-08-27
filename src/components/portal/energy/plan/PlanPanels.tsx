@@ -19,12 +19,13 @@ import React, { useMemo, useRef, useState } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import {
   linearScale, midpointLinePath, niceTicks, placeBandLabels, stackBands,
-  stepAreaPath, stepBandPath, stepLinePath, type Scale,
+  stepAreaPath, stepBandPath, stepLinePath, type BandLabelPlacement, type Scale,
 } from '@/lib/energy-shift/plan-chart-geometry';
 import {
   PRICE_RAMP_STEPS, priceBands, priceGradientStops,
 } from '@/lib/energy-shift/price-bands';
 import type { ConsumptionSeries } from '@/lib/energy-shift/consumption-series';
+import { powerFlowMagnitudes } from '@/lib/energy-shift/power-flows';
 import { loadColour, PLAN_COLOURS } from './types';
 
 export interface PlanPanelRow {
@@ -32,6 +33,11 @@ export interface PlanPanelRow {
   /** Axis label for this quarter, already localised. */
   label: string;
   measured: boolean;
+  /**
+   * Power, in watts. Signs are ignored: import and export are separate fields,
+   * as are charge and discharge, so which way the energy went is already
+   * carried by which field it is in (see power-flows.ts).
+   */
   solarW: number | null;
   loadW: number | null;
   gridImportW: number | null;
@@ -94,6 +100,32 @@ const EndLabel: React.FC<{ y: number; colour: string; children: string }> = ({ y
   </g>
 );
 
+/** Band order in the flow panel, so a placement can be turned back into a name. */
+const FLOW_NAMES = (t: (sv: string, en: string) => string): string[] => [
+  t('Sol', 'Solar'), t('Batteri ut', 'Battery out'), t('Nätimport', 'Grid in'),
+  t('Batteri in', 'Battery in'), t('Nätexport', 'Grid out'),
+];
+
+/** A band's own name, written inside it where there is room. */
+const InlineLabel: React.FC<{
+  placement: BandLabelPlacement;
+  children: React.ReactNode;
+}> = ({ placement, children }) => (
+  <g>
+    <rect
+      x={placement.x - placement.width / 2} y={placement.y - placement.height / 2}
+      width={placement.width} height={placement.height} rx={3}
+      className="fill-card" fillOpacity={0.85}
+    />
+    <text
+      x={placement.x} y={placement.y + 4} textAnchor="middle"
+      className="fill-foreground text-[9.5px] font-medium"
+    >
+      {children}
+    </text>
+  </g>
+);
+
 /** Long enough to name the meter, short enough not to span the plot. */
 const INLINE_NAME_MAX = 20;
 const shorten = (name: string): string =>
@@ -143,20 +175,14 @@ const PlanPanels: React.FC<{
     const priceY = linearScale([0, priceMax], [price.top + price.height, price.top]);
 
     // --- Flows: into the house above zero, out of it below ----------------
-    // Solar counted here is what the house used *directly*: what the panels
-    // made, less whatever was exported or stored. Counting all of it would
-    // credit the same watt twice.
+    const flows = powerFlowMagnitudes(rows);
+    const toKw = (values: number[]) => values.map(watts => watts / 1_000);
+    const toNegativeKw = (values: number[]) => values.map(watts => -watts / 1_000);
     const supply = stackBands([
-      rows.map(row => Math.max(
-        0,
-        (row.solarW ?? 0) - (row.gridExportW ?? 0) - (row.batteryChargeW ?? 0),
-      ) / 1_000),
-      rows.map(row => (row.batteryDischargeW ?? 0) / 1_000),
-      rows.map(row => (row.gridImportW ?? 0) / 1_000),
+      toKw(flows.solarDirect), toKw(flows.batteryOut), toKw(flows.gridIn),
     ]);
     const disposal = stackBands([
-      rows.map(row => -(row.batteryChargeW ?? 0) / 1_000),
-      rows.map(row => -(row.gridExportW ?? 0) / 1_000),
+      toNegativeKw(flows.batteryIn), toNegativeKw(flows.gridOut),
     ]);
     const flowMax = Math.max(0.5, ...supply[2].map(pair => pair[1])) * 1.12;
     const flowMin = Math.min(-0.5, ...disposal[1].map(pair => pair[0])) * 1.1;
@@ -172,6 +198,8 @@ const PlanPanels: React.FC<{
       ...loadBands[loadBands.length - 1].map(pair => pair[1]),
       ...rows.map(row => (row.solarW ?? 0) / 1_000),
     ) * 1.1;
+    const flowLabels = placeBandLabels([...supply, ...disposal], FLOW_NAMES(t), x, flowY);
+
     const loadY = linearScale([0, loadMax], [load.top + load.height, load.top]);
     const loadLabels = placeBandLabels(
       loadBands,
@@ -190,15 +218,15 @@ const PlanPanels: React.FC<{
     return {
       x, axisY, height: axisY + 42,
       price, priceY, priceMax, buy, sell, bands,
-      flow, flowY, flowMin, flowMax, supply, disposal,
+      flow, flowY, flowMin, flowMax, supply, disposal, flowLabels,
       load, loadY, loadMax, loadBands, loadLabels,
       soc, socY, cost, costY, cumulative, costMin, costMax,
     };
-  }, [baseValues, n, rows, series, showSoc]);
+  }, [baseValues, n, rows, series, showSoc, t]);
 
   const {
     x, axisY, height, price, priceY, priceMax, buy, sell, bands,
-    flow, flowY, flowMin, flowMax, supply, disposal,
+    flow, flowY, flowMin, flowMax, supply, disposal, flowLabels,
     load, loadY, loadMax, loadBands, loadLabels,
     soc, socY, cost, costY, cumulative, costMin, costMax,
   } = geometry;
@@ -372,6 +400,11 @@ const PlanPanels: React.FC<{
             x1={MARGIN_LEFT} x2={RIGHT} y1={flowY(0)} y2={flowY(0)}
             className="stroke-foreground" strokeWidth={1.25}
           />
+          {flowLabels.map(placement => (
+            <InlineLabel key={placement.band} placement={placement}>
+              {FLOW_NAMES(t)[placement.band]}
+            </InlineLabel>
+          ))}
 
           {/* ---------------------------------------------- Consumption --- */}
           <PanelHeading
@@ -402,19 +435,9 @@ const PlanPanels: React.FC<{
             />
           ))}
           {loadLabels.filter(placement => placement.band > 0).map(placement => (
-            <g key={`${series[placement.band - 1].key}-label`}>
-              <rect
-                x={placement.x - placement.width / 2} y={placement.y - placement.height / 2}
-                width={placement.width} height={placement.height} rx={3}
-                className="fill-card" fillOpacity={0.85}
-              />
-              <text
-                x={placement.x} y={placement.y + 4} textAnchor="middle"
-                className="fill-foreground text-[9.5px] font-medium"
-              >
-                {shorten(series[placement.band - 1].name)}
-              </text>
-            </g>
+            <InlineLabel key={series[placement.band - 1].key} placement={placement}>
+              {shorten(series[placement.band - 1].name)}
+            </InlineLabel>
           ))}
           {/* Solar as an outline over the stack, so "did the sun cover it?" is
               one comparison between two edges rather than a hunt through fills. */}
@@ -590,12 +613,16 @@ const PlanTooltip: React.FC<{
 }) => {
   const { t } = useLanguage();
 
-  const flows: Array<[string, number | null, string]> = [
-    [t('Sol', 'Solar'), kw(row.solarW), PLAN_COLOURS.solar],
-    [t('Nätimport', 'Grid in'), kw(row.gridImportW), PLAN_COLOURS.grid],
-    [t('Nätexport', 'Grid out'), kw(row.gridExportW), PLAN_COLOURS.grid],
-    [t('Batteri ut', 'Battery out'), kw(row.batteryDischargeW), PLAN_COLOURS.battery],
-    [t('Batteri in', 'Battery in'), kw(row.batteryChargeW), PLAN_COLOURS.battery],
+  // Magnitudes, like the panel: "Battery in −3.59 kW" says the same thing
+  // twice, once in the label and once in a minus sign that disagrees with the
+  // band it is describing.
+  const magnitudes = powerFlowMagnitudes([row]);
+  const flows: Array<[string, number, string]> = [
+    [t('Sol', 'Solar'), magnitudes.solarDirect[0] / 1_000, PLAN_COLOURS.solar],
+    [t('Nätimport', 'Grid in'), magnitudes.gridIn[0] / 1_000, PLAN_COLOURS.grid],
+    [t('Nätexport', 'Grid out'), magnitudes.gridOut[0] / 1_000, PLAN_COLOURS.grid],
+    [t('Batteri ut', 'Battery out'), magnitudes.batteryOut[0] / 1_000, PLAN_COLOURS.battery],
+    [t('Batteri in', 'Battery in'), magnitudes.batteryIn[0] / 1_000, PLAN_COLOURS.battery],
   ];
   const running = series
     .map(entry => ({ ...entry, value: entry.values[index] ?? 0 }))
@@ -621,15 +648,13 @@ const PlanTooltip: React.FC<{
           {measured ? t('uppmätt', 'measured') : t('plan', 'plan')}
         </span>
       </div>
-      {flows
-        .filter(([, value]) => value !== null && Math.abs(value) >= 0.02)
-        .map(([name, value, colour]) => (
-          <Reading key={name} name={name} colour={colour} value={`${(value as number).toFixed(2)} kW`} />
-        ))}
+      {flows.filter(([, value]) => value >= 0.02).map(([name, value, colour]) => (
+        <Reading key={name} name={name} colour={colour} value={`${value.toFixed(2)} kW`} />
+      ))}
       <div className="mt-1 border-t pt-1">
         <Reading
           name={t('Husets förbrukning', 'House demand')}
-          value={`${(kw(row.loadW) ?? 0).toFixed(2)} kW`}
+          value={`${Math.abs(kw(row.loadW) ?? 0).toFixed(2)} kW`}
         />
         {running.map(entry => (
           <Reading
