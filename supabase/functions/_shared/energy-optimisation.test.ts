@@ -4,7 +4,7 @@ import {
   validateSnapshot,
 } from "./energy-optimisation.ts";
 import { projectZoneTemperature } from "./thermal-model.ts";
-import { assertEquals } from "jsr:@std/assert@1";
+import { assertAlmostEquals, assertEquals } from "jsr:@std/assert@1";
 
 /** The captured_at the shared fixture uses, so a plan is always fresh. */
 const NOW = "2026-08-10T07:55:00Z";
@@ -2657,4 +2657,93 @@ Deno.test("every planned quarter records decision evidence and exact grid arithm
       `${slot.start}: recorded residual does not match its operands`,
     );
   }
+});
+
+/**
+ * The two tests below pin air-source physics reaching the *schedule*, which
+ * §8.12.1 records as the gap: heuristic 5 is reproduced against
+ * `store-models.ts` at the unit level and nowhere in a whole plan. They are
+ * also the behaviours most likely to be lost quietly when `PoolHeatPumpModel`
+ * tiers into air and ground variants (§8.14), because a ground-source unit has
+ * neither a cut-out nor an air term and a careless refactor can drop both from
+ * the air path while every ground test still passes.
+ */
+Deno.test("below the cut-out no price makes pool heat schedulable", () => {
+  const base = input();
+  // As cold a pool as the curve values at all, so willingness to pay is at its
+  // maximum and only the physics can refuse.
+  const cold = (airC: number) =>
+    input({
+      schema_version: 6,
+      pool: { water_temperature_c: 23, volume_m3: 55 },
+      outdoor_temperature_c: base.slots.map(() => airC),
+    });
+
+  const warmDay = generateOptimisationPlan(cold(22), new Date(NOW));
+  const frozenDay = generateOptimisationPlan(cold(4), new Date(NOW));
+
+  const poolKwh = (plan: ReturnType<typeof generateOptimisationPlan>) =>
+    plan.plans.priority.slots.reduce(
+      (total, slot) => total + slot.pool_w / 1_000 * 0.25,
+      0,
+    );
+
+  assertEquals(warmDay.status, "ready");
+  assertEquals(frozenDay.status, "ready");
+  assert(
+    poolKwh(warmDay) > 2.5,
+    `the same pool at 22 °C air must heat, got ${poolKwh(warmDay)}`,
+  );
+  assertEquals(
+    poolKwh(frozenDay),
+    0,
+    "below cutout_air_c the pump delivers nothing, so buying power is waste",
+  );
+
+  // And it says so rather than going quiet. The exact reason code is not
+  // asserted: `StoreDiagnostic.reason` has no case for a store whose hardware
+  // cannot run and falls through to one about the curve (§8.13), so only the
+  // claim that it did not run is stable here.
+  const pool = frozenDay.plans.priority.store_diagnostics.find((store) =>
+    store.key === "pool"
+  );
+  assert(pool !== undefined, "a store that cannot run still has to report");
+  assertEquals(pool.planned_kwh, 0);
+  assert(
+    pool.reason !== "scheduled",
+    `a pool that bought nothing must not report scheduled, got ${pool.reason}`,
+  );
+});
+
+Deno.test("the plan prices pool heat at COP(air), not at the meter", () => {
+  const base = input();
+  const atAir = (airC: number) =>
+    generateOptimisationPlan(
+      input({
+        schema_version: 6,
+        pool: { water_temperature_c: 23, volume_m3: 55 },
+        outdoor_temperature_c: base.slots.map(() => airC),
+      }),
+      new Date(NOW),
+    );
+
+  const poolValue = (plan: ReturnType<typeof generateOptimisationPlan>) =>
+    plan.plans.priority.store_diagnostics.find((store) => store.key === "pool")
+      ?.marginal_value_sek_per_kwh ?? 0;
+
+  // Same water, same curve, same prices: the only difference is the air the
+  // pump is working against, so the ratio of what a kilowatt-hour is worth to
+  // the pool is exactly the ratio of the two COPs.
+  const cool = poolValue(atAir(12));
+  const warm = poolValue(atAir(24));
+
+  assert(cool > 0 && warm > 0, "both days are above the cut-out");
+  const seededCop = (airC: number) =>
+    4.5 * (1 + 0.045 * (airC - 20)) * (1 - 0.02 * (23 - 27));
+  assertAlmostEquals(
+    warm / cool,
+    seededCop(24) / seededCop(12),
+    1e-3,
+    "a warm day must buy proportionally more pool heat per kilowatt-hour",
+  );
 });

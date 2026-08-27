@@ -3538,6 +3538,50 @@ integration rather than the edge functions, so this is an integration-side
 change; §8.12.2's rule applies to how it is reported, which is that a pool
 withdrawn for works and a home with no pool must not look the same in the plan.
 
+#### Implementation status (2026-08-27)
+
+| Piece | State |
+|---|---|
+| Epoch boundary on the pool fit | **Landed.** `heat_pump_epoch_start` on `energy_optimisation_pool_model`; `poolTrainingWindowStartMs` clamps the rolling window to it and `poolRefitIsDue` forces a refit when an epoch is recorded after the standing fit, so stating a changeover takes effect at once rather than up to a day later |
+| Air-source physics pinned at plan level | **Landed.** Two tests in `energy-optimisation.test.ts`: below `cutout_air_c` no price makes pool heat schedulable, and the pool's published marginal value tracks COP(air) exactly. These are the air-only behaviours a careless tiering can drop while every ground test still passes |
+| Model tiering | Not started |
+| Ground variant and its fit | Blocked on the register map |
+
+The epoch is set by staff, per home, as a timestamp. Nothing infers it: detecting
+a machine change from its own output is the kind of rule §8 refuses to write.
+Until one is recorded the rolling window stands alone, which is every home that
+has never had a changeover.
+
+`TRAINING_WINDOW_DAYS` was left shared with the room fit. Clamping to an epoch
+needs no pool-specific window length, and splitting the constant to express one
+would have been a change without a reason.
+
+Two corrections to what this section asked for before it was built.
+
+**The air-to-water model is better protected than "only a fixture" suggested.**
+`pool-training.test.ts` simulates history from a known pool and requires
+`fitPoolModel` to recover the parameters that produced it, and
+`store-models.test.ts` already pins the cut-out, the COP slope and the
+delivered-heat comparison that heuristic 5 rests on. What none of them could
+catch is the air path being lost between the model and the schedule, which is
+what the two new plan-level tests close. A captured real-data fixture is still
+worth having and is not urgent: `energy_optimisation_pool_slots` retains 1095
+days and `energy_optimisation_device_slots` 400, so the whole air-to-water
+season is archived at quarter resolution and is not going anywhere. It should be
+built from that archive rather than scraped back out of Home Assistant, whose
+five-minute statistics carry ±0.05 °C of noise against a signal of roughly
+0.02 °C per quarter.
+
+**A defect of the same family is already live, and predates the changeover.**
+`refitPoolModel` takes every meter whose category is `pool_heating` and sums
+them into the heat pump's electrical energy. On the reference home that is three
+meters: the heat pump, the circulation pump and the pool *room* floor heater.
+The pump alone clears `HEATED_SLOT_MIN_KWH` — 412 W for a quarter is 0.103 kWh —
+so pump-only quarters count as heated samples in which energy went in and the
+water did not warm, inflating `heated_sample_count` on evidence that is not
+heating and biasing the fitted COP down. This is "one machine, two sinks" above,
+arriving early and by a different route; a category is not a control contract.
+
 ## 9. Parameter model
 
 ### 9.1 Parameter classes and ownership
