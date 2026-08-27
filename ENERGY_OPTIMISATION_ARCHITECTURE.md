@@ -3213,7 +3213,7 @@ the water-temperature probe is not reliably reading bulk water. It is enough to
 say the seeded `SEEDED_POOL_LOSS_KW_PER_K = 0.35` is roughly double what the
 pool actually did — 0.35 kW/K predicts about 1.1 °C/day against the 0.55 °C/day
 observed — and not enough to replace it. A defensible loss fit needs circulation
-running and has to wait for the new installation (§8.14).
+running, and has to wait for the ground-source unit now replacing it.
 
 **3. The retention weighting is an anti-deferral tax roughly ten times larger
 than any price signal.**
