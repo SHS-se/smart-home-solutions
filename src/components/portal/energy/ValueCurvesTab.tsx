@@ -391,8 +391,8 @@ const ValueCurvesTab: React.FC<Props> = ({
               </CardTitle>
               <p className="mt-1 text-xs text-muted-foreground">
                 {t(
-                  'Tillståndet är användbar lagrad energi över minsta SOC. Punkterna är de exakta brytpunkter som den aktuella planen använde.',
-                  'State is usable stored energy above minimum SOC. The points are the exact breakpoints used by the current plan.',
+                  'Tillståndet är användbar lagrad energi över minsta SOC. Varje punkt i diagrammet är en exakt brytpunkt ur den aktuella planen — håll muspekaren över den för att läsa av den.',
+                  'State is usable stored energy above minimum SOC. Every dot on the chart is an exact breakpoint from the current plan — hover one to read it off.',
                 )}
               </p>
             </div>
@@ -446,8 +446,8 @@ const ValueCurvesTab: React.FC<Props> = ({
                       label={{ value: 'SEK/kWh', angle: -90, position: 'insideLeft', fontSize: 11 }}
                     />
                     <ChartTooltip
-                      formatter={(value: number) => [`${value.toFixed(3)} SEK/kWh`, t('Behållet värde', 'Retained value')]}
-                      labelFormatter={(label: number) => `${Number(label).toFixed(3)} kWh`}
+                      formatter={(value: number) => [`${value.toFixed(4)} SEK/kWh`, t('Behållet värde', 'Retained value')]}
+                      labelFormatter={(label: number) => `${Number(label).toFixed(4)} kWh`}
                     />
                     <ReferenceLine
                       x={batteryValueCurve.initial_state_kwh}
@@ -472,27 +472,6 @@ const ValueCurvesTab: React.FC<Props> = ({
                 {t('Planeraren kunde inte härleda någon batterivärdekurva.', 'The planner could not derive a battery value curve.')}
               </p>
             )}
-
-            <div className="overflow-x-auto rounded-md border">
-              <table className="w-full min-w-[420px] text-xs">
-                <thead className="bg-muted/70 text-left">
-                  <tr>
-                    <th className="px-3 py-2 font-medium">#</th>
-                    <th className="px-3 py-2 font-medium">{t('Brytpunkt', 'Breakpoint')}</th>
-                    <th className="px-3 py-2 font-medium">{t('Marginalvärde', 'Marginal value')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {batteryValueCurve.curve.points.map((point, index) => (
-                    <tr key={`${point.at}:${index}`} className="border-t">
-                      <td className="px-3 py-2 tabular-nums text-muted-foreground">{index + 1}</td>
-                      <td className="px-3 py-2 tabular-nums">{point.at.toFixed(4)} kWh</td>
-                      <td className="px-3 py-2 font-medium tabular-nums">{point.sek_per_unit.toFixed(4)} SEK/kWh</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
           </CardContent>
         </Card>
       )}
