@@ -2911,7 +2911,7 @@ a modelling error or a correction to the heuristic — both are findings.
 |---|---|---|
 | 1 | Self-consume solar by default, but export when the price is high and tomorrow's sun reliably refills the battery | Concave battery value + probabilistic PV forecast (§8.4, §8.7) |
 | 2 | Keep a buffer rather than run the battery flat, against price spikes and mid-charge cloud | Scenario-based solve + start costs (§8.7) |
-| 3 | Overheat the pool before a forecast cloudy day; cut it short or skip it on a cloudy day when the battery needs the energy | Pool state + one-way lossy store + concave utility (§8.3) |
+| 3 | Overheat the pool before a forecast cloudy day; cut it short or skip it on a cloudy day when the battery needs the energy | Pool state + one-way lossy store + concave utility (§8.3) — **does not emerge; §8.3's path cannot produce it, see §8.13** |
 | 4 | Car outranks pool at low SOC and stops outranking it near full; winter raises the value of the same SOC | Marginal value comparison + utility over range (§8.3, §8.9) |
 | 5 | Pool heating tracks air temperature ahead of price in spring, and stops being worthwhile in winter | COP(air, water) in the physics (§8.3) |
 | 6 | Buy from the grid whenever price is below the marginal utility of a sink; accept expensive imports in winter when no cheaper window exists | The objective itself (§8.2) |
@@ -2932,6 +2932,11 @@ Heuristics 1, 4 and 7 are already reproduced as executable tests against
 `store-value.ts`, without any rule encoding them. Heuristics 3 and 5 are
 reproduced against `store-models.ts`. That is the acceptance criterion in
 §8.12 being met at the unit level, not yet in a whole plan.
+
+The gap that qualifier leaves is not academic: a solve contradicting heuristic 3
+in both directions shipped without a failing test (§8.13). Unit-level agreement
+with `store-models.ts` says the physics is right, which is a different claim from
+the plan being right.
 
 #### 8.12.2 The objective has to be legible, not only correct (2026-08-18)
 
@@ -3113,6 +3118,209 @@ button is clicked; the portal's 30-second poll must not repeatedly transfer it.
 Old current rows are not reconstructed from later database state: replay remains
 unavailable until the next solve rolls the row forward, because an approximate
 capsule would defeat the purpose of deterministic diagnosis.
+
+### 8.13 Store value must be derived for every buffered store, not only the battery (2026-08-27)
+
+Acceptance test §8.12 #3 — *overheat the pool before a forecast cloudy day; cut
+it short or skip it on a cloudy day* — does not pass in a whole plan, and the
+emergence path §8.3 claims for it cannot produce it. §8.12 states the test to
+apply: a heuristic the formulation contradicts is either a modelling error or a
+correction to the heuristic. This one is a modelling error, and it is the same
+one in both directions.
+
+Evidence throughout is plan `1bdbb1b1`, snapshot `schema 6`, planner
+`marginal-value-planner-v11`, input hash `f4bb6a72d486`, solved
+2026-08-27T16:00Z over 288 quarters. Four replay capsules were downloaded from
+different quarters of it; all four carry the same input hash and the same
+generation request, so they are four windows onto one solve.
+
+#### What the plan did
+
+| Day | PV | Surplus | Import price | Pool got | House exported |
+|---|---|---|---|---|---|
+| 27 Aug (evening only) | 2.3 kWh | 1.3 kWh | **2.26 mean — dearest in the horizon** | **20.1 kWh** (9.4 from grid, 33.3 SEK) | 0.6 kWh |
+| 28 Aug | 32.6 kWh | 25.4 kWh | 1.42 mean | 70.0 kWh | 0.8 kWh |
+| 29 Aug (overcast) | 2.2 kWh | 0.0 kWh | 1.51 mean | 0 | 0 |
+| 30 Aug | **37.0 kWh** | **30.4 kWh** | 1.39 mean | **0** | **13.6 kWh** |
+
+The heater ran 23.75 hours without interruption from 27 Aug 18:15, through the
+dearest quarters in the horizon, and then declined 30 kWh of surplus on the
+sunniest day and exported it. Both halves of heuristic #3 failed in one solve.
+
+The refusal on 30 Aug is the sharper of the two, because the pool is at 27.4 °C
+at the time — *below* the household's own "really want heat" threshold — and the
+energy on offer costs 0.41 SEK/kWh:
+
+```
+30/08 12:00   surplus at 0.46 SEK/kWh   pool 27.79 °C   raw bid 5.61   × retention 0.082 = 0.46   marginal
+30/08 14:00   surplus at 0.41 SEK/kWh   pool 27.65 °C   raw bid 5.63   × retention 0.055 = 0.31   refused
+30/08 16:00   surplus at 0.41 SEK/kWh   pool 27.51 °C   raw bid 5.64   × retention 0.028 = 0.16   refused
+```
+
+#### Three findings
+
+**1. §8.4 was implemented for the house battery and for nothing else.**
+
+§8.4 says the battery's curve is computed, never configured, and that its
+marginal value is the expected cost of replacing that energy later. That is
+built: `deriveBatteryValueCurve` reads the covering window's forward import
+prices, the remaining forecast surplus and the expected draw, and returns a
+curve derived from them. §8.3 then assigns the pool and the EV *supplied*
+curves — "household taste, one curve" — and asserts in the same section that the
+two-way soft target "falls straight out of the curve". It does not, because a
+supplied curve contains no forecast.
+
+The asymmetry is visible in one row of the plan's own `store_diagnostics`:
+
+| Store | Curve source | Bids | Published price band |
+|---|---|---|---|
+| Battery | derived from the forecast | **0.93 SEK/kWh** | 0.86 – 2.87 |
+| Pool | supplied, static | **7.77 SEK/kWh** | 0.86 – 2.87 |
+| EV | supplied, static | 2.70 SEK/kWh | 0.86 – 2.87 |
+
+A derived value lands inside the price band by construction, because it *is* a
+price taken from the forecast — which is why the battery shapes correctly and
+ends the horizon full. A supplied value lands wherever the customer's thresholds
+and the anchoring reference put it, and here it lands 2.6× above the dearest
+quarter on the board. A store whose bid exceeds every price in the horizon
+cannot express *when*, only *whether*.
+
+This is a class property, not a pool property. The EV carries the same defect
+and is merely masked: it sits exactly at its own 80 % cap, so it had no room to
+bid at all.
+
+**2. The steep segment of a preference curve is the operating point, not an
+exception.**
+
+`curveFromPreference` pins the *comfortable* threshold at what the energy costs
+and the *urgent* threshold at `URGENT_MULTIPLE = 3` times that, so that "the
+steep segment clears the dearest hour a household would ever face". Against this
+home's anchoring reference of 2.51 SEK/kWh all-in, urgent is 7.52 SEK/kWh, and
+the dearest hour the household actually faced was 2.87. The multiple is applied
+to a *typical* all-in price and compared against *actual* all-in prices, so it
+clears the dearest hour by a factor, not by a margin.
+
+That would still be tolerable if the steep segment were rare. It is not. A 55 m³
+pool holds 63.97 kWh per °C and rests well below 28 °C in late August, so
+`urgent_below = 28` describes the pool's normal state rather than an exception.
+The measured trajectory over four unheated days (23–27 Aug) is 28.50 → 26.86 °C.
+The steep segment is where the pool lives.
+
+**3. The retention weighting is an anti-deferral tax roughly ten times larger
+than any price signal.**
+
+The pool store is given `usage_weight` uniform across the horizon and no
+terminal weight, so `retentionBySlot` values a unit of heat by the number of
+remaining usage occasions. Across this horizon that runs **0.81 at the start to
+0.08 at the end**. Heat bought on the last day is discounted tenfold against
+identical heat bought on the first.
+
+This is a defensible model of *continuously consumed* warmth and it is the exact
+opposite of what §8.12 #3 requires. Deferring to a cheaper day is penalised
+harder than any intraday or interday price difference can compensate for, and
+banking against a cloudy day fails whenever the cloudy day is near the horizon
+edge. Since the horizon rolls, "the day after tomorrow" is permanently
+half-discarded.
+
+The battery is exempt by construction: `retention_per_slot: 1`,
+`usage_weight` all zero, `terminal_weight: 1`. Its stored energy is worth the
+same whenever it is put in, and its terminal state carries value past *T*. That
+is the §8.4 treatment, and it is why the battery can bank and the pool cannot.
+
+#### The experiment that separates physics from value model
+
+Three solves of the same snapshot. The middle row corrects only the physics; the
+last row corrects only the value model on top of it.
+
+| | Pool energy | Ends at | Pool energy cost | House import | House export | 27 Aug (dearest) | 30 Aug (sunniest) |
+|---|---|---|---|---|---|---|---|
+| As shipped | 90.1 kWh | 27.36 °C | 111.6 SEK | 86.4 kWh | 15.0 kWh | 20.1 kWh | 0 |
+| Measured loss only | 78.8 kWh | 28.89 °C | 100.8 SEK | 74.8 kWh | 14.3 kWh | 20.1 kWh | 0 |
+| Loss + value model | 81.3 kWh | **29.65 °C** | **59.0 SEK** | **57.2 kWh** | **1.2 kWh** | **1.4 kWh** (all solar) | **21.0 kWh** (20.6 solar) |
+
+Correcting the physics alone changes *how much* and not *when*: the 27 Aug
+evening block and the 30 Aug refusal are unchanged to the tenth of a kWh. The
+timing is governed entirely by the value model.
+
+The last row was produced by rescaling the pool curve and carrying its retention
+past the horizon edge (`terminal_weight` set to the discounted tail of an
+indefinitely repeating usage weight, 2.538, with the curve rescaled by the
+inverse so the effective bid was unchanged). It is an experiment, not a proposed
+design — the numbers are not the finding. The finding is that both halves of
+heuristic #3 appear as soon as the anti-deferral tax is removed, and that they
+appear while delivering *more* heat, a pool 2.3 °C warmer, and roughly a third
+of the energy cost.
+
+#### What this requires
+
+1. **Every buffered store's marginal value is derived from the forecast**, on
+   the §8.4 pattern already built for the battery. For the pool the quantity is
+   the cost of obtaining the same stored heat at the best remaining opportunity,
+   net of the surplus still forecast to arrive, discounted by the heat actually
+   retained until it is wanted. "Tomorrow is sunnier" then lowers today's bid and
+   "the next two days are overcast" raises it, with no rule for either — which is
+   the test §8 sets for itself.
+
+2. **The customer's three thresholds become a constraint and a shortfall price,
+   not the bid.** "At least 28 °C by Saturday afternoon" is a comfort constraint
+   the plan must satisfy; what it is worth paying to get there is the forecast's
+   business. The present formulation conflates *I want it warm* with *I will pay
+   7.52 SEK/kWh for it*, and that conflation is finding 2. The editor built in
+   §8.12.2 stays; what changes is what its output is used for.
+
+3. **Terminal value must carry past the horizon for every store, not only the
+   battery.** A value function that decays to zero at *T* discards the last day
+   of every rolling solve, which contradicts the Bellman decomposition §8.4
+   relies on to make the monthly objective tractable.
+
+4. **Scope is buffered stores only** — pool, EV, house battery. Hot water and
+   room heat are deadline and comfort problems, not storage-arbitrage problems,
+   and keep their existing contracts: the boiler's duty-cycle permit/inhibit
+   (§1.6.4) and the rooms' comfort-band constraints (§5.5, §7.5). Deferral there
+   is a comfort question, not a price question, and must not inherit this
+   treatment.
+
+#### Open questions
+
+- **The covering window for a leaky store.** The battery derives its value over
+  the longest single deficit run — one night. A pool leaks continuously and its
+  relevant window is closer to *until the next dependable surplus*, which is
+  longer and forecast-dependent. Choosing this window is most of the work.
+- **How the comfort constraint and the derived value compose** when they
+  disagree: a pool below its constraint with no affordable window in the horizon
+  must do something, and "buy at any price" is the current answer by default
+  rather than by design.
+- **What the customer curve editor becomes** once its output is a constraint.
+  The three thresholds remain the right thing to ask for; the shortfall price is
+  a fourth number nobody can state and should be derived.
+
+#### Two secondary defects found in the same replay, recorded separately
+
+Neither changes the decisions above — both were patched out and re-run with
+byte-identical plans — but both are wrong and both distort the published
+evidence §8.12.2 exists to provide.
+
+| Defect | Effect |
+|---|---|
+| `recostSlot` counts battery discharge as spare PV (`pv_w + returnedW − fixed_load_w`) and prices the resulting charge at the *export* price | During 07:15–08:15 on 28 Aug — the four dearest quarters of the day — the pool books all 3500 W as solar at 1.09 SEK/kWh while PV is 693–1135 W and the import price is 2.15. The battery is emptied into the heat pump and the transfer is booked at a price neither side pays. `returnedW` belongs in `headroomW`, which is a feasibility question; it does not belong in a cost |
+| The pool store declares neither `min_power_w` nor `power_step_w` | The pool heat pump is `switch_schedule` at 3429 W with a four-quarter minimum run, but the auction may bid it at any power from zero. Latent while the curve dominates and every bid is full power; the moment the bid stops dominating the plan schedules 38 W, 59 W and 340 W tracking PV, which the hardware cannot execute. This blocks finding 1's fix rather than merely accompanying it |
+
+Also: `StoreDiagnostic.reason` has no case for a store at its own state cap and
+falls through to `outbid`. The EV in this plan is exactly at its 80 % target and
+had no room to bid; the plan says it lost an auction it never entered. This is
+the §8.12.2 distinction — *considered and declined* against *could not
+participate* — one level further in.
+
+#### Acceptance tests to add to §8.12
+
+| # | Behaviour that must emerge | Emerges from |
+|---|---|---|
+| 8 | Skip a dear evening entirely when the next two days carry enough forecast surplus to reach the same state, and reach it | Derived store value over the forecast (§8.13) |
+| 9 | Absorb surplus that would otherwise export, ahead of a forecast overcast day, in proportion to how dear the replacement energy will be | The same derived value, in the other direction |
+
+Both are whole-plan tests. Heuristic #3 is currently reproduced only at the unit
+level against `store-models.ts` (§8.12.1), which is why a plan contradicting it
+in both directions shipped without a failing test.
 
 ## 9. Parameter model
 
