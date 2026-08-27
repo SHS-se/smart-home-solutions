@@ -86,14 +86,21 @@
     --plan-price-6: #d4634f;
     --plan-price-7: #a92e22;
 
-    /* Device matrix, nothing to full power: one hue, light to dark. */
-    --plan-cell-0: #f4f6f8;
-    --plan-cell-1: #dde3e9;
-    --plan-cell-2: #bcc7d2;
-    --plan-cell-3: #93a3b3;
-    --plan-cell-4: #6a7d90;
-    --plan-cell-5: #42566b;
-    --plan-cell-6: #1d2c3c;
+    /* Consumption bands. Assigned to a meter and held there, so filtering a
+       series never repaints the ones that remain. Eight is the ceiling: a
+       ninth qualifying meter joins base load rather than take a colour nobody
+       could tell from the others. The last three repeat the flow hues, which
+       is safe only because flows and consumption never share a panel. */
+    --plan-load-0: #e34948;
+    --plan-load-1: #4a3aa7;
+    --plan-load-2: #e87ba4;
+    --plan-load-3: #eda100;
+    --plan-load-4: #008300;
+    --plan-load-5: #2a78d6;
+    --plan-load-6: #eb6834;
+    --plan-load-7: #1baf7a;
+    /* Base load is grey on purpose: it is the background, not a series. */
+    --plan-base: #8a8f98;
   }
 }
 

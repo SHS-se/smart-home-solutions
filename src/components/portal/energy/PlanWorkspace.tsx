@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
 import {
+  effectivePlanningRole,
   isOptimisationPlan,
   type ActualEnergySlot,
   type ThermalFixtureSeason,
@@ -577,6 +578,16 @@ const PlanView: React.FC<{
     () => new Map(empiricalDevices.map(device => [device.id, device.device_key])),
     [empiricalDevices],
   );
+  // Which meters the plan is allowed to move. Only these earn a band of their
+  // own in the consumption panel; the rest are background whatever they draw.
+  const schedulableKeys = useMemo(
+    () => new Set(
+      empiricalDevices
+        .filter(device => effectivePlanningRole(device) === 'controllable')
+        .map(device => device.device_key),
+    ),
+    [empiricalDevices],
+  );
   const timeline = useMemo(() => buildEnergyTimeline({
     actuals,
     deviceActuals,
@@ -766,6 +777,7 @@ const PlanView: React.FC<{
             dayWindowOptions={dayWindowOptions}
             onDayWindowChange={onDayWindowChange}
             deviceNameByKey={deviceNameByKey}
+            schedulableKeys={schedulableKeys}
             hasBattery={hasBattery}
             hasEvBattery={hasEvBattery}
           />

@@ -175,3 +175,67 @@ export const spansOf = <T>(values: readonly T[]): Array<{ from: number; to: numb
   }
   return spans;
 };
+
+export interface BandLabelPlacement {
+  /** Index into the bands that were passed in. */
+  band: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Where a stacked band can carry its own name, and where it cannot.
+ *
+ * Two rules, both learned from the first attempt at this panel. A band gets a
+ * label only where it is thick enough to hold one — otherwise the text spills
+ * over its neighbours and reads as belonging to the wrong series. And labels
+ * are placed thickest-first, each one dropped if it would overlap a label
+ * already placed, because six bands all labelled at their own widest point
+ * put four of them on top of each other in the middle of the day.
+ *
+ * Everything dropped here is still named in the legend and the tooltip, so a
+ * missing label costs nothing but the convenience.
+ */
+export const placeBandLabels = (
+  bands: readonly Band[],
+  names: readonly string[],
+  x: Scale,
+  y: Scale,
+  { minThickness = 26, charWidth = 5.8, padding = 12, height = 16 } = {},
+): BandLabelPlacement[] => {
+  const candidates = bands.flatMap((band, index) => {
+    let best = -1;
+    let thickest = 0;
+    band.forEach((pair, quarter) => {
+      const thickness = Math.abs(y(pair[0]) - y(pair[1]));
+      if (thickness > thickest) { thickest = thickness; best = quarter; }
+    });
+    if (best < 0 || thickest < minThickness) return [];
+    const width = (names[index]?.length ?? 0) * charWidth + padding;
+    const centre = Math.min(
+      Math.max((x(best) + x(best + 1)) / 2, x(0) + width / 2),
+      x(band.length) - width / 2,
+    );
+    return [{
+      band: index,
+      x: centre,
+      y: (y(band[best][0]) + y(band[best][1])) / 2,
+      width,
+      height,
+      thickness: thickest,
+    }];
+  });
+
+  const placed: BandLabelPlacement[] = [];
+  for (const candidate of [...candidates].sort((a, b) => b.thickness - a.thickness)) {
+    const clashes = placed.some(other =>
+      Math.abs(other.x - candidate.x) < (other.width + candidate.width) / 2
+      && Math.abs(other.y - candidate.y) < (other.height + candidate.height) / 2);
+    if (clashes) continue;
+    const { thickness: _thickness, ...placement } = candidate;
+    placed.push(placement);
+  }
+  return placed.sort((a, b) => a.band - b.band);
+};

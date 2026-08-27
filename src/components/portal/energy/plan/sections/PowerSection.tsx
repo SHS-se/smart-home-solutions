@@ -24,11 +24,15 @@ import {
   type TimelineRange,
   type TimelineRow,
 } from '@/lib/energy-shift/energy-timeline';
+import {
+  splitConsumption, type ConsumptionSeries,
+} from '@/lib/energy-shift/consumption-series';
 import { DayWindowToggle } from '../ui';
 import type { PlanModel } from '../usePlanModel';
 import DeviceEnergyTable from '../DeviceEnergyTable';
 import StoreDecisions from '../StoreDecisions';
-import PlanPanels, { type PlanPanelDevice, type PlanPanelRow } from '../PlanPanels';
+import PlanPanels, { type PlanPanelRow } from '../PlanPanels';
+import { loadColour, PLAN_COLOURS } from '../types';
 
 const QUARTER_W_TO_KWH = 4_000;
 
@@ -51,6 +55,8 @@ const PowerSection: React.FC<{
   dayWindowOptions: DayWindow[];
   onDayWindowChange: (value: DayWindow) => void;
   deviceNameByKey: ReadonlyMap<string, string>;
+  /** Meters the plan is allowed to move. Only these earn a band of their own. */
+  schedulableKeys: ReadonlySet<string>;
   hasBattery: boolean;
   hasEvBattery: boolean;
 }> = ({
@@ -61,6 +67,7 @@ const PowerSection: React.FC<{
   dayWindowOptions,
   onDayWindowChange,
   deviceNameByKey,
+  schedulableKeys,
   hasBattery,
   hasEvBattery,
 }) => {
@@ -96,24 +103,21 @@ const PowerSection: React.FC<{
   }, [view]);
 
   /**
-   * One row per meter that actually ran, largest first. Meters are never
-   * bucketed: the planner dispatches individual devices, so a chart that
-   * grouped them would describe something the plan cannot act on.
+   * Individual meters, never categories — the plan dispatches devices, so a
+   * band labelled by category would describe something no schedule can act on.
+   * Which meters earn a band is decided in consumption-series.ts; the rest
+   * join base load.
    */
-  const devices = useMemo<PlanPanelDevice[]>(() => {
+  const consumption = useMemo(() => {
     const active = activeDeviceKeys(rows, range);
-    return [...active]
-      .map(key => {
-        const values = view.map(row => row.deviceW[key] ?? 0);
-        return {
-          key,
-          name: deviceNameByKey.get(key) ?? key,
-          values,
-          kwh: values.reduce((total, watts) => total + watts / QUARTER_W_TO_KWH, 0),
-        };
-      })
-      .sort((left, right) => right.kwh - left.kwh || left.name.localeCompare(right.name));
-  }, [deviceNameByKey, range, rows, view]);
+    const candidates = [...active].map(key => ({
+      key,
+      name: deviceNameByKey.get(key) ?? key,
+      values: view.map(row => row.deviceW[key] ?? 0),
+      schedulable: schedulableKeys.has(key),
+    }));
+    return splitConsumption(candidates, view.map(row => row.loadW));
+  }, [deviceNameByKey, range, rows, schedulableKeys, view]);
 
   const divider = nowDividerIndex(rows, range);
   const plannedStarts = useMemo(
@@ -174,7 +178,8 @@ const PowerSection: React.FC<{
       </div>
       <PlanPanels
         rows={panelRows}
-        devices={devices}
+        series={consumption.series}
+        baseValues={consumption.baseValues}
         dividerIndex={divider}
         hasBattery={hasBattery}
         hasEvBattery={hasEvBattery}
@@ -187,7 +192,12 @@ const PowerSection: React.FC<{
           }
         }}
       />
-      <PanelLegend hasBattery={hasBattery} hasEvBattery={hasEvBattery} />
+      <PanelLegend
+        series={consumption.series}
+        foldedCount={consumption.foldedCount}
+        hasBattery={hasBattery}
+        hasEvBattery={hasEvBattery}
+      />
       {/*
         Above the per-device table on purpose. The device table says how much
         each thing used; this says why the plan chose that at all, and a reader
@@ -216,59 +226,68 @@ const PowerSection: React.FC<{
   );
 };
 
-/** What each colour means. Informational: the panels have nothing to declutter. */
-const PanelLegend: React.FC<{ hasBattery: boolean; hasEvBattery: boolean }> = ({
-  hasBattery, hasEvBattery,
-}) => {
+/**
+ * What each colour means. Informational rather than a set of toggles: the
+ * panels are single-purpose now, so there is nothing left to declutter.
+ */
+const PanelLegend: React.FC<{
+  series: ConsumptionSeries[];
+  foldedCount: number;
+  hasBattery: boolean;
+  hasEvBattery: boolean;
+}> = ({ series, foldedCount, hasBattery, hasEvBattery }) => {
   const { t } = useLanguage();
-  const keys: Array<{ label: string; colour: string; shape: 'box' | 'line' }> = [
-    { label: t('Sol', 'Solar'), colour: 'var(--plan-solar)', shape: 'box' },
-    { label: t('Nät', 'Grid'), colour: 'var(--plan-grid)', shape: 'box' },
-    ...(hasBattery
-      ? [{ label: t('Batteri', 'Battery'), colour: 'var(--plan-battery)', shape: 'box' as const }]
-      : []),
+  const flows: Array<{ label: string; colour: string; line?: boolean }> = [
+    { label: t('Sol', 'Solar'), colour: PLAN_COLOURS.solar },
+    { label: t('Nät', 'Grid'), colour: PLAN_COLOURS.grid },
+    ...(hasBattery ? [{ label: t('Batteri', 'Battery'), colour: PLAN_COLOURS.battery }] : []),
     ...(hasEvBattery
-      ? [{ label: t('Bilbatteri', 'Car battery'), colour: 'var(--plan-ev)', shape: 'line' as const }]
+      ? [{ label: t('Bilbatteri', 'Car battery'), colour: PLAN_COLOURS.ev, line: true }]
       : []),
   ];
   return (
     <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
-      {keys.map(key => (
-        <span key={key.label} className="inline-flex items-center gap-1.5">
-          <span
-            className={key.shape === 'box' ? 'h-2.5 w-2.5 rounded-sm' : 'h-0.5 w-3.5 rounded-full'}
-            style={{ backgroundColor: key.colour }}
-            aria-hidden="true"
-          />
-          {key.label}
-        </span>
+      {flows.map(flow => (
+        <Key key={flow.label} colour={flow.colour} line={flow.line}>{flow.label}</Key>
       ))}
+      <span className="text-border" aria-hidden="true">|</span>
+      {series.map(entry => (
+        <Key key={entry.key} colour={loadColour(entry.slot)}>{entry.name}</Key>
+      ))}
+      <Key colour={PLAN_COLOURS.base}>
+        {foldedCount > 0
+          ? t(
+            `Baslast + ${foldedCount} små mätare`,
+            `Base load + ${foldedCount} small meters`,
+          )
+          : t('Baslast', 'Base load')}
+      </Key>
       <span className="inline-flex items-center gap-1.5">
         <span className="flex" aria-hidden="true">
           {[1, 3, 5, 7].map(step => (
             <span
-              key={step}
-              className="h-2.5 w-2.5"
+              key={step} className="h-2.5 w-2.5"
               style={{ backgroundColor: `var(--plan-price-${step})` }}
             />
           ))}
         </span>
         {t('Köppris, billigt → dyrt', 'Buy price, cheap → dear')}
       </span>
-      <span className="inline-flex items-center gap-1.5">
-        <span className="flex" aria-hidden="true">
-          {[0, 2, 4, 6].map(step => (
-            <span
-              key={step}
-              className="h-2.5 w-2.5"
-              style={{ backgroundColor: `var(--plan-cell-${step})` }}
-            />
-          ))}
-        </span>
-        {t('Enhetseffekt', 'Device power')}
-      </span>
     </div>
   );
 };
+
+const Key: React.FC<{ colour: string; line?: boolean; children: React.ReactNode }> = ({
+  colour, line, children,
+}) => (
+  <span className="inline-flex items-center gap-1.5">
+    <span
+      className={line ? 'h-0.5 w-3.5 rounded-full' : 'h-2.5 w-2.5 rounded-sm'}
+      style={{ backgroundColor: colour }}
+      aria-hidden="true"
+    />
+    {children}
+  </span>
+);
 
 export default PowerSection;

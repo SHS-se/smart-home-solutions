@@ -3,6 +3,7 @@ import {
   linearScale,
   midpointLinePath,
   niceTicks,
+  placeBandLabels,
   spansOf,
   stackBands,
   stepAreaPath,
@@ -100,4 +101,55 @@ Deno.test('spans cover every index exactly once', () => {
   assertEquals(spans[0].from, 0);
   assertEquals(spans[spans.length - 1].to, values.length);
   for (let i = 1; i < spans.length; i += 1) assertEquals(spans[i].from, spans[i - 1].to);
+});
+
+const bandOf = (values: number[]): Array<[number, number]> =>
+  values.map(value => [0, value] as [number, number]);
+
+Deno.test('a band too thin to hold its name does not get one', () => {
+  const thin = bandOf([0.2, 0.2, 0.2]);
+  assertEquals(placeBandLabels([thin], ['Pool pump'], x, y).length, 0);
+});
+
+Deno.test('a band thick enough is labelled at its widest point', () => {
+  const band = bandOf([1, 9, 1]);
+  const [placement] = placeBandLabels([band], ['Pool heater'], x, y);
+  assertEquals(placement.band, 0);
+  // Quarter 1 is the thickest, so the label sits over its middle.
+  assertEquals(placement.x, (x(1) + x(2)) / 2);
+});
+
+Deno.test('overlapping labels are dropped, thickest kept', () => {
+  // Stacked bands are separated vertically by their own thickness, so labels
+  // collide only when two bands peak at different times but similar heights —
+  // which is exactly what a long meter name turns into an overlap.
+  const thick: Array<[number, number]> = [[0, 5], [0, 1], [0, 1], [0, 1]];
+  const thin: Array<[number, number]> = [[5, 6], [1, 5], [1, 5], [1, 5]];
+  const name = 'Tesla Model Y Charge';
+  const placed = placeBandLabels([thick, thin], [name, name], x, y, { minThickness: 18 });
+  assertEquals(placed.length, 1);
+  assertEquals(placed[0].band, 0, 'the thicker band should keep its label');
+});
+
+Deno.test('labels far apart both survive', () => {
+  const left = bandOf([9, 1, 1, 1]);
+  const right = bandOf([1, 1, 1, 9]);
+  const placed = placeBandLabels([left, right], ['A', 'B'], x, y);
+  assertEquals(placed.length, 2);
+});
+
+Deno.test('a label never hangs off the end of the plot', () => {
+  const atEdge = bandOf([9, 1, 1, 1]);
+  const [placement] = placeBandLabels([atEdge], ['A very long meter name'], x, y);
+  assert(placement.x - placement.width / 2 >= x(0) - 0.001, 'ran off the left');
+  assert(placement.x + placement.width / 2 <= x(4) + 0.001, 'ran off the right');
+});
+
+Deno.test('placements come back in band order', () => {
+  const placed = placeBandLabels(
+    [bandOf([1, 1, 1, 9]), bandOf([9, 1, 1, 1])],
+    ['B', 'A'],
+    x, y,
+  );
+  assertEquals(placed.map(placement => placement.band), [0, 1]);
 });

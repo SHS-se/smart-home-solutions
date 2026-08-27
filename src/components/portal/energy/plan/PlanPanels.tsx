@@ -6,27 +6,26 @@
 // relationship that is not in the data, because the alignment between the two
 // scales is arbitrary. Each quantity now gets its own strip and its own axis,
 // stacked over the same quarters, so reading a moment in time is reading a
-// column: what it cost, where the power came from, which meters were running,
-// what was left in store, what it added up to.
+// column: what it cost, where the power came from, what used it, what was left
+// in store, what it added up to.
 //
-// Devices are drawn as a matrix rather than a stack, one row per meter. Colour
-// cannot carry nineteen identities — eight distinguishable hues is the ceiling,
-// and the previous chart cycled a palette of eight across all of them, so three
-// meters shared every colour — and grouping them is not available either: the
-// planner schedules individual devices, so a chart that buckets them describes
-// something the plan cannot act on. Position carries identity here and darkness
-// carries power, which has no such ceiling.
+// The consumption stack draws individual meters, never categories: the planner
+// dispatches individual devices, so a band labelled "Kitchen & cold" would
+// describe something no schedule can act on. It stays legible by drawing
+// *fewer* meters rather than coarser ones — see consumption-series.ts for
+// which ones earn a band.
 
 import React, { useMemo, useRef, useState } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import {
-  linearScale, midpointLinePath, niceTicks, spansOf, stackBands,
-  stepAreaPath, stepBandPath, stepLinePath, type Band, type Scale,
+  linearScale, midpointLinePath, niceTicks, placeBandLabels, stackBands,
+  stepAreaPath, stepBandPath, stepLinePath, type Scale,
 } from '@/lib/energy-shift/plan-chart-geometry';
 import {
   PRICE_RAMP_STEPS, priceBands, priceGradientStops,
 } from '@/lib/energy-shift/price-bands';
-import { SIGNIFICANT_POWER_W } from '@/lib/energy-shift/energy-timeline';
+import type { ConsumptionSeries } from '@/lib/energy-shift/consumption-series';
+import { loadColour, PLAN_COLOURS } from './types';
 
 export interface PlanPanelRow {
   startMs: number;
@@ -48,57 +47,35 @@ export interface PlanPanelRow {
   cumulativeCostSek: number;
 }
 
-export interface PlanPanelDevice {
-  key: string;
-  name: string;
-  /** Watts per quarter, one entry per row. */
-  values: number[];
-  kwh: number;
-}
-
 const VIEW_W = 1160;
-/** Wide enough for a meter name; every panel shares it so columns line up. */
-const MARGIN_LEFT = 138;
-const MARGIN_RIGHT = 88;
+const MARGIN_LEFT = 58;
+const MARGIN_RIGHT = 92;
 const PLOT_W = VIEW_W - MARGIN_LEFT - MARGIN_RIGHT;
+const RIGHT = MARGIN_LEFT + PLOT_W;
 const GAP = 34;
-const ROW_H = 15;
-const ROW_GAP = 2;
-const CELL_STEPS = 6;
-const NAME_MAX = 22;
 
 const kw = (watts: number | null): number | null =>
   watts === null || !Number.isFinite(watts) ? null : watts / 1_000;
 
 const AXIS_TEXT = 'fill-muted-foreground text-[10px] font-mono';
-const TITLE_TEXT = 'fill-foreground text-[11px] font-medium';
-const UNIT_TEXT = 'fill-muted-foreground text-[10px] font-mono';
 
-interface Panel {
-  top: number;
-  height: number;
-}
-
-const truncate = (name: string): string =>
-  name.length <= NAME_MAX ? name : `${name.slice(0, NAME_MAX - 1)}…`;
+interface Panel { top: number; height: number }
 
 const PanelHeading: React.FC<{ title: string; unit: string; y: number }> = ({ title, unit, y }) => (
   <>
-    <text x={MARGIN_LEFT} y={y} className={TITLE_TEXT}>{title}</text>
-    <text x={MARGIN_LEFT + title.length * 6.6 + 10} y={y} className={UNIT_TEXT}>{unit}</text>
+    <text x={MARGIN_LEFT} y={y} className="fill-foreground text-[11px] font-medium">{title}</text>
+    <text x={MARGIN_LEFT + title.length * 6.6 + 10} y={y} className={AXIS_TEXT}>{unit}</text>
   </>
 );
 
-const Gridlines: React.FC<{
-  ticks: number[];
-  y: Scale;
-  format: (tick: number) => string;
-}> = ({ ticks, y, format }) => (
+const Gridlines: React.FC<{ ticks: number[]; y: Scale; format: (tick: number) => string }> = ({
+  ticks, y, format,
+}) => (
   <>
     {ticks.map(tick => (
       <g key={tick}>
         <line
-          x1={MARGIN_LEFT} x2={MARGIN_LEFT + PLOT_W} y1={y(tick)} y2={y(tick)}
+          x1={MARGIN_LEFT} x2={RIGHT} y1={y(tick)} y2={y(tick)}
           className="stroke-border" strokeWidth={1}
         />
         <text x={MARGIN_LEFT - 8} y={y(tick) + 3} textAnchor="end" className={AXIS_TEXT}>
@@ -112,21 +89,32 @@ const Gridlines: React.FC<{
 /** The one label a line always earns: its own value, at its own end. */
 const EndLabel: React.FC<{ y: number; colour: string; children: string }> = ({ y, colour, children }) => (
   <g>
-    <circle cx={MARGIN_LEFT + PLOT_W} cy={y} r={3} fill={colour} className="stroke-card" strokeWidth={2} />
-    <text x={MARGIN_LEFT + PLOT_W + 7} y={y + 3.5} className={AXIS_TEXT}>{children}</text>
+    <circle cx={RIGHT} cy={y} r={3} fill={colour} className="stroke-card" strokeWidth={2} />
+    <text x={RIGHT + 7} y={y + 3.5} className={AXIS_TEXT}>{children}</text>
   </g>
 );
 
+/** Long enough to name the meter, short enough not to span the plot. */
+const INLINE_NAME_MAX = 20;
+const shorten = (name: string): string =>
+  name.length <= INLINE_NAME_MAX ? name : `${name.slice(0, INLINE_NAME_MAX - 1)}…`;
+
 const PlanPanels: React.FC<{
   rows: PlanPanelRow[];
-  devices: PlanPanelDevice[];
+  /** Meters that earned a band of their own, largest first. */
+  series: ConsumptionSeries[];
+  /** Base load plus every meter that did not. */
+  baseValues: number[];
   /** First planned quarter; equals rows.length when the window is all history. */
   dividerIndex: number;
   hasBattery: boolean;
   hasEvBattery: boolean;
   selectedIndex?: number;
   onQuarterClick?: (index: number) => void;
-}> = ({ rows, devices, dividerIndex, hasBattery, hasEvBattery, selectedIndex = -1, onQuarterClick }) => {
+}> = ({
+  rows, series, baseValues, dividerIndex, hasBattery, hasEvBattery,
+  selectedIndex = -1, onQuarterClick,
+}) => {
   const { t } = useLanguage();
   const svgRef = useRef<SVGSVGElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -138,21 +126,13 @@ const PlanPanels: React.FC<{
     || (hasEvBattery && rows.some(row => row.evSoc !== null));
 
   const geometry = useMemo(() => {
-    const x = linearScale([0, Math.max(1, n)], [MARGIN_LEFT, MARGIN_LEFT + PLOT_W]);
+    const x = linearScale([0, Math.max(1, n)], [MARGIN_LEFT, RIGHT]);
 
     const price: Panel = { top: 30, height: 68 };
     const flow: Panel = { top: price.top + price.height + GAP, height: 126 };
-    const matrixTop = flow.top + flow.height + GAP;
-    const matrixHeight = Math.max(
-      ROW_H,
-      devices.length * (ROW_H + ROW_GAP) - ROW_GAP,
-    );
-    const matrix: Panel = { top: matrixTop, height: matrixHeight };
-    const soc: Panel = { top: matrix.top + matrix.height + GAP, height: showSoc ? 62 : 0 };
-    const cost: Panel = {
-      top: soc.top + (showSoc ? soc.height + GAP : 0),
-      height: 72,
-    };
+    const load: Panel = { top: flow.top + flow.height + GAP, height: 150 };
+    const soc: Panel = { top: load.top + load.height + GAP, height: showSoc ? 62 : 0 };
+    const cost: Panel = { top: soc.top + (showSoc ? soc.height + GAP : 0), height: 72 };
     const axisY = cost.top + cost.height;
 
     // --- Price ------------------------------------------------------------
@@ -182,22 +162,26 @@ const PlanPanels: React.FC<{
     const flowMin = Math.min(-0.5, ...disposal[1].map(pair => pair[0])) * 1.1;
     const flowY = linearScale([flowMin, flowMax], [flow.top + flow.height, flow.top]);
 
-    // --- Devices ----------------------------------------------------------
-    const peakKw = Math.max(0.05, ...devices.flatMap(device => device.values)) / 1_000;
-    // Square root, not linear: a 90 W fridge and a 7 kW charger share one ramp,
-    // and on a linear scale everything but the charger is blank.
-    const cellStep = (watts: number): number => watts < SIGNIFICANT_POWER_W
-      ? 0
-      : Math.max(1, Math.min(CELL_STEPS, Math.ceil(
-        Math.min(1, Math.sqrt((watts / 1_000) / peakKw)) * CELL_STEPS,
-      )));
-    const maxKwh = Math.max(0.01, ...devices.map(device => device.kwh));
-    const barW = linearScale([0, maxKwh], [0, 52]);
+    // --- Consumption: base at the floor, movable loads riding on top -------
+    const loadBands = stackBands([
+      baseValues.map(watts => watts / 1_000),
+      ...series.map(entry => entry.values.map(watts => watts / 1_000)),
+    ]);
+    const loadMax = Math.max(
+      0.5,
+      ...loadBands[loadBands.length - 1].map(pair => pair[1]),
+      ...rows.map(row => (row.solarW ?? 0) / 1_000),
+    ) * 1.1;
+    const loadY = linearScale([0, loadMax], [load.top + load.height, load.top]);
+    const loadLabels = placeBandLabels(
+      loadBands,
+      ['', ...series.map(entry => shorten(entry.name))],
+      x,
+      loadY,
+    );
 
-    // --- Storage ----------------------------------------------------------
     const socY = linearScale([0, 100], [soc.top + soc.height, soc.top]);
 
-    // --- Cost -------------------------------------------------------------
     const cumulative = rows.map(row => row.cumulativeCostSek);
     const costMin = Math.min(0, ...cumulative);
     const costMax = Math.max(1, ...cumulative) * 1.18;
@@ -207,25 +191,25 @@ const PlanPanels: React.FC<{
       x, axisY, height: axisY + 42,
       price, priceY, priceMax, buy, sell, bands,
       flow, flowY, flowMin, flowMax, supply, disposal,
-      matrix, cellStep, barW,
+      load, loadY, loadMax, loadBands, loadLabels,
       soc, socY, cost, costY, cumulative, costMin, costMax,
     };
-  }, [devices, n, rows, showSoc]);
+  }, [baseValues, n, rows, series, showSoc]);
 
   const {
     x, axisY, height, price, priceY, priceMax, buy, sell, bands,
     flow, flowY, flowMin, flowMax, supply, disposal,
-    matrix, cellStep, barW, soc, socY, cost, costY, cumulative, costMin, costMax,
+    load, loadY, loadMax, loadBands, loadLabels,
+    soc, socY, cost, costY, cumulative, costMin, costMax,
   } = geometry;
 
   const gradientId = 'plan-price-ramp';
-  const gradientStroke = bands ? `url(#${gradientId})` : 'var(--plan-price-4)';
+  const priceStroke = bands ? `url(#${gradientId})` : 'var(--plan-price-4)';
 
-  /** Hour marks, thinned so labels never collide at a narrow width. */
   const hourTicks = useMemo(() => {
     const every = n > 200 ? 6 : n > 100 ? 3 : 2;
     return rows
-      .map((row, index) => ({ index, row, date: new Date(row.startMs) }))
+      .map((row, index) => ({ index, date: new Date(row.startMs) }))
       .filter(({ date }) => date.getMinutes() === 0 && date.getHours() % every === 0);
   }, [n, rows]);
 
@@ -234,29 +218,24 @@ const PlanPanels: React.FC<{
     .filter(({ index, date }) => index > 0 && date.getHours() === 0 && date.getMinutes() === 0),
   [rows]);
 
-  const indexFromClientX = (clientX: number): number | null => {
-    const svg = svgRef.current;
-    if (!svg) return null;
-    const box = svg.getBoundingClientRect();
-    if (box.width === 0) return null;
-    const viewX = (clientX - box.left) * (VIEW_W / box.width);
-    const index = Math.floor(((viewX - MARGIN_LEFT) / PLOT_W) * n);
-    return index >= 0 && index < n ? index : null;
-  };
-
   const handleMove = (event: React.PointerEvent<SVGSVGElement>) => {
-    const index = indexFromClientX(event.clientX);
-    setHover(index);
+    const svg = svgRef.current;
     const wrap = wrapRef.current;
-    if (index === null || !wrap) { setPointer(null); return; }
-    const box = wrap.getBoundingClientRect();
-    setPointer({ left: event.clientX - box.left, top: event.clientY - box.top });
+    if (!svg || !wrap) return;
+    const box = svg.getBoundingClientRect();
+    if (box.width === 0) return;
+    const viewX = (event.clientX - box.left) * (VIEW_W / box.width);
+    const index = Math.floor(((viewX - MARGIN_LEFT) / PLOT_W) * n);
+    if (index < 0 || index >= n) { setHover(null); setPointer(null); return; }
+    setHover(index);
+    const wrapBox = wrap.getBoundingClientRect();
+    setPointer({ left: event.clientX - wrapBox.left, top: event.clientY - wrapBox.top });
   };
 
   const handleKey = (event: React.KeyboardEvent<SVGSVGElement>) => {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
     event.preventDefault();
-    const from = hover ?? dividerIndex;
+    const from = hover ?? Math.min(dividerIndex, n - 1);
     const next = Math.max(0, Math.min(n - 1, from + (event.key === 'ArrowLeft' ? -1 : 1)));
     setHover(next);
     setPointer({ left: ((next + 0.5) / n) * PLOT_W + MARGIN_LEFT, top: flow.top });
@@ -265,10 +244,6 @@ const PlanPanels: React.FC<{
   const hovered = hover === null ? null : rows[hover];
   const planWidth = dividerIndex >= n ? 0 : x(n) - x(dividerIndex);
 
-  const flowBand = (band: Band, colour: string, opacity: number, key: string) => (
-    <path key={key} d={stepBandPath(band, x, flowY)} fill={colour} fillOpacity={opacity} />
-  );
-
   return (
     <div ref={wrapRef} className="relative">
       <div className="overflow-x-auto rounded-lg border bg-card">
@@ -276,13 +251,13 @@ const PlanPanels: React.FC<{
           ref={svgRef}
           viewBox={`0 0 ${VIEW_W} ${height}`}
           preserveAspectRatio="xMidYMid meet"
-          className="block h-auto w-full min-w-[820px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="block h-auto w-full min-w-[760px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           style={onQuarterClick ? { cursor: 'pointer' } : undefined}
           role="img"
           tabIndex={0}
           aria-label={t(
-            'Pris, effektflöden, enheter, lagernivå och kostnad över tid',
-            'Price, power flows, devices, storage and cost over time',
+            'Pris, effektflöden, förbrukning, lagernivå och kostnad över tid',
+            'Price, power flows, consumption, storage and cost over time',
           )}
           onPointerMove={handleMove}
           onPointerLeave={() => { setHover(null); setPointer(null); }}
@@ -292,8 +267,7 @@ const PlanPanels: React.FC<{
           {bands && (
             <defs>
               <linearGradient
-                id={gradientId}
-                gradientUnits="userSpaceOnUse"
+                id={gradientId} gradientUnits="userSpaceOnUse"
                 x1={x(0)} y1={0} x2={x(n)} y2={0}
               >
                 {priceGradientStops(buy, bands).map((stop, index) => (
@@ -325,40 +299,30 @@ const PlanPanels: React.FC<{
           />
           {bands && (
             <g>
-              <rect
-                x={MARGIN_LEFT + PLOT_W - PRICE_RAMP_STEPS * 13 - 6}
-                y={price.top - 23}
-                width={PRICE_RAMP_STEPS * 13} height={9}
-                fill={`url(#${gradientId})`} opacity={0}
-              />
               {Array.from({ length: PRICE_RAMP_STEPS }, (_, step) => (
                 <rect
                   key={step}
-                  x={MARGIN_LEFT + PLOT_W - PRICE_RAMP_STEPS * 13 - 6 + step * 13}
+                  x={RIGHT - PRICE_RAMP_STEPS * 13 - 6 + step * 13}
                   y={price.top - 23} width={12} height={9}
                   fill={`var(--plan-price-${step + 1})`}
                 />
               ))}
               <text
-                x={MARGIN_LEFT + PLOT_W - PRICE_RAMP_STEPS * 13 - 12}
-                y={price.top - 15} textAnchor="end" className={AXIS_TEXT}
+                x={RIGHT - PRICE_RAMP_STEPS * 13 - 12} y={price.top - 15}
+                textAnchor="end" className={AXIS_TEXT}
               >
                 {bands.min.toFixed(2)}
               </text>
-              <text x={MARGIN_LEFT + PLOT_W + 2} y={price.top - 15} className={AXIS_TEXT}>
+              <text x={RIGHT + 2} y={price.top - 15} className={AXIS_TEXT}>
                 {bands.max.toFixed(2)}
               </text>
             </g>
           )}
-          <Gridlines
-            ticks={niceTicks(0, priceMax, 3)} y={priceY}
-            format={tick => tick.toFixed(1)}
-          />
-          <path d={stepAreaPath(buy, x, priceY, 0)} fill={gradientStroke} fillOpacity={0.2} />
+          <Gridlines ticks={niceTicks(0, priceMax, 3)} y={priceY} format={tick => tick.toFixed(1)} />
+          <path d={stepAreaPath(buy, x, priceY, 0)} fill={priceStroke} fillOpacity={0.2} />
           {bands && [bands.cheapAt, bands.dearAt].map(level => (
             <line
-              key={level}
-              x1={MARGIN_LEFT} x2={MARGIN_LEFT + PLOT_W} y1={priceY(level)} y2={priceY(level)}
+              key={level} x1={MARGIN_LEFT} x2={RIGHT} y1={priceY(level)} y2={priceY(level)}
               className="stroke-muted-foreground" strokeWidth={1} strokeOpacity={0.5}
             />
           ))}
@@ -368,7 +332,7 @@ const PlanPanels: React.FC<{
           />
           <path
             d={stepLinePath(buy, x, priceY)} fill="none"
-            stroke={gradientStroke} strokeWidth={3} strokeLinejoin="round"
+            stroke={priceStroke} strokeWidth={3} strokeLinejoin="round"
           />
 
           {/* ---------------------------------------------------- Flows --- */}
@@ -384,79 +348,81 @@ const PlanPanels: React.FC<{
             ticks={niceTicks(flowMin, flowMax, 4)} y={flowY}
             format={tick => tick.toFixed(Math.abs(tick) >= 10 ? 0 : 1)}
           />
-          {flowBand(supply[0], 'var(--plan-solar)', 0.9, 'solar')}
-          {flowBand(supply[1], 'var(--plan-battery)', 0.9, 'discharge')}
-          {flowBand(supply[2], 'var(--plan-grid)', 0.9, 'import')}
-          {flowBand(disposal[0], 'var(--plan-battery)', 0.42, 'charge')}
-          {flowBand(disposal[1], 'var(--plan-grid)', 0.42, 'export')}
+          {[PLAN_COLOURS.solar, PLAN_COLOURS.battery, PLAN_COLOURS.grid].map((colour, index) => (
+            <path
+              key={`supply-${index}`} d={stepBandPath(supply[index], x, flowY)}
+              fill={colour} fillOpacity={0.9}
+            />
+          ))}
+          {[PLAN_COLOURS.battery, PLAN_COLOURS.grid].map((colour, index) => (
+            <path
+              key={`disposal-${index}`} d={stepBandPath(disposal[index], x, flowY)}
+              fill={colour} fillOpacity={0.42}
+            />
+          ))}
           {/* A two-pixel gap of card colour keeps the stack from fusing. */}
           {[supply[0], supply[1]].map((band, index) => (
             <path
-              key={`sep-${index}`}
+              key={`flow-sep-${index}`}
               d={stepLinePath(band.map(pair => pair[1]), x, flowY)}
               fill="none" className="stroke-card" strokeWidth={2}
             />
           ))}
           <line
-            x1={MARGIN_LEFT} x2={MARGIN_LEFT + PLOT_W} y1={flowY(0)} y2={flowY(0)}
+            x1={MARGIN_LEFT} x2={RIGHT} y1={flowY(0)} y2={flowY(0)}
             className="stroke-foreground" strokeWidth={1.25}
           />
 
-          {/* -------------------------------------------------- Devices --- */}
+          {/* ---------------------------------------------- Consumption --- */}
           <PanelHeading
-            title={t('Enheter', 'Devices')}
+            title={t('Förbrukning', 'Consumption')}
             unit={t(
-              'mörkare = mer effekt · störst först',
-              'darker = more power · largest first',
+              'kW · styrbara mätare var för sig, resten i baslasten',
+              'kW · schedulable meters individually, the rest in base load',
             )}
-            y={matrix.top - 14}
+            y={load.top - 14}
           />
-          <g>
-            {Array.from({ length: CELL_STEPS + 1 }, (_, step) => (
+          <Gridlines
+            ticks={niceTicks(0, loadMax, 3)} y={loadY}
+            format={tick => tick.toFixed(Math.abs(tick) >= 10 ? 0 : 1)}
+          />
+          {loadBands.map((band, index) => (
+            <path
+              key={index === 0 ? 'base' : series[index - 1].key}
+              d={stepBandPath(band, x, loadY)}
+              fill={index === 0 ? PLAN_COLOURS.base : loadColour(series[index - 1].slot)}
+              fillOpacity={0.92}
+            />
+          ))}
+          {loadBands.slice(0, -1).map((band, index) => (
+            <path
+              key={`load-sep-${index}`}
+              d={stepLinePath(band.map(pair => pair[1]), x, loadY)}
+              fill="none" className="stroke-card" strokeWidth={2}
+            />
+          ))}
+          {loadLabels.filter(placement => placement.band > 0).map(placement => (
+            <g key={`${series[placement.band - 1].key}-label`}>
               <rect
-                key={step}
-                x={MARGIN_LEFT + PLOT_W - (CELL_STEPS + 1) * 13 - 6 + step * 13}
-                y={matrix.top - 23} width={12} height={9}
-                fill={`var(--plan-cell-${step})`}
+                x={placement.x - placement.width / 2} y={placement.y - placement.height / 2}
+                width={placement.width} height={placement.height} rx={3}
+                className="fill-card" fillOpacity={0.85}
               />
-            ))}
-            <text x={MARGIN_LEFT + PLOT_W + 2} y={matrix.top - 15} className={AXIS_TEXT}>
-              kWh
-            </text>
-          </g>
-          {devices.map((device, rowIndex) => {
-            const top = matrix.top + rowIndex * (ROW_H + ROW_GAP);
-            return (
-              <g key={device.key}>
-                {spansOf(device.values.map(cellStep)).map(span => (
-                  <rect
-                    key={span.from}
-                    x={x(span.from)} y={top}
-                    width={Math.max(0.5, x(span.to) - x(span.from))} height={ROW_H}
-                    fill={`var(--plan-cell-${span.value})`}
-                  />
-                ))}
-                <text
-                  x={MARGIN_LEFT - 10} y={top + ROW_H - 4}
-                  textAnchor="end" className="fill-foreground text-[9.5px]"
-                >
-                  {truncate(device.name)}
-                  <title>{device.name}</title>
-                </text>
-                <rect
-                  x={MARGIN_LEFT + PLOT_W + 10} y={top + 3}
-                  width={Math.max(1, barW(device.kwh))} height={ROW_H - 6} rx={1}
-                  className="fill-muted-foreground" fillOpacity={0.5}
-                />
-                <text
-                  x={MARGIN_LEFT + PLOT_W + 66} y={top + ROW_H - 4}
-                  className="fill-muted-foreground text-[9px] font-mono"
-                >
-                  {device.kwh.toFixed(1)}
-                </text>
-              </g>
-            );
-          })}
+              <text
+                x={placement.x} y={placement.y + 4} textAnchor="middle"
+                className="fill-foreground text-[9.5px] font-medium"
+              >
+                {shorten(series[placement.band - 1].name)}
+              </text>
+            </g>
+          ))}
+          {/* Solar as an outline over the stack, so "did the sun cover it?" is
+              one comparison between two edges rather than a hunt through fills. */}
+          <path
+            d={stepLinePath(rows.map(row => kw(row.solarW)), x, loadY)}
+            fill="none" stroke={PLAN_COLOURS.solar} strokeWidth={2}
+            strokeDasharray="1 3" strokeLinecap="round"
+          />
 
           {/* -------------------------------------------------- Storage --- */}
           {showSoc && (
@@ -467,27 +433,27 @@ const PlanPanels: React.FC<{
                 <>
                   <path
                     d={stepAreaPath(rows.map(row => row.homeSoc), x, socY, 0)}
-                    fill="var(--plan-battery)" fillOpacity={0.2}
+                    fill={PLAN_COLOURS.battery} fillOpacity={0.2}
                   />
                   <path
                     d={stepLinePath(rows.map(row => row.homeSoc), x, socY)}
-                    fill="none" stroke="var(--plan-battery)" strokeWidth={2}
+                    fill="none" stroke={PLAN_COLOURS.battery} strokeWidth={2}
                   />
                 </>
               )}
               {hasEvBattery && (
                 <path
                   d={midpointLinePath(rows.map(row => row.evSoc), x, socY)}
-                  fill="none" stroke="var(--plan-ev)" strokeWidth={2}
+                  fill="none" stroke={PLAN_COLOURS.ev} strokeWidth={2}
                 />
               )}
               {hasBattery && rows[n - 1]?.homeSoc !== null && (
-                <EndLabel y={socY(rows[n - 1].homeSoc as number)} colour="var(--plan-battery)">
+                <EndLabel y={socY(rows[n - 1].homeSoc as number)} colour={PLAN_COLOURS.battery}>
                   {`${t('hem', 'home')} ${Math.round(rows[n - 1].homeSoc as number)}%`}
                 </EndLabel>
               )}
               {hasEvBattery && rows[n - 1]?.evSoc !== null && (
-                <EndLabel y={socY(rows[n - 1].evSoc as number)} colour="var(--plan-ev)">
+                <EndLabel y={socY(rows[n - 1].evSoc as number)} colour={PLAN_COLOURS.ev}>
                   {`${t('bil', 'car')} ${Math.round(rows[n - 1].evSoc as number)}%`}
                 </EndLabel>
               )}
@@ -500,10 +466,7 @@ const PlanPanels: React.FC<{
             unit={t('SEK, ackumulerat', 'SEK, cumulative')}
             y={cost.top - 14}
           />
-          <Gridlines
-            ticks={niceTicks(costMin, costMax, 4)} y={costY}
-            format={tick => tick.toFixed(0)}
-          />
+          <Gridlines ticks={niceTicks(costMin, costMax, 4)} y={costY} format={tick => tick.toFixed(0)} />
           <path
             d={stepAreaPath(cumulative, x, costY, 0)}
             className="fill-foreground" fillOpacity={0.07}
@@ -560,14 +523,11 @@ const PlanPanels: React.FC<{
 
           {/* ------------------------------------------------- X axis ----- */}
           <line
-            x1={MARGIN_LEFT} x2={MARGIN_LEFT + PLOT_W} y1={axisY} y2={axisY}
+            x1={MARGIN_LEFT} x2={RIGHT} y1={axisY} y2={axisY}
             className="stroke-border" strokeWidth={1}
           />
           {hourTicks.map(({ index, date }) => (
-            <text
-              key={index} x={x(index)} y={axisY + 14}
-              textAnchor="middle" className={AXIS_TEXT}
-            >
+            <text key={index} x={x(index)} y={axisY + 14} textAnchor="middle" className={AXIS_TEXT}>
               {date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </text>
           ))}
@@ -591,7 +551,8 @@ const PlanPanels: React.FC<{
       {hovered && pointer && (
         <PlanTooltip
           row={hovered}
-          devices={devices}
+          series={series}
+          baseValue={baseValues[hover as number] ?? 0}
           index={hover as number}
           measured={(hover as number) < dividerIndex}
           hasBattery={hasBattery}
@@ -606,15 +567,17 @@ const PlanPanels: React.FC<{
 };
 
 /**
- * Only what was actually happening.
+ * Only what was actually happening, and in the colours it was drawn in.
  *
  * The old tooltip listed every series in the chart, so a house with twenty
  * meters produced twenty lines, nearly all of them "0.00 kW", and the two that
- * were running were lost among them.
+ * were running were lost among them. The swatches are the chart's own colours:
+ * a reader matching a band to a number should not have to count bands.
  */
 const PlanTooltip: React.FC<{
   row: PlanPanelRow;
-  devices: PlanPanelDevice[];
+  series: ConsumptionSeries[];
+  baseValue: number;
   index: number;
   measured: boolean;
   hasBattery: boolean;
@@ -622,34 +585,35 @@ const PlanTooltip: React.FC<{
   left: number;
   top: number;
   bounds: DOMRect | null;
-}> = ({ row, devices, index, measured, hasBattery, hasEvBattery, left, top, bounds }) => {
+}> = ({
+  row, series, baseValue, index, measured, hasBattery, hasEvBattery, left, top, bounds,
+}) => {
   const { t } = useLanguage();
-  const running = devices
-    .map(device => ({ name: device.name, value: device.values[index] ?? 0 }))
-    .filter(entry => entry.value >= SIGNIFICANT_POWER_W)
-    .sort((a, b) => b.value - a.value);
 
-  const flows: Array<[string, number | null]> = [
-    [t('Sol', 'Solar'), kw(row.solarW)],
-    [t('Nätimport', 'Grid in'), kw(row.gridImportW)],
-    [t('Nätexport', 'Grid out'), kw(row.gridExportW)],
-    [t('Batteri ut', 'Battery out'), kw(row.batteryDischargeW)],
-    [t('Batteri in', 'Battery in'), kw(row.batteryChargeW)],
+  const flows: Array<[string, number | null, string]> = [
+    [t('Sol', 'Solar'), kw(row.solarW), PLAN_COLOURS.solar],
+    [t('Nätimport', 'Grid in'), kw(row.gridImportW), PLAN_COLOURS.grid],
+    [t('Nätexport', 'Grid out'), kw(row.gridExportW), PLAN_COLOURS.grid],
+    [t('Batteri ut', 'Battery out'), kw(row.batteryDischargeW), PLAN_COLOURS.battery],
+    [t('Batteri in', 'Battery in'), kw(row.batteryChargeW), PLAN_COLOURS.battery],
   ];
+  const running = series
+    .map(entry => ({ ...entry, value: entry.values[index] ?? 0 }))
+    .filter(entry => entry.value >= 10);
 
-  const width = 236;
+  const width = 244;
   // Flip to the other side of the pointer rather than run off the edge, and
-  // keep the whole card inside the chart however tall the device matrix is.
+  // keep the whole card inside the chart.
   const offset = bounds && left + width + 24 > bounds.width ? -width - 16 : 16;
-  const estimatedHeight = 150 + running.slice(0, 7).length * 16;
-  const top_ = bounds
-    ? Math.min(Math.max(4, top - 40), Math.max(4, bounds.height - estimatedHeight))
+  const estimated = 190 + running.length * 16;
+  const clampedTop = bounds
+    ? Math.min(Math.max(4, top - 40), Math.max(4, bounds.height - estimated))
     : Math.max(4, top - 40);
 
   return (
     <div
       className="pointer-events-none absolute z-10 rounded-lg border bg-popover px-2.5 py-2 text-xs shadow-md"
-      style={{ left: Math.max(4, left + offset), top: top_, width }}
+      style={{ left: Math.max(4, left + offset), top: clampedTop, width }}
     >
       <div className="mb-1 flex items-baseline justify-between gap-2 font-medium">
         <span>{row.label}</span>
@@ -657,38 +621,42 @@ const PlanTooltip: React.FC<{
           {measured ? t('uppmätt', 'measured') : t('plan', 'plan')}
         </span>
       </div>
-      {flows.filter(([, value]) => value !== null && Math.abs(value) >= 0.02).map(([name, value]) => (
-        <Reading key={name} name={name} value={`${(value as number).toFixed(2)} kW`} />
-      ))}
+      {flows
+        .filter(([, value]) => value !== null && Math.abs(value) >= 0.02)
+        .map(([name, value, colour]) => (
+          <Reading key={name} name={name} colour={colour} value={`${(value as number).toFixed(2)} kW`} />
+        ))}
       <div className="mt-1 border-t pt-1">
         <Reading
           name={t('Husets förbrukning', 'House demand')}
           value={`${(kw(row.loadW) ?? 0).toFixed(2)} kW`}
         />
-        {running.slice(0, 6).map(entry => (
+        {running.map(entry => (
           <Reading
-            key={entry.name} name={entry.name} value={`${(entry.value / 1_000).toFixed(2)} kW`} muted
+            key={entry.key} name={entry.name} colour={loadColour(entry.slot)}
+            value={`${(entry.value / 1_000).toFixed(2)} kW`}
           />
         ))}
-        {running.length > 6 && (
-          <Reading
-            name={t(`+ ${running.length - 6} till`, `+ ${running.length - 6} more`)}
-            value="" muted
-          />
-        )}
+        <Reading
+          name={t('Baslast', 'Base load')} colour={PLAN_COLOURS.base}
+          value={`${(baseValue / 1_000).toFixed(2)} kW`}
+        />
       </div>
       <div className="mt-1 border-t pt-1">
         {hasBattery && row.homeSoc !== null && (
-          <Reading name={t('Hembatteri', 'Home battery')} value={`${Math.round(row.homeSoc)} %`} />
+          <Reading
+            name={t('Hembatteri', 'Home battery')} colour={PLAN_COLOURS.battery}
+            value={`${Math.round(row.homeSoc)} %`}
+          />
         )}
         {hasEvBattery && row.evSoc !== null && (
-          <Reading name={t('Bilbatteri', 'Car battery')} value={`${Math.round(row.evSoc)} %`} />
+          <Reading
+            name={t('Bilbatteri', 'Car battery')} colour={PLAN_COLOURS.ev}
+            value={`${Math.round(row.evSoc)} %`}
+          />
         )}
         {row.importPriceSekPerKwh !== null && (
-          <Reading
-            name={t('Köp', 'Buy')}
-            value={`${row.importPriceSekPerKwh.toFixed(2)} SEK/kWh`}
-          />
+          <Reading name={t('Köp', 'Buy')} value={`${row.importPriceSekPerKwh.toFixed(2)} SEK/kWh`} />
         )}
         <Reading
           name={t('Kostnad hittills', 'Cost so far')}
@@ -699,9 +667,24 @@ const PlanTooltip: React.FC<{
   );
 };
 
-const Reading: React.FC<{ name: string; value: string; muted?: boolean }> = ({ name, value, muted }) => (
-  <div className={`flex items-baseline justify-between gap-3 ${muted ? 'text-muted-foreground' : ''}`}>
-    <span className="truncate">{name}</span>
+/**
+ * A swatch carries the identity; the text stays in ink.
+ *
+ * Colouring the label itself would put a 2:1 yellow on a light popover, which
+ * is the one place the chart's palette cannot survive being text.
+ */
+const Reading: React.FC<{ name: string; value: string; colour?: string }> = ({
+  name, value, colour,
+}) => (
+  <div className="flex items-baseline justify-between gap-3">
+    <span className="flex min-w-0 items-baseline gap-1.5">
+      <span
+        className="mt-px h-2 w-2 shrink-0 rounded-sm"
+        style={{ backgroundColor: colour ?? 'transparent' }}
+        aria-hidden="true"
+      />
+      <span className="truncate">{name}</span>
+    </span>
     <span className="shrink-0 tabular-nums">{value}</span>
   </div>
 );
