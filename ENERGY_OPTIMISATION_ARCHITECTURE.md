@@ -2613,7 +2613,10 @@ cost per kilometre, which is knowable to two decimals.
 
 **The COP belongs in the physics, not the objective.** An air-to-water pool heat
 pump delivers heat at COP(air temperature, water temperature), so the effective
-price of pool heat is the electricity price divided by that COP. In spring the
+price of pool heat is the electricity price divided by that COP. The rest of
+this paragraph is specific to an air-source unit and does not survive the change
+to ground-source, where the source temperature is flat across a day and price
+becomes the only intraday signal the pool has (§8.14). In spring the
 COP varies more across a day than the price does, so "heat the pool when the air
 is warm, not when power is cheap" is arithmetic rather than a seasonal rule. The
 same physics states when heating stops being worthwhile at all — delivered heat
@@ -2913,7 +2916,7 @@ a modelling error or a correction to the heuristic — both are findings.
 | 2 | Keep a buffer rather than run the battery flat, against price spikes and mid-charge cloud | Scenario-based solve + start costs (§8.7) |
 | 3 | Overheat the pool before a forecast cloudy day; cut it short or skip it on a cloudy day when the battery needs the energy | Pool state + one-way lossy store + concave utility (§8.3) — **does not emerge; §8.3's path cannot produce it, see §8.13** |
 | 4 | Car outranks pool at low SOC and stops outranking it near full; winter raises the value of the same SOC | Marginal value comparison + utility over range (§8.3, §8.9) |
-| 5 | Pool heating tracks air temperature ahead of price in spring, and stops being worthwhile in winter | COP(air, water) in the physics (§8.3) |
+| 5 | Pool heating tracks air temperature ahead of price in spring, and stops being worthwhile in winter | COP(air, water) in the physics (§8.3) — **air-source only; does not hold for a ground-source unit, see §8.14** |
 | 6 | Buy from the grid whenever price is below the marginal utility of a sink; accept expensive imports in winter when no cheaper window exists | The objective itself (§8.2) |
 | 7 | Grid-charge the battery only when the intraday spread beats round-trip losses plus wear | `d_batt` + efficiency in the objective (§8.10) |
 
@@ -3332,6 +3335,143 @@ participate* — one level further in.
 Both are whole-plan tests. Heuristic #3 is currently reproduced only at the unit
 level against `store-models.ts` (§8.12.1), which is why a plan contradicting it
 in both directions shipped without a failing test.
+
+### 8.14 The pool heat pump changes type, and the model must tier rather than move (2026-08-27)
+
+The reference installation's pool heat pump is being replaced: air-to-water out,
+ground-source in. `switch.pool_heater` last ran 23 Aug 12:34–16:12 and has been
+off since, with `unavailable` transitions on 25 and 27 Aug; circulation stopped
+with it, `sensor.pool_pump_energy` falling from 0.8–2.3 kWh/day to 0.14 and then
+0. `pool_model` is null throughout, so every plan in this period uses the seeded
+air-to-water figures for a machine that is not there.
+
+The air-to-water model is not obsolete — it is the more common installation and
+stays a first-class supported case. What has gone is the ability to *validate*
+it here, because this was the only pool in the fleet exercising it. Both facts
+have to be built for, and they pull in opposite directions: the new model needs
+writing, and the old one needs freezing before it rots.
+
+#### What actually changes in the physics
+
+| | Air-to-water | Ground-source |
+|---|---|---|
+| COP depends on | Air temperature, water temperature | **Brine/ground-loop temperature**, water temperature |
+| Source temperature over a day | Swings 12 °C in late August | Effectively flat |
+| Source temperature over a season | Follows the weather | Drifts slowly as heat is extracted |
+| Below about 12 °C air | Efficiency collapses; `cutout_air_c: 8` returns zero output | **No cutout** |
+| Operating season here | Shut down Sept/Oct, restarted April/May | **Year round** |
+
+Two consequences that are not re-tuning.
+
+**One heuristic disappears and one becomes the whole game.** §8.3 argues that
+"in spring the COP varies more across a day than the price does, so heating when
+the air is warm rather than when power is cheap emerges from the arithmetic",
+and §8.12 #5 makes that an acceptance test. Both are true of an air-source unit
+and false of a ground-source one: with a flat source temperature the COP no
+longer varies across a day at all, and **price becomes the only intraday signal
+the pool has**. Everything in §8.13 about the pool being unable to see price
+therefore stops being one defect among several and becomes the entire value of
+planning the pool.
+
+**The season the planner was never asked about is now the important one.** A
+year-round pool in this climate is probably the largest controllable load in the
+house, and its hardest months are the ones with volatile prices and almost no
+surplus. That is where §8.13's cross-day deferral pays most, and where its open
+question is hardest: "how long until the next dependable free top-up" is a clean
+question in August and close to meaningless in December. The winter form of the
+pool's covering window is likely not about surplus at all — it is about the
+cheapest window in a price forecast that does not extend that far, which is the
+same terminal-value problem as §8.13 finding 3 in a harsher form.
+
+#### Requirement: the model tiers, it does not move
+
+`SEEDED_POOL_HEAT_PUMP` is air-shaped in every parameter — `rated_air_c`,
+`cop_per_air_c`, `cutout_air_c` — and `poolCop(model, airC, waterC)` and
+`stepPoolTemperature(model, waterC, airC, electricalW)` both take air as the
+single source temperature. Replacing those values in place would delete the
+air-to-water model. What is needed instead:
+
+| Piece | Change |
+|---|---|
+| `PoolHeatPumpModel` | Becomes a tagged union on `source: "air" \| "ground"`, each variant carrying its own rating point and slope |
+| `poolCop` | Dispatches on the tag. The ground variant has no cutout and no air term |
+| `stepPoolTemperature` | Signature change, not a parameter swap: the pool still *loses* heat to air while now *gaining* it from the ground loop, and one `airC` argument currently serves both roles |
+| `pool-training.ts` | Fits a different regressor set per variant. `MIN_AIR_SPREAD_C` is an air-only identifiability gate; the ground variant needs a brine-spread gate or none |
+| Snapshot | Carries the installed type. This is a commissioning fact, §9.1 "hard installation" class — not inferable and not a customer preference |
+
+#### Requirement: the fit needs an epoch boundary, before the new unit runs
+
+`TRAINING_WINDOW_DAYS = 21` with `REFIT_INTERVAL_HOURS = 24`. Once the new unit
+starts, every daily refit for three weeks will regress across air-to-water
+samples, an outage with circulation stopped, and ground-source samples as though
+they described one machine.
+
+It will not fail loudly. `MIN_POOL_FIT_R2 = 0.4` is easy to clear because the
+cooling term explains most of the variance unaided, so the blend will return a
+`rated_cop` and a `cop_per_air_c` for a machine that does not exist, be stored,
+and be consumed by the planner. That is precisely the failure
+`MIN_HEATED_POOL_SAMPLES` was introduced to prevent, restated at the level of
+the window rather than the sample count: **worse than a refusal, because it
+looks like an answer.**
+
+The fix is a recorded commissioning instant per home, before which heat-pump
+samples are excluded from the fit. Two details:
+
+- The **loss** fit may span the boundary — loss is a property of the pool, not of
+  the machine heating it — but must exclude quarters where circulation stopped,
+  because an uncirculated pool's temperature probe is not reading bulk water
+  (§8.13).
+- `TRAINING_WINDOW_DAYS` currently lives in `thermal-training.ts` and is shared
+  with the room fit. A pool-specific window cannot be set without splitting it.
+
+#### Requirement: freeze the air-to-water model against fixtures
+
+This home can no longer exercise the air-to-water path, so from commissioning
+onward the only evidence that model still works is a fixture. The data is not at
+risk — `energy_optimisation_pool_slots` is retained 1095 days and
+`energy_optimisation_device_slots` 400 days, so the whole air-to-water era is
+already archived at quarter resolution — which makes this a data-selection task
+rather than a race against Home Assistant's ten-day recorder.
+
+A fixture is only useful if it pins the behaviours that distinguish the model.
+At minimum it needs windows covering: a spring day where COP varies more than
+price and heating follows air rather than tariff (§8.12 #5); a cold window where
+delivered heat falls below the loss rate and heating correctly stops; and a
+mid-season window with heating, circulation and a clean temperature trajectory
+from which `fitPoolModel` returns an accepted fit. These belong with the §10.1
+canonical seasonal fixtures.
+
+#### Commissioning unknowns that change the contract
+
+None of these can be settled until the installation finishes, and each one
+changes more than a parameter.
+
+- **Does the unit expose brine temperature to Home Assistant?** Without a
+  source-side temperature there is no regressor for the ground variant's COP
+  slope, and the model degrades to a constant COP with an assumed seasonal
+  drift. If this is still a specification decision it should be made now rather
+  than discovered later.
+- **Does it modulate?** The air-to-water unit was `switch_schedule` at a fixed
+  3429 W with a four-quarter minimum run. An inverter-driven ground-source unit
+  is a different control contract, and it promotes §8.13's second secondary
+  defect — the pool store declaring neither `min_power_w` nor `power_step_w` —
+  from latent to load-bearing.
+- **Is the ground loop shared with anything else?** A pool heater sharing a
+  compressor or a borehole with house heating is a coupling the planner has no
+  representation for: two stores competing for one machine, and extraction from
+  a loop that recovers slowly. If the install is pool-dedicated this is moot; if
+  it is not, it is a larger modelling question than the COP curve.
+
+#### Until commissioning
+
+`capabilities.pool` is still true and the pool is still the top bidder in every
+solve — 7.77 SEK/kWh against a price band topping out at 2.87 (§8.13) — so it
+outbids the house battery and the car for a heat pump that is physically being
+removed, and the plan in capsule `1bdbb1b1` schedules 90 kWh into it. The pool
+should be marked out of service for the duration. The capability is built in the
+integration rather than the edge functions, so this is an integration-side
+change; §8.12.2's rule applies to how it is reported, which is that a pool
+withdrawn for works and a home with no pool must not look the same in the plan.
 
 ## 9. Parameter model
 
