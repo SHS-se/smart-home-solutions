@@ -3,6 +3,8 @@ import {
   COP_REFERENCE_AIR_C,
   fitPoolModel,
   type PoolTrainingSample,
+  poolRefitIsDue,
+  poolTrainingWindowStartMs,
   SLOT_HOURS,
 } from "./pool-training.ts";
 import { WATER_KWH_PER_M3_K } from "./store-models.ts";
@@ -134,4 +136,48 @@ Deno.test("a rejection still reports how much evidence there was", () => {
   assert("rejected" in result);
   assertEquals(result.heated_sample_count, 0);
   assert(result.sample_count > 400, "the refusal is about heating, not history");
+});
+
+const HOUR = 3_600_000;
+const DAY = 86_400_000;
+const NOW = Date.parse("2026-09-10T12:00:00Z");
+
+Deno.test("without an epoch the window is the rolling one", () => {
+  assertEquals(
+    poolTrainingWindowStartMs(NOW, null, 21),
+    NOW - 21 * DAY,
+  );
+});
+
+Deno.test("an epoch inside the rolling window truncates it", () => {
+  const epoch = Date.parse("2026-09-01T00:00:00Z");
+  assertEquals(poolTrainingWindowStartMs(NOW, epoch, 21), epoch);
+});
+
+Deno.test("an epoch older than the rolling window does not extend it", () => {
+  // A machine commissioned last year must not drag a year of samples in.
+  const epoch = Date.parse("2025-09-01T00:00:00Z");
+  assertEquals(poolTrainingWindowStartMs(NOW, epoch, 21), NOW - 21 * DAY);
+});
+
+Deno.test("no samples survive an epoch set in the present", () => {
+  // The window collapses to nothing, so `fitPoolModel` refuses for want of
+  // evidence rather than blending two machines into a confident answer.
+  assertEquals(poolTrainingWindowStartMs(NOW, NOW, 21), NOW);
+});
+
+Deno.test("a refit waits out the interval when nothing has changed", () => {
+  assertEquals(poolRefitIsDue(NOW, NOW - 3 * HOUR, null, 24), false);
+  assertEquals(poolRefitIsDue(NOW, NOW - 25 * HOUR, null, 24), true);
+});
+
+Deno.test("an epoch recorded after the standing fit forces one immediately", () => {
+  const fittedAt = NOW - 3 * HOUR;
+  assertEquals(poolRefitIsDue(NOW, fittedAt, NOW - HOUR, 24), true);
+});
+
+Deno.test("an epoch older than the standing fit does not force one", () => {
+  // The fit already saw only post-epoch samples; nothing has been restated.
+  const fittedAt = NOW - 3 * HOUR;
+  assertEquals(poolRefitIsDue(NOW, fittedAt, NOW - 10 * DAY, 24), false);
 });

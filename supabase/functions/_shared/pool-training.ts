@@ -192,3 +192,55 @@ export function fitPoolModel(
     },
   };
 }
+
+/**
+ * Where a pool fit's training window starts.
+ *
+ * The rolling window alone assumes the machine at the end of it is the machine
+ * at the start. Replacing a pool heat pump breaks that, and the blend does not
+ * fail loudly: `MIN_POOL_FIT_R2` is easy to clear because the cooling term
+ * explains most of the variance unaided, so a window straddling two units
+ * returns a confident COP for a machine that never existed. That is the same
+ * failure `MIN_HEATED_POOL_SAMPLES` guards against, one level up.
+ *
+ * `epochStartMs` is the instant the current heat pump began serving the pool —
+ * a commissioning fact, §9.1 "hard installation" class, never inferred. Samples
+ * before it describe different hardware and are excluded, whatever the rolling
+ * window would otherwise admit. Null leaves the window as it was.
+ *
+ * The loss coefficient is a property of the pool rather than of the machine
+ * heating it, so in principle it could be fitted across the boundary. It is not,
+ * because `fitPoolModel` solves loss and COP together in one regression. Until
+ * that splits, a home crossing an epoch waits for post-epoch data and plans on
+ * seeded figures meanwhile — which is what it already does before any fit
+ * converges.
+ */
+export function poolTrainingWindowStartMs(
+  nowMs: number,
+  epochStartMs: number | null,
+  windowDays: number,
+): number {
+  const rolling = nowMs - windowDays * 86_400_000;
+  if (epochStartMs === null || !Number.isFinite(epochStartMs)) return rolling;
+  return Math.max(rolling, epochStartMs);
+}
+
+/**
+ * Whether a pool refit is due.
+ *
+ * Normally a fixed interval, because a fit that moves faster than the physics
+ * is noise. The exception is an epoch recorded after the standing fit was
+ * made: that fit describes the previous machine, and waiting out the interval
+ * would plan against it for up to a day after someone stated it was wrong.
+ */
+export function poolRefitIsDue(
+  nowMs: number,
+  fittedAtMs: number,
+  epochStartMs: number | null,
+  intervalHours: number,
+): boolean {
+  if (epochStartMs !== null && Number.isFinite(epochStartMs)) {
+    if (epochStartMs > fittedAtMs) return true;
+  }
+  return nowMs - fittedAtMs >= intervalHours * 3_600_000;
+}

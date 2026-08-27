@@ -35,6 +35,8 @@ import { resolveValueCurves } from "../_shared/value-curves.ts";
 import {
   fitPoolModel,
   type PoolTrainingSample,
+  poolRefitIsDue,
+  poolTrainingWindowStartMs,
 } from "../_shared/pool-training.ts";
 import {
   buildComfortForecast,
@@ -313,13 +315,21 @@ async function refitPoolModel(
   const now = Date.now();
   const { data: existing } = await supabase
     .from("energy_optimisation_pool_model")
-    .select("fitted_at")
+    .select("fitted_at, heat_pump_epoch_start")
     .eq("home_id", homeId)
     .maybeSingle();
   const lastFit = existing?.fitted_at ? Date.parse(existing.fitted_at) : 0;
-  if (now - lastFit < REFIT_INTERVAL_HOURS * 3_600_000) return;
+  // Samples from before the current heat pump was commissioned describe a
+  // different machine, so the window is clamped to it and a newly recorded
+  // epoch invalidates the standing fit at once rather than a day later.
+  const epochStart = existing?.heat_pump_epoch_start
+    ? Date.parse(existing.heat_pump_epoch_start)
+    : null;
+  if (!poolRefitIsDue(now, lastFit, epochStart, REFIT_INTERVAL_HOURS)) return;
 
-  const from = new Date(now - TRAINING_WINDOW_DAYS * 86_400_000).toISOString();
+  const from = new Date(
+    poolTrainingWindowStartMs(now, epochStart, TRAINING_WINDOW_DAYS),
+  ).toISOString();
   const [{ data: waterRows }, { data: outdoorRows }, { data: deviceRows }] =
     await Promise.all([
       supabase.from("energy_optimisation_pool_slots")
