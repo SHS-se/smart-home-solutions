@@ -3203,8 +3203,17 @@ clears the dearest hour by a factor, not by a margin.
 That would still be tolerable if the steep segment were rare. It is not. A 55 m³
 pool holds 63.97 kWh per °C and rests well below 28 °C in late August, so
 `urgent_below = 28` describes the pool's normal state rather than an exception.
-The measured trajectory over four unheated days (23–27 Aug) is 28.50 → 26.86 °C.
+The observed trajectory over four unheated days (24–27 Aug) is 28.50 → 26.86 °C.
 The steep segment is where the pool lives.
+
+That trajectory is an observation, not a fit. Those four days are the
+air-to-water heat pump's removal, and `sensor.pool_pump_energy` falls from
+0.8–2.3 kWh/day to 0.14 and then 0 across them, so circulation had stopped and
+the water-temperature probe is not reliably reading bulk water. It is enough to
+say the seeded `SEEDED_POOL_LOSS_KW_PER_K = 0.35` is roughly double what the
+pool actually did — 0.35 kW/K predicts about 1.1 °C/day against the 0.55 °C/day
+observed — and not enough to replace it. A defensible loss fit needs circulation
+running and has to wait for the new installation (§8.14).
 
 **3. The retention weighting is an anti-deferral tax roughly ten times larger
 than any price signal.**
@@ -3235,12 +3244,14 @@ last row corrects only the value model on top of it.
 | | Pool energy | Ends at | Pool energy cost | House import | House export | 27 Aug (dearest) | 30 Aug (sunniest) |
 |---|---|---|---|---|---|---|---|
 | As shipped | 90.1 kWh | 27.36 °C | 111.6 SEK | 86.4 kWh | 15.0 kWh | 20.1 kWh | 0 |
-| Measured loss only | 78.8 kWh | 28.89 °C | 100.8 SEK | 74.8 kWh | 14.3 kWh | 20.1 kWh | 0 |
+| Lower loss coefficient only | 78.8 kWh | 28.89 °C | 100.8 SEK | 74.8 kWh | 14.3 kWh | 20.1 kWh | 0 |
 | Loss + value model | 81.3 kWh | **29.65 °C** | **59.0 SEK** | **57.2 kWh** | **1.2 kWh** | **1.4 kWh** (all solar) | **21.0 kWh** (20.6 solar) |
 
 Correcting the physics alone changes *how much* and not *when*: the 27 Aug
 evening block and the 30 Aug refusal are unchanged to the tenth of a kWh. The
-timing is governed entirely by the value model.
+timing is governed entirely by the value model. That is also why the provisional
+loss coefficient above does not weaken the finding — every row shares the same
+value model or the same physics, and the two effects separate cleanly.
 
 The last row was produced by rescaling the pool curve and carrying its retention
 past the horizon edge (`terminal_weight` set to the discounted tail of an
