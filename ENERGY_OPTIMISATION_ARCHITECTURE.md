@@ -1856,7 +1856,7 @@ an existing Node-RED flow to consume the same request entities.
 | Battery | Charge/discharge envelope and target SOC trajectory | Clamp to live SOC, inverter limits, reserve, grid mode, and confirmation | Direct bounded target only after shadow validation |
 | EV charger | Required energy by deadline plus target/minimum/maximum current for every slot | Presence/SOC check, reactive step adjustment, delivered-energy/deadline guard, confirmation | Advisory current target to EV controller |
 | Water boiler | Opportunity windows and normal/soft/hard temperature targets | Thermostat, hygiene cycle, maximum runtime, completion | Permit/request only |
-| Pool heating | Opportunity windows and soft/hard water targets | Pump/heater coupling, filtration requirement, seasonal enable, completion | Permit/request only |
+| Pool heating | Opportunity windows and soft/hard water targets | Pump/heater coupling, filtration requirement, seasonal enable (air-source only, §8.14), completion | Permit/request only |
 | Resistive room heating | Aggregate heating-power envelope plus per-room comfort band, preheat permission and priority | Home-wide grant allocator, then room thermostat, occupancy, manual override and hard comfort floor | Bounded setpoint/permission advice; never direct relay timing |
 | Inverter heat pump/aircon | Mode, bounded setpoint offset, preferred recovery window | Native thermostat, COP/defrost behaviour, minimum run time, IR/power confirmation | Setpoint advice only |
 | Duty-cycle appliance | Start-by window or “avoid now” signal | User intent and non-interruptible cycle | Advisory; never force-start initially |
@@ -3339,7 +3339,8 @@ in both directions shipped without a failing test.
 ### 8.14 The pool heat pump changes type, and the model must tier rather than move (2026-08-27)
 
 The reference installation's pool heat pump is being replaced: air-to-water out,
-ground-source in. `switch.pool_heater` last ran 23 Aug 12:34–16:12 and has been
+a Nibe S1256 13 kW ground-source unit in, driven over Modbus TCP and also
+pre-heating the water feeding the existing electric boiler. `switch.pool_heater` last ran 23 Aug 12:34–16:12 and has been
 off since, with `unavailable` transitions on 25 and 27 Aug; circulation stopped
 with it, `sensor.pool_pump_energy` falling from 0.8–2.3 kWh/day to 0.14 and then
 0. `pool_model` is null throughout, so every plan in this period uses the seeded
@@ -3441,26 +3442,90 @@ mid-season window with heating, circulation and a clean temperature trajectory
 from which `fitPoolModel` returns an accepted fit. These belong with the §10.1
 canonical seasonal fixtures.
 
-#### Commissioning unknowns that change the contract
+#### One machine, two sinks: the meter stops meaning what it meant
 
-None of these can be settled until the installation finishes, and each one
-changes more than a parameter.
+The unit is a **Nibe S1256 13 kW**, and it will heat the pool *and* pre-heat the
+water feeding the existing electric boiler. The boiler needs no new model for
+that — see below — but the pool's does, because the measurement underneath it
+changes meaning.
 
-- **Does the unit expose brine temperature to Home Assistant?** Without a
-  source-side temperature there is no regressor for the ground variant's COP
-  slope, and the model degrades to a constant COP with an assumed seasonal
-  drift. If this is still a specification decision it should be made now rather
-  than discovered later.
-- **Does it modulate?** The air-to-water unit was `switch_schedule` at a fixed
-  3429 W with a four-quarter minimum run. An inverter-driven ground-source unit
-  is a different control contract, and it promotes §8.13's second secondary
-  defect — the pool store declaring neither `min_power_w` nor `power_step_w` —
-  from latent to load-bearing.
-- **Is the ground loop shared with anything else?** A pool heater sharing a
-  compressor or a borehole with house heating is a coupling the planner has no
-  representation for: two stores competing for one machine, and extraction from
-  a loop that recovers slowly. If the install is pool-dedicated this is moot; if
-  it is not, it is a larger modelling question than the COP curve.
+`sensor.pool_heater_energy` is a three-phase Shelly on the heater supply. Today
+it measures one machine doing one job. Pointed at the S1256 it measures one
+machine doing two, and nothing in the snapshot distinguishes them.
+
+`fitPoolModel` regresses pool temperature rise against that meter's energy. Any
+quarter where the compressor was making hot water instead contributes
+electricity with no corresponding temperature rise, so the fitted COP comes out
+**too low**, and — as with the epoch blend above — it clears `MIN_POOL_FIT_R2`
+anyway because the cooling term carries the variance. A confident wrong answer,
+again.
+
+Two further consequences of one compressor serving several demands:
+
+- **The pool's available power is not a nameplate.** Nibe's internal logic
+  prioritises hot water. A pool store declaring a constant `max_power_w` claims
+  capacity the unit will not always give it.
+- **The control contract moves.** The air-to-water unit was `switch_schedule`:
+  the planner closed a relay. The S1256 is driven over Modbus TCP, and the
+  planner's lever becomes *block, and nudge setpoints* — the unit chooses within
+  what it is allowed. §4.4 already specifies pool heating as *permit/request
+  only*, so this is not a new row in that table: it is the implementation, which
+  went to direct relay scheduling, being forced back to what the table always
+  said. §4.4's "seasonal enable" for this class is air-source reasoning and does
+  not survive either.
+
+The fix for the first is a register rather than a model. The S-series publishes
+which demand the compressor is currently serving, which turns "was this
+quarter's electricity pool heat or hot water?" from a confound into a regressor.
+Securing that register is therefore a precondition for fitting the ground
+variant at all, not a nicety.
+
+#### The boiler needs no model change, and will retrain itself
+
+Pre-heating reduces what the boiler must supply, and the existing contract
+absorbs that without alteration. The boiler's whole forecast in capsule
+`1bdbb1b1` is about 2.0 kWh/day (1.07 / 2.06 / 1.98 / 1.27 across the four
+days), declared deferrable under a 20-quarter inhibit cap. Halving it saves
+roughly a kilowatt-hour a day, which is inside the noise of everything else in
+the plan, and `forecast_method: empirical_recent_history` over a 10-day window
+means the reduction is learned rather than configured.
+
+The one predictable artefact is the boiler's own version of the epoch problem:
+for about a fortnight after commissioning the planner will reserve hot-water
+energy that is no longer needed. At this magnitude that is worth knowing so it
+is not diagnosed as a defect, and not worth code.
+
+Worth one check at the same time: 2.0 kWh/day is low for household hot water —
+some 38 minutes of a 3.1 kW element. If the meter mapping is catching only part
+of the boiler, then both the saving and the baseline it is measured against are
+understated.
+
+#### Commissioning checklist, and what still cannot be settled
+
+The integration path is Modbus TCP into Home Assistant's `nibe_heatpump`, which
+supports the S-series. The cloud path exists and should not be used for control.
+Pool registers on Nibe come from an accessory rather than the base unit, so
+their presence is a question for the installer and not an assumption.
+
+Each row below is a model requirement first and a register second; the register
+names are the expected shape and must be confirmed against the live map.
+
+| What the model needs | Expected source | Consequence if absent |
+|---|---|---|
+| COP source term, replacing air temperature | Brine in / out (BT10, BT11) | Ground variant degrades to a constant COP with an assumed seasonal drift |
+| Pool water temperature | Pool sensor (BT51), pool accessory only | Keeps `sensor.filtered_pool_water_temperature`; check which is authoritative rather than carrying both |
+| **Which demand the compressor is serving** | Priority / operating-mode register | The COP fit cannot separate pool heat from hot water, per the section above |
+| Whether the compressor modulates | Compressor frequency | The pool is a variable-power store, which promotes §8.13's `min_power_w` / `power_step_w` omission from latent to load-bearing |
+| Electrical input | Unit-reported power if present | Keep the Shelly on the supply; note it measures both sinks either way |
+| Control: pool | Pool start/stop setpoints, pool activation | No pool actuation at all |
+| Control: block | External adjustment / blocking registers | The planner has no lever, and the pool leaves the dispatch |
+
+What genuinely cannot be settled yet is how the unit behaves when the planner
+and its own controller disagree — whether a block is honoured immediately, how
+long a demand it has already started will run, and whether setpoint nudges are
+rate-limited. That is the difference between commanding a device and influencing
+one, and it determines whether the pool can stay a dispatched store or has to
+become a permission contract like the boiler.
 
 #### Until commissioning
 
