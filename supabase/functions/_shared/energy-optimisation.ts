@@ -2023,6 +2023,62 @@ const SEEDED_POOL_HEAT_PUMP = {
 /** Until a fitted kWh/km exists, a mid-size EV at a mild temperature. */
 const SEEDED_VEHICLE_KWH_PER_KM = 0.16;
 
+/**
+ * Where power starts costing something beyond the energy, as a share of the
+ * connection.
+ *
+ * Half. Ordinary household load sits far below it — the reference home averages
+ * 1.74 kW against a 13.2 kW service — so nothing the plan cannot move is
+ * shaped, while a store adding several kilowatts on top of it is. A share
+ * rather than a figure in watts because it is a statement about the
+ * installation's own headroom, and the connection is the only measure of that
+ * the snapshot carries.
+ */
+const PEAK_SHAPING_THRESHOLD_SHARE = 0.5;
+
+/**
+ * What a kilowatt above the threshold adds to every kilowatt-hour drawn beside
+ * it, SEK/kWh per kW.
+ *
+ * **Zero, so shaping is off until one defect is cleared.** The mechanism itself
+ * is built and measured — at 0.6 a winter horizon spreads its charging from 17
+ * quarters to 63, drops peak charge power from 8.8 kW to 5.5 and the grid peak
+ * from 13.2 kW to 8.0, moving the same energy. What stops it being switched on
+ * is that a shaped plan changes the order allocations are made in, and that
+ * order exposes a bound defect in the store dispatch: a vehicle's charge is
+ * scheduled past the state its own cap allows, `project` silently clamps the
+ * state, and the schedule keeps power the car will refuse. Turning shaping on
+ * before that is fixed would plan energy into a car that cannot take it, which
+ * is the exact failure `max_state` was added to stop.
+ *
+ * When it is switched on, 0.3–1.0 is the range that shapes; below about 0.3
+ * nothing moves, because the rate has to be comparable to the gap between what
+ * a store thinks its energy is worth and what the quarter costs. §8.16 leaves
+ * the calibration open beyond that: it can be anchored to the last published
+ * effektavgift when one returns.
+ */
+const PEAK_SHAPING_SEK_PER_KWH_PER_KW = 0;
+
+/** The shadow price on power this plan is shaped with (§8.16). */
+function derivePeakShaping(
+  snapshot: OptimisationSnapshot,
+): { threshold_w: number; sek_per_kwh_per_kw: number } {
+  const policy = snapshot.policy as OptimisationSnapshot["policy"] & {
+    peak_shaping_threshold_w?: number | null;
+    peak_shaping_sek_per_kwh_per_kw?: number | null;
+  };
+  const stated = (value: unknown): number | null =>
+    typeof value === "number" && Number.isFinite(value) && value >= 0
+      ? value
+      : null;
+  return {
+    threshold_w: stated(policy.peak_shaping_threshold_w) ??
+      snapshot.grid.import_limit_w * PEAK_SHAPING_THRESHOLD_SHARE,
+    sek_per_kwh_per_kw: stated(policy.peak_shaping_sek_per_kwh_per_kw) ??
+      PEAK_SHAPING_SEK_PER_KWH_PER_KW,
+  };
+}
+
 interface DerivedBatteryValueCurve {
   curve: UtilityCurve;
   diagnostic: BatteryValueCurveDiagnostic;
@@ -2533,6 +2589,7 @@ function scheduleServices(
   const dispatchKey = reservedW.every((watts) => Math.abs(watts) < 1e-9)
     ? "unreserved"
     : reservedW.join(",");
+  const peakShaping = derivePeakShaping(snapshot);
   let dispatchBundle = dispatchCache.get(dispatchKey);
   if (!dispatchCache.has(dispatchKey)) {
     const stores = buildDispatchStores(slots, snapshot, derivedBatteryValue);
@@ -2554,6 +2611,8 @@ function scheduleServices(
         result: planDispatch(dispatchSlots, stores, {
           grid_import_limit_w: snapshot.grid.import_limit_w,
           grid_export_limit_w: snapshot.grid.export_limit_w,
+          grid_import_shaping_w: peakShaping.threshold_w,
+          peak_shaping_sek_per_kwh_per_kw: peakShaping.sek_per_kwh_per_kw,
         }),
       };
     } else {

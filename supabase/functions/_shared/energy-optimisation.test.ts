@@ -3003,3 +3003,79 @@ Deno.test("a battery that charges in winter also discharges", () => {
     `and a dear morning is what it was stored for, returned ${returned} kWh`,
   );
 });
+
+
+Deno.test("a shaped peak spreads a charge instead of concentrating it", () => {
+  // §8.12 #10 and #13. Off by default (see `PEAK_SHAPING_SEK_PER_KWH_PER_KW`),
+  // so the rate is stated here; what is under test is that the mechanism moves
+  // power without moving energy.
+  const start = Date.parse("2026-08-10T08:00:00.000Z");
+  const base = horizon();
+  const dark = base.slots.map((slot, index) => {
+    const hour = ((index / 4) + 10) % 24;
+    return {
+      ...slot,
+      start: new Date(start + index * 15 * 60_000).toISOString(),
+      pv_forecast_w: 0,
+      base_load_forecast_w: hour >= 16 && hour < 21 ? 5_000 : 2_500,
+      base_load_p10_w: 2_000,
+      base_load_p90_w: 6_500,
+      import_price_sek_per_kwh: index < 96
+        ? (hour >= 6 && hour < 9 ? 3.2 : hour >= 16 && hour < 20 ? 2.9 : 0.8)
+        : null,
+      export_price_sek_per_kwh: index < 96 ? 0.2 : null,
+    };
+  });
+  const at = (rate: number) => {
+    const plan = generateOptimisationPlan(
+      horizon({
+        slots: dark,
+        outdoor_temperature_c: dark.map(() => -8),
+        pool: { water_temperature_c: 30.9, volume_m3: 55 },
+        // A pack whose charger can outrun the shaping, so the power it settles
+        // at is a decision rather than the hardware limit.
+        battery: { ...base.battery!, capacity_kwh: 18.08, charge_max_w: 8_800 },
+        policy: {
+          ...base.policy,
+          peak_shaping_sek_per_kwh_per_kw: rate,
+        } as OptimisationSnapshot["policy"],
+      }),
+      new Date(NOW),
+    );
+    const slots = plan.plans.priority.slots;
+    const charging = slots.filter((slot) => slot.battery_charge_w > 1);
+    return {
+      status: plan.status,
+      quarters: charging.length,
+      peakChargeW: Math.max(...charging.map((slot) => slot.battery_charge_w)),
+      peakImportW: Math.max(...slots.map((slot) => slot.grid_import_w)),
+      kwh: charging.reduce(
+        (total, slot) => total + slot.battery_charge_w / 1_000 * 0.25,
+        0,
+      ),
+    };
+  };
+
+  const flat = at(0);
+  const shaped = at(0.6);
+
+  assertEquals(flat.status, "ready");
+  assertEquals(shaped.status, "ready");
+  assert(
+    shaped.quarters > flat.quarters,
+    `shaping spreads the charge: ${flat.quarters} quarters became ${shaped.quarters}`,
+  );
+  assert(
+    shaped.peakChargeW < flat.peakChargeW,
+    `and lowers the power it is drawn at: ${flat.peakChargeW} W became ${shaped.peakChargeW} W`,
+  );
+  assert(
+    shaped.peakImportW < flat.peakImportW,
+    `which is the point — the grid peak: ${flat.peakImportW} W became ${shaped.peakImportW} W`,
+  );
+  // Power moved, energy did not: this is not simply buying less.
+  assert(
+    shaped.kwh > flat.kwh * 0.8,
+    `the same charge is still bought, ${flat.kwh} against ${shaped.kwh} kWh`,
+  );
+});

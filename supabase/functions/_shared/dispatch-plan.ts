@@ -28,7 +28,11 @@
 // before a cloudy day" a real trade rather than free storage: some of what goes
 // in early leaks back out, and the arithmetic says how much.
 
-import { type UtilityCurve, valueOfMove } from "./store-value.ts";
+import {
+  marginalValue,
+  type UtilityCurve,
+  valueOfMove,
+} from "./store-value.ts";
 
 export const SLOT_HOURS = 0.25;
 
@@ -125,6 +129,26 @@ export interface DispatchStore {
 export interface DispatchLimits {
   grid_import_limit_w: number;
   grid_export_limit_w: number;
+  /**
+   * Grid import above which drawing more starts to cost something beyond the
+   * energy, in watts. Below it nothing is shaped, so ordinary household load —
+   * which the plan cannot move anyway — is left entirely alone.
+   */
+  grid_import_shaping_w: number;
+  /**
+   * What a kilowatt of import above that threshold adds to every kilowatt-hour
+   * drawn in the same quarter, SEK/kWh per kW.
+   *
+   * §8.16's shadow price on power, and requirements 1, 2 and 4 all come out of
+   * its being *convex*: the marginal cost rises with the power already
+   * committed, so spreading a given energy across more quarters is cheaper than
+   * concentrating it, backing off is automatic when another load has taken the
+   * room, and covering a little of every quarter beats covering all of a few.
+   * None of those three is written down anywhere.
+   *
+   * Zero restores the pure energy objective exactly.
+   */
+  peak_shaping_sek_per_kwh_per_kw: number;
 }
 
 export interface DispatchAllocationDiagnostic {
@@ -293,6 +317,8 @@ function energyCostSekPerKwh(
   slot: DispatchSlot,
   occupiedW: number,
   addedW: number,
+  limits: DispatchLimits,
+  returnedW = 0,
 ): number {
   if (addedW <= 0) return 0;
   const surplusW = Math.max(0, slot.pv_w - slot.fixed_load_w - occupiedW);
@@ -301,7 +327,65 @@ function energyCostSekPerKwh(
   return (
     solarW * slot.export_price_sek_per_kwh +
     gridW * slot.import_price_sek_per_kwh
-  ) / addedW;
+  ) / addedW +
+    peakSekPerKwh(limits, gridImportW(slot, occupiedW, returnedW), gridW);
+}
+
+/** What the house is already drawing from the grid in this quarter. */
+function gridImportW(
+  slot: DispatchSlot,
+  occupiedW: number,
+  returnedW: number,
+): number {
+  return Math.max(
+    0,
+    slot.fixed_load_w + occupiedW - Math.max(0, slot.pv_w) - returnedW,
+  );
+}
+
+/** How far one import figure sits above the shaping threshold, in kW. */
+function overThresholdKw(limits: DispatchLimits, importW: number): number {
+  return Math.max(0, importW - limits.grid_import_shaping_w) / 1_000;
+}
+
+/**
+ * What raising this quarter's import by `addedW` costs beyond the energy.
+ *
+ * The average marginal price across the interval, which is exact for a cost
+ * rising linearly in the overshoot — so a block of power is charged what its
+ * kilowatts actually cost rather than what its first one did.
+ */
+function peakSekPerKwh(
+  limits: DispatchLimits,
+  importBeforeW: number,
+  addedW: number,
+): number {
+  const rate = limits.peak_shaping_sek_per_kwh_per_kw;
+  if (!(rate > 0) || addedW <= 0) return 0;
+  return rate *
+    (overThresholdKw(limits, importBeforeW) +
+      overThresholdKw(limits, importBeforeW + addedW)) / 2;
+}
+
+/**
+ * What lowering this quarter's import by `removedW` is worth beyond the energy.
+ *
+ * The mirror of `peakSekPerKwh`, and the reason a battery too small to cover a
+ * dear evening spreads across all of it: a kilowatt taken off the top of a high
+ * quarter is worth more than one taken off a low quarter, so covering a little
+ * of every quarter beats covering all of a few (§8.16 requirement 4).
+ */
+function peakReliefSekPerKwh(
+  limits: DispatchLimits,
+  importBeforeW: number,
+  removedW: number,
+): number {
+  const rate = limits.peak_shaping_sek_per_kwh_per_kw;
+  if (!(rate > 0) || removedW <= 0) return 0;
+  const after = Math.max(0, importBeforeW - removedW);
+  return rate *
+    (overThresholdKw(limits, importBeforeW) +
+      overThresholdKw(limits, after)) / 2;
 }
 
 /** Power still available in a slot before the import limit binds. */
@@ -474,6 +558,8 @@ export function planDispatch(
         slot,
         occupiedW[index],
         powerLevel,
+        limits,
+        returnedW[index],
       );
       const surplusW = Math.max(
         0,
@@ -630,6 +716,36 @@ export function planDispatch(
           );
           if (surplusW > 0 && surplusW < fullW) rawPowers.push(surplusW);
           const units = store.units_per_kwh(state[slotIndex], slotIndex);
+          // Where the shaped cost of the next kilowatt meets what it is worth.
+          //
+          // Every other level here is a breakpoint of something piecewise —
+          // the surplus running out, the curve turning. A shaped peak is not
+          // piecewise: its marginal cost rises continuously with the power
+          // already committed, so the profit-maximising power is an interior
+          // point that no breakpoint lands on. Without it the auction can only
+          // take the block whole or leave it, which is why a shaped plan
+          // stopped charging altogether instead of charging more gently.
+          //
+          // Solving `value = price + rate × (over + x)` for the increment x,
+          // where the average-marginal form makes the optimum exactly
+          // `(value − price)/rate − over`.
+          if (limits.peak_shaping_sek_per_kwh_per_kw > 0 && units > 0) {
+            const slot = slots[slotIndex];
+            const valuePerKwh = marginalValue(store.curve, state[slotIndex]) *
+              units;
+            const beforeW = gridImportW(
+              slot,
+              occupiedW[slotIndex],
+              returnedW[slotIndex],
+            );
+            const gainPerKwh = valuePerKwh - slot.import_price_sek_per_kwh -
+              (store.wear_sek_per_kwh ?? 0);
+            const bestKw = gainPerKwh /
+                limits.peak_shaping_sek_per_kwh_per_kw -
+              overThresholdKw(limits, beforeW);
+            const bestW = bestKw * 1_000;
+            if (bestW > 1e-9 && bestW < fullW - 1e-9) rawPowers.push(bestW);
+          }
           for (const point of store.curve.points) {
             const toPointW = (point.at - state[slotIndex]) / units /
               SLOT_HOURS *
@@ -715,7 +831,12 @@ export function planDispatch(
             const price = (
               loadW * slot.import_price_sek_per_kwh +
               toExportW * slot.export_price_sek_per_kwh
-            ) / powerLevel;
+            ) / powerLevel +
+              peakReliefSekPerKwh(
+                limits,
+                gridImportW(slot, occupiedW[index], returnedW[index]),
+                loadW,
+              );
             const destination = toExportW <= 1e-9
               ? "load" as const
               : loadW <= 1e-9
@@ -905,12 +1026,26 @@ export function planDispatch(
       slot.pv_w + returnedW[index] - slot.fixed_load_w,
     );
     const solarShare = Math.min(1, spareW / chargeW);
+    // Peak is a property of the quarter, not of one allocation, so it is shared
+    // in proportion to the grid each part actually draws — the same pro-rata
+    // rule the surplus above uses, and for the same reason: no store has a
+    // claim on the quarter beyond its share of it.
+    const gridTotalW = charges.reduce(
+      (sum, part) => sum + part.power_w * (1 - solarShare),
+      0,
+    );
+    const peakSek = peakSekPerKwh(
+      limits,
+      Math.max(0, slot.fixed_load_w - spareW),
+      gridTotalW,
+    );
     for (const part of charges) {
       part.solar_w = part.power_w * solarShare;
       part.grid_w = part.power_w - part.solar_w;
       part.energy_cost_sek_per_kwh =
         (part.solar_w * slot.export_price_sek_per_kwh +
-          part.grid_w * slot.import_price_sek_per_kwh) / part.power_w;
+          part.grid_w * slot.import_price_sek_per_kwh) / part.power_w +
+        peakSek * (part.grid_w / Math.max(1e-9, part.power_w));
     }
   };
 
