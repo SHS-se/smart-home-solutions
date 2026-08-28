@@ -1695,7 +1695,7 @@ Deno.test("schema 6 with pool state dispatches by temperature, not by budget", (
   const plan = generateOptimisationPlan(snapshot, new Date(NOW));
 
   assertEquals(plan.schema_version, 6);
-  assertEquals(plan.model_version, "marginal-value-planner-v15");
+  assertEquals(plan.model_version, "marginal-value-planner-v16");
   // Asserted explicitly: an earlier version of this test checked the pool
   // energy but not the status, and so passed while every schema 6 plan was
   // reported infeasible by validations that still assumed fixed blocks.
@@ -3163,5 +3163,94 @@ Deno.test("§8.12 #12 — a winter covering window is the dear stretch, not the 
     curve.curve.points[0].sek_per_unit,
     dearestCovered * battery.discharge_efficiency - 0.45,
     0.02,
+  );
+});
+
+Deno.test("§8.12 #11 — charge power gives way to the load already in the quarter", () => {
+  // The envelope is the whole home's, not the battery's own (§8.16 requirement
+  // 2). A per-device cap could not express this: it would leave the same peak
+  // reachable by two other loads, and the figure a fuse and a tariff both care
+  // about is the sum.
+  //
+  // Two plans differing only in how busy the house is during the charging
+  // window, because a single plan cannot show it: with quiet quarters available
+  // the battery simply charges in those, which is correct and tells us nothing.
+  // Raising the whole window leaves it nowhere to escape to, so what it does
+  // with its power is the only thing left to observe.
+  //
+  // The connection is widened to 20 kW so that the fuse can never be what backs
+  // the charger off: at 4 kW of house it still leaves 16 kW against an 8.8 kW
+  // charger. Two earlier versions of this test passed with shaping switched
+  // off because `headroomW` was clipping against the *physical* limit — which
+  // is precisely the envelope §8.16 requirement 2 says is not enough, so a test
+  // that cannot tell the two apart is testing the wrong one.
+  const start = Date.parse("2026-08-10T08:00:00.000Z");
+  const base = horizon();
+  const atHouseLoad = (houseW: number) => {
+    const slots = base.slots.map((slot, index) => {
+      const load = index < 48 ? houseW : 3_000;
+      return {
+        ...slot,
+        start: new Date(start + index * 15 * 60_000).toISOString(),
+        pv_forecast_w: 0,
+        // Twelve cheap hours to charge in, then a dear evening to have charged
+        // for. The price is flat across the window on purpose: if the battery
+        // backed off because a quarter were dearer, this would be measuring the
+        // energy objective it already had.
+        base_load_forecast_w: load,
+        base_load_p10_w: Math.round(load * 0.8),
+        base_load_p90_w: Math.round(load * 1.3),
+        import_price_sek_per_kwh: index < 96 ? (index < 48 ? 0.8 : 3.0) : null,
+        export_price_sek_per_kwh: index < 96 ? 0.2 : null,
+      };
+    });
+    const plan = generateOptimisationPlan(
+      horizon({
+        slots,
+        outdoor_temperature_c: slots.map(() => -8),
+        pool: { water_temperature_c: 30.9, volume_m3: 55 },
+        grid: { import_limit_w: 20_000, export_limit_w: 20_000 },
+        battery: {
+          ...base.battery!,
+          capacity_kwh: 18.08,
+          soc: 0.05,
+          charge_max_w: 8_800,
+        },
+      }),
+      new Date(NOW),
+    );
+    const window = plan.plans.priority.slots.slice(0, 48);
+    const charging = window.filter((slot) => slot.battery_charge_w > 1);
+    return {
+      status: plan.status,
+      peakChargeW: charging.length === 0
+        ? 0
+        : Math.max(...charging.map((slot) => slot.battery_charge_w)),
+      peakImportW: Math.max(...window.map((slot) => slot.grid_import_w)),
+      kwh: charging.reduce(
+        (total, slot) => total + slot.battery_charge_w / 1_000 * 0.25,
+        0,
+      ),
+    };
+  };
+
+  const quiet = atHouseLoad(500);
+  const busy = atHouseLoad(4_000);
+
+  assertEquals(quiet.status, "ready");
+  assertEquals(busy.status, "ready");
+  assert(quiet.peakChargeW > 0, "the battery has to charge in the quiet house");
+  assert(busy.peakChargeW > 0, "and in the busy one");
+  assert(
+    busy.peakChargeW < quiet.peakChargeW,
+    `a busier house leaves the battery less power at the same price: ` +
+      `${busy.peakChargeW} W against ${quiet.peakChargeW} W`,
+  );
+  // Which is the point: what it gives way to is the total, so the busy home's
+  // grid peak does not simply rise by the whole extra 3.5 kW of house.
+  assert(
+    busy.peakImportW - quiet.peakImportW < 3_500,
+    `the peak absorbs some of the extra house load rather than all of it: ` +
+      `${busy.peakImportW} W against ${quiet.peakImportW} W`,
   );
 });

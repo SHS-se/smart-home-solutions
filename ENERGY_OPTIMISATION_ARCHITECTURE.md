@@ -4132,7 +4132,7 @@ vehicle above the limit it will refuse past.
 | # | Behaviour that must emerge | Emerges from |
 |---|---|---|
 | 10 | A charge that fits in four quarters at full power is spread across the whole comparably-priced window when nothing else competes for it | A priced peak, or C-rate-dependent efficiency and wear (§8.16) |
-| 11 | Battery charge power falls as other scheduled load rises, keeping the total under a stated ceiling rather than under the fuse | One whole-home envelope at the planning ceiling |
+| 11 | Battery charge power falls as other scheduled load rises, keeping the total under a stated ceiling rather than under the fuse | One whole-home envelope at the planning ceiling. **Covered**, and it found a defect: the shaping cost has a kink at the threshold, and until that kink was offered as a power level a quarter starting below the threshold charged at full power and the shaped plan matched the unshaped one exactly. Two earlier versions of the test also passed with shaping off because the *fuse* was doing the clipping — the envelope §8.16 says is not enough — so the fixture now runs a connection the charger cannot reach |
 | 12 | With no solar in the horizon, the battery still charges to a level set by the dearest stretch it can cover — not to full, and not to a target | A covering window with a winter form (§8.4, §8.16) |
 | 13 | A battery too small to cover a dear evening halves the draw across all of it rather than eliminating the draw across part of it | The same priced peak as #10 |
 

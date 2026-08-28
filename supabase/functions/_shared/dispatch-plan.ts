@@ -763,11 +763,33 @@ export function planDispatch(
             );
             const gainPerKwh = valuePerKwh - slot.import_price_sek_per_kwh -
               (store.wear_sek_per_kwh ?? 0);
+            // Two points, because the cost is not one curve but two joined at
+            // the threshold. The join itself is a breakpoint like any other —
+            // the surplus running out, the utility curve turning — and it is
+            // frequently the answer: filling a quarter exactly up to the
+            // threshold and stopping costs nothing at all, which beats both
+            // going further and stopping short. Missing it let a house at 4 kW
+            // charge at the full 8.8 rather than the 6 that reaches the
+            // threshold, so the shaped and unshaped plans were identical.
+            const toThresholdW = limits.grid_import_shaping_w - beforeW;
+            if (toThresholdW > 1e-9 && toThresholdW < fullW - 1e-9) {
+              rawPowers.push(toThresholdW);
+            }
+            // And the optimum of the branch above it, where the marginal cost
+            // is rising: `value = price + rate × (over_before + x)/2` in the
+            // average-marginal form the cost is charged at.
+            const overBeforeKw = (beforeW - limits.grid_import_shaping_w) /
+              1_000;
             const bestKw = gainPerKwh /
                 limits.peak_shaping_sek_per_kwh_per_kw -
-              overThresholdKw(limits, beforeW);
+              overBeforeKw / 2;
             const bestW = bestKw * 1_000;
-            if (bestW > 1e-9 && bestW < fullW - 1e-9) rawPowers.push(bestW);
+            if (
+              bestW > 1e-9 && bestW < fullW - 1e-9 &&
+              beforeW + bestW > limits.grid_import_shaping_w
+            ) {
+              rawPowers.push(bestW);
+            }
           }
           for (const point of store.curve.points) {
             const toPointW = (point.at - state[slotIndex]) / units /
