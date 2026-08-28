@@ -3876,13 +3876,61 @@ The block-model path keeps the check. That battery is given no terminal value
 either, so there the floor is the only thing that reports a plan ending low —
 weaker than pricing it, and the reason schema 5 is legacy.
 
-**Still open, deliberately.** The reserve is now unenforced *and* unpriced for a
-dispatched battery, which is honest but incomplete: §8.4's table promises
+**Open when this was written.** The reserve was then unenforced *and* unpriced
+for a dispatched battery, which was honest but incomplete: §8.4's table promises
 "Battery reserve SOC → outage insurance and peak insurance, both priced", and
-neither is built. Pricing it needs the value of not being empty, which is the
+neither was built. Pricing it looked to need the value of not being empty, the
 same figure §8.13's open questions call a shortfall price and the same one
-nobody can state. Until it exists, `min_soc` is the only real floor — and it is
-a real one, imposed on every quarter rather than checked afterwards.
+nobody can state. Resolved below by looking for a different figure.
+
+#### The reserve is priced (2026-08-28, `marginal-value-planner-v18`)
+
+The blocker recorded above was that pricing a reserve needs the value of not
+being empty, which nobody can state. That was the wrong figure to look for.
+
+**A reserve insures against the plan being wrong, so what it is worth is the
+worst hour on the board — not the expected one.** The merit order already prices
+the forecast path; what having nothing left exposes a household to is the spike
+the forecast did not carry, or the peak event. The dearest quarter in the
+horizon is exactly that number, and the plan already has it. Nothing is asked
+for that was not already configured: `terminal_soc_min` says how much, and the
+horizon says what it is worth.
+
+So the reserve is the **price of the bottom of the pack**, not a floor under it.
+`batteryValueCurve` lays a band from zero to `reserveKwh` at
+`worst × discharge_efficiency − wear`, and the merit order takes over above it.
+The same kilowatt-hours serve both purposes; what the reserve changes is only
+what the lowest ones are worth.
+
+**It is self-limiting, which is what keeps it from re-becoming the hard target
+§8.4 deleted.** The battery will not go below the reserve for an ordinary dear
+hour, and it *will* for one at the horizon's worst — that being the event it was
+kept for. There is no state it cannot reach and no plan it can make infeasible,
+which matters because §8.15 exists precisely because the previous treatment did
+both.
+
+Against the live capsules, sweeping `terminal_soc_min`:
+
+| | reserve 5% | reserve 20% | reserve 40% |
+|---|---|---|---|
+| `3ebf8f4d` — starts at 15.9% | low 8.4%, ends 10.7%, 42.93 SEK | low 14.1%, **ends 20.5%**, 46.25 | low 12.7%, ends 40.0%, 45.78 |
+| `0a8116dd` — starts at 19.6% | low 6.7%, ends 20.0%, 38.48 SEK | low 9.2%, ends 20.4%, 41.56 | low 11.0%, ends 37.6%, 39.46 |
+
+A battery that starts *below* its reserve climbs back to it — which is the case
+that produced the infeasible plan §8.15 was written about, now answered by
+buying rather than by complaining. The premium is about 3 SEK over three days at
+20%, and it is legible: `curve_input` publishes `reserve_kwh` and
+`worst_import_sek_per_kwh` beside the curve they produced.
+
+The trough still dips under the reserve — 9.2% against a 20% reserve on
+`0a8116dd`. That is the design and not a defect: a price floor is crossed when
+the price justifies it. A household that wants a floor no plan may cross has
+`min_soc`, which is imposed on every quarter.
+
+**Outage insurance remains unbuilt.** This is the peak-insurance half of §8.4's
+promise. Pricing an outage needs the cost of being without power, which is a
+figure about the household rather than about the horizon, and none of the above
+supplies it.
 
 ### 8.16 The plan must shape power, not only energy (2026-08-28)
 

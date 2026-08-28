@@ -72,6 +72,9 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6] as const;
  * meaningless. v8 makes comfort schedules room-temperature constraints and
  * moves preheating inside the shared electrical objective. v10 replaces the
  * battery's peak-price step with the weighted merit order of displaced import.
+ * v18 prices the battery's reserve at the dearest hour in the horizon, so
+ * `terminal_soc_min` is what the bottom of the pack is worth rather than a
+ * floor asserted after the fact (§8.15).
  * v17 integrates the shaped peak across the interval rather than averaging its
  * endpoints, which is only equal while both ends sit above the threshold.
  * v16 offers the shaping threshold itself as a power level, so a quarter can be
@@ -92,7 +95,7 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6] as const;
  * v11 integrates every sizeable curve move, applies configured EV curves,
  * prices minimum runs as complete blocks and records exact quarter evidence.
  */
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v17";
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v18";
 /** The planner a schema 5 snapshot still receives, unchanged. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v8";
 export const SLOT_MINUTES = 15;
@@ -423,6 +426,10 @@ export interface BatteryValueCurveDiagnostic {
     usable_kwh: number;
     /** What the curve converts a stored kWh with; see `dischargeEfficiency`. */
     discharge_efficiency: number;
+    /** Energy held back, kWh above the hard floor, from `terminal_soc_min`. */
+    reserve_kwh: number;
+    /** What that energy is priced at: the dearest hour in the horizon. */
+    worst_import_sek_per_kwh: number;
     degradation_sek_per_kwh: number;
     expected_draw_kwh: number;
   };
@@ -2227,6 +2234,17 @@ function deriveBatteryValueCurve(
     futureSurplusKwh: remainingSurplusKwh,
     usableKwh,
     dischargeEfficiency: battery.discharge_efficiency,
+    // What the household asked to keep back, in the curve's own units — kWh
+    // above the hard floor, not a fraction of the pack.
+    reserveKwh: Math.max(
+      0,
+      (snapshot.policy.terminal_soc_min - battery.min_soc) *
+        battery.capacity_kwh,
+    ),
+    worstImportSekPerKwh: slots.reduce(
+      (worst, slot) => Math.max(worst, slot.shadow_import_sek_per_kwh),
+      0,
+    ),
     degradationSekPerKwh:
       DEFAULT_VALUE_SETTINGS.battery_degradation_sek_per_kwh,
     expectedDrawKwh: expectedDrawKwh / battery.discharge_efficiency,
@@ -2253,6 +2271,8 @@ function deriveBatteryValueCurve(
         future_surplus_kwh: curveInput.futureSurplusKwh,
         usable_kwh: curveInput.usableKwh,
         discharge_efficiency: curveInput.dischargeEfficiency,
+        reserve_kwh: curveInput.reserveKwh,
+        worst_import_sek_per_kwh: curveInput.worstImportSekPerKwh,
         degradation_sek_per_kwh: curveInput.degradationSekPerKwh,
         expected_draw_kwh: curveInput.expectedDrawKwh,
       },

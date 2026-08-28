@@ -33,6 +33,8 @@ const battery = (
     futureSurplusKwh,
     usableKwh: 10,
     dischargeEfficiency: DISCHARGE_EFFICIENCY,
+    reserveKwh: 0,
+    worstImportSekPerKwh: 0,
     degradationSekPerKwh: DEGRADATION,
     expectedDrawKwh: 6,
   });
@@ -121,6 +123,8 @@ Deno.test("§8.12 #7 — grid charging needs the spread to beat losses and wear"
     futureSurplusKwh: 0,
     usableKwh: 10,
     dischargeEfficiency: DISCHARGE_EFFICIENCY,
+    reserveKwh: 0,
+    worstImportSekPerKwh: 0,
     degradationSekPerKwh: DEGRADATION,
     expectedDrawKwh: 6,
   });
@@ -233,6 +237,8 @@ Deno.test("§8.4 — covering follows the merit order of displaced imports", () 
     futureSurplusKwh: 0,
     usableKwh: 10,
     dischargeEfficiency: DISCHARGE_EFFICIENCY,
+    reserveKwh: 0,
+    worstImportSekPerKwh: 0,
     degradationSekPerKwh: DEGRADATION,
     expectedDrawKwh: 6,
   });
@@ -257,6 +263,8 @@ Deno.test("§8.4 — a modest overnight spread only buys the expensive tail", ()
     futureSurplusKwh: 20,
     usableKwh: 10,
     dischargeEfficiency: DISCHARGE_EFFICIENCY,
+    reserveKwh: 0,
+    worstImportSekPerKwh: 0,
     degradationSekPerKwh: DEGRADATION,
     expectedDrawKwh: 6,
   });
@@ -293,6 +301,8 @@ Deno.test("§8.4 — covering takes the dearest kWh first when weights are given
     futureSurplusKwh: 0,
     usableKwh: 10,
     dischargeEfficiency: DISCHARGE_EFFICIENCY,
+    reserveKwh: 0,
+    worstImportSekPerKwh: 0,
     degradationSekPerKwh: DEGRADATION,
     expectedDrawKwh: 6,
   });
@@ -313,6 +323,8 @@ Deno.test("§8.4 — every covering price requires an explicit kWh weight", () =
         futureSurplusKwh: 0,
         usableKwh: 10,
         dischargeEfficiency: DISCHARGE_EFFICIENCY,
+        reserveKwh: 0,
+        worstImportSekPerKwh: 0,
         degradationSekPerKwh: DEGRADATION,
         expectedDrawKwh: 6,
       }),
@@ -336,6 +348,8 @@ Deno.test("§8.4 — a stored kWh is never worth more than the import it displac
       futureSurplusKwh: 0,
       usableKwh: 10,
       dischargeEfficiency: DISCHARGE_EFFICIENCY,
+    reserveKwh: 0,
+    worstImportSekPerKwh: 0,
       degradationSekPerKwh: 0,
       expectedDrawKwh: 6,
     });
@@ -354,4 +368,81 @@ Deno.test("§8.4 — a stored kWh is never worth more than the import it displac
       1e-6,
     );
   }
+});
+
+Deno.test("§8.4 — a reserve is priced at the worst hour, not at the expected one", () => {
+  // What a reserve insures against is the plan being wrong, so what it is worth
+  // is not what the forecast path costs — the merit order already prices that —
+  // but what the dearest hour on the board costs. That figure the plan already
+  // has, which is why the reserve needs no number from the customer.
+  const covering = [1.0, 0.6];
+  const worst = 4.0;
+  const withReserve = batteryValueCurve({
+    futureImportSekPerKwh: covering,
+    futureImportKwh: [3, 3],
+    futureSurplusKwh: 0,
+    usableKwh: 10,
+    dischargeEfficiency: DISCHARGE_EFFICIENCY,
+    degradationSekPerKwh: 0,
+    expectedDrawKwh: 6,
+    reserveKwh: 2,
+    worstImportSekPerKwh: worst,
+  });
+
+  assertEquals(validateCurve(withReserve), null);
+  // The bottom of the pack is worth the worst hour...
+  assertAlmostEquals(
+    marginalValue(withReserve, 1),
+    worst * DISCHARGE_EFFICIENCY,
+    1e-6,
+  );
+  // ...and immediately above the reserve the merit order takes over unchanged:
+  // the dearest covering hour, then the next, exactly as with no reserve at all.
+  assertAlmostEquals(
+    marginalValue(withReserve, 2.5),
+    covering[0] * DISCHARGE_EFFICIENCY,
+    1e-6,
+  );
+  assertAlmostEquals(
+    marginalValue(withReserve, 4.5),
+    covering[1] * DISCHARGE_EFFICIENCY,
+    1e-6,
+  );
+
+  // Which is what makes it a preference and not the hard target §8.4 deleted:
+  // an ordinary dear hour cannot reach it, and an hour at the horizon's worst
+  // can — that being the event it was kept for.
+  const store: StoreState = {
+    key: "battery",
+    curve: withReserve,
+    at: 1,
+    unitsPerKwh: 1,
+  };
+  assertEquals(
+    worthExporting(store, 2.0),
+    false,
+    "an ordinary spike does not spend the reserve",
+  );
+  assert(
+    worthExporting(store, worst),
+    "the hour it was kept for does spend it",
+  );
+});
+
+Deno.test("§8.4 — no reserve leaves the merit order exactly as it was", () => {
+  const input = {
+    futureImportSekPerKwh: [1.0, 0.6],
+    futureImportKwh: [3, 3],
+    futureSurplusKwh: 0,
+    usableKwh: 10,
+    dischargeEfficiency: DISCHARGE_EFFICIENCY,
+    degradationSekPerKwh: 0,
+    expectedDrawKwh: 6,
+    worstImportSekPerKwh: 4.0,
+  };
+  assertEquals(
+    batteryValueCurve({ ...input, reserveKwh: 0 }),
+    batteryValueCurve({ ...input, reserveKwh: 0, worstImportSekPerKwh: 99 }),
+    "a home that asked for nothing is unaffected by what the worst hour is",
+  );
 });

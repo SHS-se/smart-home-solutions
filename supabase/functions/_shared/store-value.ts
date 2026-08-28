@@ -271,6 +271,30 @@ export interface StoredEnergyValueInput {
   degradationSekPerKwh: number;
   /** Expected residual load to be covered before the next surplus, kWh. */
   expectedDrawKwh: number;
+  /**
+   * Energy the household wants kept back, kWh above the hard floor.
+   *
+   * `terminal_soc_min` expressed in the curve's own units. Zero leaves the
+   * curve exactly as the merit order builds it.
+   */
+  reserveKwh: number;
+  /**
+   * The dearest hour anywhere in the horizon, SEK/kWh — what the reserve is
+   * priced at, and the reason it needs no number from the customer.
+   *
+   * A reserve is insurance against the plan being wrong: a spike the forecast
+   * did not carry, or a peak event. What it is worth is therefore not what the
+   * *expected* path costs — the merit order already prices that — but what the
+   * worst hour on the board costs, because that is the thing having nothing
+   * left would expose the household to.
+   *
+   * It is self-limiting in the way a reserve should be. The battery will not go
+   * below it for an ordinary dear hour, and it *will* for one at the horizon's
+   * worst, which is precisely the event the reserve was being kept for. So it
+   * is never a floor the plan cannot cross, and it never has to be, which is
+   * what stops it re-becoming the hard target §8.4 deleted.
+   */
+  worstImportSekPerKwh: number;
 }
 
 /**
@@ -306,6 +330,8 @@ export function batteryValueCurve(
     dischargeEfficiency,
     degradationSekPerKwh,
     expectedDrawKwh,
+    reserveKwh,
+    worstImportSekPerKwh,
   } = input;
   if (usableKwh <= 0 || futureImportSekPerKwh.length === 0) {
     return { unit: "kwh", points: [] };
@@ -349,6 +375,18 @@ export function batteryValueCurve(
   const coveringKwh = Math.max(0, Math.min(expectedDrawKwh, usableKwh));
 
   const points: { at: number; sek_per_unit: number }[] = [];
+
+  // The reserve sits under the merit order rather than beside it: the same
+  // kilowatt-hours serve both, and what the reserve changes is only what the
+  // bottom of the pack is worth. Appending it first means the merit order takes
+  // over above it — `appendBand` drops any band that would land below a
+  // breakpoint already placed — so a covering window dearer than the worst hour
+  // cannot happen and a cheaper one simply starts higher up the pack.
+  const reserve = Math.max(0, Math.min(reserveKwh, usableKwh));
+  if (reserve > 0 && Number.isFinite(worstImportSekPerKwh)) {
+    appendBand(points, reserve, netValue(worstImportSekPerKwh));
+  }
+
   const slices = futureImportSekPerKwh
     .map((sek, index) => ({
       sek,

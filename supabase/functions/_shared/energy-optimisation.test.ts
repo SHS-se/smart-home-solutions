@@ -1695,7 +1695,7 @@ Deno.test("schema 6 with pool state dispatches by temperature, not by budget", (
   const plan = generateOptimisationPlan(snapshot, new Date(NOW));
 
   assertEquals(plan.schema_version, 6);
-  assertEquals(plan.model_version, "marginal-value-planner-v17");
+  assertEquals(plan.model_version, "marginal-value-planner-v18");
   // Asserted explicitly: an earlier version of this test checked the pool
   // energy but not the status, and so passed while every schema 6 plan was
   // reported infeasible by validations that still assumed fixed blocks.
@@ -3262,4 +3262,78 @@ Deno.test("§8.12 #11 — charge power gives way to the load already in the quar
     `the peak absorbs some of the extra house load rather than all of it: ` +
       `${busy.peakImportW} W against ${quiet.peakImportW} W`,
   );
+});
+
+Deno.test("a battery below its reserve climbs back to it", () => {
+  // §8.15 left the reserve unenforced *and* unpriced, which was honest and
+  // incomplete: `terminal_soc_min` did nothing at all for a dispatched battery.
+  // It is now the price of the bottom of the pack rather than a floor under it,
+  // so a battery that starts below its reserve refills toward it when that is
+  // affordable, and is not failed for having started there.
+  // A sunless horizon, because a sunny one fills the pack to the brim whatever
+  // the reserve says and the comparison would measure nothing.
+  const start = Date.parse("2026-08-10T08:00:00.000Z");
+  const base = horizon();
+  const dark = base.slots.map((slot, index) => {
+    const hour = ((index / 4) + 10) % 24;
+    return {
+      ...slot,
+      start: new Date(start + index * 15 * 60_000).toISOString(),
+      pv_forecast_w: 0,
+      base_load_forecast_w: hour >= 16 && hour < 21 ? 5_000 : 2_500,
+      base_load_p10_w: 2_000,
+      base_load_p90_w: 6_500,
+      import_price_sek_per_kwh: index < 96
+        ? (hour >= 6 && hour < 9 ? 3.2 : hour >= 16 && hour < 20 ? 2.9 : 0.8)
+        : null,
+      export_price_sek_per_kwh: index < 96 ? 0.2 : null,
+    };
+  });
+  const at = (reserve: number) => {
+    const plan = generateOptimisationPlan(
+      horizon({
+        slots: dark,
+        pool: { water_temperature_c: 30.9, volume_m3: 55 },
+        outdoor_temperature_c: dark.map(() => -8),
+        battery: { ...base.battery!, capacity_kwh: 18.08, soc: 0.1 },
+        policy: { ...base.policy, terminal_soc_min: reserve },
+      }),
+      new Date(NOW),
+    );
+    return {
+      status: plan.status,
+      errors: plan.validation_errors,
+      end: plan.plans.priority.summary.battery_soc_end,
+      curve: plan.battery_value_curve,
+    };
+  };
+
+  const none = at(0.05);
+  const held = at(0.4);
+
+  assertEquals(none.status, "ready");
+  assertEquals(held.status, "ready");
+  // Starting under the reserve is not a fault, and never was the plan's doing.
+  assertEquals(held.errors, []);
+  assert(
+    held.end > none.end,
+    `asking for a reserve leaves more in the pack: ${none.end} against ${held.end}`,
+  );
+
+  // And the published curve says what it was priced at, so the premium is
+  // legible rather than buried: a figure the plan already had, not one the
+  // household was asked for.
+  const curve = held.curve!;
+  assert(
+    curve.curve_input.reserve_kwh > 0,
+    "the reserve reaches the curve in its own units",
+  );
+  assertAlmostEquals(
+    curve.curve.points[0].sek_per_unit,
+    curve.curve_input.worst_import_sek_per_kwh *
+        curve.curve_input.discharge_efficiency -
+      curve.curve_input.degradation_sek_per_kwh,
+    0.02,
+  );
+  assertEquals(none.curve!.curve_input.reserve_kwh, 0);
 });
