@@ -72,6 +72,9 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6] as const;
  * meaningless. v8 makes comfort schedules room-temperature constraints and
  * moves preheating inside the shared electrical objective. v10 replaces the
  * battery's peak-price step with the weighted merit order of displaced import.
+ * v15 ends the battery's covering window at any chance to refill rather than
+ * only at a surplus, and picks the dearest such stretch instead of the longest,
+ * so the pack is priced against the peak it exists for in a season with no sun.
  * v14 prices power alongside energy, so a charge spreads across the window it
  * is drawn from instead of being taken at full power in the fewest quarters
  * that fit (§8.16).
@@ -84,7 +87,7 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6] as const;
  * v11 integrates every sizeable curve move, applies configured EV curves,
  * prices minimum runs as complete blocks and records exact quarter evidence.
  */
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v14";
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v15";
 /** The planner a schema 5 snapshot still receives, unchanged. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v8";
 export const SLOT_MINUTES = 15;
@@ -2101,39 +2104,102 @@ function deriveBatteryValueCurve(
     return total + (surplusW > 0 ? surplusW / 1_000 * SLOT_HOURS : 0);
   }, 0);
 
-  // The covering band is the longest single deficit run in the horizon: the
-  // battery must carry one night, rather than every deficit in three days.
-  let expectedDrawKwh = 0;
-  let runKwh = 0;
-  let runDraw: Array<{
-    start: string;
-    sek_per_kwh: number;
-    ac_kwh: number;
-  }> = [];
-  let windowDraw: typeof runDraw = [];
+  /**
+   * A quarter the battery could refill in.
+   *
+   * The sun giving energy away is one way, and it was the only one. That is
+   * what "the longest single deficit run" quietly assumed: that a surplus is
+   * what ends a stretch the battery has to carry. In a Swedish December there
+   * is no surplus for weeks, so every quarter is a deficit, the run is the
+   * whole horizon, and the battery is priced against the dearest hours in three
+   * days — which says *full* under nearly every condition and loses the
+   * discrimination the curve exists to provide (§8.16 requirement 3).
+   *
+   * A cheap enough hour refills a battery exactly as well as the sun does. The
+   * question the window has to answer is not "when does the sun next return"
+   * but "what is the dearest stretch this charge has to carry before it can be
+   * bought back cheaply", and in summer the two coincide because surplus *is*
+   * the cheapest energy there is. One definition, both seasons.
+   *
+   * "Cheap enough" is the arbitrage condition rather than a quantile: a quarter
+   * refills the battery when buying there and spending at the horizon's typical
+   * price survives the round trip. A quantile fails at both ends — a strict
+   * comparison excludes an entire flat block of identical cheap night prices,
+   * which is exactly what a night trough is, and an inclusive one makes every
+   * quarter of a flat week a refill opportunity. This has neither failure and
+   * is self-limiting: on a flat horizon `median × roundTrip < median`, so
+   * nothing qualifies and the battery correctly goes back to carrying
+   * everything.
+   */
+  const prices = slots
+    .map((slot) => slot.shadow_import_sek_per_kwh)
+    .filter((price) => Number.isFinite(price))
+    .sort((left, right) => left - right);
+  const medianSekPerKwh = prices.length > 0
+    ? prices[Math.floor(prices.length / 2)]
+    : 0;
+  const refillSekPerKwh = medianSekPerKwh *
+    battery.charge_efficiency * battery.discharge_efficiency;
+  const refillable = (slot: PreparedSlot): boolean =>
+    slot.pv_w - fixedLoadW(slot) > 0 ||
+    slot.shadow_import_sek_per_kwh < refillSekPerKwh;
+
+  // The covering band is the stretch between two chances to refill that this
+  // battery is worth the most in — the *dearest* one it has to carry, not the
+  // longest.
+  //
+  // Longest was right while a surplus was the only thing that ended a run,
+  // because then there was one run a day and it was the night. Once a cheap
+  // hour also ends one, the horizon breaks into several and the longest is
+  // frequently a placid stretch of ordinary prices rather than the evening peak
+  // the battery exists for: the winter probe priced its whole pack against a
+  // 33-hour lull and came out at 1.36 SEK/kWh with the dearest hours in the
+  // horizon at 3.2. Scoring each run by what this battery's own capacity would
+  // save in it answers the question §8.16 actually asks.
+  type Slice = { start: string; sek_per_kwh: number; ac_kwh: number };
+  const runs: Slice[][] = [];
+  let runDraw: Slice[] = [];
   for (const slot of slots) {
     const netW = slot.pv_w - fixedLoadW(slot);
-    if (netW < 0) {
-      const acKwh = -netW / 1_000 * SLOT_HOURS;
-      runKwh += acKwh;
+    if (netW < 0 && !refillable(slot)) {
       runDraw.push({
         start: slot.start,
         sek_per_kwh: slot.shadow_import_sek_per_kwh,
-        ac_kwh: acKwh,
+        ac_kwh: -netW / 1_000 * SLOT_HOURS,
       });
-    } else {
-      if (runKwh > expectedDrawKwh) {
-        expectedDrawKwh = runKwh;
-        windowDraw = runDraw;
-      }
-      runKwh = 0;
+    } else if (runDraw.length > 0) {
+      runs.push(runDraw);
       runDraw = [];
     }
   }
-  if (runKwh > expectedDrawKwh) {
-    expectedDrawKwh = runKwh;
-    windowDraw = runDraw;
+  if (runDraw.length > 0) runs.push(runDraw);
+
+  /** What this battery would save across one run, filling its dearest hours. */
+  const coveringValueSek = (run: Slice[]): number => {
+    let left = usableKwh * battery.discharge_efficiency;
+    let total = 0;
+    for (const slice of [...run].sort((a, b) => b.sek_per_kwh - a.sek_per_kwh)) {
+      if (left <= 0) break;
+      const take = Math.min(slice.ac_kwh, left);
+      total += take * slice.sek_per_kwh;
+      left -= take;
+    }
+    return total;
+  };
+
+  let windowDraw: Slice[] = [];
+  let bestValue = -Infinity;
+  for (const run of runs) {
+    const value = coveringValueSek(run);
+    if (value > bestValue) {
+      bestValue = value;
+      windowDraw = run;
+    }
   }
+  const expectedDrawKwh = windowDraw.reduce(
+    (total, slice) => total + slice.ac_kwh,
+    0,
+  );
   if (windowDraw.length === 0) {
     windowDraw = slots.map((slot) => ({
       start: slot.start,

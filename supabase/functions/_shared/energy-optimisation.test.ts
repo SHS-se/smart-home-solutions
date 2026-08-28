@@ -1695,7 +1695,7 @@ Deno.test("schema 6 with pool state dispatches by temperature, not by budget", (
   const plan = generateOptimisationPlan(snapshot, new Date(NOW));
 
   assertEquals(plan.schema_version, 6);
-  assertEquals(plan.model_version, "marginal-value-planner-v14");
+  assertEquals(plan.model_version, "marginal-value-planner-v15");
   // Asserted explicitly: an earlier version of this test checked the pool
   // energy but not the status, and so passed while every schema 6 plan was
   // reported infeasible by validations that still assumed fixed blocks.
@@ -3091,5 +3091,77 @@ Deno.test("a shaped peak spreads a charge instead of concentrating it", () => {
   assert(
     shaped.kwh > flat.kwh * 0.8,
     `the same charge is still bought, ${flat.kwh} against ${shaped.kwh} kWh`,
+  );
+});
+
+Deno.test("§8.12 #12 — a winter covering window is the dear stretch, not the horizon", () => {
+  // The window ends where the battery can next be refilled. A surplus was the
+  // only thing that counted as a refill, so a horizon with no sun had none: the
+  // run was all 288 quarters and 273 kWh, the whole pack was priced against the
+  // dearest hours in three days, and the curve said *full* under nearly every
+  // condition (§8.16 requirement 3).
+  const start = Date.parse("2026-08-10T08:00:00.000Z");
+  const base = horizon();
+  const dark = base.slots.map((slot, index) => {
+    const hour = ((index / 4) + 10) % 24;
+    return {
+      ...slot,
+      start: new Date(start + index * 15 * 60_000).toISOString(),
+      pv_forecast_w: 0,
+      base_load_forecast_w: hour >= 16 && hour < 21 ? 5_000 : 2_500,
+      base_load_p10_w: 2_000,
+      base_load_p90_w: 6_500,
+      import_price_sek_per_kwh: index < 96
+        ? (hour >= 6 && hour < 9 ? 3.2 : hour >= 16 && hour < 20 ? 2.9 : 0.8)
+        : null,
+      export_price_sek_per_kwh: index < 96 ? 0.2 : null,
+    };
+  });
+  const plan = generateOptimisationPlan(
+    horizon({
+      slots: dark,
+      outdoor_temperature_c: dark.map(() => -8),
+      pool: { water_temperature_c: 30.9, volume_m3: 55 },
+      battery: { ...base.battery!, capacity_kwh: 18.08, charge_max_w: 8_800 },
+    }),
+    new Date(NOW),
+  );
+
+  assertEquals(plan.status, "ready");
+  const curve = plan.battery_value_curve;
+  assert(curve !== null, "a dispatched battery publishes its curve");
+  const window = curve.covering_window;
+  assert(
+    window.length < dark.length / 4,
+    `the window is one stretch, not the horizon: ${window.length} of ${dark.length} quarters`,
+  );
+  // And it is a *dear* stretch, which is the half of the requirement a
+  // longest-run rule gets wrong once a cheap hour also ends a run: the longest
+  // gap between two refills is frequently a lull rather than the peak the
+  // battery exists for. Every quarter in it must beat the horizon's typical
+  // price, or the pack is being valued against ordinary hours again.
+  const horizonPrices = plan.plans.priority.slots
+    .map((slot) =>
+      slot.import_price_sek_per_kwh ?? slot.shadow_import_sek_per_kwh
+    )
+    .sort((left, right) => left - right);
+  const median = horizonPrices[Math.floor(horizonPrices.length / 2)];
+  const cheapestCovered = Math.min(
+    ...window.map((quarter) => quarter.import_price_sek_per_kwh),
+  );
+  assert(
+    cheapestCovered > median,
+    `even the cheapest covered quarter (${cheapestCovered}) beats the median ${median}`,
+  );
+  // Which puts what a stored kWh is worth where the arithmetic says it should
+  // be: the dearest price it displaces, less the discharge loss and the wear.
+  const dearestCovered = Math.max(
+    ...window.map((quarter) => quarter.import_price_sek_per_kwh),
+  );
+  const battery = plan.battery!;
+  assertAlmostEquals(
+    curve.curve.points[0].sek_per_unit,
+    dearestCovered * battery.discharge_efficiency - 0.45,
+    0.02,
   );
 });

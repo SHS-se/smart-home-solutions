@@ -4023,7 +4023,7 @@ nothing else changes.
 | 1 — charging spreads across its window | **Built and on**, at 0.6 SEK/kWh per kW. One convex cost on total grid import |
 | 2 — one whole-home envelope | **Built** by the same term: the cost depends on what the quarter already draws, so a store backs off as other load rises |
 | 4 — discharge spreads across a peak it cannot cover | **Built** by the same term, mirrored: relief is worth more off a high quarter than a low one |
-| 3 — a winter form of the covering window | Not started |
+| 3 — a winter form of the covering window | **Built.** The window ends at any refill, and is the dearest stretch rather than the longest |
 
 **One mechanism, as §8.16 argued.** `DispatchLimits` gains a shaping threshold —
 half the connection, so ordinary household load is untouched — and a rate in
@@ -4056,6 +4056,45 @@ the same energy is being bought, moved rather than reduced. On live capsule
 `0a8116dd` the four dearest quarters fall from 6.89 kW to 6.43 and the
 terminal-adjusted cost falls slightly with it; on `3ebf8f4d` the peak falls from
 8.17 kW to 6.83 for about 1.2 SEK over three days.
+
+**Requirement 3 landed in `marginal-value-planner-v15`, in two parts.**
+
+*A refill, not only a surplus, ends a covering window.* A cheap enough hour puts
+charge back into a battery exactly as well as the sun does, and in summer the two
+coincide because surplus is the cheapest energy there is — which is why one
+definition covers both seasons and the summer behaviour is unchanged. "Cheap
+enough" is the arbitrage condition, `price < median × round-trip`, rather than a
+quantile: a strict quantile comparison excludes an entire flat block of identical
+night prices, which is precisely what a night trough is, and an inclusive one
+makes every quarter of a flat week a refill opportunity. The arbitrage form has
+neither failure and is self-limiting — on a flat horizon `median × round-trip <
+median`, nothing qualifies, and the battery correctly goes back to carrying
+everything.
+
+*And the window is the dearest such stretch, not the longest.* Longest was right
+while a surplus was the only boundary, because then there was one run a day and
+it was the night. Once a cheap hour also ends a run the horizon breaks into
+several, and the longest is frequently a placid stretch of ordinary prices rather
+than the peak the battery exists for: with only the first change in place, the
+winter probe priced its whole pack against a 33-hour lull and came out at 1.36
+SEK/kWh while the dearest hours in the horizon were 3.20. Each run is now scored
+by what this battery's own capacity would save in it, which is the question
+§8.16 asks in the form it asks it.
+
+On the reference home's 18.08 kWh pack the winter probe's published window falls
+from **288 quarters and 273 kWh to 12 quarters and 18.9 kWh** — the morning peak,
+and a draw comparable to the pack itself. The plan itself is unchanged there,
+because a window that saturates the battery either way values it the same; what
+changed is that the Economics tab now names the stretch the pack is being held
+for instead of three undifferentiated days. Both live capsules improve slightly:
+`0a8116dd` 38.03 → 37.74 SEK terminal-adjusted, `3ebf8f4d` 43.04 → 42.76.
+
+**Not validated: a battery large against its peak.** At 40 and 80 kWh the scoring
+selects the long lull over the short peak — correctly by its own arithmetic, since
+a pack that can already cover the morning outright is bound by the bigger
+stretch — and the plan then declines to fill it. Whether that is better than the
+previous behaviour of filling regardless is untested, and the reference
+installation cannot answer it. Worth revisiting against a home that has one.
 
 **Below about 0.3 nothing moves.** The rate has to be comparable to the gap
 between what a store believes its energy is worth and what the quarter costs,
@@ -4104,10 +4143,12 @@ vehicle above the limit it will refuse past.
   kW nothing moves at all, and 0.6 halves a winter grid peak for around a krona
   over three days. The remaining judgement is where in that range a household
   wants to sit, which is a preference and not a derivation.
-- **What replaces "the longest deficit run" in winter?** The candidate is the
-  dearest contiguous stretch the battery could cover between two chances to
-  recharge cheaply, which needs the recharge opportunity defined — the same
-  question §8.13 leaves open for the pool, in a different unit.
+- ~~**What replaces "the longest deficit run" in winter?**~~ **Answered above**:
+  the dearest stretch between two chances to refill, with a refill defined by
+  the arbitrage condition rather than by the sun. What remains open is the case
+  of a battery large against its own peak, where the scoring prefers a long lull
+  to a short spike and the reference installation cannot say whether that is
+  right.
 - ~~**Why does the winter probe never discharge?**~~ **Answered in §8.17**: a
   stored kWh was valued at `P / round-trip` instead of `P × discharge`, so
   discharging required an hour 17% dearer than the dearest hour the curve had
