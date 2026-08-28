@@ -1695,7 +1695,7 @@ Deno.test("schema 6 with pool state dispatches by temperature, not by budget", (
   const plan = generateOptimisationPlan(snapshot, new Date(NOW));
 
   assertEquals(plan.schema_version, 6);
-  assertEquals(plan.model_version, "marginal-value-planner-v18");
+  assertEquals(plan.model_version, "marginal-value-planner-v19");
   // Asserted explicitly: an earlier version of this test checked the pool
   // energy but not the status, and so passed while every schema 6 plan was
   // reported infeasible by validations that still assumed fixed blocks.
@@ -2149,6 +2149,79 @@ Deno.test("a car past its charge limit leaves the surplus alone", () => {
     charged < 0.5,
     `a car already past its limit has no room left to sell into, got ${charged} kWh`,
   );
+  // And it says which of the two silences this is. `outbid` claims the car
+  // competed and lost; it never entered, because there was nothing to bid for.
+  // Reporting a contest a store could not take part in is §8.12.2's complaint
+  // one level in, where "considered and declined" and "could not participate"
+  // are made to look alike.
+  const ev = plan.plans.priority.store_diagnostics.find((store) =>
+    store.key === "ev"
+  );
+  assertEquals(ev?.reason, "at_state_cap");
+});
+
+Deno.test("no allocation is charged for more solar than the quarter had", () => {
+  // `recostSlot` divides a quarter's spare PV between the stores charging in
+  // it, and it counted a *discharging* store's output as spare. That is not
+  // spare energy: it is a transfer the discharging store was already paid for
+  // through its own allocation, so the charging store got a discount nobody
+  // funded. One observed quarter had the pool book its whole 3.5 kW at the
+  // 1.09 SEK/kWh export price while PV was under 1.2 kW and the import price
+  // was 2.15 — the four dearest quarters of that day, made to look cheapest.
+  //
+  // The over-credit only appears where a discharging store puts out *more* than
+  // the quarter's residual load, because only then is there a phantom surplus
+  // to divide. So: no sun, a light house, a full battery whose top-of-curve
+  // energy is worth little, and a cold pool drawing hard beside it.
+  const start = Date.parse("2026-08-10T08:00:00.000Z");
+  const base = horizon();
+  const dark = base.slots.map((slot, index) => {
+    const hour = ((index / 4) + 10) % 24;
+    return {
+      ...slot,
+      start: new Date(start + index * 15 * 60_000).toISOString(),
+      pv_forecast_w: 0,
+      base_load_forecast_w: 1_000,
+      base_load_p10_w: 800,
+      base_load_p90_w: 1_300,
+      import_price_sek_per_kwh: index < 96
+        ? (hour >= 16 && hour < 20 ? 2.4 : 0.8)
+        : null,
+      export_price_sek_per_kwh: index < 96 ? 0.2 : null,
+    };
+  });
+  const plan = generateOptimisationPlan(
+    horizon({
+      slots: dark,
+      outdoor_temperature_c: dark.map(() => 15),
+      pool: { water_temperature_c: 24, volume_m3: 55 },
+      battery: { ...base.battery!, capacity_kwh: 18.08, soc: 1 },
+    }),
+    new Date(NOW),
+  );
+
+  assertEquals(plan.status, "ready");
+  const priority = plan.plans.priority;
+  assert(
+    priority.slots.some((slot) =>
+      slot.battery_discharge_w > Math.max(0, slot.base_w - slot.pv_w) + 1 &&
+      (slot.decision.store_allocations ?? []).some((part) =>
+        part.direction === "charge"
+      )
+    ),
+    "the fixture has to put a discharge beside a charge, or nothing is tested",
+  );
+  for (const slot of priority.slots) {
+    const bookedSolarW = (slot.decision.store_allocations ?? [])
+      .filter((part) => part.direction === "charge")
+      .reduce((total, part) => total + part.solar_w, 0);
+    const spareW = Math.max(0, slot.pv_w - slot.base_w);
+    assert(
+      bookedSolarW <= spareW + 1,
+      `${slot.start}: ${bookedSolarW.toFixed(0)} W booked as solar against ` +
+        `${spareW.toFixed(0)} W of surplus`,
+    );
+  }
 });
 
 Deno.test("every allocation is priced where it lands, and none of them loses", () => {

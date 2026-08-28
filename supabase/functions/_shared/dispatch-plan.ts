@@ -1077,10 +1077,18 @@ export function planDispatch(
     if (charges.length === 0) return;
     const chargeW = charges.reduce((sum, part) => sum + part.power_w, 0);
     if (chargeW <= 0) return;
-    const spareW = Math.max(
-      0,
-      slot.pv_w + returnedW[index] - slot.fixed_load_w,
-    );
+    // PV surplus only. A store discharging into this quarter is *not* spare
+    // energy: it is a transfer the discharging store was already paid for
+    // through its own allocation, and counting it here hands the charging store
+    // a discount nobody funded. One observed quarter had the pool book its
+    // whole 3.5 kW at the export price of 1.09 SEK/kWh while PV was under
+    // 1.2 kW and the import price was 2.15 — the four dearest quarters of that
+    // day, made to look like the cheapest.
+    //
+    // `energyCostSekPerKwh`, which the auction bids against, never included it.
+    // Only the settled re-pricing did, so the plan was decided on one number
+    // and explained with another.
+    const spareW = Math.max(0, slot.pv_w - slot.fixed_load_w);
     const solarShare = Math.min(1, spareW / chargeW);
     // Peak is a property of the quarter, not of one allocation, so it is shared
     // in proportion to the grid each part actually draws — the same pro-rata

@@ -3519,8 +3519,8 @@ section asked for.
 | Findings 2 and 3, the value model | **Landed.** The stored preference curve is re-stated against the horizon's own prices at plan time, and pool heat is valued as state carried to the horizon edge instead of by how much of the horizon remains |
 | The pool's power contract | **Landed.** `min_power_w` equals `max_power_w`, and both come from the service's declared `fixed_power` rather than a seeded constant |
 | Finding 1, a curve derived on the §8.4 pattern | **Not landed.** See below — the anchoring is a cheaper approximation and its limit is known |
-| `recostSlot` counting battery discharge as spare PV | Not started |
-| `StoreDiagnostic.reason` for a store at its state cap | Not started |
+| `recostSlot` counting battery discharge as spare PV | **Landed** in `marginal-value-planner-v19`. Spare is PV surplus alone: a discharging store's output is a transfer it was already paid for through its own allocation, and counting it again handed the charging store a discount nobody funded. The auction never included it — only the settled re-pricing did — so the plan was decided on one number and explained with another |
+| `StoreDiagnostic.reason` for a store at its state cap | **Landed.** `at_state_cap`, distinct from `outbid`: a car at its own charge limit never entered the auction, and reporting a contest it could not take part in is §8.12.2's complaint one level in |
 | The EV carrying the same defect | Not started |
 
 Against capsule `1bdbb1b1`, all four quarters:

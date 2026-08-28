@@ -72,6 +72,8 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6] as const;
  * meaningless. v8 makes comfort schedules room-temperature constraints and
  * moves preheating inside the shared electrical objective. v10 replaces the
  * battery's peak-price step with the weighted merit order of displaced import.
+ * v19 stops a discharging store's output counting as spare PV when a quarter's
+ * cost is settled across the stores charging in it (§8.13).
  * v18 prices the battery's reserve at the dearest hour in the horizon, so
  * `terminal_soc_min` is what the bottom of the pack is worth rather than a
  * floor asserted after the fact (§8.15).
@@ -95,7 +97,7 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6] as const;
  * v11 integrates every sizeable curve move, applies configured EV curves,
  * prices minimum runs as complete blocks and records exact quarter evidence.
  */
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v18";
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v19";
 /** The planner a schema 5 snapshot still receives, unchanged. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v8";
 export const SLOT_MINUTES = 15;
@@ -728,6 +730,16 @@ export interface StoreDiagnostic {
     | "scheduled"
     | "state_above_curve"
     | "value_below_price"
+    /**
+     * Already at the state it may not pass, so there was nothing to bid for.
+     *
+     * Distinct from `outbid`, which says the store competed and lost. A car
+     * sitting at its own charge limit never entered the auction — reporting a
+     * contest it could not take part in is the §8.12.2 defect one level in,
+     * where "considered and declined" and "could not participate" are made to
+     * look alike.
+     */
+    | "at_state_cap"
     /** Cleared the cheapest price somewhere, but that energy went elsewhere. */
     | "outbid"
     // Everything below this line means the store was never in the auction.
@@ -2756,6 +2768,9 @@ function scheduleServices(
           ? "scheduled"
           : value <= 0
           ? "state_above_curve"
+          : store.max_state !== undefined &&
+              store.initial_state >= store.max_state - 1e-9
+          ? "at_state_cap"
           : value < cheapest
           ? "value_below_price"
           : "outbid",
