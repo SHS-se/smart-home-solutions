@@ -36,6 +36,15 @@ import {
 
 export const SLOT_HOURS = 0.25;
 
+/**
+ * How many auction/settlement rounds a plan may take to reach a fixed point.
+ *
+ * Each round strictly re-prices what the last one left, and the observed
+ * capsules settle in well under half of this. The cap exists so a horizon that
+ * will not converge still ships a schedule and says so, rather than spinning.
+ */
+const MAX_SETTLE_ROUNDS = 24;
+
 export interface DispatchSlot {
   pv_w: number;
   /** Base load plus anything not being scheduled here. */
@@ -210,7 +219,10 @@ export interface DispatchResult {
   /** The battery comparison in every quarter, including an explicit hold. */
   battery: (DispatchBatteryDiagnostic | null)[];
   /** Why the last candidate was refused, for explaining a plan. */
-  stopped_because: "no_profitable_candidate" | "iteration_cap";
+  stopped_because:
+    | "no_profitable_candidate"
+    | "iteration_cap"
+    | "settle_cap";
   iterations: number;
 }
 
@@ -325,9 +337,9 @@ function energyCostSekPerKwh(
   const solarW = Math.min(addedW, surplusW);
   const gridW = addedW - solarW;
   return (
-    solarW * slot.export_price_sek_per_kwh +
-    gridW * slot.import_price_sek_per_kwh
-  ) / addedW +
+        solarW * slot.export_price_sek_per_kwh +
+        gridW * slot.import_price_sek_per_kwh
+      ) / addedW +
     peakSekPerKwh(limits, gridImportW(slot, occupiedW, returnedW), gridW);
 }
 
@@ -431,7 +443,8 @@ function sellLegIsPublished(
   roundTrip: number,
 ): boolean {
   if (slots[index].binding !== true) return true;
-  const needed = slots[index].import_price_sek_per_kwh / Math.max(1e-9, roundTrip);
+  const needed = slots[index].import_price_sek_per_kwh /
+    Math.max(1e-9, roundTrip);
   for (let ahead = index + 1; ahead < slots.length; ahead += 1) {
     if (slots[ahead].published_price !== true) continue;
     if (slots[ahead].import_price_sek_per_kwh > needed) return true;
@@ -490,6 +503,7 @@ export function planDispatch(
   }
 
   let iterations = 0;
+  let releasedThisRound = 0;
   let stopped: DispatchResult["stopped_because"] = "no_profitable_candidate";
   const allocations: DispatchAllocationDiagnostic[][] = Array.from(
     { length: count },
@@ -659,356 +673,6 @@ export function planDispatch(
   // 288 quarters after each allocation.
   const cachedBestByStore = new Map<string, Candidate | null>();
 
-  while (iterations < maxIterations) {
-    iterations += 1;
-    let best: Candidate | null = null;
-
-    for (const store of stores) {
-      if (cachedBestByStore.has(store.key)) {
-        const cached = cachedBestByStore.get(store.key);
-        if (cached && outranks(cached, best)) best = cached;
-        continue;
-      }
-      let storeBest: Candidate | null = null;
-      const schedule = powerW[store.key];
-      const dischargeByKey = dischargeW[store.key];
-      const state = stateByKey[store.key];
-      const retention = retentionByKey[store.key];
-      const minRun = Math.max(1, store.min_run_slots ?? 1);
-      // Both directions read the same suffix extremes: charging is bounded by
-      // the highest state still to come, discharging by the lowest.
-      const suffixMin = suffixMinByKey[store.key];
-      const suffixMax = suffixMaxByKey[store.key];
-      suffixBounds(state, suffixMin, suffixMax);
-      for (let index = 0; index < count; index += 1) {
-        // A slot already committed to discharge must not also charge. Only the
-        // discharge side used to check this, so whichever direction won the
-        // auction first could be joined by the other in the same slot — the
-        // plan then bought energy at the import price and paid the round trip
-        // to push it through the battery for nothing.
-        if (schedule[index] > 0 || dischargeByKey[index] > 0) continue;
-        const adjacentRun = (schedule[index - 1] ?? 0) > 0 ||
-          (schedule[index + 1] ?? 0) > 0;
-        const startsRun = minRun > 1 && !adjacentRun;
-        const indices = startsRun
-          ? Array.from({ length: minRun }, (_, offset) => index + offset)
-          : [index];
-        if (
-          indices.at(-1)! >= count ||
-          indices.some((slotIndex) =>
-            schedule[slotIndex] > 0 || dischargeByKey[slotIndex] > 0
-          )
-        ) continue;
-
-        // Only a store that sells its charge back is doing arbitrage. A pool
-        // buys warmth and a car buys range; neither is betting on a price.
-        const roundTrip = store.discharge
-          ? store.units_per_kwh(state[index], index) /
-            Math.max(1e-9, store.discharge.state_per_kwh_out(state[index], index))
-          : 0;
-        const fullW = Math.min(
-          store.max_power_w,
-          ...indices.map((slotIndex) => {
-            const units = store.units_per_kwh(state[slotIndex], slotIndex);
-            if (units <= 0) return 0;
-            const slot = slots[slotIndex];
-            const gridBarred = store.discharge !== undefined &&
-              !sellLegIsPublished(slots, slotIndex, roundTrip);
-            return Math.min(
-              headroomW(
-                slot,
-                limits,
-                occupiedW[slotIndex],
-                returnedW[slotIndex],
-              ),
-              chargeRoomW(store, suffixMax[slotIndex], units),
-              // Barred from the grid, it may still take what the roof is
-              // giving away: that energy costs no committed money.
-              gridBarred
-                ? Math.max(
-                  0,
-                  slot.pv_w - slot.fixed_load_w - occupiedW[slotIndex],
-                )
-                : Infinity,
-            );
-          }),
-        );
-        if (fullW <= 0) continue;
-        // Candidate levels stop wherever either the source cost or the curve
-        // changes. This applies to every store: valuing an 11 kW EV quarter or
-        // a four-quarter pool run at the first infinitesimal unit is precisely
-        // the defect an integral utility curve exists to prevent.
-        const rawPowers = [fullW, store.min_power_w ?? 0];
-        for (const slotIndex of indices) {
-          const surplusW = Math.max(
-            0,
-            Math.min(
-              fullW,
-              slots[slotIndex].pv_w - slots[slotIndex].fixed_load_w -
-                occupiedW[slotIndex],
-            ),
-          );
-          if (surplusW > 0 && surplusW < fullW) rawPowers.push(surplusW);
-          const units = store.units_per_kwh(state[slotIndex], slotIndex);
-          // Where the shaped cost of the next kilowatt meets what it is worth.
-          //
-          // Every other level here is a breakpoint of something piecewise —
-          // the surplus running out, the curve turning. A shaped peak is not
-          // piecewise: its marginal cost rises continuously with the power
-          // already committed, so the profit-maximising power is an interior
-          // point that no breakpoint lands on. Without it the auction can only
-          // take the block whole or leave it, which is why a shaped plan
-          // stopped charging altogether instead of charging more gently.
-          //
-          // Solving `value = price + rate × (over + x)` for the increment x,
-          // where the average-marginal form makes the optimum exactly
-          // `(value − price)/rate − over`.
-          if (limits.peak_shaping_sek_per_kwh_per_kw > 0 && units > 0) {
-            const slot = slots[slotIndex];
-            const valuePerKwh = marginalValue(store.curve, state[slotIndex]) *
-              units;
-            const beforeW = gridImportW(
-              slot,
-              occupiedW[slotIndex],
-              returnedW[slotIndex],
-            );
-            const gainPerKwh = valuePerKwh - slot.import_price_sek_per_kwh -
-              (store.wear_sek_per_kwh ?? 0);
-            // Two points, because the cost is not one curve but two joined at
-            // the threshold. The join itself is a breakpoint like any other —
-            // the surplus running out, the utility curve turning — and it is
-            // frequently the answer: filling a quarter exactly up to the
-            // threshold and stopping costs nothing at all, which beats both
-            // going further and stopping short. Missing it let a house at 4 kW
-            // charge at the full 8.8 rather than the 6 that reaches the
-            // threshold, so the shaped and unshaped plans were identical.
-            const toThresholdW = limits.grid_import_shaping_w - beforeW;
-            if (toThresholdW > 1e-9 && toThresholdW < fullW - 1e-9) {
-              rawPowers.push(toThresholdW);
-            }
-            // And the optimum of the branch above it, where the marginal cost
-            // is rising: `value = price + rate × (over_before + x)/2` in the
-            // average-marginal form the cost is charged at.
-            const overBeforeKw = (beforeW - limits.grid_import_shaping_w) /
-              1_000;
-            const bestKw = gainPerKwh /
-                limits.peak_shaping_sek_per_kwh_per_kw -
-              overBeforeKw / 2;
-            const bestW = bestKw * 1_000;
-            if (
-              bestW > 1e-9 && bestW < fullW - 1e-9 &&
-              beforeW + bestW > limits.grid_import_shaping_w
-            ) {
-              rawPowers.push(bestW);
-            }
-          }
-          for (const point of store.curve.points) {
-            const toPointW = (point.at - state[slotIndex]) / units /
-              SLOT_HOURS *
-              1_000;
-            if (toPointW > 1e-9 && toPointW < fullW - 1e-9) {
-              rawPowers.push(toPointW);
-            }
-          }
-        }
-        let slotBest: Candidate | null = null;
-        for (
-          const powerLevel of executablePowerLevels(store, rawPowers, fullW)
-        ) {
-          const candidate = chargeCandidate(
-            store,
-            indices,
-            powerLevel,
-            startsRun,
-          );
-          // Power levels in one slot are alternatives, not separate bids: the
-          // charger cannot first win 5 A and then add 1 A after the slot has
-          // been locked. Choose the executable level with the greatest total
-          // welfare here, then compare that action with other slots/stores by
-          // welfare per kWh.
-          if (
-            candidate &&
-            (slotBest === null ||
-              candidate.surplus > slotBest.surplus + 1e-12 ||
-              (Math.abs(candidate.surplus - slotBest.surplus) <= 1e-12 &&
-                candidate.score > slotBest.score))
-          ) {
-            slotBest = candidate;
-          }
-        }
-        if (slotBest && outranks(slotBest, storeBest)) storeBest = slotBest;
-      }
-
-      // Discharge is the same comparison with the signs exchanged: the value is
-      // the import it avoids, and the cost is the stored energy given up. Making
-      // it a candidate in the same auction is the point — a battery that would
-      // rather keep its charge simply loses to the sinks, and one whose charge is
-      // worth less than tonight's import price wins.
-      if (store.discharge) {
-        for (let index = 0; index < count; index += 1) {
-          if (schedule[index] > 0 || dischargeByKey[index] > 0) continue;
-          const slot = slots[index];
-          const deficitW = Math.max(
-            0,
-            slot.fixed_load_w + occupiedW[index] - slot.pv_w - returnedW[index],
-          );
-          const coverW = Math.min(store.discharge.max_power_w, deficitW);
-          const exportW = store.discharge.export_allowed
-            ? Math.min(
-              store.discharge.max_power_w - coverW,
-              Math.max(
-                0,
-                limits.grid_export_limit_w -
-                  Math.max(0, slot.pv_w - slot.fixed_load_w),
-              ),
-            )
-            : 0;
-          const maximumW = coverW + exportW;
-          const rawLevels = [coverW, maximumW];
-          const statePerKwh = store.discharge.state_per_kwh_out(
-            state[index],
-            index,
-          );
-          for (const point of store.curve.points) {
-            const toPointW = (state[index] - point.at) / statePerKwh /
-              SLOT_HOURS * 1_000;
-            if (toPointW > 1e-9 && toPointW < maximumW - 1e-9) {
-              rawLevels.push(toPointW);
-            }
-          }
-          const dischargeLevels = [
-            ...new Set(rawLevels.map((level) => Math.round(level * 1e6) / 1e6)),
-          ].filter((level) => level > 1e-9);
-          let slotBest: Candidate | null = null;
-          for (const powerLevel of dischargeLevels) {
-            if (powerLevel <= 0) continue;
-            const loadW = Math.min(powerLevel, coverW);
-            const toExportW = powerLevel - loadW;
-            const price = (
-              loadW * slot.import_price_sek_per_kwh +
-              toExportW * slot.export_price_sek_per_kwh
-            ) / powerLevel +
-              peakReliefSekPerKwh(
-                limits,
-                gridImportW(slot, occupiedW[index], returnedW[index]),
-                loadW,
-              );
-            const destination = toExportW <= 1e-9
-              ? "load" as const
-              : loadW <= 1e-9
-              ? "export" as const
-              : "mixed" as const;
-            const kwh = powerLevel / 1_000 * SLOT_HOURS;
-            const spent = kwh * statePerKwh;
-            // Feasible only if the lowest state still to come can absorb it.
-            if (
-              store.min_state !== undefined &&
-              suffixMin[index] - spent < store.min_state - 1e-9
-            ) continue;
-            // The sell side of the curve: what the charge being given up is
-            // worth, not what the next unit would be worth to buy.
-            const after = state[index] - spent;
-            const givenUp = -valueOfMove(
-              store.curve,
-              state[index],
-              after,
-            ) / kwh * retention[index];
-            const gained = price - (store.wear_sek_per_kwh ?? 0);
-            const surplus = (gained - givenUp) * kwh;
-            if (surplus <= 1e-9) continue;
-            const candidate: Candidate = {
-              store,
-              index,
-              indices: [index],
-              surplus,
-              score: surplus / kwh,
-              direction: "discharge",
-              parts: [{
-                store_key: store.key,
-                direction: "discharge",
-                trigger: "economic_winner",
-                allocation_order: 0,
-                run_start_index: index,
-                run_slots: 1,
-                power_w: powerLevel,
-                state_before: state[index],
-                state_after: after,
-                state_unit: store.curve.unit,
-                retention_factor: retention[index],
-                average_value_sek_per_kwh: price,
-                energy_cost_sek_per_kwh: givenUp,
-                wear_cost_sek_per_kwh: store.wear_sek_per_kwh ?? 0,
-                start_cost_sek: 0,
-                net_value_sek: surplus,
-                run_net_value_sek: surplus,
-                solar_w: 0,
-                grid_w: 0,
-                discharge_destination: destination,
-              }],
-            };
-            if (
-              slotBest === null ||
-              candidate.surplus > slotBest.surplus + 1e-12 ||
-              (Math.abs(candidate.surplus - slotBest.surplus) <= 1e-12 &&
-                candidate.score > slotBest.score)
-            ) {
-              slotBest = candidate;
-            }
-          }
-          if (slotBest && outranks(slotBest, storeBest)) storeBest = slotBest;
-        }
-      }
-      cachedBestByStore.set(store.key, storeBest);
-      if (storeBest && outranks(storeBest, best)) {
-        best = storeBest;
-      }
-    }
-
-    if (!best) break;
-
-    // Apply exactly the candidate that won. A new compressor run reached this
-    // point only after the complete block cleared its complete cost; no
-    // unevaluated continuation is appended here.
-    const schedule = powerW[best.store.key];
-    const discharge = dischargeW[best.store.key];
-    const changedIndices: number[] = [];
-    for (const [partIndex, part] of best.parts.entries()) {
-      const index = best.indices[partIndex];
-      part.allocation_order = iterations;
-      allocations[index].push(part);
-      if (best.direction === "discharge") {
-        discharge[index] = part.power_w;
-        returnedW[index] += part.power_w;
-      } else {
-        schedule[index] = part.power_w;
-        occupiedW[index] += part.power_w;
-      }
-      changedIndices.push(index);
-    }
-    project(
-      best.store,
-      schedule,
-      discharge,
-      best.index,
-      stateByKey[best.store.key],
-    );
-    const changed = new Set(changedIndices);
-    for (const store of stores) {
-      const cached = cachedBestByStore.get(store.key);
-      if (
-        store.key === best.store.key || best.direction === "discharge" ||
-        // A sink that starts charging can create a new discharge opportunity
-        // in that slot even when the battery's previous winner was elsewhere.
-        store.discharge !== undefined ||
-        (cached !== null && cached !== undefined &&
-          cached.indices.some((index) => changed.has(index)))
-      ) {
-        cachedBestByStore.delete(store.key);
-      }
-    }
-  }
-  if (iterations >= maxIterations) stopped = "iteration_cap";
-
   // ---------------------------------------------------------------------
   // Settle the books against the trajectory the plan will execute.
   //
@@ -1022,9 +686,9 @@ export function planDispatch(
   //
   // Re-price each committed run where it actually sits, release what no longer
   // pays for itself, and repeat until the schedule is self-consistent. Only
-  // removal happens here: releasing a charge lowers the states after it, which
-  // raises what the remaining energy is worth, so nothing is made worse by
-  // settling and the pass terminates.
+  // removal happens here, which is what makes this pass terminate; putting back
+  // what the removals re-open is the outer round's job, and the note on that
+  // loop says why a discharging store needs one.
   // ---------------------------------------------------------------------
   const movedValue = (
     store: DispatchStore,
@@ -1108,7 +772,7 @@ export function planDispatch(
       part.grid_w = part.power_w - part.solar_w;
       part.energy_cost_sek_per_kwh =
         (part.solar_w * slot.export_price_sek_per_kwh +
-          part.grid_w * slot.import_price_sek_per_kwh) / part.power_w +
+            part.grid_w * slot.import_price_sek_per_kwh) / part.power_w +
         peakSek * (part.grid_w / Math.max(1e-9, part.power_w));
     }
   };
@@ -1127,7 +791,8 @@ export function planDispatch(
       charging ? 0 : part.power_w,
     );
     return charging
-      ? value - (part.energy_cost_sek_per_kwh + wear) * kwh - part.start_cost_sek
+      ? value - (part.energy_cost_sek_per_kwh + wear) * kwh -
+        part.start_cost_sek
       : value + (part.average_value_sek_per_kwh - wear) * kwh;
   };
 
@@ -1181,65 +846,471 @@ export function planDispatch(
         returnedW[index] = Math.max(0, returnedW[index] - part.power_w);
       }
     }
-    project(store, powerW[store.key], dischargeW[store.key], 0, stateByKey[store.key]);
+    project(
+      store,
+      powerW[store.key],
+      dischargeW[store.key],
+      0,
+      stateByKey[store.key],
+    );
   };
 
-  // Every store settles in the same loop, because releasing one store's charge
-  // frees surplus that re-prices another's in the same quarter. Settling them
-  // one after another would leave whichever went first holding a price the
-  // rest of the pass had already moved.
+  // ---------------------------------------------------------------------
+  // The auction and the settlement are one fixed point, not two passes.
   //
-  // A minimum-run block cleared its cost as a block and is released as one, or
-  // the schedule would keep a compressor start it no longer pays for.
-  for (let pass = 0; pass <= count * stores.length; pass += 1) {
-    for (const store of stores) {
-      project(
-        store,
-        powerW[store.key],
-        dischargeW[store.key],
-        0,
-        stateByKey[store.key],
-      );
+  // Settling only ever removes, and the note below justifies that with a
+  // monotonicity that holds for a pure sink: releasing a charge lowers every
+  // later state, which raises what the charge still standing is worth, so no
+  // release can create work for another. A store that also *discharges* breaks
+  // it in both directions. Releasing a charge starves the discharges it was
+  // funding, and releasing a discharge raises every later state, which pushes
+  // the charges that fed it under water. The two feed each other downwards,
+  // and what the pass leaves behind is a schedule the auction would not have
+  // stopped at.
+  //
+  // Live plan `eb2ffa5e`, 2026-08-28. The auction bought the cheap night and
+  // planned to discharge continuously across the 17:15–23:30 evening. Settling
+  // released the afternoon top-up as unprofitable, starved the discharges it
+  // funded — from the back, so the *dearest* quarters were the ones dropped —
+  // and shipped a battery that sat on 1.41 kWh through 20:15–21:15 while the
+  // house imported at 2.19 SEK/kWh. Discharging into any of those quarters was
+  // worth about +0.13 SEK and needed nothing that was not already bought.
+  // Nothing re-ran the auction to notice.
+  //
+  // So alternate them until a settlement releases nothing: each round bids
+  // against the trajectory the previous one actually left, and a round that
+  // releases nothing is by construction a schedule where every commitment pays
+  // where it lands and no absent one would. The loop is bounded twice — by the
+  // iteration budget the auction already spends from, and by the round cap.
+  // ---------------------------------------------------------------------
+  let settling = true;
+  for (let round = 0; settling; round += 1) {
+    if (round >= MAX_SETTLE_ROUNDS) {
+      stopped = "settle_cap";
+      break;
     }
-    for (let index = 0; index < count; index += 1) recostSlot(index);
+    releasedThisRound = 0;
+    // Every cached per-store winner was priced against a schedule the previous
+    // round has since settled away.
+    cachedBestByStore.clear();
+    while (iterations < maxIterations) {
+      iterations += 1;
+      let best: Candidate | null = null;
 
-    let starved: { store: DispatchStore; indices: number[] } | null = null;
-    let stranded: { store: DispatchStore; indices: number[] } | null = null;
-    let worst: { store: DispatchStore; indices: number[]; net: number } | null =
-      null;
-    for (const store of stores) {
-      if (stranded === null) {
-        const block = shortBlock(store);
-        if (block !== null) stranded = { store, indices: block };
+      for (const store of stores) {
+        if (cachedBestByStore.has(store.key)) {
+          const cached = cachedBestByStore.get(store.key);
+          if (cached && outranks(cached, best)) best = cached;
+          continue;
+        }
+        let storeBest: Candidate | null = null;
+        const schedule = powerW[store.key];
+        const dischargeByKey = dischargeW[store.key];
+        const state = stateByKey[store.key];
+        const retention = retentionByKey[store.key];
+        const minRun = Math.max(1, store.min_run_slots ?? 1);
+        // Both directions read the same suffix extremes: charging is bounded by
+        // the highest state still to come, discharging by the lowest.
+        const suffixMin = suffixMinByKey[store.key];
+        const suffixMax = suffixMaxByKey[store.key];
+        suffixBounds(state, suffixMin, suffixMax);
+        for (let index = 0; index < count; index += 1) {
+          // A slot already committed to discharge must not also charge. Only the
+          // discharge side used to check this, so whichever direction won the
+          // auction first could be joined by the other in the same slot — the
+          // plan then bought energy at the import price and paid the round trip
+          // to push it through the battery for nothing.
+          if (schedule[index] > 0 || dischargeByKey[index] > 0) continue;
+          const adjacentRun = (schedule[index - 1] ?? 0) > 0 ||
+            (schedule[index + 1] ?? 0) > 0;
+          const startsRun = minRun > 1 && !adjacentRun;
+          const indices = startsRun
+            ? Array.from({ length: minRun }, (_, offset) => index + offset)
+            : [index];
+          if (
+            indices.at(-1)! >= count ||
+            indices.some((slotIndex) =>
+              schedule[slotIndex] > 0 || dischargeByKey[slotIndex] > 0
+            )
+          ) continue;
+
+          // Only a store that sells its charge back is doing arbitrage. A pool
+          // buys warmth and a car buys range; neither is betting on a price.
+          const roundTrip = store.discharge
+            ? store.units_per_kwh(state[index], index) /
+              Math.max(
+                1e-9,
+                store.discharge.state_per_kwh_out(state[index], index),
+              )
+            : 0;
+          const fullW = Math.min(
+            store.max_power_w,
+            ...indices.map((slotIndex) => {
+              const units = store.units_per_kwh(state[slotIndex], slotIndex);
+              if (units <= 0) return 0;
+              const slot = slots[slotIndex];
+              const gridBarred = store.discharge !== undefined &&
+                !sellLegIsPublished(slots, slotIndex, roundTrip);
+              return Math.min(
+                headroomW(
+                  slot,
+                  limits,
+                  occupiedW[slotIndex],
+                  returnedW[slotIndex],
+                ),
+                chargeRoomW(store, suffixMax[slotIndex], units),
+                // Barred from the grid, it may still take what the roof is
+                // giving away: that energy costs no committed money.
+                gridBarred
+                  ? Math.max(
+                    0,
+                    slot.pv_w - slot.fixed_load_w - occupiedW[slotIndex],
+                  )
+                  : Infinity,
+              );
+            }),
+          );
+          if (fullW <= 0) continue;
+          // Candidate levels stop wherever either the source cost or the curve
+          // changes. This applies to every store: valuing an 11 kW EV quarter or
+          // a four-quarter pool run at the first infinitesimal unit is precisely
+          // the defect an integral utility curve exists to prevent.
+          const rawPowers = [fullW, store.min_power_w ?? 0];
+          for (const slotIndex of indices) {
+            const surplusW = Math.max(
+              0,
+              Math.min(
+                fullW,
+                slots[slotIndex].pv_w - slots[slotIndex].fixed_load_w -
+                  occupiedW[slotIndex],
+              ),
+            );
+            if (surplusW > 0 && surplusW < fullW) rawPowers.push(surplusW);
+            const units = store.units_per_kwh(state[slotIndex], slotIndex);
+            // Where the shaped cost of the next kilowatt meets what it is worth.
+            //
+            // Every other level here is a breakpoint of something piecewise —
+            // the surplus running out, the curve turning. A shaped peak is not
+            // piecewise: its marginal cost rises continuously with the power
+            // already committed, so the profit-maximising power is an interior
+            // point that no breakpoint lands on. Without it the auction can only
+            // take the block whole or leave it, which is why a shaped plan
+            // stopped charging altogether instead of charging more gently.
+            //
+            // Solving `value = price + rate × (over + x)` for the increment x,
+            // where the average-marginal form makes the optimum exactly
+            // `(value − price)/rate − over`.
+            if (limits.peak_shaping_sek_per_kwh_per_kw > 0 && units > 0) {
+              const slot = slots[slotIndex];
+              const valuePerKwh = marginalValue(store.curve, state[slotIndex]) *
+                units;
+              const beforeW = gridImportW(
+                slot,
+                occupiedW[slotIndex],
+                returnedW[slotIndex],
+              );
+              const gainPerKwh = valuePerKwh - slot.import_price_sek_per_kwh -
+                (store.wear_sek_per_kwh ?? 0);
+              // Two points, because the cost is not one curve but two joined at
+              // the threshold. The join itself is a breakpoint like any other —
+              // the surplus running out, the utility curve turning — and it is
+              // frequently the answer: filling a quarter exactly up to the
+              // threshold and stopping costs nothing at all, which beats both
+              // going further and stopping short. Missing it let a house at 4 kW
+              // charge at the full 8.8 rather than the 6 that reaches the
+              // threshold, so the shaped and unshaped plans were identical.
+              const toThresholdW = limits.grid_import_shaping_w - beforeW;
+              if (toThresholdW > 1e-9 && toThresholdW < fullW - 1e-9) {
+                rawPowers.push(toThresholdW);
+              }
+              // And the optimum of the branch above it, where the marginal cost
+              // is rising: `value = price + rate × (over_before + x)/2` in the
+              // average-marginal form the cost is charged at.
+              const overBeforeKw = (beforeW - limits.grid_import_shaping_w) /
+                1_000;
+              const bestKw = gainPerKwh /
+                  limits.peak_shaping_sek_per_kwh_per_kw -
+                overBeforeKw / 2;
+              const bestW = bestKw * 1_000;
+              if (
+                bestW > 1e-9 && bestW < fullW - 1e-9 &&
+                beforeW + bestW > limits.grid_import_shaping_w
+              ) {
+                rawPowers.push(bestW);
+              }
+            }
+            for (const point of store.curve.points) {
+              const toPointW = (point.at - state[slotIndex]) / units /
+                SLOT_HOURS *
+                1_000;
+              if (toPointW > 1e-9 && toPointW < fullW - 1e-9) {
+                rawPowers.push(toPointW);
+              }
+            }
+          }
+          let slotBest: Candidate | null = null;
+          for (
+            const powerLevel of executablePowerLevels(store, rawPowers, fullW)
+          ) {
+            const candidate = chargeCandidate(
+              store,
+              indices,
+              powerLevel,
+              startsRun,
+            );
+            // Power levels in one slot are alternatives, not separate bids: the
+            // charger cannot first win 5 A and then add 1 A after the slot has
+            // been locked. Choose the executable level with the greatest total
+            // welfare here, then compare that action with other slots/stores by
+            // welfare per kWh.
+            if (
+              candidate &&
+              (slotBest === null ||
+                candidate.surplus > slotBest.surplus + 1e-12 ||
+                (Math.abs(candidate.surplus - slotBest.surplus) <= 1e-12 &&
+                  candidate.score > slotBest.score))
+            ) {
+              slotBest = candidate;
+            }
+          }
+          if (slotBest && outranks(slotBest, storeBest)) storeBest = slotBest;
+        }
+
+        // Discharge is the same comparison with the signs exchanged: the value is
+        // the import it avoids, and the cost is the stored energy given up. Making
+        // it a candidate in the same auction is the point — a battery that would
+        // rather keep its charge simply loses to the sinks, and one whose charge is
+        // worth less than tonight's import price wins.
+        if (store.discharge) {
+          for (let index = 0; index < count; index += 1) {
+            if (schedule[index] > 0 || dischargeByKey[index] > 0) continue;
+            const slot = slots[index];
+            const deficitW = Math.max(
+              0,
+              slot.fixed_load_w + occupiedW[index] - slot.pv_w -
+                returnedW[index],
+            );
+            const coverW = Math.min(store.discharge.max_power_w, deficitW);
+            const exportW = store.discharge.export_allowed
+              ? Math.min(
+                store.discharge.max_power_w - coverW,
+                Math.max(
+                  0,
+                  limits.grid_export_limit_w -
+                    Math.max(0, slot.pv_w - slot.fixed_load_w),
+                ),
+              )
+              : 0;
+            const maximumW = coverW + exportW;
+            const rawLevels = [coverW, maximumW];
+            const statePerKwh = store.discharge.state_per_kwh_out(
+              state[index],
+              index,
+            );
+            for (const point of store.curve.points) {
+              const toPointW = (state[index] - point.at) / statePerKwh /
+                SLOT_HOURS * 1_000;
+              if (toPointW > 1e-9 && toPointW < maximumW - 1e-9) {
+                rawLevels.push(toPointW);
+              }
+            }
+            const dischargeLevels = [
+              ...new Set(
+                rawLevels.map((level) => Math.round(level * 1e6) / 1e6),
+              ),
+            ].filter((level) => level > 1e-9);
+            let slotBest: Candidate | null = null;
+            for (const powerLevel of dischargeLevels) {
+              if (powerLevel <= 0) continue;
+              const loadW = Math.min(powerLevel, coverW);
+              const toExportW = powerLevel - loadW;
+              const price = (
+                    loadW * slot.import_price_sek_per_kwh +
+                    toExportW * slot.export_price_sek_per_kwh
+                  ) / powerLevel +
+                peakReliefSekPerKwh(
+                  limits,
+                  gridImportW(slot, occupiedW[index], returnedW[index]),
+                  loadW,
+                );
+              const destination = toExportW <= 1e-9
+                ? "load" as const
+                : loadW <= 1e-9
+                ? "export" as const
+                : "mixed" as const;
+              const kwh = powerLevel / 1_000 * SLOT_HOURS;
+              const spent = kwh * statePerKwh;
+              // Feasible only if the lowest state still to come can absorb it.
+              if (
+                store.min_state !== undefined &&
+                suffixMin[index] - spent < store.min_state - 1e-9
+              ) continue;
+              // The sell side of the curve: what the charge being given up is
+              // worth, not what the next unit would be worth to buy.
+              const after = state[index] - spent;
+              const givenUp = -valueOfMove(
+                store.curve,
+                state[index],
+                after,
+              ) / kwh * retention[index];
+              const gained = price - (store.wear_sek_per_kwh ?? 0);
+              const surplus = (gained - givenUp) * kwh;
+              if (surplus <= 1e-9) continue;
+              const candidate: Candidate = {
+                store,
+                index,
+                indices: [index],
+                surplus,
+                score: surplus / kwh,
+                direction: "discharge",
+                parts: [{
+                  store_key: store.key,
+                  direction: "discharge",
+                  trigger: "economic_winner",
+                  allocation_order: 0,
+                  run_start_index: index,
+                  run_slots: 1,
+                  power_w: powerLevel,
+                  state_before: state[index],
+                  state_after: after,
+                  state_unit: store.curve.unit,
+                  retention_factor: retention[index],
+                  average_value_sek_per_kwh: price,
+                  energy_cost_sek_per_kwh: givenUp,
+                  wear_cost_sek_per_kwh: store.wear_sek_per_kwh ?? 0,
+                  start_cost_sek: 0,
+                  net_value_sek: surplus,
+                  run_net_value_sek: surplus,
+                  solar_w: 0,
+                  grid_w: 0,
+                  discharge_destination: destination,
+                }],
+              };
+              if (
+                slotBest === null ||
+                candidate.surplus > slotBest.surplus + 1e-12 ||
+                (Math.abs(candidate.surplus - slotBest.surplus) <= 1e-12 &&
+                  candidate.score > slotBest.score)
+              ) {
+                slotBest = candidate;
+              }
+            }
+            if (slotBest && outranks(slotBest, storeBest)) storeBest = slotBest;
+          }
+        }
+        cachedBestByStore.set(store.key, storeBest);
+        if (storeBest && outranks(storeBest, best)) {
+          best = storeBest;
+        }
       }
-      const runs = new Map<string, { indices: number[]; net: number }>();
-      let starvedKey: string | null = null;
-      for (let index = 0; index < count; index += 1) {
-        const part = partAt(store, index);
-        if (!part) continue;
-        const key = `${part.direction}:${part.run_start_index}`;
-        const run = runs.get(key) ?? { indices: [], net: 0 };
-        run.indices.push(index);
-        run.net += settledNet(store, index);
-        runs.set(key, run);
-        if (starvedKey === null && overdrawn(store, index)) starvedKey = key;
+
+      if (!best) break;
+
+      // Apply exactly the candidate that won. A new compressor run reached this
+      // point only after the complete block cleared its complete cost; no
+      // unevaluated continuation is appended here.
+      const schedule = powerW[best.store.key];
+      const discharge = dischargeW[best.store.key];
+      const changedIndices: number[] = [];
+      for (const [partIndex, part] of best.parts.entries()) {
+        const index = best.indices[partIndex];
+        part.allocation_order = iterations;
+        allocations[index].push(part);
+        if (best.direction === "discharge") {
+          discharge[index] = part.power_w;
+          returnedW[index] += part.power_w;
+        } else {
+          schedule[index] = part.power_w;
+          occupiedW[index] += part.power_w;
+        }
+        changedIndices.push(index);
       }
-      // Resolve the run only once the scan has collected all of its slots.
-      if (starvedKey !== null && starved === null) {
-        starved = { store, indices: runs.get(starvedKey)!.indices };
-      }
-      for (const run of runs.values()) {
-        if (run.net < -1e-9 && (worst === null || run.net < worst.net)) {
-          worst = { store, indices: run.indices, net: run.net };
+      project(
+        best.store,
+        schedule,
+        discharge,
+        best.index,
+        stateByKey[best.store.key],
+      );
+      const changed = new Set(changedIndices);
+      for (const store of stores) {
+        const cached = cachedBestByStore.get(store.key);
+        if (
+          store.key === best.store.key || best.direction === "discharge" ||
+          // A sink that starts charging can create a new discharge opportunity
+          // in that slot even when the battery's previous winner was elsewhere.
+          store.discharge !== undefined ||
+          (cached !== null && cached !== undefined &&
+            cached.indices.some((index) => changed.has(index)))
+        ) {
+          cachedBestByStore.delete(store.key);
         }
       }
     }
-    // Neither an unsupplied discharge nor a run the hardware cannot execute is
-    // a price call, so both go before anything that is merely unprofitable.
-    const target = starved ?? stranded ?? worst;
-    if (target === null) break;
-    releaseRun(target.store, target.indices);
+
+    // Every store settles in the same loop, because releasing one store's charge
+    // frees surplus that re-prices another's in the same quarter. Settling them
+    // one after another would leave whichever went first holding a price the
+    // rest of the pass had already moved.
+    //
+    // A minimum-run block cleared its cost as a block and is released as one, or
+    // the schedule would keep a compressor start it no longer pays for.
+    for (let pass = 0; pass <= count * stores.length; pass += 1) {
+      for (const store of stores) {
+        project(
+          store,
+          powerW[store.key],
+          dischargeW[store.key],
+          0,
+          stateByKey[store.key],
+        );
+      }
+      for (let index = 0; index < count; index += 1) recostSlot(index);
+
+      let starved: { store: DispatchStore; indices: number[] } | null = null;
+      let stranded: { store: DispatchStore; indices: number[] } | null = null;
+      let worst:
+        | { store: DispatchStore; indices: number[]; net: number }
+        | null = null;
+      for (const store of stores) {
+        if (stranded === null) {
+          const block = shortBlock(store);
+          if (block !== null) stranded = { store, indices: block };
+        }
+        const runs = new Map<string, { indices: number[]; net: number }>();
+        let starvedKey: string | null = null;
+        for (let index = 0; index < count; index += 1) {
+          const part = partAt(store, index);
+          if (!part) continue;
+          const key = `${part.direction}:${part.run_start_index}`;
+          const run = runs.get(key) ?? { indices: [], net: 0 };
+          run.indices.push(index);
+          run.net += settledNet(store, index);
+          runs.set(key, run);
+          if (starvedKey === null && overdrawn(store, index)) starvedKey = key;
+        }
+        // Resolve the run only once the scan has collected all of its slots.
+        if (starvedKey !== null && starved === null) {
+          starved = { store, indices: runs.get(starvedKey)!.indices };
+        }
+        for (const run of runs.values()) {
+          if (run.net < -1e-9 && (worst === null || run.net < worst.net)) {
+            worst = { store, indices: run.indices, net: run.net };
+          }
+        }
+      }
+      // Neither an unsupplied discharge nor a run the hardware cannot execute is
+      // a price call, so both go before anything that is merely unprofitable.
+      const target = starved ?? stranded ?? worst;
+      if (target === null) break;
+      releasedThisRound += 1;
+      releaseRun(target.store, target.indices);
+    }
+
+    settling = releasedThisRound > 0;
   }
+
+  if (iterations >= maxIterations) stopped = "iteration_cap";
 
   for (const store of stores) {
     // Publish the settled arithmetic. The allocation's own record and the

@@ -4,8 +4,9 @@ import {
   type DispatchSlot,
   type DispatchStore,
   planDispatch,
+  SLOT_HOURS,
 } from "./dispatch-plan.ts";
-import type { UtilityCurve } from "./store-value.ts";
+import { type UtilityCurve, valueOfMove } from "./store-value.ts";
 
 const LIMITS: DispatchLimits = {
   grid_import_limit_w: 13_200,
@@ -193,7 +194,10 @@ Deno.test("spare solar is shared by draw, not claimed by whoever bid first", () 
     }
   }
 
-  assert(shared > 0, "no quarter had two stores charging, so nothing was tested");
+  assert(
+    shared > 0,
+    "no quarter had two stores charging, so nothing was tested",
+  );
   assertEquals(
     misquoted.slice(0, 3),
     [],
@@ -798,4 +802,82 @@ Deno.test("load-cover discharge is valued at import, never export", () => {
   assertEquals(result.battery[0]?.reason, "retained_value_exceeds_import");
   assertEquals(result.battery[0]?.comparison_price_sek_per_kwh, 1);
   assertEquals(result.battery[0]?.comparison_power_w, 600);
+});
+
+Deno.test("§8.18 — the settled schedule is one the auction would have stopped at", () => {
+  // The shape that broke it (live plan `eb2ffa5e`, 2026-08-28): a cheap night,
+  // a dear evening, and a concave curve. The greedy over-buys the night against
+  // the marginal value of an emptier pack; settling releases the surplus charge
+  // as unprofitable; and the discharges that charge was funding fall away as
+  // starved — from the back, so the *dearest* quarters are the ones dropped.
+  // Nothing then re-priced the hole that left.
+  const slots: DispatchSlot[] = Array.from({ length: 96 }, (_slot, index) => ({
+    pv_w: 0,
+    fixed_load_w: 1_000,
+    import_price_sek_per_kwh: index < 64 ? 0.86 : index < 80 ? 2.2 : 1.2,
+    export_price_sek_per_kwh: 0.05,
+  }));
+  const battery: DispatchStore = {
+    key: "battery",
+    // Concave, as the derived curve is: the bottom of the pack is worth the
+    // evening it covers, the top only what a flat night would pay for it.
+    curve: {
+      unit: "kwh",
+      points: [
+        { at: 2.7, sek_per_unit: 1.65 },
+        { at: 4.3, sek_per_unit: 0.95 },
+        { at: 17, sek_per_unit: 0.45 },
+      ],
+    },
+    initial_state: 0,
+    min_state: 0,
+    max_state: 17,
+    max_power_w: 8_800,
+    retention_per_slot: 1,
+    usage_weight: new Array(96).fill(0),
+    terminal_weight: 1,
+    units_per_kwh: () => 0.95,
+    drift: (state) => state,
+    discharge: {
+      max_power_w: 9_600,
+      state_per_kwh_out: () => 1 / 0.95,
+      export_allowed: false,
+    },
+  };
+
+  const result = planDispatch(slots, [battery], LIMITS);
+  const state = result.state.battery;
+  // The lowest state still to come is what a discharge here has to leave room
+  // under, exactly as the auction's own feasibility check reads it.
+  const suffixMin = new Array(state.length).fill(0);
+  suffixMin[state.length - 1] = state[state.length - 1];
+  for (let index = state.length - 2; index >= 0; index -= 1) {
+    suffixMin[index] = Math.min(state[index], suffixMin[index + 1]);
+  }
+
+  for (let index = 0; index < slots.length; index += 1) {
+    if (result.import_w[index] <= 1e-9) continue;
+    if (result.power_w.battery[index] > 0) continue;
+    const powerW = Math.min(result.import_w[index], 9_600);
+    const kwh = powerW / 1_000 * SLOT_HOURS;
+    const spent = kwh / 0.95;
+    if (suffixMin[index] - spent < -1e-9) continue;
+    const givenUp = -valueOfMove(
+      battery.curve,
+      state[index],
+      state[index] - spent,
+    ) / kwh;
+    const surplus = (slots[index].import_price_sek_per_kwh - givenUp) * kwh;
+    assert(
+      surplus <= 1e-9,
+      `slot ${index} imported ${result.import_w[index].toFixed(0)} W at ` +
+        `${slots[index].import_price_sek_per_kwh} SEK/kWh while holding ` +
+        `${state[index].toFixed(3)} kWh worth ${givenUp.toFixed(3)}: ` +
+        `discharging was worth ${surplus.toFixed(4)} SEK and was not taken`,
+    );
+  }
+  assert(
+    result.stopped_because !== "settle_cap",
+    "the auction and the settlement must reach a fixed point",
+  );
 });

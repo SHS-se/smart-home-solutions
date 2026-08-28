@@ -4298,6 +4298,98 @@ curve must name what the curve actually used. The round trip is still the right
 quantity for `sellLegIsPublished`, which asks a genuine round-trip question —
 whether a buy now can be sold later — and is unchanged.
 
+### 8.18 The auction and the settlement are one fixed point (2026-08-28)
+
+Live plan `eb2ffa5e`, 2026-08-28. Prices: a flat 0.86 SEK/kWh night and
+afternoon, and an evening peak reaching 2.21. The battery started at its 5%
+floor with 18.08 kWh of capacity and a whole cheap day in front of it. The plan
+it shipped charged to 28.3% by 01:30, held that for fifteen hours, discharged
+from 17:15 to 20:00 — and then stopped, sitting on 1.41 kWh while the house
+imported through 20:15, 20:30, 21:00 and 21:15 at 2.19–2.21 SEK/kWh, the four
+dearest quarters of the day. Discharging into any of them was worth about
++0.13 SEK and needed nothing that had not already been bought.
+
+**What the auction actually decided.** It bought the cheap night *and* an
+afternoon top-up at 12:45–14:30, and it planned to discharge continuously from
+17:15 to 23:30. That is the behaviour asked for. The plan that shipped was not
+the plan the auction made.
+
+**What the settlement did to it.** §8.12's settling pass re-prices every
+commitment where the executed trajectory actually puts it and releases what no
+longer pays. It is removal-only, and the note justifying that argued a
+monotonicity: releasing a charge lowers every later state, which raises what the
+charge still standing is worth, so no release can create work for another.
+
+That holds for a pure sink. A store that also **discharges** breaks it in both
+directions:
+
+- releasing a charge *starves* the discharges it was funding, and the pass drops
+  them as unsupplied; and
+- releasing a discharge *raises* every later state, which on a concave curve
+  lowers the marginal value there and pushes the charges that fed it under
+  water.
+
+The two feed each other downwards. Here the afternoon top-up went first, the
+discharges it funded were then starved — from the back, so the *dearest*
+quarters were the ones dropped — and each release made the next one easier.
+146 releases in the first pass, and no mechanism to put anything back.
+
+**The rule.** A settled schedule must be one the auction would have stopped at.
+Every commitment pays where it lands *and* no absent one would pay to be added.
+The pass enforced only the first half, so its output was a fixed point of
+removal and of nothing else.
+
+**Resolved** by alternating the two until a settlement releases nothing. Each
+round bids against the trajectory the previous one actually left; a round that
+releases nothing satisfies both halves by construction. The capsule converges in
+13 rounds and 1001 auction iterations against 349 before, and plan generation
+stays at about 1.4 s. Termination is bounded twice: by the iteration budget the
+auction already spends from, and by `MAX_SETTLE_ROUNDS`, which reports
+`stopped_because: "settle_cap"` rather than spinning.
+
+On `eb2ffa5e` the battery now discharges through 20:15–21:15 and refills at
+22:30 when the price falls to 1.30. Grid import across 17:45–22:00 falls from
+2.507 kWh to 1.277 kWh, and its cost from 4.99 SEK to 2.38 SEK. Over the whole
+three-day horizon the terminal-adjusted cost falls from 77.59 to 77.16 SEK — the
+horizon is mostly cheap and flat, so the win is concentrated in the one evening
+that is not. `model_version` does not move: no pricing rule changed, only
+whether the plan is solved to a fixed point.
+
+**What this does not fix, and the number that governs it.** The battery still
+charges only to ~29% on this capsule, not to the ~45% that covering the whole
+17:45–22:00 evening would need. That is the wear cost doing its job, not a
+defect. At `battery_degradation_sek_per_kwh = 0.45` on a 95/95 pack, a stored
+kWh must displace an import dearer than
+
+    0.86 / (0.95 × 0.95) + 0.45 / 0.95 ≈ 1.43 SEK/kWh
+
+to be worth buying at a 0.86 SEK night. The quarters left on the grid are the
+ones below that line. Sweeping the parameter on this capsule:
+
+| wear SEK/kWh | pre-evening peak SOC | 17:45–22:00 grid import |
+|---|---|---|
+| 0.45 (default) | 29.0% | 1.28 kWh |
+| 0.30 | 33.1% | 2.30 kWh |
+| 0.10 | 36.6% | 0.98 kWh |
+| 0.01 | 44.5% | 1.53 kWh |
+
+**Open.** `deriveBatteryValueCurve` reads
+`DEFAULT_VALUE_SETTINGS.battery_degradation_sek_per_kwh` directly, so the
+per-customer value `value-curves.ts` resolves never reaches the planner. The
+setting is configurable and inert. Wiring it through is the prerequisite for
+answering "should this household cycle harder", which is a question about the
+pack's warranty and price, not about the horizon.
+
+#### Acceptance tests to add to §8.12
+
+- **A settled schedule is auction-stable.** No quarter may import at a price
+  where discharging the battery would have paid, while the battery holds usable
+  charge and the discharge is feasible against its own floor. Covered by
+  `dispatch-plan.test.ts`, "§8.18 — the settled schedule is one the auction
+  would have stopped at", which fails on the pre-fix code at exactly this
+  property.
+
+
 ## 9. Parameter model
 
 ### 9.1 Parameter classes and ownership
