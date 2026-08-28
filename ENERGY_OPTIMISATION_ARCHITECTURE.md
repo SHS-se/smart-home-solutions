@@ -4020,7 +4020,7 @@ nothing else changes.
 
 | Requirement | State |
 |---|---|
-| 1 — charging spreads across its window | **Built, off by default.** One convex cost on total grid import |
+| 1 — charging spreads across its window | **Built and on**, at 0.6 SEK/kWh per kW. One convex cost on total grid import |
 | 2 — one whole-home envelope | **Built** by the same term: the cost depends on what the quarter already draws, so a store backs off as other load rises |
 | 4 — discharge spreads across a peak it cannot cover | **Built** by the same term, mirrored: relief is worth more off a high quarter than a low one |
 | 3 — a winter form of the covering window | Not started |
@@ -4046,9 +4046,9 @@ turned "off" into "spread":
 
 | Rate | Charge quarters | Peak charge power | Grid peak | Mean import |
 |---|---|---|---|---|
-| 0 | 17 | 8.8 kW | 13.20 kW | 3.84 kW |
+| 0 (off) | 17 | 8.8 kW | 13.20 kW | 3.84 kW |
 | 0.3 | 26 | 6.6 kW | 10.54 kW | 3.84 kW |
-| 0.6 | 63 | 5.5 kW | 8.04 kW | 3.86 kW |
+| **0.6 — shipped** | **63** | **5.5 kW** | **8.04 kW** | 3.86 kW |
 | 1.0 | 75 | 4.0 kW | 6.54 kW | 3.84 kW |
 
 A no-solar winter horizon, and the mean import is flat across all four rows:
@@ -4064,19 +4064,29 @@ chosen to be unobtrusive — was simply inert, which is worth knowing before
 anyone calibrates against a demand charge: the shaping price is not small
 relative to energy, and a tariff that produces one this large is doing real work.
 
-**It ships at zero, and the reason is a defect it exposes rather than causes.**
-A shaped plan changes the order allocations are made in, and some orders reveal
-that the store dispatch can schedule charge a store's own `max_state` cannot
-absorb: `project` clamps the state silently while the schedule keeps the power.
-For a vehicle that means planning wall energy the car will refuse, which is the
-failure `max_state` exists to prevent. Measured: `end_state` exactly at the 375
-km cap, `planned_kwh` 22.08 against a deliverable 20.38, published `ev_soc`
-0.8208 against a 0.8 target. Not the candidate cache — disabling it reproduces
-the result exactly — and every candidate touching the offending quarter was
-evaluated against the vehicle's *initial* state, so the bound was computed on a
-trajectory later allocations raised and nothing re-checked. Fixing that is its
-own change; turning shaping on before it would plan energy into a car that
-cannot take it.
+**It ships on at 0.6, after fixing a bound defect it exposed rather than
+caused.** A shaped plan changes the order allocations are made in, and one order
+revealed that the dispatch could schedule charge a store's own `max_state`
+cannot absorb: `project` clamped the state silently while the schedule kept the
+power, so a plan bought 22.08 kWh for a car that stops accepting at 20.38.
+
+The cause was narrower than it first looked, and worth recording because the two
+bounds that exist both looked sufficient. `fullW` bounds each slot of a block
+against `chargeRoomW(suffixMax)` — the room left at the highest the trajectory
+still reaches — and `chargeCandidate` walks the block's own cumulative
+trajectory against `max_state`. Neither sees a *multi-slot block placed earlier
+than work already scheduled*: at slot 7 the local state was the vehicle's
+starting 257.81 km while the suffix already reached 353.03, so two quarters that
+each individually fitted the room together carried it past 375. It appeared only
+at one shaping rate, which is what a defect that depends on allocation order
+looks like from the outside.
+
+Fixed by measuring the block's cumulative gain from the suffix maximum rather
+than from its first slot's state. Drift only ever removes some of what was added
+— a leaky store loses heat, it does not gain it — so bounding the total is exact
+for a store that holds and conservative for one that leaks. The per-quarter
+invariant is now asserted rather than the total alone: no quarter may leave a
+vehicle above the limit it will refuse past.
 
 #### Acceptance tests to add to §8.12
 

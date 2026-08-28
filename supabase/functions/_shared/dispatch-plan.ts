@@ -542,6 +542,23 @@ export function planDispatch(
     const high = store.max_state ?? Infinity;
     const parts: DispatchAllocationDiagnostic[] = [];
     let candidateState = state[indices[0]];
+    // The highest the trajectory already reaches from here on, which is what a
+    // block's gain lands on top of — not the state standing in its first slot.
+    //
+    // `fullW` bounds each slot of a block against this, and the walk below
+    // bounds the block's own local trajectory, and until now those were the
+    // only two checks. Neither sees a *multi-slot* block placed earlier than
+    // work already scheduled: at slot 7 the local state was the vehicle's
+    // starting 257.81 km while the suffix already reached 353.03, so two
+    // quarters of charge each individually inside the room together carried it
+    // past the 375 km its own charge limit allows. `project` then clamped the
+    // state and left the power in the schedule, so the plan bought 22.08 kWh
+    // for a car that stops accepting at 20.38.
+    const ceilingFrom = Math.max(
+      candidateState,
+      suffixMaxByKey[store.key]?.[indices[0]] ?? candidateState,
+    );
+    let gainedUnits = 0;
 
     for (const [offset, index] of indices.entries()) {
       const slot = slots[index];
@@ -551,6 +568,12 @@ export function planDispatch(
       const kwh = powerLevel / 1_000 * SLOT_HOURS;
       const afterInput = before + kwh * units;
       if (afterInput < low - 1e-9 || afterInput > high + 1e-9) return null;
+      // Drift only ever removes some of what was added — a leaky store loses
+      // heat, it does not gain it — so charging the whole block raises every
+      // later state by at most the total put in, and refusing on that total is
+      // safe for a drifting store and exact for one that holds.
+      gainedUnits += kwh * units;
+      if (ceilingFrom + gainedUnits > high + 1e-9) return null;
       const retained = retention[index];
       const valueSek = valueOfMove(store.curve, before, afterInput) * retained;
       const valuePerKwh = valueSek / kwh;

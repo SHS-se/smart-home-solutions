@@ -72,6 +72,9 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6] as const;
  * meaningless. v8 makes comfort schedules room-temperature constraints and
  * moves preheating inside the shared electrical objective. v10 replaces the
  * battery's peak-price step with the weighted merit order of displaced import.
+ * v14 prices power alongside energy, so a charge spreads across the window it
+ * is drawn from instead of being taken at full power in the fewest quarters
+ * that fit (§8.16).
  * v13 values a stored kWh at the energy it delivers rather than at the energy
  * it took to store, which is what lets the battery discharge at all.
  * v12 re-states the pool's stored preference curve against the horizon's own
@@ -81,7 +84,7 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6] as const;
  * v11 integrates every sizeable curve move, applies configured EV curves,
  * prices minimum runs as complete blocks and records exact quarter evidence.
  */
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v13";
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v14";
 /** The planner a schema 5 snapshot still receives, unchanged. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v8";
 export const SLOT_MINUTES = 15;
@@ -2040,24 +2043,23 @@ const PEAK_SHAPING_THRESHOLD_SHARE = 0.5;
  * What a kilowatt above the threshold adds to every kilowatt-hour drawn beside
  * it, SEK/kWh per kW.
  *
- * **Zero, so shaping is off until one defect is cleared.** The mechanism itself
- * is built and measured — at 0.6 a winter horizon spreads its charging from 17
- * quarters to 63, drops peak charge power from 8.8 kW to 5.5 and the grid peak
- * from 13.2 kW to 8.0, moving the same energy. What stops it being switched on
- * is that a shaped plan changes the order allocations are made in, and that
- * order exposes a bound defect in the store dispatch: a vehicle's charge is
- * scheduled past the state its own cap allows, `project` silently clamps the
- * state, and the schedule keeps power the car will refuse. Turning shaping on
- * before that is fixed would plan energy into a car that cannot take it, which
- * is the exact failure `max_state` was added to stop.
+ * Six tenths, which is a stated choice and not a measured figure.
  *
- * When it is switched on, 0.3–1.0 is the range that shapes; below about 0.3
- * nothing moves, because the rate has to be comparable to the gap between what
- * a store thinks its energy is worth and what the quarter costs. §8.16 leaves
- * the calibration open beyond that: it can be anchored to the last published
- * effektavgift when one returns.
+ * The rate has to be comparable to the gap between what a store believes its
+ * energy is worth and what the quarter costs — 1.5–2 SEK/kWh for a battery
+ * mid-winter — or nothing moves at all: 0.05 was inert. Across a no-solar
+ * winter horizon 0.6 spreads charging from 17 quarters to 63, brings peak
+ * charge power down from 8.8 kW to 5.5 and the grid peak from 13.2 kW to 8.0,
+ * and buys the same energy while doing it. Higher shapes harder; 1.0 halves the
+ * grid peak outright.
+ *
+ * §8.16 leaves the calibration open, and it can be anchored to the last
+ * published effektavgift when one returns. Until then this is where a household
+ * is asked to sit rather than something derivable, which is why it is published
+ * in the plan and can be overridden per home. Zero restores the pure energy
+ * objective exactly.
  */
-const PEAK_SHAPING_SEK_PER_KWH_PER_KW = 0;
+const PEAK_SHAPING_SEK_PER_KWH_PER_KW = 0.6;
 
 /** The shadow price on power this plan is shaped with (§8.16). */
 function derivePeakShaping(

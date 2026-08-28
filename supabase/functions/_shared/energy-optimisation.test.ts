@@ -1695,7 +1695,7 @@ Deno.test("schema 6 with pool state dispatches by temperature, not by budget", (
   const plan = generateOptimisationPlan(snapshot, new Date(NOW));
 
   assertEquals(plan.schema_version, 6);
-  assertEquals(plan.model_version, "marginal-value-planner-v13");
+  assertEquals(plan.model_version, "marginal-value-planner-v14");
   // Asserted explicitly: an earlier version of this test checked the pool
   // energy but not the status, and so passed while every schema 6 plan was
   // reported infeasible by validations that still assumed fixed blocks.
@@ -2085,6 +2085,20 @@ Deno.test("the car's own charge limit caps what the plan buys for it", () => {
   // Wall energy that reaches 80% from 55%: 0.25 * 75 / 0.92.
   const deliverable = 0.25 * 75 / 0.92;
 
+  // And not merely in total: no quarter may leave the car above the limit it
+  // will refuse past. The block bound used to be measured from the state
+  // standing in a block's first slot rather than from the highest the
+  // trajectory already reached, so two quarters placed *earlier* than work
+  // already scheduled each fitted the room and together did not — `project`
+  // clamped the state and the schedule kept power the car cannot take.
+  const overshoot = plan.plans.priority.slots.filter((slot) =>
+    slot.ev_soc > 0.8 + 1e-6
+  );
+  assertEquals(
+    overshoot.length,
+    0,
+    `no quarter may plan past the charge limit, ${overshoot.length} do`,
+  );
   assert(
     charged <= deliverable + 1e-6,
     `the car stops accepting charge at its limit, so the plan must not buy past ${
