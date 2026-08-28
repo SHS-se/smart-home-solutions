@@ -2366,7 +2366,10 @@ power with separate import/export thresholds, hysteresis, and a stable duration.
 5. Wait for measured confirmation before allocating the same watts elsewhere.
 6. When import exceeds the plan envelope or a large uncontrolled load starts,
    shed controllable sinks in reverse service priority, respecting minimum run
-   and hard-service constraints.
+   and hard-service constraints. §7.7 replaces "reverse service priority" with
+   the two criteria that order actually needs — response time, and headroom
+   within a class — and specifies how such a load is detected when it is
+   unmetered, and how the shed loads are returned.
 7. Re-evaluate on confirmed transitions and stable material power changes, not
    on every noisy sensor sample.
 
@@ -2522,6 +2525,166 @@ The default overview shows aggregate room heating, not every heater and room
 temperature. Selecting the aggregate or a room opens the same plan at room
 resolution. This preserves one authoritative plan while allowing both a clean
 whole-home explanation and detailed commissioning diagnostics.
+
+### 7.7 The controller defends the plan against loads the plan cannot see (2026-08-28)
+
+Requirements from Phil. §7.1–§7.5 specify the allocator, the executors and the
+room coordinator; what follows is the part that decides *when to leave the
+plan*, which none of them state.
+
+**The two layers have different clocks, and that is the whole reason both
+exist.** The planner reasons in quarter-hours over three days. A kettle, a
+toaster, a coffee machine and a dishwasher's heating burst are all shorter than
+one of its slots, and none of them is announced. No amount of forecasting
+reaches them: they are not badly predicted, they are outside the sampling rate.
+The planner owns the horizon; the controller owns the instant. A controller that
+tries to re-optimise is duplicating the planner badly, and a planner that tries
+to anticipate a kettle is inventing data.
+
+#### 7.7.1 An unplanned load is a residual, not a device
+
+Most of these loads are unmetered and some are unmeterable. The sauna draws at
+least 8 kW and appears nowhere except in whole-home consumption; nothing says
+what it is, and nothing says how long it will run.
+
+The controller therefore must not try to identify the load. It measures the
+**residual**: whole-home consumption minus the plan's own forecast for the
+quarter in progress, minus what the controller itself has commanded. Everything
+the plan knows about is already in that forecast, so what remains is by
+definition what the plan could not see. This is computable from what the
+integration already holds — the plan carries `load_w` per slot — and it needs no
+new metering anywhere.
+
+Two consequences follow directly:
+
+- **Base-load forecast error is indistinguishable from a small unplanned load,
+  and must be.** Both mean the same thing operationally: more power is being
+  drawn than the plan reserved. The residual needs a magnitude threshold and a
+  stable duration before it acts, on the same grounds §7.1 already gives for
+  grid power — never on a single sample.
+- **Duration is unknowable and must not be guessed.** The controller commits to
+  nothing on the basis of how long it thinks the sauna will run. It responds to
+  the residual that exists now and re-evaluates, which is also what makes it
+  safe: the worst case of a wrong guess is one more evaluation cycle.
+
+#### 7.7.2 What to shed, and in what order
+
+§8.5 gives a merit order for peak shaving by marginal cost — room heat, then
+pool, then EV deferral, then battery, then curtailment. That order is correct
+for the planner, which is choosing over hours. The controller is choosing over
+seconds, and needs a second criterion the planner never has to think about.
+
+**Response time is a first-class selection criterion.** An electric wall heater
+is off the moment its relay opens. A heat pump has a minimum run, a compressor
+that dislikes short cycles, and thermal inertia in the loop behind it. When 8 kW
+appears without warning, the instrument that can answer in one second is worth
+more than the instrument that is marginally cheaper to interrupt. The
+controller ranks by **cost of interruption per second of response**, not by cost
+of interruption alone, and the two orders are not the same list.
+
+**Within a class, shed what has the most headroom.** §7.5 ranks rooms for
+*granting* heat by thermal debt — deficit against the comfort band, time
+waiting, forecast loss, priority. Shedding is the mirror image and must use the
+same score in reverse: the rooms closest to their targets give up heat first,
+because they are the ones that will notice last. Two rooms both inside their
+band are not equivalent, and a static per-room priority cannot express which of
+them is closer.
+
+**Shed to a budget, not to zero.** The quantity to remove is the overshoot above
+the planning ceiling §8.16 asks for — enough to bring the total back under it,
+and no more. Shedding every eligible load because one appeared is how a
+controller turns an 8 kW event into a cold house.
+
+**Hard constraints are not sheddable at any residual.** A room below its hard
+comfort or frost limit is a hard request (§7.5). A store at a safety floor is
+not an instrument. The controller reduces what is discretionary and stops.
+
+#### 7.7.3 Restoring is a scheduled act, not the absence of shedding
+
+The event ends when the residual falls back below its threshold for a stable
+duration — the same test as entry, and for the same reason.
+
+**Restoration is staged.** Returning every shed load in the same instant
+recreates exactly the peak the shedding avoided, in the opposite direction, and
+does it at the moment the house is least prepared for it. Loads return in the
+order they were shed, spaced so the total stays under the ceiling, and each
+respects its own minimum off time.
+
+**And the plan is resumed, not recomputed.** The controller hands each load back
+to the schedule it already had. If a deviation was long enough that resuming is
+no longer sensible — a pool that lost an hour of a window that has since
+closed — the answer is to trigger a replan, not to have the controller invent a
+replacement schedule.
+
+#### 7.7.4 Every deviation is reported, and some of them are inputs
+
+A shed load is energy the plan believed would be delivered and which was not.
+§7.4 already says this for the EV — "delivered-energy drift is carried into the
+deadline guard and next replan rather than being erased at the slot boundary" —
+and it generalises: **the controller's deviations are an input to the next plan,
+never a silent local correction.** A pool shut down for the sauna is behind on a
+window the planner sized; a room that gave up twenty minutes of heat has thermal
+debt the next plan has to see. Absorbing that quietly is how the two layers
+drift apart until neither is describing the house.
+
+This is also the honest boundary on the controller's authority. It may deviate
+from the plan; it may not *replace* it, and the mechanism that keeps that true
+is that every deviation shows up in the next snapshot.
+
+#### 7.7.5 Human overrides, and which layer each one belongs to
+
+The controller owns the actuators, so it must expose the override surface. But
+overrides are not one thing, and the distinction is architectural rather than
+cosmetic: **an override that changes what the plan should have been belongs to
+the planner; an override that changes what happens now belongs to the
+controller.**
+
+| Example | Belongs to | Why |
+|---|---|---|
+| "Charge the car to full before 07:00 tomorrow, we are driving" | Planner | This is a deadline and a target — `ev_battery.departure` and its target SOC already exist in the snapshot contract (§5.3). Handling it locally would have the controller fighting a plan built without it |
+| "Warmer in this room, now" | Controller | Inside the comfort band it is a bounded setpoint offset the executor already supports (§7.4). It reaches the planner as observed state on the next snapshot |
+| "Vacation mode until the 14th" | Planner | A comfort schedule for a date range (§5.5) is what the planner optimises against; expressing it as a standing local override would hide it from every forecast |
+| "Do not touch the sauna circuit" | Controller | An eligibility flag on one load. The planner never had it as an instrument |
+| "Nothing may be shed this evening" | Controller | A temporary suspension of §7.7.2, with an expiry |
+
+Two rules across all of them:
+
+- **Every override has an expiry, stated when it is set.** A permanent override
+  is a configuration change and should be made as one. Overrides that outlive
+  their reason are indistinguishable from defects, and they are the most common
+  way a planner is blamed for a decision it was not allowed to make.
+- **A planner-class override reaches the planner through the snapshot, not
+  through the controller's own state.** The contract for a departure or a
+  comfort schedule exists; a second private path for the same fact would mean
+  two answers to the same question.
+
+#### 7.7.6 Where this lives, and what it needs
+
+The controller belongs in the integration, alongside the executors it drives.
+It needs the current plan, the live measurements §7.1 lists, the actuator
+bindings each shiftable load already declares in its device mapping, and its own
+configuration surface for the overrides above. Nothing in that list is new
+infrastructure; what is new is the decision logic between them.
+
+**It is not built, and the sequencing is deliberate.** A controller that
+defends a plan is only worth having once the plan is worth defending, and by
+Phil's own measure the scheduler does not yet beat the heating controls it would
+replace. §8.13 and §8.16 are that work. This section exists so the controller is
+specified before it is needed rather than discovered during a cold week.
+
+#### Open questions
+
+- **The residual threshold and its stable duration.** Both are calibratable from
+  the home's own history — the distribution of base-load forecast error is
+  measurable, and the threshold should sit above its ordinary range rather than
+  at a number someone picked.
+- **How response time is stated per device class.** §4.4 describes control
+  contracts but not how quickly each answers. A relay, a thermostat setpoint and
+  an inverter setpoint differ by orders of magnitude, and §7.7.2 ranks on it.
+- **Whether the ceiling the controller defends is the planner's or its own.**
+  §8.16 asks for a planning ceiling below the fuse. The controller may want a
+  slightly higher one, so that ordinary forecast error does not trip shedding
+  while a genuine 8 kW event still does.
 
 ## 8. Objective function (rewritten 2026-08-16)
 
@@ -2725,6 +2888,11 @@ almost no marginal cost, and shifting it inside the comfort curve is invisible),
 then pool (nearly free, one-way), then EV deferral (free while the range curve
 is flat), then battery discharge (costs `d_batt` per kWh), then service
 curtailment. The battery is *not* the first instrument to reach for.
+
+That order is the planner's, and it ranks by marginal cost alone because the
+planner is choosing over hours. The reactive controller is choosing over
+seconds and ranks by cost per second of response instead, which is a different
+list (§7.7.2).
 
 ### 8.6 Heating is the load-balancing instrument — and the main peak risk
 
