@@ -3909,7 +3909,29 @@ function simulate(
       }
     }
   }
-  if (soc + 1e-6 < snapshot.policy.terminal_soc_min) {
+  // The same exemption, for the same reason, and it was missing here. A
+  // dispatched battery carries its terminal state at `terminal_weight: 1`
+  // against a curve derived from the forecast, so where it ends is the priced
+  // answer rather than an oversight — and a floor asserted on top of that is
+  // the deleted hard target wearing a different hat.
+  //
+  // Worse, it was asserted against nothing. `terminal_soc_min` reaches
+  // `buildDispatchStores` nowhere: the battery store's floor is `min_state: 0`,
+  // which is `min_soc`. The auction was free to end anywhere above 5% and was
+  // then failed for ending below 20%, so the planner marked its own output
+  // infeasible against a constraint it had never been given. One live plan
+  // raised a battery from 15.9% to 17.9% — the state it *inherited* was already
+  // under the floor — and reported itself infeasible for the improvement. No
+  // plan could have passed except one that force-charged at any price, which is
+  // the behaviour §8.4 deleted.
+  //
+  // Nothing is hidden by this. `policy.terminal_soc_min` and
+  // `summary.battery_soc_end` are both published, so a reader that wants to
+  // show the comparison has it; what it is not is a verdict on the plan.
+  if (
+    !schedule.dispatched.has("battery") &&
+    soc + 1e-6 < snapshot.policy.terminal_soc_min
+  ) {
     errors.push(
       `terminal SOC ${(soc * 100).toFixed(1)}% is below ` +
         `${(snapshot.policy.terminal_soc_min * 100).toFixed(1)}%`,

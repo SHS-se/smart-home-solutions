@@ -3645,6 +3645,72 @@ water did not warm, inflating `heated_sample_count` on evidence that is not
 heating and biasing the fitted COP down. This is "one machine, two sinks" above,
 arriving early and by a different route; a category is not a control contract.
 
+### 8.15 A validator may only fail a plan against a constraint the planner was given (2026-08-28)
+
+`infeasible` is in this document, and it means one of two things: the stated
+constraints could not all hold — §6's room projection, where comfort, heater
+rating and thermal physics have no common solution — or a required input was
+missing or stale, where the plan refuses "instead of publishing a partial
+answer" (§8.12.3). Both are claims about the *inputs*. Neither is a claim about
+the planner's own output being unsatisfactory to the planner.
+
+To that, the post-plan validation adds a third, legitimate kind: a self-check
+that the schedule it just built is physically coherent. Energy balances at every
+quarter, no simultaneous import and export, nothing unserved, the EV inside its
+current envelope, simulated service load equal to delivered. Those fire only
+when the planner has a bug, and marking the output infeasible is exactly right.
+
+**The rule the third kind implies, and which was broken.** A validator may fail
+a plan only against something the optimiser was actually constrained by.
+Checking a target the optimiser was never told about does not discover an
+infeasibility; it manufactures one, and it is unfalsifiable — no plan can pass a
+test the search space was never restricted to satisfy.
+
+The service checks obey this. `min_run_slots`, run contiguity, the duty-cycle
+inhibit cap and delivered-versus-required are all contracts the block scheduler
+is built to honour, and each is skipped for a device the dispatch owns
+(`schedule.dispatched.has(service.device)`), because a dispatched store has no
+block to reconcile. `battery_target_is_hard` obeys it too, and says so where it
+is written: "A hard SOC target is meaningless once the battery bids by marginal
+value: the trade-off is priced rather than switched (§8.4), and enforcing a
+target on top would override the very comparison that replaced it."
+
+`terminal_soc_min` was the one exception, and it was the strongest form of the
+error: not merely unenforced for the dispatched case but **unenforced
+everywhere**. It appears in the snapshot contract and in the post-plan check and
+in no optimiser. The battery store's floor is `min_state: 0`, which is
+`min_soc` — so the auction was free to end anywhere above 5% and was then failed
+for ending below 20%.
+
+Live plan `3ebf8f4d`, 2026-08-28: a battery at **15.9%** against a 20% reserve.
+The plan raised it to **17.9%** and reported itself infeasible for the
+improvement. The state it was judged on was the one it inherited, and the only
+plan that could have passed was one that force-charged at any price — the hard
+target §8.4 deleted. All three scenarios carried the same error, so the whole
+plan showed as infeasible in the portal.
+
+**Resolved** by extending the existing exemption rather than inventing a new
+mechanism: a dispatched battery carries its terminal state at
+`terminal_weight: 1` against a curve derived from the forecast (§8.4), so where
+it ends *is* the priced answer. Nothing is hidden — `policy.terminal_soc_min`
+and `summary.battery_soc_end` are both published, so a surface that wants to
+show "17.9% against a 20% reserve" has both numbers. What it no longer is, is a
+verdict. No decision changed: the schedules are identical either side of the
+fix, which is what distinguishes removing a false verdict from changing a plan,
+and why `model_version` does not move.
+
+The block-model path keeps the check. That battery is given no terminal value
+either, so there the floor is the only thing that reports a plan ending low —
+weaker than pricing it, and the reason schema 5 is legacy.
+
+**Still open, deliberately.** The reserve is now unenforced *and* unpriced for a
+dispatched battery, which is honest but incomplete: §8.4's table promises
+"Battery reserve SOC → outage insurance and peak insurance, both priced", and
+neither is built. Pricing it needs the value of not being empty, which is the
+same figure §8.13's open questions call a shortfall price and the same one
+nobody can state. Until it exists, `min_soc` is the only real floor — and it is
+a real one, imposed on every quarter rather than checked afterwards.
+
 ## 9. Parameter model
 
 ### 9.1 Parameter classes and ownership

@@ -2877,3 +2877,79 @@ Deno.test("surplus is banked while the pool values it above what it would fetch"
     "and the energy the pool kept is energy that was not sold",
   );
 });
+
+Deno.test("a dispatched battery is not failed against a floor it was never given", () => {
+  // The live plan behind this: a battery starting at 15.9% against a 20%
+  // terminal reserve. The plan raised it to 17.9% and reported itself
+  // infeasible for the improvement, because `terminal_soc_min` reaches the
+  // dispatch nowhere — the store's floor is `min_soc` — so the auction was
+  // free to end anywhere above 5% and was then judged against 20%. No plan
+  // could have passed except one that force-charged at any price, which is the
+  // hard target §8.4 deleted.
+  //
+  // Power here is cheap enough that `batteryValueCurve` values stored energy
+  // at nothing once wear is subtracted, so the battery correctly ends low. At
+  // ordinary prices it grid-charges to full even across a sunless horizon,
+  // which is why this went unnoticed for so long.
+  const base = horizon();
+  const start = Date.parse("2026-08-10T08:00:00.000Z");
+  const cheapSlots = base.slots.map((slot, index) => ({
+    ...slot,
+    start: new Date(start + index * 15 * 60_000).toISOString(),
+    import_price_sek_per_kwh: index < 96 ? 0.35 : null,
+    export_price_sek_per_kwh: index < 96 ? 0.1 : null,
+  }));
+  const withFloor = (
+    floor: number,
+    overrides: Partial<OptimisationSnapshot> = {},
+  ) =>
+    horizon({
+      // Pool state is what makes the dispatch buildable at all: it refuses to
+      // mix a measured store with a budgeted one, so a fixture without it is
+      // never dispatched and would test nothing here.
+      pool: { water_temperature_c: 30.9, volume_m3: 55 },
+      outdoor_temperature_c: base.slots.map(() => 30.9),
+      slots: cheapSlots,
+      policy: { ...base.policy, terminal_soc_min: floor },
+      ...overrides,
+    });
+
+  const dispatched = generateOptimisationPlan(withFloor(0.2), new Date(NOW));
+
+  assertEquals(
+    dispatched.plans.priority.dispatched_devices.includes("battery"),
+    true,
+  );
+  assert(
+    dispatched.plans.priority.summary.battery_soc_end < 0.2,
+    `the floor has to bind, got ${
+      dispatched.plans.priority.summary.battery_soc_end
+    }`,
+  );
+  assertEquals(dispatched.validation_errors, []);
+  assertEquals(dispatched.status, "ready");
+  // The comparison stays legible: both numbers are published, so a reader that
+  // wants to show "below the reserve" has them. What it is not is a verdict.
+  assertEquals(dispatched.policy.terminal_soc_min, 0.2);
+
+  // And the exemption is scoped to the store that prices its own terminal
+  // state. A battery the dispatch never took is still planned by the block
+  // model, which was given no terminal value either, so there the floor is the
+  // only thing that says the plan ended low. Its own floor, because the block
+  // model settles higher on the same prices.
+  const blockModel = generateOptimisationPlan(
+    withFloor(0.8, { schema_version: 5, pool: null }),
+    new Date(NOW),
+  );
+  assertEquals(
+    blockModel.plans.priority.dispatched_devices.includes("battery"),
+    false,
+  );
+  assert(
+    blockModel.validation_errors.some((error) => error.includes("terminal SOC")),
+    `an undispatched battery still reports the floor, got ${
+      JSON.stringify(blockModel.validation_errors)
+    }`,
+  );
+});
+
