@@ -1695,7 +1695,7 @@ Deno.test("schema 6 with pool state dispatches by temperature, not by budget", (
   const plan = generateOptimisationPlan(snapshot, new Date(NOW));
 
   assertEquals(plan.schema_version, 6);
-  assertEquals(plan.model_version, "marginal-value-planner-v12");
+  assertEquals(plan.model_version, "marginal-value-planner-v13");
   // Asserted explicitly: an earlier version of this test checked the pool
   // energy but not the status, and so passed while every schema 6 plan was
   // reported infeasible by validations that still assumed fixed blocks.
@@ -2953,3 +2953,53 @@ Deno.test("a dispatched battery is not failed against a floor it was never given
   );
 });
 
+
+Deno.test("a battery that charges in winter also discharges", () => {
+  // No sun for the whole horizon, so every quarter is a deficit and the
+  // covering window is the entire three days. Under the round-trip valuation
+  // this plan charged 15 kWh and discharged in none of 288 quarters: a battery
+  // that only ever accumulates, bought at prices it could never pay back.
+  const start = Date.parse("2026-08-10T08:00:00.000Z");
+  const base = horizon();
+  const dark = base.slots.map((slot, index) => {
+    const hour = ((index / 4) + 10) % 24;
+    return {
+      ...slot,
+      start: new Date(start + index * 15 * 60_000).toISOString(),
+      pv_forecast_w: 0,
+      base_load_forecast_w: hour >= 16 && hour < 21 ? 5_000 : 2_500,
+      base_load_p10_w: 2_000,
+      base_load_p90_w: 6_500,
+      // A real day/night spread, which is the only thing a battery can trade.
+      import_price_sek_per_kwh: index < 96
+        ? (hour >= 6 && hour < 9 ? 3.2 : hour >= 16 && hour < 20 ? 2.9 : 0.8)
+        : null,
+      export_price_sek_per_kwh: index < 96 ? 0.2 : null,
+    };
+  });
+  const plan = generateOptimisationPlan(
+    horizon({
+      slots: dark,
+      outdoor_temperature_c: dark.map(() => -8),
+      pool: { water_temperature_c: 30.9, volume_m3: 55 },
+    }),
+    new Date(NOW),
+  );
+
+  assertEquals(plan.status, "ready");
+  const priority = plan.plans.priority;
+  assertEquals(priority.dispatched_devices.includes("battery"), true);
+  const charged = priority.slots.reduce(
+    (total, slot) => total + slot.battery_charge_w / 1_000 * 0.25,
+    0,
+  );
+  const returned = priority.slots.reduce(
+    (total, slot) => total + slot.battery_discharge_w / 1_000 * 0.25,
+    0,
+  );
+  assert(charged > 1, `a cheap night is worth storing, charged ${charged} kWh`);
+  assert(
+    returned > 1,
+    `and a dear morning is what it was stored for, returned ${returned} kWh`,
+  );
+});

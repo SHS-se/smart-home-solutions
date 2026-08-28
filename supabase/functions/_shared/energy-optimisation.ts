@@ -72,6 +72,8 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6] as const;
  * meaningless. v8 makes comfort schedules room-temperature constraints and
  * moves preheating inside the shared electrical objective. v10 replaces the
  * battery's peak-price step with the weighted merit order of displaced import.
+ * v13 values a stored kWh at the energy it delivers rather than at the energy
+ * it took to store, which is what lets the battery discharge at all.
  * v12 re-states the pool's stored preference curve against the horizon's own
  * prices and values its heat as state carried to the horizon edge rather than
  * by how much of the horizon remains, which is what lets it decline a dear day
@@ -79,7 +81,7 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6] as const;
  * v11 integrates every sizeable curve move, applies configured EV curves,
  * prices minimum runs as complete blocks and records exact quarter evidence.
  */
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v12";
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v13";
 /** The planner a schema 5 snapshot still receives, unchanged. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v8";
 export const SLOT_MINUTES = 15;
@@ -408,7 +410,8 @@ export interface BatteryValueCurveDiagnostic {
   curve_input: {
     future_surplus_kwh: number;
     usable_kwh: number;
-    round_trip_efficiency: number;
+    /** What the curve converts a stored kWh with; see `dischargeEfficiency`. */
+    discharge_efficiency: number;
     degradation_sek_per_kwh: number;
     expected_draw_kwh: number;
   };
@@ -2089,7 +2092,7 @@ function deriveBatteryValueCurve(
     futureImportKwh: storedDrawKwh,
     futureSurplusKwh: remainingSurplusKwh,
     usableKwh,
-    roundTrip: battery.charge_efficiency * battery.discharge_efficiency,
+    dischargeEfficiency: battery.discharge_efficiency,
     degradationSekPerKwh:
       DEFAULT_VALUE_SETTINGS.battery_degradation_sek_per_kwh,
     expectedDrawKwh: expectedDrawKwh / battery.discharge_efficiency,
@@ -2115,7 +2118,7 @@ function deriveBatteryValueCurve(
       curve_input: {
         future_surplus_kwh: curveInput.futureSurplusKwh,
         usable_kwh: curveInput.usableKwh,
-        round_trip_efficiency: curveInput.roundTrip,
+        discharge_efficiency: curveInput.dischargeEfficiency,
         degradation_sek_per_kwh: curveInput.degradationSekPerKwh,
         expected_draw_kwh: curveInput.expectedDrawKwh,
       },

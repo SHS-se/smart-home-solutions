@@ -243,8 +243,30 @@ export interface StoredEnergyValueInput {
   futureSurplusKwh: number;
   /** Usable capacity between min and max SOC, kWh. */
   usableKwh: number;
-  /** Round-trip efficiency, charge × discharge. */
-  roundTrip: number;
+  /**
+   * Discharge efficiency, and deliberately not the round trip.
+   *
+   * The curve answers one question: what is a kilowatt-hour *in the battery*
+   * worth. One stored kWh delivers `dischargeEfficiency` kWh to the house, each
+   * displacing an import, so that is the whole conversion — the charge side
+   * never enters, because this is not the value of *acquiring* a kWh.
+   *
+   * It was the round trip, and both efficiencies were then applied a second
+   * time by the dispatch, which already converts on the flow: `units_per_kwh`
+   * multiplies a charge by `charge_efficiency`, and `state_per_kwh_out` divides
+   * a discharge by `discharge_efficiency`. Dividing by the round trip here
+   * counted them again and in the wrong direction, inflating a stored kWh by
+   * `1 / (charge × discharge²)` — about 17% on a 95/95 pack.
+   *
+   * The consequence was one-way. Discharging then required the present hour to
+   * beat the hour the curve was priced against by that same 17%, and since the
+   * curve prices the battery at the *dearest* hours it can cover, no such hour
+   * exists by construction: a battery in a no-solar winter horizon charged 15
+   * kWh and discharged in none of 288 quarters. Charging was the mirror error,
+   * clearing at any price below `P / discharge` where the true break-even is
+   * `P × charge × discharge`, so it hoarded at prices that never paid back.
+   */
+  dischargeEfficiency: number;
   /** Wear cost per kWh of throughput, SEK. */
   degradationSekPerKwh: number;
   /** Expected residual load to be covered before the next surplus, kWh. */
@@ -281,7 +303,7 @@ export function batteryValueCurve(
     futureImportKwh,
     futureSurplusKwh,
     usableKwh,
-    roundTrip,
+    dischargeEfficiency,
     degradationSekPerKwh,
     expectedDrawKwh,
   } = input;
@@ -310,12 +332,12 @@ export function batteryValueCurve(
       "futureImportKwh must sum to expectedDrawKwh",
     );
   }
-  const efficiency = Math.max(0.05, roundTrip);
+  const efficiency = Math.min(1, Math.max(0.05, dischargeEfficiency));
   const sorted = [...futureImportSekPerKwh].sort((a, b) => b - a);
   const median = sorted[Math.floor(sorted.length / 2)];
   const cheapest = sorted[sorted.length - 1];
   const netValue = (sek: number) =>
-    Math.max(0, sek / efficiency - degradationSekPerKwh);
+    Math.max(0, sek * efficiency - degradationSekPerKwh);
 
   // The energy that covers the draw before the next surplus arrives. This
   // segment survives however sunny tomorrow is, and an earlier version of this
@@ -354,7 +376,7 @@ export function batteryValueCurve(
     // exporting into a spike is right.
     const remainingKwh = usableKwh - filledTo;
     const refilledBySun = futureSurplusKwh >= remainingKwh;
-    const level = (refilledBySun ? cheapest : median) / efficiency;
+    const level = (refilledBySun ? cheapest : median) * efficiency;
     // Cap at the *last* covering value, not the first: remaining used to be
     // compared to the dearest hour, which with a two-level step was the only
     // covering value. Under merit order that would let remaining rise above

@@ -17,7 +17,10 @@ import {
   worthExporting,
 } from "./store-value.ts";
 
-const ROUND_TRIP = 0.85;
+// A 95%-in / 92%-out pack. The curve converts a *stored* kWh into the energy it
+// will deliver, so only the discharge side enters it; the charge side is applied
+// by the dispatch on the flow (`units_per_kwh`).
+const DISCHARGE_EFFICIENCY = 0.92;
 const DEGRADATION = 0.5;
 
 const battery = (
@@ -29,7 +32,7 @@ const battery = (
     futureImportKwh: prices.map(() => 2),
     futureSurplusKwh,
     usableKwh: 10,
-    roundTrip: ROUND_TRIP,
+    dischargeEfficiency: DISCHARGE_EFFICIENCY,
     degradationSekPerKwh: DEGRADATION,
     expectedDrawKwh: 6,
   });
@@ -108,14 +111,16 @@ Deno.test("§8.12 #1 — the last kWh is worth less than the first", () => {
 });
 
 Deno.test("§8.12 #7 — grid charging needs the spread to beat losses and wear", () => {
-  // An 18% spread: exactly the round-trip break-even on energy alone, so wear
-  // has to make it a refusal.
+  // A 15% spread. What a stored kWh is worth is the import it displaces after
+  // the discharge loss, and 1.0 × 0.92 leaves less than the 0.5 SEK of wear a
+  // cycle costs, so the whole band is worth nothing and the cheapest hour in it
+  // still does not justify buying.
   const tight = batteryValueCurve({
     futureImportSekPerKwh: [0.85, 0.92, 1.0],
     futureImportKwh: [2, 2, 2],
     futureSurplusKwh: 0,
     usableKwh: 10,
-    roundTrip: ROUND_TRIP,
+    dischargeEfficiency: DISCHARGE_EFFICIENCY,
     degradationSekPerKwh: DEGRADATION,
     expectedDrawKwh: 6,
   });
@@ -227,11 +232,11 @@ Deno.test("§8.4 — covering follows the merit order of displaced imports", () 
     futureImportKwh: [2, 2, 2],
     futureSurplusKwh: 0,
     usableKwh: 10,
-    roundTrip: ROUND_TRIP,
+    dischargeEfficiency: DISCHARGE_EFFICIENCY,
     degradationSekPerKwh: DEGRADATION,
     expectedDrawKwh: 6,
   });
-  const dear = 2.4 / ROUND_TRIP - DEGRADATION;
+  const dear = 2.4 * DISCHARGE_EFFICIENCY - DEGRADATION;
 
   assertEquals(validateCurve(curve), null);
   assertAlmostEquals(marginalValue(curve, 0.5), dear, 0.05);
@@ -251,7 +256,7 @@ Deno.test("§8.4 — a modest overnight spread only buys the expensive tail", ()
     futureImportKwh: [2, 2, 2],
     futureSurplusKwh: 20,
     usableKwh: 10,
-    roundTrip: ROUND_TRIP,
+    dischargeEfficiency: DISCHARGE_EFFICIENCY,
     degradationSekPerKwh: DEGRADATION,
     expectedDrawKwh: 6,
   });
@@ -287,12 +292,12 @@ Deno.test("§8.4 — covering takes the dearest kWh first when weights are given
     futureImportKwh: [1, 5],
     futureSurplusKwh: 0,
     usableKwh: 10,
-    roundTrip: ROUND_TRIP,
+    dischargeEfficiency: DISCHARGE_EFFICIENCY,
     degradationSekPerKwh: DEGRADATION,
     expectedDrawKwh: 6,
   });
-  const dear = 2.4 / ROUND_TRIP - DEGRADATION;
-  const cheap = Math.max(0, 0.5 / ROUND_TRIP - DEGRADATION);
+  const dear = 2.4 * DISCHARGE_EFFICIENCY - DEGRADATION;
+  const cheap = Math.max(0, 0.5 * DISCHARGE_EFFICIENCY - DEGRADATION);
 
   assertEquals(validateCurve(curve), null);
   assertAlmostEquals(marginalValue(curve, 0.5), dear, 0.05);
@@ -307,11 +312,46 @@ Deno.test("§8.4 — every covering price requires an explicit kWh weight", () =
         futureImportKwh: [6],
         futureSurplusKwh: 0,
         usableKwh: 10,
-        roundTrip: ROUND_TRIP,
+        dischargeEfficiency: DISCHARGE_EFFICIENCY,
         degradationSekPerKwh: DEGRADATION,
         expectedDrawKwh: 6,
       }),
     Error,
     "one residual-load value per import price",
   );
+});
+
+Deno.test("§8.4 — a stored kWh is never worth more than the import it displaces", () => {
+  // The invariant the round-trip division broke. A kWh in the battery buys back
+  // `dischargeEfficiency` kWh at the house, so its value is strictly below the
+  // price it displaces, before wear is even subtracted. Dividing by the round
+  // trip put it *above* that price, and since the dispatch then applies the
+  // discharge loss again on the flow, discharging required the present hour to
+  // beat the hour the curve was priced against by about 17% — which, the curve
+  // having taken the dearest hours first, no hour can.
+  for (const dearest of [0.8, 1.6, 2.4, 3.2]) {
+    const curve = batteryValueCurve({
+      futureImportSekPerKwh: [dearest, dearest / 2],
+      futureImportKwh: [3, 3],
+      futureSurplusKwh: 0,
+      usableKwh: 10,
+      dischargeEfficiency: DISCHARGE_EFFICIENCY,
+      degradationSekPerKwh: 0,
+      expectedDrawKwh: 6,
+    });
+    assertEquals(validateCurve(curve), null);
+    assert(
+      marginalValue(curve, 0.1) < dearest,
+      `a stored kWh priced at ${
+        marginalValue(curve, 0.1)
+      } cannot beat the ${dearest} it displaces`,
+    );
+    // And it is worth exactly the delivered energy, which is what makes
+    // discharging into that same hour break even rather than impossible.
+    assertAlmostEquals(
+      marginalValue(curve, 0.1),
+      dearest * DISCHARGE_EFFICIENCY,
+      1e-6,
+    );
+  }
 });

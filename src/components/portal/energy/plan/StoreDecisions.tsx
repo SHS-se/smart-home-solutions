@@ -362,8 +362,8 @@ const StoreDecisions: React.FC<{
           {!hasEvidence ? (
             <div className="rounded-md border border-amber-300 bg-amber-50/70 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/25 dark:text-amber-200">
               {t(
-                'Den här äldre planen innehåller inte versionsstyrda beslutsbevis. Portalen kommer inte att gissa en förklaring; invänta nästa plan från marginal-value-planner-v12.',
-                'This older plan does not contain versioned decision evidence. The portal will not guess an explanation; wait for the next marginal-value-planner-v12 plan.',
+                'Den här äldre planen innehåller inte versionsstyrda beslutsbevis. Portalen kommer inte att gissa en förklaring; invänta nästa plan från marginal-value-planner-v13.',
+                'This older plan does not contain versioned decision evidence. The portal will not guess an explanation; wait for the next marginal-value-planner-v13 plan.',
               )}
             </div>
           ) : (

@@ -420,7 +420,7 @@ const ValueCurvesTab: React.FC<Props> = ({
               <div className="rounded-md border p-2">
                 <div className="text-muted-foreground">{t('Kurvans antaganden', 'Curve inputs')}</div>
                 <div className="font-semibold tabular-nums">
-                  {(batteryValueCurve.curve_input.round_trip_efficiency * 100).toFixed(1)}% {t('rundverkningsgrad', 'round trip')}
+                  {(batteryValueCurve.curve_input.discharge_efficiency * 100).toFixed(1)}% {t('urladdningsverkningsgrad', 'discharge efficiency')}
                 </div>
                 <div className="text-[10px] text-muted-foreground">
                   {batteryValueCurve.curve_input.future_surplus_kwh.toFixed(2)} kWh {t('prognostiserat överskott', 'forecast surplus')} · {batteryValueCurve.curve_input.degradation_sek_per_kwh.toFixed(3)} SEK/kWh {t('slitage', 'degradation')}

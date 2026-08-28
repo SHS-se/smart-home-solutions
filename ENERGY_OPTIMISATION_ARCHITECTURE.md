@@ -4037,10 +4037,80 @@ nothing else changes.
   dearest contiguous stretch the battery could cover between two chances to
   recharge cheaply, which needs the recharge opportunity defined — the same
   question §8.13 leaves open for the pool, in a different unit.
-- **Why does the winter probe never discharge?** It buys 15 kWh and returns
-  none. Whether that is the terminal value making holding free, wear tipping a
-  near-break-even trade, or a defect, is not yet established and should be
-  before any of the above is built on top of it.
+- ~~**Why does the winter probe never discharge?**~~ **Answered in §8.17**: a
+  stored kWh was valued at `P / round-trip` instead of `P × discharge`, so
+  discharging required an hour 17% dearer than the dearest hour the curve had
+  already taken. Fixed in `marginal-value-planner-v13`.
+
+### 8.17 A stored kilowatt-hour is worth what it delivers, not what it took to store (2026-08-28)
+
+The open question §8.16 ended on — why a battery in a no-solar winter horizon
+charged 15 kWh and discharged in none of 288 quarters — has an answer, and it is
+one arithmetic error in `batteryValueCurve`.
+
+The curve answers one question: what is a kilowatt-hour *in the battery* worth.
+One stored kWh delivers `discharge_efficiency` kWh to the house, each displacing
+an import at price *P*, so it is worth `P × discharge_efficiency`. The charge
+side never enters, because this is not the value of *acquiring* a kWh.
+
+It was computed as `P / (charge_efficiency × discharge_efficiency)`. Both
+efficiencies were then applied a *second* time by the dispatch, which already
+converts on the flow: `units_per_kwh` multiplies a charge by
+`charge_efficiency`, and `state_per_kwh_out` divides a discharge by
+`discharge_efficiency`. Counting them twice, and in the inverting direction,
+inflated a stored kWh by `1 / (charge × discharge²)` — about 17% on a 95/95
+pack.
+
+**The consequence was one-way, which is why it looked like a battery policy
+rather than a defect.**
+
+| | Condition the code enforced | Condition that is correct |
+|---|---|---|
+| Discharge | `P_now > 1.166 × P_future` | `P_now > P_future` |
+| Charge | `C < P_future / discharge` | `C < P_future × charge × discharge` |
+
+Discharging required the present hour to beat the hour the curve was priced
+against by 17%. Since the covering band takes the *dearest* hours first, no such
+hour exists by construction — the battery could never discharge into the very
+peak it was charged for. Charging was the mirror error and cleared at any price
+below `P / discharge` where the true break-even is `P × charge × discharge`, so
+it bought cycles that could not pay back. Charge freely, never discharge, and
+the observed behaviour follows exactly.
+
+The instrumented probe agrees to four decimals: giving up the marginal stored
+kWh was priced at 3.2586 SEK/kWh against a dearest available hour of 3.2000, and
+3.2586 is `(3.2 / 0.9025 − 0.45) / 0.95`.
+
+**Resolved** by valuing a stored kWh at `P × discharge_efficiency` throughout the
+curve, including the band above covering. The same winter horizon now charges
+31.8 kWh and returns 15.0 across 10 quarters. On the two live capsules:
+
+| | Terminal-adjusted cost | Grid import peak |
+|---|---|---|
+| `0a8116dd` before / after | 37.19 → **39.63** SEK | 13.07 → **7.06 kW** |
+| `3ebf8f4d` before / after | 43.72 → **41.80** SEK | 9.48 → **8.17 kW** |
+
+One capsule is dearer on that metric and one cheaper, and the dearer one is not
+a regression: `net_cost_sek` prices imports and exports and charges nothing for
+throughput, while `terminal_adjusted_cost_sek` values what is left in the pack at
+the flat `terminal_energy_value_sek_per_kwh` rather than at the derived curve.
+A battery that over-values its own charge by 17% therefore looks *better* on
+both figures precisely when it is buying cycles it should not — the wear it
+burns is the one cost neither metric carries. That the peak fell by nearly half
+on the same plan is the more reliable signal, and it is §8.16's requirement 1
+arriving for free rather than by design.
+
+`marginal-value-planner-v13`. The invariant now pinned in `store-value.test.ts`
+is the physical one that was violated: a stored kilowatt-hour is never worth more
+than the import it displaces. It is worth exactly the energy it gives back, and
+that is what makes discharging into the hour it was priced against break even
+rather than impossible.
+
+**And `curve_input.round_trip_efficiency` becomes `discharge_efficiency`** in the
+published battery diagnostic, because a diagnostic whose job is to explain the
+curve must name what the curve actually used. The round trip is still the right
+quantity for `sellLegIsPublished`, which asks a genuine round-trip question —
+whether a buy now can be sold later — and is unchanged.
 
 ## 9. Parameter model
 
