@@ -4016,6 +4016,68 @@ headroom and physics without it. A shadow price on power, small and stated,
 produces all of them; when the tariff arrives it replaces the shadow price and
 nothing else changes.
 
+#### Implementation status (2026-08-28)
+
+| Requirement | State |
+|---|---|
+| 1 — charging spreads across its window | **Built, off by default.** One convex cost on total grid import |
+| 2 — one whole-home envelope | **Built** by the same term: the cost depends on what the quarter already draws, so a store backs off as other load rises |
+| 4 — discharge spreads across a peak it cannot cover | **Built** by the same term, mirrored: relief is worth more off a high quarter than a low one |
+| 3 — a winter form of the covering window | Not started |
+
+**One mechanism, as §8.16 argued.** `DispatchLimits` gains a shaping threshold —
+half the connection, so ordinary household load is untouched — and a rate in
+SEK/kWh per kW above it. `energyCostSekPerKwh` adds the average marginal cost
+across the power being added, and the discharge side subtracts the mirror
+relief. Requirements 1, 2 and 4 are all consequences of that cost being
+*convex*; none of them is written down.
+
+**The candidate power levels had to change with it, and that is the part worth
+recording.** The auction offers each store a set of executable power levels and
+takes the one with the greatest surplus. Those levels were the breakpoints of
+things that are piecewise — surplus running out, the utility curve turning —
+which was sufficient while cost was piecewise-constant in power. A shaped peak
+is not: its marginal cost rises continuously, so the profit-maximising power is
+an interior point no breakpoint lands on. Without it the auction could only take
+a block whole or leave it, and the first measured result was a battery that
+stopped charging altogether at rates above 0.6 rather than charging more gently.
+Adding the closed-form optimum — `(value − price)/rate − overshoot` — is what
+turned "off" into "spread":
+
+| Rate | Charge quarters | Peak charge power | Grid peak | Mean import |
+|---|---|---|---|---|
+| 0 | 17 | 8.8 kW | 13.20 kW | 3.84 kW |
+| 0.3 | 26 | 6.6 kW | 10.54 kW | 3.84 kW |
+| 0.6 | 63 | 5.5 kW | 8.04 kW | 3.86 kW |
+| 1.0 | 75 | 4.0 kW | 6.54 kW | 3.84 kW |
+
+A no-solar winter horizon, and the mean import is flat across all four rows:
+the same energy is being bought, moved rather than reduced. On live capsule
+`0a8116dd` the four dearest quarters fall from 6.89 kW to 6.43 and the
+terminal-adjusted cost falls slightly with it; on `3ebf8f4d` the peak falls from
+8.17 kW to 6.83 for about 1.2 SEK over three days.
+
+**Below about 0.3 nothing moves.** The rate has to be comparable to the gap
+between what a store believes its energy is worth and what the quarter costs,
+which for a battery mid-winter is 1.5–2 SEK/kWh. An earlier default of 0.05 —
+chosen to be unobtrusive — was simply inert, which is worth knowing before
+anyone calibrates against a demand charge: the shaping price is not small
+relative to energy, and a tariff that produces one this large is doing real work.
+
+**It ships at zero, and the reason is a defect it exposes rather than causes.**
+A shaped plan changes the order allocations are made in, and some orders reveal
+that the store dispatch can schedule charge a store's own `max_state` cannot
+absorb: `project` clamps the state silently while the schedule keeps the power.
+For a vehicle that means planning wall energy the car will refuse, which is the
+failure `max_state` exists to prevent. Measured: `end_state` exactly at the 375
+km cap, `planned_kwh` 22.08 against a deliverable 20.38, published `ev_soc`
+0.8208 against a 0.8 target. Not the candidate cache — disabling it reproduces
+the result exactly — and every candidate touching the offending quarter was
+evaluated against the vehicle's *initial* state, so the bound was computed on a
+trajectory later allocations raised and nothing re-checked. Fixing that is its
+own change; turning shaping on before it would plan energy into a car that
+cannot take it.
+
 #### Acceptance tests to add to §8.12
 
 | # | Behaviour that must emerge | Emerges from |
@@ -4027,12 +4089,11 @@ nothing else changes.
 
 #### Open questions
 
-- **What is a kilowatt of peak worth before the tariff exists?** A shadow price
-  large enough to spread and small enough not to distort energy decisions. It
-  can be calibrated against the last published effektavgift, or set so that the
-  spreading it induces costs a stated fraction of a percent of the bill. It must
-  be published in the plan like every other derived figure, because a number
-  nobody can see is a number nobody can argue with.
+- **What is a kilowatt of peak worth before the tariff exists?** Still open, but
+  now bounded by measurement rather than guessed at: below about 0.3 SEK/kWh per
+  kW nothing moves at all, and 0.6 halves a winter grid peak for around a krona
+  over three days. The remaining judgement is where in that range a household
+  wants to sit, which is a preference and not a derivation.
 - **What replaces "the longest deficit run" in winter?** The candidate is the
   dearest contiguous stretch the battery could cover between two chances to
   recharge cheaply, which needs the recharge opportunity defined — the same
