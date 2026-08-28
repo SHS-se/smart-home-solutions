@@ -351,9 +351,12 @@ function overThresholdKw(limits: DispatchLimits, importW: number): number {
 /**
  * What raising this quarter's import by `addedW` costs beyond the energy.
  *
- * The average marginal price across the interval, which is exact for a cost
- * rising linearly in the overshoot — so a block of power is charged what its
- * kilowatts actually cost rather than what its first one did.
+ * The integral of the marginal price across the interval, not the average of
+ * its endpoints. The two agree while both ends sit above the threshold, and
+ * they disagree across the kink — which is most of the interesting cases,
+ * because a quarter that starts below the threshold pays nothing until it
+ * crosses. Averaging the endpoints there overcharges the crossing block, and
+ * over-credits the mirror case below by as much as five times.
  */
 function peakSekPerKwh(
   limits: DispatchLimits,
@@ -362,9 +365,9 @@ function peakSekPerKwh(
 ): number {
   const rate = limits.peak_shaping_sek_per_kwh_per_kw;
   if (!(rate > 0) || addedW <= 0) return 0;
-  return rate *
-    (overThresholdKw(limits, importBeforeW) +
-      overThresholdKw(limits, importBeforeW + addedW)) / 2;
+  const before = overThresholdKw(limits, importBeforeW);
+  const after = overThresholdKw(limits, importBeforeW + addedW);
+  return rate * (after * after - before * before) / (2 * (addedW / 1_000));
 }
 
 /**
@@ -382,10 +385,18 @@ function peakReliefSekPerKwh(
 ): number {
   const rate = limits.peak_shaping_sek_per_kwh_per_kw;
   if (!(rate > 0) || removedW <= 0) return 0;
-  const after = Math.max(0, importBeforeW - removedW);
-  return rate *
-    (overThresholdKw(limits, importBeforeW) +
-      overThresholdKw(limits, after)) / 2;
+  const before = overThresholdKw(limits, importBeforeW);
+  const after = overThresholdKw(
+    limits,
+    Math.max(0, importBeforeW - removedW),
+  );
+  // Capped by construction at the whole triangle above the threshold, which is
+  // what makes a store spread: once a quarter has been brought down to the
+  // threshold there is no more relief to be had in it, and the next kilowatt is
+  // worth more somewhere still above it. The averaged form went on paying —
+  // 1.44 SEK for a 9.6 kW discharge whose real relief was 0.30 — so emptying
+  // the pack into one quarter looked nearly five times better than it was.
+  return rate * (before * before - after * after) / (2 * (removedW / 1_000));
 }
 
 /** Power still available in a slot before the import limit binds. */

@@ -1695,7 +1695,7 @@ Deno.test("schema 6 with pool state dispatches by temperature, not by budget", (
   const plan = generateOptimisationPlan(snapshot, new Date(NOW));
 
   assertEquals(plan.schema_version, 6);
-  assertEquals(plan.model_version, "marginal-value-planner-v16");
+  assertEquals(plan.model_version, "marginal-value-planner-v17");
   // Asserted explicitly: an earlier version of this test checked the pool
   // energy but not the status, and so passed while every schema 6 plan was
   // reported infeasible by validations that still assumed fixed blocks.
@@ -3210,6 +3210,15 @@ Deno.test("§8.12 #11 — charge power gives way to the load already in the quar
         outdoor_temperature_c: slots.map(() => -8),
         pool: { water_temperature_c: 30.9, volume_m3: 55 },
         grid: { import_limit_w: 20_000, export_limit_w: 20_000 },
+        // Its own rate rather than the shipped default, so the test says what
+        // it depends on. At the default this fixture's overshoot is small
+        // enough that crossing the threshold genuinely is worth it — the cost
+        // of 2.8 kW over is 0.59 SEK against 1.04 SEK of extra value — and
+        // full power is then the right answer, not a defect.
+        policy: {
+          ...base.policy,
+          peak_shaping_sek_per_kwh_per_kw: 2,
+        } as OptimisationSnapshot["policy"],
         battery: {
           ...base.battery!,
           capacity_kwh: 18.08,

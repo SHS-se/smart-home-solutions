@@ -72,6 +72,8 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6] as const;
  * meaningless. v8 makes comfort schedules room-temperature constraints and
  * moves preheating inside the shared electrical objective. v10 replaces the
  * battery's peak-price step with the weighted merit order of displaced import.
+ * v17 integrates the shaped peak across the interval rather than averaging its
+ * endpoints, which is only equal while both ends sit above the threshold.
  * v16 offers the shaping threshold itself as a power level, so a quarter can be
  * filled exactly to it: without that the shaped and unshaped plans agreed
  * whenever the quarter started below the threshold.
@@ -90,7 +92,7 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6] as const;
  * v11 integrates every sizeable curve move, applies configured EV curves,
  * prices minimum runs as complete blocks and records exact quarter evidence.
  */
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v16";
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v17";
 /** The planner a schema 5 snapshot still receives, unchanged. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v8";
 export const SLOT_MINUTES = 15;
@@ -2049,15 +2051,20 @@ const PEAK_SHAPING_THRESHOLD_SHARE = 0.5;
  * What a kilowatt above the threshold adds to every kilowatt-hour drawn beside
  * it, SEK/kWh per kW.
  *
- * Six tenths, which is a stated choice and not a measured figure.
+ * One and a half, which is a stated choice and not a measured figure.
  *
  * The rate has to be comparable to the gap between what a store believes its
  * energy is worth and what the quarter costs — 1.5–2 SEK/kWh for a battery
  * mid-winter — or nothing moves at all: 0.05 was inert. Across a no-solar
- * winter horizon 0.6 spreads charging from 17 quarters to 63, brings peak
+ * winter horizon 1.5 spreads charging from 17 quarters to 55, brings peak
  * charge power down from 8.8 kW to 5.5 and the grid peak from 13.2 kW to 8.0,
- * and buys the same energy while doing it. Higher shapes harder; 1.0 halves the
- * grid peak outright.
+ * and buys the same energy while doing it. Higher shapes harder, with little
+ * left to gain past about 3.
+ *
+ * It was 0.6, measured against a cost that averaged the endpoints of the shaped
+ * interval instead of integrating it. That overcharged any block crossing the
+ * threshold, so the same shaping came out of a smaller number; the arithmetic
+ * is exact now and the scale moved with it.
  *
  * §8.16 leaves the calibration open, and it can be anchored to the last
  * published effektavgift when one returns. Until then this is where a household
@@ -2065,7 +2072,7 @@ const PEAK_SHAPING_THRESHOLD_SHARE = 0.5;
  * in the plan and can be overridden per home. Zero restores the pure energy
  * objective exactly.
  */
-const PEAK_SHAPING_SEK_PER_KWH_PER_KW = 0.6;
+const PEAK_SHAPING_SEK_PER_KWH_PER_KW = 1.5;
 
 /** The shadow price on power this plan is shaped with (§8.16). */
 function derivePeakShaping(

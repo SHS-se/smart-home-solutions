@@ -4022,7 +4022,7 @@ nothing else changes.
 |---|---|
 | 1 — charging spreads across its window | **Built and on**, at 0.6 SEK/kWh per kW. One convex cost on total grid import |
 | 2 — one whole-home envelope | **Built** by the same term: the cost depends on what the quarter already draws, so a store backs off as other load rises |
-| 4 — discharge spreads across a peak it cannot cover | **Built** by the same term, mirrored: relief is worth more off a high quarter than a low one |
+| 4 — discharge spreads across a peak it cannot cover | **Partly.** Relief moves how much is discharged and over how many quarters — 63 quarters and 7.5 kWh become 76 and 11.1 on capsule `0a8116dd` — but it cannot spread *within* a peak. See below |
 | 3 — a winter form of the covering window | **Built.** The window ends at any refill, and is the dearest stretch rather than the longest |
 
 **One mechanism, as §8.16 argued.** `DispatchLimits` gains a shaping threshold —
@@ -4047,9 +4047,9 @@ turned "off" into "spread":
 | Rate | Charge quarters | Peak charge power | Grid peak | Mean import |
 |---|---|---|---|---|
 | 0 (off) | 17 | 8.8 kW | 13.20 kW | 3.84 kW |
-| 0.3 | 26 | 6.6 kW | 10.54 kW | 3.84 kW |
-| **0.6 — shipped** | **63** | **5.5 kW** | **8.04 kW** | 3.86 kW |
-| 1.0 | 75 | 4.0 kW | 6.54 kW | 3.84 kW |
+| 0.6 | 34 | 7.0 kW | 9.53 kW | 3.84 kW |
+| **1.5 — shipped** | **55** | **5.5 kW** | **8.04 kW** | 3.86 kW |
+| 3.0 | 42 | 4.1 kW | 6.64 kW | 3.84 kW |
 
 A no-solar winter horizon, and the mean import is flat across all four rows:
 the same energy is being bought, moved rather than reduced. On live capsule
@@ -4096,6 +4096,27 @@ stretch — and the plan then declines to fill it. Whether that is better than t
 previous behaviour of filling regardless is untested, and the reference
 installation cannot answer it. Worth revisiting against a home that has one.
 
+**The shaped cost is integrated, not averaged (`v17`).** The marginal price is
+zero below the threshold and rises above it, so the average of an interval's
+endpoints is the true cost only while both ends are above. Across the kink it
+overcharges — and over-credits the mirror case on the discharge side by as much
+as five times, crediting 1.44 SEK for a 9.6 kW discharge whose real relief was
+0.30. The first shipped rate of 0.6 was calibrated against that overcharge, so
+the exact form shapes less at the same number and the default moved to 1.5. The
+table above is measured with the exact form.
+
+**Requirement 4 is only half built, and the missing half is structural.** The
+relief term reaches the right answer across quarters and cannot reach it within
+one. Spreading a 17 kWh pack across a sixteen-quarter evening is worth 16 SEK of
+relief against 6 SEK for concentrating it in six, and the auction takes the
+concentrated answer every time: within a slot it chooses the power level with
+the greatest *total* surplus, which is `(price − givenUp) × kWh + relief`, and
+the first term grows with power while relief is capped at the triangle above the
+threshold. Maximum power therefore always wins, and the slot is then locked
+against revisiting. Reaching the better answer needs the auction to be able to
+add to a slot it has already allocated — a change to its structure, not to this
+term — so acceptance test #13 has no test and should not be claimed as covered.
+
 **Below about 0.3 nothing moves.** The rate has to be comparable to the gap
 between what a store believes its energy is worth and what the quarter costs,
 which for a battery mid-winter is 1.5–2 SEK/kWh. An earlier default of 0.05 —
@@ -4134,15 +4155,20 @@ vehicle above the limit it will refuse past.
 | 10 | A charge that fits in four quarters at full power is spread across the whole comparably-priced window when nothing else competes for it | A priced peak, or C-rate-dependent efficiency and wear (§8.16) |
 | 11 | Battery charge power falls as other scheduled load rises, keeping the total under a stated ceiling rather than under the fuse | One whole-home envelope at the planning ceiling. **Covered**, and it found a defect: the shaping cost has a kink at the threshold, and until that kink was offered as a power level a quarter starting below the threshold charged at full power and the shaped plan matched the unshaped one exactly. Two earlier versions of the test also passed with shaping off because the *fuse* was doing the clipping — the envelope §8.16 says is not enough — so the fixture now runs a connection the charger cannot reach |
 | 12 | With no solar in the horizon, the battery still charges to a level set by the dearest stretch it can cover — not to full, and not to a target | A covering window with a winter form (§8.4, §8.16) |
-| 13 | A battery too small to cover a dear evening halves the draw across all of it rather than eliminating the draw across part of it | The same priced peak as #10 |
+| 13 | A battery too small to cover a dear evening halves the draw across all of it rather than eliminating the draw across part of it | The same priced peak as #10. **Not covered and not achieved** — the auction allocates a slot once and takes maximum power in it, so it concentrates. Every fixture written for this either had `coverW` doing the ordering or measured that concentration; a test asserting the desired behaviour would fail |
 
 #### Open questions
 
 - **What is a kilowatt of peak worth before the tariff exists?** Still open, but
-  now bounded by measurement rather than guessed at: below about 0.3 SEK/kWh per
-  kW nothing moves at all, and 0.6 halves a winter grid peak for around a krona
-  over three days. The remaining judgement is where in that range a household
-  wants to sit, which is a preference and not a derivation.
+  bounded by measurement: below about 0.3 SEK/kWh per kW nothing moves, 1.5
+  takes a winter grid peak from 13.2 kW to 8.0, and past about 3 there is little
+  left to gain. Where in that range a household sits is a preference and not a
+  derivation.
+- **Can the auction revisit a slot?** Requirement 4's missing half needs it, and
+  so would any future term whose value falls with the power already committed.
+  The present structure — allocate a slot once, at maximum power, then lock
+  it — is what makes the greedy auction tractable, so this is not a small
+  question.
 - ~~**What replaces "the longest deficit run" in winter?**~~ **Answered above**:
   the dearest stretch between two chances to refill, with a refill defined by
   the arbitrage condition rather than by the sun. What remains open is the case
