@@ -2692,6 +2692,11 @@ three highest hours on distinct days, that same evening costs a third of a step
 and the planner has real work to do on the other two. A controller tuned for one
 is misconfigured for the other.
 
+The deferral this implies — that nothing about peaks is built until the tariff
+is published — is revisited in §8.16, which asks for three peak-shaping
+behaviours that are justified by grid headroom and battery physics without any
+demand charge at all.
+
 That example also marks the boundary of this section. Short unplanned draws —
 sauna, an oven, a guest weekend — are not schedulable and the planner should not
 pretend otherwise; they belong to the reactive layer (§7), which is not yet
@@ -2929,7 +2934,7 @@ a modelling error or a correction to the heuristic — both are findings.
 | Pool and vehicle as physical state (`store-models.ts`) | **Landed and wired in schema 6** |
 | Utility curves, integrals and marginal value (`store-value.ts`) | **Landed and wired in `marginal-value-planner-v11`** |
 | Scheduler consuming them | **Landed; exact quarter evidence is published** |
-| Capacity-charge state (§8.5) | Not started; waits on the published tariff |
+| Capacity-charge state (§8.5) | Not started. The wait on the published tariff is challenged in §8.16: a shadow price on power delivers most of the behaviour before the tariff exists |
 
 Heuristics 1, 4 and 7 are already reproduced as executable tests against
 `store-value.ts`, without any rule encoding them. Heuristics 3 and 5 are
@@ -3710,6 +3715,164 @@ neither is built. Pricing it needs the value of not being empty, which is the
 same figure §8.13's open questions call a shortfall price and the same one
 nobody can state. Until it exists, `min_soc` is the only real floor — and it is
 a real one, imposed on every quarter rather than checked afterwards.
+
+### 8.16 The plan must shape power, not only energy (2026-08-28)
+
+Requirements from Phil, heading into the first winter this planner will run. The
+short form: the objective in §8.2 prices *energy* and treats *power* as nothing
+but a constraint to stay under. Every behaviour below is about power, and none
+of them can emerge from an objective that does not price it.
+
+#### What the current planner does
+
+Live plan `0a8116dd`, 2026-08-28, an ordinary late-summer horizon:
+
+| | |
+|---|---|
+| Battery charged | 11.5 kWh across 25 quarters |
+| Of those, at full 8.8 kW | 3 |
+| Grid import, peak | **13.07 kW** against a 13.2 kW limit |
+| Grid import, mean | 1.74 kW |
+
+A peak-to-mean ratio of 7.5:1, and the peak is battery charging: at 08-29 00:00
+the battery draws 8.25 kW on top of a 4.82 kW house load and uses 99% of the
+grid connection in one quarter.
+
+A synthetic Swedish winter — no PV at all, 2.5–6 kW of heating, a real day/night
+price spread — is worse and shows why this gets more serious rather than less:
+
+| | |
+|---|---|
+| Battery | 20% → **98.8%**, charged in **7 quarters** at up to 8.8 kW |
+| Grid import, peak | **13.20 kW** — the import limit exactly |
+| Grid import, mean | 3.81 kW |
+| Covering window | **all 288 quarters, 273 kWh** |
+| Discharge | **none, in any quarter** |
+
+Two things there are structural rather than incidental. The covering window
+`deriveBatteryValueCurve` computes is "the longest single deficit run", which
+assumes a surplus eventually interrupts it; with no solar there is never a
+surplus, so the window degenerates to the entire horizon and the whole battery
+is priced against the dearest 17 kWh of three days. And the battery buys 15 kWh
+and returns none of it — worth its own investigation, because a battery that
+only ever accumulates saves nothing.
+
+#### Requirement 1 — charging spreads across the window it is drawn from
+
+Given *n* quarters at a comparable price and no competing scheduled load, a
+charge of *E* kWh is drawn as evenly as the hardware allows across the *n*,
+rather than at maximum power across the fewest quarters that fit.
+
+**This does not follow from the current objective, and saying so matters.**
+Under energy-only pricing, spreading is at best free and usually slightly
+dearer: concentrating on the cheapest quarters of a window is what an energy
+objective *should* do, and the planner is not malfunctioning when it does. The
+requirement is therefore a statement that power has a price the objective is
+not yet carrying. Three sources of that price, in descending order of how well
+we can currently quantify them:
+
+- **The demand charge (§8.5).** The clearest and the one that is not yet
+  billable. Everything below stands without it.
+- **Headroom against forecast error (§8.7).** A quarter at 99% of the grid
+  connection has no margin for the base-load forecast being wrong or for the
+  unplanned draw §8.5 sets aside — the sauna, the oven, the guest weekend. The
+  plan does not merely risk a fuse; it spends the whole safety margin buying
+  something it could have bought slightly later for nearly the same money.
+- **The physics the model currently cannot see.** A battery charged at 8.8 kW
+  is less efficient and wears faster than the same energy at 4.4 kW.
+  `charge_efficiency` and `degradation_sek_per_kwh` are both constants, so the
+  model is blind to C-rate. Were they rate-dependent, spreading would fall out
+  of the arithmetic with no rule written anywhere — which is the test §8 sets
+  itself, and the reason this is the preferred route rather than a smoothing
+  penalty bolted on.
+
+#### Requirement 2 — one whole-home power envelope, below the fuse
+
+The planner already shares a whole-home envelope: `headroomW` gives each
+candidate `import_limit + pv + returned − fixed_load − occupied`, so the battery
+cannot charge into power another load has taken. What is missing is that the
+envelope is the *physical* limit. A configurable planning ceiling, below the
+fuse, must bound the same sum — so that when heating draws 10 kW the battery
+sees what is left of the ceiling, not what is left of the connection.
+
+Stated as a ceiling on the total, never as a per-device cap: capping the battery
+alone would leave the same peak reachable by two other loads, and the quantity
+the tariff and the fuse both care about is the sum.
+
+#### Requirement 3 — what an empty battery costs is derived from the forecast draw
+
+Already the design (§8.4) and already built: `batteryValueCurve` prices stored
+energy at the merit order of the imports it displaces, so "how full" is answered
+by filling until the marginal value falls below the price of charging, not by a
+target. Two gaps stop it working in winter.
+
+**The covering window has no winter form.** "The longest single deficit run"
+means "one night" only because a surplus ends it. With no solar it is the whole
+horizon, the whole battery is valued against the dearest hours in three days,
+and the curve loses the discrimination that makes it useful — it says *full*
+under nearly every condition. The winter question is not "when does the sun
+next refill this" but "what is the dearest stretch this charge can realistically
+cover before it can next be recharged cheaply", and that is a different window.
+
+**And it must not degenerate at the horizon edge.** A 72-hour horizon in
+December sees perhaps two price cycles. The terminal value has to carry the
+reserve beyond it, or each plan ends with a battery whose remaining charge is
+worth whatever the last quarter says.
+
+#### Requirement 4 — discharge spreads when the store cannot cover the peak
+
+When forecast demand across a dear window exceeds what the battery holds, the
+discharge is spread to reduce the maximum import across that window, rather than
+spent dearest-quarter-first until empty.
+
+**This is requirement 1 seen from the other side, and it has the same
+prerequisite.** Dearest-first is what minimises energy cost, and it is what the
+marginal auction correctly does today. Spreading trades a little energy cost for
+a lower peak, and the exchange rate between those is exactly the price of power
+that requirement 1 also needs. One mechanism answers both; two separate
+smoothing rules would be the wrong shape.
+
+Worth stating explicitly because it is counter-intuitive: with 10 kWh against a
+20 kWh evening, the right answer is *not* to run the battery flat over the
+dearest half. It is to cover about half of every quarter, so the grid draw is
+halved throughout rather than eliminated then doubled.
+
+#### What this asks for, in one line
+
+A price on power, alongside the price on energy, carried by the objective rather
+than by four behavioural rules. §8.5 already specifies the mechanism — a second
+state variable and a second value function — and defers it until the tariff is
+published. **That deferral is what needs revisiting**, because three of the four
+behaviours above are wanted before any effektavgift returns and are justified by
+headroom and physics without it. A shadow price on power, small and stated,
+produces all of them; when the tariff arrives it replaces the shadow price and
+nothing else changes.
+
+#### Acceptance tests to add to §8.12
+
+| # | Behaviour that must emerge | Emerges from |
+|---|---|---|
+| 10 | A charge that fits in four quarters at full power is spread across the whole comparably-priced window when nothing else competes for it | A priced peak, or C-rate-dependent efficiency and wear (§8.16) |
+| 11 | Battery charge power falls as other scheduled load rises, keeping the total under a stated ceiling rather than under the fuse | One whole-home envelope at the planning ceiling |
+| 12 | With no solar in the horizon, the battery still charges to a level set by the dearest stretch it can cover — not to full, and not to a target | A covering window with a winter form (§8.4, §8.16) |
+| 13 | A battery too small to cover a dear evening halves the draw across all of it rather than eliminating the draw across part of it | The same priced peak as #10 |
+
+#### Open questions
+
+- **What is a kilowatt of peak worth before the tariff exists?** A shadow price
+  large enough to spread and small enough not to distort energy decisions. It
+  can be calibrated against the last published effektavgift, or set so that the
+  spreading it induces costs a stated fraction of a percent of the bill. It must
+  be published in the plan like every other derived figure, because a number
+  nobody can see is a number nobody can argue with.
+- **What replaces "the longest deficit run" in winter?** The candidate is the
+  dearest contiguous stretch the battery could cover between two chances to
+  recharge cheaply, which needs the recharge opportunity defined — the same
+  question §8.13 leaves open for the pool, in a different unit.
+- **Why does the winter probe never discharge?** It buys 15 kWh and returns
+  none. Whether that is the terminal value making holding free, wear tipping a
+  near-break-even trade, or a defect, is not yet established and should be
+  before any of the above is built on top of it.
 
 ## 9. Parameter model
 
