@@ -54,8 +54,25 @@ import {
   homeLocation,
   outdoorSeriesFromProvider,
 } from "../_shared/outdoor-forecast.ts";
-import { irradianceForQuarters } from "../_shared/solar-irradiance.ts";
-import { gridRound } from "../_shared/weather-cache.ts";
+import {
+  irradianceForQuarters,
+  irradianceOnto,
+  irradiancePoints,
+} from "../_shared/solar-irradiance.ts";
+import {
+  gridRound,
+  type WeatherPoint,
+} from "../_shared/weather-cache.ts";
+
+/**
+ * Training quarters given an irradiance figure per push.
+ *
+ * A three-week window is 2016 quarters, and filling all of them in one request
+ * costs more CPU than a worker is given. Refits are daily and pushes are
+ * quarter-hourly, so a bounded batch closes the same gap within an hour and
+ * never competes with the plan the household is actually waiting for.
+ */
+const BACKFILL_QUARTERS_PER_PUSH = 250;
 
 const MAX_ACTUAL_SLOTS_PER_PUSH = 288;
 const MAX_THERMAL_SLOTS_PER_PUSH = 288;
@@ -327,12 +344,11 @@ async function backfillTrainingIrradiance(
   // deno-lint-ignore no-explicit-any
   supabase: any,
   homeId: string,
-  snapshot: OptimisationSnapshot,
+  points: WeatherPoint[] | null,
   from: string,
   to: string,
 ): Promise<void> {
-  const location = homeLocation(snapshot);
-  if (!location) return;
+  if (!points) return;
   try {
     // The whole row comes back, not just its timestamp. An upsert has to
     // present a tuple that could legally be inserted before its conflict
@@ -353,17 +369,15 @@ async function backfillTrainingIrradiance(
       .is("solar_w_per_m2", null)
       .gte("start_ts", from)
       .lt("start_ts", to)
-      .order("start_ts");
+      .order("start_ts")
+      .limit(BACKFILL_QUARTERS_PER_PUSH);
     const existing = (missing ?? []) as OutdoorRow[];
     if (existing.length === 0) return;
 
-    const irradiance = await irradianceForQuarters({
-      supabase,
-      latitude: location.latitude,
-      longitude: location.longitude,
-      starts: existing.map((row) => row.start_ts),
-    });
-    if (!irradiance) return;
+    const irradiance = irradianceOnto(
+      points,
+      existing.map((row) => row.start_ts),
+    );
     const rows = existing
       .map((row, index) => ({ ...row, solar_w_per_m2: irradiance[index] }))
       .filter((row) => row.solar_w_per_m2 !== null);
@@ -645,17 +659,21 @@ async function prepareThermalPlanning(
   // else, and is not allowed to shorten the horizon the way missing
   // temperature would.
   const solarLocation = homeLocation(snapshot);
-  // A partial series is welcome here, unlike a partial temperature forecast:
+  // Fetched once and resampled twice: an edge function has 50 ms of CPU, and
+  // this series is some 2200 points. Reading it a second time for the training
+  // backfill is what pushed the whole request past the worker's limit.
+  //
+  // A partial result is welcome here, unlike a partial temperature forecast:
   // each slot falls back to the fitted mean on its own, so covering what the
   // provider knows is strictly better than covering none of it.
-  const solar = solarLocation
-    ? await irradianceForQuarters({
+  const solarPoints = solarLocation
+    ? await irradiancePoints({
       supabase,
       latitude: solarLocation.latitude,
       longitude: solarLocation.longitude,
-      starts,
     })
     : null;
+  const solar = solarPoints ? irradianceOnto(solarPoints, starts) : null;
   if (solar) {
     snapshot = { ...snapshot, solar_irradiance_w_per_m2: solar };
   }
@@ -684,7 +702,7 @@ async function prepareThermalPlanning(
     await backfillTrainingIrradiance(
       supabase,
       homeId,
-      snapshot,
+      solarPoints,
       trainingFrom,
       trainingTo,
     );

@@ -15,9 +15,17 @@
 // because that describes the model run better than any interval we could
 // invent, and because met.no's terms of service require clients to honour it.
 
-/** One instant a provider described, in that series' own unit. */
+/**
+ * One instant a provider described, in that series' own unit.
+ *
+ * `t` is epoch milliseconds, not an ISO string, and that is a cost decision
+ * rather than a style one. An edge function gets 50 ms of CPU per request, and
+ * a cached irradiance series is ~2200 points: re-parsing every stamp on every
+ * read burned most of that budget before the plan was even built. Numbers go
+ * into the cache already parsed and come back ready to compare.
+ */
 export interface WeatherPoint {
-  at: string;
+  t: number;
   v: number;
 }
 
@@ -64,8 +72,11 @@ export async function cachedProviderPoints(options: {
       .eq("latitude", latitude)
       .eq("longitude", longitude)
       .maybeSingle();
-    if (cached && Date.parse(cached.expires_at) > now.getTime()) {
-      return cached.points as WeatherPoint[];
+    if (
+      cached && Date.parse(cached.expires_at) > now.getTime() &&
+      isPointArray(cached.points)
+    ) {
+      return cached.points;
     }
 
     const fresh = await fetchPoints(latitude, longitude);
@@ -122,7 +133,7 @@ const LEAD_IN_MS = 3_600_000;
  */
 export function interpolateOntoSlots(
   points: WeatherPoint[],
-  starts: string[],
+  starts: (string | number)[],
   maxStepMs: number,
 ): (number | null)[] {
   const ordered = orderPoints(points);
@@ -132,7 +143,7 @@ export function interpolateOntoSlots(
   const last = ordered[ordered.length - 1];
   let index = 0;
   return starts.map((start) => {
-    const at = Date.parse(start);
+    const at = typeof start === "number" ? start : Date.parse(start);
     if (!Number.isFinite(at) || at > last.t) return null;
     if (at < first.t) return first.t - at < LEAD_IN_MS ? first.v : null;
     while (index + 1 < ordered.length && ordered[index + 1].t < at) index += 1;
@@ -159,7 +170,7 @@ export function interpolateOntoSlots(
  */
 export function stepOntoSlots(
   points: WeatherPoint[],
-  starts: string[],
+  starts: (string | number)[],
   intervalMs: number,
 ): (number | null)[] {
   const ordered = orderPoints(points);
@@ -167,7 +178,7 @@ export function stepOntoSlots(
 
   let index = 0;
   return starts.map((start) => {
-    const at = Date.parse(start);
+    const at = typeof start === "number" ? start : Date.parse(start);
     if (!Number.isFinite(at)) return null;
     while (index < ordered.length && ordered[index].t <= at) index += 1;
     const covering = ordered[index];
@@ -178,8 +189,30 @@ export function stepOntoSlots(
   });
 }
 
-const orderPoints = (points: WeatherPoint[]) =>
-  points
-    .map((point) => ({ t: Date.parse(point.at), v: point.v }))
-    .filter((point) => Number.isFinite(point.t) && Number.isFinite(point.v))
-    .sort((left, right) => left.t - right.t);
+/**
+ * Providers issue their series in order, so the common path is a scan that
+ * confirms it and copies nothing. Only a series that is actually out of order
+ * pays for a sort.
+ */
+const orderPoints = (points: WeatherPoint[]): WeatherPoint[] => {
+  let ordered = true;
+  for (let index = 0; index < points.length; index += 1) {
+    const point = points[index];
+    if (!Number.isFinite(point?.t) || !Number.isFinite(point?.v)) {
+      return points
+        .filter((candidate) =>
+          Number.isFinite(candidate?.t) && Number.isFinite(candidate?.v)
+        )
+        .sort((left, right) => left.t - right.t);
+    }
+    if (index > 0 && point.t < points[index - 1].t) ordered = false;
+  }
+  return ordered ? points : [...points].sort((left, right) => left.t - right.t);
+};
+
+/** Whether a cached payload is the current point shape rather than an older one. */
+const isPointArray = (value: unknown): value is WeatherPoint[] =>
+  Array.isArray(value) &&
+  (value.length === 0 ||
+    (typeof value[0] === "object" && value[0] !== null &&
+      typeof (value[0] as { t?: unknown }).t === "number"));

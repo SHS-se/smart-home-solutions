@@ -23,8 +23,8 @@ const quarters = (from: string, count: number): string[] => {
 
 Deno.test("interpolates linearly between two provider hours", () => {
   const points: WeatherPoint[] = [
-    { at: "2026-08-30T04:00:00Z", v: 10 },
-    { at: "2026-08-30T05:00:00Z", v: 14 },
+    { t: Date.parse("2026-08-30T04:00:00Z"), v: 10 },
+    { t: Date.parse("2026-08-30T05:00:00Z"), v: 14 },
   ];
   assertEquals(
     interpolateOntoSlots(points, quarters("2026-08-30T04:00:00Z", 5), HOUR),
@@ -34,8 +34,8 @@ Deno.test("interpolates linearly between two provider hours", () => {
 
 Deno.test("interpolates across a six-hourly tail when the step allows it", () => {
   const points: WeatherPoint[] = [
-    { at: "2026-09-01T00:00:00Z", v: 12 },
-    { at: "2026-09-01T06:00:00Z", v: 18 },
+    { t: Date.parse("2026-09-01T00:00:00Z"), v: 12 },
+    { t: Date.parse("2026-09-01T06:00:00Z"), v: 18 },
   ];
   assertEquals(
     interpolateOntoSlots(points, ["2026-09-01T03:00:00Z"], 6 * HOUR),
@@ -50,8 +50,8 @@ Deno.test("interpolates across a six-hourly tail when the step allows it", () =>
 
 Deno.test("reads the first point for a slot just before the series starts", () => {
   const points: WeatherPoint[] = [
-    { at: "2026-08-30T04:00:00Z", v: 10 },
-    { at: "2026-08-30T05:00:00Z", v: 14 },
+    { t: Date.parse("2026-08-30T04:00:00Z"), v: 10 },
+    { t: Date.parse("2026-08-30T05:00:00Z"), v: 14 },
   ];
   assertEquals(
     interpolateOntoSlots(points, ["2026-08-30T03:45:00Z"], HOUR),
@@ -67,7 +67,7 @@ Deno.test("reads the first point for a slot just before the series starts", () =
 Deno.test("never extrapolates past the last point", () => {
   assertEquals(
     interpolateOntoSlots(
-      [{ at: "2026-08-30T04:00:00Z", v: 10 }],
+      [{ t: Date.parse("2026-08-30T04:00:00Z"), v: 10 }],
       ["2026-08-30T04:15:00Z"],
       HOUR,
     ),
@@ -78,8 +78,8 @@ Deno.test("never extrapolates past the last point", () => {
 Deno.test("an interval mean covers the hour it ends, not the hour it starts", () => {
   // Open-Meteo stamps the mean of 04:00-05:00 at 05:00.
   const points: WeatherPoint[] = [
-    { at: "2026-08-30T05:00:00Z", v: 100 },
-    { at: "2026-08-30T06:00:00Z", v: 200 },
+    { t: Date.parse("2026-08-30T05:00:00Z"), v: 100 },
+    { t: Date.parse("2026-08-30T06:00:00Z"), v: 200 },
   ];
   assertEquals(
     stepOntoSlots(points, quarters("2026-08-30T04:00:00Z", 8), HOUR),
@@ -88,7 +88,10 @@ Deno.test("an interval mean covers the hour it ends, not the hour it starts", ()
 });
 
 Deno.test("an interval mean is never stretched beyond its own interval", () => {
-  const points: WeatherPoint[] = [{ at: "2026-08-30T05:00:00Z", v: 100 }];
+  const points: WeatherPoint[] = [{
+    t: Date.parse("2026-08-30T05:00:00Z"),
+    v: 100,
+  }];
   assertEquals(
     stepOntoSlots(points, ["2026-08-30T03:45:00Z"], HOUR),
     [null],
@@ -161,7 +164,10 @@ const fakeSupabase = (
   },
 });
 
-const points: WeatherPoint[] = [{ at: "2026-08-30T05:00:00Z", v: 7 }];
+const points: WeatherPoint[] = [{
+  t: Date.parse("2026-08-30T05:00:00Z"),
+  v: 7,
+}];
 const now = new Date("2026-08-30T04:10:00Z");
 
 Deno.test("a miss fetches, caches by rounded coordinate, and returns", async () => {
@@ -297,4 +303,45 @@ Deno.test("an unusable coordinate is refused before any request is made", async 
   });
   assertEquals(result, null);
   assert(!called, "an unlocatable home must not generate a provider request");
+});
+
+Deno.test("a cache row in an older shape is a miss, not a crash", async () => {
+  // Points were once stored with ISO stamps. A row still holding them is
+  // refetched rather than read, so the change costs one request per place and
+  // needs no migration of a cache that rebuilds itself anyway.
+  let fetched = false;
+  const result = await cachedProviderPoints({
+    supabase: fakeSupabase(
+      {
+        points: [{ at: "2026-08-30T05:00:00Z", v: 7 }],
+        expires_at: "2099-01-01T00:00:00Z",
+      },
+      [],
+    ),
+    provider: "test_provider",
+    latitude: 59.46,
+    longitude: 18.04,
+    now,
+    fetchPoints: () => {
+      fetched = true;
+      return Promise.resolve({ points, expiresAt: "2099-01-01T00:00:00Z" });
+    },
+  });
+  assert(fetched, "an unreadable cached shape must be refetched");
+  assertEquals(result, points);
+});
+
+Deno.test("an already-ordered series is not copied to sort it", () => {
+  // The hot path: providers issue in order, so ordering is a scan that
+  // allocates nothing. Identity is the observable proof of that.
+  const ordered: WeatherPoint[] = [
+    { t: 1, v: 1 },
+    { t: 2, v: 2 },
+    { t: 3, v: 3 },
+  ];
+  assertEquals(
+    stepOntoSlots(ordered, [1, 2], 10),
+    [2, 3],
+    "a numeric slot start is read without parsing",
+  );
 });

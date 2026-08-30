@@ -68,7 +68,7 @@ Deno.test("parses air temperature out of a met.no response and skips junk", () =
     },
   };
   assertEquals(parseMetNoForecast(body), [
-    { at: "2026-08-30T04:00:00Z", v: 14.4 },
+    { t: Date.parse("2026-08-30T04:00:00Z"), v: 14.4 },
   ]);
   assertEquals(parseMetNoForecast({}), []);
   assertEquals(parseMetNoForecast(null), []);
@@ -142,8 +142,8 @@ Deno.test("a live cache entry is used without calling the provider", async () =>
   const result = await outdoorSeriesFromProvider({
     supabase: fakeSupabase({
       points: [
-        { at: "2026-08-30T04:00:00Z", v: 10 },
-        { at: "2026-08-30T05:00:00Z", v: 14 },
+        { t: Date.parse("2026-08-30T04:00:00Z"), v: 10 },
+        { t: Date.parse("2026-08-30T05:00:00Z"), v: 14 },
       ],
       fetched_at: "2026-08-30T04:00:00Z",
       expires_at: "2026-08-30T04:42:35Z",
@@ -165,7 +165,7 @@ Deno.test("an expired cache entry is refetched", async () => {
   let calls = 0;
   const result = await outdoorSeriesFromProvider({
     supabase: fakeSupabase({
-      points: [{ at: "2026-08-30T00:00:00Z", v: 1 }],
+      points: [{ t: Date.parse("2026-08-30T00:00:00Z"), v: 1 }],
       fetched_at: "2026-08-30T00:00:00Z",
       expires_at: "2026-08-30T00:30:00Z",
     }, written),

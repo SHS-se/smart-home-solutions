@@ -133,10 +133,9 @@ export function parseMetNoForecast(body: unknown): WeatherPoint[] {
       data?: { instant?: { details?: { air_temperature?: unknown } } };
     })?.data?.instant?.details?.air_temperature;
     if (typeof time !== "string" || typeof celsius !== "number") continue;
-    if (!Number.isFinite(Date.parse(time)) || !Number.isFinite(celsius)) {
-      continue;
-    }
-    points.push({ at: time, v: celsius });
+    const at = Date.parse(time);
+    if (!Number.isFinite(at) || !Number.isFinite(celsius)) continue;
+    points.push({ t: at, v: celsius });
   }
   return points;
 }

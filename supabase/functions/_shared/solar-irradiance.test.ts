@@ -15,8 +15,8 @@ Deno.test("reads the hourly irradiance series, stamping bare times as UTC", () =
     },
   };
   assertEquals(parseOpenMeteoIrradiance(body), [
-    { at: "2026-08-30T04:00:00.000Z", v: 0 },
-    { at: "2026-08-30T05:00:00.000Z", v: 63 },
+    { t: Date.parse("2026-08-30T04:00:00.000Z"), v: 0 },
+    { t: Date.parse("2026-08-30T05:00:00.000Z"), v: 63 },
   ]);
 });
 
@@ -30,7 +30,7 @@ Deno.test("an hour with no reanalysis behind it is skipped, not zeroed", () => {
     },
   };
   assertEquals(parseOpenMeteoIrradiance(body), [
-    { at: "2026-08-30T12:00:00.000Z", v: 457 },
+    { t: Date.parse("2026-08-30T12:00:00.000Z"), v: 457 },
   ]);
 });
 
@@ -61,8 +61,8 @@ const fakeSupabase = (points: unknown) => ({
 Deno.test("each quarter carries the mean of the hour it falls in", async () => {
   const result = await irradianceForQuarters({
     supabase: fakeSupabase([
-      { at: "2026-08-30T05:00:00.000Z", v: 100 },
-      { at: "2026-08-30T06:00:00.000Z", v: 200 },
+      { t: Date.parse("2026-08-30T05:00:00.000Z"), v: 100 },
+      { t: Date.parse("2026-08-30T06:00:00.000Z"), v: 200 },
     ]),
     latitude: 59.46,
     longitude: 18.04,
@@ -81,7 +81,10 @@ Deno.test("recording keeps what it knows and leaves the rest null", async () => 
   // Unlike a forecast, a partial record is worth having: the covered quarters
   // are still quarters a zone can learn sunshine from.
   const result = await irradianceForQuarters({
-    supabase: fakeSupabase([{ at: "2026-08-30T05:00:00.000Z", v: 100 }]),
+    supabase: fakeSupabase([{
+      t: Date.parse("2026-08-30T05:00:00.000Z"),
+      v: 100,
+    }]),
     latitude: 59.46,
     longitude: 18.04,
     starts: ["2026-08-30T04:30:00.000Z", "2026-08-30T09:00:00.000Z"],

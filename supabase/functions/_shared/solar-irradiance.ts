@@ -79,14 +79,18 @@ export function parseOpenMeteoIrradiance(body: unknown): WeatherPoint[] {
     if (typeof time !== "string" || typeof value !== "number") continue;
     if (!Number.isFinite(value)) continue;
     // `timezone=UTC` returns "2026-08-30T04:00": no seconds and no zone, which
-    // a parser would otherwise read as local time.
+    // a parser would otherwise read as local time. Length alone distinguishes
+    // it, which matters at 2200 stamps a request — a regex per point is real
+    // CPU against a 50 ms budget.
     const parsed = Date.parse(
-      /(Z|[+-]\d\d:?\d\d)$/.test(time)
-        ? time
-        : `${time}${time.length === 16 ? ":00" : ""}Z`,
+      time.length === 16
+        ? `${time}:00Z`
+        : time.length === 19
+        ? `${time}Z`
+        : time,
     );
     if (!Number.isFinite(parsed)) continue;
-    points.push({ at: new Date(parsed).toISOString(), v: value });
+    points.push({ t: parsed, v: value });
   }
   return points;
 }
@@ -144,7 +148,7 @@ export async function irradianceForQuarters(options: {
   supabase: any;
   latitude: number;
   longitude: number;
-  starts: string[];
+  starts: (string | number)[];
   now?: Date;
   fetchImpl?: typeof fetch;
 }): Promise<(number | null)[] | null> {
@@ -152,4 +156,20 @@ export async function irradianceForQuarters(options: {
   const points = await irradiancePoints(options);
   if (!points) return null;
   return stepOntoSlots(points, options.starts, INTERVAL_MS);
+}
+
+/**
+ * Resample a series already in hand.
+ *
+ * One request needs irradiance twice — once across the planning horizon and
+ * once across the training quarters being backfilled — and fetching it twice
+ * meant reading and re-checking a 2200-point series twice inside a 50 ms CPU
+ * budget. The series is fetched once and resampled here as many times as the
+ * request needs.
+ */
+export function irradianceOnto(
+  points: WeatherPoint[],
+  starts: (string | number)[],
+): (number | null)[] {
+  return stepOntoSlots(points, starts, INTERVAL_MS);
 }
