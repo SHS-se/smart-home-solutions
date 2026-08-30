@@ -332,46 +332,46 @@ async function backfillTrainingIrradiance(
   const location = homeLocation(snapshot);
   if (!location) return;
   try {
+    // The whole row comes back, not just its timestamp. An upsert has to
+    // present a tuple that could legally be inserted before its conflict
+    // clause is ever reached, and `customer_id` and `temperature_c` are NOT
+    // NULL — a three-column patch would be rejected outright rather than
+    // resolving to an update.
+    type OutdoorRow = {
+      customer_id: string;
+      home_id: string;
+      start_ts: string;
+      temperature_c: number;
+      device_token_id: string | null;
+    };
     const { data: missing } = await supabase
       .from("energy_optimisation_outdoor_slots")
-      .select("start_ts")
+      .select("customer_id, home_id, start_ts, temperature_c, device_token_id")
       .eq("home_id", homeId)
       .is("solar_w_per_m2", null)
       .gte("start_ts", from)
       .lt("start_ts", to)
       .order("start_ts");
-    const starts = (missing ?? []).map((row: { start_ts: string }) =>
-      row.start_ts
-    );
-    if (starts.length === 0) return;
+    const existing = (missing ?? []) as OutdoorRow[];
+    if (existing.length === 0) return;
 
     const irradiance = await irradianceForQuarters({
       supabase,
       latitude: location.latitude,
       longitude: location.longitude,
-      starts,
+      starts: existing.map((row) => row.start_ts),
     });
     if (!irradiance) return;
-    const rows = starts
-      .map((start: string, index: number) => ({
-        start,
-        value: irradiance[index],
-      }))
-      .filter((row: { value: number | null }) => row.value !== null);
+    const rows = existing
+      .map((row, index) => ({ ...row, solar_w_per_m2: irradiance[index] }))
+      .filter((row) => row.solar_w_per_m2 !== null);
     if (rows.length === 0) return;
 
     // One statement per quarter would be thousands of round trips, so the
-    // fill goes back as a single upsert keyed on the row that already exists.
+    // fill goes back as a single upsert onto the rows that already exist.
     const { error } = await supabase
       .from("energy_optimisation_outdoor_slots")
-      .upsert(
-        rows.map((row: { start: string; value: number }) => ({
-          home_id: homeId,
-          start_ts: row.start,
-          solar_w_per_m2: row.value,
-        })),
-        { onConflict: "home_id,start_ts", ignoreDuplicates: false },
-      );
+      .upsert(rows, { onConflict: "home_id,start_ts" });
     if (error) {
       console.error("[ENERGY-OPTIMISATION] irradiance backfill failed", error);
     }
