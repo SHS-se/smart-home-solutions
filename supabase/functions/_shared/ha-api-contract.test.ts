@@ -1,5 +1,6 @@
 import { assertEquals } from "jsr:@std/assert@1";
 import {
+  describeThrown,
   HA_API_VERSION,
   HA_SUPPORTED_PLAN_SCHEMA_VERSIONS,
   HA_SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS,
@@ -90,4 +91,46 @@ Deno.test("the dispatched-EV consumer fixture is emitted by the real planner", a
     ),
     true,
   );
+});
+
+Deno.test("a database failure names itself rather than reading as a bad snapshot", () => {
+  // What PostgREST actually throws: a plain object, not an Error. Reported as
+  // "invalid snapshot" it said only that something had gone wrong, and said it
+  // in words that blamed the integration for sending bad data.
+  assertEquals(
+    describeThrown({
+      message: 'column "solar_w_per_m2" does not exist',
+      code: "42703",
+      hint: null,
+      details: null,
+    }),
+    'column "solar_w_per_m2" does not exist · code 42703',
+  );
+  assertEquals(
+    describeThrown({
+      message:
+        "permission denied for function get_energy_thermal_training_moments",
+      code: "42501",
+      details: "some detail",
+      hint: "some hint",
+    }),
+    "permission denied for function get_energy_thermal_training_moments · " +
+      "code 42501 · some detail · some hint",
+  );
+});
+
+Deno.test("an Error still speaks for itself", () => {
+  assertEquals(
+    describeThrown(
+      new Error("bathroom: no trained thermal model is available"),
+    ),
+    "bathroom: no trained thermal model is available",
+  );
+});
+
+Deno.test("something with nothing to say falls back rather than printing junk", () => {
+  assertEquals(describeThrown(null), "invalid snapshot");
+  assertEquals(describeThrown(undefined), "invalid snapshot");
+  assertEquals(describeThrown("a bare string"), "invalid snapshot");
+  assertEquals(describeThrown({}), "invalid snapshot");
 });

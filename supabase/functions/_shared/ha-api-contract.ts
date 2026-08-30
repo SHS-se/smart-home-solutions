@@ -28,6 +28,29 @@ export interface HaApiError {
 
 const PLAIN_REQUEST_ID = /^[A-Za-z0-9._:-]{8,128}$/;
 
+/**
+ * Name whatever was thrown, so a refused snapshot says why.
+ *
+ * Not everything throwable is an `Error`. A PostgREST failure arrives as a
+ * plain `{ message, code, details, hint }`, and reporting that as "invalid
+ * snapshot" told Home Assistant only that something had gone wrong, in a
+ * message that read as though the snapshot itself were malformed.
+ */
+export function describeThrown(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object") {
+    const { message, code, details, hint } = error as Record<string, unknown>;
+    const parts = [
+      typeof message === "string" ? message : null,
+      code === undefined || code === null ? null : `code ${String(code)}`,
+      typeof details === "string" ? details : null,
+      typeof hint === "string" ? hint : null,
+    ].filter((part): part is string => Boolean(part));
+    if (parts.length > 0) return parts.join(" · ");
+  }
+  return "invalid snapshot";
+}
+
 export function haRequestId(request: Request): string {
   const supplied = request.headers.get("x-request-id")?.trim() ?? "";
   return PLAIN_REQUEST_ID.test(supplied) ? supplied : crypto.randomUUID();

@@ -155,15 +155,22 @@ BEGIN
       AND slot.start_ts < p_to
     WINDOW w AS (PARTITION BY slot.room_key ORDER BY slot.start_ts)
   ),
+  -- Every design column is cast here, once, rather than at each of the twenty
+  -- sums built from them. `RETURN QUERY` demands the exact declared type and
+  -- applies no implicit cast, and all of these start life `numeric`: metered
+  -- energy, both temperatures and the irradiance are numeric columns. Summing
+  -- them yields numeric, which against a `double precision` result column
+  -- fails the whole function with 42804 — the error that kept this from ever
+  -- returning a row.
   usable AS (
     SELECT
       paired.room_key,
-      paired.p_w AS p,
-      (paired.t_out - paired.t_in) AS d,
-      (paired.t_next - paired.t_in) / 0.25 AS y,
-      paired.t_in,
-      paired.t_out,
-      paired.irradiance AS i
+      paired.p_w::double precision AS p,
+      (paired.t_out - paired.t_in)::double precision AS d,
+      ((paired.t_next - paired.t_in) / 0.25)::double precision AS y,
+      paired.t_in::double precision AS t_in,
+      paired.t_out::double precision AS t_out,
+      paired.irradiance::double precision AS i
     FROM paired
     WHERE paired.t_next IS NOT NULL
       AND paired.next_start = paired.start_ts + interval '15 minutes'

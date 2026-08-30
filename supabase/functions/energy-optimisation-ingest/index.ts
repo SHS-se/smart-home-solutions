@@ -10,6 +10,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { authenticateDevice, sha256Hex } from "../_shared/ha-device-auth.ts";
 import {
   HA_API_CORS_HEADERS,
+  describeThrown,
   haApiResponse,
   haRequestId,
   validatePlanningNegotiation,
@@ -292,6 +293,7 @@ interface PreparedThermalPlanning {
   zones: ProjectionZoneInput[];
 }
 
+
 /**
  * Plan every load on its own recent history, with no room comfort forecast.
  * This is what the home did before comfort forecasting existed, and it is the
@@ -539,9 +541,9 @@ async function prepareThermalPlanning(
     const stored = storedByKey.get(model.key);
     const room = stored ? roomMapping(stored) : null;
     if (!stored || !room) {
-      throw new Error(
-        `${model.name}: a ready Home Assistant room mapping is required`,
-      );
+      // Commissioning is not finished for this control. Its own profile still
+      // plans; only its comfort forecast is unavailable.
+      continue;
     }
     const grouped = rooms.get(room.key) ?? {
       key: room.key,
@@ -549,7 +551,9 @@ async function prepareThermalPlanning(
       models: [],
     };
     if (grouped.name !== room.name) {
-      throw new Error(`${room.key}: Home Assistant reported two room names`);
+      // Two names for one key is a mapping inconsistency to surface in the
+      // portal, not a reason to leave the house unplanned.
+      continue;
     }
     grouped.models.push(model);
     rooms.set(room.key, grouped);
@@ -694,16 +698,33 @@ async function prepareThermalPlanning(
         p_min_samples: MIN_TRAINING_SAMPLES,
       },
     );
-    if (error) throw error;
-    const fits = fitZones((moments ?? []) as ThermalMomentRow[]);
-    if (fits.length > 0) {
-      const { error: upsertError } = await supabase
-        .from("energy_optimisation_zone_models")
-        .upsert(
-          zoneModelRows(fits, { customerId, homeId, trainingFrom, trainingTo }),
-          { onConflict: "home_id,room_key" },
-        );
-      if (upsertError) throw upsertError;
+    // A refit is maintenance, not a precondition. Whatever goes wrong while
+    // re-learning a zone, the home still has the models it had a moment ago
+    // and is still owed a plan — so this is logged and stepped over rather
+    // than thrown, which would reject the snapshot and stop the house.
+    if (error) {
+      console.error("[ENERGY-OPTIMISATION] zone refit skipped", error);
+    } else {
+      const fits = fitZones((moments ?? []) as ThermalMomentRow[]);
+      if (fits.length > 0) {
+        const { error: upsertError } = await supabase
+          .from("energy_optimisation_zone_models")
+          .upsert(
+            zoneModelRows(fits, {
+              customerId,
+              homeId,
+              trainingFrom,
+              trainingTo,
+            }),
+            { onConflict: "home_id,room_key" },
+          );
+        if (upsertError) {
+          console.error(
+            "[ENERGY-OPTIMISATION] zone models not stored",
+            upsertError,
+          );
+        }
+      }
     }
   }
 
@@ -730,6 +751,9 @@ async function prepareThermalPlanning(
       )
       .eq("home_id", homeId),
   ]);
+  // Room comfort needs all three of these. Losing them is the same situation
+  // as having no weather: the rooms cannot be forecast, and every other load
+  // still plans on prices and its own recent history.
   for (
     const result of [
       trainedResult,
@@ -737,7 +761,13 @@ async function prepareThermalPlanning(
       scheduleResult,
     ]
   ) {
-    if (result.error) throw result.error;
+    if (result.error) {
+      console.error(
+        "[ENERGY-OPTIMISATION] comfort inputs unreadable",
+        result.error,
+      );
+      return withoutComfortForecast(snapshot);
+    }
   }
 
   const trainedByRoom = new Map<string, Record<string, unknown>>(
@@ -764,16 +794,26 @@ async function prepareThermalPlanning(
 
   const zones: ProjectionZoneInput[] = [];
   const planningZones: NonNullable<OptimisationSnapshot["thermal_zones"]> = [];
+  // A room that cannot be comfort-forecast is skipped, not fatal. Refusing the
+  // whole snapshot for one room meant any single zone the fit declined — too
+  // few samples, a sensor the fit cannot separate from outdoor air, a comfort
+  // routine nobody has filled in yet — stopped the battery, boiler, pool and
+  // car being planned at all. A skipped room keeps its recent-history profile,
+  // exactly as it had before comfort forecasting existed, while its neighbours
+  // are still planned properly.
+  const skipped: string[] = [];
   for (const room of rooms.values()) {
     const fitted = trainedByRoom.get(room.key);
     if (!fitted) {
-      throw new Error(`${room.name}: no trained thermal model is available`);
+      skipped.push(`${room.name}: no trained thermal model`);
+      continue;
     }
     const observation = latestByRoom.get(room.key);
     if (
       !observation || !Number.isFinite(Number(observation.room_temperature_c))
     ) {
-      throw new Error(`${room.name}: no recent room temperature is available`);
+      skipped.push(`${room.name}: no recent room temperature`);
+      continue;
     }
     const rawSchedule = scheduleByRoom.get(room.key);
     const schedule: ZoneComfortSchedule | null = rawSchedule
@@ -788,14 +828,16 @@ async function prepareThermalPlanning(
       }
       : null;
     if (!isZoneComfortSchedule(schedule)) {
-      throw new Error(`${room.name}: comfort schedule is missing or invalid`);
+      skipped.push(`${room.name}: comfort schedule missing or invalid`);
+      continue;
     }
     const ratedPowerW = room.models.reduce(
       (sum, model) => sum + Number(model.active_power_w ?? 0),
       0,
     );
     if (!Number.isFinite(ratedPowerW) || ratedPowerW <= 0) {
-      throw new Error(`${room.name}: rated power is unavailable`);
+      skipped.push(`${room.name}: rated power unavailable`);
+      continue;
     }
     const thermalModel = {
       gain_c_per_wh: Number(fitted.gain_c_per_wh),
@@ -829,7 +871,8 @@ async function prepareThermalPlanning(
         !Number.isFinite(value)
       )
     ) {
-      throw new Error(`${room.name}: fitted thermal model is incomplete`);
+      skipped.push(`${room.name}: fitted thermal model incomplete`);
+      continue;
     }
     const forecast = buildComfortForecast(
       starts,
@@ -873,6 +916,16 @@ async function prepareThermalPlanning(
       ),
       unplanned_power_w: forecast.power_w,
     });
+  }
+
+  // Silent degradation is worse than none, so what was skipped is said out
+  // loud. With no room left the result is exactly `withoutComfortForecast`:
+  // no zones, and every model back on its own recent history.
+  if (skipped.length > 0) {
+    console.error(
+      `[ENERGY-OPTIMISATION] ${skipped.length} of ${rooms.size} rooms not ` +
+        `comfort-forecast: ${skipped.join("; ")}`,
+    );
   }
 
   return {
@@ -1758,9 +1811,8 @@ serve(async (req) => {
           priceArchive,
         );
       } catch (error) {
-        const detail = error instanceof Error
-          ? error.message
-          : "invalid snapshot";
+        const detail = describeThrown(error);
+        console.error("[ENERGY-OPTIMISATION] snapshot refused", detail, error);
         return json({ error: "invalid_snapshot", detail }, 400);
       }
 
