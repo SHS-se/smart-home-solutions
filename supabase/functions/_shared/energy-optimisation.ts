@@ -38,7 +38,8 @@ import {
 } from "./store-value.ts";
 import {
   DEFAULT_VALUE_CURVES,
-  DEFAULT_VALUE_SETTINGS,
+  resolveValueSettings,
+  type ValueSettings,
   type ValueStoreKey,
 } from "./value-curves.ts";
 import {
@@ -371,6 +372,16 @@ export interface OptimisationSnapshot {
    * defaults apply, which is what a home that has never opened the editor gets.
    */
   value_curves?: Partial<Record<ValueStoreKey, UtilityCurve>> | null;
+  /**
+   * The home's scalar prices, resolved by the edge alongside the curves.
+   *
+   * Same provenance and the same reason as `value_curves`: a customer figure
+   * held in the portal, resolved before planning so a malformed row degrades to
+   * the shipped default rather than failing the plan. Absent means the
+   * defaults, which is what every snapshot written before this field existed
+   * carries — including the replay capsules.
+   */
+  value_settings?: ValueSettings | null;
   /**
    * The pool's fitted loss and COP, when the fit was accepted.
    *
@@ -1462,8 +1473,7 @@ function preparedSlots(
   );
   const outlook: PriceOutlook = resolvedPriceOutlook
     ? {
-      shadowImportSekPerKwh:
-        resolvedPriceOutlook.shadow_import_sek_per_kwh,
+      shadowImportSekPerKwh: resolvedPriceOutlook.shadow_import_sek_per_kwh,
       levelSekPerKwh: resolvedPriceOutlook.level_sek_per_kwh,
       observedDays: resolvedPriceOutlook.observed_days,
       effectiveDays: resolvedPriceOutlook.effective_days,
@@ -1477,7 +1487,9 @@ function preparedSlots(
     outlook.shadowImportSekPerKwh.length !== snapshot.slots.length ||
     outlook.shadowImportSekPerKwh.some((value) => !finite(value))
   ) {
-    throw new Error("resolved price outlook must contain one finite value per slot");
+    throw new Error(
+      "resolved price outlook must contain one finite value per slot",
+    );
   }
   // Export is not shaped separately: the archive stores an import price, and
   // the spread between them is a supplier and tariff construct rather than
@@ -2207,7 +2219,9 @@ function deriveBatteryValueCurve(
   const coveringValueSek = (run: Slice[]): number => {
     let left = usableKwh * battery.discharge_efficiency;
     let total = 0;
-    for (const slice of [...run].sort((a, b) => b.sek_per_kwh - a.sek_per_kwh)) {
+    for (
+      const slice of [...run].sort((a, b) => b.sek_per_kwh - a.sek_per_kwh)
+    ) {
       if (left <= 0) break;
       const take = Math.min(slice.ac_kwh, left);
       total += take * slice.sek_per_kwh;
@@ -2257,8 +2271,17 @@ function deriveBatteryValueCurve(
       (worst, slot) => Math.max(worst, slot.shadow_import_sek_per_kwh),
       0,
     ),
-    degradationSekPerKwh:
-      DEFAULT_VALUE_SETTINGS.battery_degradation_sek_per_kwh,
+    // What a kWh of throughput costs this household, not what it costs a
+    // household. The figure only ever bites as a *minimum price spread* — the
+    // battery declines any round trip that does not clear
+    // `buy / (charge x discharge) + wear / discharge` — so a pack whose
+    // warranty is bounded by the calendar rather than by throughput wants a
+    // much smaller number here than one being consumed by cycling (§8.19).
+    // Through the same resolver the edge uses, so a snapshot that reached the
+    // planner some other way — a replay capsule, a test fixture — cannot feed
+    // the curve a negative or non-finite wear that the edge would have caught.
+    degradationSekPerKwh: resolveValueSettings(snapshot.value_settings)
+      .battery_degradation_sek_per_kwh,
     expectedDrawKwh: expectedDrawKwh / battery.discharge_efficiency,
   };
   const curve = batteryValueCurve(curveInput);
@@ -2313,7 +2336,9 @@ function buildDispatchStores(
   // neither — the pool's was hard-coded and the car's dropped — so a charger
   // contract asking for half an hour got quarter-hour cycling, and a deployed
   // plan switched the car on and off thirteen times in one evening.
-  const declaredMinRun = (device: ServiceInput["device"]): number | undefined => {
+  const declaredMinRun = (
+    device: ServiceInput["device"],
+  ): number | undefined => {
     for (const service of snapshot.services) {
       if (service.device !== device) continue;
       const declared = "min_run_slots" in service
@@ -3438,7 +3463,10 @@ function empiricalDeviceLoads(
   // Controlled meters share one dispatched run, so they are allocated together
   // rather than one at a time: a device that cannot take its share has to hand
   // the remainder to one that can.
-  const byService = new Map<string, Array<Extract<DeviceLoadRule, { kind: "controlled" }>>>();
+  const byService = new Map<
+    string,
+    Array<Extract<DeviceLoadRule, { kind: "controlled" }>>
+  >();
   for (const rule of deviceLoadRules(snapshot)) {
     if (rule.kind === "fixed") {
       result[rule.key] = round(rule.forecastW[index], 2);
@@ -3454,14 +3482,16 @@ function empiricalDeviceLoads(
     }
   }
   for (const [service, rules] of byService) {
-    for (const [key, watts] of allocateWithinCeilings(
-      controlled[service] ?? 0,
-      rules.map((rule) => ({
-        key: rule.key,
-        share: rule.shareBySlot[index],
-        ceilingW: rule.ceilingW,
-      })),
-    )) {
+    for (
+      const [key, watts] of allocateWithinCeilings(
+        controlled[service] ?? 0,
+        rules.map((rule) => ({
+          key: rule.key,
+          share: rule.shareBySlot[index],
+          ceilingW: rule.ceilingW,
+        })),
+      )
+    ) {
       result[key] = round(watts, 2);
     }
   }

@@ -31,7 +31,10 @@ import {
   TRAINING_WINDOW_DAYS,
   zoneModelRows,
 } from "../_shared/thermal-training.ts";
-import { resolveValueCurves } from "../_shared/value-curves.ts";
+import {
+  resolveValueCurves,
+  resolveValueSettings,
+} from "../_shared/value-curves.ts";
 import {
   fitPoolModel,
   type PoolTrainingSample,
@@ -1482,12 +1485,19 @@ serve(async (req) => {
       for (const warning of resolved.warnings) {
         console.warn("[ENERGY-OPTIMISATION] value curve", warning);
       }
+      // The scalar prices come from the same place and for the same reason.
+      const { data: settingsRow } = await supabase
+        .from("energy_optimisation_value_settings")
+        .select("battery_degradation_sek_per_kwh, vehicle_fallback_sek_per_km")
+        .eq("home_id", auth.homeId)
+        .maybeSingle();
       snapshot = {
         ...snapshot,
         value_curves: {
           pool: resolved.curves.pool.curve,
           ev: resolved.curves.ev.curve,
         },
+        value_settings: resolveValueSettings(settingsRow),
       };
 
       // Refit the pool alongside the rooms, then hand the planner whatever the

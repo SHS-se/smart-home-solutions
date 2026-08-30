@@ -19,7 +19,14 @@ import { type UtilityCurve, validateCurve } from "./store-value.ts";
 export type ValueStoreKey = "pool" | "ev" | "hot_water";
 
 export interface ValueSettings {
-  /** Purchase price divided by warranted lifetime throughput, SEK per kWh. */
+  /**
+   * Wear cost per kWh stored, SEK.
+   *
+   * Read as the minimum price spread the battery will trade on rather than as
+   * an accounting entry. Purchase price over warranted throughput only where
+   * cycling is what retires the pack; near zero where the calendar does, which
+   * is every LFP installation whose rated cycle life outruns its warranty.
+   */
   battery_degradation_sek_per_kwh: number;
   /**
    * A plug-in hybrid's fallback cost per km, if it has one.
@@ -31,11 +38,29 @@ export interface ValueSettings {
 }
 
 export const DEFAULT_VALUE_SETTINGS: ValueSettings = {
-  // A mid-range figure for a domestic LFP pack: a 30–40k SEK battery against
-  // roughly 6000 cycles of usable throughput. Wrong for any specific
-  // installation, right enough to stop pointless shallow cycling until the
-  // customer's own invoice replaces it.
-  battery_degradation_sek_per_kwh: 0.45,
+  // Near zero, because a modern LFP pack is retired by the calendar and not by
+  // its cycle count, and this figure may only price a resource that is
+  // genuinely scarce.
+  //
+  // It was 0.45: purchase price over warranted lifetime throughput, which is
+  // the right formula for a battery consumed by cycling. Rate a pack at 10,000
+  // cycles against a ten-year warranty with no throughput limit and the formula
+  // has no denominator worth dividing by — exhausting that many cycles by 2036
+  // needs about 49.5 kWh a day through the pack against a household base load
+  // near 16. Across the planner's entire wear range on the live capsules,
+  // throughput moves only between 110 and 147 equivalent full cycles a year:
+  // 11% to 15% of the rating either way. Charging for cycles nobody can spend
+  // simply refuses the arbitrage the battery was bought for.
+  //
+  // What survives is not degradation at all. The figure sets the minimum price
+  // spread the battery will accept — it declines any round trip that does not
+  // clear `buy / (charge × discharge) + wear / discharge` — and the reason to
+  // keep it above zero is that prices beyond the day-ahead window are a shaped
+  // prior. 0.05 asks for a 17% spread against a round-trip efficiency floor of
+  // about 11%, so the margin insures against forecast error, which is the risk
+  // that is actually there. A pack that really is throughput-limited overrides
+  // this from its own row.
+  battery_degradation_sek_per_kwh: 0.05,
   vehicle_fallback_sek_per_km: null,
 };
 
@@ -175,7 +200,9 @@ export function parseStoredCurve(row: StoredCurveRow): UtilityCurve | string {
   }
   const points: { at: number; sek_per_unit: number }[] = [];
   for (const raw of row.points) {
-    if (typeof raw !== "object" || raw === null) return "a point must be an object";
+    if (typeof raw !== "object" || raw === null) {
+      return "a point must be an object";
+    }
     const at = Number((raw as Record<string, unknown>).at);
     const value = Number((raw as Record<string, unknown>).sek_per_unit);
     if (!Number.isFinite(at) || !Number.isFinite(value)) {

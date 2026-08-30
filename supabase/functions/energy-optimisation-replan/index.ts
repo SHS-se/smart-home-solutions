@@ -24,7 +24,10 @@ import {
   generateOptimisationPlan,
   type OptimisationSnapshot,
 } from "../_shared/energy-optimisation.ts";
-import { resolveValueCurves } from "../_shared/value-curves.ts";
+import {
+  resolveValueCurves,
+  resolveValueSettings,
+} from "../_shared/value-curves.ts";
 import { sha256Hex } from "../_shared/ha-device-auth.ts";
 
 const corsHeaders = {
@@ -119,6 +122,13 @@ serve(async (request) => {
       .eq("home_id", homeId);
     const resolved = resolveValueCurves(curveRows ?? []);
 
+    const { data: settingsRow } = await service
+      .from("energy_optimisation_value_settings")
+      .select("battery_degradation_sek_per_kwh, vehicle_fallback_sek_per_km")
+      .eq("home_id", homeId)
+      .maybeSingle();
+    const settings = resolveValueSettings(settingsRow);
+
     const shapeFrom = new Date(
       Date.now() - PRICE_SHAPE_WINDOW_DAYS * 24 * 60 * 60_000,
     ).toISOString();
@@ -138,6 +148,7 @@ serve(async (request) => {
         pool: resolved.curves.pool.curve,
         ev: resolved.curves.ev.curve,
       },
+      value_settings: settings,
     };
 
     let generated;

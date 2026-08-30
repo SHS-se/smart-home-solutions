@@ -4390,6 +4390,92 @@ pack's warranty and price, not about the horizon.
   property.
 
 
+### 8.19 Wear may only price a resource that is actually scarce (2026-08-30)
+
+`battery_degradation_sek_per_kwh` was defined, stored, resolved — and never
+read. `deriveBatteryValueCurve` took `DEFAULT_VALUE_SETTINGS` directly, so the
+column added with the value curves was configurable and inert, and every home
+was priced against a figure nobody had chosen. It is now wired through the
+snapshot from both entry points, resolved by the same `resolveValueSettings` the
+edge uses so a capsule or fixture cannot feed the curve a negative wear.
+
+**What the figure actually controls.** Not an accounting entry — a threshold.
+Charged once per kWh *stored*, by lowering what stored energy is worth, it makes
+the battery decline any round trip that does not clear
+
+    buy / (charge × discharge)  +  wear / discharge
+
+At 0.45 SEK/kWh against a 0.86 SEK night that demands an evening **66% dearer**.
+At 0.05 it demands 17%, against a floor of about 11% that is pure round-trip
+efficiency and cannot be avoided. That is the whole behavioural content of the
+number, and it is the form to think in: the smallest price spread the battery
+will get out of bed for.
+
+**Why 0.45 was wrong, and it was not the arithmetic.** The formula behind it —
+purchase price over warranted lifetime throughput — is correct for a battery
+consumed by cycling. It has no denominator worth dividing by for a pack the
+calendar retires first.
+
+Sigen Battery 10.0, the pack this was measured against: **10,000 cycles** rated
+(cell-level, 25 °C, 0.5C, to SOH=60%), 100% depth of discharge, **ten-year
+warranty with no throughput limit**. Exhausting 10,000 cycles by 2036 needs
+about 49.5 kWh a day through the pack; the household's entire non-flexible base
+load is roughly 16 kWh a day, so a battery serving *all* of it every day of the
+year still reaches only a third of the rating. Measured across the planner's
+whole wear range on capsule `eb2ffa5e`, throughput moves only between 110 and
+147 equivalent full cycles a year — 11% to 15% of the rating either way, and the
+comparable cost is flat below 0.10 and jumps above 0.15:
+
+| wear | min spread | comparable cost, 3 days | throughput | rating used by 2036 |
+|---|---|---|---|---|
+| 0.45 | +66% | 77.51 SEK | 111 cyc/yr | 11.1% |
+| 0.15 | +29% | 77.82 | 143 cyc/yr | 14.3% |
+| 0.10 | +23% | 70.25 | 144 cyc/yr | 14.4% |
+| **0.05** | **+17%** | **69.62** | 120 cyc/yr | 12.0% |
+| 0.01 | +12% | 70.98 | 119 cyc/yr | 11.9% |
+
+The non-monotonic wobbles between neighbouring rows are greedy-search noise, not
+signal. What is signal is the plateau below 0.10 and the step above 0.15.
+
+**So the default is 0.05, and what survives is not degradation.** A pack whose
+rated cycle life is unreachable inside its warranty has no scarce throughput to
+price, and charging for cycles nobody can spend simply refuses the arbitrage the
+battery was bought for. The reason to keep the figure above zero is different in
+kind: prices past the day-ahead window are a shaped prior (§8.15), and a round
+trip decided on a 12% modelled spread that does not materialise is a real loss.
+0.05 buys a margin against *forecast error*, which is the risk that is there,
+rather than against wear, which is not. A pack that genuinely is
+throughput-limited overrides it from its own row.
+
+**Effect on `eb2ffa5e`, with §8.18 already in.** The battery charges to 40.2%
+across the cheap window instead of 28.3%, and covers **every quarter from 17:15
+to 21:15 with no grid import at all** — the whole evening peak, which is what
+prompted this. Import across 17:45–22:00 falls from 2.507 kWh / 4.99 SEK to
+1.245 kWh / 2.21 SEK. Roughly 950 SEK a year on a flat summer horizon, more in
+winter when spreads widen.
+
+**A note on where this number belongs.** There is no portal editor for
+`energy_optimisation_value_settings`, so the row is reachable only by migration.
+That is tolerable while the fleet is one home and the right value is a product
+default; it is not tolerable once a customer's pack genuinely differs, because
+the figure is then a commissioning input like `min_soc` and belongs beside the
+curves editor.
+
+#### Acceptance tests to add to §8.12
+
+- **The home's own wear reaches the curve.** A snapshot carrying
+  `value_settings` must produce a curve built from it, published in
+  `curve_input.degradation_sek_per_kwh`, and must change the decision: a 50%
+  evening spread is refused through 0.45 and taken through 0.05. A snapshot
+  without one gets the shipped default. Covered by `energy-optimisation.test.ts`,
+  "§8.19 — the home's own wear cost reaches the curve".
+- **Behavioural fixtures state their own wear.** Three tests turned on the
+  battery declining a round trip and read the shipped default to do it, so
+  moving that default silently changed what they asserted. Each now pins the
+  figure it means (`PRICED_WEAR`), and the covering-window test asserts against
+  the wear the plan published rather than a literal.
+
+
 ## 9. Parameter model
 
 ### 9.1 Parameter classes and ownership

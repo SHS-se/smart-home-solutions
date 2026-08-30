@@ -4,6 +4,7 @@ import {
   validateSnapshot,
 } from "./energy-optimisation.ts";
 import { projectZoneTemperature } from "./thermal-model.ts";
+import { DEFAULT_VALUE_SETTINGS } from "./value-curves.ts";
 import { assertAlmostEquals, assertEquals } from "jsr:@std/assert@1";
 
 /** The captured_at the shared fixture uses, so a plan is always fresh. */
@@ -155,6 +156,17 @@ const input = (
  * double-counted wear cost — because neither is visible when the horizon is
  * shorter than a single night. Planner behaviour belongs here.
  */
+/**
+ * A wear cost pinned by the fixture rather than inherited.
+ *
+ * Three tests below turn on the battery declining a round trip, and the shipped
+ * default is a product figure that moves with the packs being sold (it fell
+ * from 0.45 to 0.05 when the first calendar-limited pack was measured). A
+ * behavioural test that reads it silently changes what it asserts, so each of
+ * them states the wear it means.
+ */
+const PRICED_WEAR = { battery_degradation_sek_per_kwh: 0.45 } as const;
+
 const horizon = (
   overrides: Partial<OptimisationSnapshot> = {},
   { peakPvW = 9_000, baseLoadW = 1_000, pricedSlots = 96 } = {},
@@ -369,7 +381,13 @@ Deno.test("the battery covers the boiler too, not just the base load", () => {
     schema_version: 6,
     slots,
     outdoor_temperature_c: slots.map(() => 22),
-    capabilities: { pv: false, battery: true, pool: false, boiler: true, ev: false },
+    capabilities: {
+      pv: false,
+      battery: true,
+      pool: false,
+      boiler: true,
+      ev: false,
+    },
     battery: { ...base.battery, soc: 0.95 },
     pool: null,
     sources: { ...base.sources, pv: null },
@@ -450,7 +468,13 @@ Deno.test("the stores leave the connection the services still need", () => {
     schema_version: 6,
     slots,
     outdoor_temperature_c: slots.map(() => 22),
-    capabilities: { pv: false, battery: true, pool: true, boiler: true, ev: true },
+    capabilities: {
+      pv: false,
+      battery: true,
+      pool: true,
+      boiler: true,
+      ev: true,
+    },
     battery: { ...base.battery, soc: 0.1 },
     pool: { water_temperature_c: 26, volume_m3: 55 },
     sources: { ...base.sources, pv: null },
@@ -602,7 +626,8 @@ Deno.test("deferred hot water comes back at the cheapest hours, not the quietest
   // Recovery is whatever priority runs above the untouched baseline shape.
   const recovered = priority.slots.slice(0, 96)
     .map((slot, index) =>
-      slot.boiler_expected_w - plan.plans.baseline.slots[index].boiler_expected_w
+      slot.boiler_expected_w -
+      plan.plans.baseline.slots[index].boiler_expected_w
     );
   const total = recovered.reduce(
     (sum, extraW) => sum + Math.max(0, extraW),
@@ -755,7 +780,11 @@ Deno.test("a device is never credited with more power than it can draw", () => {
     }
   }
 
-  assertEquals(miscounted.slice(0, 3), [], "the breakdown must still sum to the run");
+  assertEquals(
+    miscounted.slice(0, 3),
+    [],
+    "the breakdown must still sum to the run",
+  );
   assertEquals(
     overdrawn.slice(0, 3),
     [],
@@ -2284,15 +2313,18 @@ Deno.test("every allocation is priced where it lands, and none of them loses", (
         Math.abs(part.state_before - battery.state_before) > 1e-6
       ) {
         misstated.push(
-          `${slot.start}: booked at ${part.state_before.toFixed(4)} kWh, ran at ${
-            battery.state_before.toFixed(4)
-          } kWh`,
+          `${slot.start}: booked at ${
+            part.state_before.toFixed(4)
+          } kWh, ran at ${battery.state_before.toFixed(4)} kWh`,
         );
       }
     }
   }
 
-  assert(allocations > 20, `expected a busy plan, got ${allocations} allocations`);
+  assert(
+    allocations > 20,
+    `expected a busy plan, got ${allocations} allocations`,
+  );
   assertEquals(
     misstated.slice(0, 3),
     [],
@@ -2723,7 +2755,10 @@ Deno.test("every planned quarter records decision evidence and exact grid arithm
   assertEquals(batteryCurve.schema_version, 1);
   assertEquals(batteryCurve.state_basis, "usable_kwh_above_min_soc");
   assertEquals(batteryCurve.curve.unit, "kwh");
-  assert(batteryCurve.curve.points.length > 2, "curve breakpoints are required");
+  assert(
+    batteryCurve.curve.points.length > 2,
+    "curve breakpoints are required",
+  );
   assert(
     Math.abs(
       batteryCurve.covering_window.reduce(
@@ -2955,7 +2990,9 @@ Deno.test("surplus is banked while the pool values it above what it would fetch"
   );
   assert(
     poolKwh(dearExport) < poolKwh(cheapExport),
-    `surplus worth 3.0 is worth more sold: ${poolKwh(dearExport)} kWh against ` +
+    `surplus worth 3.0 is worth more sold: ${
+      poolKwh(dearExport)
+    } kWh against ` +
       `${poolKwh(cheapExport)}`,
   );
   assert(
@@ -2977,7 +3014,8 @@ Deno.test("a dispatched battery is not failed against a floor it was never given
   // Power here is cheap enough that `batteryValueCurve` values stored energy
   // at nothing once wear is subtracted, so the battery correctly ends low. At
   // ordinary prices it grid-charges to full even across a sunless horizon,
-  // which is why this went unnoticed for so long.
+  // which is why this went unnoticed for so long. The wear is stated rather
+  // than inherited, because it is that subtraction that sets the scene here.
   const base = horizon();
   const start = Date.parse("2026-08-10T08:00:00.000Z");
   const cheapSlots = base.slots.map((slot, index) => ({
@@ -2998,6 +3036,7 @@ Deno.test("a dispatched battery is not failed against a floor it was never given
       outdoor_temperature_c: base.slots.map(() => 30.9),
       slots: cheapSlots,
       policy: { ...base.policy, terminal_soc_min: floor },
+      value_settings: { ...PRICED_WEAR, vehicle_fallback_sek_per_km: null },
       ...overrides,
     });
 
@@ -3009,9 +3048,7 @@ Deno.test("a dispatched battery is not failed against a floor it was never given
   );
   assert(
     dispatched.plans.priority.summary.battery_soc_end < 0.2,
-    `the floor has to bind, got ${
-      dispatched.plans.priority.summary.battery_soc_end
-    }`,
+    `the floor has to bind, got ${dispatched.plans.priority.summary.battery_soc_end}`,
   );
   assertEquals(dispatched.validation_errors, []);
   assertEquals(dispatched.status, "ready");
@@ -3033,13 +3070,14 @@ Deno.test("a dispatched battery is not failed against a floor it was never given
     false,
   );
   assert(
-    blockModel.validation_errors.some((error) => error.includes("terminal SOC")),
+    blockModel.validation_errors.some((error) =>
+      error.includes("terminal SOC")
+    ),
     `an undispatched battery still reports the floor, got ${
       JSON.stringify(blockModel.validation_errors)
     }`,
   );
 });
-
 
 Deno.test("a battery that charges in winter also discharges", () => {
   // No sun for the whole horizon, so every quarter is a deficit and the
@@ -3090,7 +3128,6 @@ Deno.test("a battery that charges in winter also discharges", () => {
     `and a dear morning is what it was stored for, returned ${returned} kWh`,
   );
 });
-
 
 Deno.test("a shaped peak spreads a charge instead of concentrating it", () => {
   // §8.12 #10 and #13. Off by default (see `PEAK_SHAPING_SEK_PER_KWH_PER_KW`),
@@ -3232,9 +3269,12 @@ Deno.test("§8.12 #12 — a winter covering window is the dear stretch, not the 
     ...window.map((quarter) => quarter.import_price_sek_per_kwh),
   );
   const battery = plan.battery!;
+  // Against the wear the plan actually used, which it publishes. Reading the
+  // shipped default back would assert nothing when that default moves.
   assertAlmostEquals(
     curve.curve.points[0].sek_per_unit,
-    dearestCovered * battery.discharge_efficiency - 0.45,
+    dearestCovered * battery.discharge_efficiency -
+      curve.curve_input.degradation_sek_per_kwh,
     0.02,
   );
 });
@@ -3344,7 +3384,9 @@ Deno.test("a battery below its reserve climbs back to it", () => {
   // so a battery that starts below its reserve refills toward it when that is
   // affordable, and is not failed for having started there.
   // A sunless horizon, because a sunny one fills the pack to the brim whatever
-  // the reserve says and the comparison would measure nothing.
+  // the reserve says and the comparison would measure nothing. The wear is
+  // stated for the same reason: cheap enough throughput and the battery fills
+  // to 100% on this price shape alone, and again nothing is being compared.
   const start = Date.parse("2026-08-10T08:00:00.000Z");
   const base = horizon();
   const dark = base.slots.map((slot, index) => {
@@ -3370,6 +3412,7 @@ Deno.test("a battery below its reserve climbs back to it", () => {
         outdoor_temperature_c: dark.map(() => -8),
         battery: { ...base.battery!, capacity_kwh: 18.08, soc: 0.1 },
         policy: { ...base.policy, terminal_soc_min: reserve },
+        value_settings: { ...PRICED_WEAR, vehicle_fallback_sek_per_km: null },
       }),
       new Date(NOW),
     );
@@ -3409,4 +3452,77 @@ Deno.test("a battery below its reserve climbs back to it", () => {
     0.02,
   );
   assertEquals(none.curve!.curve_input.reserve_kwh, 0);
+});
+
+Deno.test("§8.19 — the home's own wear cost reaches the curve", () => {
+  // The column existed, the resolver existed, and `deriveBatteryValueCurve`
+  // read the shipped constant instead — so the setting was configurable and
+  // inert, and every home was priced against a figure nobody had chosen.
+  const start = Date.parse("2026-08-10T08:00:00.000Z");
+  const base = horizon();
+  // A night trough and an evening peak: the shape wear is a threshold on.
+  const dark = base.slots.map((slot, index) => {
+    const hour = ((index / 4) + 10) % 24;
+    return {
+      ...slot,
+      start: new Date(start + index * 15 * 60_000).toISOString(),
+      pv_forecast_w: 0,
+      base_load_forecast_w: 1_500,
+      base_load_p10_w: 1_000,
+      base_load_p90_w: 2_500,
+      import_price_sek_per_kwh: index < 96
+        ? (hour >= 17 && hour < 21 ? 1.35 : 0.9)
+        : null,
+      export_price_sek_per_kwh: index < 96 ? 0.2 : null,
+    };
+  });
+  const at = (settings?: { battery_degradation_sek_per_kwh: number }) =>
+    generateOptimisationPlan(
+      horizon({
+        slots: dark,
+        pool: { water_temperature_c: 30.9, volume_m3: 55 },
+        outdoor_temperature_c: dark.map(() => 12),
+        battery: { ...base.battery!, capacity_kwh: 18.08, soc: 0.1 },
+        value_settings: settings
+          ? { ...settings, vehicle_fallback_sek_per_km: null }
+          : undefined,
+      }),
+      new Date(NOW),
+    );
+
+  const priced = at({ battery_degradation_sek_per_kwh: 0.45 });
+  const cheap = at({ battery_degradation_sek_per_kwh: 0.05 });
+
+  // What the home asked for is what the curve was built from, and it says so.
+  assertEquals(
+    priced.battery_value_curve!.curve_input.degradation_sek_per_kwh,
+    0.45,
+  );
+  assertEquals(
+    cheap.battery_value_curve!.curve_input.degradation_sek_per_kwh,
+    0.05,
+  );
+
+  // And it is a decision, not a label. A 1.35 against 0.9 evening is a 50%
+  // spread: through 0.45 of wear the round trip needs 66% and this evening is
+  // refused, through 0.05 it needs 17% and the evening is taken. The dear plan
+  // is not quite idle — the shaped prior past the published window is dearer
+  // than anything quoted, and a little trades against that — so what is
+  // asserted is the size of the gap and not a zero.
+  const cycled = (plan: ReturnType<typeof generateOptimisationPlan>) =>
+    plan.plans.priority.slots.reduce(
+      (total, slot) => total + slot.battery_discharge_w,
+      0,
+    );
+  assert(
+    cycled(cheap) > cycled(priced) * 10,
+    `lowering the threshold must open the evening up: ` +
+      `${cycled(priced)} against ${cycled(cheap)}`,
+  );
+
+  // A home that has never had a row keeps whatever the product ships.
+  assertEquals(
+    at().battery_value_curve!.curve_input.degradation_sek_per_kwh,
+    DEFAULT_VALUE_SETTINGS.battery_degradation_sek_per_kwh,
+  );
 });
