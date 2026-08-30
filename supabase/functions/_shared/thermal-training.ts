@@ -7,9 +7,9 @@
 
 import {
   fitThermalZoneFromMoments,
+  projectZoneTemperature,
   type ThermalFitResult,
   type ThermalMoments,
-  projectZoneTemperature,
   type ThermalZoneModel,
 } from "./thermal-model.ts";
 
@@ -71,6 +71,8 @@ export const zoneModelRows = (
         heat_loss_w_per_c: null,
         time_constant_h: null,
         heating_rate_c_per_h: null,
+        solar_gain_c_per_h_per_wm2: null,
+        solar_mean_w_per_m2: null,
         r2: null,
         residual_std_c: null,
       };
@@ -93,6 +95,11 @@ export const zoneModelRows = (
       heat_loss_w_per_c: result.model.heat_loss_w_per_c,
       time_constant_h: result.model.time_constant_h,
       heating_rate_c_per_h: result.model.heating_rate_c_per_h,
+      // Null on a zone fitted without irradiance, which is how the planner
+      // tells the two model shapes apart.
+      solar_gain_c_per_h_per_wm2: result.model.solar_gain_c_per_h_per_wm2 ??
+        null,
+      solar_mean_w_per_m2: result.model.solar_mean_w_per_m2 ?? null,
       r2: result.model.r2,
       residual_std_c: result.model.residual_std_c,
     };
@@ -154,6 +161,7 @@ export function buildThermalProjection(
   starts: string[],
   outdoorTemperatureC: (number | null)[],
   zones: ProjectionZoneInput[],
+  solarWPerM2?: (number | null)[] | null,
 ): ThermalProjectionOutput | null {
   if (starts.length === 0 || zones.length === 0) return null;
   // A zone cannot be rolled forward through quarters with no outdoor
@@ -166,12 +174,25 @@ export function buildThermalProjection(
   if (length === 0) return null;
 
   const outdoor = outdoorTemperatureC.slice(0, length) as number[];
-  if (zones.some((zone) =>
-    zone.comfort_min_c.length < length || zone.target_c.length < length ||
-    zone.comfort_max_c.length < length || zone.planned_power_w.length < length ||
-    zone.unplanned_power_w.length < length
-  )) {
-    throw new Error("thermal projection series do not cover the weather horizon");
+  // Irradiance is optional here in a way outdoor temperature is not: a zone
+  // with a solar term falls back to the mean sun it was fitted on, so a
+  // missing forecast shortens no horizon.
+  const solar = solarWPerM2
+    ? solarWPerM2.slice(0, length).map((value) =>
+      typeof value === "number" && Number.isFinite(value) ? value : null
+    )
+    : null;
+  if (
+    zones.some((zone) =>
+      zone.comfort_min_c.length < length || zone.target_c.length < length ||
+      zone.comfort_max_c.length < length ||
+      zone.planned_power_w.length < length ||
+      zone.unplanned_power_w.length < length
+    )
+  ) {
+    throw new Error(
+      "thermal projection series do not cover the weather horizon",
+    );
   }
   const projectedZones = zones.map((zone, index) => {
     const planned = zone.planned_power_w.slice(0, length);
@@ -191,12 +212,14 @@ export function buildThermalProjection(
         zone.start_temperature_c,
         outdoor,
         planned,
+        solar,
       ),
       unplanned_temperature_c: projectZoneTemperature(
         zone.model,
         zone.start_temperature_c,
         outdoor,
         unplanned,
+        solar,
       ),
       planned_power_w: planned,
       unplanned_power_w: unplanned,

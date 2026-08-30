@@ -1,4 +1,5 @@
 import {
+  backgroundRateForSlot,
   projectZoneTemperature,
   type ThermalZoneModel,
 } from "./thermal-model.ts";
@@ -184,6 +185,7 @@ export function buildComfortForecast(
   outdoorTemperatureC: number[],
   ratedPowerW: number,
   heatingLockout: boolean[],
+  solarWPerM2?: (number | null)[] | null,
 ): ComfortForecast {
   if (
     starts.length === 0 || starts.length !== outdoorTemperatureC.length ||
@@ -225,7 +227,7 @@ export function buildComfortForecast(
     const maximumNextGain = SLOT_HOURS * (
       model.gain_c_per_wh * ratedPowerW +
       model.cooling_constant_per_h * outdoorTemperatureC[index] +
-      model.background_gain_c_per_h
+      backgroundRateForSlot(model, index, solarWPerM2)
     );
     const neededNow = (required[index + 1] - maximumNextGain) / alpha;
     required[index] = Math.min(
@@ -241,7 +243,7 @@ export function buildComfortForecast(
     const passiveNext = temperature + SLOT_HOURS * (
           model.cooling_constant_per_h *
             (outdoorTemperatureC[index] - temperature) +
-          model.background_gain_c_per_h
+          backgroundRateForSlot(model, index, solarWPerM2)
         );
     const desiredPower = (desiredNext - passiveNext) /
       (SLOT_HOURS * model.gain_c_per_wh);
@@ -264,6 +266,7 @@ export function buildComfortForecast(
       startTemperatureC,
       outdoorTemperatureC,
       power,
+      solarWPerM2,
     ),
   };
 }

@@ -422,6 +422,13 @@ export interface OptimisationSnapshot {
    * this, electrical planning does not.
    */
   outdoor_temperature_c?: (number | null)[];
+  /**
+   * Global horizontal irradiance per slot, W/m². Filled server-side for every
+   * home, and optional in a way outdoor temperature is not: a zone with a
+   * solar term falls back to the mean sun it was fitted on, so its absence
+   * costs accuracy rather than shortening the horizon.
+   */
+  solar_irradiance_w_per_m2?: (number | null)[] | null;
   /** Injected and validated by the planning edge, never supplied by the app. */
   thermal_zones?: ThermalZonePlanningInput[];
 }

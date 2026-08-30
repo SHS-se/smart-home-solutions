@@ -31,6 +31,7 @@ import {
   TRAINING_WINDOW_DAYS,
   zoneModelRows,
 } from "../_shared/thermal-training.ts";
+import { MIN_TRAINING_SAMPLES } from "../_shared/thermal-model.ts";
 import {
   resolveValueCurves,
   resolveValueSettings,
@@ -311,6 +312,75 @@ const withoutComfortForecast = (
   zones: [],
 });
 
+
+/**
+ * Fill in irradiance for training quarters recorded before it was collected.
+ *
+ * Bounded by construction: a three-week window is at most 2016 quarters, and
+ * this runs only when a refit is actually due — at most daily. It never
+ * invents a figure; quarters the provider cannot answer for stay null and are
+ * simply quarters the sun cannot be fitted from.
+ */
+async function backfillTrainingIrradiance(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  homeId: string,
+  snapshot: OptimisationSnapshot,
+  from: string,
+  to: string,
+): Promise<void> {
+  const location = homeLocation(snapshot);
+  if (!location) return;
+  try {
+    const { data: missing } = await supabase
+      .from("energy_optimisation_outdoor_slots")
+      .select("start_ts")
+      .eq("home_id", homeId)
+      .is("solar_w_per_m2", null)
+      .gte("start_ts", from)
+      .lt("start_ts", to)
+      .order("start_ts");
+    const starts = (missing ?? []).map((row: { start_ts: string }) =>
+      row.start_ts
+    );
+    if (starts.length === 0) return;
+
+    const irradiance = await irradianceForQuarters({
+      supabase,
+      latitude: location.latitude,
+      longitude: location.longitude,
+      starts,
+    });
+    if (!irradiance) return;
+    const rows = starts
+      .map((start: string, index: number) => ({
+        start,
+        value: irradiance[index],
+      }))
+      .filter((row: { value: number | null }) => row.value !== null);
+    if (rows.length === 0) return;
+
+    // One statement per quarter would be thousands of round trips, so the
+    // fill goes back as a single upsert keyed on the row that already exists.
+    const { error } = await supabase
+      .from("energy_optimisation_outdoor_slots")
+      .upsert(
+        rows.map((row: { start: string; value: number }) => ({
+          home_id: homeId,
+          start_ts: row.start,
+          solar_w_per_m2: row.value,
+        })),
+        { onConflict: "home_id,start_ts", ignoreDuplicates: false },
+      );
+    if (error) {
+      console.error("[ENERGY-OPTIMISATION] irradiance backfill failed", error);
+    }
+  } catch (error) {
+    // A zone that cannot learn from the sun today still fits without it.
+    console.error("[ENERGY-OPTIMISATION] irradiance backfill skipped", error);
+  }
+}
+
 /**
  * Replace every mapped room control's recent-history profile with the demand
  * implied by its portal comfort routine, season, outdoor forecast, latest
@@ -563,6 +633,29 @@ async function prepareThermalPlanning(
     };
   }
 
+  // What the sun is expected to do over the horizon. A zone fitted with a
+  // solar term projects far better with this than without, but it is never
+  // required: `backgroundRateForSlot` falls back to the mean irradiance the
+  // zone was fitted on, which is exactly the flat background a three-regressor
+  // fit would have used. So an Open-Meteo outage costs accuracy and nothing
+  // else, and is not allowed to shorten the horizon the way missing
+  // temperature would.
+  const solarLocation = homeLocation(snapshot);
+  // A partial series is welcome here, unlike a partial temperature forecast:
+  // each slot falls back to the fitted mean on its own, so covering what the
+  // provider knows is strictly better than covering none of it.
+  const solar = solarLocation
+    ? await irradianceForQuarters({
+      supabase,
+      latitude: solarLocation.latitude,
+      longitude: solarLocation.longitude,
+      starts,
+    })
+    : null;
+  if (solar) {
+    snapshot = { ...snapshot, solar_irradiance_w_per_m2: solar };
+  }
+
   const now = Date.now();
   const { data: existing } = await supabase
     .from("energy_optimisation_zone_models")
@@ -579,6 +672,18 @@ async function prepareThermalPlanning(
       now - TRAINING_WINDOW_DAYS * 86_400_000,
     ).toISOString();
     const trainingTo = new Date(now).toISOString();
+    // Quarters recorded before irradiance was collected have none, and a fit
+    // will not mix covered quarters with uncovered ones. The provider's own
+    // history reaches back three months against a three-week window, so the
+    // gap is closed here rather than waiting a window's worth of pushes for
+    // the sun to become fittable.
+    await backfillTrainingIrradiance(
+      supabase,
+      homeId,
+      snapshot,
+      trainingFrom,
+      trainingTo,
+    );
     const { data: moments, error } = await supabase.rpc(
       "get_energy_thermal_training_moments",
       {
@@ -586,6 +691,7 @@ async function prepareThermalPlanning(
         p_home_id: homeId,
         p_from: trainingFrom,
         p_to: trainingTo,
+        p_min_samples: MIN_TRAINING_SAMPLES,
       },
     );
     if (error) throw error;
@@ -605,7 +711,7 @@ async function prepareThermalPlanning(
     supabase
       .from("energy_optimisation_zone_models")
       .select(
-        "room_key, room_name, gain_c_per_wh, cooling_constant_per_h, background_gain_c_per_h, thermal_capacity_wh_per_c, heat_loss_w_per_c, time_constant_h, heating_rate_c_per_h, r2, residual_std_c, sample_count",
+        "room_key, room_name, gain_c_per_wh, cooling_constant_per_h, background_gain_c_per_h, solar_gain_c_per_h_per_wm2, solar_mean_w_per_m2, thermal_capacity_wh_per_c, heat_loss_w_per_c, time_constant_h, heating_rate_c_per_h, r2, residual_std_c, sample_count",
       )
       .eq("home_id", homeId)
       .eq("trained", true),
@@ -701,13 +807,26 @@ async function prepareThermalPlanning(
       heating_rate_c_per_h: fitted.heating_rate_c_per_h === null
         ? null
         : Number(fitted.heating_rate_c_per_h),
+      // Null here is the whole signal: a zone fitted before irradiance existed
+      // keeps its flat background and is projected exactly as it always was.
+      solar_gain_c_per_h_per_wm2: fitted.solar_gain_c_per_h_per_wm2 === null ||
+          fitted.solar_gain_c_per_h_per_wm2 === undefined
+        ? null
+        : Number(fitted.solar_gain_c_per_h_per_wm2),
+      solar_mean_w_per_m2: fitted.solar_mean_w_per_m2 === null ||
+          fitted.solar_mean_w_per_m2 === undefined
+        ? null
+        : Number(fitted.solar_mean_w_per_m2),
       r2: Number(fitted.r2),
       sample_count: Number(fitted.sample_count),
       residual_std_c: Number(fitted.residual_std_c),
     };
     if (
       Object.entries(thermalModel).some(([key, value]) =>
-        key !== "heating_rate_c_per_h" && !Number.isFinite(value)
+        key !== "heating_rate_c_per_h" &&
+        key !== "solar_gain_c_per_h_per_wm2" &&
+        key !== "solar_mean_w_per_m2" &&
+        !Number.isFinite(value)
       )
     ) {
       throw new Error(`${room.name}: fitted thermal model is incomplete`);
@@ -721,6 +840,7 @@ async function prepareThermalPlanning(
       outdoor as number[],
       ratedPowerW,
       summerLockout,
+      solar,
     );
     for (const model of room.models) {
       const share = (model.active_power_w ?? 0) / ratedPowerW;
@@ -1658,6 +1778,7 @@ serve(async (req) => {
               slot.room_heating_w?.[zone.key] ?? 0
             ),
           })),
+          snapshot.solar_irradiance_w_per_m2 ?? null,
         );
         if (projection) {
           generated = { ...generated, thermal_projection: projection };

@@ -4546,11 +4546,52 @@ no irradiance, unlocated homes can have none, and the provider's reanalysis
 does not cover its own oldest days. It is evidence where it exists, never a
 precondition.
 
-**Not yet implemented: the fit itself.** The column is populated; the solar
-term is not. Adding it makes the zone regression four-regressor
-(`y = a·P + γ·ΔT + s·I + g`), which changes what `background_gain_c_per_h`
-means on every model already fitted and so requires a deliberate refit rather
-than arriving as a side effect.
+**The fit.** The zone regression is now four-regressor:
+
+```
+y = a·P + γ·(T_out − T_in) + s·I + g
+```
+
+`s` is stored as `solar_gain_c_per_h_per_wm2` and is never negative — sunshine
+cannot cool a room, so a negative solution is a correlation (drawn blinds on
+the brightest afternoons will produce one) and the zone falls back to three
+regressors rather than publishing it.
+
+The bias this removes is not confined to the constant. On a synthetic room
+driven by a known solar coefficient, fitting blind costs far more than the
+background term:
+
+| | r² | `gain_c_per_wh` | `cooling_constant_per_h` | `background_gain_c_per_h` |
+|---|---|---|---|---|
+| Three-regressor | 0.695 | −9.7% | −15.4% | 0.168 (true 0.05) |
+| Four-regressor | 1.000 | exact | exact | exact |
+
+A 15% error in the cooling constant is a 15% error in the home's fitted heat
+loss coefficient, because `heat_loss_w_per_c` is derived from it. Omitting the
+sun was never only about the constant.
+
+Two rules keep the two model shapes interchangeable downstream. Every consumer
+reads the free-heat rate through `backgroundRateForSlot()` rather than the
+constant directly, so neither the comfort forecast nor the projection knows
+which shape it was handed. And `solar_mean_w_per_m2` is stored with the
+coefficient, so a zone with a solar term but no irradiance forecast evaluates
+at its own fitted mean — which reproduces the flat background exactly. Losing
+the forecast costs accuracy, never correctness, and never shortens the horizon
+the way missing temperature does.
+
+Sample sets are chosen once, before any sum is accumulated. Moments are only a
+valid regression if every sum ran over the same rows, so a window is either
+restricted to the quarters carrying irradiance — when those are at least 80% of
+it, and at least `MIN_TRAINING_SAMPLES` — or fitted on everything with three
+regressors. It is never mixed, and an unrecorded hour is never read as an hour
+without sun.
+
+**Refit on deploy.** Existing models were fitted when `g` still absorbed the
+sun, so their constants are inflated and their heat-loss figures low. They are
+replaced on each zone's next scheduled refit (`REFIT_INTERVAL_HOURS = 24`), and
+the training window's missing irradiance is backfilled from the provider's
+92-day history first, so the first refit after deploy already has a full
+window to fit on rather than three weeks of nulls.
 
 Three properties keep this from eroding integration ownership:
 
