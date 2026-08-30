@@ -4508,11 +4508,49 @@ So the integration publishes `outdoor_temperature_c` only when its provider
 covers every slot, and never a series with holes in it — the two must stay
 distinguishable, because a hole means a series was built and not filled, while
 absence means no adapter reached that far. On absence the planning edge reads
-met.no directly for the coordinates the snapshot already declares under
-`sources.pv.location`, caches the response by rounded coordinate until the
-provider's own `Expires`, and records the result as
+met.no directly for the home's coordinates, caches the response by rounded
+coordinate until the provider's own `Expires`, and records the result as
 `sources.outdoor_temperature` with an empty `entity_ids` so the origin stays
 legible.
+
+Coordinates are a property of the home, published at the snapshot's top level
+as `location` since integration 0.8.0-beta.7. They were previously carried only
+inside `sources.pv`, which made weather a privilege of homes that generate;
+`homeLocation()` still falls back to that field for homes on older versions.
+
+#### 9.1.2 Solar irradiance
+
+The same reasoning extends past temperature. A room gains far more heat from
+the sun than from anything the planner switches on, and the 1R1C fit currently
+has one constant — `background_gain_c_per_h` — standing for sunshine, cooking,
+lighting and occupants at once. A constant cannot separate a bright day from a
+dull one: over the eight days to 2026-09-05 this site received between 0.24 and
+4.79 kWh/m², a twentyfold spread that a single averaged term must
+under-predict at one end and over-predict at the other.
+
+`shortwave_radiation` — global horizontal irradiance, W/m² — is recorded per
+completed quarter on `energy_optimisation_outdoor_slots` for **every** home,
+whether or not it generates. Solar gain through a window has nothing to do with
+owning an inverter, and a PV forecast is the wrong quantity for it regardless:
+that series reports expected AC output, already through array orientation,
+shading, temperature derating and inverter efficiency. A wall gains heat from
+the sky.
+
+Open-Meteo is the source, because met.no publishes no irradiance. One request
+returns the forecast plus 92 days of history, so the column is recorded now
+rather than waiting on accumulation — and recorded now because it can only be
+recovered for so long: a quarter left unrecorded past that window is gone.
+
+The column is nullable and stays nullable. Rows written before it existed have
+no irradiance, unlocated homes can have none, and the provider's reanalysis
+does not cover its own oldest days. It is evidence where it exists, never a
+precondition.
+
+**Not yet implemented: the fit itself.** The column is populated; the solar
+term is not. Adding it makes the zone regression four-regressor
+(`y = a·P + γ·ΔT + s·I + g`), which changes what `background_gain_c_per_h`
+means on every model already fitted and so requires a deliberate refit rather
+than arriving as a side effect.
 
 Three properties keep this from eroding integration ownership:
 

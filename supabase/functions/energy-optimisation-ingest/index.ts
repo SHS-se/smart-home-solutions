@@ -49,9 +49,11 @@ import {
 } from "../_shared/comfort-schedule.ts";
 import {
   classifyOutdoorSeries,
-  gridRound,
+  homeLocation,
   outdoorSeriesFromProvider,
 } from "../_shared/outdoor-forecast.ts";
+import { irradianceForQuarters } from "../_shared/solar-irradiance.ts";
+import { gridRound } from "../_shared/weather-cache.ts";
 
 const MAX_ACTUAL_SLOTS_PER_PUSH = 288;
 const MAX_THERMAL_SLOTS_PER_PUSH = 288;
@@ -523,15 +525,11 @@ async function prepareThermalPlanning(
   } else {
     // Home Assistant's adapter did not reach the end of the horizon. The
     // weather usually still exists — met.no publishes ten days of it — so ask
-    // the provider directly before planning the rooms blind. The coordinates
-    // are the ones the snapshot already declares for its PV forecast, so this
-    // needs nothing new from the home.
-    const location = snapshot.sources.pv?.location;
-    const latitude = location?.latitude;
-    const longitude = location?.longitude;
-    if (typeof latitude !== "number" || typeof longitude !== "number") {
-      return withoutComfortForecast(snapshot);
-    }
+    // the provider directly before planning the rooms blind, using the
+    // coordinates the snapshot already declares.
+    const location = homeLocation(snapshot);
+    if (!location) return withoutComfortForecast(snapshot);
+    const { latitude, longitude } = location;
     const provided = await outdoorSeriesFromProvider({
       supabase,
       latitude,
@@ -1353,6 +1351,9 @@ serve(async (req) => {
           home_id: auth.homeId,
           start_ts: new Date(start).toISOString(),
           temperature_c: outdoor,
+          // Filled below, once the whole batch's timestamps are known and one
+          // provider read can answer for all of them.
+          solar_w_per_m2: null as number | null,
           device_token_id: auth.tokenId,
         });
       }
@@ -1420,6 +1421,27 @@ serve(async (req) => {
           quality: thermal.quality ?? {},
           device_token_id: auth.tokenId,
         });
+      }
+    }
+
+    // What the sun was doing over these quarters. Recorded now because it can
+    // only be recovered for so long: the provider's history reaches back about
+    // three months, so a quarter left unrecorded past that is unrecoverable,
+    // and a zone can only ever learn from sunshine it has a record of.
+    if (outdoorRows.length > 0) {
+      const location = homeLocation(snapshot);
+      const irradiance = location
+        ? await irradianceForQuarters({
+          supabase,
+          latitude: location.latitude,
+          longitude: location.longitude,
+          starts: outdoorRows.map((row) => row.start_ts as string),
+        })
+        : null;
+      if (irradiance) {
+        for (const [index, row] of outdoorRows.entries()) {
+          row.solar_w_per_m2 = irradiance[index];
+        }
       }
     }
 

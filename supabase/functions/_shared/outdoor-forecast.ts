@@ -21,8 +21,7 @@
 // provider marks hourly — for met.no about two days, against a three-day
 // horizon — while the same met.no response describes temperature for ten
 // days, hourly at first and six-hourly after. So the planner asks met.no
-// itself before giving up on comfort, using the coordinates the snapshot
-// already declares for its PV forecast.
+// itself before giving up on comfort.
 //
 // Reading the provider directly is a wider change than it looks: until now
 // every forecast reached the planner through the home's own integration, and
@@ -30,6 +29,14 @@
 // quantity. It is deliberately the fallback and never the default. Whatever
 // the home's own adapter can cover, it covers; this only answers for the part
 // no adapter reached.
+
+import {
+  cachedProviderPoints,
+  expiryFrom,
+  interpolateOntoSlots,
+  type ProviderResponse,
+  type WeatherPoint,
+} from "./weather-cache.ts";
 
 /** Slot-aligned outdoor temperatures, or why there are none. */
 export type OutdoorSeries =
@@ -58,70 +65,68 @@ export function classifyOutdoorSeries(
   return { status: "complete", series };
 }
 
-/** One instant a provider described, at whatever resolution it issued. */
-export interface ForecastPoint {
-  at: string;
-  c: number;
-}
-
 /**
- * A quarter starting within this much of the first point takes that point.
+ * Where the home is, from wherever this snapshot happens to carry it.
  *
- * Providers publish on the hour and drop the hour already under way, so the
- * planner's first quarter is routinely minutes ahead of the forecast's first
- * entry. Reading that entry a few minutes early is the forecast, not a guess;
- * an hour is the most that can be true of, because the gap can never exceed
- * the distance from one quarter to the next hour.
+ * Integrations before 0.8.0-beta.7 published coordinates only under
+ * `sources.pv`, which tied weather to owning panels. A house without panels
+ * sits in the same weather and its rooms gain heat from the same sun, so the
+ * top-level field is preferred and the PV one is only a fallback for homes
+ * that have not updated yet.
  */
-const LEAD_IN_MS = 3_600_000;
-
-/** Widest provider step worth interpolating across. met.no issues six. */
-const MAX_STEP_MS = 6 * 3_600_000;
+export function homeLocation(
+  snapshot:
+    | {
+      location?: { latitude?: number; longitude?: number } | null;
+      sources?: {
+        pv?: { location?: { latitude?: number; longitude?: number } } | null;
+      };
+    }
+    | null
+    | undefined,
+): { latitude: number; longitude: number } | null {
+  // A push may carry completed quarters with no snapshot at all, so an absent
+  // snapshot is an ordinary answer here rather than a caller's mistake.
+  if (!snapshot) return null;
+  for (const candidate of [snapshot.location, snapshot.sources?.pv?.location]) {
+    const { latitude, longitude } = candidate ?? {};
+    if (
+      typeof latitude === "number" && typeof longitude === "number" &&
+      Number.isFinite(latitude) && Number.isFinite(longitude) &&
+      Math.abs(latitude) <= 90 && Math.abs(longitude) <= 180
+    ) {
+      return { latitude, longitude };
+    }
+  }
+  return null;
+}
 
 /**
- * Resample provider points onto slot starts, linearly between the bracketing
- * pair. Slots past the last point stay null rather than flat-extrapolated:
- * a short provider horizon must stay visibly short instead of inventing
- * weather. A gap wider than a provider ever issues is treated the same way,
- * so a truncated response cannot be smoothed into a plausible-looking line.
+ * met.no requires an identifying User-Agent with a way to reach whoever runs
+ * the client, and blocks requests without one. It also asks for coordinates
+ * truncated to at most four decimals; the cache rounds harder still, to two,
+ * so the request and the cache describe the same square kilometre.
  */
-export function interpolateOntoSlots(
-  points: ForecastPoint[],
-  starts: string[],
-): (number | null)[] {
-  const ordered = points
-    .map((point) => ({ t: Date.parse(point.at), c: point.c }))
-    .filter((point) => Number.isFinite(point.t) && Number.isFinite(point.c))
-    .sort((left, right) => left.t - right.t);
-  if (ordered.length === 0) return starts.map(() => null);
+const MET_NO_USER_AGENT =
+  "SmartHomeSolutions-EnergyPlanner/1.0 support@smarthomesolutions.se";
+const MET_NO_ENDPOINT =
+  "https://api.met.no/weatherapi/locationforecast/2.0/compact";
+export const MET_NO_PROVIDER = "met_no_locationforecast";
 
-  const first = ordered[0];
-  const last = ordered[ordered.length - 1];
-  let index = 0;
-  return starts.map((start) => {
-    const at = Date.parse(start);
-    if (!Number.isFinite(at) || at > last.t) return null;
-    if (at < first.t) return first.t - at < LEAD_IN_MS ? first.c : null;
-    while (index + 1 < ordered.length && ordered[index + 1].t < at) index += 1;
-    const left = ordered[index];
-    const right = ordered[index + 1] ?? left;
-    if (right.t === left.t) return left.c;
-    if (right.t - left.t > MAX_STEP_MS) return null;
-    return left.c + (right.c - left.c) * ((at - left.t) / (right.t - left.t));
-  });
-}
+/** Widest step met.no issues, once past its first two hourly days. */
+const MET_NO_MAX_STEP_MS = 6 * 3_600_000;
 
 /**
  * Read `properties.timeseries[].data.instant.details.air_temperature` out of a
  * met.no locationforecast response, skipping anything malformed rather than
  * failing the whole plan over one bad entry.
  */
-export function parseMetNoForecast(body: unknown): ForecastPoint[] {
+export function parseMetNoForecast(body: unknown): WeatherPoint[] {
   const series = (body as {
     properties?: { timeseries?: unknown[] };
   })?.properties?.timeseries;
   if (!Array.isArray(series)) return [];
-  const points: ForecastPoint[] = [];
+  const points: WeatherPoint[] = [];
   for (const entry of series) {
     const time = (entry as { time?: unknown })?.time;
     const celsius = (entry as {
@@ -131,78 +136,19 @@ export function parseMetNoForecast(body: unknown): ForecastPoint[] {
     if (!Number.isFinite(Date.parse(time)) || !Number.isFinite(celsius)) {
       continue;
     }
-    points.push({ at: time, c: celsius });
+    points.push({ at: time, v: celsius });
   }
   return points;
 }
 
 /**
- * met.no requires an identifying User-Agent with a way to reach whoever runs
- * the client, and blocks requests without one. It also asks for coordinates
- * truncated to at most four decimals; we round harder still, to the two
- * decimals the cache is keyed by, so the request and the cache describe the
- * same square kilometre.
- */
-const MET_NO_USER_AGENT =
-  "SmartHomeSolutions-EnergyPlanner/1.0 support@smarthomesolutions.se";
-const MET_NO_ENDPOINT =
-  "https://api.met.no/weatherapi/locationforecast/2.0/compact";
-const PROVIDER = "met_no_locationforecast";
-
-/** Cache-key precision: ~1 km, comfortably inside met.no's own grid. */
-export const gridRound = (value: number): number =>
-  Math.round(value * 100) / 100;
-
-/** How long a response is trusted when the provider names no expiry. */
-const DEFAULT_TTL_MS = 30 * 60_000;
-
-interface CachedForecast {
-  points: ForecastPoint[];
-  expiresAt: string;
-  fetchedAt: string;
-}
-
-async function fetchMetNo(
-  latitude: number,
-  longitude: number,
-  now: Date,
-  fetchImpl: typeof fetch,
-): Promise<CachedForecast | null> {
-  const url = `${MET_NO_ENDPOINT}?lat=${latitude.toFixed(2)}&lon=${
-    longitude.toFixed(2)
-  }`;
-  const response = await fetchImpl(url, {
-    headers: { "User-Agent": MET_NO_USER_AGENT, Accept: "application/json" },
-  });
-  if (!response.ok) {
-    console.error("[OUTDOOR-FORECAST] met.no responded", response.status);
-    return null;
-  }
-  const points = parseMetNoForecast(await response.json());
-  if (points.length === 0) return null;
-  const expires = Date.parse(response.headers.get("expires") ?? "");
-  return {
-    points,
-    fetchedAt: now.toISOString(),
-    expiresAt: new Date(
-      Number.isFinite(expires) && expires > now.getTime()
-        ? expires
-        : now.getTime() + DEFAULT_TTL_MS,
-    ).toISOString(),
-  };
-}
-
-/**
- * Outdoor temperature for every slot start, from met.no via a shared cache.
+ * Outdoor temperature for every slot start, from met.no via the shared cache.
  *
  * Returns null whenever the horizon cannot be covered end to end — provider
  * unreachable, response unusable, or a forecast that still falls short. A
  * partial answer is worth nothing here: the caller's alternative is to plan
  * without comfort forecasting, which is strictly better than projecting a
  * room against weather that was interpolated out of nothing.
- *
- * A weather outage must never stop a home from planning, so every failure
- * path is a logged null rather than a throw.
  */
 export async function outdoorSeriesFromProvider(options: {
   // deno-lint-ignore no-explicit-any
@@ -213,62 +159,47 @@ export async function outdoorSeriesFromProvider(options: {
   now?: Date;
   fetchImpl?: typeof fetch;
 }): Promise<{ series: number[]; issuedAt: string; points: number } | null> {
-  const {
-    supabase,
-    starts,
-    now = new Date(),
-    fetchImpl = fetch,
-  } = options;
+  const { supabase, starts, now = new Date(), fetchImpl = fetch } = options;
   if (starts.length === 0) return null;
-  const latitude = gridRound(options.latitude);
-  const longitude = gridRound(options.longitude);
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
 
-  try {
-    const { data: cached } = await supabase
-      .from("energy_outdoor_forecast_cache")
-      .select("points, fetched_at, expires_at")
-      .eq("provider", PROVIDER)
-      .eq("latitude", latitude)
-      .eq("longitude", longitude)
-      .maybeSingle();
+  const points = await cachedProviderPoints({
+    supabase,
+    provider: MET_NO_PROVIDER,
+    latitude: options.latitude,
+    longitude: options.longitude,
+    now,
+    fetchPoints: async (
+      latitude,
+      longitude,
+    ): Promise<ProviderResponse | null> => {
+      const response = await fetchImpl(
+        `${MET_NO_ENDPOINT}?lat=${latitude.toFixed(2)}&lon=${
+          longitude.toFixed(2)
+        }`,
+        {
+          headers: {
+            "User-Agent": MET_NO_USER_AGENT,
+            Accept: "application/json",
+          },
+        },
+      );
+      if (!response.ok) {
+        console.error("[WEATHER] met.no responded", response.status);
+        return null;
+      }
+      return {
+        points: parseMetNoForecast(await response.json()),
+        expiresAt: expiryFrom(response, now),
+      };
+    },
+  });
+  if (!points) return null;
 
-    let forecast: CachedForecast | null =
-      cached && Date.parse(cached.expires_at) > now.getTime()
-        ? {
-          points: cached.points as ForecastPoint[],
-          fetchedAt: cached.fetched_at,
-          expiresAt: cached.expires_at,
-        }
-        : null;
-
-    if (!forecast) {
-      forecast = await fetchMetNo(latitude, longitude, now, fetchImpl);
-      if (!forecast) return null;
-      const { error } = await supabase
-        .from("energy_outdoor_forecast_cache")
-        .upsert({
-          provider: PROVIDER,
-          latitude,
-          longitude,
-          points: forecast.points,
-          fetched_at: forecast.fetchedAt,
-          expires_at: forecast.expiresAt,
-        }, { onConflict: "provider,latitude,longitude" });
-      // A cache that will not write costs another request next quarter, which
-      // is not a reason to withhold a forecast we already hold.
-      if (error) console.error("[OUTDOOR-FORECAST] cache write failed", error);
-    }
-
-    const series = interpolateOntoSlots(forecast.points, starts);
-    if (series.some((value) => value === null)) return null;
-    return {
-      series: series as number[],
-      issuedAt: forecast.fetchedAt,
-      points: forecast.points.length,
-    };
-  } catch (error) {
-    console.error("[OUTDOOR-FORECAST] met.no lookup failed", error);
-    return null;
-  }
+  const series = interpolateOntoSlots(points, starts, MET_NO_MAX_STEP_MS);
+  if (series.some((value) => value === null)) return null;
+  return {
+    series: series as number[],
+    issuedAt: now.toISOString(),
+    points: points.length,
+  };
 }

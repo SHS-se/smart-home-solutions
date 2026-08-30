@@ -1,11 +1,7 @@
-import {
-  assert,
-  assertEquals,
-} from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   classifyOutdoorSeries,
-  gridRound,
-  interpolateOntoSlots,
+  homeLocation,
   outdoorSeriesFromProvider,
   parseMetNoForecast,
 } from "./outdoor-forecast.ts";
@@ -54,62 +50,6 @@ const quarters = (from: string, count: number): string[] => {
   );
 };
 
-Deno.test("interpolates linearly between two provider hours", () => {
-  const points = [
-    { at: "2026-08-30T04:00:00Z", c: 10 },
-    { at: "2026-08-30T05:00:00Z", c: 14 },
-  ];
-  assertEquals(
-    interpolateOntoSlots(points, quarters("2026-08-30T04:00:00Z", 5)),
-    [10, 11, 12, 13, 14],
-  );
-});
-
-Deno.test("interpolates across met.no's six-hourly tail", () => {
-  const points = [
-    { at: "2026-09-01T00:00:00Z", c: 12 },
-    { at: "2026-09-01T06:00:00Z", c: 18 },
-  ];
-  assertEquals(
-    interpolateOntoSlots(points, ["2026-09-01T03:00:00Z"]),
-    [15],
-  );
-});
-
-Deno.test("reads the first entry for a quarter just before the forecast starts", () => {
-  const points = [
-    { at: "2026-08-30T04:00:00Z", c: 10 },
-    { at: "2026-08-30T05:00:00Z", c: 14 },
-  ];
-  assertEquals(
-    interpolateOntoSlots(points, ["2026-08-30T03:45:00Z"]),
-    [10],
-  );
-  assertEquals(
-    interpolateOntoSlots(points, ["2026-08-30T03:00:00Z"]),
-    [null],
-  );
-});
-
-Deno.test("never extrapolates past the last point", () => {
-  const points = [{ at: "2026-08-30T04:00:00Z", c: 10 }];
-  assertEquals(
-    interpolateOntoSlots(points, ["2026-08-30T04:15:00Z"]),
-    [null],
-  );
-});
-
-Deno.test("a gap wider than a provider issues is a gap, not a long straight line", () => {
-  const points = [
-    { at: "2026-08-30T04:00:00Z", c: 10 },
-    { at: "2026-09-01T04:00:00Z", c: 20 },
-  ];
-  assertEquals(
-    interpolateOntoSlots(points, ["2026-08-31T04:00:00Z"]),
-    [null],
-  );
-});
-
 Deno.test("parses air temperature out of a met.no response and skips junk", () => {
   const body = {
     properties: {
@@ -128,15 +68,10 @@ Deno.test("parses air temperature out of a met.no response and skips junk", () =
     },
   };
   assertEquals(parseMetNoForecast(body), [
-    { at: "2026-08-30T04:00:00Z", c: 14.4 },
+    { at: "2026-08-30T04:00:00Z", v: 14.4 },
   ]);
   assertEquals(parseMetNoForecast({}), []);
   assertEquals(parseMetNoForecast(null), []);
-});
-
-Deno.test("coordinates are rounded to the cache's kilometre grid", () => {
-  assertEquals(gridRound(59.456128864845056), 59.46);
-  assertEquals(gridRound(18.04084897041321), 18.04);
 });
 
 /** Minimal stand-in for the query builder the edge functions use. */
@@ -207,8 +142,8 @@ Deno.test("a live cache entry is used without calling the provider", async () =>
   const result = await outdoorSeriesFromProvider({
     supabase: fakeSupabase({
       points: [
-        { at: "2026-08-30T04:00:00Z", c: 10 },
-        { at: "2026-08-30T05:00:00Z", c: 14 },
+        { at: "2026-08-30T04:00:00Z", v: 10 },
+        { at: "2026-08-30T05:00:00Z", v: 14 },
       ],
       fetched_at: "2026-08-30T04:00:00Z",
       expires_at: "2026-08-30T04:42:35Z",
@@ -230,7 +165,7 @@ Deno.test("an expired cache entry is refetched", async () => {
   let calls = 0;
   const result = await outdoorSeriesFromProvider({
     supabase: fakeSupabase({
-      points: [{ at: "2026-08-30T00:00:00Z", c: 1 }],
+      points: [{ at: "2026-08-30T00:00:00Z", v: 1 }],
       fetched_at: "2026-08-30T00:00:00Z",
       expires_at: "2026-08-30T00:30:00Z",
     }, written),
@@ -282,27 +217,32 @@ Deno.test("a weather outage never stops a plan", async () => {
   assertEquals(refused, null);
 });
 
-Deno.test("the real met.no response shape covers a 72 hour horizon", () => {
-  // Two days of hourly followed by a six-hourly tail, as met.no issues it.
-  const points = [
-    ...Array.from({ length: 57 }, (_unused, index) => ({
-      at: new Date(Date.parse("2026-08-30T04:00:00Z") + index * 3_600_000)
-        .toISOString(),
-      c: 15,
-    })),
-    ...Array.from({ length: 30 }, (_unused, index) => ({
-      at: new Date(
-        Date.parse("2026-09-01T12:00:00Z") + index * 6 * 3_600_000,
-      ).toISOString(),
-      c: 15,
-    })),
-  ];
-  const series = interpolateOntoSlots(
-    points,
-    quarters("2026-08-30T04:00:00Z", 288),
+Deno.test("the home's own location is preferred over the PV forecast's", () => {
+  assertEquals(
+    homeLocation({
+      location: { latitude: 59.46, longitude: 18.04 },
+      sources: { pv: { location: { latitude: 1, longitude: 2 } } },
+    }),
+    { latitude: 59.46, longitude: 18.04 },
   );
-  assert(
-    series.every((value) => value !== null),
-    "met.no's own resolution left a hole in the 72 hour horizon",
+});
+
+Deno.test("an older integration is still located through its PV forecast", () => {
+  assertEquals(
+    homeLocation({
+      sources: { pv: { location: { latitude: 59, longitude: 18 } } },
+    }),
+    { latitude: 59, longitude: 18 },
+  );
+});
+
+Deno.test("a home with neither is simply unlocated, not an error", () => {
+  assertEquals(homeLocation({ sources: { pv: null } }), null);
+  assertEquals(homeLocation({}), null);
+  assertEquals(homeLocation(null), null);
+  assertEquals(
+    homeLocation({ location: { latitude: 91, longitude: 18 } }),
+    null,
+    "an impossible latitude is not a location",
   );
 });

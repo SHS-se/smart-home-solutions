@@ -336,6 +336,11 @@ export interface OptimisationSnapshot {
   snapshot_id: string;
   captured_at: string;
   timezone: string;
+  // Where the house is. Optional only because integrations older than
+  // 0.8.0-beta.7 published it inside `sources.pv` instead, which made weather
+  // a privilege of homes that generate; read it through `homeLocation()`,
+  // never directly, so the older shape keeps working.
+  location?: { latitude: number; longitude: number };
   slot_minutes: 15;
   slots: ForecastSlotInput[];
   sources: {
