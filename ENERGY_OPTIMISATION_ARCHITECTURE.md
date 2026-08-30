@@ -4485,10 +4485,43 @@ curves editor.
 | Hard installation | Fuse/import/export limit, rated power, battery min/max SOC, inverter modes, actuator relationship | Staff commissioning + integration verification | No |
 | Customer policy | Comfort targets/ranges, EV target SOC and optional departure, quiet hours, reserve preference | Customer/staff in portal | No; suggestions only |
 | Live state | SOC, temperatures, presence, cycle complete, override, availability, work completed | Integration from HA | No substitution |
-| Forecast | PV, outdoor temperature, base load, import/export prices | Integration adapters + server models | Bias/error can be learned |
+| Forecast | PV, outdoor temperature, base load, import/export prices | Integration adapters + server models; outdoor temperature may also be read from met.no server-side when the home's adapter falls short (§9.1.1) | Bias/error can be learned |
 | Device dynamics | COP, modulation, startup, efficiency, thermal capacity/loss, power curve | Manufacturer profile, then measured calibration | Yes, within validated bounds |
 | Market/tariff | Effective version, price series, demand rule, month peak | Portal catalogue + integration recorder | No |
 | Orchestration | 15-minute step, 72-hour look-ahead, binding horizon, replan thresholds | SHS model version | Product-controlled |
+
+#### 9.1.1 Outdoor temperature: one exception to integration ownership
+
+Every other forecast reaches the planner through the home's own integration,
+and outdoor temperature normally does too. It carries one exception, because
+the integration cannot always deliver what the provider actually published.
+
+Home Assistant's weather platform exposes only the part of a forecast the
+provider marks hourly. For met.no that is roughly two days, against a 72-hour
+look-ahead — yet the same met.no response describes air temperature for ten,
+hourly at first and six-hourly after. The missing 24 hours were never missing
+from the provider, only from the adapter. Room comfort forecasting is the one
+thing that needs them: a 1R1C zone cannot be projected forward without knowing
+what it loses heat to.
+
+So the integration publishes `outdoor_temperature_c` only when its provider
+covers every slot, and never a series with holes in it — the two must stay
+distinguishable, because a hole means a series was built and not filled, while
+absence means no adapter reached that far. On absence the planning edge reads
+met.no directly for the coordinates the snapshot already declares under
+`sources.pv.location`, caches the response by rounded coordinate until the
+provider's own `Expires`, and records the result as
+`sources.outdoor_temperature` with an empty `entity_ids` so the origin stays
+legible.
+
+Three properties keep this from eroding integration ownership:
+
+- it is a fallback, never a default — whatever the home's adapter covers, the
+  adapter's figures are used;
+- it never invents weather, only interpolates inside the provider's own
+  resolution, and yields nothing rather than a partial series;
+- it cannot stop a plan. A weather outage costs the home its comfort forecast
+  for that push; every other load still plans on prices and recent history.
 
 ### 9.2 Minimum device specifications
 

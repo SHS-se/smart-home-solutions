@@ -47,7 +47,11 @@ import {
   summerHeatingLockoutForStarts,
   type ZoneComfortSchedule,
 } from "../_shared/comfort-schedule.ts";
-import { classifyOutdoorSeries } from "../_shared/outdoor-forecast.ts";
+import {
+  classifyOutdoorSeries,
+  gridRound,
+  outdoorSeriesFromProvider,
+} from "../_shared/outdoor-forecast.ts";
 
 const MAX_ACTUAL_SLOTS_PER_PUSH = 288;
 const MAX_THERMAL_SLOTS_PER_PUSH = 288;
@@ -508,15 +512,58 @@ async function prepareThermalPlanning(
     snapshot.outdoor_temperature_c,
     snapshot.slots.length,
   );
-  if (classified.status === "absent") {
-    return withoutComfortForecast(snapshot);
-  }
   if (classified.status === "holed") {
     throw new Error(
       "room comfort forecasting needs outdoor temperature for every slot",
     );
   }
-  const outdoor = classified.series;
+  let outdoor: number[];
+  if (classified.status === "complete") {
+    outdoor = classified.series;
+  } else {
+    // Home Assistant's adapter did not reach the end of the horizon. The
+    // weather usually still exists — met.no publishes ten days of it — so ask
+    // the provider directly before planning the rooms blind. The coordinates
+    // are the ones the snapshot already declares for its PV forecast, so this
+    // needs nothing new from the home.
+    const location = snapshot.sources.pv?.location;
+    const latitude = location?.latitude;
+    const longitude = location?.longitude;
+    if (typeof latitude !== "number" || typeof longitude !== "number") {
+      return withoutComfortForecast(snapshot);
+    }
+    const provided = await outdoorSeriesFromProvider({
+      supabase,
+      latitude,
+      longitude,
+      starts,
+    });
+    if (!provided) return withoutComfortForecast(snapshot);
+    outdoor = provided.series;
+    snapshot = {
+      ...snapshot,
+      outdoor_temperature_c: provided.series,
+      sources: {
+        ...snapshot.sources,
+        outdoor_temperature: {
+          provider: "met_no_locationforecast",
+          // No Home Assistant entity stands behind this one; the portal
+          // reads the empty list as "the planner fetched this itself".
+          entity_ids: [],
+          issued_at: provided.issuedAt,
+          valid_until: new Date(
+            Date.parse(starts[starts.length - 1]) + SLOT_MS,
+          ).toISOString(),
+          quality: "provider_raw",
+          sample_count: provided.points,
+          location: {
+            latitude: gridRound(latitude),
+            longitude: gridRound(longitude),
+          },
+        },
+      },
+    };
+  }
 
   const now = Date.now();
   const { data: existing } = await supabase
