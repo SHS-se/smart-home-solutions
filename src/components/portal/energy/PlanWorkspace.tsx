@@ -420,6 +420,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
           stale={clock > Date.parse(current.plan.valid_until)}
           isDemo={false}
           lastCheckedAt={lastCheckedAt}
+          connectionLastSeenAt={activeConnection?.last_seen_at ?? null}
           deviceActuals={deviceActuals}
           prices={prices}
           now={clock}
@@ -481,6 +482,13 @@ const PlanView: React.FC<{
   stale: boolean;
   isDemo: boolean;
   lastCheckedAt?: number | null;
+  /**
+   * When Home Assistant last authenticated with us. Stamped before any
+   * planning work, so it still moves when a push is rejected — which is what
+   * separates "your home stopped talking to us" from "we could not build a
+   * plan for it".
+   */
+  connectionLastSeenAt?: string | null;
   deviceActuals: EmpiricalDeviceSlotMatrix[];
   prices: PriceSlotRow[];
   now: number;
@@ -498,6 +506,7 @@ const PlanView: React.FC<{
   stale,
   isDemo,
   lastCheckedAt,
+  connectionLastSeenAt,
   dayWindow,
   onDayWindowChange,
   deviceActuals,
@@ -626,47 +635,156 @@ const PlanView: React.FC<{
           </AlertDescription>
         </Alert>
       )}
-      {(!acknowledgedReady || validationMessages.length > 0) && (
-        <Alert variant={acknowledgementRejected || stale || bindingExpired || sourceStale.length > 0 ? 'destructive' : 'default'}>
-          <AlertTriangle className="h-4 w-4" />
-          <AlertTitle>
-            {acknowledgementRejected
-              ? t('Home Assistant avvisade den senaste planen', 'Home Assistant rejected the latest plan')
-              : acknowledgementPending
-                ? t('Väntar på Home Assistant', 'Waiting for Home Assistant acknowledgement')
-                : stale
-              ? t('Planen har gått ut', 'Plan expired')
+      {(!acknowledgedReady || validationMessages.length > 0) && (() => {
+        // Every one of these states used to be reported in the planner's own
+        // vocabulary — "valid_until passed", "advisory, unpriced slots" —
+        // repeated once per forecast source. For an expired plan that is the
+        // same fact four times over: the sources all carry the same deadline,
+        // so when the plan lapses they lapse together and listing them says
+        // nothing the headline did not. What a household actually needs to
+        // know is what its home is doing right now, and whether anyone is
+        // waiting on them. The wording below answers those two questions
+        // first; the original detail is kept, one disclosure away, for
+        // whoever is debugging rather than living here.
+        const lastSeenMs = connectionLastSeenAt
+          ? Date.parse(connectionLastSeenAt)
+          : Number.NaN;
+        const minutesSinceSeen = Number.isFinite(lastSeenMs)
+          ? Math.max(0, Math.round((now - lastSeenMs) / 60_000))
+          : null;
+        // Pushes arrive every quarter hour, so twenty minutes of silence is
+        // the first missed one rather than a blip.
+        const connectionLive = minutesSinceSeen !== null && minutesSinceSeen <= 20;
+        const clockTime = (value: string | number) =>
+          new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const ago = minutesSinceSeen === null
+          ? null
+          : minutesSinceSeen < 1
+            ? t('för mindre än en minut sedan', 'less than a minute ago')
+            : minutesSinceSeen < 60
+              ? t(`för ${minutesSinceSeen} minuter sedan`, `${minutesSinceSeen} minutes ago`)
+              : t(`kl. ${clockTime(lastSeenMs)}`, `at ${clockTime(lastSeenMs)}`);
+
+        // Source keys are internal. Only these names ever reach a household.
+        const SOURCE_NAMES: Record<string, [string, string]> = {
+          pv: ['solprognosen', 'the solar forecast'],
+          battery: ['batteriets mätvärden', 'the battery readings'],
+          base_load: ['hemmets normalförbrukning', "your home's usual consumption"],
+          import_price: ['elpriserna', 'electricity prices'],
+          export_price: ['elpriserna', 'electricity prices'],
+          outdoor_temperature: ['väderprognosen', 'the weather forecast'],
+        };
+        const staleNames = [...new Set(sourceStale.map(source =>
+          SOURCE_NAMES[source] ? t(...SOURCE_NAMES[source]) : source))];
+
+        const runningNormally = t(
+          'Värme, varmvatten och batteri går på sina vanliga inställningar under tiden, så ingenting är avstängt — hemmet planeras bara inte för lägsta kostnad just nu.',
+          'Your heating, hot water and battery are running on their usual settings meanwhile, so nothing is switched off — your home just is not being planned for lowest cost right now.',
+        );
+        const notYours = t(
+          'Det här är något vi behöver rätta till, inte något du behöver göra.',
+          'This is something for us to put right, not something you need to do.',
+        );
+
+        const title = acknowledgementRejected
+          ? t('Home Assistant kunde inte använda den senaste planen', 'Home Assistant could not use the latest plan')
+          : acknowledgementPending
+            ? t('Väntar på Home Assistant', 'Waiting for Home Assistant')
+            : stale
+              ? connectionLive
+                ? t('Planen är inaktuell', 'Your plan is out of date')
+                : t('Hemmet har slutat skicka data', 'Your home has stopped sending data')
               : bindingExpired
-                ? t('Den prissatta perioden har gått ut', 'The priced interval has ended')
-              : sourceStale.length > 0
-                ? t('En prognoskälla är gammal', 'A forecast source is stale')
-                : t('Planen är inte genomförbar', 'Plan is not feasible')}
-          </AlertTitle>
-          <AlertDescription>
-            {[
-              ...(acknowledgementRejected && acknowledgementMessage
-                ? [acknowledgementMessage]
-                : []),
-              ...(acknowledgementPending ? [t(
-                'Servern har skapat planen men Home Assistant har ännu inte bekräftat att den kan köras.',
-                'The server generated this plan, but Home Assistant has not yet confirmed that it can execute it.',
-              )] : []),
-              ...(stale && !isDemo ? [current.ha_ack_status === 'accepted'
-                ? t(
-                  'Home Assistant accepterade planen, men ingen ersättningsplan skapades innan den gick ut.',
-                  'Home Assistant accepted this plan, but no replacement was generated before it expired.',
-                )
-                : t(
-                  'Home Assistant begär planer, servern skapar dem och Home Assistant validerar dem före körning.',
-                  'Home Assistant requests plans, the server generates them, and Home Assistant validates them before execution.',
-                )] : []),
-              ...(bindingExpired ? [t('Home Assistant utför inte rådgivande, oprissatta pass.', 'Home Assistant does not execute advisory, unpriced slots.')] : []),
-              ...sourceStale.map(source => `${source}: valid_until passed`),
-              ...validationMessages,
-            ].slice(0, 8).join(' · ') || t('Home Assistant använder baskontrollerna tills en giltig plan finns.', 'Home Assistant uses its baseline controllers until a valid plan is available.')}
-          </AlertDescription>
-        </Alert>
-      )}
+                ? t('Planen sträcker sig längre än elpriserna', 'The plan reaches further than the prices do')
+                : sourceStale.length > 0
+                  ? t('En del av prognosen är inaktuell', 'Part of the forecast is out of date')
+                  : t('Planen går inte att genomföra', 'This plan cannot be carried out');
+
+        const body = acknowledgementRejected
+          ? [t(
+            'Home Assistant kunde inte köra planen och har gått tillbaka till dina vanliga inställningar.',
+            'Home Assistant could not run the plan and has gone back to your usual settings.',
+          ), notYours]
+          : acknowledgementPending
+            ? [t(
+              'Planen är klar och väntar på att Home Assistant ska bekräfta att den kan köras. Det tar normalt några sekunder.',
+              'The plan is ready and waiting for Home Assistant to confirm it can run it. That usually takes a few seconds.',
+            )]
+            : stale
+              ? connectionLive
+                ? [
+                  t(
+                    `Ingen ny plan har skapats sedan kl. ${clockTime(current.plan.valid_until)}.`,
+                    `No new plan has been produced since ${clockTime(current.plan.valid_until)}.`,
+                  ),
+                  runningNormally,
+                  ago ? t(
+                    `Home Assistant hörde av sig ${ago}, så uppkopplingen fungerar.`,
+                    `Home Assistant checked in ${ago}, so the connection is working.`,
+                  ) : '',
+                  notYours,
+                ]
+                : [
+                  ago ? t(
+                    `Home Assistant hörde senast av sig ${ago}.`,
+                    `Home Assistant last checked in ${ago}.`,
+                  ) : t(
+                    'Home Assistant har aldrig hört av sig.',
+                    'Home Assistant has never checked in.',
+                  ),
+                  runningNormally,
+                  t(
+                    'Kontrollera att Home Assistant är igång och att Smart Home Solutions-integrationen är aktiverad.',
+                    'Check that Home Assistant is running and that the Smart Home Solutions integration is enabled.',
+                  ),
+                ]
+              : bindingExpired
+                ? [t(
+                  'Elpriserna publiceras bara ungefär ett dygn i förväg. Längre fram är planen en gissning, så Home Assistant följer dina vanliga inställningar tills morgondagens priser kommer.',
+                  'Electricity prices are only published about a day ahead. Beyond that the plan is a best guess, so Home Assistant follows your usual settings until tomorrow\'s prices arrive.',
+                ), t('Inget behöver göras.', 'Nothing needs doing.')]
+                : sourceStale.length > 0
+                  ? [t(
+                    `Planen bygger delvis på ${staleNames.join(', ')}, som nu är inaktuell.`,
+                    `This plan was partly built on ${staleNames.join(', ')}, which is now out of date.`,
+                  ), t(
+                    'En ny plan ersätter den normalt inom en timme.',
+                    'A fresh plan normally replaces it within the hour.',
+                  )]
+                  : [t(
+                    'Home Assistant använder sina vanliga inställningar tills en giltig plan finns.',
+                    'Home Assistant uses its usual settings until a valid plan is available.',
+                  )];
+
+        // The original wording, kept whole. A household never needs it; the
+        // person diagnosing the home always does, and losing it to make the
+        // banner friendlier would have traded one bad message for another.
+        const details = [
+          ...(acknowledgementRejected && acknowledgementMessage ? [acknowledgementMessage] : []),
+          ...(stale ? [`plan valid_until ${current.plan.valid_until}`] : []),
+          ...(bindingExpired ? [`binding_until ${plan.binding_until}`] : []),
+          ...sourceStale.map(source => `${source}: valid_until passed`),
+          ...validationMessages,
+        ];
+
+        return (
+          <Alert variant={acknowledgementRejected || stale || bindingExpired || sourceStale.length > 0 ? 'destructive' : 'default'}>
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>{title}</AlertTitle>
+            <AlertDescription>
+              <p>{body.filter(Boolean).join(' ')}</p>
+              {details.length > 0 && (
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-xs opacity-70">
+                    {t('Tekniska detaljer', 'Technical details')}
+                  </summary>
+                  <p className="mt-1 text-xs opacity-70">{details.slice(0, 8).join(' · ')}</p>
+                </details>
+              )}
+            </AlertDescription>
+          </Alert>
+        );
+      })()}
 
       <Card>
         <CardHeader className="pb-3">
