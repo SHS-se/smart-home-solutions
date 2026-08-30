@@ -661,6 +661,8 @@ const PlanView: React.FC<{
           ? null
           : minutesSinceSeen < 1
             ? t('för mindre än en minut sedan', 'less than a minute ago')
+            : minutesSinceSeen === 1
+              ? t('för en minut sedan', 'a minute ago')
             : minutesSinceSeen < 60
               ? t(`för ${minutesSinceSeen} minuter sedan`, `${minutesSinceSeen} minutes ago`)
               : t(`kl. ${clockTime(lastSeenMs)}`, `at ${clockTime(lastSeenMs)}`);
