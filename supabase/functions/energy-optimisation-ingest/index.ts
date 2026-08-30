@@ -47,6 +47,7 @@ import {
   summerHeatingLockoutForStarts,
   type ZoneComfortSchedule,
 } from "../_shared/comfort-schedule.ts";
+import { classifyOutdoorSeries } from "../_shared/outdoor-forecast.ts";
 
 const MAX_ACTUAL_SLOTS_PER_PUSH = 288;
 const MAX_THERMAL_SLOTS_PER_PUSH = 288;
@@ -285,6 +286,26 @@ interface PreparedThermalPlanning {
 }
 
 /**
+ * Plan every load on its own recent history, with no room comfort forecast.
+ * This is what the home did before comfort forecasting existed, and it is the
+ * right answer whenever the forecast cannot be built: comfort is one term of
+ * the plan, not a precondition for having one.
+ */
+const withoutComfortForecast = (
+  snapshot: OptimisationSnapshot,
+): PreparedThermalPlanning => ({
+  snapshot: {
+    ...snapshot,
+    device_models: snapshot.device_models.map((model) => ({
+      ...model,
+      forecast_method: model.forecast_method ?? "empirical_recent_history",
+    })),
+    thermal_zones: [],
+  },
+  zones: [],
+});
+
+/**
  * Replace every mapped room control's recent-history profile with the demand
  * implied by its portal comfort routine, season, outdoor forecast, latest
  * measured temperature and fitted 1R1C model.
@@ -430,17 +451,7 @@ async function prepareThermalPlanning(
       roomMapping(stored) !== null;
   });
   if (roomModels.length === 0) {
-    return {
-      snapshot: {
-        ...snapshot,
-        device_models: snapshot.device_models.map((model) => ({
-          ...model,
-          forecast_method: model.forecast_method ?? "empirical_recent_history",
-        })),
-        thermal_zones: [],
-      },
-      zones: [],
-    };
+    return withoutComfortForecast(snapshot);
   }
 
   const rooms = new Map<string, {
@@ -493,15 +504,19 @@ async function prepareThermalPlanning(
     };
   }
 
-  const outdoor = snapshot.outdoor_temperature_c;
-  if (
-    !outdoor || outdoor.length !== snapshot.slots.length ||
-    outdoor.some((value) => value === null || !Number.isFinite(value))
-  ) {
+  const classified = classifyOutdoorSeries(
+    snapshot.outdoor_temperature_c,
+    snapshot.slots.length,
+  );
+  if (classified.status === "absent") {
+    return withoutComfortForecast(snapshot);
+  }
+  if (classified.status === "holed") {
     throw new Error(
       "room comfort forecasting needs outdoor temperature for every slot",
     );
   }
+  const outdoor = classified.series;
 
   const now = Date.now();
   const { data: existing } = await supabase
