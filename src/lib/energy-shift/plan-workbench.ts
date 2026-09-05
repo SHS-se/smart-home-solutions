@@ -19,7 +19,9 @@ import {
   type DispatchSchedule,
   type DispatchScore,
 } from '../../../supabase/functions/_shared/dispatch-plan';
+import type { DispatchStore } from '../../../supabase/functions/_shared/dispatch-plan';
 import type { DispatchWorkbench } from '../../../supabase/functions/_shared/energy-optimisation';
+import { splitConsumption, type ConsumptionSeries } from './consumption-series';
 
 /** Quarters per editable column at each granularity. */
 export const GRANULARITY_SLOTS = { hour: 4, quarter: 1 } as const;
@@ -78,7 +80,7 @@ const LABELS: Record<string, string> = {
   boiler: 'Hot water',
 };
 
-const labelFor = (key: string): string =>
+export const storeLabel = (key: string): string =>
   LABELS[key] ?? key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ');
 
 export function buildWorkbenchModel(
@@ -112,7 +114,7 @@ export function buildWorkbenchModel(
       id: `${store.key}:charge`,
       storeKey: store.key,
       direction: 'charge',
-      label: labelFor(store.key),
+      label: storeLabel(store.key),
       minKw: (store.min_power_w ?? 0) / 1_000,
       maxKw: store.max_power_w / 1_000,
       stepKw: (store.power_step_w ?? 0) / 1_000,
@@ -131,7 +133,7 @@ export function buildWorkbenchModel(
       id: `${store.key}:discharge`,
       storeKey: store.key,
       direction: 'discharge',
-      label: `${labelFor(store.key)} — out`,
+      label: `${storeLabel(store.key)} — out`,
       minKw: 0,
       maxKw: store.discharge.max_power_w / 1_000,
       stepKw: 0,
@@ -264,4 +266,123 @@ export function executableKw(row: WorkbenchRow, kw: number): number {
     return Math.min(row.maxKw, Math.max(row.minKw, snapped));
   }
   return Math.max(row.minKw, capped);
+}
+
+// ---------------------------------------------------------------------------
+// The same chart the plan is read on, drawn from the schedule being edited.
+//
+// A number says a plan is better; it does not say whether it *looks* right. The
+// shapes people actually check — is the car charging under the solar bell, does
+// the battery come back up before the evening peak, does the storage curve ever
+// flatten against its ceiling — are read off the panels, so an editor without
+// them asks for judgement while withholding what judgement is made of.
+//
+// The row shape is declared here rather than imported from `PlanPanels` so this
+// module stays free of anything React: `deno task test` runs `src/lib`, and a
+// `.tsx` import would drag JSX into it. Structural typing keeps the two in
+// agreement, and `tsc` fails at the call site if they ever drift.
+// ---------------------------------------------------------------------------
+
+export interface WorkbenchPanelRow {
+  startMs: number;
+  label: string;
+  measured: boolean;
+  solarW: number | null;
+  loadW: number | null;
+  gridImportW: number | null;
+  gridExportW: number | null;
+  batteryChargeW: number | null;
+  batteryDischargeW: number | null;
+  homeSoc: number | null;
+  evSoc: number | null;
+  importPriceSekPerKwh: number | null;
+  exportPriceSekPerKwh: number | null;
+  cumulativeCostSek: number;
+}
+
+export interface WorkbenchChart {
+  rows: WorkbenchPanelRow[];
+  series: ConsumptionSeries[];
+  baseValues: number[];
+  hasBattery: boolean;
+  hasEvBattery: boolean;
+}
+
+/** State as a percentage of the store's own ceiling, when it declares one. */
+const percentOf = (store: DispatchStore, state: number | undefined): number | null => {
+  const ceiling = store.max_state;
+  if (state === undefined || ceiling === undefined || !(ceiling > 0)) return null;
+  return Math.max(0, Math.min(100, (state / ceiling) * 100));
+};
+
+export function buildWorkbenchChart(
+  bench: DispatchWorkbench,
+  schedule: DispatchSchedule,
+  score: DispatchScore,
+  formatLabel: (startMs: number) => string,
+  nameFor: (storeKey: string) => string,
+): WorkbenchChart {
+  const count = bench.slots.length;
+  // The pack is whichever store can give energy back; the car is the one whose
+  // state is a distance. Neither is found by key, so a home that names them
+  // differently still charts.
+  const battery = bench.stores.find(store => store.discharge !== undefined);
+  const vehicle = bench.stores.find(store => store.curve.unit === 'km');
+
+  const houseDemandW: number[] = [];
+  const rows: WorkbenchPanelRow[] = [];
+  let running = 0;
+  for (let index = 0; index < count; index += 1) {
+    const slot = bench.slots[index];
+    // Charging the pack is a flow, not consumption: the flow panel already
+    // draws it as "battery in", and counting it here would draw it twice.
+    const demandW = bench.stores.reduce(
+      (total, store) => total + (store === battery ? 0 : schedule.power_w[store.key]?.[index] ?? 0),
+      slot.fixed_load_w,
+    );
+    houseDemandW.push(demandW);
+    const importKwh = score.import_w[index] / 1_000 * 0.25;
+    const exportKwh = score.export_w[index] / 1_000 * 0.25;
+    running += importKwh * slot.import_price_sek_per_kwh -
+      exportKwh * slot.export_price_sek_per_kwh;
+    rows.push({
+      startMs: bench.slot_start_ms[index],
+      label: formatLabel(bench.slot_start_ms[index]),
+      measured: false,
+      solarW: slot.pv_w,
+      loadW: demandW,
+      gridImportW: score.import_w[index],
+      gridExportW: score.export_w[index],
+      batteryChargeW: battery ? schedule.power_w[battery.key]?.[index] ?? 0 : null,
+      batteryDischargeW: battery ? schedule.discharge_w[battery.key]?.[index] ?? 0 : null,
+      homeSoc: battery ? percentOf(battery, score.state[battery.key]?.[index]) : null,
+      evSoc: vehicle ? percentOf(vehicle, score.state[vehicle.key]?.[index]) : null,
+      importPriceSekPerKwh: slot.import_price_sek_per_kwh,
+      exportPriceSekPerKwh: slot.export_price_sek_per_kwh,
+      cumulativeCostSek: running,
+    });
+  }
+
+  const split = splitConsumption(
+    bench.stores
+      .filter(store => store !== battery)
+      .map(store => ({
+        key: store.key,
+        name: nameFor(store.key),
+        values: Array.from(
+          { length: count },
+          (_value, index) => schedule.power_w[store.key]?.[index] ?? 0,
+        ),
+        schedulable: true,
+      })),
+    houseDemandW,
+  );
+
+  return {
+    rows,
+    series: split.series,
+    baseValues: split.baseValues,
+    hasBattery: battery !== undefined,
+    hasEvBattery: vehicle !== undefined,
+  };
 }

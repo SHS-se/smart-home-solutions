@@ -125,5 +125,19 @@ test.describe('plan workbench', () => {
     await expect(async () => {
       expect(await difference.textContent()).not.toBe(before);
     }).toPass({ timeout: 15_000 });
+
+    // The panels are how an edit is judged by eye, so they have to be drawn
+    // from the schedule rather than from the stored plan.
+    const chart = page.getByRole('img', {
+      name: /effektflöden|power flows/i,
+    }).first();
+    await expect(chart).toBeVisible();
+
+    // Flipping to the planner's plan must redraw rather than freeze.
+    const shape = await chart.textContent();
+    await page.getByRole('button', { name: /The planner’s|Planerarens$/ }).click();
+    await expect(async () => {
+      expect(await chart.textContent()).not.toBe(shape);
+    }).toPass({ timeout: 15_000 });
   });
 });

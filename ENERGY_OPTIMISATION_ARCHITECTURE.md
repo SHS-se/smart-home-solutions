@@ -4512,6 +4512,19 @@ Three properties make the comparison mean something:
   editor opens on the planner's schedule, so its faults are inherited by every
   draft; only what a draft *introduces* is reported against it.
 
+**And the panels come with it.** A number says a plan is better; it does not
+say whether it *looks* right, and the shapes people actually check — is the car
+charging under the solar bell, does the pack come back up before the evening
+peak, does the storage curve flatten against its ceiling — are read off the
+chart. So the tab draws the same five panels as the plan view (`PlanPanels`,
+§7.6) from the schedule being edited, redrawn on every keystroke, with a toggle
+between the household's plan and the planner's so the difference can be read as
+a shape and not only as kronor. `buildWorkbenchChart` declares its own row type
+rather than importing one from a `.tsx`, because `deno task test` runs
+`src/lib`; structural typing keeps the two in agreement and `tsc` fails at the
+call site if they drift. Charging the pack is drawn as a flow and never as
+consumption, so the same kilowatt is not drawn twice.
+
 Reading the result: **lower is better** — the score is cost net of service
 delivered, so it is routinely negative. A hand-built plan that scores lower is
 proof the search left money on the table, and the fix is a better solver. One

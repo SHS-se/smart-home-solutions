@@ -26,6 +26,7 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
 import { dispatchWorkbench, type DispatchWorkbench, type OptimisationSnapshot } from '../../../../supabase/functions/_shared/energy-optimisation';
 import {
+  buildWorkbenchChart,
   buildWorkbenchModel,
   compareWorkbench,
   executableKw,
@@ -34,9 +35,15 @@ import {
   type WorkbenchComparison,
   type WorkbenchDraft,
   type WorkbenchModel,
+  storeLabel,
 } from '@/lib/energy-shift/plan-workbench';
+import PlanPanels from './plan/PlanPanels';
 import { useHomeTimeZone } from './HomeTimeZoneContext';
-import { formatHomeDayMonth, formatHomeTime } from '@/lib/energy-shift/home-time';
+import {
+  formatHomeDayMonth,
+  formatHomeDayMonthTime,
+  formatHomeTime,
+} from '@/lib/energy-shift/home-time';
 
 interface Props {
   homeId: string | null;
@@ -107,10 +114,30 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
     [draft, model],
   );
 
-  const comparison: WorkbenchComparison | null = useMemo(() => {
-    if (!bench || !model) return null;
-    return compareWorkbench(bench, scheduleFromDraft(bench, model, draft));
-  }, [bench, model, draft]);
+  const manual = useMemo(
+    () => (bench && model ? scheduleFromDraft(bench, model, draft) : null),
+    [bench, model, draft],
+  );
+
+  const comparison: WorkbenchComparison | null = useMemo(
+    () => (bench && manual ? compareWorkbench(bench, manual) : null),
+    [bench, manual],
+  );
+
+  const [charted, setCharted] = useState<'manual' | 'planner'>('manual');
+
+  const chart = useMemo(() => {
+    if (!bench || !comparison || !manual) return null;
+    const showing = charted === 'manual' ? manual : bench.planned;
+    const score = charted === 'manual' ? comparison.manual : comparison.planner;
+    return buildWorkbenchChart(
+      bench,
+      showing,
+      score,
+      startMs => formatHomeDayMonthTime(startMs, homeTimeZone),
+      storeLabel,
+    );
+  }, [bench, comparison, manual, charted, homeTimeZone]);
 
   const load = async () => {
     if (!homeId) return;
@@ -331,6 +358,49 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
           )}
         </CardContent>
       </Card>
+
+      {chart && (
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <CardTitle className="text-base">
+                {t('Planerad förbrukning', 'Planned consumption')}
+              </CardTitle>
+              <div className="flex items-center gap-1">
+                {([
+                  ['manual', t('Din plan', 'Your plan')],
+                  ['planner', t('Planerarens', 'The planner’s')],
+                ] as const).map(([option, label]) => (
+                  <Button
+                    key={option}
+                    size="sm"
+                    variant={option === charted ? 'default' : 'outline'}
+                    onClick={() => setCharted(option)}
+                  >
+                    {label}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <PlanPanels
+              rows={chart.rows}
+              series={chart.series}
+              baseValues={chart.baseValues}
+              dividerIndex={0}
+              hasBattery={chart.hasBattery}
+              hasEvBattery={chart.hasEvBattery}
+            />
+            <p className="text-[11px] text-muted-foreground mt-2">
+              {t(
+                'Samma panelerna som planvyn, ritade från schemat nedan. Ändra en ruta och kurvan följer med — flytta mellan din plan och planerarens för att se skillnaden i form, inte bara i kronor.',
+                'The same panels as the plan view, drawn from the schedule below. Change a cell and the curves follow — flip between yours and the planner’s to see the difference in shape, not only in kronor.',
+              )}
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader className="pb-3">

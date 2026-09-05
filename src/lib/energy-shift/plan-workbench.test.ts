@@ -1,5 +1,6 @@
 import { assert, assertAlmostEquals, assertEquals } from 'jsr:@std/assert@1';
 import {
+  buildWorkbenchChart,
   buildWorkbenchModel,
   compareWorkbench,
   executableKw,
@@ -244,4 +245,87 @@ Deno.test('a breach the planner already had is not blamed on the household', () 
   const untouched = compareWorkbench(bench, bench.planned);
   assert(untouched.planner.infeasibilities.length > 0, 'the leak is still there');
   assertEquals(untouched.introduced, []);
+});
+
+// ---------------------------------------------------------------------------
+// The chart the edit is judged by eye on.
+// ---------------------------------------------------------------------------
+
+const chartOf = (bench: DispatchWorkbench, schedule = bench.planned) =>
+  buildWorkbenchChart(
+    bench,
+    schedule,
+    compareWorkbench(bench, schedule).manual,
+    ms => new Date(ms).toISOString(),
+    key => key,
+  );
+
+Deno.test('the chart covers every quarter the plan does', () => {
+  const bench = dispatchWorkbench(realSnapshot());
+  assert(bench !== null);
+
+  const chart = chartOf(bench);
+
+  assertEquals(chart.rows.length, 288);
+  assertEquals(chart.baseValues.length, 288);
+  assert(chart.hasBattery, 'this home has a pack');
+  assert(chart.rows.every(row => row.measured === false), 'all of it is plan');
+  assert(
+    chart.rows.every(row => row.homeSoc === null || (row.homeSoc >= 0 && row.homeSoc <= 100)),
+    'a state of charge is a percentage',
+  );
+});
+
+Deno.test('charging the pack is a flow, not consumption', () => {
+  // Drawn in the flow panel as "battery in" already; counting it as house
+  // demand too would draw the same kilowatt twice and inflate the base band.
+  const bench = dispatchWorkbench(realSnapshot());
+  assert(bench !== null);
+  const battery = bench.stores.find(store => store.discharge !== undefined);
+  assert(battery !== undefined);
+
+  const chart = chartOf(bench);
+  const charging = bench.planned.power_w[battery.key]
+    .findIndex(watts => watts > 100);
+  assert(charging >= 0, 'the fixture charges the pack somewhere');
+
+  assertEquals(chart.rows[charging].loadW, bench.slots[charging].fixed_load_w);
+  assert(
+    (chart.rows[charging].batteryChargeW ?? 0) > 100,
+    'and it still shows in the flow panel',
+  );
+  assert(
+    chart.series.every(entry => entry.key !== battery.key),
+    'the pack never earns a consumption band',
+  );
+});
+
+Deno.test('editing the schedule redraws the chart', () => {
+  // The whole reason the panels are here: a number says a plan is better, the
+  // shape says whether it looks right, and the shape has to follow the edit.
+  const bench = dispatchWorkbench(realSnapshot());
+  assert(bench !== null);
+  const model = buildWorkbenchModel(bench, 'quarter');
+  const pool = model.rows.find(row => row.storeKey === 'pool');
+  assert(pool !== undefined, 'the fixture home has a pool');
+
+  // Switch off a quarter the planner had running, leaving the rest of its
+  // schedule alone — an edit whose effect is unambiguous.
+  const running = model.planned[pool.id].findIndex(kw => kw > 0);
+  assert(running >= 0, 'the fixture heats the pool somewhere');
+  const before = chartOf(bench);
+  const edited = scheduleFromDraft(bench, model, {
+    [pool.id]: model.planned[pool.id].map((kw, index) => (index === running ? 0 : kw)),
+  });
+  const after = chartOf(bench, edited);
+
+  assertEquals(after.rows.length, before.rows.length);
+  assert(
+    after.rows[running].loadW !== before.rows[running].loadW,
+    'the quarter that was edited must move',
+  );
+  assert(
+    after.rows.at(-1)!.cumulativeCostSek !== before.rows.at(-1)!.cumulativeCostSek,
+    'and the running cost with it',
+  );
 });
