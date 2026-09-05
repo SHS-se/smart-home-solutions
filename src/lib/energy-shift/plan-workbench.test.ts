@@ -329,3 +329,48 @@ Deno.test('editing the schedule redraws the chart', () => {
     'and the running cost with it',
   );
 });
+
+Deno.test('a windowed chart draws only that day, costed from its own edge', () => {
+  // The day tabs narrow the chart and the table together. A window that still
+  // carried the horizon's running total would open every day but the first on
+  // a cost line that started halfway up the axis.
+  const bench = dispatchWorkbench(realSnapshot());
+  assert(bench !== null);
+  const score = compareWorkbench(bench, bench.planned).manual;
+  const label = (ms: number) => new Date(ms).toISOString();
+
+  const whole = buildWorkbenchChart(bench, bench.planned, score, label, key => key);
+  const second = buildWorkbenchChart(bench, bench.planned, score, label, key => key, {
+    from: 96,
+    to: 192,
+  });
+
+  assertEquals(second.rows.length, 96);
+  assertEquals(second.baseValues.length, 96);
+  assertEquals(second.rows[0].startMs, whole.rows[96].startMs);
+  // Same quarter, same physics — only the running total is re-based.
+  assertEquals(second.rows[0].loadW, whole.rows[96].loadW);
+  assertEquals(second.rows[0].homeSoc, whole.rows[96].homeSoc);
+  assert(
+    Math.abs(second.rows[0].cumulativeCostSek) <
+      Math.abs(whole.rows[96].cumulativeCostSek),
+    'the day starts its own tally',
+  );
+});
+
+Deno.test('a window past the horizon is clamped rather than padded', () => {
+  const bench = dispatchWorkbench(realSnapshot());
+  assert(bench !== null);
+  const score = compareWorkbench(bench, bench.planned).manual;
+
+  const chart = buildWorkbenchChart(
+    bench,
+    bench.planned,
+    score,
+    ms => String(ms),
+    key => key,
+    { from: 240, to: 400 },
+  );
+
+  assertEquals(chart.rows.length, 48);
+});

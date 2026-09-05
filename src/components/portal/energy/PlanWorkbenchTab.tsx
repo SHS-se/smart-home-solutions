@@ -15,7 +15,7 @@
 // still reading better to the household is a curve that needs correcting. The
 // answer is a number either way, which is the point.
 
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Loader2, RotateCcw, Sparkles } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -35,6 +35,7 @@ import {
   type WorkbenchComparison,
   type WorkbenchDraft,
   type WorkbenchModel,
+  type SlotRange,
   storeLabel,
 } from '@/lib/energy-shift/plan-workbench';
 import PlanPanels from './plan/PlanPanels';
@@ -96,7 +97,15 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
   // nothing flagged. Anything coarser is already an edit.
   const [granularity, setGranularity] = useState<Granularity>('quarter');
   const [draft, setDraft] = useState<WorkbenchDraft>({});
-  const [day, setDay] = useState(0);
+  // `'all'` is the whole horizon; a number indexes `days`. Focusing on one day
+  // narrows the chart and the table together — they are two views of the same
+  // quarters, and letting them disagree about which quarters is how a reader
+  // ends up editing one afternoon while looking at another.
+  const [day, setDay] = useState<number | 'all'>(0);
+  /** Absolute quarter index the reader has pointed at, from either view. */
+  const [selected, setSelected] = useState<number | null>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
+  const headerCells = useRef(new Map<number, HTMLTableCellElement>());
 
   const model: WorkbenchModel | null = useMemo(
     () => (bench ? buildWorkbenchModel(bench, granularity) : null),
@@ -113,6 +122,70 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
     (rowId: string): number[] => draft[rowId] ?? model?.planned[rowId] ?? [],
     [draft, model],
   );
+
+  // Days are cut on the home's own clock, not the reader's: a plan for a house
+  // in Stockholm read from a laptop in another zone must still break at that
+  // house's midnight.
+  const days = useMemo(() => {
+    if (!model || !bench) {
+      return [] as { label: string; columns: number[]; range: SlotRange }[];
+    }
+    const grouped = new Map<string, number[]>();
+    model.columns.forEach((column, index) => {
+      const key = formatHomeDayMonth(column.startMs, homeTimeZone);
+      grouped.set(key, [...(grouped.get(key) ?? []), index]);
+    });
+    return [...grouped.entries()].map(([label, columns]) => {
+      const slots = columns.flatMap(index => model.columns[index].slots);
+      return {
+        label,
+        columns,
+        range: { from: Math.min(...slots), to: Math.max(...slots) + 1 },
+      };
+    });
+  }, [model, bench, homeTimeZone]);
+
+  // Memoised so the chart's own memo can depend on the range itself: a fresh
+  // object every render would rebuild 288 quarters on every keystroke.
+  const view: SlotRange = useMemo(
+    () => (day === 'all' || !days[day]
+      ? { from: 0, to: bench?.slots.length ?? 0 }
+      : days[day].range),
+    [day, days, bench],
+  );
+  const shown = day === 'all'
+    ? (model?.columns ?? []).map((_column, index) => index)
+    : days[day]?.columns ?? [];
+
+  /** Which editable column holds the pointed-at quarter, if any. */
+  const selectedColumn = useMemo(() => {
+    if (selected === null || !model) return -1;
+    return model.columns.findIndex(column => column.slots.includes(selected));
+  }, [selected, model]);
+
+  // Bring the pointed-at column into view rather than leaving the reader to
+  // hunt for it: a day is 96 columns at quarter resolution, most of them off
+  // screen. Measured against the live boxes so the sticky label column and any
+  // page scrolling are already accounted for.
+  useEffect(() => {
+    if (selectedColumn < 0) return;
+    // Measured after the browser has laid the table out, not during the commit
+    // that changed it. Clicking a quarter while looking at the whole horizon
+    // switches the day in the same render, and a rect read before that relayout
+    // describes the table that is being replaced — which scrolled to roughly
+    // the right fraction of the wrong width.
+    const frame = requestAnimationFrame(() => {
+      const container = gridRef.current;
+      const cell = headerCells.current.get(selectedColumn);
+      if (!container || !cell) return;
+      const cellBox = cell.getBoundingClientRect();
+      const box = container.getBoundingClientRect();
+      if (cellBox.width === 0) return;
+      const delta = cellBox.left - box.left - box.width / 2 + cellBox.width / 2;
+      container.scrollTo({ left: container.scrollLeft + delta, behavior: 'smooth' });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [selectedColumn, granularity, day]);
 
   const manual = useMemo(
     () => (bench && model ? scheduleFromDraft(bench, model, draft) : null),
@@ -136,8 +209,9 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
       score,
       startMs => formatHomeDayMonthTime(startMs, homeTimeZone),
       storeLabel,
+      view,
     );
-  }, [bench, comparison, manual, charted, homeTimeZone]);
+  }, [bench, comparison, manual, charted, homeTimeZone, view]);
 
   const load = async () => {
     if (!homeId) return;
@@ -187,20 +261,9 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
     });
   };
 
-  // Days are cut on the home's own clock, not the reader's: a plan for a house
-  // in Stockholm read from a laptop in another zone must still break at that
-  // house's midnight.
-  const days = useMemo(() => {
-    if (!model) return [] as { label: string; columns: number[] }[];
-    const grouped = new Map<string, number[]>();
-    model.columns.forEach((column, index) => {
-      const key = formatHomeDayMonth(column.startMs, homeTimeZone);
-      grouped.set(key, [...(grouped.get(key) ?? []), index]);
-    });
-    return [...grouped.entries()].map(([label, columns]) => ({ label, columns }));
-  }, [model, homeTimeZone]);
-
-  const shown = days[day]?.columns ?? [];
+  /** Tint marking the quarter the reader pointed at, in either view. */
+  const column = (index: number): string =>
+    index === selectedColumn ? 'bg-primary/10' : '';
 
   if (!bench) {
     return (
@@ -391,6 +454,21 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
               dividerIndex={0}
               hasBattery={chart.hasBattery}
               hasEvBattery={chart.hasEvBattery}
+              selectedIndex={
+                selected !== null && selected >= view.from && selected < view.to
+                  ? selected - view.from
+                  : -1
+              }
+              onQuarterClick={index => {
+                const quarter = view.from + index;
+                setSelected(quarter);
+                // Clicking a quarter while looking at the whole horizon is a
+                // request to go and look at it, so the table follows.
+                const containing = days.findIndex(
+                  entry => quarter >= entry.range.from && quarter < entry.range.to,
+                );
+                if (containing >= 0 && containing !== day) setDay(containing);
+              }}
             />
             <p className="text-[11px] text-muted-foreground mt-2">
               {t(
@@ -419,6 +497,13 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
                   {entry.label}
                 </Button>
               ))}
+              <Button
+                size="sm"
+                variant={day === 'all' ? 'default' : 'outline'}
+                onClick={() => setDay('all')}
+              >
+                {t('Alla', 'All')}
+              </Button>
               <span className="mx-1 h-4 w-px bg-border" />
               {(['hour', 'quarter'] as Granularity[]).map(option => (
                 <Button
@@ -447,7 +532,7 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
               'Type power in kW. At 15 min you see the planner’s plan exactly. At 1 hour a cell is an average for that hour: below what the device can run at, it becomes full power for part of the hour instead — the same trade the planner makes.',
             )}
           </p>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto" ref={gridRef} data-testid="workbench-grid">
             <table className="text-xs border-separate border-spacing-0">
               <thead>
                 <tr>
@@ -457,7 +542,12 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
                   {shown.map(index => (
                     <th
                       key={index}
-                      className="font-normal text-muted-foreground py-1 px-1 text-center min-w-[52px]"
+                      ref={element => {
+                        if (element) headerCells.current.set(index, element);
+                        else headerCells.current.delete(index);
+                      }}
+                      data-selected={index === selectedColumn ? 'true' : undefined}
+                      className={`font-normal text-muted-foreground py-1 px-1 text-center min-w-[52px] ${column(index)}`}
                     >
                       {formatHomeTime(model!.columns[index].startMs, homeTimeZone)}
                       {!model!.columns[index].binding && (
@@ -475,7 +565,7 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
                     {t('Pris in / ut', 'Price in / out')}
                   </td>
                   {shown.map(index => (
-                    <td key={index} className="py-1 px-1 text-center whitespace-nowrap">
+                    <td key={index} className={`py-1 px-1 text-center whitespace-nowrap ${column(index)}`}>
                       <div>{model!.columns[index].importSekPerKwh.toFixed(2)}</div>
                       <div className="opacity-50">
                         {model!.columns[index].exportSekPerKwh.toFixed(2)}
@@ -488,7 +578,7 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
                     {t('Sol / husets last', 'Solar / house load')}
                   </td>
                   {shown.map(index => (
-                    <td key={index} className="py-1 px-1 text-center whitespace-nowrap">
+                    <td key={index} className={`py-1 px-1 text-center whitespace-nowrap ${column(index)}`}>
                       <div className="text-amber-600 dark:text-amber-400">
                         {model!.columns[index].solarKw.toFixed(1)}
                       </div>
@@ -508,7 +598,7 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
                       </div>
                     </td>
                     {shown.map(index => (
-                      <td key={index} className="py-0.5 px-0.5">
+                      <td key={index} className={`py-0.5 px-0.5 ${column(index)}`}>
                         <Input
                           type="number"
                           inputMode="decimal"
@@ -533,7 +623,7 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
                       const trajectory = comparison.manual.state[row.storeKey];
                       const lastSlot = model!.columns[index].slots.at(-1)!;
                       return (
-                        <td key={index} className="py-1 px-1 text-center whitespace-nowrap">
+                        <td key={index} className={`py-1 px-1 text-center whitespace-nowrap ${column(index)}`}>
                           {trajectory
                             ? stateLabel(row.stateUnit, trajectory[lastSlot + 1])
                             : '—'}

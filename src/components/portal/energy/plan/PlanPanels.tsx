@@ -257,15 +257,30 @@ const PlanPanels: React.FC<{
     }),
   [homeTimeZone, rows]);
 
-  const handleMove = (event: React.PointerEvent<SVGSVGElement>) => {
+  /**
+   * Which quarter a pointer is over, straight from its position.
+   *
+   * Read at click time as well as on move, because `hover` is state and a click
+   * can land in the same batch as the move that set it — so the handler would
+   * see the previous value. A touch is the case that never works otherwise: a
+   * tap has no preceding pointermove at all, so `hover` is still null and the
+   * quarter under the finger would be unreachable.
+   */
+  const quarterAt = (clientX: number): number | null => {
     const svg = svgRef.current;
-    const wrap = wrapRef.current;
-    if (!svg || !wrap) return;
+    if (!svg) return null;
     const box = svg.getBoundingClientRect();
-    if (box.width === 0) return;
-    const viewX = (event.clientX - box.left) * (VIEW_W / box.width);
+    if (box.width === 0) return null;
+    const viewX = (clientX - box.left) * (VIEW_W / box.width);
     const index = Math.floor(((viewX - MARGIN_LEFT) / PLOT_W) * n);
-    if (index < 0 || index >= n) { setHover(null); setPointer(null); return; }
+    return index < 0 || index >= n ? null : index;
+  };
+
+  const handleMove = (event: React.PointerEvent<SVGSVGElement>) => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const index = quarterAt(event.clientX);
+    if (index === null) { setHover(null); setPointer(null); return; }
     setHover(index);
     const wrapBox = wrap.getBoundingClientRect();
     setPointer({ left: event.clientX - wrapBox.left, top: event.clientY - wrapBox.top });
@@ -301,7 +316,10 @@ const PlanPanels: React.FC<{
           onPointerMove={handleMove}
           onPointerLeave={() => { setHover(null); setPointer(null); }}
           onKeyDown={handleKey}
-          onClick={() => { if (hover !== null) onQuarterClick?.(hover); }}
+          onClick={event => {
+            const index = quarterAt(event.clientX) ?? hover;
+            if (index !== null) onQuarterClick?.(index);
+          }}
         >
           {bands && (
             <defs>

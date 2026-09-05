@@ -315,14 +315,23 @@ const percentOf = (store: DispatchStore, state: number | undefined): number | nu
   return Math.max(0, Math.min(100, (state / ceiling) * 100));
 };
 
+/** A contiguous run of quarters, as `[from, to)`. */
+export interface SlotRange {
+  from: number;
+  to: number;
+}
+
 export function buildWorkbenchChart(
   bench: DispatchWorkbench,
   schedule: DispatchSchedule,
   score: DispatchScore,
   formatLabel: (startMs: number) => string,
   nameFor: (storeKey: string) => string,
+  /** Quarters to draw. Omitted means the whole horizon. */
+  range: SlotRange = { from: 0, to: bench.slots.length },
 ): WorkbenchChart {
-  const count = bench.slots.length;
+  const from = Math.max(0, range.from);
+  const to = Math.min(bench.slots.length, range.to);
   // The pack is whichever store can give energy back; the car is the one whose
   // state is a distance. Neither is found by key, so a home that names them
   // differently still charts.
@@ -331,8 +340,11 @@ export function buildWorkbenchChart(
 
   const houseDemandW: number[] = [];
   const rows: WorkbenchPanelRow[] = [];
+  // The running total restarts at the window's own edge, as the plan view's
+  // does: a day's cost is what that day cost, not what the horizon had reached
+  // by the time it started.
   let running = 0;
-  for (let index = 0; index < count; index += 1) {
+  for (let index = from; index < to; index += 1) {
     const slot = bench.slots[index];
     // Charging the pack is a flow, not consumption: the flow panel already
     // draws it as "battery in", and counting it here would draw it twice.
@@ -370,8 +382,8 @@ export function buildWorkbenchChart(
         key: store.key,
         name: nameFor(store.key),
         values: Array.from(
-          { length: count },
-          (_value, index) => schedule.power_w[store.key]?.[index] ?? 0,
+          { length: to - from },
+          (_value, offset) => schedule.power_w[store.key]?.[from + offset] ?? 0,
         ),
         schedulable: true,
       })),

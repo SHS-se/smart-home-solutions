@@ -4525,6 +4525,21 @@ rather than importing one from a `.tsx`, because `deno task test` runs
 call site if they drift. Charging the pack is drawn as a flow and never as
 consumption, so the same kilowatt is not drawn twice.
 
+The chart and the table are one view of one window. The day tabs narrow both,
+so a reader cannot edit one afternoon while looking at another, and clicking a
+quarter in the chart selects it in the table — switching day if the whole
+horizon was on screen, tinting the column and scrolling it to the middle. The
+running cost restarts at the window's own edge, as the plan view's does.
+
+Two mechanics that were wrong first and are worth not rediscovering. The scroll
+is measured in a `requestAnimationFrame`, not in the commit that changed the
+day: reading a rect before that relayout describes the table being replaced, and
+lands at the right fraction of the wrong width. And `PlanPanels` now resolves the
+quarter under the pointer from the event's own position rather than from `hover`
+state — a click can land in the same batch as the move that set it, and a *tap*
+has no preceding pointermove at all, so the quarter under a finger was
+unreachable on touch. That last one was a live defect in the plan tab too.
+
 Reading the result: **lower is better** — the score is cost net of service
 delivered, so it is routinely negative. A hand-built plan that scores lower is
 proof the search left money on the table, and the fix is a better solver. One

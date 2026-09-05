@@ -139,5 +139,32 @@ test.describe('plan workbench', () => {
     await expect(async () => {
       expect(await chart.textContent()).not.toBe(shape);
     }).toPass({ timeout: 15_000 });
+
+    // The day tabs narrow the chart and the table together.
+    const oneDay = await chart.textContent();
+    await page.getByRole('button', { name: /^(All|Alla)$/ }).click();
+    await expect(async () => {
+      expect(await chart.textContent()).not.toBe(oneDay);
+    }).toPass({ timeout: 15_000 });
+
+    // Clicking a quarter in the chart brings the table to it.
+    // Scrolling to *somewhere* is not the claim — the pointed-at quarter has to
+    // end up on screen, which is the part that broke when the measurement ran
+    // before the day switch had been laid out.
+    const grid = page.getByTestId('workbench-grid');
+    const box = await chart.boundingBox();
+    expect(box).not.toBeNull();
+    await chart.click({ position: { x: box!.width * 0.8, y: box!.height * 0.45 } });
+
+    await expect(async () => {
+      const visible = await grid.evaluate(container => {
+        const marked = container.querySelector('th[data-selected="true"]');
+        if (!marked) return false;
+        const cell = marked.getBoundingClientRect();
+        const view = container.getBoundingClientRect();
+        return cell.left >= view.left && cell.right <= view.right;
+      });
+      expect(visible).toBe(true);
+    }).toPass({ timeout: 15_000 });
   });
 });
