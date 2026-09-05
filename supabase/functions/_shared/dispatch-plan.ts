@@ -222,7 +222,8 @@ export interface DispatchResult {
   stopped_because:
     | "no_profitable_candidate"
     | "iteration_cap"
-    | "settle_cap";
+    | "settle_cap"
+    | "settle_cycle";
   iterations: number;
 }
 
@@ -1086,16 +1087,32 @@ export function planDispatch(
   // So alternate them until a settlement releases nothing: each round bids
   // against the trajectory the previous one actually left, and a round that
   // releases nothing is by construction a schedule where every commitment pays
-  // where it lands and no absent one would. The loop is bounded twice — by the
-  // iteration budget the auction already spends from, and by the round cap.
+  // where it lands and no absent one would.
+  //
+  // Some horizons never reach that. The auction re-bids exactly what the last
+  // settlement released, settlement releases exactly the same runs again, and
+  // the pair sits in a limit cycle: the September 5 replay released the same 30
+  // battery runs every round from round 2 to the cap, twenty-one rounds of
+  // provably identical work costing about 58% of the solve's iterations and
+  // most of its settlement passes. A worker's CPU budget cannot pay for that,
+  // and nothing at the end of it differs from the schedule round 2 had already
+  // produced. So a round that releases exactly what the round before it
+  // released stops the loop where it stands: repeating it cannot change the
+  // answer, only the bill. The result is the same schedule the round cap used
+  // to return, and `settle_cycle` says that is why it stopped.
+  //
+  // The loop is therefore bounded three ways — by the iteration budget the
+  // auction already spends from, by the round cap, and by the cycle.
   // ---------------------------------------------------------------------
   let settling = true;
+  let previousReleases: string | null = null;
   for (let round = 0; settling; round += 1) {
     if (round >= MAX_SETTLE_ROUNDS) {
       stopped = "settle_cap";
       break;
     }
     releasedThisRound = 0;
+    const releasedRuns: string[] = [];
     // Every cached per-store winner was priced against a schedule the previous
     // round has since settled away.
     cachedBestByStore.clear();
@@ -1583,9 +1600,20 @@ export function planDispatch(
       const target = starved ?? stranded ?? worst;
       if (target === null) break;
       releasedThisRound += 1;
+      releasedRuns.push(
+        `${target.store.key}:${target.indices.join(",")}`,
+      );
       releaseRun(target.store, target.indices);
     }
 
+    // Order is an artefact of which run happened to price worst first, so the
+    // set is what has to match, not the sequence.
+    const releases = releasedRuns.sort().join("|");
+    if (releasedThisRound > 0 && releases === previousReleases) {
+      stopped = "settle_cycle";
+      break;
+    }
+    previousReleases = releases;
     settling = releasedThisRound > 0;
   }
 

@@ -704,6 +704,108 @@ Deno.test("a partial discharge deepens when the load it covers is dearer", () =>
   );
 });
 
+Deno.test("a settlement that repeats itself stops instead of buying the cap", () => {
+  // Not every horizon reaches a fixed point. The auction re-bids exactly what
+  // the last settlement released, settlement releases the same runs again, and
+  // the two sit in a limit cycle until the round cap. The September 5 replay
+  // released the same 30 battery runs every round from round 2 to the cap:
+  // twenty-one rounds that could not change the answer, on a function whose
+  // whole solve has to fit a worker's CPU budget. It stopped fitting, and the
+  // portal's replan started returning 546 CPU Time exceeded.
+  //
+  // Forty-eight quarters that reproduce the cycle. What matters is not that
+  // this shape still cycles — a later reconciliation of the two may well settle
+  // it — but that a horizon which does not converge stops where it stopped
+  // repeating rather than paying for the rest of the rounds.
+  const slots = shapedSlots([
+    [0, 1_401, 1.08, 0.16],
+    [0, 1_107, 2.40, 0.34],
+    [0, 1_049, 1.16, 0.41],
+    [0, 471, 2.19, 0.12],
+    [0, 936, 2.30, 0.31],
+    [0, 512, 1.91, 0.20],
+    [0, 1_757, 0.39, 0.48],
+    [435, 492, 0.76, 0.02],
+    [6_581, 978, 1.82, 0.51],
+    [1_630, 1_002, 1.14, 0.05],
+    [3_649, 443, 0.44, 0.50],
+    [5_635, 301, 2.66, 0.06],
+    [6_807, 1_091, 0.77, 0.36],
+    [360, 1_467, 2.49, 0.43],
+    [3_120, 1_723, 0.47, 0.38],
+    [6_860, 1_558, 1.84, 0.28],
+    [232, 1_573, 2.31, 0.29],
+    [2_188, 1_654, 2.53, 0.24],
+    [0, 824, 0.34, 0.50],
+    [0, 770, 1.35, 0.42],
+    [0, 1_601, 2.51, 0.24],
+    [0, 611, 1.85, 0.33],
+    [0, 1_370, 2.55, 0.12],
+    [0, 718, 1.13, 0.29],
+    [0, 341, 0.99, 0.44],
+    [0, 551, 2.16, 0.22],
+    [0, 929, 1.25, 0.44],
+    [0, 1_013, 2.67, 0.15],
+    [0, 428, 2.00, 0.03],
+    [0, 1_401, 2.18, 0.34],
+    [0, 730, 1.08, 0.35],
+    [753, 582, 2.06, 0.51],
+    [4_413, 471, 1.69, 0.49],
+    [201, 1_167, 1.54, 0.38],
+    [5_926, 938, 1.53, 0.05],
+    [6_039, 968, 0.84, 0.31],
+    [3_226, 1_154, 1.55, 0.17],
+    [1_506, 1_660, 1.74, 0.28],
+    [1_427, 534, 0.90, 0.43],
+    [1_324, 1_766, 0.85, 0.43],
+    [2_257, 772, 2.08, 0.48],
+    [2_606, 908, 2.27, 0.47],
+    [0, 806, 1.33, 0.47],
+    [0, 1_684, 1.59, 0.44],
+    [0, 516, 1.20, 0.17],
+    [0, 509, 1.05, 0.47],
+    [0, 691, 0.98, 0.46],
+    [0, 478, 0.80, 0.05],
+  ]);
+  const battery: DispatchStore = {
+    ...replayBattery(slots.length, 3.16, 1.69),
+    max_state: 10,
+    curve: {
+      unit: "kwh",
+      points: [
+        { at: 3.03, sek_per_unit: 1.69 },
+        { at: 10, sek_per_unit: 0.44 },
+      ],
+    },
+    units_per_kwh: () => 0.95,
+    discharge: {
+      max_power_w: 9_600,
+      state_per_kwh_out: () => 1 / 0.95,
+      export_allowed: false,
+    },
+  };
+  const result = planDispatch(slots, [battery], LIMITS);
+
+  assert(
+    result.stopped_because !== "settle_cap",
+    "a repeating settlement must stop at the repeat, not at the round cap",
+  );
+  // Stopping early may not cost anything, so the schedule still has to be one
+  // the hardware could execute.
+  let stored = battery.initial_state;
+  for (let index = 0; index < slots.length; index += 1) {
+    const chargeW = result.power_w.battery[index];
+    const dischargeW = result.discharge_w.battery[index];
+    assert(chargeW === 0 || dischargeW === 0, `slot ${index} does both`);
+    stored += (chargeW * 0.95 - dischargeW / 0.95) / 1_000 * SLOT_HOURS;
+    assert(
+      stored >= -1e-8 && stored <= 10 + 1e-8,
+      `slot ${index} leaves the battery at ${stored}`,
+    );
+    assert(Math.abs(result.state.battery[index + 1] - stored) < 1e-8);
+  }
+});
+
 Deno.test("the battery discharges to cover load worth more than its charge", () => {
   // Dark, dear import, a full battery whose charge is worth little.
   const slots = buildSlots([new Array(SLOTS_PER_DAY).fill(0)], {
@@ -1110,7 +1212,8 @@ Deno.test("§8.18 — the settled schedule is one the auction would have stopped
     );
   }
   assert(
-    result.stopped_because !== "settle_cap",
-    "the auction and the settlement must reach a fixed point",
+    result.stopped_because !== "settle_cap" &&
+      result.stopped_because !== "settle_cycle",
+    "the auction and the settlement must reach a fixed point, not a cycle",
   );
 });
