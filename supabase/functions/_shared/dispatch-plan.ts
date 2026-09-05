@@ -530,6 +530,309 @@ function sellLegIsPublished(
  * when a car is nearly full or a pool has fallen out of its band (§8.9).
  * Complete schedules are compared so early purchases do not lock out solar.
  */
+/**
+ * What one schedule is worth, judged the way the planner judges its own.
+ *
+ * The objective in §8.2 was, until now, a closure inside `planDispatch` that
+ * only ever ran on schedules `planDispatch` had just produced. That made one
+ * question unanswerable: is a plan bad because the *objective* is wrong, or
+ * because the *search* failed to find the best schedule the objective allows?
+ * Scoring an arbitrary schedule separates them. A hand-built plan that scores
+ * better than the planner's proves the search left money on the table; one that
+ * scores worse while still looking better to a human indicts a utility curve.
+ *
+ * Both sides must be judged by the same arithmetic or the comparison says
+ * nothing, so `planDispatch` selects on this function rather than on a private
+ * copy of it.
+ */
+export interface DispatchSchedule {
+  /** Charge power per store per slot. Missing stores are treated as idle. */
+  power_w: Record<string, number[]>;
+  /** Discharge power per store per slot. Missing stores are treated as idle. */
+  discharge_w: Record<string, number[]>;
+}
+
+export interface DispatchScoreStore {
+  key: string;
+  state_unit: string;
+  charged_kwh: number;
+  discharged_kwh: number;
+  end_state: number;
+  /** Utility delivered, already weighted by usage and terminal weight. */
+  service_value_sek: number;
+  wear_sek: number;
+  start_sek: number;
+  runs: number;
+}
+
+export interface DispatchScore {
+  /**
+   * The objective. **Lower is better** — it is a cost net of service delivered,
+   * and it is routinely negative on a plan that delivers more than it spends.
+   */
+  total_sek: number;
+  import_sek: number;
+  /** Revenue, stated positive and subtracted from the total. */
+  export_sek: number;
+  peak_sek: number;
+  start_sek: number;
+  wear_sek: number;
+  /** Utility delivered across every store, subtracted from the total. */
+  service_value_sek: number;
+  grid_import_kwh: number;
+  grid_export_kwh: number;
+  import_w: number[];
+  export_w: number[];
+  state: Record<string, number[]>;
+  stores: DispatchScoreStore[];
+  /**
+   * Physical or contractual rules the schedule breaks.
+   *
+   * A hand-built plan must not be allowed to win by charging a full battery or
+   * exceeding the service fuse, and `project` clamps a state silently, so an
+   * infeasible schedule would otherwise score as though the clamp were free.
+   */
+  infeasibilities: string[];
+}
+
+/** Maximal blocks of consecutive slots the store is drawing in. */
+function runsOf(powerW: number[]): { start: number; slots: number }[] {
+  const runs: { start: number; slots: number }[] = [];
+  let start = -1;
+  for (let index = 0; index <= powerW.length; index += 1) {
+    const on = index < powerW.length && (powerW[index] ?? 0) > 1e-9;
+    if (on && start < 0) start = index;
+    if (!on && start >= 0) {
+      runs.push({ start, slots: index - start });
+      start = -1;
+    }
+  }
+  return runs;
+}
+
+export function scoreDispatch(
+  slots: DispatchSlot[],
+  stores: DispatchStore[],
+  limits: DispatchLimits,
+  schedule: DispatchSchedule,
+): DispatchScore {
+  const count = slots.length;
+  const zeros = () => new Array<number>(count).fill(0);
+  const infeasibilities: string[] = [];
+  const powerByKey: Record<string, number[]> = {};
+  const dischargeByKey: Record<string, number[]> = {};
+  const stateByKey: Record<string, number[]> = {};
+
+  for (const store of stores) {
+    const power = (schedule.power_w[store.key] ?? zeros()).slice(0, count);
+    const discharge = (schedule.discharge_w[store.key] ?? zeros()).slice(
+      0,
+      count,
+    );
+    while (power.length < count) power.push(0);
+    while (discharge.length < count) discharge.push(0);
+    powerByKey[store.key] = power;
+    dischargeByKey[store.key] = discharge;
+
+    // Project the trajectory unclamped so a schedule that overfills or drains a
+    // store is reported rather than quietly bounded into feasibility.
+    const low = store.min_state ?? -Infinity;
+    const high = store.max_state ?? Infinity;
+    const state = new Array<number>(count + 1).fill(store.initial_state);
+    for (let index = 0; index < count; index += 1) {
+      const next = nextState(
+        store,
+        state[index],
+        power[index],
+        discharge[index],
+        index,
+      );
+      if (next < low - 1e-6 || next > high + 1e-6) {
+        infeasibilities.push(
+          `${store.key} reaches ${next.toFixed(2)} ${store.curve.unit} at slot ${
+            index + 1
+          }, outside ${low}–${high}`,
+        );
+      }
+      state[index + 1] = Math.min(high, Math.max(low, next));
+    }
+    stateByKey[store.key] = state;
+
+    const minimum = store.min_power_w ?? 0;
+    const step = store.power_step_w ?? 0;
+    for (let index = 0; index < count; index += 1) {
+      const watts = power[index];
+      if (watts > store.max_power_w + 1e-6) {
+        infeasibilities.push(
+          `${store.key} draws ${Math.round(watts)} W at slot ${index}, above its ${
+            Math.round(store.max_power_w)
+          } W maximum`,
+        );
+      }
+      if (watts > 1e-9 && watts + 1e-6 < minimum) {
+        infeasibilities.push(
+          `${store.key} draws ${Math.round(watts)} W at slot ${index}, below the ${
+            Math.round(minimum)
+          } W it can execute`,
+        );
+      }
+      if (
+        watts > 1e-9 && step > 0 &&
+        Math.abs((watts - minimum) / step - Math.round((watts - minimum) / step)) >
+          1e-6
+      ) {
+        infeasibilities.push(
+          `${store.key} draws ${
+            Math.round(watts)
+          } W at slot ${index}, off its ${Math.round(step)} W increment`,
+        );
+      }
+      const out = discharge[index];
+      if (out > 1e-9 && !store.discharge) {
+        infeasibilities.push(
+          `${store.key} returns ${
+            Math.round(out)
+          } W at slot ${index} but cannot discharge`,
+        );
+      } else if (out > (store.discharge?.max_power_w ?? 0) + 1e-6) {
+        infeasibilities.push(
+          `${store.key} returns ${Math.round(out)} W at slot ${index}, above its ${
+            Math.round(store.discharge?.max_power_w ?? 0)
+          } W maximum`,
+        );
+      }
+    }
+
+    // A run truncated by the edge of the horizon is not a defect: the plan is
+    // receding, and the quarter before it started is not in view either.
+    const minimumRun = store.min_run_slots ?? 1;
+    for (const run of runsOf(power)) {
+      if (run.start === 0 || run.start + run.slots >= count) continue;
+      if (run.slots < minimumRun) {
+        infeasibilities.push(
+          `${store.key} runs ${run.slots} quarter(s) from slot ${run.start}, short of its ${minimumRun}-quarter minimum`,
+        );
+      }
+    }
+  }
+
+  const occupiedW = zeros();
+  const returnedW = zeros();
+  for (const store of stores) {
+    for (let index = 0; index < count; index += 1) {
+      occupiedW[index] += powerByKey[store.key][index];
+      returnedW[index] += dischargeByKey[store.key][index];
+    }
+  }
+
+  const importW = zeros();
+  const exportW = zeros();
+  for (let index = 0; index < count; index += 1) {
+    const net = slots[index].pv_w + returnedW[index] -
+      slots[index].fixed_load_w - occupiedW[index];
+    if (net >= 0) {
+      exportW[index] = Math.min(net, limits.grid_export_limit_w);
+    } else {
+      importW[index] = -net;
+    }
+    if (importW[index] > limits.grid_import_limit_w + 1e-6) {
+      infeasibilities.push(
+        `slot ${index} imports ${
+          Math.round(importW[index])
+        } W, above the ${Math.round(limits.grid_import_limit_w)} W connection`,
+      );
+    }
+  }
+
+  for (const store of stores) {
+    if (!store.discharge || store.discharge.export_allowed) continue;
+    for (let index = 0; index < count; index += 1) {
+      if (
+        dischargeByKey[store.key][index] > 1e-9 && exportW[index] > 1e-9
+      ) {
+        infeasibilities.push(
+          `${store.key} discharges into export at slot ${index}, which it is not permitted to do`,
+        );
+      }
+    }
+  }
+
+  let importSek = 0;
+  let peakSek = 0;
+  let exportSek = 0;
+  let gridImportKwh = 0;
+  let gridExportKwh = 0;
+  for (let index = 0; index < count; index += 1) {
+    const importKwh = importW[index] / 1_000 * SLOT_HOURS;
+    const exportKwh = exportW[index] / 1_000 * SLOT_HOURS;
+    gridImportKwh += importKwh;
+    gridExportKwh += exportKwh;
+    importSek += importKwh * slots[index].import_price_sek_per_kwh;
+    peakSek += importKwh * peakSekPerKwh(limits, 0, importW[index]);
+    exportSek += exportKwh * slots[index].export_price_sek_per_kwh;
+  }
+
+  const scored: DispatchScoreStore[] = [];
+  let serviceValueSek = 0;
+  let wearSek = 0;
+  let startSek = 0;
+  for (const store of stores) {
+    const power = powerByKey[store.key];
+    const discharge = dischargeByKey[store.key];
+    const state = stateByKey[store.key];
+    let storeValue = (store.terminal_weight ?? 0) *
+      valueOfMove(store.curve, store.initial_state, state[count]);
+    let storeWear = 0;
+    let chargedKwh = 0;
+    let dischargedKwh = 0;
+    for (let index = 0; index < count; index += 1) {
+      storeValue += (store.usage_weight[index] ?? 0) *
+        valueOfMove(store.curve, store.initial_state, state[index]);
+      storeWear += SLOT_HOURS / 1_000 *
+        ((power[index] + discharge[index]) * (store.wear_sek_per_kwh ?? 0) +
+          discharge[index] *
+            (store.discharge?.state_per_kwh_out(state[index], index) ?? 0) *
+            (store.discharge?.cycling_cost_sek_per_unit ?? 0));
+      chargedKwh += power[index] / 1_000 * SLOT_HOURS;
+      dischargedKwh += discharge[index] / 1_000 * SLOT_HOURS;
+    }
+    const runs = runsOf(power);
+    const storeStart = runs.length * (store.start_cost_sek ?? 0);
+    serviceValueSek += storeValue;
+    wearSek += storeWear;
+    startSek += storeStart;
+    scored.push({
+      key: store.key,
+      state_unit: store.curve.unit,
+      charged_kwh: chargedKwh,
+      discharged_kwh: dischargedKwh,
+      end_state: state[count],
+      service_value_sek: storeValue,
+      wear_sek: storeWear,
+      start_sek: storeStart,
+      runs: runs.length,
+    });
+  }
+
+  return {
+    total_sek: importSek + peakSek - exportSek + startSek + wearSek -
+      serviceValueSek,
+    import_sek: importSek,
+    export_sek: exportSek,
+    peak_sek: peakSek,
+    start_sek: startSek,
+    wear_sek: wearSek,
+    service_value_sek: serviceValueSek,
+    grid_import_kwh: gridImportKwh,
+    grid_export_kwh: gridExportKwh,
+    import_w: importW,
+    export_w: exportW,
+    state: stateByKey,
+    stores: scored,
+    infeasibilities,
+  };
+}
+
 export function planDispatch(
   slots: DispatchSlot[],
   stores: DispatchStore[],
@@ -537,32 +840,13 @@ export function planDispatch(
   options: { maxIterations?: number } = {},
 ): DispatchResult {
   let best = dispatchAuction(slots, stores, limits, options);
-  const objective = (result: DispatchResult): number => {
-    let cost = slots.reduce((total, slot, i) =>
-      total + SLOT_HOURS / 1_000 *
-        (result.import_w[i] * (slot.import_price_sek_per_kwh +
-              peakSekPerKwh(limits, 0, result.import_w[i])) -
-          result.export_w[i] * slot.export_price_sek_per_kwh), 0);
-    cost += result.allocations.flat().reduce(
-      (sum, part) => sum + part.start_cost_sek,
-      0,
-    );
-    for (const store of stores) {
-      const state = result.state[store.key];
-      cost -= (store.terminal_weight ?? 0) *
-        valueOfMove(store.curve, store.initial_state, state.at(-1)!);
-      for (let i = 0; i < slots.length; i += 1) {
-        cost -= (store.usage_weight[i] ?? 0) *
-          valueOfMove(store.curve, store.initial_state, state[i]);
-        cost += SLOT_HOURS / 1_000 *
-          ((result.power_w[store.key][i] + result.discharge_w[store.key][i]) *
-              (store.wear_sek_per_kwh ?? 0) + result.discharge_w[store.key][i] *
-              (store.discharge?.state_per_kwh_out(state[i], i) ?? 0) *
-              (store.discharge?.cycling_cost_sek_per_unit ?? 0));
-      }
-    }
-    return cost;
-  };
+  // Selection runs through the same scorer a hand-built plan is judged by, so
+  // "the planner picked this" and "this scored better" are the same claim.
+  const objective = (result: DispatchResult): number =>
+    scoreDispatch(slots, stores, limits, {
+      power_w: result.power_w,
+      discharge_w: result.discharge_w,
+    }).total_sek;
   let bestCost = objective(best);
   for (const store of stores) {
     const profile = cheapestDiscreteProfile(

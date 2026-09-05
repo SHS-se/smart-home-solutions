@@ -1,9 +1,11 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import {
   type DispatchLimits,
+  type DispatchSchedule,
   type DispatchSlot,
   type DispatchStore,
   planDispatch,
+  scoreDispatch,
   SLOT_HOURS,
 } from "./dispatch-plan.ts";
 import { type UtilityCurve, valueOfMove } from "./store-value.ts";
@@ -1405,4 +1407,140 @@ Deno.test("a real departure before the sun still allows fast grid charging", () 
   assert(result.power_w.ev.slice(2).every((watts) => watts === 0));
   assert(Math.max(...result.power_w.ev) >= 9_000);
   assert(result.state.ev[2] >= 5);
+});
+
+
+// ---------------------------------------------------------------------------
+// Scoring a schedule the planner did not produce (§8.12).
+//
+// The objective was a closure inside `planDispatch` until it became
+// `scoreDispatch`, and while it was, only schedules the planner had just built
+// were ever scored. That left the question the acceptance tests actually ask —
+// did the search find the best schedule the objective allows? — unanswerable,
+// because the alternative was never priced. These pin the property that makes
+// it answerable: any schedule can be scored, and a schedule that cheats the
+// physics is reported rather than silently clamped into feasibility.
+// ---------------------------------------------------------------------------
+
+/** A schedule with every store idle: the do-nothing baseline. */
+function idle(slots: number, stores: DispatchStore[]): DispatchSchedule {
+  const schedule: DispatchSchedule = { power_w: {}, discharge_w: {} };
+  for (const store of stores) {
+    schedule.power_w[store.key] = new Array(slots).fill(0);
+    schedule.discharge_w[store.key] = new Array(slots).fill(0);
+  }
+  return schedule;
+}
+
+Deno.test("the planner's own plan beats doing nothing when charging pays", () => {
+  const slots = buildSlots([solarDay(8_000), solarDay(8_000)]);
+  const ev = evStore(slots.length, 90, slots.length - 1);
+  const planned = planDispatch(slots, [ev], LIMITS);
+
+  const scored = scoreDispatch(slots, [ev], LIMITS, {
+    power_w: planned.power_w,
+    discharge_w: planned.discharge_w,
+  });
+  const nothing = scoreDispatch(slots, [ev], LIMITS, idle(slots.length, [ev]));
+
+  assertEquals(scored.infeasibilities, []);
+  assert(
+    scored.total_sek < nothing.total_sek,
+    `a car at 90 km must be worth charging: ${scored.total_sek} vs ${nothing.total_sek}`,
+  );
+});
+
+Deno.test("the same energy scores better taken from sun than from grid", () => {
+  // The comparison the workbench exists to make, with both sides hand-built so
+  // it tests the scorer rather than the search: identical kWh into the car,
+  // once across midday surplus and once from the dark early hours.
+  const slots = buildSlots([solarDay(8_000)]);
+  const ev = evStore(slots.length, 90, slots.length - 1);
+
+  const sun = idle(slots.length, [ev]);
+  for (let index = 44; index < 56; index += 1) sun.power_w.ev[index] = 6_000;
+  const grid = idle(slots.length, [ev]);
+  for (let index = 4; index < 16; index += 1) grid.power_w.ev[index] = 6_000;
+
+  const fromSun = scoreDispatch(slots, [ev], LIMITS, sun);
+  const fromGrid = scoreDispatch(slots, [ev], LIMITS, grid);
+
+  assertEquals(fromSun.infeasibilities, []);
+  assertEquals(fromGrid.infeasibilities, []);
+  assert(
+    fromSun.total_sek < fromGrid.total_sek,
+    `surplus at ${LIMITS.grid_export_limit_w} W export must beat import: ${fromSun.total_sek} vs ${fromGrid.total_sek}`,
+  );
+});
+
+Deno.test("a schedule that overfills a store is reported, not clamped", () => {
+  const slots = buildSlots([solarDay(8_000)]);
+  const ev = { ...evStore(slots.length, 90, slots.length - 1), max_state: 400 };
+
+  const greedy = idle(slots.length, [ev]);
+  for (let index = 0; index < slots.length; index += 1) {
+    greedy.power_w.ev[index] = 11_000;
+  }
+  const scored = scoreDispatch(slots, [ev], LIMITS, greedy);
+
+  assert(
+    scored.infeasibilities.some((entry) => entry.includes("outside")),
+    "charging a full car all day must be refused, not silently bounded",
+  );
+});
+
+Deno.test("a schedule above the connection is reported", () => {
+  const slots = buildSlots([solarDay(0)]);
+  const ev = evStore(slots.length, 90, slots.length - 1);
+
+  const over = idle(slots.length, [ev]);
+  over.power_w.ev[10] = 11_000;
+  const scored = scoreDispatch(slots, [ev], {
+    ...LIMITS,
+    grid_import_limit_w: 5_000,
+  }, over);
+
+  assert(
+    scored.infeasibilities.some((entry) => entry.includes("connection")),
+    `expected a connection breach, got ${JSON.stringify(scored.infeasibilities)}`,
+  );
+});
+
+Deno.test("a hardware increment the schedule misses is reported", () => {
+  const slots = buildSlots([solarDay(8_000)]);
+  const ev = {
+    ...evStore(slots.length, 90, slots.length - 1),
+    min_power_w: 4_140,
+    power_step_w: 690,
+  };
+
+  const off = idle(slots.length, [ev]);
+  off.power_w.ev[48] = 5_000;
+  const scored = scoreDispatch(slots, [ev], LIMITS, off);
+
+  assert(
+    scored.infeasibilities.some((entry) => entry.includes("increment")),
+    `expected an increment breach, got ${JSON.stringify(scored.infeasibilities)}`,
+  );
+});
+
+Deno.test("start costs are counted per run, from the schedule itself", () => {
+  const slots = buildSlots([solarDay(0)]);
+  const pool = poolStore(slots.length, 26);
+
+  const once = idle(slots.length, [pool]);
+  for (let index = 40; index < 48; index += 1) once.power_w.pool[index] = 3_500;
+  const twice = idle(slots.length, [pool]);
+  for (let index = 40; index < 44; index += 1) twice.power_w.pool[index] = 3_500;
+  for (let index = 46; index < 50; index += 1) twice.power_w.pool[index] = 3_500;
+
+  const single = scoreDispatch(slots, [pool], LIMITS, once);
+  const split = scoreDispatch(slots, [pool], LIMITS, twice);
+
+  assertEquals(single.stores[0].runs, 1);
+  assertEquals(split.stores[0].runs, 2);
+  assert(
+    split.start_sek > single.start_sek,
+    "two runs must pay two start costs",
+  );
 });

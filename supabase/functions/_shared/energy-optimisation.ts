@@ -20,7 +20,9 @@ import {
 import {
   type DispatchAllocationDiagnostic,
   type DispatchBatteryDiagnostic,
+  type DispatchLimits,
   type DispatchResult,
+  type DispatchSchedule,
   type DispatchSlot,
   type DispatchStore,
   planDispatch,
@@ -4258,6 +4260,78 @@ function buildPlan(
     service_inhibited_slots: scheduled.schedule.serviceInhibitedSlots,
     dispatched_devices: [...scheduled.schedule.dispatched].sort(),
     store_diagnostics: scheduled.schedule.storeDiagnostics,
+  };
+}
+
+/**
+ * The exact inputs the store auction was given, so a person can answer it back.
+ *
+ * §8.12 asks whether the operating heuristics *emerge*, and the planner's own
+ * plan cannot settle that on its own: a schedule that looks wrong is either a
+ * search that failed to find the best answer the objective allows, or an
+ * objective that prefers the wrong answer. Those need opposite fixes, and the
+ * only way to tell them apart is to score a schedule the planner did not
+ * produce — a hand-built one — against the same slots, stores and limits.
+ *
+ * So this hands the caller the auction's inputs and its answer, and
+ * `scoreDispatch` judges anything built from them. The bundle is read out of
+ * the same cache `buildPlan` fills, never rebuilt, so the workbench cannot
+ * drift from the planner it is meant to interrogate.
+ *
+ * Snapshot freshness is deliberately not checked. Every snapshot worth
+ * interrogating is one that has been sitting in a table since the plan it
+ * produced, which is exactly what `generateOptimisationPlan` refuses.
+ */
+export interface DispatchWorkbench {
+  slots: DispatchSlot[];
+  stores: DispatchStore[];
+  limits: DispatchLimits;
+  /** Start of each quarter, for labelling the schedule in local time. */
+  slot_start_ms: number[];
+  /** What the planner chose, ready to be scored or edited. */
+  planned: DispatchSchedule;
+  stopped_because: DispatchResult["stopped_because"];
+  iterations: number;
+}
+
+export function dispatchWorkbench(
+  snapshot: OptimisationSnapshot,
+  priceArchive: StoredPriceRow[] = [],
+  resolvedPriceOutlook?: OptimisationPlan["price_outlook"],
+): DispatchWorkbench | null {
+  const { slots } = preparedSlots(snapshot, priceArchive, resolvedPriceOutlook);
+  const { reservedW } = batteryReservation(slots, snapshot);
+  const derivedBatteryValue = snapshot.schema_version >= 6
+    ? deriveBatteryValueCurve(slots, snapshot)
+    : null;
+  const dispatchCache = new Map<string, DispatchBundle | null>();
+  scheduleServices(
+    "priority",
+    slots,
+    snapshot,
+    reservedW,
+    dispatchCache,
+    derivedBatteryValue,
+  );
+  const bundle = [...dispatchCache.values()].find((entry) => entry !== null);
+  if (!bundle) return null;
+  const peakShaping = derivePeakShaping(snapshot);
+  return {
+    slots: bundle.slots,
+    stores: bundle.stores,
+    limits: {
+      grid_import_limit_w: snapshot.grid.import_limit_w,
+      grid_export_limit_w: snapshot.grid.export_limit_w,
+      grid_import_shaping_w: peakShaping.threshold_w,
+      peak_shaping_sek_per_kwh_per_kw: peakShaping.sek_per_kwh_per_kw,
+    },
+    slot_start_ms: slots.map((slot) => slot.epoch_ms),
+    planned: {
+      power_w: bundle.result.power_w,
+      discharge_w: bundle.result.discharge_w,
+    },
+    stopped_because: bundle.result.stopped_because,
+    iterations: bundle.result.iterations,
   };
 }
 

@@ -1,0 +1,495 @@
+// Build a plan by hand, and let the planner's own objective judge it.
+//
+// ENERGY_OPTIMISATION_ARCHITECTURE.md §8.12 asks whether the operating
+// heuristics emerge from the objective rather than from rules. When a shipped
+// plan contradicts one, the finding is ambiguous in a way that matters: either
+// the search failed to find the best schedule the objective allows, or the
+// objective prefers the wrong schedule. Those need opposite fixes — a different
+// solver versus a different utility curve — and nothing in a plan distinguishes
+// them, because the planner's own schedule is the only one ever priced.
+//
+// This prices a second one. The household edits the auction's schedule, the
+// edit is expanded back into quarters, and `scoreDispatch` — the same function
+// `planDispatch` selects on — scores both. A hand-built plan that scores better
+// is proof the search left money on the table. One that scores worse while
+// still reading better to the household is a curve that needs correcting. The
+// answer is a number either way, which is the point.
+
+import React, { useCallback, useMemo, useState } from 'react';
+import { AlertTriangle, Loader2, RotateCcw, Sparkles } from 'lucide-react';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { useLanguage } from '@/contexts/LanguageContext';
+import { supabase } from '@/integrations/supabase/client';
+import { dispatchWorkbench, type DispatchWorkbench, type OptimisationSnapshot } from '../../../../supabase/functions/_shared/energy-optimisation';
+import {
+  buildWorkbenchModel,
+  compareWorkbench,
+  executableKw,
+  scheduleFromDraft,
+  type Granularity,
+  type WorkbenchComparison,
+  type WorkbenchDraft,
+  type WorkbenchModel,
+} from '@/lib/energy-shift/plan-workbench';
+import { useHomeTimeZone } from './HomeTimeZoneContext';
+import { formatHomeDayMonth, formatHomeTime } from '@/lib/energy-shift/home-time';
+
+interface Props {
+  homeId: string | null;
+}
+
+const signed = (value: number, digits: number, unit: string): string => {
+  const rounded = Number(value.toFixed(digits));
+  const body = `${Math.abs(rounded).toFixed(digits)} ${unit}`;
+  if (rounded === 0) return body;
+  return `${rounded > 0 ? '+' : '−'}${body}`;
+};
+
+/** The state units the planner works in, said the way a household reads them. */
+const stateLabel = (unit: string, value: number): string => {
+  if (unit === 'km') return `${Math.round(value)} km`;
+  if (unit === 'celsius') return `${value.toFixed(1)} °C`;
+  if (unit === 'kwh') return `${value.toFixed(1)} kWh`;
+  return `${value.toFixed(1)} ${unit}`;
+};
+
+
+const Issues: React.FC<{
+  title: string;
+  entries: string[];
+  tone: 'destructive' | 'default';
+  more: string;
+  footer?: string;
+}> = ({ title, entries, tone, more, footer }) => (
+  <Alert variant={tone === 'destructive' ? 'destructive' : undefined}>
+    <AlertTriangle className="h-4 w-4" />
+    <AlertTitle>{title}</AlertTitle>
+    <AlertDescription>
+      <ul className="text-xs list-disc pl-4 space-y-0.5">
+        {entries.slice(0, 8).map(entry => <li key={entry}>{entry}</li>)}
+        {entries.length > 8 && <li>{more} ({entries.length})</li>}
+      </ul>
+      {footer && <p className="text-[11px] mt-2 opacity-80">{footer}</p>}
+    </AlertDescription>
+  </Alert>
+);
+
+const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
+  const { t } = useLanguage();
+  const homeTimeZone = useHomeTimeZone();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [bench, setBench] = useState<DispatchWorkbench | null>(null);
+  // Quarters by default: that is the planner's own resolution, so the editor
+  // opens showing exactly what it chose, with the two scores identical and
+  // nothing flagged. Anything coarser is already an edit.
+  const [granularity, setGranularity] = useState<Granularity>('quarter');
+  const [draft, setDraft] = useState<WorkbenchDraft>({});
+  const [day, setDay] = useState(0);
+
+  const model: WorkbenchModel | null = useMemo(
+    () => (bench ? buildWorkbenchModel(bench, granularity) : null),
+    [bench, granularity],
+  );
+
+  /**
+   * Every column, including the ones the day tabs are not showing.
+   *
+   * A plan is scored over the whole 72 hours or it is not comparable, so the
+   * draft is horizon-wide and the day selector only ever narrows what is drawn.
+   */
+  const values = useCallback(
+    (rowId: string): number[] => draft[rowId] ?? model?.planned[rowId] ?? [],
+    [draft, model],
+  );
+
+  const comparison: WorkbenchComparison | null = useMemo(() => {
+    if (!bench || !model) return null;
+    return compareWorkbench(bench, scheduleFromDraft(bench, model, draft));
+  }, [bench, model, draft]);
+
+  const load = async () => {
+    if (!homeId) return;
+    setLoading(true);
+    setError(null);
+    const { data, error: queryError } = await supabase
+      .from('energy_optimisation_current')
+      .select('snapshot')
+      .eq('home_id', homeId)
+      .maybeSingle();
+    if (queryError || !data?.snapshot) {
+      setLoading(false);
+      setError(t(
+        'Ingen sparad ögonblicksbild att bygga mot.',
+        'No stored snapshot to build against.',
+      ));
+      return;
+    }
+    try {
+      const built = dispatchWorkbench(data.snapshot as unknown as OptimisationSnapshot);
+      if (!built) {
+        setError(t(
+          'Ögonblicksbilden har inga lager att planera — ingen bil, pool eller batteri är kopplad till planeraren.',
+          'This snapshot has no stores to plan — no car, pool or battery is routed to the planner.',
+        ));
+      } else {
+        setBench(built);
+        setDraft({});
+        setDay(0);
+      }
+    } catch (thrown) {
+      setError(thrown instanceof Error ? thrown.message : String(thrown));
+    }
+    setLoading(false);
+  };
+
+  const setCell = (rowId: string, columnIndex: number, kw: number) => {
+    if (!model) return;
+    const row = model.rows.find(entry => entry.id === rowId);
+    if (!row) return;
+    setDraft(current => {
+      const next = [...(current[rowId] ?? model.planned[rowId] ?? [])];
+      next[columnIndex] = row.direction === 'charge'
+        ? executableKw(row, kw)
+        : Math.max(0, Math.min(row.maxKw, kw));
+      return { ...current, [rowId]: next };
+    });
+  };
+
+  // Days are cut on the home's own clock, not the reader's: a plan for a house
+  // in Stockholm read from a laptop in another zone must still break at that
+  // house's midnight.
+  const days = useMemo(() => {
+    if (!model) return [] as { label: string; columns: number[] }[];
+    const grouped = new Map<string, number[]>();
+    model.columns.forEach((column, index) => {
+      const key = formatHomeDayMonth(column.startMs, homeTimeZone);
+      grouped.set(key, [...(grouped.get(key) ?? []), index]);
+    });
+    return [...grouped.entries()].map(([label, columns]) => ({ label, columns }));
+  }, [model, homeTimeZone]);
+
+  const shown = days[day]?.columns ?? [];
+
+  if (!bench) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">
+            {t('Bygg en plan själv', 'Build a plan yourself')}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            {t(
+              'Hämtar planerarens egna indata — priser, solprognos, laster och lager — och låter dig skriva in ditt eget schema. Båda planerna får poäng av exakt samma målfunktion som planeraren väljer med, så skillnaden är i kronor och går att lita på.',
+              'Loads the planner’s own inputs — prices, solar forecast, loads and stores — and lets you type your own schedule. Both plans are scored by exactly the objective the planner selects on, so the difference is in kronor and means something.',
+            )}
+          </p>
+          {error && (
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>{t('Kunde inte läsa in', 'Could not load')}</AlertTitle>
+              <AlertDescription className="text-xs">{error}</AlertDescription>
+            </Alert>
+          )}
+          <Button onClick={load} disabled={loading || !homeId}>
+            {loading
+              ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              : <Sparkles className="w-4 h-4 mr-2" />}
+            {t('Läs in planerarens plan', 'Load the planner’s plan')}
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const better = comparison ? comparison.totalDeltaSek < -0.005 : false;
+  const worse = comparison ? comparison.totalDeltaSek > 0.005 : false;
+  const blocked = (comparison?.introduced.length ?? 0) > 0;
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">
+            {t('Poäng', 'Score')}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div>
+              <div className="text-xs text-muted-foreground">
+                {t('Planerarens plan', 'The planner’s plan')}
+              </div>
+              <div className="text-2xl font-medium tabular-nums">
+                {comparison?.planner.total_sek.toFixed(2)} SEK
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground">
+                {t('Din plan', 'Your plan')}
+              </div>
+              <div className="text-2xl font-medium tabular-nums">
+                {comparison?.manual.total_sek.toFixed(2)} SEK
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground">
+                {t('Skillnad', 'Difference')}
+              </div>
+              <div
+                className={`text-2xl font-medium tabular-nums ${
+                  blocked
+                    ? 'text-muted-foreground'
+                    : better
+                    ? 'text-emerald-600 dark:text-emerald-400'
+                    : worse
+                    ? 'text-rose-600 dark:text-rose-400'
+                    : ''
+                }`}
+              >
+                {comparison ? signed(comparison.totalDeltaSek, 2, 'SEK') : '—'}
+              </div>
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {t(
+              'Lägre är bättre: talet är kostnad minus levererad nytta, så det är ofta negativt. Är din plan lägre hittade planeraren inte den bästa lösningen som målfunktionen tillåter — felet sitter i sökningen. Är den högre men känns bättre är det en värdekurva som är fel.',
+              'Lower is better: the number is cost minus the service delivered, so it is often negative. If yours is lower, the planner failed to find the best schedule its own objective allows — the fault is in the search. If yours is higher but still reads better to you, a value curve is wrong.',
+            )}
+          </p>
+          {blocked && (
+            <Issues
+              title={t('Din plan går inte att köra', 'Your plan cannot be run')}
+              entries={comparison!.introduced}
+              tone="destructive"
+              more={t('… och fler', '… and more')}
+            />
+          )}
+          {(comparison?.planner.infeasibilities.length ?? 0) > 0 && (
+            <Issues
+              title={t(
+                'Planerarens egen plan bryter mot sina egna regler',
+                'The planner’s own plan breaks its own rules',
+              )}
+              entries={comparison!.planner.infeasibilities}
+              tone="default"
+              more={t('… och fler', '… and more')}
+              footer={t(
+                'Det här är ett fynd, inte ett fel i verktyget: målfunktionen underkänner ett schema planeraren själv skickade. Jämförelsen ovan gäller ändå — båda planerna räknas med samma regler.',
+                'This is a finding, not a fault in the tool: the objective refuses a schedule the planner itself issued. The comparison above still holds — both plans are scored by the same rules.',
+              )}
+            />
+          )}
+          {comparison && (
+            <div className="overflow-x-auto">
+              <table className="text-xs w-full min-w-[520px]">
+                <thead className="text-muted-foreground">
+                  <tr>
+                    <th className="text-left font-normal py-1">{t('Post', 'Line')}</th>
+                    <th className="text-right font-normal py-1">{t('Planeraren', 'Planner')}</th>
+                    <th className="text-right font-normal py-1">{t('Du', 'You')}</th>
+                    <th className="text-right font-normal py-1">{t('Skillnad', 'Diff')}</th>
+                  </tr>
+                </thead>
+                <tbody className="tabular-nums">
+                  {([
+                    [t('Köpt el', 'Energy bought'), comparison.planner.import_sek, comparison.manual.import_sek],
+                    [t('Effekttillägg', 'Peak charge'), comparison.planner.peak_sek, comparison.manual.peak_sek],
+                    [t('Såld el', 'Energy sold'), -comparison.planner.export_sek, -comparison.manual.export_sek],
+                    [t('Slitage', 'Wear'), comparison.planner.wear_sek, comparison.manual.wear_sek],
+                    [t('Starter', 'Starts'), comparison.planner.start_sek, comparison.manual.start_sek],
+                    [t('Levererad nytta', 'Service delivered'), -comparison.planner.service_value_sek, -comparison.manual.service_value_sek],
+                  ] as [string, number, number][]).map(([label, left, right]) => (
+                    <tr key={label} className="border-t border-border/50">
+                      <td className="py-1">{label}</td>
+                      <td className="text-right py-1">{left.toFixed(2)}</td>
+                      <td className="text-right py-1">{right.toFixed(2)}</td>
+                      <td className="text-right py-1">{signed(right - left, 2, '')}</td>
+                    </tr>
+                  ))}
+                  <tr className="border-t border-border">
+                    <td className="py-1">{t('Köpt från nätet', 'Bought from grid')}</td>
+                    <td className="text-right py-1">{comparison.planner.grid_import_kwh.toFixed(1)} kWh</td>
+                    <td className="text-right py-1">{comparison.manual.grid_import_kwh.toFixed(1)} kWh</td>
+                    <td className="text-right py-1">{signed(comparison.importDeltaKwh, 1, '')}</td>
+                  </tr>
+                  <tr className="border-t border-border/50">
+                    <td className="py-1">{t('Sålt till nätet', 'Sold to grid')}</td>
+                    <td className="text-right py-1">{comparison.planner.grid_export_kwh.toFixed(1)} kWh</td>
+                    <td className="text-right py-1">{comparison.manual.grid_export_kwh.toFixed(1)} kWh</td>
+                    <td className="text-right py-1">{signed(comparison.exportDeltaKwh, 1, '')}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <CardTitle className="text-base">
+              {t('Ditt schema', 'Your schedule')}
+            </CardTitle>
+            <div className="flex flex-wrap items-center gap-1">
+              {days.map((entry, index) => (
+                <Button
+                  key={entry.label}
+                  size="sm"
+                  variant={index === day ? 'default' : 'outline'}
+                  onClick={() => setDay(index)}
+                >
+                  {entry.label}
+                </Button>
+              ))}
+              <span className="mx-1 h-4 w-px bg-border" />
+              {(['hour', 'quarter'] as Granularity[]).map(option => (
+                <Button
+                  key={option}
+                  size="sm"
+                  variant={option === granularity ? 'default' : 'outline'}
+                  onClick={() => {
+                    setGranularity(option);
+                    setDraft({});
+                  }}
+                >
+                  {option === 'hour' ? t('1 tim', '1 hour') : t('15 min', '15 min')}
+                </Button>
+              ))}
+              <Button size="sm" variant="ghost" onClick={() => setDraft({})}>
+                <RotateCcw className="w-3.5 h-3.5 mr-1" />
+                {t('Återställ', 'Reset')}
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <p className="text-xs text-muted-foreground mb-3">
+            {t(
+              'Skriv effekt i kW. På 15 min ser du exakt planerarens plan. På 1 tim är rutan ett snitt för timmen: ligger den under vad enheten kan köra blir den i stället full effekt under en del av timmen, precis som planeraren gör.',
+              'Type power in kW. At 15 min you see the planner’s plan exactly. At 1 hour a cell is an average for that hour: below what the device can run at, it becomes full power for part of the hour instead — the same trade the planner makes.',
+            )}
+          </p>
+          <div className="overflow-x-auto">
+            <table className="text-xs border-separate border-spacing-0">
+              <thead>
+                <tr>
+                  <th className="sticky left-0 z-10 bg-background text-left font-normal text-muted-foreground py-1 pr-3 min-w-[132px]">
+                    {t('Tid', 'Time')}
+                  </th>
+                  {shown.map(index => (
+                    <th
+                      key={index}
+                      className="font-normal text-muted-foreground py-1 px-1 text-center min-w-[52px]"
+                    >
+                      {formatHomeTime(model!.columns[index].startMs, homeTimeZone)}
+                      {!model!.columns[index].binding && (
+                        <div className="text-[9px] opacity-60">
+                          {t('prognos', 'forecast')}
+                        </div>
+                      )}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="tabular-nums">
+                <tr>
+                  <td className="sticky left-0 z-10 bg-background py-1 pr-3 text-muted-foreground">
+                    {t('Pris in / ut', 'Price in / out')}
+                  </td>
+                  {shown.map(index => (
+                    <td key={index} className="py-1 px-1 text-center whitespace-nowrap">
+                      <div>{model!.columns[index].importSekPerKwh.toFixed(2)}</div>
+                      <div className="opacity-50">
+                        {model!.columns[index].exportSekPerKwh.toFixed(2)}
+                      </div>
+                    </td>
+                  ))}
+                </tr>
+                <tr className="border-t">
+                  <td className="sticky left-0 z-10 bg-background py-1 pr-3 text-muted-foreground">
+                    {t('Sol / husets last', 'Solar / house load')}
+                  </td>
+                  {shown.map(index => (
+                    <td key={index} className="py-1 px-1 text-center whitespace-nowrap">
+                      <div className="text-amber-600 dark:text-amber-400">
+                        {model!.columns[index].solarKw.toFixed(1)}
+                      </div>
+                      <div className="opacity-50">
+                        {model!.columns[index].fixedLoadKw.toFixed(1)}
+                      </div>
+                    </td>
+                  ))}
+                </tr>
+                {model!.rows.map(row => (
+                  <tr key={row.id} className="border-t">
+                    <td className="sticky left-0 z-10 bg-background py-1 pr-3">
+                      <div>{row.label}</div>
+                      <div className="text-[10px] text-muted-foreground">
+                        {t('max', 'max')} {row.maxKw.toFixed(1)} kW
+                        {row.stepKw > 0 && ` · ${row.minKw.toFixed(2)}–${row.stepKw.toFixed(2)}`}
+                      </div>
+                    </td>
+                    {shown.map(index => (
+                      <td key={index} className="py-0.5 px-0.5">
+                        <Input
+                          type="number"
+                          inputMode="decimal"
+                          min={0}
+                          max={row.maxKw}
+                          step={row.stepKw > 0 ? row.stepKw : 0.1}
+                          value={Number((values(row.id)[index] ?? 0).toFixed(2))}
+                          onChange={event =>
+                            setCell(row.id, index, Number(event.target.value.replace(',', '.')))}
+                          className="h-7 w-[52px] px-1 text-center text-xs tabular-nums"
+                        />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+                {comparison && model!.rows.filter(row => row.direction === 'charge').map(row => (
+                  <tr key={`${row.id}-state`} className="border-t">
+                    <td className="sticky left-0 z-10 bg-background py-1 pr-3 text-muted-foreground">
+                      {row.label} — {t('slutläge', 'ends at')}
+                    </td>
+                    {shown.map(index => {
+                      const trajectory = comparison.manual.state[row.storeKey];
+                      const lastSlot = model!.columns[index].slots.at(-1)!;
+                      return (
+                        <td key={index} className="py-1 px-1 text-center whitespace-nowrap">
+                          {trajectory
+                            ? stateLabel(row.stateUnit, trajectory[lastSlot + 1])
+                            : '—'}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 mt-3">
+            <Badge variant="outline" className="text-[10px]">
+              {t('Planeraren stannade på', 'Planner stopped on')}: {bench.stopped_because}
+            </Badge>
+            <Badge variant="outline" className="text-[10px]">
+              {bench.iterations} {t('iterationer', 'iterations')}
+            </Badge>
+            <Badge variant="outline" className="text-[10px]">
+              {bench.slots.length} {t('kvartar', 'quarters')}
+            </Badge>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+};
+
+export default PlanWorkbenchTab;

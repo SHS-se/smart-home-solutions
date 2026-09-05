@@ -4476,6 +4476,73 @@ curves editor.
   the wear the plan published rather than a literal.
 
 
+### 8.20 A plan the planner did not write must be scorable too (2026-09-05)
+
+§8.12 asks whether the operating heuristics *emerge*. For weeks the answer has
+been "no" for three of them — the plan draws from the grid with a charged
+battery, exports into cheap prices instead of storing, and buys the car's charge
+in short 11 kW bursts — and each round of work has treated that as a defect in
+some rule. It cannot be settled that way, because a plan that looks wrong has
+two possible causes needing opposite fixes:
+
+- the **search** failed to find the best schedule the objective allows, or
+- the **objective** prefers the wrong schedule.
+
+Nothing in a plan distinguishes them, because the planner's own schedule was the
+only one ever priced. The objective lived as a closure inside `planDispatch` and
+only ever ran on schedules `planDispatch` had just produced.
+
+**So the objective became a function.** `scoreDispatch(slots, stores, limits,
+schedule)` prices *any* schedule, `planDispatch` selects on it rather than on a
+private copy, and `dispatchWorkbench(snapshot)` hands back the exact slots,
+stores and limits the auction was given — read out of the cache `buildPlan`
+fills, never rebuilt, so the workbench cannot drift from the planner it
+interrogates. The portal's **Build a plan** tab (`PlanWorkbenchTab`) puts the
+auction's schedule in an editable grid and prints both scores.
+
+Three properties make the comparison mean something:
+
+- **Both sides run the same arithmetic.** "The planner picked this" and "this
+  scored better" are the same claim, so a difference is attributable.
+- **Infeasible schedules are reported, not clamped.** `project` silently bounds
+  a state, so a hand-built plan that overfills the battery, exceeds the service
+  fuse, misses the charger's 690 W increment or breaks a compressor's minimum
+  run would otherwise score as though the clamp were free.
+- **A breach the planner already had is not charged to the household.** The
+  editor opens on the planner's schedule, so its faults are inherited by every
+  draft; only what a draft *introduces* is reported against it.
+
+Reading the result: **lower is better** — the score is cost net of service
+delivered, so it is routinely negative. A hand-built plan that scores lower is
+proof the search left money on the table, and the fix is a better solver. One
+that scores higher while still reading better to the household indicts a utility
+curve instead. A pair that scores within rounding of each other says the
+objective is degenerate, and no solver will help until a tie-breaking term has a
+real magnitude.
+
+#### 8.20.1 What it found on first contact: the battery discharges into export
+
+The workbench was pointed at the shared 72-hour fixture and immediately refused
+a schedule the planner itself had issued. Five quarters carry a battery
+discharge tagged `discharge_destination: "load"` in a quarter where the house is
+exporting, which this pack's contract does not permit — 20 W at slots 65, 161
+and 257, and **2.46 kW at slot 227 and 2.17 kW at slot 228**.
+
+The mechanism is §8.18's, with the signs that reach a bill. The discharge is bid
+against a deficit that exists when the bid wins; a later release removes the load
+it was covering and nothing re-checks the discharge. What is left sells stored
+energy at the export price against a value booked at the import price it thought
+it was avoiding — 1.0–2.7 SEK/kWh apart on this fixture. It is a small instance
+of exactly the behaviour §8.12's heuristics 1 and 6 are failing on, which is the
+first time that failure has been visible as a rule breach rather than a
+judgement call.
+
+Not fixed here: the finding is pinned by
+`plan-workbench.test.ts`, "the only rule the planner's own plan breaks is the
+export leak", which asserts the *class* so a new kind of breach in the planner's
+own output fails rather than hiding behind this one.
+
+
 ## 9. Parameter model
 
 ### 9.1 Parameter classes and ownership
