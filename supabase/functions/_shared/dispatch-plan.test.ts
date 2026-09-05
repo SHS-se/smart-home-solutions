@@ -471,6 +471,83 @@ function batteryStore(
   };
 }
 
+Deno.test("a partial battery charge grows when earlier discharge frees capacity", () => {
+  // The September 5 replay left cheap solar exporting beside tiny battery
+  // charges. Each accepted setpoint locked its quarter, even after an earlier
+  // discharge reopened room in the trajectory. This short horizon reproduces
+  // that sequence: the last sunny quarter must use the room freed before it.
+  const slots: DispatchSlot[] = [
+    [4_000, 1_500, 1, 0.06],
+    [3_000, 0, 1, 0.04],
+    [6_000, 1_500, 1, 0.04],
+    [5_000, 1_000, 1, 0.01],
+    [0, 1_000, 1, 0.09],
+    [6_000, 1_500, 1, 0.01],
+    [0, 500, 2, 0.01],
+    [0, 500, 2, 0.09],
+  ].map((
+    [pv_w, fixed_load_w, import_price_sek_per_kwh, export_price_sek_per_kwh],
+  ) => ({
+    pv_w,
+    fixed_load_w,
+    import_price_sek_per_kwh,
+    export_price_sek_per_kwh,
+  }));
+  const battery: DispatchStore = {
+    ...batteryStore(slots.length, 0, 0),
+    min_state: 0,
+    max_state: 4,
+    curve: {
+      unit: "kwh",
+      points: [
+        { at: 0.5, sek_per_unit: 1.5 },
+        { at: 1, sek_per_unit: 0.8 },
+        { at: 4, sek_per_unit: 0.7 },
+      ],
+    },
+  };
+  const result = planDispatch(slots, [battery], LIMITS);
+  assertEquals(result.stopped_because, "no_profitable_candidate");
+  assert(
+    result.discharge_w.battery[4] > 0,
+    "the earlier discharge must free room",
+  );
+  assert(
+    result.export_w[5] > 0,
+    "the last solar quarter must still have surplus",
+  );
+  assert(
+    Math.abs(result.state.battery[6] - 4) < 1e-8,
+    "export must wait until the battery fills",
+  );
+
+  let stored = battery.initial_state;
+  for (let index = 0; index < slots.length; index += 1) {
+    const chargeW = result.power_w.battery[index];
+    const dischargeW = result.discharge_w.battery[index];
+    assert(chargeW === 0 || dischargeW === 0);
+    assert(chargeW <= battery.max_power_w);
+    stored += (chargeW * 0.95 - dischargeW / 0.95) / 1_000 * SLOT_HOURS;
+    assert(
+      stored >= -1e-8 && stored <= 4 + 1e-8,
+      "no energy may be clipped at a state bound",
+    );
+    assert(Math.abs(result.state.battery[index + 1] - stored) < 1e-8);
+    assert(
+      Math.abs(
+        slots[index].pv_w + dischargeW + result.import_w[index] -
+          slots[index].fixed_load_w - chargeW - result.export_w[index],
+      ) < 1e-6,
+      "replacement power must be counted exactly once",
+    );
+    const entries = result.allocations[index];
+    assertEquals(entries.length, chargeW > 0 || dischargeW > 0 ? 1 : 0);
+    if (entries.length === 0) continue;
+    assertEquals(entries[0].power_w, chargeW || dischargeW);
+    assert(Math.abs(entries[0].state_after - stored) < 1e-8);
+  }
+});
+
 Deno.test("the battery discharges to cover load worth more than its charge", () => {
   // Dark, dear import, a full battery whose charge is worth little.
   const slots = buildSlots([new Array(SLOTS_PER_DAY).fill(0)], {

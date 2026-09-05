@@ -73,6 +73,8 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6] as const;
  * meaningless. v8 makes comfort schedules room-temperature constraints and
  * moves preheating inside the shared electrical objective. v10 replaces the
  * battery's peak-price step with the weighted merit order of displaced import.
+ * v20 reopens partial charge setpoints when the evolving schedule leaves room
+ * for more profitable energy, so an early allocation cannot strand cheap PV.
  * v19 stops a discharging store's output counting as spare PV when a quarter's
  * cost is settled across the stores charging in it (§8.13).
  * v18 prices the battery's reserve at the dearest hour in the horizon, so
@@ -98,7 +100,7 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6] as const;
  * v11 integrates every sizeable curve move, applies configured EV curves,
  * prices minimum runs as complete blocks and records exact quarter evidence.
  */
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v19";
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v20";
 /** The planner a schema 5 snapshot still receives, unchanged. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v8";
 export const SLOT_MINUTES = 15;

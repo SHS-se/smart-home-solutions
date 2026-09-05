@@ -629,7 +629,7 @@ const PlanTooltip: React.FC<{
   // band it is describing.
   const magnitudes = powerFlowMagnitudes([row]);
   const flows: Array<[string, number, string]> = [
-    [t('Sol', 'Solar'), magnitudes.solarDirect[0] / 1_000, PLAN_COLOURS.solar],
+    [t('Sol till huset', 'Solar to house'), magnitudes.solarDirect[0] / 1_000, PLAN_COLOURS.solar],
     [t('Nätimport', 'Grid in'), magnitudes.gridIn[0] / 1_000, PLAN_COLOURS.grid],
     [t('Nätexport', 'Grid out'), magnitudes.gridOut[0] / 1_000, PLAN_COLOURS.grid],
     [t('Batteri ut', 'Battery out'), magnitudes.batteryOut[0] / 1_000, PLAN_COLOURS.battery],
