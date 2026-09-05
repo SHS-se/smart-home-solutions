@@ -56,6 +56,8 @@ import {
 import type { OptimisationSnapshot } from '../../../../supabase/functions/_shared/energy-optimisation';
 import { comparePreference, type PreviewComparison } from '@/lib/energy-shift/curve-preview';
 import type { BatteryValueCurveDiagnostic } from '@/lib/energy-shift/contracts';
+import { useHomeTimeZone } from './HomeTimeZoneContext';
+import { formatHomeStamp, formatHomeTimeWithSeconds } from '@/lib/energy-shift/home-time';
 
 interface Props {
   customerId: string | null;
@@ -108,6 +110,7 @@ const ValueCurvesTab: React.FC<Props> = ({
   batteryValueCurve,
 }) => {
   const { t } = useLanguage();
+  const homeTimeZone = useHomeTimeZone();
   const { toast } = useToast();
   const [drafts, setDrafts] = useState<Drafts>({});
   const [stored, setStored] = useState<Partial<Record<ValueStoreKey, UtilityCurve>>>({});
@@ -313,7 +316,7 @@ const ValueCurvesTab: React.FC<Props> = ({
     }
     toast({
       title: t('Planen är omräknad', 'Plan rebuilt'),
-      description: `${data?.status ?? ''} · ${new Date(data?.issued_at ?? Date.now()).toLocaleTimeString()}`,
+      description: `${data?.status ?? ''} · ${formatHomeTimeWithSeconds(data?.issued_at ?? Date.now(), homeTimeZone)}`,
     });
   };
 
@@ -413,7 +416,7 @@ const ValueCurvesTab: React.FC<Props> = ({
                 <div className="font-semibold tabular-nums">{batteryValueCurve.curve_input.expected_draw_kwh.toFixed(3)} kWh</div>
                 {coveringStart && coveringEndStart && (
                   <div className="text-[10px] text-muted-foreground">
-                    {new Date(coveringStart).toLocaleString()} – {new Date(Date.parse(coveringEndStart) + 15 * 60_000).toLocaleString()}
+                    {formatHomeStamp(coveringStart, homeTimeZone)} – {formatHomeStamp(Date.parse(coveringEndStart) + 15 * 60_000, homeTimeZone)}
                   </div>
                 )}
               </div>

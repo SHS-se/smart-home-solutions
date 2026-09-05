@@ -8,6 +8,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { useLanguage } from '@/contexts/LanguageContext';
 import type { DayWindow } from '@/lib/energy-shift/energy-timeline';
+import { useHomeTimeZone } from '../HomeTimeZoneContext';
+import { formatHomeDayMonth, homeDayBounds } from '@/lib/energy-shift/home-time';
 
 export const useSeriesVisibility = <T extends string>() => {
   const [hidden, setHidden] = useState<Set<T>>(() => new Set());
@@ -101,13 +103,16 @@ export const DayWindowToggle: React.FC<{
   onChange: (value: DayWindow) => void;
 }> = ({ value, options, onChange }) => {
   const { t } = useLanguage();
+  const homeTimeZone = useHomeTimeZone();
   const label = (window: DayWindow) => {
     if (window === 'all') return t('Alla', 'All');
     if (window === 0) return t('Idag', 'Today');
-    const day = new Date();
-    day.setHours(0, 0, 0, 0);
-    day.setDate(day.getDate() + window);
-    return day.toLocaleDateString([], { day: '2-digit', month: '2-digit' });
+    // The label has to name the home's day, not the reader's: off by a
+    // timezone it disagrees with the chart it switches.
+    return formatHomeDayMonth(
+      homeDayBounds(Date.now(), window, homeTimeZone).startMs,
+      homeTimeZone,
+    );
   };
   const tone = (window: DayWindow) => {
     if (window === 'all' || window === 0) return '';

@@ -28,6 +28,13 @@ import {
   type ThermalSlotRow,
   summariseThermalSlots,
 } from './plan/types';
+import { useHomeTimeZone } from './HomeTimeZoneContext';
+import {
+  formatHomeDayMonth,
+  formatHomeStamp,
+  formatHomeTime,
+  formatHomeTimeWithSeconds,
+} from '@/lib/energy-shift/home-time';
 import {
   availableDayWindows,
   buildEnergyTimeline,
@@ -65,6 +72,7 @@ const LOADED_HISTORY_DAYS = 3;
 
 const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, homeId, accountPath }) => {
   const { t } = useLanguage();
+  const homeTimeZone = useHomeTimeZone();
   const [current, setCurrent] = useState<CurrentRow | null>(null);
   const [actuals, setActuals] = useState<ActualEnergySlot[]>([]);
   const [prices, setPrices] = useState<PriceSlotRow[]>([]);
@@ -362,8 +370,8 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
               <p className="mt-1 text-sm text-muted-foreground">
                 {activeConnection
                   ? t(
-                    `Anslutningen ${activeConnection.device_name} sågs senast ${activeConnection.last_seen_at ? new Date(activeConnection.last_seen_at).toLocaleString() : 'aldrig'}. Portalen kontrollerar efter en plan var 30:e sekund.`,
-                    `The ${activeConnection.device_name} connection was last seen ${activeConnection.last_seen_at ? new Date(activeConnection.last_seen_at).toLocaleString() : 'never'}. The portal checks for a plan every 30 seconds.`,
+                    `Anslutningen ${activeConnection.device_name} sågs senast ${activeConnection.last_seen_at ? formatHomeStamp(activeConnection.last_seen_at, homeTimeZone) : 'aldrig'}. Portalen kontrollerar efter en plan var 30:e sekund.`,
+                    `The ${activeConnection.device_name} connection was last seen ${activeConnection.last_seen_at ? formatHomeStamp(activeConnection.last_seen_at, homeTimeZone) : 'never'}. The portal checks for a plan every 30 seconds.`,
                   )
                   : hasConnectionForAnotherHome
                     ? t(
@@ -375,7 +383,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
                       'Create a pairing code on the Account page and connect Smart Home Solutions Energy in Home Assistant.',
                     )}
               </p>
-              {lastCheckedAt && <p className="mt-2 text-xs text-muted-foreground">{t('Senast kontrollerad', 'Last checked')} {new Date(lastCheckedAt).toLocaleTimeString()}</p>}
+              {lastCheckedAt && <p className="mt-2 text-xs text-muted-foreground">{t('Senast kontrollerad', 'Last checked')} {formatHomeTimeWithSeconds(lastCheckedAt, homeTimeZone)}</p>}
             </div>
             <div className="flex flex-wrap gap-2">
               {!activeConnection && (
@@ -514,6 +522,7 @@ const PlanView: React.FC<{
   now,
 }) => {
   const { t } = useLanguage();
+  const homeTimeZone = useHomeTimeZone();
   const model = usePlanModel(current, empiricalDevices, stale);
   const {
     plan, planView, setPlanView, executed, active, comparison, hasBattery, hasEvBattery,
@@ -605,15 +614,17 @@ const PlanView: React.FC<{
     deviceKeyById,
     nowMs,
   }), [actuals, active.slots, deviceActuals, deviceKeyById, nowMs, prices]);
-  const dayWindowOptions = availableDayWindows(timeline, nowMs);
-  const timelineRange = dayWindowRange(timeline, dayWindow, nowMs);
+  const dayWindowOptions = availableDayWindows(timeline, nowMs, homeTimeZone);
+  const timelineRange = dayWindowRange(timeline, dayWindow, nowMs, homeTimeZone);
   const windowSummary = summariseTimeline(timeline, timelineRange);
   const windowLabel = dayWindow === 'all'
     ? t('hela perioden', 'the whole period')
     : dayWindow === 0
       ? t('idag', 'today')
-      : new Date(timeline[timelineRange.from]?.start ?? nowMs)
-        .toLocaleDateString([], { day: '2-digit', month: '2-digit' });
+      : formatHomeDayMonth(
+        timeline[timelineRange.from]?.start ?? nowMs,
+        homeTimeZone,
+      );
   // "Today" is part measured and part forecast. Saying which is which is the
   // difference between a number and a claim.
   const provenance = windowSummary.measuredSlotCount > 0 && windowSummary.plannedSlotCount > 0
@@ -656,7 +667,7 @@ const PlanView: React.FC<{
         // the first missed one rather than a blip.
         const connectionLive = minutesSinceSeen !== null && minutesSinceSeen <= 20;
         const clockTime = (value: string | number) =>
-          new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          formatHomeTime(value, homeTimeZone);
         const ago = minutesSinceSeen === null
           ? null
           : minutesSinceSeen < 1
@@ -811,11 +822,11 @@ const PlanView: React.FC<{
                 </Badge>
               </div>
               <p className="mt-1 text-sm text-muted-foreground">
-                {t('Utfärdad', 'Issued')} {new Date(plan.issued_at).toLocaleString()} · {plan.model_version} · {actuals.length} {t('faktiska kvartar', 'actual quarters')}
+                {t('Utfärdad', 'Issued')} {formatHomeStamp(plan.issued_at, homeTimeZone)} · {plan.model_version} · {actuals.length} {t('faktiska kvartar', 'actual quarters')}
               </p>
               {!isDemo && lastCheckedAt && (
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {t('Portalen kontrollerade senast', 'Portal last checked')} {new Date(lastCheckedAt).toLocaleTimeString()} · {current.ha_ack_status === 'accepted'
+                  {t('Portalen kontrollerade senast', 'Portal last checked')} {formatHomeTimeWithSeconds(lastCheckedAt, homeTimeZone)} · {current.ha_ack_status === 'accepted'
                     ? t('Home Assistant accepterade denna plan', 'Home Assistant accepted this plan')
                     : t('Planen körs inte som accepterad', 'The plan is not acknowledged as executable')}
                 </p>
@@ -827,7 +838,7 @@ const PlanView: React.FC<{
               )}
               {!isDemo && nextReplanAt && (
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {t('Nästa omplanering', 'Next replan')} {nextReplanAt.toLocaleTimeString()} · {t('planen gäller till', 'plan valid until')} {new Date(plan.valid_until).toLocaleTimeString()}
+                  {t('Nästa omplanering', 'Next replan')} {formatHomeTimeWithSeconds(nextReplanAt, homeTimeZone)} · {t('planen gäller till', 'plan valid until')} {formatHomeTimeWithSeconds(plan.valid_until, homeTimeZone)}
                 </p>
               )}
             </div>

@@ -27,6 +27,8 @@ import {
 import type { ConsumptionSeries } from '@/lib/energy-shift/consumption-series';
 import { powerFlowMagnitudes } from '@/lib/energy-shift/power-flows';
 import { loadColour, PLAN_COLOURS } from './types';
+import { useHomeTimeZone } from '../HomeTimeZoneContext';
+import { formatHomeDayMonth, formatHomeTime, homeHourMinute } from '@/lib/energy-shift/home-time';
 
 export interface PlanPanelRow {
   startMs: number;
@@ -148,6 +150,7 @@ const PlanPanels: React.FC<{
   selectedIndex = -1, onQuarterClick,
 }) => {
   const { t } = useLanguage();
+  const homeTimeZone = useHomeTimeZone();
   const svgRef = useRef<SVGSVGElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<number | null>(null);
@@ -238,13 +241,21 @@ const PlanPanels: React.FC<{
     const every = n > 200 ? 6 : n > 100 ? 3 : 2;
     return rows
       .map((row, index) => ({ index, date: new Date(row.startMs) }))
-      .filter(({ date }) => date.getMinutes() === 0 && date.getHours() % every === 0);
-  }, [n, rows]);
+      .filter(({ date }) => {
+        const { hour, minute } = homeHourMinute(date, homeTimeZone);
+        return minute === 0 && hour % every === 0;
+      });
+  }, [homeTimeZone, n, rows]);
 
+  // The divider marks the home's midnight. Read off the browser's clock it
+  // landed an hour or a continent away from the day it was dividing.
   const dayTicks = useMemo(() => rows
     .map((row, index) => ({ index, date: new Date(row.startMs) }))
-    .filter(({ index, date }) => index > 0 && date.getHours() === 0 && date.getMinutes() === 0),
-  [rows]);
+    .filter(({ index, date }) => {
+      const { hour, minute } = homeHourMinute(date, homeTimeZone);
+      return index > 0 && hour === 0 && minute === 0;
+    }),
+  [homeTimeZone, rows]);
 
   const handleMove = (event: React.PointerEvent<SVGSVGElement>) => {
     const svg = svgRef.current;
@@ -551,7 +562,7 @@ const PlanPanels: React.FC<{
           />
           {hourTicks.map(({ index, date }) => (
             <text key={index} x={x(index)} y={axisY + 14} textAnchor="middle" className={AXIS_TEXT}>
-              {date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              {formatHomeTime(date, homeTimeZone)}
             </text>
           ))}
           {dayTicks.map(({ index, date }) => (
@@ -564,7 +575,7 @@ const PlanPanels: React.FC<{
                 x={x(index)} y={axisY + 27} textAnchor="middle"
                 className="fill-foreground text-[10px] font-mono font-semibold"
               >
-                {date.toLocaleDateString([], { day: '2-digit', month: '2-digit' })}
+                {formatHomeDayMonth(date, homeTimeZone)}
               </text>
             </g>
           ))}

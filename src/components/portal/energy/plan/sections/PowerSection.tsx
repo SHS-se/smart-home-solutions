@@ -33,6 +33,8 @@ import DeviceEnergyTable from '../DeviceEnergyTable';
 import StoreDecisions from '../StoreDecisions';
 import PlanPanels, { type PlanPanelRow } from '../PlanPanels';
 import { loadColour, PLAN_COLOURS } from '../types';
+import { useHomeTimeZone } from '../../HomeTimeZoneContext';
+import { formatHomeDayMonthTime } from '@/lib/energy-shift/home-time';
 
 const QUARTER_W_TO_KWH = 4_000;
 
@@ -72,6 +74,7 @@ const PowerSection: React.FC<{
   hasEvBattery,
 }) => {
   const { t } = useLanguage();
+  const homeTimeZone = useHomeTimeZone();
   const [selectedQuarterStart, setSelectedQuarterStart] = useState<string | null>(null);
   const [selectionRequest, setSelectionRequest] = useState(0);
 
@@ -83,9 +86,7 @@ const PowerSection: React.FC<{
       running += row.costSek ?? 0;
       return {
         startMs: row.startMs,
-        label: new Date(row.start).toLocaleString([], {
-          month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
-        }),
+        label: formatHomeDayMonthTime(row.start, homeTimeZone),
         measured: row.measured,
         solarW: row.solarW,
         loadW: row.loadW,
@@ -100,7 +101,7 @@ const PowerSection: React.FC<{
         cumulativeCostSek: running,
       };
     });
-  }, [view]);
+  }, [homeTimeZone, view]);
 
   /**
    * Individual meters, never categories — the plan dispatches devices, so a

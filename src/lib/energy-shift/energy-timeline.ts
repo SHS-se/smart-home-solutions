@@ -5,11 +5,14 @@
 // the same quantities on the same 15-minute grid — the only difference is which
 // side of now they fall on. Joining them means a day can be read as a day.
 //
-// Windows are calendar days in the reader's own timezone, midnight to midnight.
-// The rolling 72-hour horizon made every total describe a slightly different
-// slice of wall-clock time, which is what made the numbers look wrong.
+// Windows are calendar days at the home, midnight to midnight in the timezone
+// Home Assistant reports. The rolling 72-hour horizon made every total describe
+// a slightly different slice of wall-clock time, which is what made the numbers
+// look wrong; taking the day from the reader's own clock instead reintroduced
+// the same fault for anyone reading from another timezone.
 
 import type { ActualEnergySlot, PlannedSlot } from './contracts';
+import { homeDayBounds } from './home-time';
 
 /** Days either side of today, or the whole span. */
 export type DayWindow = -2 | -1 | 0 | 1 | 2 | 'all';
@@ -99,18 +102,15 @@ const watts = (kwh: number | null | undefined) =>
   kwh === null || kwh === undefined ? null : kwh * QUARTER_W_TO_KWH;
 
 /**
- * Local midnight-to-midnight bounds for a day relative to today. Built from
- * calendar fields rather than millisecond arithmetic so a DST change keeps the
- * day a day.
+ * Midnight-to-midnight bounds at the home for a day relative to today. Built
+ * from calendar fields rather than millisecond arithmetic so a DST change keeps
+ * the day a day.
  */
-export const dayBounds = (nowMs: number, offset: number): { startMs: number; endMs: number } => {
-  const start = new Date(nowMs);
-  start.setHours(0, 0, 0, 0);
-  start.setDate(start.getDate() + offset);
-  const end = new Date(start);
-  end.setDate(end.getDate() + 1);
-  return { startMs: start.getTime(), endMs: end.getTime() };
-};
+export const dayBounds = (
+  nowMs: number,
+  offset: number,
+  timeZone: string,
+): { startMs: number; endMs: number } => homeDayBounds(nowMs, offset, timeZone);
 
 export const buildEnergyTimeline = ({
   actuals,
@@ -223,9 +223,10 @@ export const dayWindowRange = (
   rows: readonly TimelineRow[],
   window: DayWindow,
   nowMs: number,
+  timeZone: string,
 ): TimelineRange => {
   if (window === 'all') return { from: 0, to: rows.length };
-  const { startMs, endMs } = dayBounds(nowMs, window);
+  const { startMs, endMs } = dayBounds(nowMs, window, timeZone);
   let from = rows.length;
   let to = 0;
   for (const [index, row] of rows.entries()) {
@@ -241,9 +242,10 @@ export const dayWindowRange = (
 export const availableDayWindows = (
   rows: readonly TimelineRow[],
   nowMs: number,
+  timeZone: string,
 ): DayWindow[] => DAY_WINDOW_OPTIONS.filter(window => {
   if (window === 'all') return rows.length > 0;
-  const range = dayWindowRange(rows, window, nowMs);
+  const range = dayWindowRange(rows, window, nowMs, timeZone);
   return range.to > range.from;
 });
 

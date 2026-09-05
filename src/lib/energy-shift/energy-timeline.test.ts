@@ -21,9 +21,11 @@ const assert = (value: boolean, message: string) => {
   if (!value) throw new Error(message);
 };
 
-// Local noon, so every day boundary in these tests is the runner's own
-// midnight rather than UTC's.
-const NOW = new Date(2026, 7, 16, 12, 0, 0).getTime();
+// A fixed instant plus an explicit home zone, so these assertions describe the
+// house's day rather than whatever timezone the test runner happens to be in.
+const TZ = 'Europe/Stockholm';
+// 12:00 UTC on 16 August 2026 is 14:00 in Stockholm, comfortably mid-day there.
+const NOW = Date.parse('2026-08-16T12:00:00Z');
 
 const actual = (startMs: number, overrides: Partial<ActualEnergySlot> = {}): ActualEnergySlot => ({
   start_ts: new Date(startMs).toISOString(),
@@ -84,13 +86,17 @@ const build = (overrides: Partial<Parameters<typeof buildEnergyTimeline>[0]> = {
     ...overrides,
   });
 
-Deno.test('a day window is local midnight to midnight, whatever the clock says', () => {
-  const today = dayBounds(NOW, 0);
-  assertEquals(new Date(today.startMs).getHours(), 0, 'starts at midnight');
-  assertEquals(new Date(today.endMs).getDate(), new Date(NOW).getDate() + 1, 'ends next day');
-  const yesterday = dayBounds(NOW, -1);
+Deno.test('a day window is the house\'s midnight to midnight, whatever the reader\'s clock says', () => {
+  const today = dayBounds(NOW, 0, TZ);
+  assertEquals(
+    new Date(today.startMs).toISOString(),
+    '2026-08-15T22:00:00.000Z',
+    'starts at Stockholm midnight',
+  );
+  assertEquals(today.endMs - today.startMs, 24 * 60 * 60_000, 'a whole day long');
+  const yesterday = dayBounds(NOW, -1, TZ);
   assertEquals(yesterday.endMs, today.startMs, 'yesterday ends where today starts');
-  const tomorrow = dayBounds(NOW, 1);
+  const tomorrow = dayBounds(NOW, 1, TZ);
   assertEquals(tomorrow.startMs, today.endMs, 'tomorrow starts where today ends');
 });
 
@@ -158,12 +164,12 @@ Deno.test('export and battery charge are held negative on both sides', () => {
 });
 
 Deno.test('today totals combine what happened with what is planned', () => {
-  const midnight = dayBounds(NOW, 0).startMs;
+  const midnight = dayBounds(NOW, 0, TZ).startMs;
   const rows = build({
     actuals: [actual(midnight, { total_load_kwh: 1, solar_production_kwh: 0 })],
     planSlots: [planned(NOW, { load_w: 4_000, pv_w: 4_000 })],
   });
-  const summary = summariseTimeline(rows, dayWindowRange(rows, 0, NOW));
+  const summary = summariseTimeline(rows, dayWindowRange(rows, 0, NOW, TZ));
   assertEquals(summary.measuredSlotCount, 1, 'one elapsed quarter');
   assertEquals(summary.plannedSlotCount, 1, 'one forecast quarter');
   assertEquals(summary.consumptionKwh, 2, '1 kWh measured plus 1 kWh planned');
@@ -182,11 +188,11 @@ Deno.test('an unpriced quarter is reported rather than counted as free', () => {
 
 Deno.test('windows only offer days the loaded data can fill', () => {
   const rows = build({
-    actuals: [actual(dayBounds(NOW, -1).startMs)],
-    planSlots: [planned(NOW), planned(dayBounds(NOW, 1).startMs)],
+    actuals: [actual(dayBounds(NOW, -1, TZ).startMs)],
+    planSlots: [planned(NOW), planned(dayBounds(NOW, 1, TZ).startMs)],
   });
-  assertEquals(availableDayWindows(rows, NOW), [-1, 0, 1, 'all'], 'offered windows');
-  const empty = dayWindowRange(rows, -2, NOW);
+  assertEquals(availableDayWindows(rows, NOW, TZ), [-1, 0, 1, 'all'], 'offered windows');
+  const empty = dayWindowRange(rows, -2, NOW, TZ);
   assertEquals(empty, { from: 0, to: 0 }, 'a day with no data is empty');
 });
 
@@ -198,9 +204,9 @@ Deno.test('the divider sits where measurement stops', () => {
   const all = { from: 0, to: rows.length };
   assertEquals(nowDividerIndex(rows, all), 2, 'after the two measured quarters');
   // A finished day is entirely measured, so there is nothing to divide.
-  const past = build({ actuals: [actual(dayBounds(NOW, -1).startMs)] });
+  const past = build({ actuals: [actual(dayBounds(NOW, -1, TZ).startMs)] });
   assertEquals(
-    nowDividerIndex(past, dayWindowRange(past, -1, NOW)),
+    nowDividerIndex(past, dayWindowRange(past, -1, NOW, TZ)),
     1,
     'no divider drawn inside a finished day',
   );

@@ -23,6 +23,8 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
+import { useHomeTimeZone } from './HomeTimeZoneContext';
+import { formatHomeStamp } from '@/lib/energy-shift/home-time';
 import {
   COMFORT_MODES,
   comfortIntervals,
@@ -76,6 +78,7 @@ const ComfortSchedulesTab: React.FC<{
   homeId: string | null;
 }> = ({ customerId, homeId }) => {
   const { t } = useLanguage();
+  const homeTimeZone = useHomeTimeZone();
   const { toast } = useToast();
   const [zones, setZones] = useState<ComfortZone[]>([]);
   const [stored, setStored] = useState<Record<string, StoredComfortSchedule>>({});
@@ -364,7 +367,7 @@ const ComfortSchedulesTab: React.FC<{
                       <p className="text-xs text-muted-foreground">
                         {saved.source === 'node_red_seed'
                           ? t('Startvärden från det befintliga Node-RED-schemat', 'Initial values from the existing Node-RED schedule')
-                          : `${t('Senast ändrad', 'Last changed')} ${new Date(saved.updated_at).toLocaleString()}`}
+                          : `${t('Senast ändrad', 'Last changed')} ${formatHomeStamp(saved.updated_at, homeTimeZone)}`}
                       </p>
                       <div className="mt-2 flex flex-wrap items-center gap-1.5">
                         <span className="mr-1 text-xs text-muted-foreground">{t('Planerade styrenheter:', 'Planned controls:')}</span>

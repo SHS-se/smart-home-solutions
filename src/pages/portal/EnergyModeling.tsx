@@ -9,6 +9,7 @@ import PlanWorkspace, { type PlanSection } from '@/components/portal/energy/Plan
 import ROITab from '@/components/portal/energy/ROITab';
 import HomeSelector from '@/components/portal/energy/HomeSelector';
 import ComfortSchedulesTab from '@/components/portal/energy/ComfortSchedulesTab';
+import HomeTimeZoneProvider from '@/components/portal/energy/HomeTimeZoneContext';
 
 interface EnergyModelingProps {
   customerId?: string;
@@ -136,18 +137,25 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
         mounted across the plan sections, so switching tabs changes a prop
         instead of remounting and refetching a 72-hour plan each time.
       */}
-      {tab === 'roi' ? (
-        <ROITab customerId={resolvedCustomerId} homeId={selectedHomeId} homeCount={homeCount} />
-      ) : tab === 'comfort' ? (
-        <ComfortSchedulesTab customerId={resolvedCustomerId} homeId={selectedHomeId} />
-      ) : (
-        <PlanWorkspace
-          section={tab}
-          customerId={resolvedCustomerId}
-          homeId={selectedHomeId}
-          accountPath={isStaffView ? `/portal/customers/${resolvedCustomerId}/account` : '/portal/account'}
-        />
-      )}
+      {/*
+        Every tab below prints times from the same plan, so they share one
+        source for the home's timezone rather than each resolving it — and a
+        tab that forgot to would quietly fall back to the reader's own clock.
+      */}
+      <HomeTimeZoneProvider customerId={resolvedCustomerId} homeId={selectedHomeId}>
+        {tab === 'roi' ? (
+          <ROITab customerId={resolvedCustomerId} homeId={selectedHomeId} homeCount={homeCount} />
+        ) : tab === 'comfort' ? (
+          <ComfortSchedulesTab customerId={resolvedCustomerId} homeId={selectedHomeId} />
+        ) : (
+          <PlanWorkspace
+            section={tab}
+            customerId={resolvedCustomerId}
+            homeId={selectedHomeId}
+            accountPath={isStaffView ? `/portal/customers/${resolvedCustomerId}/account` : '/portal/account'}
+          />
+        )}
+      </HomeTimeZoneProvider>
     </div>
   );
 };

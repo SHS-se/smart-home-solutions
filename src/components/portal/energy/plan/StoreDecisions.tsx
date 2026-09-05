@@ -12,6 +12,8 @@ import { supabase } from '@/integrations/supabase/client';
 import type { PlannedSlot } from '@/lib/energy-shift/contracts';
 import type { TimelineRange, TimelineRow } from '@/lib/energy-shift/energy-timeline';
 import type { PlanModel } from './usePlanModel';
+import { useHomeTimeZone } from '../HomeTimeZoneContext';
+import { formatHomeDayMonthTime, formatHomeStamp } from '@/lib/energy-shift/home-time';
 
 const ACTIVE_W = 10;
 const DEMAND_COLUMNS = 7;
@@ -67,6 +69,7 @@ const StoreDecisions: React.FC<{
   onSelectedStartChange?: (start: string) => void;
 }> = ({ model, rows: timeline, range, selectedStart, selectionRequest, onSelectedStartChange }) => {
   const { t } = useLanguage();
+  const homeTimeZone = useHomeTimeZone();
   const { toast } = useToast();
   const [openItem, setOpenItem] = React.useState<string>('sequence');
   const [replayLoading, setReplayLoading] = React.useState<string | null>(null);
@@ -201,7 +204,7 @@ const StoreDecisions: React.FC<{
       const balance = plannedSlot.decision.grid_balance;
       return displayedAllocations.map(allocation => [
         slot.start,
-        new Date(slot.start).toLocaleString(),
+        formatHomeStamp(slot.start, homeTimeZone),
         allocation ? storeLabel(allocation.store_key) : '',
         allocation?.direction,
         allocation?.trigger,
@@ -508,9 +511,7 @@ const StoreDecisions: React.FC<{
                                 rowSpan={rowSpan}
                                 className={`sticky left-0 z-10 whitespace-nowrap p-2 align-top font-medium tabular-nums ${BODY.quarter}`}
                               >
-                                {new Date(slot.start).toLocaleString([], {
-                                  month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
-                                })}
+                                {formatHomeDayMonthTime(slot.start, homeTimeZone)}
                               </TableCell>
                             )}
                             {allocation ? (
@@ -658,7 +659,7 @@ const StoreDecisions: React.FC<{
                                     title={!canReplay
                                       ? t('Nästa plan kommer att innehålla exakta replaydata.', 'The next plan will contain exact replay data.')
                                       : t('Ladda ned alla indata och det förväntade resultatet.', 'Download every input and the expected result.')}
-                                    aria-label={`${t('Ladda ned JSON-repris för', 'Download JSON replay for')} ${new Date(slot.start).toLocaleString()}`}
+                                    aria-label={`${t('Ladda ned JSON-repris för', 'Download JSON replay for')} ${formatHomeStamp(slot.start, homeTimeZone)}`}
                                     onClick={event => {
                                       event.stopPropagation();
                                       void downloadReplay(plannedSlot, slotIndex);

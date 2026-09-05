@@ -16,6 +16,8 @@ import {
   reconcilePlanDeviceRoles,
 } from '@/lib/energy-shift/plan-device-roles';
 import type { EmpiricalEnergyDevice } from '../EmpiricalDeviceModelsCard';
+import { useHomeTimeZone } from '../HomeTimeZoneContext';
+import { formatHomeDayMonthTime, homeHourMinute } from '@/lib/energy-shift/home-time';
 import {
   COLORS,
   DEVICE_COLORS,
@@ -31,6 +33,7 @@ export function usePlanModel(
   stale: boolean,
 ) {
   const { t } = useLanguage();
+  const homeTimeZone = useHomeTimeZone();
   const { plan } = current;
   const [planView, setPlanView] = useState<PlanViewMode>('planned');
   // Home Assistant executes the priority scenario. Baseline is exposed only
@@ -49,7 +52,7 @@ export function usePlanModel(
     return {
       i: index,
       start: slot.start,
-      label: new Date(slot.start).toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
+      label: formatHomeDayMonthTime(slot.start, homeTimeZone),
       pv: slot.pv_w,
       base: foldDevicePowerIntoBase(
         slot.base_w,
@@ -83,11 +86,11 @@ export function usePlanModel(
         slot.device_loads_w[model.key] ?? 0,
       ])),
     };
-  }), [active, deviceRoleView, plan.ev_battery, plan.policy.battery_end_of_solar_target_soc]);
+  }), [active, deviceRoleView, homeTimeZone, plan.ev_battery, plan.policy.battery_end_of_solar_target_soc]);
   const thermalProjection = plan.thermal_projection;
   const thermalData = useMemo(() => thermalProjection?.starts.map((start, index) => ({
     i: index,
-    label: new Date(start).toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
+    label: formatHomeDayMonthTime(start, homeTimeZone),
     outdoor: thermalProjection.outdoor_temperature_c[index],
     thermalPower: planView === 'planned'
       ? thermalProjection.planned_total_power_w[index]
@@ -101,11 +104,14 @@ export function usePlanModel(
       ],
       [`zoneTarget${zoneIndex}`, zone.target_c[index]],
     ])),
-  })) ?? [], [planView, thermalProjection]);
+  })) ?? [], [homeTimeZone, planView, thermalProjection]);
   const firstAdvisory = active.slots.findIndex(slot => !slot.binding);
   const bindingIndex = firstAdvisory < 0 ? active.slots.length : firstAdvisory;
   const ticks = active.slots.map((slot, index) => ({ slot, index }))
-    .filter(({ slot }) => new Date(slot.start).getMinutes() === 0 && new Date(slot.start).getHours() % 6 === 0)
+    .filter(({ slot }) => {
+      const { hour, minute } = homeHourMinute(slot.start, homeTimeZone);
+      return minute === 0 && hour % 6 === 0;
+    })
     .map(({ index }) => index);
   const hasBattery = plan.capabilities.battery && plan.battery !== null;
   const hasEvBattery = plan.capabilities.ev && plan.ev_battery != null;
