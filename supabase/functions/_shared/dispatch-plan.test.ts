@@ -1217,3 +1217,145 @@ Deno.test("§8.18 — the settled schedule is one the auction would have stopped
     "the auction and the settlement must reach a fixed point, not a cycle",
   );
 });
+
+/** A valuable reserve and a later full pack blocked both standalone bids. */
+function solarTransferCase(reverse = false, exportPrice = 0.1, wear = 0.05) {
+  const slots: DispatchSlot[] = [
+    {
+      pv_w: 1_000,
+      fixed_load_w: 0,
+      import_price_sek_per_kwh: 1,
+      export_price_sek_per_kwh: exportPrice,
+    },
+    {
+      pv_w: 0,
+      fixed_load_w: 902.5,
+      import_price_sek_per_kwh: 1,
+      export_price_sek_per_kwh: 0.1,
+    },
+    {
+      pv_w: 2_000,
+      fixed_load_w: 0,
+      import_price_sek_per_kwh: 1,
+      export_price_sek_per_kwh: 0.01,
+    },
+  ];
+  if (reverse) [slots[0], slots[1]] = [slots[1], slots[0]];
+  const battery = batteryStore(3, 0.5, 3);
+  battery.min_state = 0;
+  battery.max_state = 0.975;
+  battery.max_power_w = 4_000;
+  battery.units_per_kwh = () => 0.95;
+  battery.discharge!.state_per_kwh_out = () => 1 / 0.95;
+  battery.discharge!.cycling_cost_sek_per_unit = wear;
+  return { slots, battery };
+}
+
+for (const reverse of [false, true]) {
+  Deno.test(`solar and load are priced jointly (${reverse ? "use then refill" : "charge then use"})`, () => {
+    const { slots, battery } = solarTransferCase(reverse);
+    const result = planDispatch(slots, [battery], LIMITS);
+    const charge = reverse ? 1 : 0;
+    const load = reverse ? 0 : 1;
+    assert(
+      result.export_w[charge] < 1e-6,
+      "do not sell solar needed by the house",
+    );
+    assert(
+      result.import_w[load] < 1e-6,
+      "cover load despite the reserve's higher marginal value",
+    );
+    assert(
+      Math.abs(result.state.battery[2] - 0.5) < 1e-9,
+      "the pair leaves the suffix unchanged",
+    );
+    assert(
+      Math.abs(result.state.battery[3] - 0.975) < 1e-9,
+      "preserve the future full pack",
+    );
+    const part = result.allocations[load][0];
+    const pair = part.solar_transfers![0];
+    assert(Math.abs(pair.discharged_kwh - pair.charged_kwh * 0.9025) < 1e-9);
+    const saving = 0.9025 * 0.25 - 0.1 * 0.25 - 0.05 * 0.95 * 0.25;
+    assert(
+      Math.abs(pair.saving_sek - saving) < 1e-9,
+      "pay export opportunity cost, both losses and cycling wear",
+    );
+    assert(
+      Math.abs(part.net_value_sek - saving) < 1e-9,
+      "diagnostics explain joint profit",
+    );
+    for (let index = 0; index < slots.length; index += 1) {
+      const supplied = slots[index].pv_w + result.import_w[index] +
+        result.discharge_w.battery[index];
+      const consumed = slots[index].fixed_load_w + result.export_w[index] +
+        result.power_w.battery[index];
+      assert(
+        Math.abs(supplied - consumed) < 1e-6,
+        "conserve electrical energy",
+      );
+      assert(
+        result.state.battery[index] >= 0 && result.state.battery[index] <= 1,
+      );
+      assert(
+        !(result.power_w.battery[index] > 0 &&
+          result.discharge_w.battery[index] > 0),
+      );
+    }
+  });
+}
+
+for (
+  const [name, exportPrice, wear] of [
+    ["export revenue", 1.1, 0.05],
+    ["round-trip loss", 0.95, 0],
+    ["cycling wear", 0.1, 1],
+  ] as const
+) {
+  Deno.test(`a solar transfer must clear ${name}`, () => {
+    const { slots, battery } = solarTransferCase(false, exportPrice, wear);
+    const result = planDispatch(slots, [battery], LIMITS);
+    assertEquals(result.discharge_w.battery[1], 0);
+    assert(result.allocations.flat().every((part) => !part.solar_transfers));
+  });
+}
+
+Deno.test("joint transfers respect intervening capacity and the discharge power limit", () => {
+  const { slots, battery } = solarTransferCase();
+  battery.initial_state = 0.965;
+  battery.discharge!.max_power_w = 20;
+  const result = planDispatch(slots, [battery], LIMITS);
+  assert(Math.abs(result.discharge_w.battery[1] - 20) < 1e-6);
+  assert(
+    result.state.battery.every((state) => state <= 1 + 1e-9 && state >= 0),
+  );
+  const empty = solarTransferCase(true);
+  empty.battery.initial_state = 0;
+  const emptyResult = planDispatch(empty.slots, [empty.battery], LIMITS);
+  assertEquals(
+    emptyResult.discharge_w.battery[0],
+    0,
+    "future solar cannot supply an already-empty pack",
+  );
+});
+
+Deno.test("joint transfers do not bypass discrete hardware or intermediate utility", () => {
+  for (
+    const change of [
+      (store: DispatchStore) => {
+        store.power_step_w = 500;
+      },
+      (store: DispatchStore) => {
+        store.usage_weight[1] = 1;
+      },
+      (store: DispatchStore) => {
+        store.retention_per_slot = 0.99;
+      },
+    ]
+  ) {
+    const { slots, battery } = solarTransferCase();
+    change(battery);
+    const result = planDispatch(slots, [battery], LIMITS);
+    assert(result.allocations.flat().every((part) => !part.solar_transfers));
+  }
+});

@@ -132,6 +132,9 @@ export interface DispatchStore {
     state_per_kwh_out: (state: number, index: number) => number;
     /** Whether discharging into export is permitted, not merely to cover load. */
     export_allowed: boolean;
+    /** Cycling cost per unit of state, already embedded in the utility curve.
+     * Balanced transfers leave terminal utility unchanged, so pay it explicitly. */
+    cycling_cost_sek_per_unit?: number;
   };
 }
 
@@ -181,6 +184,14 @@ export interface DispatchAllocationDiagnostic {
   solar_w: number;
   grid_w: number;
   discharge_destination: "load" | "export" | "mixed" | null;
+  /** Joint solar-to-load decisions, priced together rather than against reserve value. */
+  solar_transfers?: {
+    charge_index: number;
+    discharge_index: number;
+    charged_kwh: number;
+    discharged_kwh: number;
+    saving_sek: number;
+  }[];
 }
 
 export interface DispatchBatteryDiagnostic {
@@ -225,6 +236,35 @@ export interface DispatchResult {
     | "settle_cap"
     | "settle_cycle";
   iterations: number;
+}
+
+/** Continuous storage with no intermediate utility can move equal stored energy. */
+function supportsEnergyTransfers(store: DispatchStore): boolean {
+  return store.discharge !== undefined && store.retention_per_slot === 1 &&
+    store.usage_weight.every((weight) => weight === 0) &&
+    (store.min_power_w ?? 0) === 0 && (store.power_step_w ?? 0) === 0 &&
+    (store.min_run_slots ?? 1) === 1 && (store.start_cost_sek ?? 0) === 0;
+}
+
+/** Room for adding state at one quarter and removing it at another. */
+function transferRoom(
+  state: number[],
+  charge: number,
+  low: number,
+  high: number,
+): number[] {
+  const room = new Array<number>(state.length - 1).fill(0);
+  let highest = -Infinity;
+  for (let other = charge + 1; other < room.length; other += 1) {
+    highest = Math.max(highest, state[other]);
+    room[other] = high - highest;
+  }
+  let lowest = Infinity;
+  for (let other = charge - 1; other >= 0; other -= 1) {
+    lowest = Math.min(lowest, state[other + 1]);
+    room[other] = lowest - low;
+  }
+  return room;
 }
 
 /**
@@ -783,12 +823,7 @@ export function planDispatch(
   const bestSolarExchange = (): ChargeExchange | null => {
     let best: ChargeExchange | null = null;
     for (const store of stores) {
-      if (
-        !store.discharge || store.retention_per_slot !== 1 ||
-        store.usage_weight.some((weight) => weight !== 0) ||
-        (store.min_power_w ?? 0) > 0 || (store.power_step_w ?? 0) > 0 ||
-        (store.min_run_slots ?? 1) > 1 || (store.start_cost_sek ?? 0) > 0
-      ) continue;
+      if (!supportsEnergyTransfers(store)) continue;
       const schedule = powerW[store.key];
       const discharge = dischargeW[store.key];
       const state = stateByKey[store.key];
@@ -820,17 +855,7 @@ export function planDispatch(
 
         // Moving charge earlier raises the intervening states; moving it later
         // lowers them. Only that interval changes, not the whole suffix.
-        const room = new Array<number>(count).fill(0);
-        let highest = -Infinity;
-        for (let from = to + 1; from < count; from += 1) {
-          highest = Math.max(highest, state[from]);
-          room[from] = high - highest;
-        }
-        let lowest = Infinity;
-        for (let from = to - 1; from >= 0; from -= 1) {
-          lowest = Math.min(lowest, state[from + 1]);
-          room[from] = lowest - low;
-        }
+        const room = transferRoom(state, to, low, high);
 
         for (let from = 0; from < count; from += 1) {
           if (from === to || schedule[from] <= 1e-6 || units[from] <= 0) {
@@ -1657,6 +1682,216 @@ export function planDispatch(
     }
   }
 
+  // A single charge can be blocked by tomorrow's full pack while a single
+  // discharge loses to retained value. Buying surplus and serving a later load
+  // TOGETHER changes neither tomorrow's pack nor terminal utility. Price that
+  // transaction directly, after settlement so neither leg is released alone.
+  // Check the intervening trajectory in either direction: charge before use,
+  // or use existing charge before a solar refill. The suffix remains intact.
+  // Each accepted transfer consumes solar or load headroom.
+  type SolarTransfer = {
+    store: DispatchStore;
+    charge: number;
+    discharge: number;
+    inW: number;
+    outW: number;
+    cost: number;
+    benefit: number;
+    wear: number;
+    saving: number;
+    score: number;
+  };
+  const transferredStores = new Set<string>();
+  while (iterations < maxIterations) {
+    let best: SolarTransfer | null = null;
+    for (const store of stores) {
+      if (!supportsEnergyTransfers(store)) continue;
+      const schedule = powerW[store.key];
+      const discharge = dischargeW[store.key];
+      const state = stateByKey[store.key];
+      const flowWear = store.wear_sek_per_kwh ?? 0;
+      for (let charge = 0; charge < count; charge += 1) {
+        if (discharge[charge] > 0) continue;
+        const availableW = Math.min(
+          store.max_power_w - schedule[charge],
+          slots[charge].pv_w - slots[charge].fixed_load_w - occupiedW[charge],
+        );
+        const units = store.units_per_kwh(state[charge], charge);
+        if (availableW <= 1e-6 || units <= 0) continue;
+        const room = transferRoom(
+          state,
+          charge,
+          store.min_state ?? -Infinity,
+          store.max_state ?? Infinity,
+        );
+        for (let load = 0; load < count; load += 1) {
+          if (load === charge || schedule[load] > 0) continue;
+          const importW = gridImportW(
+            slots[load],
+            occupiedW[load],
+            returnedW[load],
+          );
+          const spent = store.discharge!.state_per_kwh_out(state[load], load);
+          if (spent <= 0) continue;
+          const stored = Math.min(
+            room[load],
+            availableW / 1_000 * SLOT_HOURS * units,
+            Math.min(importW, store.discharge!.max_power_w - discharge[load]) /
+              1_000 * SLOT_HOURS * spent,
+          );
+          if (stored <= 1e-9) continue;
+          const maximumW = stored / spent / SLOT_HOURS * 1_000;
+          const unitCost = (slots[charge].export_price_sek_per_kwh + flowWear) *
+              spent / units +
+            flowWear +
+            (store.discharge!.cycling_cost_sek_per_unit ?? 0) * spent;
+          const levels = [maximumW];
+          const rate = limits.peak_shaping_sek_per_kwh_per_kw;
+          if (rate > 0) {
+            levels.push(
+              Math.min(
+                maximumW,
+                importW - limits.grid_import_shaping_w -
+                  Math.max(0, unitCost - slots[load].import_price_sek_per_kwh) /
+                    rate * 1_000,
+              ),
+            );
+          }
+          for (const outW of levels) {
+            if (outW <= 1e-6) continue;
+            const inW = outW * spent / units;
+            const inKwh = inW / 1_000 * SLOT_HOURS;
+            const outKwh = outW / 1_000 * SLOT_HOURS;
+            const cost = inKwh * slots[charge].export_price_sek_per_kwh;
+            const wear = (inKwh + outKwh) * flowWear + outKwh * spent *
+                (store.discharge!.cycling_cost_sek_per_unit ?? 0);
+            const benefit = outKwh * (slots[load].import_price_sek_per_kwh +
+              peakReliefSekPerKwh(limits, importW, outW));
+            const saving = benefit - cost - wear;
+            const score = saving / (outKwh * spent);
+            if (saving <= 1e-9 || score <= (best?.score ?? 0) + 1e-9) continue;
+            // Verify actual dynamics without clamping, including any
+            // state-dependent efficiency. The suffix must be unchanged.
+            const first = Math.min(charge, load);
+            const last = Math.max(charge, load);
+            let projected = state[first];
+            let feasible = true;
+            for (let index = first; index <= last; index += 1) {
+              projected = nextState(
+                store,
+                projected,
+                schedule[index] + (index === charge ? inW : 0),
+                discharge[index] + (index === load ? outW : 0),
+                index,
+              );
+              if (
+                !Number.isFinite(projected) ||
+                projected < (store.min_state ?? -Infinity) - 1e-9 ||
+                projected > (store.max_state ?? Infinity) + 1e-9
+              ) {
+                feasible = false;
+                break;
+              }
+            }
+            if (!feasible || Math.abs(projected - state[last + 1]) > 1e-9) {
+              continue;
+            }
+            best = {
+              store,
+              charge,
+              discharge: load,
+              inW,
+              outW,
+              cost,
+              benefit,
+              wear,
+              saving,
+              score,
+            };
+          }
+        }
+      }
+    }
+    if (!best) break;
+    iterations += 1;
+    const { store, charge, discharge, inW, outW, cost, benefit, wear, saving } =
+      best;
+    transferredStores.add(store.key);
+    const transfer = {
+      charge_index: charge,
+      discharge_index: discharge,
+      charged_kwh: inW / 1_000 * SLOT_HOURS,
+      discharged_kwh: outW / 1_000 * SLOT_HOURS,
+      saving_sek: saving,
+    };
+    // Attribute the opportunity cost to the discharge it funds. Charging this
+    // energy has zero standalone profit; the load leg records the joint saving.
+    for (
+      const [index, watts, charging] of [[charge, inW, true], [
+        discharge,
+        outW,
+        false,
+      ]] as const
+    ) {
+      const old = partAt(store, index);
+      const oldKwh = (old?.power_w ?? 0) / 1_000 * SLOT_HOURS;
+      const kwh = watts / 1_000 * SLOT_HOURS;
+      const total = oldKwh + kwh;
+      const part: DispatchAllocationDiagnostic = {
+        store_key: store.key,
+        direction: charging ? "charge" : "discharge",
+        trigger: "economic_winner",
+        allocation_order: iterations,
+        run_start_index: index,
+        run_slots: 1,
+        power_w: (old?.power_w ?? 0) + watts,
+        state_before: 0,
+        state_after: 0,
+        state_unit: store.curve.unit,
+        retention_factor: 1,
+        average_value_sek_per_kwh:
+          ((old?.average_value_sek_per_kwh ?? 0) * oldKwh +
+            (charging ? cost : benefit)) / total,
+        energy_cost_sek_per_kwh:
+          ((old?.energy_cost_sek_per_kwh ?? 0) * oldKwh + cost) / total,
+        wear_cost_sek_per_kwh:
+          ((old?.wear_cost_sek_per_kwh ?? 0) * oldKwh + (charging ? 0 : wear)) /
+          total,
+        start_cost_sek: 0,
+        net_value_sek: (old?.net_value_sek ?? 0) + (charging ? 0 : saving),
+        run_net_value_sek: (old?.net_value_sek ?? 0) + (charging ? 0 : saving),
+        solar_w: (old?.solar_w ?? 0) + (charging ? watts : 0),
+        grid_w: old?.grid_w ?? 0,
+        discharge_destination: charging ? null : "load",
+        solar_transfers: [...(old?.solar_transfers ?? []), transfer],
+      };
+      if (old) allocations[index][allocations[index].indexOf(old)] = part;
+      else allocations[index].push(part);
+    }
+    powerW[store.key][charge] += inW;
+    occupiedW[charge] += inW;
+    dischargeW[store.key][discharge] += outW;
+    returnedW[discharge] += outW;
+    project(
+      store,
+      powerW[store.key],
+      dischargeW[store.key],
+      Math.min(charge, discharge),
+      stateByKey[store.key],
+    );
+  }
+  if (iterations >= maxIterations) stopped = "iteration_cap";
+  // Transfers change intermediate states, including those of pre-existing bids.
+  for (const store of stores) {
+    if (!transferredStores.has(store.key)) continue;
+    for (let index = 0; index < count; index += 1) {
+      const part = partAt(store, index);
+      if (!part) continue;
+      part.state_before = stateByKey[store.key][index];
+      part.state_after = stateByKey[store.key][index + 1];
+    }
+  }
+
   const importW = new Array(count).fill(0);
   const exportW = new Array(count).fill(0);
   for (let index = 0; index < count; index += 1) {
@@ -1701,7 +1936,7 @@ export function planDispatch(
           stored_value_sek_per_kwh: accepted.direction === "charge"
             ? accepted.average_value_sek_per_kwh
             : accepted.energy_cost_sek_per_kwh,
-          wear_cost_sek_per_kwh: wear,
+          wear_cost_sek_per_kwh: accepted.wear_cost_sek_per_kwh,
           net_value_sek: accepted.net_value_sek,
         };
         continue;
