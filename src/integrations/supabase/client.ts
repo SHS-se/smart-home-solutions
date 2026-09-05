@@ -2,9 +2,14 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 import { recoverFromSchemaDrift } from '@/lib/app-recovery';
+import { pinFunctionRegion } from '@/lib/function-region';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+// The region the database lives in, so Edge Functions run beside it rather
+// than beside whoever happened to click. Unset simply leaves the default
+// nearest-the-browser routing in place.
+const SUPABASE_FUNCTION_REGION = import.meta.env.VITE_SUPABASE_FUNCTION_REGION;
 
 // A tab loaded before a migration keeps asking for the column list of the
 // build it came from, and PostgREST answers every poll with an error nobody in
@@ -18,11 +23,24 @@ const schemaDriftCodes = new Set([
   'PGRST204', // a written column does not exist
 ]);
 
+/** Route an Edge Function call to the database's region, whatever the form. */
+function toDatabaseRegion(input: RequestInfo | URL): RequestInfo | URL {
+  if (!SUPABASE_FUNCTION_REGION) return input;
+  if (typeof input === 'string') {
+    return pinFunctionRegion(input, SUPABASE_FUNCTION_REGION);
+  }
+  if (input instanceof URL) {
+    return pinFunctionRegion(input.toString(), SUPABASE_FUNCTION_REGION);
+  }
+  const pinned = pinFunctionRegion(input.url, SUPABASE_FUNCTION_REGION);
+  return pinned === input.url ? input : new Request(pinned, input);
+}
+
 async function fetchWithSchemaDriftRecovery(
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<Response> {
-  const response = await fetch(input, init);
+  const response = await fetch(toDatabaseRegion(input), init);
   if (response.status !== 400 && response.status !== 404) return response;
   if (!response.headers.get('content-type')?.includes('json')) return response;
 
