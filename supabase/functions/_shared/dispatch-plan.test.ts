@@ -1359,3 +1359,50 @@ Deno.test("joint transfers do not bypass discrete hardware or intermediate utili
     assert(result.allocations.flat().every((part) => !part.solar_transfers));
   }
 });
+
+function discreteSolarCar() {
+  const slots: DispatchSlot[] = Array.from({ length: 8 }, (_, index) => ({
+    pv_w: index >= 2 ? 4_000 : 0,
+    fixed_load_w: 300,
+    import_price_sek_per_kwh: 1,
+    export_price_sek_per_kwh: 0.1,
+  }));
+  const car: DispatchStore = {
+    key: "ev",
+    curve: { unit: "kwh", points: [{ at: 10, sek_per_unit: 3 }] },
+    initial_state: 0,
+    max_state: 5.175,
+    max_power_w: 11_040,
+    min_power_w: 3_450,
+    power_step_w: 690,
+    min_run_slots: 1,
+    retention_per_slot: 1,
+    terminal_weight: 1,
+    usage_weight: new Array(8).fill(0),
+    units_per_kwh: () => 1,
+    drift: (state) => state,
+  };
+  return { slots, car };
+}
+
+Deno.test("the same car energy is spread over solar at supported amps instead of bought in 11 kW blocks", () => {
+  const { slots, car } = discreteSolarCar();
+  const result = planDispatch(slots, [car], LIMITS);
+  assertEquals(result.power_w.ev, [0, 0, 3450, 3450, 3450, 3450, 3450, 3450]);
+  assert(Math.abs(result.state.ev.at(-1)! - car.max_state!) < 1e-9);
+  assert(result.import_w.slice(2).every((watts) => watts < 1e-6));
+  assertEquals(
+    result.power_w.ev.reduce((sum, watts) => sum + watts, 0) / 4000,
+    5.175,
+  );
+});
+
+Deno.test("a real departure before the sun still allows fast grid charging", () => {
+  const { slots, car } = discreteSolarCar();
+  car.terminal_weight = 0;
+  car.usage_weight[2] = 1;
+  const result = planDispatch(slots, [car], LIMITS);
+  assert(result.power_w.ev.slice(2).every((watts) => watts === 0));
+  assert(Math.max(...result.power_w.ev) >= 9_000);
+  assert(result.state.ev[2] >= 5);
+});

@@ -73,6 +73,7 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6] as const;
  * meaningless. v8 makes comfort schedules room-temperature constraints and
  * moves preheating inside the shared electrical objective. v10 replaces the
  * battery's peak-price step with the weighted merit order of displaced import.
+ * v22 keeps unplugged vehicles in planning and reschedules discrete charge across the horizon.
  * v21 evaluates solar charging and later load discharge as a joint transfer.
  * v20 reopens partial charge setpoints when the evolving schedule leaves room
  * for more profitable energy, so an early allocation cannot strand cheap PV.
@@ -101,7 +102,7 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6] as const;
  * v11 integrates every sizeable curve move, applies configured EV curves,
  * prices minimum runs as complete blocks and records exact quarter evidence.
  */
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v21";
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v22";
 /** The planner a schema 5 snapshot still receives, unchanged. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v8";
 export const SLOT_MINUTES = 15;
@@ -201,6 +202,7 @@ export interface PoolStateInput {
 
 export interface EvBatteryInput {
   name: string;
+  /** Measured cable state; planning assumes the car can be plugged in. */
   connected: boolean;
   capacity_kwh: number;
   soc: number;
@@ -1037,21 +1039,14 @@ export function validateSnapshot(snapshot: OptimisationSnapshot): string[] {
       ? null
       : isoMs(evBattery.departure);
     if (
-      evBattery.connected &&
+      (evBattery.connected || evBattery.available_from !== null ||
+        departure !== null) &&
       (!Number.isFinite(availableFrom) ||
         (departure !== null &&
           (!Number.isFinite(departure) || availableFrom >= departure)))
     ) {
       errors.push(
-        "connected ev_battery requires a valid availability start and optional departure",
-      );
-    }
-    if (
-      !evBattery.connected &&
-      (evBattery.available_from !== null || evBattery.departure !== null)
-    ) {
-      errors.push(
-        "disconnected ev_battery must not declare an availability window",
+        "ev_battery requires a valid availability start and optional departure",
       );
     }
   }
@@ -2490,11 +2485,9 @@ function buildDispatchStores(
 
   if (snapshot.capabilities.ev) {
     const vehicle = snapshot.ev_battery;
-    if (!vehicle || !vehicle.connected) {
-      // A disconnected car is not a store the planner can fill. It contributes
-      // nothing rather than blocking the whole dispatch path.
-      if (!vehicle) return null;
-    } else {
+    if (vehicle) {
+      // Cable state is telemetry, not a forecast of whether the household can
+      // plug in. Always plan measured range using the declared charger limits.
       const perKm = vehicleKwhPerKm(vehicle);
       const control = evCurrentControl(snapshot);
       // A capability is a concrete actuator contract, not permission to
@@ -2660,11 +2653,7 @@ function undispatchedStores(
         "ev",
         "km",
         rangeKm,
-        !snapshot.capabilities.ev
-          ? "not_controllable"
-          : vehicle.connected
-          ? "state_unavailable"
-          : "disconnected",
+        !snapshot.capabilities.ev ? "not_controllable" : "state_unavailable",
       );
     } else if (snapshot.capabilities.ev) {
       skip("ev", "km", null, "state_unavailable");

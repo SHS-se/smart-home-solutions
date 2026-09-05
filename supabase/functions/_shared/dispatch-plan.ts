@@ -528,8 +528,222 @@ function sellLegIsPublished(
  * old scheduler encoded as a fixed order — pool before car, both before
  * battery — falls out of comparing marginal values, and reverses on its own
  * when a car is nearly full or a pool has fallen out of its band (§8.9).
+ * Complete schedules are compared so early purchases do not lock out solar.
  */
 export function planDispatch(
+  slots: DispatchSlot[],
+  stores: DispatchStore[],
+  limits: DispatchLimits,
+  options: { maxIterations?: number } = {},
+): DispatchResult {
+  let best = dispatchAuction(slots, stores, limits, options);
+  const objective = (result: DispatchResult): number => {
+    let cost = slots.reduce((total, slot, i) =>
+      total + SLOT_HOURS / 1_000 *
+        (result.import_w[i] * (slot.import_price_sek_per_kwh +
+              peakSekPerKwh(limits, 0, result.import_w[i])) -
+          result.export_w[i] * slot.export_price_sek_per_kwh), 0);
+    cost += result.allocations.flat().reduce(
+      (sum, part) => sum + part.start_cost_sek,
+      0,
+    );
+    for (const store of stores) {
+      const state = result.state[store.key];
+      cost -= (store.terminal_weight ?? 0) *
+        valueOfMove(store.curve, store.initial_state, state.at(-1)!);
+      for (let i = 0; i < slots.length; i += 1) {
+        cost -= (store.usage_weight[i] ?? 0) *
+          valueOfMove(store.curve, store.initial_state, state[i]);
+        cost += SLOT_HOURS / 1_000 *
+          ((result.power_w[store.key][i] + result.discharge_w[store.key][i]) *
+              (store.wear_sek_per_kwh ?? 0) + result.discharge_w[store.key][i] *
+              (store.discharge?.state_per_kwh_out(state[i], i) ?? 0) *
+              (store.discharge?.cycling_cost_sek_per_unit ?? 0));
+      }
+    }
+    return cost;
+  };
+  let bestCost = objective(best);
+  for (const store of stores) {
+    const profile = cheapestDiscreteProfile(
+      slots,
+      store,
+      best.power_w[store.key],
+      limits,
+    );
+    if (!profile) continue;
+    // Let the battery and other stores respond to the new car schedule; keeping
+    // their old allocations would reserve tomorrow's solar against moving it.
+    const candidate = dispatchAuction(
+      slots.map((slot, i) => ({
+        ...slot,
+        fixed_load_w: slot.fixed_load_w + profile[i],
+      })),
+      stores.filter((other) => other !== store),
+      limits,
+      options,
+    );
+    const state = new Array(slots.length + 1).fill(store.initial_state);
+    const discharge = new Array(slots.length).fill(0);
+    project(store, profile, discharge, 0, state);
+    candidate.power_w[store.key] = profile;
+    candidate.discharge_w[store.key] = discharge;
+    candidate.state[store.key] = state;
+    const retention = retentionBySlot(store, slots.length);
+    for (let i = 0; i < slots.length; i += 1) {
+      const watts = profile[i];
+      if (watts <= 0) continue;
+      const kwh = watts / 1_000 * SLOT_HOURS;
+      const value = valueOfMove(store.curve, state[i], state[i + 1]) *
+        retention[i];
+      const otherW = Object.entries(candidate.power_w).reduce(
+        (total, [key, powers]) => total + (key === store.key ? 0 : powers[i]),
+        0,
+      );
+      const returned = Object.values(candidate.discharge_w).reduce(
+        (total, powers) => total + powers[i],
+        0,
+      );
+      const cost = energyCostSekPerKwh(
+        slots[i],
+        otherW,
+        watts,
+        limits,
+        returned,
+      );
+      const wear = store.wear_sek_per_kwh ?? 0;
+      const solarW = Math.min(
+        watts,
+        Math.max(0, slots[i].pv_w - slots[i].fixed_load_w - otherW),
+      );
+      candidate.allocations[i].push({
+        store_key: store.key,
+        direction: "charge",
+        trigger: "economic_winner",
+        allocation_order: candidate.iterations,
+        run_start_index: i,
+        run_slots: 1,
+        power_w: watts,
+        state_before: state[i],
+        state_after: state[i + 1],
+        state_unit: store.curve.unit,
+        retention_factor: retention[i],
+        average_value_sek_per_kwh: value / kwh,
+        energy_cost_sek_per_kwh: cost,
+        wear_cost_sek_per_kwh: wear,
+        start_cost_sek: 0,
+        net_value_sek: value - (cost + wear) * kwh,
+        run_net_value_sek: value - (cost + wear) * kwh,
+        solar_w: solarW,
+        grid_w: watts - solarW,
+        discharge_destination: null,
+      });
+    }
+    const cost = objective(candidate);
+    if (
+      candidate.stopped_because !== "iteration_cap" && cost < bestCost - 1e-9
+    ) {
+      best = candidate;
+      bestCost = cost;
+    }
+  }
+  return best;
+}
+
+/** Minimum-cost placement of a fixed amount at executable current settings. */
+function cheapestDiscreteProfile(
+  slots: DispatchSlot[],
+  store: DispatchStore,
+  original: number[],
+  limits: DispatchLimits,
+): number[] | null {
+  const step = store.power_step_w ?? 0;
+  const minimum = store.min_power_w ?? 0;
+  const units = store.units_per_kwh(store.initial_state, 0);
+  if (
+    store.discharge || step <= 0 || store.retention_per_slot !== 1 ||
+    (store.min_run_slots ?? 1) !== 1 || (store.start_cost_sek ?? 0) !== 0 ||
+    Math.abs(minimum / step - Math.round(minimum / step)) > 1e-9 ||
+    store.usage_weight.filter((weight) => weight > 0).length > 1 ||
+    slots.some((_slot, i) =>
+      store.units_per_kwh(store.initial_state, i) !== units ||
+      store.drift(store.initial_state, i) !== store.initial_state
+    )
+  ) return null;
+  const target = Math.round(
+    original.reduce((sum, watts) => sum + watts, 0) / step,
+  );
+  if (
+    target === 0 ||
+    original.some((watts) =>
+      Math.abs(watts / step - Math.round(watts / step)) > 1e-6
+    )
+  ) return null;
+  const retention = retentionBySlot(store, slots.length);
+  const wanted = Math.max(...retention);
+  if (original.some((watts, i) => watts > 0 && retention[i] !== wanted)) {
+    return null;
+  }
+  let costs = new Float64Array(target + 1).fill(Infinity);
+  costs[0] = 0;
+  const previous: Int32Array[] = [];
+  for (let i = 0; i < slots.length; i += 1) {
+    const maximum = retention[i] === wanted
+      ? Math.min(store.max_power_w, headroomW(slots[i], limits, 0, 0))
+      : 0;
+    const choices = [{ steps: 0, cost: 0 }];
+    for (
+      let watts = Math.max(step, minimum);
+      watts <= maximum + 1e-9;
+      watts += step
+    ) {
+      choices.push({
+        steps: Math.round(watts / step),
+        cost: watts / 1_000 * SLOT_HOURS *
+          energyCostSekPerKwh(slots[i], 0, watts, limits),
+      });
+    }
+    const next = new Float64Array(target + 1).fill(Infinity);
+    const picked = new Int32Array(target + 1).fill(-1);
+    for (let total = 0; total <= target; total += 1) {
+      if (!Number.isFinite(costs[total])) continue;
+      for (const choice of choices) {
+        const after = total + choice.steps;
+        if (after > target) continue;
+        const cost = costs[total] + choice.cost;
+        if (cost < next[after] - 1e-9) {
+          next[after] = cost;
+          picked[after] = choice.steps;
+        }
+      }
+    }
+    previous.push(picked);
+    costs = next;
+  }
+  if (!Number.isFinite(costs[target])) return null;
+  const replacement = new Array<number>(slots.length).fill(0);
+  let remaining = target;
+  for (let i = slots.length - 1; i >= 0; i -= 1) {
+    const chosen = previous[i][remaining];
+    if (chosen < 0) throw new Error("discrete charge schedule is unreachable");
+    replacement[i] = chosen * step;
+    remaining -= chosen;
+  }
+  // Validate the full physical trajectory, not just the integer energy total.
+  const before = new Array(slots.length + 1).fill(store.initial_state);
+  project(store, original, new Array(slots.length).fill(0), 0, before);
+  let projected = store.initial_state;
+  for (let i = 0; i < slots.length; i += 1) {
+    projected = nextState(store, projected, replacement[i], 0, i);
+    if (
+      projected < (store.min_state ?? -Infinity) - 1e-9 ||
+      projected > (store.max_state ?? Infinity) + 1e-9
+    ) return null;
+  }
+  return Math.abs(projected - before.at(-1)!) < 1e-9 ? replacement : null;
+}
+
+function dispatchAuction(
   slots: DispatchSlot[],
   stores: DispatchStore[],
   limits: DispatchLimits,

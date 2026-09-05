@@ -1724,7 +1724,7 @@ Deno.test("schema 6 with pool state dispatches by temperature, not by budget", (
   const plan = generateOptimisationPlan(snapshot, new Date(NOW));
 
   assertEquals(plan.schema_version, 6);
-  assertEquals(plan.model_version, "marginal-value-planner-v21");
+  assertEquals(plan.model_version, "marginal-value-planner-v22");
   // Asserted explicitly: an earlier version of this test checked the pool
   // energy but not the status, and so passed while every schema 6 plan was
   // reported infeasible by validations that still assumed fixed blocks.
@@ -2504,7 +2504,7 @@ Deno.test("a store the planner never saw says so instead of vanishing", () => {
   );
 });
 
-Deno.test("an unplugged car is reported as unplugged, not as unwanted", () => {
+Deno.test("an unplugged car without charger controls reports missing planning state", () => {
   const snapshot = horizon({
     capabilities: {
       pv: true,
@@ -2535,7 +2535,7 @@ Deno.test("an unplugged car is reported as unplugged, not as unwanted", () => {
 
   const ev = generateOptimisationPlan(snapshot, new Date(NOW))
     .plans.priority.store_diagnostics.find((entry) => entry.key === "ev")!;
-  assertEquals(ev.reason, "disconnected");
+  assertEquals(ev.reason, "state_unavailable");
 });
 
 Deno.test("a home without the equipment stays silent about it", () => {
@@ -2626,8 +2626,8 @@ Deno.test("a single-phase charger is planned at the power its cable delivers", (
     `a single-phase 16 A cable delivers 3.7 kW, planned ${single} W`,
   );
   assert(
-    three > single * 2,
-    `three phases must plan more power than one: ${single} vs ${three}`,
+    three > 0 && three <= 3 * 230 * 16 + 1 && three % (3 * 230) === 0,
+    `three-phase charging must use supported currents within its limit: ${three}`,
   );
 });
 
@@ -3524,5 +3524,30 @@ Deno.test("§8.19 — the home's own wear cost reaches the curve", () => {
   assertEquals(
     at().battery_value_curve!.curve_input.degradation_sek_per_kwh,
     DEFAULT_VALUE_SETTINGS.battery_degradation_sek_per_kwh,
+  );
+});
+
+Deno.test("unplugging preserves the car's planned energy while cable telemetry stays false", async () => {
+  const { dispatchedEvSnapshot } = await import(
+    "../../../scripts/generate-ha-plan-fixture.ts"
+  );
+  const snapshot = dispatchedEvSnapshot();
+  const now = new Date(snapshot.captured_at);
+  const connected = generateOptimisationPlan(snapshot, now);
+  snapshot.ev_battery!.connected = false;
+  const unplugged = generateOptimisationPlan(snapshot, now);
+  assertEquals(unplugged.validation_errors, []);
+  assertEquals(unplugged.ev_battery!.connected, false);
+  assertEquals(
+    unplugged.plans.priority.slots.map((slot) => slot.ev_w),
+    connected.plans.priority.slots.map((slot) => slot.ev_w),
+  );
+  assert(
+    unplugged.plans.priority.slots.some((slot) => slot.ev_w > 0),
+    "the unplugged car must still be planned",
+  );
+  assert(
+    unplugged.plans.priority.slots.every((slot) => !slot.ev_connected),
+    "do not invent a cable connection",
   );
 });
