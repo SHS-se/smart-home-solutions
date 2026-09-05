@@ -513,12 +513,16 @@ Deno.test("a partial battery charge grows when earlier discharge frees capacity"
     "the earlier discharge must free room",
   );
   assert(
-    result.export_w[5] > 0,
-    "the last solar quarter must still have surplus",
+    result.export_w[5] < 1e-6,
+    "the cheapest solar quarter must be stored whole, not exported",
+  );
+  assert(
+    result.export_w[0] > 0,
+    "the dearest solar quarter is the one worth exporting instead",
   );
   assert(
     Math.abs(result.state.battery[6] - 4) < 1e-8,
-    "export must wait until the battery fills",
+    "and the battery still ends the sunny run full",
   );
 
   let stored = battery.initial_state;
@@ -546,6 +550,158 @@ Deno.test("a partial battery charge grows when earlier discharge frees capacity"
     assertEquals(entries[0].power_w, chargeW || dischargeW);
     assert(Math.abs(entries[0].state_after - stored) < 1e-8);
   }
+});
+
+/** Quarters as (pv_w, fixed_load_w, import price, export price). */
+function shapedSlots(rows: number[][]): DispatchSlot[] {
+  return rows.map((
+    [pv_w, fixed_load_w, import_price_sek_per_kwh, export_price_sek_per_kwh],
+  ) => ({
+    pv_w,
+    fixed_load_w,
+    import_price_sek_per_kwh,
+    export_price_sek_per_kwh,
+  }));
+}
+
+/** A lossless two-sided battery on a concave curve, in the curve's own kWh. */
+function replayBattery(
+  slots: number,
+  initialKwh: number,
+  steepSekPerKwh: number,
+): DispatchStore {
+  return {
+    key: "battery",
+    curve: {
+      unit: "kwh",
+      points: [
+        { at: 1, sek_per_unit: steepSekPerKwh },
+        { at: 4, sek_per_unit: 0.22 },
+      ],
+    },
+    initial_state: initialKwh,
+    min_state: 0,
+    max_state: 4,
+    max_power_w: 8_800,
+    retention_per_slot: 1,
+    usage_weight: new Array(slots).fill(0),
+    terminal_weight: 1,
+    units_per_kwh: () => 1,
+    drift: (state) => state,
+    discharge: {
+      max_power_w: 9_600,
+      state_per_kwh_out: () => 1,
+      export_allowed: false,
+    },
+  };
+}
+
+Deno.test("surplus solar replaces the grid purchase that reserved its room", () => {
+  // The September 5 replay exported solar from 16:45 while the home battery sat
+  // at 59%. Nothing was wrong with the room it had: the trajectory was already
+  // full further down the horizon, and what had reserved it was grid charging
+  // this solar could have paid for instead. A committed charge is not
+  // irrevocable, so equal stored energy is exchanged between the two quarters.
+  //
+  // Twelve quarters reduced from that replay — two short solar days either side
+  // of an evening the battery covers. The prices keep the replay's own
+  // unrounded shape because the defect only shows while the trajectory sits
+  // just under the ceiling rather than on it. Quarter 0 buys 5117 W at 0.82
+  // into the steep part of the curve, which outbids quarter 8's cheaper
+  // surplus; quarter 8's 1078 W is then refused for want of room and exported
+  // at 0.27. Left alone the plan buys 1.279 kWh and exports 0.270 — it pays
+  // 0.82 for energy it is selling at 0.27 in the same horizon.
+  const slots = shapedSlots([
+    [0, 0, 0.82, 0.35],
+    [2_580, 0, 1.52, 0.14],
+    [2_073, 0, 1.53, 0.21],
+    [0, 0, 1.00, 0.14],
+    [0, 5_885, 1.77, 0.13],
+    [0, 0, 2.43, 0.33],
+    [0, 0, 1.64, 0.38],
+    [5_717, 0, 1.72, 0.42],
+    [1_078, 0, 1.52, 0.27],
+    [0, 0, 0.98, 0.40],
+    [0, 1_454, 0.71, 0.29],
+    [0, 0, 2.33, 0.06],
+  ]);
+  const result = planDispatch(
+    slots,
+    [replayBattery(slots.length, 1.33, 1.17)],
+    LIMITS,
+  );
+  assertEquals(result.stopped_because, "no_profitable_candidate");
+
+  assert(
+    result.export_w.every((watts) => watts < 1e-9),
+    "no surplus may be exported while a dearer purchase is holding its room",
+  );
+  assert(
+    Math.abs(result.power_w.battery[8] - 1_078) < 1e-6,
+    "the refused quarter's whole surplus must reach the battery",
+  );
+  // The exchange only re-sources energy, so what the purchase gives up is
+  // exactly what the solar takes over, and the horizon ends where it did.
+  assert(
+    Math.abs(result.power_w.battery[8] - (5_117 - result.import_w[0])) < 1e-6,
+    "the grid purchase must shrink by exactly the solar that replaces it",
+  );
+  assert(
+    Math.abs(result.state.battery[slots.length] - 3.367) < 1e-9,
+    "an exchange must not change what the battery ends the horizon holding",
+  );
+  const importedKwh = result.import_w.reduce((total, watts) => total + watts) /
+    1_000 * SLOT_HOURS;
+  assert(
+    importedKwh < 1.279,
+    "and the plan must buy less than the one that exported the solar",
+  );
+});
+
+Deno.test("a partial discharge deepens when the load it covers is dearer", () => {
+  // The same replay's other half. A discharge quarter, once accepted, was never
+  // reconsidered: whatever rate won first stood, even after later allocations
+  // made a deeper one pay. Quarter 4 covered 480 W of a 5057 W load and bought
+  // the remaining 4577 W at 2.41 — the dearest quarter in the horizon — while
+  // the battery held charge worth 0.22. The charge it kept then blocked
+  // quarter 8's surplus, which was exported at 0.31.
+  const slots = shapedSlots([
+    [0, 0, 1.17, 0.07],
+    [4_161, 0, 1.94, 0.23],
+    [1_036, 0, 2.56, 0.37],
+    [0, 0, 1.03, 0.05],
+    [0, 5_057, 2.41, 0.27],
+    [0, 0, 1.31, 0.07],
+    [0, 0, 2.72, 0.34],
+    [4_900, 0, 1.42, 0.13],
+    [1_195, 0, 1.79, 0.31],
+    [0, 0, 2.68, 0.22],
+    [0, 965, 0.85, 0.27],
+    [0, 0, 2.86, 0.40],
+  ]);
+  const result = planDispatch(
+    slots,
+    [replayBattery(slots.length, 1.12, 1.02)],
+    LIMITS,
+  );
+  assertEquals(result.stopped_because, "no_profitable_candidate");
+
+  assert(
+    Math.abs(result.discharge_w.battery[4] - 5_057) < 1e-6,
+    "the battery must cover the dearest quarter's load in full",
+  );
+  assert(
+    result.import_w[4] < 1e-9,
+    "nothing may be bought at 2.41 beside a battery that would rather discharge",
+  );
+  assert(
+    Math.abs(result.power_w.battery[8] - 1_195) < 1e-6,
+    "and the room the deeper discharge frees must take the refused surplus",
+  );
+  assert(
+    result.export_w.every((watts) => watts < 1e-9),
+    "which leaves nothing to export",
+  );
 });
 
 Deno.test("the battery discharges to cover load worth more than its charge", () => {
