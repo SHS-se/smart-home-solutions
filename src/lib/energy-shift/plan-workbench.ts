@@ -723,3 +723,53 @@ export function exportFreeCeilingKw(
   });
   return Math.min(...ceilings) / 1_000;
 }
+
+/**
+ * Stores whose curve asks for a state the hardware will not let them reach.
+ *
+ * The condition behind "the car never stops being worth charging". A curve's
+ * top breakpoint is where the next unit stops being worth buying; if the store
+ * cannot get there, that point is unreachable and the store outbids the grid at
+ * every hour of every horizon — §8.3's "charging to the limit from the grid is
+ * rarely correct" cannot emerge, because the segments that would produce it are
+ * beyond the ceiling.
+ *
+ * Reported as a **fraction of what the store can hold**, never as a level.
+ * A vehicle's curve is stated over range, its cap is enforced as state of
+ * charge, and the kilometres in an SOC move a long way between January and
+ * July — so a level in kilometres is a season wearing a number, while the ratio
+ * is the same in both. Multiply it by the charge limit to read it back as SOC:
+ * a top at 1.28 against an 80% limit is a curve asking for 102% SOC.
+ */
+export interface CurveBeyondReach {
+  key: string;
+  label: string;
+  stateUnit: string;
+  /** Where the curve stops valuing another unit. */
+  topAt: number;
+  /** The most the store can hold, from its own hardware limit. */
+  reachable: number;
+  /** `topAt / reachable`. Above 1 is the defect. */
+  ratio: number;
+}
+
+export function curvesBeyondReach(
+  workbench: DispatchWorkbench,
+): CurveBeyondReach[] {
+  const found: CurveBeyondReach[] = [];
+  for (const store of workbench.stores) {
+    const top = store.curve.points.at(-1)?.at;
+    const reachable = store.max_state;
+    if (top === undefined || reachable === undefined || !(reachable > 0)) continue;
+    if (top <= reachable * (1 + 1e-9)) continue;
+    found.push({
+      key: store.key,
+      label: storeLabel(store.key),
+      stateUnit: store.curve.unit,
+      topAt: top,
+      reachable,
+      ratio: top / reachable,
+    });
+  }
+  return found;
+}

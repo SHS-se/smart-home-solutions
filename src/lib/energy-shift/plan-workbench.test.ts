@@ -3,6 +3,7 @@ import {
   buildWorkbenchChart,
   buildWorkbenchExport,
   buildWorkbenchModel,
+  curvesBeyondReach,
   exportFreeCeilingKw,
   gridWattsAt,
   storeValueSeries,
@@ -802,4 +803,58 @@ Deno.test('doing nothing is cheapest on the bill and worst on the objective', ()
     comparison.totalDeltaSek > 0,
     `and still score worse: ${comparison.totalDeltaSek}`,
   );
+});
+
+Deno.test('a curve reaching past the hardware cap is reported as a ratio', () => {
+  // Stated as a fraction of what the store can hold, never as a level: a
+  // vehicle's curve is over range, its cap is enforced as SOC, and the
+  // kilometres in one SOC move a long way between January and July. The ratio
+  // is the same in both.
+  const bench = workbench();
+  const [car] = bench.stores;
+  bench.stores = [{
+    ...car,
+    max_state: 390.4,
+    curve: {
+      unit: 'km',
+      points: [
+        { at: 100, sek_per_unit: 1.225247 },
+        { at: 400, sek_per_unit: 0.408416 },
+        { at: 500, sek_per_unit: 0 },
+      ],
+    },
+  }];
+
+  const [found] = curvesBeyondReach(bench);
+
+  assertEquals(found.key, 'ev');
+  assertEquals(found.topAt, 500);
+  assertEquals(found.reachable, 390.4);
+  assertAlmostEquals(found.ratio, 1.2807, 1e-4);
+  // Read back through the 80% charge limit that produced 390.4 km, the curve
+  // is asking for 102% SOC — which no season makes reachable.
+  assertAlmostEquals(found.ratio * 0.8, 1.0246, 1e-4);
+});
+
+Deno.test('a curve the store can reach is not reported', () => {
+  const bench = workbench();
+  const [car] = bench.stores;
+  bench.stores = [{
+    ...car,
+    max_state: 500,
+    curve: {
+      unit: 'km',
+      points: [{ at: 100, sek_per_unit: 1 }, { at: 480, sek_per_unit: 0 }],
+    },
+  }];
+
+  assertEquals(curvesBeyondReach(bench), []);
+});
+
+Deno.test('a store with no ceiling has nothing to reach past', () => {
+  const bench = workbench();
+  const [car] = bench.stores;
+  bench.stores = [{ ...car, max_state: undefined }];
+
+  assertEquals(curvesBeyondReach(bench), []);
 });

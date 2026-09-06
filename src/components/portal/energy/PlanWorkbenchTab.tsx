@@ -35,6 +35,7 @@ import {
   buildWorkbenchChart,
   buildWorkbenchExport,
   buildWorkbenchModel,
+  curvesBeyondReach,
   gridWattsAt,
   compareWorkbench,
   executableKw,
@@ -235,6 +236,12 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
   const values$ = useMemo(
     () => (bench && comparison ? storeValueSeries(bench, comparison.manual) : []),
     [bench, comparison],
+  );
+
+  /** Curves whose top the hardware will not let the store reach. */
+  const beyondReach = useMemo(
+    () => (bench ? curvesBeyondReach(bench) : []),
+    [bench],
   );
 
   /** The store whose contract the export row is asking the reader to relax. */
@@ -546,6 +553,35 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
               timeOf={timeOf}
               onGo={goToQuarter}
             />
+          )}
+          {beyondReach.length > 0 && (
+            <Alert>
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>
+                {t(
+                  'En värdekurva ber om mer än hårdvaran tillåter',
+                  'A value curve asks for more than the hardware allows',
+                )}
+              </AlertTitle>
+              <AlertDescription>
+                <ul className="text-xs list-disc pl-4 space-y-0.5">
+                  {beyondReach.map(entry => (
+                    <li key={entry.key}>
+                      {t(
+                        `${entry.label}: kurvan slutar värdera vid ${Math.round(entry.ratio * 100)}% av vad lagret kan hålla`,
+                        `${entry.label}: the curve stops valuing at ${Math.round(entry.ratio * 100)}% of what the store can hold`,
+                      )}
+                    </li>
+                  ))}
+                </ul>
+                <p className="text-[11px] mt-2 opacity-80">
+                  {t(
+                    'Den punkten nås aldrig, så lagret slutar aldrig vara värt att ladda och vinner mot nätpriset varje timme. Andelen är årstidsoberoende: gångra den med laddgränsen för att läsa den som SOC — 128% mot en gräns på 80% är en kurva som ber om 102% SOC. Ställ om trösklarna i Ekonomi, eller höj laddgränsen.',
+                    'That point is never reached, so the store never stops being worth charging and beats the grid price every hour. The fraction is season-independent: multiply it by the charge limit to read it as SOC — 128% against an 80% limit is a curve asking for 102% SOC. Restate the thresholds under Economics, or raise the charge limit.',
+                  )}
+                </p>
+              </AlertDescription>
+            </Alert>
           )}
           {(comparison?.planner.infeasibilities.length ?? 0) > 0 && (
             <Issues

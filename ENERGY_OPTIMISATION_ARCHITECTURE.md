@@ -4626,6 +4626,46 @@ actually published. Two thirds of a 72-hour horizon is priced against a shaped
 prior (§1.4.3), so the whole-horizon figure is a forecast wearing a currency
 symbol; this one is money.
 
+#### 8.20.3 A cap is a state of charge; a curve is a range (2026-09-06)
+
+The workbench's first real verdict, and the correction that came with it.
+
+Phil's plan bought grid energy for the car at nearly every hour. The measured
+cause was not the search: at the car's own charge limit the curve still valued
+another kilometre at 0.4346 SEK — about **2.45 SEK/kWh** through a Model Y's
+efficiency, against import prices of 0.86–2.40. A *full* car outbid the grid,
+so §8.3's "charging to the limit from the grid is rarely correct" could not
+emerge. The comparison the workbench makes — same objective, two schedules —
+is what separated that from a search failure: the hand-built plan bought 15.6
+kWh less and delivered 44 SEK less service, and the objective was right.
+
+The first attempted fix was wrong and is worth recording. Scaling the curve so
+its indifference point lands on the reachable range makes the last unit worth
+nothing, so the car can never reach its own limit even when power is nearly
+free — the mirror of the defect. Two existing tests caught it, one of them
+stating the rule directly: *a limit is a ceiling, not a reason to decline cheap
+energy*.
+
+The second attempt was wrong for a better reason. **The hardware enforces a
+state of charge, not a range.** `max_state` already derives from it
+(`departure_target_soc × capacity ÷ kWh-per-km`, recomputed every solve), so
+the cap is already seasonal. But the kilometres in one SOC move a long way
+between January and July, so restating a *threshold* in kilometres against
+today's reachable range would bake a season into a permanent setting — and
+§8.3 chose range as the curve's unit precisely so that winter raises the value
+of the same SOC without a seasonal parameter. Both are right: the need is in
+kilometres, the cap is in SOC.
+
+So nothing silently clamps. `curvesBeyondReach` reports the condition as a
+**fraction of what the store can hold** — unit-free, and identical in every
+season because both sides divide by the same kWh/km. Multiply it by the charge
+limit to read it back: Phil's curve tops out at 1.28 of the cap, which against
+an 80% limit is a curve asking for **102% SOC**, with "comfortable" at 82%
+against a limit of 80%. Stated that way the contradiction is plain and holds
+all year: the household has asked for a comfort level its own charge limit
+forbids, so the car can never be satisfied and never stops bidding. Which of
+the two settings gives way is theirs to decide, not the planner's.
+
 Reading the result: **lower is better** — the score is cost net of service
 delivered, so it is routinely negative. A hand-built plan that scores lower is
 proof the search left money on the table, and the fix is a better solver. One
