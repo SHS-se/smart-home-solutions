@@ -4540,6 +4540,18 @@ state — a click can land in the same batch as the move that set it, and a *tap
 has no preceding pointermove at all, so the quarter under a finger was
 unreachable on touch. That last one was a live defect in the plan tab too.
 
+Three things the editor owes a reader beyond the score. A derived **grid in /
+out** row, signed the way the flow panel draws it — plus is bought, minus is
+sold — because "am I buying while the battery is full?" is the question the
+whole exercise is about and it was previously only answerable by eye off the
+chart. An **export** of both schedules, their inputs, their scores and the
+snapshot they came from, as one JSON file: a score settles which plan is better
+and the reason is in the quarters, which have to be able to leave the machine.
+And a breach now carries its quarter as data rather than in its sentence
+(`DispatchInfeasibility`), so the alert prints a time and clicking it takes the
+reader to that column — "slot 58" is a number nobody holds, and a plan is
+corrected by looking at 10:30.
+
 Reading the result: **lower is better** — the score is cost net of service
 delivered, so it is routinely negative. A hand-built plan that scores lower is
 proof the search left money on the table, and the fix is a better solver. One

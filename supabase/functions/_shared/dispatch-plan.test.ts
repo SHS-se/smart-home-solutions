@@ -1484,7 +1484,7 @@ Deno.test("a schedule that overfills a store is reported, not clamped", () => {
   const scored = scoreDispatch(slots, [ev], LIMITS, greedy);
 
   assert(
-    scored.infeasibilities.some((entry) => entry.includes("outside")),
+    scored.infeasibilities.some((entry) => entry.message.includes("outside")),
     "charging a full car all day must be refused, not silently bounded",
   );
 });
@@ -1501,7 +1501,7 @@ Deno.test("a schedule above the connection is reported", () => {
   }, over);
 
   assert(
-    scored.infeasibilities.some((entry) => entry.includes("connection")),
+    scored.infeasibilities.some((entry) => entry.message.includes("connection")),
     `expected a connection breach, got ${JSON.stringify(scored.infeasibilities)}`,
   );
 });
@@ -1519,7 +1519,7 @@ Deno.test("a hardware increment the schedule misses is reported", () => {
   const scored = scoreDispatch(slots, [ev], LIMITS, off);
 
   assert(
-    scored.infeasibilities.some((entry) => entry.includes("increment")),
+    scored.infeasibilities.some((entry) => entry.message.includes("increment")),
     `expected an increment breach, got ${JSON.stringify(scored.infeasibilities)}`,
   );
 });

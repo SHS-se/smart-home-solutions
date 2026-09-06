@@ -167,4 +167,47 @@ test.describe('plan workbench', () => {
       expect(visible).toBe(true);
     }).toPass({ timeout: 15_000 });
   });
+
+  test('reports the grid, links a breach to its time, and exports the plan', async ({ page }) => {
+    await page.goto('/portal/energy-modeling?tab=workbench');
+    await page.getByRole('button', { name: /Load the planner|Läs in planerarens/ }).click();
+    await expect(page.getByText(/The planner’s plan|Planerarens plan/)).toBeVisible({
+      timeout: 30_000,
+    });
+
+    // The grid figure is derived, signed, and sits with the rows it follows from.
+    const gridRow = page.locator('tr', { hasText: /Grid in \/ out|Nätet in \/ ut/ }).first();
+    await expect(gridRow).toBeVisible();
+    await expect(gridRow).toContainText(/[+−-]?\d+\.\d/);
+
+    // A breach names a time, and clicking it takes the table there. The fixture
+    // supplies real ones: the planner's own export leak (§8.20.1).
+    const breach = page.locator('button', { hasText: /^\d{2}\/\d{2} \d{2}:\d{2}$/ }).first();
+    await expect(breach).toBeVisible();
+    await breach.click();
+    const grid = page.getByTestId('workbench-grid');
+    await expect(async () => {
+      const visible = await grid.evaluate(container => {
+        const marked = container.querySelector('th[data-selected="true"]');
+        if (!marked) return false;
+        const cell = marked.getBoundingClientRect();
+        const view = container.getBoundingClientRect();
+        return cell.left >= view.left && cell.right <= view.right;
+      });
+      expect(visible).toBe(true);
+    }).toPass({ timeout: 15_000 });
+
+    // And the whole comparison leaves the machine as one file.
+    const download = page.waitForEvent('download');
+    await page.getByRole('button', { name: /Export|Exportera/ }).click();
+    const file = await download;
+    expect(file.suggestedFilename()).toMatch(/^plan-.*\.json$/);
+    const stream = await file.createReadStream();
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) chunks.push(chunk as Buffer);
+    const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    expect(payload.format).toBe('shs.plan-workbench.v1');
+    expect(payload.quarters).toHaveLength(288);
+    expect(payload.scores.planner.total_sek).toBeLessThan(0);
+  });
 });

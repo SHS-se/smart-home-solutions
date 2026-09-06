@@ -16,6 +16,7 @@
 
 import {
   scoreDispatch,
+  type DispatchInfeasibility,
   type DispatchSchedule,
   type DispatchScore,
 } from '../../../supabase/functions/_shared/dispatch-plan';
@@ -222,7 +223,7 @@ export interface WorkbenchComparison {
    * accusing them of it no matter what they changed. The difference is the part
    * they are answerable for; the planner's own list is shown beside it.
    */
-  introduced: string[];
+  introduced: DispatchInfeasibility[];
   /** Manual minus planner. Negative means the hand-built plan costs less. */
   totalDeltaSek: number;
   importDeltaKwh: number;
@@ -245,11 +246,12 @@ export function compareWorkbench(
     workbench.limits,
     manual,
   );
-  const inherited = new Set(planner.infeasibilities);
+  const identity = (entry: DispatchInfeasibility) => `${entry.slot}|${entry.message}`;
+  const inherited = new Set(planner.infeasibilities.map(identity));
   return {
     planner,
     manual: scored,
-    introduced: scored.infeasibilities.filter(entry => !inherited.has(entry)),
+    introduced: scored.infeasibilities.filter(entry => !inherited.has(identity(entry))),
     totalDeltaSek: scored.total_sek - planner.total_sek,
     importDeltaKwh: scored.grid_import_kwh - planner.grid_import_kwh,
     exportDeltaKwh: scored.grid_export_kwh - planner.grid_export_kwh,
@@ -396,5 +398,126 @@ export function buildWorkbenchChart(
     baseValues: split.baseValues,
     hasBattery: battery !== undefined,
     hasEvBattery: vehicle !== undefined,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Handing the whole comparison to somebody who was not sitting here.
+//
+// A score settles which plan is better; it does not say *why*, and the answer
+// to that is in the quarters. So the export carries both schedules, the inputs
+// they were solved against, and the snapshot they came from — enough for the
+// difference to be reproduced and argued with off this machine, which is the
+// point of building a plan by hand in the first place.
+// ---------------------------------------------------------------------------
+
+export interface WorkbenchExport {
+  format: 'shs.plan-workbench.v1';
+  exported_at: string;
+  snapshot_id: string;
+  captured_at: string;
+  slot_minutes: 15;
+  limits: DispatchWorkbench['limits'];
+  stores: {
+    key: string;
+    state_unit: string;
+    initial_state: number;
+    min_state: number | null;
+    max_state: number | null;
+    max_power_w: number;
+    min_power_w: number;
+    power_step_w: number;
+    min_run_slots: number;
+    discharge_max_power_w: number | null;
+    export_allowed: boolean | null;
+  }[];
+  /** One entry per quarter: what it was solved against and what both plans do. */
+  quarters: {
+    start: string;
+    binding: boolean;
+    pv_w: number;
+    fixed_load_w: number;
+    import_price_sek_per_kwh: number;
+    export_price_sek_per_kwh: number;
+    planner: { charge_w: Record<string, number>; discharge_w: Record<string, number>; grid_w: number };
+    manual: { charge_w: Record<string, number>; discharge_w: Record<string, number>; grid_w: number };
+  }[];
+  scores: {
+    planner: Omit<DispatchScore, 'import_w' | 'export_w' | 'state'>;
+    manual: Omit<DispatchScore, 'import_w' | 'export_w' | 'state'>;
+    total_delta_sek: number;
+    import_delta_kwh: number;
+    export_delta_kwh: number;
+    introduced: DispatchInfeasibility[];
+  };
+  planner_stopped_because: string;
+  planner_iterations: number;
+}
+
+/** Import positive, export negative — the sign convention the chart draws. */
+export function gridWattsAt(score: DispatchScore, slot: number): number {
+  return (score.import_w[slot] ?? 0) - (score.export_w[slot] ?? 0);
+}
+
+const withoutSeries = (score: DispatchScore) => {
+  const { import_w: _i, export_w: _e, state: _s, ...rest } = score;
+  return rest;
+};
+
+export function buildWorkbenchExport(
+  bench: DispatchWorkbench,
+  manual: DispatchSchedule,
+  comparison: WorkbenchComparison,
+): WorkbenchExport {
+  const per = (schedule: DispatchSchedule, score: DispatchScore, slot: number) => ({
+    charge_w: Object.fromEntries(
+      bench.stores.map(store => [store.key, schedule.power_w[store.key]?.[slot] ?? 0]),
+    ),
+    discharge_w: Object.fromEntries(
+      bench.stores.map(store => [store.key, schedule.discharge_w[store.key]?.[slot] ?? 0]),
+    ),
+    grid_w: gridWattsAt(score, slot),
+  });
+
+  return {
+    format: 'shs.plan-workbench.v1',
+    exported_at: new Date().toISOString(),
+    snapshot_id: bench.snapshot_id,
+    captured_at: bench.captured_at,
+    slot_minutes: 15,
+    limits: bench.limits,
+    stores: bench.stores.map(store => ({
+      key: store.key,
+      state_unit: store.curve.unit,
+      initial_state: store.initial_state,
+      min_state: store.min_state ?? null,
+      max_state: store.max_state ?? null,
+      max_power_w: store.max_power_w,
+      min_power_w: store.min_power_w ?? 0,
+      power_step_w: store.power_step_w ?? 0,
+      min_run_slots: store.min_run_slots ?? 1,
+      discharge_max_power_w: store.discharge?.max_power_w ?? null,
+      export_allowed: store.discharge?.export_allowed ?? null,
+    })),
+    quarters: bench.slots.map((slot, index) => ({
+      start: new Date(bench.slot_start_ms[index]).toISOString(),
+      binding: slot.binding !== false,
+      pv_w: slot.pv_w,
+      fixed_load_w: slot.fixed_load_w,
+      import_price_sek_per_kwh: slot.import_price_sek_per_kwh,
+      export_price_sek_per_kwh: slot.export_price_sek_per_kwh,
+      planner: per(bench.planned, comparison.planner, index),
+      manual: per(manual, comparison.manual, index),
+    })),
+    scores: {
+      planner: withoutSeries(comparison.planner),
+      manual: withoutSeries(comparison.manual),
+      total_delta_sek: comparison.totalDeltaSek,
+      import_delta_kwh: comparison.importDeltaKwh,
+      export_delta_kwh: comparison.exportDeltaKwh,
+      introduced: comparison.introduced,
+    },
+    planner_stopped_because: bench.stopped_because,
+    planner_iterations: bench.iterations,
   };
 }

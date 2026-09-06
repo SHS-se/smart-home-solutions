@@ -592,7 +592,23 @@ export interface DispatchScore {
    * exceeding the service fuse, and `project` clamps a state silently, so an
    * infeasible schedule would otherwise score as though the clamp were free.
    */
-  infeasibilities: string[];
+  infeasibilities: DispatchInfeasibility[];
+}
+
+/**
+ * One broken rule, carrying the quarter it happens in.
+ *
+ * The quarter is structured rather than written into the sentence so a reader
+ * can be *taken* to it: "slot 58" is a number nobody holds, and a plan is
+ * corrected by looking at 10:30 in the schedule, not by counting quarters.
+ */
+export interface DispatchInfeasibility {
+  /** Index into the horizon's quarters. */
+  slot: number;
+  /** The store that broke the rule, or null when the house did. */
+  store_key: string | null;
+  /** What went wrong, with no slot reference of its own. */
+  message: string;
 }
 
 /** Maximal blocks of consecutive slots the store is drawing in. */
@@ -618,7 +634,7 @@ export function scoreDispatch(
 ): DispatchScore {
   const count = slots.length;
   const zeros = () => new Array<number>(count).fill(0);
-  const infeasibilities: string[] = [];
+  const infeasibilities: DispatchInfeasibility[] = [];
   const powerByKey: Record<string, number[]> = {};
   const dischargeByKey: Record<string, number[]> = {};
   const stateByKey: Record<string, number[]> = {};
@@ -648,11 +664,11 @@ export function scoreDispatch(
         index,
       );
       if (next < low - 1e-6 || next > high + 1e-6) {
-        infeasibilities.push(
-          `${store.key} reaches ${next.toFixed(2)} ${store.curve.unit} at slot ${
-            index + 1
-          }, outside ${low}–${high}`,
-        );
+        infeasibilities.push({
+          slot: index + 1,
+          store_key: store.key,
+          message: `${store.key} reaches ${next.toFixed(2)} ${store.curve.unit}, outside ${low}–${high}`,
+        });
       }
       state[index + 1] = Math.min(high, Math.max(low, next));
     }
@@ -663,43 +679,53 @@ export function scoreDispatch(
     for (let index = 0; index < count; index += 1) {
       const watts = power[index];
       if (watts > store.max_power_w + 1e-6) {
-        infeasibilities.push(
-          `${store.key} draws ${Math.round(watts)} W at slot ${index}, above its ${
+        infeasibilities.push({
+          slot: index,
+          store_key: store.key,
+          message: `${store.key} draws ${Math.round(watts)} W, above its ${
             Math.round(store.max_power_w)
           } W maximum`,
-        );
+        });
       }
       if (watts > 1e-9 && watts + 1e-6 < minimum) {
-        infeasibilities.push(
-          `${store.key} draws ${Math.round(watts)} W at slot ${index}, below the ${
+        infeasibilities.push({
+          slot: index,
+          store_key: store.key,
+          message: `${store.key} draws ${Math.round(watts)} W, below the ${
             Math.round(minimum)
           } W it can execute`,
-        );
+        });
       }
       if (
         watts > 1e-9 && step > 0 &&
         Math.abs((watts - minimum) / step - Math.round((watts - minimum) / step)) >
           1e-6
       ) {
-        infeasibilities.push(
-          `${store.key} draws ${
+        infeasibilities.push({
+          slot: index,
+          store_key: store.key,
+          message: `${store.key} draws ${
             Math.round(watts)
-          } W at slot ${index}, off its ${Math.round(step)} W increment`,
-        );
+          } W, off its ${Math.round(step)} W increment`,
+        });
       }
       const out = discharge[index];
       if (out > 1e-9 && !store.discharge) {
-        infeasibilities.push(
-          `${store.key} returns ${
+        infeasibilities.push({
+          slot: index,
+          store_key: store.key,
+          message: `${store.key} returns ${
             Math.round(out)
-          } W at slot ${index} but cannot discharge`,
-        );
+          } W but cannot discharge`,
+        });
       } else if (out > (store.discharge?.max_power_w ?? 0) + 1e-6) {
-        infeasibilities.push(
-          `${store.key} returns ${Math.round(out)} W at slot ${index}, above its ${
+        infeasibilities.push({
+          slot: index,
+          store_key: store.key,
+          message: `${store.key} returns ${Math.round(out)} W, above its ${
             Math.round(store.discharge?.max_power_w ?? 0)
           } W maximum`,
-        );
+        });
       }
     }
 
@@ -709,9 +735,11 @@ export function scoreDispatch(
     for (const run of runsOf(power)) {
       if (run.start === 0 || run.start + run.slots >= count) continue;
       if (run.slots < minimumRun) {
-        infeasibilities.push(
-          `${store.key} runs ${run.slots} quarter(s) from slot ${run.start}, short of its ${minimumRun}-quarter minimum`,
-        );
+        infeasibilities.push({
+          slot: run.start,
+          store_key: store.key,
+          message: `${store.key} runs ${run.slots} quarter(s), short of its ${minimumRun}-quarter minimum`,
+        });
       }
     }
   }
@@ -736,11 +764,13 @@ export function scoreDispatch(
       importW[index] = -net;
     }
     if (importW[index] > limits.grid_import_limit_w + 1e-6) {
-      infeasibilities.push(
-        `slot ${index} imports ${
+      infeasibilities.push({
+        slot: index,
+        store_key: null,
+        message: `the house imports ${
           Math.round(importW[index])
         } W, above the ${Math.round(limits.grid_import_limit_w)} W connection`,
-      );
+      });
     }
   }
 
@@ -750,9 +780,11 @@ export function scoreDispatch(
       if (
         dischargeByKey[store.key][index] > 1e-9 && exportW[index] > 1e-9
       ) {
-        infeasibilities.push(
-          `${store.key} discharges into export at slot ${index}, which it is not permitted to do`,
-        );
+        infeasibilities.push({
+          slot: index,
+          store_key: store.key,
+          message: `${store.key} discharges into export, which it is not permitted to do`,
+        });
       }
     }
   }

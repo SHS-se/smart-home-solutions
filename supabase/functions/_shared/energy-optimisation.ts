@@ -4283,6 +4283,9 @@ function buildPlan(
  * produced, which is exactly what `generateOptimisationPlan` refuses.
  */
 export interface DispatchWorkbench {
+  /** Which snapshot this was solved from, so an export can be traced back. */
+  snapshot_id: string;
+  captured_at: string;
   slots: DispatchSlot[];
   stores: DispatchStore[];
   limits: DispatchLimits;
@@ -4317,6 +4320,8 @@ export function dispatchWorkbench(
   if (!bundle) return null;
   const peakShaping = derivePeakShaping(snapshot);
   return {
+    snapshot_id: snapshot.snapshot_id,
+    captured_at: snapshot.captured_at,
     slots: bundle.slots,
     stores: bundle.stores,
     limits: {

@@ -16,7 +16,7 @@
 // answer is a number either way, which is the point.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Loader2, RotateCcw, Sparkles } from 'lucide-react';
+import { AlertTriangle, Download, Loader2, RotateCcw, Sparkles } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -25,9 +25,12 @@ import { Input } from '@/components/ui/input';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
 import { dispatchWorkbench, type DispatchWorkbench, type OptimisationSnapshot } from '../../../../supabase/functions/_shared/energy-optimisation';
+import type { DispatchInfeasibility } from '../../../../supabase/functions/_shared/dispatch-plan';
 import {
   buildWorkbenchChart,
+  buildWorkbenchExport,
   buildWorkbenchModel,
+  gridWattsAt,
   compareWorkbench,
   executableKw,
   scheduleFromDraft,
@@ -66,19 +69,39 @@ const stateLabel = (unit: string, value: number): string => {
 };
 
 
+/**
+ * Broken rules, each a link to the quarter it happens in.
+ *
+ * "slot 58" is a number nobody holds. A reader fixes a plan by looking at 10:30
+ * in the schedule, so the quarter is printed as a time and clicking it takes
+ * them there — the same gesture the chart offers.
+ */
 const Issues: React.FC<{
   title: string;
-  entries: string[];
+  entries: DispatchInfeasibility[];
   tone: 'destructive' | 'default';
   more: string;
   footer?: string;
-}> = ({ title, entries, tone, more, footer }) => (
+  timeOf: (slot: number) => string;
+  onGo: (slot: number) => void;
+}> = ({ title, entries, tone, more, footer, timeOf, onGo }) => (
   <Alert variant={tone === 'destructive' ? 'destructive' : undefined}>
     <AlertTriangle className="h-4 w-4" />
     <AlertTitle>{title}</AlertTitle>
     <AlertDescription>
-      <ul className="text-xs list-disc pl-4 space-y-0.5">
-        {entries.slice(0, 8).map(entry => <li key={entry}>{entry}</li>)}
+      <ul className="text-xs space-y-0.5">
+        {entries.slice(0, 8).map(entry => (
+          <li key={`${entry.slot}|${entry.message}`}>
+            <button
+              type="button"
+              onClick={() => onGo(entry.slot)}
+              className="underline underline-offset-2 font-medium tabular-nums hover:opacity-70"
+            >
+              {timeOf(entry.slot)}
+            </button>
+            {` · ${entry.message}`}
+          </li>
+        ))}
         {entries.length > 8 && <li>{more} ({entries.length})</li>}
       </ul>
       {footer && <p className="text-[11px] mt-2 opacity-80">{footer}</p>}
@@ -213,6 +236,33 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
     );
   }, [bench, comparison, manual, charted, homeTimeZone, view]);
 
+  /**
+   * Both schedules, their inputs and their scores, as one file.
+   *
+   * A score settles which plan is better; the reason is in the quarters, and
+   * they have to leave this machine for anyone else to look at them.
+   */
+  const exportPlan = () => {
+    if (!bench || !manual || !comparison) return;
+    const payload = buildWorkbenchExport(bench, manual, comparison);
+    const url = URL.createObjectURL(
+      new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }),
+    );
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `plan-${bench.captured_at.slice(0, 16).replace(/[:T]/g, '-')}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  /** A quarter's own clock time, for naming one in a sentence. */
+  const timeOf = useCallback(
+    (slot: number): string => (bench
+      ? formatHomeDayMonthTime(bench.slot_start_ms[slot], homeTimeZone)
+      : String(slot)),
+    [bench, homeTimeZone],
+  );
+
   const load = async () => {
     if (!homeId) return;
     setLoading(true);
@@ -260,6 +310,21 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
       return { ...current, [rowId]: next };
     });
   };
+
+  /**
+   * Point both views at one quarter, wherever the request came from.
+   *
+   * Selecting is not enough on its own: a quarter in another day is off the
+   * table entirely until the day follows it, which is what makes a breach in
+   * the list reachable at all.
+   */
+  const goToQuarter = useCallback((quarter: number) => {
+    setSelected(quarter);
+    const containing = days.findIndex(
+      entry => quarter >= entry.range.from && quarter < entry.range.to,
+    );
+    if (containing >= 0 && containing !== day) setDay(containing);
+  }, [days, day]);
 
   /** Tint marking the quarter the reader pointed at, in either view. */
   const column = (index: number): string =>
@@ -359,6 +424,8 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
               entries={comparison!.introduced}
               tone="destructive"
               more={t('… och fler', '… and more')}
+              timeOf={timeOf}
+              onGo={goToQuarter}
             />
           )}
           {(comparison?.planner.infeasibilities.length ?? 0) > 0 && (
@@ -374,6 +441,8 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
                 'Det här är ett fynd, inte ett fel i verktyget: målfunktionen underkänner ett schema planeraren själv skickade. Jämförelsen ovan gäller ändå — båda planerna räknas med samma regler.',
                 'This is a finding, not a fault in the tool: the objective refuses a schedule the planner itself issued. The comparison above still holds — both plans are scored by the same rules.',
               )}
+              timeOf={timeOf}
+              onGo={goToQuarter}
             />
           )}
           {comparison && (
@@ -459,16 +528,9 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
                   ? selected - view.from
                   : -1
               }
-              onQuarterClick={index => {
-                const quarter = view.from + index;
-                setSelected(quarter);
-                // Clicking a quarter while looking at the whole horizon is a
-                // request to go and look at it, so the table follows.
-                const containing = days.findIndex(
-                  entry => quarter >= entry.range.from && quarter < entry.range.to,
-                );
-                if (containing >= 0 && containing !== day) setDay(containing);
-              }}
+              // Clicking a quarter while looking at the whole horizon is a
+              // request to go and look at it, so the table follows.
+              onQuarterClick={index => goToQuarter(view.from + index)}
             />
             <p className="text-[11px] text-muted-foreground mt-2">
               {t(
@@ -521,6 +583,10 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
               <Button size="sm" variant="ghost" onClick={() => setDraft({})}>
                 <RotateCcw className="w-3.5 h-3.5 mr-1" />
                 {t('Återställ', 'Reset')}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={exportPlan} disabled={!comparison}>
+                <Download className="w-3.5 h-3.5 mr-1" />
+                {t('Exportera', 'Export')}
               </Button>
             </div>
           </div>
@@ -614,6 +680,37 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
                     ))}
                   </tr>
                 ))}
+                {comparison && (
+                  <tr className="border-t">
+                    <td className="sticky left-0 z-10 bg-background py-1 pr-3">
+                      <div>{t('Nätet in / ut', 'Grid in / out')}</div>
+                      <div className="text-[10px] text-muted-foreground">
+                        {t('plus = köpt, minus = sålt', 'plus = bought, minus = sold')}
+                      </div>
+                    </td>
+                    {shown.map(index => {
+                      const slots = model!.columns[index].slots;
+                      const kw = slots.reduce(
+                        (total, slot) => total + gridWattsAt(comparison.manual, slot),
+                        0,
+                      ) / slots.length / 1_000;
+                      return (
+                        <td
+                          key={index}
+                          className={`py-1 px-1 text-center whitespace-nowrap font-medium ${column(index)} ${
+                            kw > 0.05
+                              ? 'text-rose-600 dark:text-rose-400'
+                              : kw < -0.05
+                                ? 'text-emerald-600 dark:text-emerald-400'
+                                : 'text-muted-foreground'
+                          }`}
+                        >
+                          {kw > 0.05 ? '+' : ''}{kw.toFixed(1)}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                )}
                 {comparison && model!.rows.filter(row => row.direction === 'charge').map(row => (
                   <tr key={`${row.id}-state`} className="border-t">
                     <td className="sticky left-0 z-10 bg-background py-1 pr-3 text-muted-foreground">

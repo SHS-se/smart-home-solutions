@@ -1,7 +1,9 @@
 import { assert, assertAlmostEquals, assertEquals } from 'jsr:@std/assert@1';
 import {
   buildWorkbenchChart,
+  buildWorkbenchExport,
   buildWorkbenchModel,
+  gridWattsAt,
   compareWorkbench,
   executableKw,
   scheduleFromDraft,
@@ -216,7 +218,7 @@ Deno.test('the only rule the planner’s own plan breaks is the export leak', ()
 
   assert(infeasibilities.length > 0, 'the leak is not fixed yet');
   assertEquals(
-    infeasibilities.filter(entry => !entry.includes('discharges into export')),
+    infeasibilities.filter(entry => !entry.message.includes('discharges into export')),
     [],
   );
 });
@@ -373,4 +375,84 @@ Deno.test('a window past the horizon is clamped rather than padded', () => {
   );
 
   assertEquals(chart.rows.length, 48);
+});
+
+// ---------------------------------------------------------------------------
+// The grid column, and handing the whole comparison to somebody else.
+// ---------------------------------------------------------------------------
+
+Deno.test('the grid figure is signed: bought positive, sold negative', () => {
+  const bench = workbench();
+  const model = buildWorkbenchModel(bench, 'quarter');
+  // Slot 0 is dark with a house load, slot 4 is sunny with nothing running.
+  const idle = scheduleFromDraft(bench, model, {
+    'ev:charge': new Array(SLOTS).fill(0),
+  });
+  const score = compareWorkbench(bench, idle).manual;
+
+  assert(gridWattsAt(score, 0) > 0, 'a dark quarter buys');
+  assert(gridWattsAt(score, 4) < 0, 'a sunny quarter sells');
+  // And it is one number, not two: the house never does both at once.
+  assertEquals(gridWattsAt(score, 0), score.import_w[0]);
+  assertEquals(gridWattsAt(score, 4), -score.export_w[4]);
+});
+
+Deno.test('a breach names the exact quarter it happens in', () => {
+  // The slot is what the alert turns into a time and a link, so it has to be
+  // the real quarter — and the sentence must not carry a slot number of its
+  // own, because "slot 58" is the thing this replaced.
+  const bench = workbench();
+  // Built directly rather than through the editor: `scheduleFromDraft` snaps a
+  // typed figure onto an executable one, which is exactly what this defeats.
+  const belowFloor = {
+    power_w: { ev: new Array(SLOTS).fill(0).map((_w, i) => (i === 3 ? 1_000 : 0)) },
+    discharge_w: { ev: new Array(SLOTS).fill(0) },
+  };
+
+  const { infeasibilities } = compareWorkbench(bench, belowFloor).manual;
+
+  // Two rules at once, and rightly: 1 kW is under the 4.14 kW floor *and* off
+  // the 690 W increment. Both name the quarter they happened in.
+  assertEquals(infeasibilities.length, 2);
+  for (const entry of infeasibilities) {
+    assertEquals(entry.slot, 3);
+    assertEquals(entry.store_key, 'ev');
+    assert(!entry.message.includes('slot'), 'no slot number in the sentence');
+  }
+  assert(
+    infeasibilities.some(entry => entry.message.includes('below the 4140 W it can execute')),
+  );
+  assert(infeasibilities.some(entry => entry.message.includes('increment')));
+});
+
+Deno.test('an export carries both plans, their inputs and where they came from', () => {
+  const bench = dispatchWorkbench(realSnapshot());
+  assert(bench !== null);
+  const model = buildWorkbenchModel(bench, 'quarter');
+  const pool = model.rows.find(row => row.storeKey === 'pool');
+  assert(pool !== undefined);
+  const manual = scheduleFromDraft(bench, model, {
+    [pool.id]: model.planned[pool.id].map(() => 0),
+  });
+  const comparison = compareWorkbench(bench, manual);
+
+  const exported = buildWorkbenchExport(bench, manual, comparison);
+  // It has to survive the trip out as JSON, which is the whole point.
+  const parsed = JSON.parse(JSON.stringify(exported)) as typeof exported;
+
+  assertEquals(parsed.format, 'shs.plan-workbench.v1');
+  assertEquals(parsed.snapshot_id, bench.snapshot_id);
+  assertEquals(parsed.quarters.length, 288);
+  assertEquals(parsed.stores.length, bench.stores.length);
+  // The pool ran in the planner's plan and does not in this one.
+  const ran = parsed.quarters.findIndex(quarter => quarter.planner.charge_w.pool > 0);
+  assert(ran >= 0, 'the planner heats the pool somewhere');
+  assertEquals(parsed.quarters[ran].manual.charge_w.pool, 0);
+  assertEquals(
+    parsed.scores.total_delta_sek,
+    comparison.totalDeltaSek,
+  );
+  // The heavy per-quarter series are in `quarters`, not duplicated in `scores`.
+  assert(!('import_w' in parsed.scores.manual), 'no duplicated series');
+  assert(!('state' in parsed.scores.planner), 'no duplicated trajectories');
 });
