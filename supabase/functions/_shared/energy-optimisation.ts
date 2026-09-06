@@ -34,6 +34,7 @@ import {
 } from "./store-models.ts";
 import {
   batteryValueCurve,
+  curveWithinReach,
   marginalValue,
   type StoredEnergyValueInput,
   type UtilityCurve,
@@ -2515,12 +2516,22 @@ function buildDispatchStores(
         } else {
           usage[count - 1] = 1;
         }
+        // What the car will actually hold: its own charge limit, in the unit the
+        // curve is stated over. The limit is a state of charge and does not
+        // move; the kilometres it buys move a long way between January and
+        // July, which is why this is recomputed every solve.
+        const reachableKm = vehicle.departure_target_soc * vehicle.capacity_kwh /
+          perKm;
         stores.push({
           key: "ev",
           // This is the resolved customer/default curve supplied by the edge.
           // Rebuilding a fresh default here made the editor a placebo: the
           // persisted curve preview changed while the live planner ignored it.
-          curve: curves.ev,
+          //
+          // Clamped to the charge limit: the car refuses a command past it, so
+          // a curve holding opinions above it describes states that cannot
+          // occur. Every value below the limit is untouched.
+          curve: curveWithinReach(curves.ev, reachableKm),
           initial_state: vehicle.soc * vehicle.capacity_kwh / perKm,
           min_run_slots: declaredMinRun("ev"),
           // The vehicle refuses charge above its own limit, so this is a
@@ -2529,8 +2540,7 @@ function buildDispatchStores(
           // range the car cannot take: three consecutive replays planned the
           // Model Y to 160% SOC, 49.9 kWh of it undeliverable. The published
           // `ev_soc` clamps at 1, so only the km state showed it.
-          max_state: vehicle.departure_target_soc * vehicle.capacity_kwh /
-            perKm,
+          max_state: reachableKm,
           max_power_w: wattsPerAmp(control) * control.max_current_a,
           min_power_w: wattsPerAmp(control) * control.min_current_a,
           power_step_w: wattsPerAmp(control) * control.current_step_a,
@@ -2545,7 +2555,15 @@ function buildDispatchStores(
 
   const battery = snapshot.battery;
   if (battery && derivedBatteryValue) {
-    const { curve } = derivedBatteryValue;
+    // Clamped to the usable band the inverter will operate in, for the same
+    // reason as the car: the discharge cut-off and the charge ceiling are
+    // enforced in hardware, and now that the cut-off is read from the plant
+    // rather than typed beside it, the band can move under a curve derived
+    // before it did.
+    const curve = curveWithinReach(
+      derivedBatteryValue.curve,
+      derivedBatteryValue.diagnostic.usable_capacity_kwh,
+    );
     if (curve.points.length > 0) {
       stores.push({
         key: "battery",
@@ -2798,13 +2816,19 @@ function scheduleServices(
         end_state: trajectory && trajectory.length > 0
           ? round(trajectory[trajectory.length - 1], 3)
           : null,
+        // The cap is asked about before the curve. Curves are clamped to the
+        // state their hardware will reach, so a store at its cap is also past
+        // the top of its curve and both answers are true — but "it is at the
+        // limit you set" names a thing the household can change, and "it is
+        // above its curve" names a consequence of that. Ordered the other way,
+        // the specific answer became unreachable the moment clamping landed.
         reason: plannedKwh > 0
           ? "scheduled"
-          : value <= 0
-          ? "state_above_curve"
           : store.max_state !== undefined &&
               store.initial_state >= store.max_state - 1e-9
           ? "at_state_cap"
+          : value <= 0
+          ? "state_above_curve"
           : value < cheapest
           ? "value_below_price"
           : "outbid",

@@ -4656,7 +4656,29 @@ today's reachable range would bake a season into a permanent setting — and
 of the same SOC without a seasonal parameter. Both are right: the need is in
 kilometres, the cap is in SOC.
 
-So nothing silently clamps. `curvesBeyondReach` reports the condition as a
+So both curves are **clamped** to the state their hardware will hold —
+`curveWithinReach`, applied to the vehicle at its charge limit and to the pack
+at its usable band. Clamped, not scaled: scaling drags the indifference point
+onto the ceiling, making the last reachable unit worth nothing and the limit
+unreachable at any price, which two existing tests refuse. Clamping keeps every
+value the household stated for every state the store can actually be in, ends
+the curve at the ceiling with the value interpolated there, and says nothing
+above it. Inside the reachable band the plan is unchanged; outside it there is
+no longer an opinion to act on.
+
+It matters more for the pack than it first appears. Now that the discharge
+cut-off is read from the plant rather than typed beside it, the usable band can
+move under a curve derived before it did.
+
+One diagnostic moved with it. `at_state_cap` is now asked before
+`state_above_curve`, because a clamped curve ends at the cap and both answers
+became true at once — "it is at the limit you set" names something the household
+can change, while "it is above its curve" names a consequence of that. Ordered
+the other way, the specific answer became unreachable the moment clamping
+landed.
+
+Clamping does not decide the household's taste, so `curvesBeyondReach` still
+reports the condition as a
 **fraction of what the store can hold** — unit-free, and identical in every
 season because both sides divide by the same kWh/km. Multiply it by the charge
 limit to read it back: Phil's curve tops out at 1.28 of the cap, which against

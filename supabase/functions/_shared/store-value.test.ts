@@ -6,7 +6,9 @@ import {
 } from "jsr:@std/assert@1";
 import {
   batteryValueCurve,
+  curveWithinReach,
   marginalValue,
+  marginalValueHeld,
   rankStores,
   type StoreState,
   totalUtility,
@@ -445,4 +447,62 @@ Deno.test("§8.4 — no reserve leaves the merit order exactly as it was", () =>
     batteryValueCurve({ ...input, reserveKwh: 0, worstImportSekPerKwh: 99 }),
     "a home that asked for nothing is unaffected by what the worst hour is",
   );
+});
+
+// ---------------------------------------------------------------------------
+// Clamping a curve to what the hardware will hold.
+// ---------------------------------------------------------------------------
+
+const carCurve: UtilityCurve = {
+  unit: "km",
+  points: [
+    { at: 100, sek_per_unit: 1.225247 },
+    { at: 400, sek_per_unit: 0.408416 },
+    { at: 500, sek_per_unit: 0 },
+  ],
+};
+
+Deno.test("a curve the store can reach is returned untouched", () => {
+  assertEquals(curveWithinReach(carCurve, 500), carCurve);
+  assertEquals(curveWithinReach(carCurve, 900), carCurve);
+});
+
+Deno.test("a curve past the cap ends at the cap, and keeps every value below", () => {
+  // Phil's Model Y: an 80% charge limit is 390.4 km at today's kWh/km, and the
+  // car refuses a command past it, so the curve must not hold opinions there.
+  const clamped = curveWithinReach(carCurve, 390.4);
+
+  assertEquals(clamped.points.at(-1)!.at, 390.4);
+  assertEquals(validateCurve(clamped), null);
+  // Every state the car can actually be in is valued exactly as before —
+  // clamping is not scaling, and a limit is still not a reason to decline
+  // cheap energy.
+  for (const at of [0, 50, 100, 250, 390.4]) {
+    assertAlmostEquals(
+      marginalValue(clamped, at),
+      marginalValue(carCurve, at),
+      1e-9,
+      `value at ${at} km moved`,
+    );
+  }
+  // And what is held at the cap is still worth the cap's value, so the pack
+  // does not discharge into any positive price.
+  assertAlmostEquals(marginalValueHeld(clamped, 390.4), 0.434554592, 1e-9);
+});
+
+Deno.test("a cap under the whole curve leaves one flat segment", () => {
+  // Winter shortens the kilometres in a state of charge; the curve must stay
+  // valid when the cap lands under its first breakpoint.
+  const clamped = curveWithinReach(carCurve, 60);
+
+  assertEquals(validateCurve(clamped), null);
+  assertEquals(clamped.points, [{ at: 60, sek_per_unit: 1.225247 }]);
+  assertAlmostEquals(marginalValue(clamped, 30), 1.225247, 1e-9);
+});
+
+Deno.test("clamping needs a real ceiling to clamp to", () => {
+  assertEquals(curveWithinReach(carCurve, 0), carCurve);
+  assertEquals(curveWithinReach(carCurve, -5), carCurve);
+  assertEquals(curveWithinReach(carCurve, Number.NaN), carCurve);
+  assertEquals(curveWithinReach({ unit: "km", points: [] }, 100).points, []);
 });

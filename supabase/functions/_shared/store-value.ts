@@ -189,6 +189,53 @@ export function marginalValueHeld(curve: UtilityCurve, at: number): number {
   return marginalValue(curve, at);
 }
 
+/**
+ * Clamp a curve's domain to the state its store can actually reach.
+ *
+ * The hardware refuses a command outside its own range — a charge limit is a
+ * state of charge the inverter or the car will not go past — so a curve holding
+ * opinions above that ceiling is describing states that cannot occur. Those
+ * opinions are not harmless: the top breakpoint is where a store stops being
+ * worth charging, and if it sits beyond the ceiling the store never stops
+ * bidding at all.
+ *
+ * Clamped, not scaled. Scaling drags the indifference point down onto the
+ * ceiling, which makes the last reachable unit worth nothing and the limit
+ * itself unreachable at any price — "a limit is a ceiling, not a reason to
+ * decline cheap energy". Clamping keeps every value the household stated for
+ * every state it can actually be in: the returned curve is identical below the
+ * ceiling, ends at it with the value interpolated there, and says nothing above
+ * it.
+ *
+ * `ceiling` is whatever bound the caller holds in the curve's own unit. For a
+ * vehicle that is the charge limit converted at today's kWh/km, which is why it
+ * is passed in rather than assumed: the state of charge is the stable quantity
+ * and the kilometres in one move with the season.
+ */
+export function curveWithinReach(
+  curve: UtilityCurve,
+  ceiling: number,
+): UtilityCurve {
+  const points = curve.points;
+  const last = points.at(-1);
+  if (!last || !Number.isFinite(ceiling) || !(ceiling > 0)) return curve;
+  if (last.at <= ceiling) return curve;
+  // A ceiling under the whole curve leaves one segment: everything the store
+  // can hold is worth what the first breakpoint says, which is what the curve
+  // already claims for every state below it.
+  if (ceiling <= points[0].at) {
+    return { ...curve, points: [{ at: ceiling, sek_per_unit: points[0].sek_per_unit }] };
+  }
+  return {
+    ...curve,
+    points: [
+      ...points.filter((point) => point.at < ceiling),
+      { at: ceiling, sek_per_unit: marginalValue(curve, ceiling) },
+    ],
+  };
+}
+
+
 /** Total utility of holding `at` units, the integral of the marginal value. */
 export function totalUtility(curve: UtilityCurve, at: number): number {
   const points = curve.points;
