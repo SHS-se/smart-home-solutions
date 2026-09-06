@@ -1178,6 +1178,20 @@ function dispatchAuction(
     parts: DispatchAllocationDiagnostic[];
   };
 
+  // Scratch buffers for the two lists every priced quarter builds and throws
+  // away. Both are consumed before the next quarter is priced, so one array
+  // each serves the whole auction; the allocation they replace was running
+  // hundreds of thousands of times per plan.
+  const rawPowers: number[] = [];
+  const levelScratch: number[] = [];
+  const addLevel = (level: number) => {
+    // A handful of levels per quarter, so a walk beats a Set — and it keeps
+    // insertion order, which is what the Set was relied on for.
+    for (let index = 0; index < levelScratch.length; index += 1) {
+      if (levelScratch[index] === level) return;
+    }
+    levelScratch.push(level);
+  };
   const executablePowerLevels = (
     store: DispatchStore,
     rawLevels: number[],
@@ -1185,14 +1199,14 @@ function dispatchAuction(
   ): number[] => {
     const minimumW = Math.max(0, store.min_power_w ?? 0);
     const stepW = Math.max(0, store.power_step_w ?? 0);
-    const levels = new Set<number>();
+    levelScratch.length = 0;
     // A discrete charger can be optimal at any supported current between a
     // curve/source breakpoint and full power. Testing only the rounded
     // breakpoint and the maximum skipped those intermediate executable bids.
     if (stepW > 0 && maximumW + 1e-9 >= minimumW) {
       for (let level = minimumW; level <= maximumW + 1e-9; level += stepW) {
         const rounded = Math.round(level * 1e6) / 1e6;
-        if (rounded > 1e-9 && rounded <= maximumW + 1e-9) levels.add(rounded);
+        if (rounded > 1e-9 && rounded <= maximumW + 1e-9) addLevel(rounded);
       }
     }
     for (const raw of rawLevels) {
@@ -1204,10 +1218,10 @@ function dispatchAuction(
       }
       level = Math.round(level * 1e6) / 1e6;
       if (level > 1e-9 && level <= maximumW + 1e-9) {
-        levels.add(level);
+        addLevel(level);
       }
     }
-    return [...levels];
+    return levelScratch;
   };
 
   const chargeCandidate = (
@@ -1279,9 +1293,14 @@ function dispatchAuction(
       );
       const solarW = Math.min(powerLevel, surplusW);
       const gridW = powerLevel - solarW;
-      const previousPart = allocations[index].find((part) =>
-        part.store_key === store.key
-      );
+      const slotAllocations = allocations[index];
+      let previousPart: DispatchAllocationDiagnostic | undefined;
+      for (let at = 0; at < slotAllocations.length; at += 1) {
+        if (slotAllocations[at].store_key === store.key) {
+          previousPart = slotAllocations[at];
+          break;
+        }
+      }
       const costOfStart = previousPart?.start_cost_sek ?? startShare;
       const netSek = (valuePerKwh - sourceCost - wear) * kwh - costOfStart;
       if (previousKwh > 0) {
@@ -1349,11 +1368,45 @@ function dispatchAuction(
     incumbent === null || candidate.score > incumbent.score + 1e-12 ||
     (Math.abs(candidate.score - incumbent.score) <= 1e-12 &&
       candidate.surplus > incumbent.surplus);
-  // A winning allocation changes its own future state, but it does not change
-  // another pure sink's candidates outside the occupied slot. Retain those
-  // unaffected per-store winners instead of rescanning every store across all
-  // 288 quarters after each allocation.
-  const cachedBestByStore = new Map<string, Candidate | null>();
+  // ---------------------------------------------------------------------
+  // Only reprice the quarters an allocation actually moved.
+  //
+  // The auction takes one bid per iteration and a thousand iterations to reach
+  // a fixed point, so what it costs is set by how much of the horizon each of
+  // those iterations has to look at again. Pricing every quarter of every store
+  // every time is what put a 72-hour plan past a worker's CPU budget.
+  //
+  // The winner's own quarters all move: its trajectory shifts from the
+  // allocation onwards, and `suffixBounds` carries that shift back to every
+  // earlier quarter as a tighter — or looser — ceiling. Nothing of the sort
+  // happens to the other stores. They read the winner only through the load
+  // already in the quarter, so a bid of theirs is stale exactly when its block
+  // overlaps one the winner just took, and stands everywhere else.
+  //
+  // Held per quarter rather than per store, because a store's best bid is not a
+  // thing that survives on its own: when the quarter it stood in is taken, the
+  // runner-up in some other quarter is the store's new bid, and only a per-slot
+  // record still holds it.
+  // ---------------------------------------------------------------------
+  const chargeBestBySlot: Record<string, (Candidate | null)[]> = {};
+  const dischargeBestBySlot: Record<string, (Candidate | null)[]> = {};
+  const staleBySlot: Record<string, Uint8Array> = {};
+  for (const store of stores) {
+    chargeBestBySlot[store.key] = new Array(count).fill(null);
+    dischargeBestBySlot[store.key] = new Array(count).fill(null);
+    staleBySlot[store.key] = new Uint8Array(count).fill(1);
+  }
+  const markAllStale = () => {
+    for (const store of stores) staleBySlot[store.key].fill(1);
+  };
+  const markStaleWindow = (key: string, from: number, to: number) => {
+    const stale = staleBySlot[key];
+    for (
+      let index = Math.max(0, from);
+      index <= Math.min(count - 1, to);
+      index += 1
+    ) stale[index] = 1;
+  };
 
   // ---------------------------------------------------------------------
   // Settle the books against the trajectory the plan will execute.
@@ -1739,20 +1792,25 @@ function dispatchAuction(
     }
     releasedThisRound = 0;
     const releasedRuns: string[] = [];
-    // Every cached per-store winner was priced against a schedule the previous
-    // round has since settled away.
-    cachedBestByStore.clear();
+    // Every held bid was priced against a schedule the previous round has since
+    // settled away.
+    markAllStale();
     while (iterations < maxIterations) {
       iterations += 1;
       let best: Candidate | null = null;
 
       for (const store of stores) {
-        if (cachedBestByStore.has(store.key)) {
-          const cached = cachedBestByStore.get(store.key);
-          if (cached && outranks(cached, best)) best = cached;
-          continue;
-        }
         let storeBest: Candidate | null = null;
+        const stale = staleBySlot[store.key];
+        const chargeBest = chargeBestBySlot[store.key];
+        const dischargeBest = dischargeBestBySlot[store.key];
+        let anyStale = false;
+        for (let index = 0; index < count; index += 1) {
+          if (stale[index]) {
+            anyStale = true;
+            break;
+          }
+        }
         const schedule = powerW[store.key];
         const dischargeByKey = dischargeW[store.key];
         const state = stateByKey[store.key];
@@ -1762,8 +1820,12 @@ function dispatchAuction(
         // the highest state still to come, discharging by the lowest.
         const suffixMin = suffixMinByKey[store.key];
         const suffixMax = suffixMaxByKey[store.key];
-        suffixBounds(state, suffixMin, suffixMax);
-        for (let index = 0; index < count; index += 1) {
+        if (anyStale) suffixBounds(state, suffixMin, suffixMax);
+        for (let index = 0; anyStale && index < count; index += 1) {
+          if (!stale[index]) continue;
+          // A quarter about to be repriced holds nothing from last time: every
+          // path out of this loop is a quarter with no charge bid in it.
+          chargeBest[index] = null;
           // A slot already committed to discharge must not also charge. Only the
           // discharge side used to check this, so whichever direction won the
           // auction first could be joined by the other in the same slot — the
@@ -1778,16 +1840,26 @@ function dispatchAuction(
           const adjacentRun = (schedule[index - 1] ?? 0) > 0 ||
             (schedule[index + 1] ?? 0) > 0;
           const startsRun = previousW === 0 && minRun > 1 && !adjacentRun;
+          const span = startsRun ? minRun : 1;
+          if (index + span > count) continue;
+          // Walked rather than mapped: this runs for every quarter of every
+          // store on every iteration of the auction, and the closure and its
+          // array cost more here than the comparison they carry.
+          let blocked = false;
+          for (let offset = 0; offset < span; offset += 1) {
+            const slotIndex = index + offset;
+            if (
+              (slotIndex !== index && schedule[slotIndex] > 0) ||
+              dischargeByKey[slotIndex] > 0
+            ) {
+              blocked = true;
+              break;
+            }
+          }
+          if (blocked) continue;
           const indices = startsRun
             ? Array.from({ length: minRun }, (_, offset) => index + offset)
             : [index];
-          if (
-            indices.at(-1)! >= count ||
-            indices.some((slotIndex) =>
-              (slotIndex !== index && schedule[slotIndex] > 0) ||
-              dischargeByKey[slotIndex] > 0
-            )
-          ) continue;
 
           // Only a store that sells its charge back is doing arbitrage. A pool
           // buys warmth and a car buys range; neither is betting on a price.
@@ -1798,42 +1870,54 @@ function dispatchAuction(
                 store.discharge.state_per_kwh_out(state[index], index),
               )
             : 0;
-          const fullW = Math.min(
-            store.max_power_w,
-            ...indices.map((slotIndex) => {
-              const units = store.units_per_kwh(state[slotIndex], slotIndex);
-              if (units <= 0) return 0;
-              const slot = slots[slotIndex];
-              const otherW = occupiedW[slotIndex] - schedule[slotIndex];
-              const gridBarred = store.discharge !== undefined &&
-                !sellLegIsPublished(slots, slotIndex, roundTrip);
-              return Math.min(
-                headroomW(
-                  slot,
-                  limits,
-                  otherW,
-                  returnedW[slotIndex],
-                ),
-                schedule[slotIndex] +
-                  chargeRoomW(store, suffixMax[slotIndex], units),
-                // Barred from the grid, it may still take what the roof is
-                // giving away: that energy costs no committed money.
-                gridBarred
-                  ? Math.max(
-                    0,
-                    slot.pv_w - slot.fixed_load_w - otherW,
-                  )
-                  : Infinity,
-              );
-            }),
-          );
+          // Walked for the same reason as the block check above: mapping the
+          // block and spreading it into `Math.min` allocated two arrays for
+          // every quarter the auction priced, which at 288 quarters times three
+          // stores times a thousand iterations is most of a worker's budget.
+          let fullW = store.max_power_w;
+          for (let offset = 0; offset < span; offset += 1) {
+            const slotIndex = index + offset;
+            const units = store.units_per_kwh(state[slotIndex], slotIndex);
+            if (units <= 0) {
+              fullW = 0;
+              break;
+            }
+            const slot = slots[slotIndex];
+            const otherW = occupiedW[slotIndex] - schedule[slotIndex];
+            const gridBarred = store.discharge !== undefined &&
+              !sellLegIsPublished(slots, slotIndex, roundTrip);
+            const limitW = Math.min(
+              headroomW(
+                slot,
+                limits,
+                otherW,
+                returnedW[slotIndex],
+              ),
+              schedule[slotIndex] +
+                chargeRoomW(store, suffixMax[slotIndex], units),
+              // Barred from the grid, it may still take what the roof is
+              // giving away: that energy costs no committed money.
+              gridBarred
+                ? Math.max(
+                  0,
+                  slot.pv_w - slot.fixed_load_w - otherW,
+                )
+                : Infinity,
+            );
+            if (limitW < fullW) fullW = limitW;
+          }
           if (fullW <= previousW + 1e-6) continue;
           // Candidate levels stop wherever either the source cost or the curve
           // changes. This applies to every store: valuing an 11 kW EV quarter or
           // a four-quarter pool run at the first infinitesimal unit is precisely
           // the defect an integral utility curve exists to prevent.
-          const rawPowers = [fullW, store.min_power_w ?? 0];
-          for (const slotIndex of indices) {
+          // One scratch array for the whole auction: nothing retains it past
+          // the levels it produces, and a fresh array per priced quarter is
+          // pure allocation.
+          rawPowers.length = 0;
+          rawPowers.push(fullW, store.min_power_w ?? 0);
+          for (let offset = 0; offset < span; offset += 1) {
+            const slotIndex = index + offset;
             const surplusW = Math.max(
               0,
               Math.min(
@@ -1928,7 +2012,7 @@ function dispatchAuction(
               slotBest = candidate;
             }
           }
-          if (slotBest && outranks(slotBest, storeBest)) storeBest = slotBest;
+          chargeBest[index] = slotBest;
         }
 
         // Discharge is the same comparison with the signs exchanged: the value is
@@ -1937,7 +2021,9 @@ function dispatchAuction(
         // rather keep its charge simply loses to the sinks, and one whose charge is
         // worth less than tonight's import price wins.
         if (store.discharge) {
-          for (let index = 0; index < count; index += 1) {
+          for (let index = 0; anyStale && index < count; index += 1) {
+            if (!stale[index]) continue;
+            dischargeBest[index] = null;
             if (schedule[index] > 0) continue;
             const previousW = dischargeByKey[index];
             const otherReturnedW = returnedW[index] - previousW;
@@ -2069,10 +2155,25 @@ function dispatchAuction(
                 slotBest = candidate;
               }
             }
-            if (slotBest && outranks(slotBest, storeBest)) storeBest = slotBest;
+            dischargeBest[index] = slotBest;
           }
         }
-        cachedBestByStore.set(store.key, storeBest);
+        if (anyStale) stale.fill(0);
+        // Reduced in the order the two scans ran in, because `outranks` keeps
+        // the incumbent on a tie: charge bids across the horizon, then
+        // discharge bids across it.
+        for (let index = 0; index < count; index += 1) {
+          const candidate = chargeBest[index];
+          if (candidate && outranks(candidate, storeBest)) storeBest = candidate;
+        }
+        if (store.discharge) {
+          for (let index = 0; index < count; index += 1) {
+            const candidate = dischargeBest[index];
+            if (candidate && outranks(candidate, storeBest)) {
+              storeBest = candidate;
+            }
+          }
+        }
         if (storeBest && outranks(storeBest, best)) {
           best = storeBest;
         }
@@ -2120,7 +2221,7 @@ function dispatchAuction(
           Math.min(from, to),
           stateByKey[store.key],
         );
-        cachedBestByStore.clear();
+        markAllStale();
         continue;
       }
 
@@ -2154,19 +2255,29 @@ function dispatchAuction(
         best.index,
         stateByKey[best.store.key],
       );
-      const changed = new Set(changedIndices);
+      let firstChanged = changedIndices[0];
+      let lastChanged = changedIndices[0];
+      for (const index of changedIndices) {
+        if (index < firstChanged) firstChanged = index;
+        if (index > lastChanged) lastChanged = index;
+      }
       for (const store of stores) {
-        const cached = cachedBestByStore.get(store.key);
-        if (
-          store.key === best.store.key || best.direction === "discharge" ||
-          // A sink that starts charging can create a new discharge opportunity
-          // in that slot even when the battery's previous winner was elsewhere.
-          store.discharge !== undefined ||
-          (cached !== null && cached !== undefined &&
-            cached.indices.some((index) => changed.has(index)))
-        ) {
-          cachedBestByStore.delete(store.key);
+        if (store.key === best.store.key) {
+          // Its trajectory moved from here on, and `suffixBounds` turns that
+          // into a different ceiling for the quarters before it too.
+          staleBySlot[store.key].fill(1);
+          continue;
         }
+        // Everyone else sees this only as load that appeared in — or left —
+        // those quarters, which reprices a bid whose block reaches into one of
+        // them and nothing further. A sink that starts charging can create a
+        // discharge opportunity the same way, so the window is the same on both
+        // sides.
+        markStaleWindow(
+          store.key,
+          firstChanged - Math.max(1, store.min_run_slots ?? 1) + 1,
+          lastChanged,
+        );
       }
     }
 

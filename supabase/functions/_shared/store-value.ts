@@ -238,12 +238,26 @@ export function curveWithinReach(
 
 /** Total utility of holding `at` units, the integral of the marginal value. */
 export function totalUtility(curve: UtilityCurve, at: number): number {
+  return utilityAt(curve, at, null);
+}
+
+/**
+ * The same integral, against an already-compiled curve when the caller holds
+ * one. `valueOfMove` is the auction's innermost arithmetic and asks for two
+ * points of the same curve every time; looking the compilation up twice made
+ * the weak-map probe, not the integral, the cost of valuing a move.
+ */
+function utilityAt(
+  curve: UtilityCurve,
+  at: number,
+  compiled: CompiledCurve | null,
+): number {
   const points = curve.points;
   if (points.length === 0 || at <= 0) return 0;
   const first = points[0];
   if (at <= first.at) return at * first.sek_per_unit;
 
-  const { utilityAtPoint } = compileCurve(curve);
+  const { utilityAtPoint } = compiled ?? compileCurve(curve);
   const index = breakpointAtOrAbove(points, at);
   if (index >= points.length) return utilityAtPoint[points.length - 1];
   const previous = points[index - 1];
@@ -270,7 +284,8 @@ export function valueOfMove(
   from: number,
   to: number,
 ): number {
-  return totalUtility(curve, to) - totalUtility(curve, from);
+  const compiled = compileCurve(curve);
+  return utilityAt(curve, to, compiled) - utilityAt(curve, from, compiled);
 }
 
 // ---------------------------------------------------------------------------
