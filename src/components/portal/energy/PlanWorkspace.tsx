@@ -576,6 +576,24 @@ const PlanView: React.FC<{
     return (vehicle.departure_target_soc * vehicle.capacity_kwh) / 0.16;
   }, [plan]);
 
+  /**
+   * Range at a full battery, so a threshold in kilometres can be read as SOC.
+   *
+   * The hardware limit is a state of charge and the curve is stated in
+   * kilometres; without this the household cannot tell whether a threshold they
+   * typed is even reachable under their own charge limit.
+   */
+  const vehicleFullRangeKm = useMemo(() => {
+    const vehicle = plan?.ev_battery;
+    if (!vehicle?.capacity_kwh) return null;
+    return vehicle.capacity_kwh / 0.16;
+  }, [plan]);
+
+  const vehicleChargeLimitSoc = useMemo(() => {
+    const target = plan?.ev_battery?.departure_target_soc;
+    return typeof target === 'number' ? target : null;
+  }, [plan]);
+
   const nextReplanAt = useMemo(() => {
     if (!plan?.valid_until) return null;
     const validUntil = Date.parse(plan.valid_until);
@@ -932,6 +950,8 @@ const PlanView: React.FC<{
               poolTemperatureC={plan?.pool?.water_temperature_c ?? null}
               vehicleRangeKm={vehicleRangeKm}
               vehicleTargetRangeKm={vehicleTargetRangeKm}
+              vehicleFullRangeKm={vehicleFullRangeKm}
+              vehicleChargeLimitSoc={vehicleChargeLimitSoc}
               poolVolumeM3={plan?.pool?.volume_m3 ?? null}
               vehicleChargeEfficiency={plan?.ev_battery?.charge_efficiency ?? null}
               batteryValueCurve={plan.battery_value_curve}

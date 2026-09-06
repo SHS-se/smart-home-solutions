@@ -892,3 +892,62 @@ Deno.test('the worth row reads the curve the household is looking at', () => {
   assert(worthOf(before) > 0, 'the shipped curve still values the pool');
   assertEquals(worthOf(after), 0);
 });
+
+Deno.test('a windowed score accounts for that window only', () => {
+  const bench = dispatchWorkbench(realSnapshot());
+  assert(bench !== null);
+
+  const whole = compareWorkbench(bench, bench.planned).planner;
+  const days = [0, 96, 192, 288].slice(0, -1).map((from, at) => compareWorkbench(
+    bench,
+    bench.planned,
+    { from, to: [96, 192, 288][at] },
+  ).planner);
+
+  // Money is a sum over quarters, so the days must add back up to the horizon.
+  assertAlmostEquals(
+    days.reduce((total, day) => total + day.billable_sek, 0),
+    whole.billable_sek,
+    1e-9,
+  );
+  assertAlmostEquals(
+    days.reduce((total, day) => total + day.grid_import_kwh, 0),
+    whole.grid_import_kwh,
+    1e-9,
+  );
+  assert(days.every(day => day.billable_sek !== whole.billable_sek));
+});
+
+Deno.test('terminal value belongs only to the window holding the horizon end', () => {
+  // It prices what the house is left holding, which is not something Tuesday
+  // can be credited with while Wednesday is still to come.
+  const bench = dispatchWorkbench(realSnapshot());
+  assert(bench !== null);
+
+  const first = compareWorkbench(bench, bench.planned, { from: 0, to: 96 }).planner;
+  const last = compareWorkbench(bench, bench.planned, { from: 192, to: 288 }).planner;
+  const battery = (score: typeof first) =>
+    score.stores.find(store => store.key === 'battery')!;
+
+  // The pack carries terminal weight and no usage weight, so its service value
+  // is entirely terminal: zero in an early window, non-zero in the last.
+  assertEquals(battery(first).service_value_sek, 0);
+  assert(battery(last).service_value_sek !== 0);
+});
+
+Deno.test('a window is projected from the start, not from its own edge', () => {
+  // Tuesday's cost depends on where Monday left the house.
+  const bench = dispatchWorkbench(realSnapshot());
+  assert(bench !== null);
+
+  const windowed = compareWorkbench(bench, bench.planned, { from: 192, to: 288 }).planner;
+  const whole = compareWorkbench(bench, bench.planned).planner;
+
+  // Same trajectory, whatever is being accounted for.
+  assertEquals(windowed.state.battery[192], whole.state.battery[192]);
+  assertEquals(windowed.state.battery[288], whole.state.battery[288]);
+  assert(
+    windowed.state.battery[192] !== bench.stores.find(s => s.key === 'battery')!.initial_state,
+    'the third day does not start where the first did',
+  );
+});

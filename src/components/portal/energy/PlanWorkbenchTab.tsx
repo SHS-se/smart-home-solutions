@@ -488,6 +488,11 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
         <CardHeader className="pb-3">
           <CardTitle className="text-base">
             {t('Poäng', 'Score')}
+            <span className="ml-2 text-xs font-normal text-muted-foreground">
+              {day === 'all' || !days[day]
+                ? t('hela horisonten', 'the whole horizon')
+                : days[day].label}
+            </span>
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">

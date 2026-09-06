@@ -359,18 +359,22 @@ export interface WorkbenchComparison {
 export function compareWorkbench(
   workbench: DispatchWorkbench,
   manual: DispatchSchedule,
+  /** Quarters to account for. Omitted means the whole horizon. */
+  range?: SlotRange,
 ): WorkbenchComparison {
   const planner = scoreDispatch(
     workbench.slots,
     workbench.stores,
     workbench.limits,
     workbench.planned,
+    range,
   );
   const scored = scoreDispatch(
     workbench.slots,
     workbench.stores,
     workbench.limits,
     manual,
+    range,
   );
   const identity = (entry: DispatchInfeasibility) => `${entry.slot}|${entry.message}`;
   const inherited = new Set(planner.infeasibilities.map(identity));

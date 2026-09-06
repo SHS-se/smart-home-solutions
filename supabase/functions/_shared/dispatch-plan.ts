@@ -674,8 +674,24 @@ export function scoreDispatch(
   stores: DispatchStore[],
   limits: DispatchLimits,
   schedule: DispatchSchedule,
+  /**
+   * Quarters to *account for*. Omitted means the whole horizon.
+   *
+   * Only the arithmetic narrows. The trajectory is always projected from the
+   * first quarter, because a day does not start with an empty battery — asking
+   * what Tuesday cost means asking what it cost given where Monday left the
+   * house, and a window that re-projected from its own edge would answer a
+   * question about a different home.
+   *
+   * Terminal value belongs to the window that contains the horizon's end, and
+   * to no other: it prices what the house is left holding, which is not a thing
+   * Tuesday can be credited with when Wednesday is still to come.
+   */
+  range?: { from: number; to: number },
 ): DispatchScore {
   const count = slots.length;
+  const from = Math.max(0, range?.from ?? 0);
+  const to = Math.min(count, range?.to ?? count);
   const zeros = () => new Array<number>(count).fill(0);
   const infeasibilities: DispatchInfeasibility[] = [];
   const powerByKey: Record<string, number[]> = {};
@@ -840,7 +856,7 @@ export function scoreDispatch(
   let quotedSek = 0;
   let gridImportKwh = 0;
   let gridExportKwh = 0;
-  for (let index = 0; index < count; index += 1) {
+  for (let index = from; index < to; index += 1) {
     const importKwh = importW[index] / 1_000 * SLOT_HOURS;
     const exportKwh = exportW[index] / 1_000 * SLOT_HOURS;
     gridImportKwh += importKwh;
@@ -861,12 +877,14 @@ export function scoreDispatch(
     const power = powerByKey[store.key];
     const discharge = dischargeByKey[store.key];
     const state = stateByKey[store.key];
-    let storeValue = (store.terminal_weight ?? 0) *
-      valueOfMove(store.curve, store.initial_state, state[count]);
+    let storeValue = to === count
+      ? (store.terminal_weight ?? 0) *
+        valueOfMove(store.curve, store.initial_state, state[count])
+      : 0;
     let storeWear = 0;
     let chargedKwh = 0;
     let dischargedKwh = 0;
-    for (let index = 0; index < count; index += 1) {
+    for (let index = from; index < to; index += 1) {
       storeValue += (store.usage_weight[index] ?? 0) *
         valueOfMove(store.curve, store.initial_state, state[index]);
       storeWear += SLOT_HOURS / 1_000 *
@@ -877,7 +895,9 @@ export function scoreDispatch(
       chargedKwh += power[index] / 1_000 * SLOT_HOURS;
       dischargedKwh += discharge[index] / 1_000 * SLOT_HOURS;
     }
-    const runs = runsOf(power);
+    const runs = runsOf(power).filter(
+      (run) => run.start >= from && run.start < to,
+    );
     const storeStart = runs.length * (store.start_cost_sek ?? 0);
     serviceValueSek += storeValue;
     wearSek += storeWear;

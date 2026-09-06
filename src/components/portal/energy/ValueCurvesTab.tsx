@@ -70,6 +70,10 @@ interface Props {
   vehicleRangeKm?: number | null;
   /** The range the customer's own charge limit asks for, anchoring the curve. */
   vehicleTargetRangeKm?: number | null;
+  /** Range at 100% SOC, so a kilometre threshold can be read as a percentage. */
+  vehicleFullRangeKm?: number | null;
+  /** The charge limit the car enforces, as a fraction. */
+  vehicleChargeLimitSoc?: number | null;
   /** Reviewed installation figures, so the physics is this home's own. */
   poolVolumeM3?: number | null;
   vehicleChargeEfficiency?: number | null;
@@ -105,6 +109,8 @@ const ValueCurvesTab: React.FC<Props> = ({
   poolTemperatureC,
   vehicleRangeKm,
   vehicleTargetRangeKm,
+  vehicleFullRangeKm,
+  vehicleChargeLimitSoc,
   poolVolumeM3,
   vehicleChargeEfficiency,
   batteryValueCurve,
@@ -550,6 +556,25 @@ const ValueCurvesTab: React.FC<Props> = ({
                       />
                       <span className="text-sm text-muted-foreground">{unitSuffix}</span>
                     </div>
+                    {!isPool && vehicleFullRangeKm !== null && vehicleFullRangeKm > 0 && (() => {
+                      // The hardware enforces a state of charge; the curve is
+                      // stated in kilometres. A threshold beyond the charge
+                      // limit is one the car can never reach, so the store
+                      // never stops bidding — and in kilometres alone that is
+                      // invisible.
+                      const soc = numeric(String(draft.preference[field]), 0) / vehicleFullRangeKm;
+                      const beyond = vehicleChargeLimitSoc !== null &&
+                        soc > vehicleChargeLimitSoc + 1e-9;
+                      return (
+                        <span className={`block text-[11px] tabular-nums ${
+                          beyond ? 'text-destructive font-medium' : 'text-muted-foreground'
+                        }`}>
+                          {`= ${(soc * 100).toFixed(0)}% SOC`}
+                          {beyond && ` · ${t('över laddgränsen', 'past the charge limit')} ${
+                            ((vehicleChargeLimitSoc ?? 0) * 100).toFixed(0)}%`}
+                        </span>
+                      );
+                    })()}
                     <span className="block text-[11px] text-muted-foreground">{t(hint[0], hint[1])}</span>
                   </label>
                 ))}
@@ -567,7 +592,7 @@ const ValueCurvesTab: React.FC<Props> = ({
                   )
                   : t(
                     `En kWh el ger ca ${scales.ev.units_per_kwh.toFixed(1)} km räckvidd. På vintern räcker samma laddning kortare, så samma gränser gör bilen viktigare utan att du ändrar något.`,
-                    `One kWh of electricity buys about ${scales.ev.units_per_kwh.toFixed(1)} km of range. In winter the same charge goes less far, so the same thresholds make the car matter more without you changing anything.`,
+                    `One kWh of electricity buys about ${scales.ev.units_per_kwh.toFixed(1)} km of range, and a full battery is about ${(vehicleFullRangeKm ?? 0).toFixed(0)} km — so ${vehicleChargeLimitSoc !== null ? `your ${(vehicleChargeLimitSoc * 100).toFixed(0)}% charge limit is about ${((vehicleFullRangeKm ?? 0) * vehicleChargeLimitSoc).toFixed(0)} km. ` : ''}A threshold above that is one the car can never reach, so it never stops being worth charging. In winter the same charge goes less far, so the same thresholds make the car matter more without you changing anything.`,
                   )}
               </p>
 
