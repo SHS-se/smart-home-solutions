@@ -702,3 +702,46 @@ Deno.test('a figure above the ceiling never sells, whatever the resolution', () 
     }
   }
 });
+
+Deno.test('a quarter of grid charging lands in the pack, and the export says so', () => {
+  // The confusion this answers: 5 kW typed into the pack for one quarter moves
+  // it by 1.19 kWh, not 5, and the flow panel draws "battery in" *below* the
+  // axis — which reads as export until the arithmetic is checked. It is not.
+  const bench = dispatchWorkbench(realSnapshot());
+  assert(bench !== null);
+  const model = buildWorkbenchModel(bench, 'quarter');
+  const charge = model.rows.find(row => row.storeKey === 'battery' && row.direction === 'charge');
+  assert(charge !== undefined);
+  // Dark, so the grid is the only source, and with the pack otherwise idle —
+  // a quarter where it is already covering load would net that off and the
+  // arithmetic under test would be buried in it.
+  const dark = bench.slots.findIndex(
+    (slot, i) => slot.pv_w === 0 && (bench.planned.discharge_w.battery[i] ?? 0) === 0,
+  );
+  assert(dark >= 0);
+
+  const schedule = scheduleFromDraft(bench, model, {
+    [charge.id]: model.planned[charge.id].map((kw, i) => (i === dark ? 5 : kw)),
+  });
+  const score = compareWorkbench(bench, schedule).manual;
+  const battery = bench.stores.find(store => store.key === 'battery');
+  assert(battery !== undefined);
+
+  // Bought, not sold — and the row is the physical balance of the quarter,
+  // which is the property being doubted when a large import looks like a sale.
+  assert(gridWattsAt(score, dark) > 0, 'the quarter imports');
+  assertAlmostEquals(gridWattsAt(score, dark), -netAt(bench, schedule, dark), 1e-6);
+  // Charging the pack raises the import by exactly what the pack draws.
+  const idle = scheduleFromDraft(bench, model, {
+    [charge.id]: model.planned[charge.id].map((kw, i) => (i === dark ? 0 : kw)),
+  });
+  assertAlmostEquals(
+    gridWattsAt(score, dark) - gridWattsAt(compareWorkbench(bench, idle).manual, dark),
+    5_000,
+    1e-6,
+  );
+  // And it lands, at the charge efficiency the store declares.
+  const moved = score.state.battery[dark + 1] - score.state.battery[dark];
+  assertAlmostEquals(moved, 5 * 0.25 * battery.units_per_kwh(0, dark), 1e-6);
+  assert(moved > 0, 'the pack fills');
+});

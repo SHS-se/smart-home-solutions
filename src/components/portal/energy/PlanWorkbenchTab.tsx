@@ -543,6 +543,11 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
                     [t('Slitage', 'Wear'), comparison.planner.wear_sek, comparison.manual.wear_sek],
                     [t('Starter', 'Starts'), comparison.planner.start_sek, comparison.manual.start_sek],
                     [t('Levererad nytta', 'Service delivered'), -comparison.planner.service_value_sek, -comparison.manual.service_value_sek],
+                    ...comparison.planner.stores.map((store, at): [string, number, number] => [
+                      `${storeLabel(store.key)} — ${t('nytta', 'service')}`,
+                      -store.service_value_sek,
+                      -(comparison.manual.stores[at]?.service_value_sek ?? 0),
+                    ]),
                   ] as [string, number, number][]).map(([label, left, right]) => (
                     <tr key={label} className="border-t border-border/50">
                       <td className="py-1">{label}</td>
@@ -856,12 +861,29 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
                     </td>
                     {shown.map(index => {
                       const trajectory = comparison.manual.state[row.storeKey];
-                      const lastSlot = model!.columns[index].slots.at(-1)!;
+                      const slots = model!.columns[index].slots;
+                      const lastSlot = slots.at(-1)!;
+                      if (!trajectory) {
+                        return (
+                          <td key={index} className={`py-1 px-1 text-center ${column(index)}`}>—</td>
+                        );
+                      }
+                      // The change, not only the level: a quarter of 5 kW into
+                      // the pack moves it by 1.19 kWh, and without the delta
+                      // beside it the level reads as though nothing landed.
+                      const moved = trajectory[lastSlot + 1] - trajectory[slots[0]];
                       return (
                         <td key={index} className={`py-1 px-1 text-center whitespace-nowrap ${column(index)}`}>
-                          {trajectory
-                            ? stateLabel(row.stateUnit, trajectory[lastSlot + 1])
-                            : '—'}
+                          <div>{stateLabel(row.stateUnit, trajectory[lastSlot + 1])}</div>
+                          {Math.abs(moved) > 0.005 && (
+                            <div className={`text-[10px] ${
+                              moved > 0
+                                ? 'text-emerald-600 dark:text-emerald-400'
+                                : 'text-muted-foreground'
+                            }`}>
+                              {moved > 0 ? '+' : '−'}{Math.abs(moved).toFixed(2)}
+                            </div>
+                          )}
                         </td>
                       );
                     })}

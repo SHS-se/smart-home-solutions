@@ -4598,6 +4598,13 @@ the stored plan's `price_outlook`. The export carries each store's curve points
 and every quarter's state and marginal value beside the powers, because "why is
 a stored kilowatt-hour worth that" has to be answerable from the file.
 
+Two readings the editor was leaving to inference, both of which produced a
+false alarm before they were added. The state row now prints **what moved**, not
+only where the trajectory landed: a quarter of 5 kW into the pack raises it by
+1.19 kWh, and beside a bare level that reads as though nothing arrived. And
+**service delivered is broken out per store**, because it is the term that
+decides most comparisons and a single total cannot say which store carried it.
+
 Reading the result: **lower is better** — the score is cost net of service
 delivered, so it is routinely negative. A hand-built plan that scores lower is
 proof the search left money on the table, and the fix is a better solver. One
