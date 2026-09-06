@@ -234,6 +234,43 @@ export function scheduleFromDraft(
     }
   });
 
+  // A store that may not sell cannot be *asked* to sell.
+  //
+  // The permit was a validation flag first, and that was the wrong shape: a
+  // household could type the pack up past the house load, watch the grid row go
+  // negative, and only then be told it was not allowed. The rule belongs on the
+  // schedule, not on the report of it — with the switch off, the pack is capped
+  // at the load it can cover, and the quarter simply cannot export.
+  for (let index = 0; index < count; index += 1) {
+    if (schedule.allow_export![index]) continue;
+    const gated = workbench.stores.filter(
+      store => store.discharge !== undefined && !store.discharge.export_allowed,
+    );
+    if (gated.length === 0) continue;
+    const slot = workbench.slots[index];
+    let occupied = 0;
+    let freeReturn = 0;
+    let gatedReturn = 0;
+    for (const store of workbench.stores) {
+      occupied += schedule.power_w[store.key]?.[index] ?? 0;
+      const out = schedule.discharge_w[store.key]?.[index] ?? 0;
+      if (gated.includes(store)) gatedReturn += out;
+      else freeReturn += out;
+    }
+    // What is left of the house's own demand once the sun and any store that
+    // *may* sell have had their say.
+    const room = Math.max(
+      0,
+      slot.fixed_load_w + occupied - slot.pv_w - freeReturn,
+    );
+    if (gatedReturn <= room + 1e-9) continue;
+    const scale = room / gatedReturn;
+    for (const store of gated) {
+      const out = schedule.discharge_w[store.key];
+      if (out) out[index] *= scale;
+    }
+  }
+
   // Trim a hand-rounded overshoot back onto the load it was meant to cover.
   // Only ever downwards: this removes energy nobody asked to send, and never
   // invents any to make a quarter look tidy.
@@ -493,6 +530,17 @@ export function buildWorkbenchChart(
 // point of building a plan by hand in the first place.
 // ---------------------------------------------------------------------------
 
+/** One plan's doing in one quarter, with the state and value it implies. */
+export interface QuarterSide {
+  charge_w: Record<string, number>;
+  discharge_w: Record<string, number>;
+  grid_w: number;
+  /** Each store's state at the start of the quarter, in its curve's unit. */
+  state: Record<string, number>;
+  /** What another kWh into each store is worth there, SEK/kWh delivered. */
+  worth_sek_per_kwh: Record<string, number>;
+}
+
 export interface WorkbenchExport {
   format: 'shs.plan-workbench.v1';
   exported_at: string;
@@ -512,6 +560,15 @@ export interface WorkbenchExport {
     min_run_slots: number;
     discharge_max_power_w: number | null;
     export_allowed: boolean | null;
+    /**
+     * The utility curve the objective priced this store against.
+     *
+     * Carried because "why is a stored kilowatt-hour worth that" is otherwise
+     * unanswerable from the file, and because the curve is *derived* per solve
+     * for the battery (§8.4) — two exports of the same home can disagree, and
+     * the disagreement is the finding.
+     */
+    curve: { at: number; sek_per_unit: number }[];
   }[];
   /** One entry per quarter: what it was solved against and what both plans do. */
   quarters: {
@@ -523,8 +580,8 @@ export interface WorkbenchExport {
     fixed_load_w: number;
     import_price_sek_per_kwh: number;
     export_price_sek_per_kwh: number;
-    planner: { charge_w: Record<string, number>; discharge_w: Record<string, number>; grid_w: number };
-    manual: { charge_w: Record<string, number>; discharge_w: Record<string, number>; grid_w: number };
+    planner: QuarterSide;
+    manual: QuarterSide;
   }[];
   scores: {
     planner: Omit<DispatchScore, 'import_w' | 'export_w' | 'state'>;
@@ -553,7 +610,18 @@ export function buildWorkbenchExport(
   manual: DispatchSchedule,
   comparison: WorkbenchComparison,
 ): WorkbenchExport {
-  const per = (schedule: DispatchSchedule, score: DispatchScore, slot: number) => ({
+  const worth = new Map(
+    [
+      ['planner', storeValueSeries(bench, comparison.planner)],
+      ['manual', storeValueSeries(bench, comparison.manual)],
+    ] as const,
+  );
+  const per = (
+    side: 'planner' | 'manual',
+    schedule: DispatchSchedule,
+    score: DispatchScore,
+    slot: number,
+  ): QuarterSide => ({
     charge_w: Object.fromEntries(
       bench.stores.map(store => [store.key, schedule.power_w[store.key]?.[slot] ?? 0]),
     ),
@@ -561,6 +629,12 @@ export function buildWorkbenchExport(
       bench.stores.map(store => [store.key, schedule.discharge_w[store.key]?.[slot] ?? 0]),
     ),
     grid_w: gridWattsAt(score, slot),
+    state: Object.fromEntries(
+      bench.stores.map(store => [store.key, score.state[store.key]?.[slot] ?? store.initial_state]),
+    ),
+    worth_sek_per_kwh: Object.fromEntries(
+      worth.get(side)!.map(series => [series.key, series.sekPerKwh[slot] ?? 0]),
+    ),
   });
 
   return {
@@ -582,6 +656,7 @@ export function buildWorkbenchExport(
       min_run_slots: store.min_run_slots ?? 1,
       discharge_max_power_w: store.discharge?.max_power_w ?? null,
       export_allowed: store.discharge?.export_allowed ?? null,
+      curve: store.curve.points.map(point => ({ ...point })),
     })),
     quarters: bench.slots.map((slot, index) => ({
       start: new Date(bench.slot_start_ms[index]).toISOString(),
@@ -591,8 +666,8 @@ export function buildWorkbenchExport(
       fixed_load_w: slot.fixed_load_w,
       import_price_sek_per_kwh: slot.import_price_sek_per_kwh,
       export_price_sek_per_kwh: slot.export_price_sek_per_kwh,
-      planner: per(bench.planned, comparison.planner, index),
-      manual: per(manual, comparison.manual, index),
+      planner: per('planner', bench.planned, comparison.planner, index),
+      manual: per('manual', manual, comparison.manual, index),
     })),
     scores: {
       planner: withoutSeries(comparison.planner),
@@ -605,4 +680,38 @@ export function buildWorkbenchExport(
     planner_stopped_because: bench.stopped_because,
     planner_iterations: bench.iterations,
   };
+}
+
+
+/**
+ * The most a store that may not sell can return in one column.
+ *
+ * The cap `scheduleFromDraft` enforces, exposed so the editor can apply it to a
+ * typed figure straight away: a household that types 2 kW into a quarter with a
+ * 0.7 kW load should see 0.7 appear, not discover afterwards that most of what
+ * they asked for was quietly dropped. Taken as the *minimum* across the
+ * column's quarters, so an hourly figure cannot sell in any one of them.
+ */
+export function exportFreeCeilingKw(
+  workbench: DispatchWorkbench,
+  column: WorkbenchColumn,
+  schedule: DispatchSchedule,
+  storeKey: string,
+): number {
+  const ceilings = column.slots.map(slot => {
+    let occupied = 0;
+    let others = 0;
+    for (const store of workbench.stores) {
+      occupied += schedule.power_w[store.key]?.[slot] ?? 0;
+      if (store.key !== storeKey) {
+        others += schedule.discharge_w[store.key]?.[slot] ?? 0;
+      }
+    }
+    return Math.max(
+      0,
+      workbench.slots[slot].fixed_load_w + occupied - workbench.slots[slot].pv_w -
+        others,
+    );
+  });
+  return Math.min(...ceilings) / 1_000;
 }

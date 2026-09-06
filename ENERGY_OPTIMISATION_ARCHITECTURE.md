@@ -4578,6 +4578,26 @@ objective; refusing to price it would make the answer unavailable. The permit
 changes what is *allowed*, never what it is *worth* — both sides score
 identically, which is what makes the answer usable.
 
+Selling from store is a **constraint on the schedule, not a note on the report
+of it**. The permit was a validation flag first, and that was the wrong shape: a
+household could type the pack past the house load, watch the grid row go
+negative, and only then be told it was not allowed. With the switch off the pack
+is held at the load it can cover — in the editor as the figure is typed, and
+again in `scheduleFromDraft`, which is authoritative. Sunshine may still push a
+quarter into export on its own; what the permit governs is whether the *pack*
+is part of that.
+
+**The workbench must solve against the plan's own prices.** It re-estimated
+them, and two thirds of a 72-hour horizon is modelled rather than quoted
+(§1.4.3). Everything derived from that tail moves with it — including the
+battery's value curve, which is built from it — so a locally re-estimated solve
+produced a curve with a handful of breakpoints where the deployed plan's had
+dozens, and the editor priced stored energy against a different day from the one
+the household was reading in the value-curve view. `dispatchWorkbench` now takes
+the stored plan's `price_outlook`. The export carries each store's curve points
+and every quarter's state and marginal value beside the powers, because "why is
+a stored kilowatt-hour worth that" has to be answerable from the file.
+
 Reading the result: **lower is better** — the score is cost net of service
 delivered, so it is routinely negative. A hand-built plan that scores lower is
 proof the search left money on the table, and the fix is a better solver. One

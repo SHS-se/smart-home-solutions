@@ -24,7 +24,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
-import { dispatchWorkbench, type DispatchWorkbench, type OptimisationSnapshot } from '../../../../supabase/functions/_shared/energy-optimisation';
+import {
+  dispatchWorkbench,
+  type DispatchWorkbench,
+  type OptimisationPlan,
+  type OptimisationSnapshot,
+} from '../../../../supabase/functions/_shared/energy-optimisation';
 import type { DispatchInfeasibility } from '../../../../supabase/functions/_shared/dispatch-plan';
 import {
   buildWorkbenchChart,
@@ -39,8 +44,10 @@ import {
   type WorkbenchDraft,
   type WorkbenchModel,
   type SlotRange,
+  exportFreeCeilingKw,
   storeLabel,
   storeValueSeries,
+  type WorkbenchRow,
 } from '@/lib/energy-shift/plan-workbench';
 import PlanPanels from './plan/PlanPanels';
 import { useHomeTimeZone } from './HomeTimeZoneContext';
@@ -282,7 +289,7 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
     setError(null);
     const { data, error: queryError } = await supabase
       .from('energy_optimisation_current')
-      .select('snapshot')
+      .select('snapshot, plan')
       .eq('home_id', homeId)
       .maybeSingle();
     if (queryError || !data?.snapshot) {
@@ -294,7 +301,20 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
       return;
     }
     try {
-      const built = dispatchWorkbench(data.snapshot as unknown as OptimisationSnapshot);
+      // Solved against the prices the deployed plan actually used, not against
+      // a fresh estimate. Two thirds of a 72-hour horizon is modelled rather
+      // than quoted (§1.4.3), and everything derived from it moves with it —
+      // including the battery's value curve, which is built from the shaped
+      // tail. Re-estimating here with no price archive produced a curve with a
+      // handful of breakpoints where the plan's had dozens, so the workbench
+      // was pricing stored energy against a different day from the one the
+      // household was reading.
+      const stored = data.plan as unknown as OptimisationPlan | null;
+      const built = dispatchWorkbench(
+        data.snapshot as unknown as OptimisationSnapshot,
+        [],
+        stored?.price_outlook,
+      );
       if (!built) {
         setError(t(
           'Ögonblicksbilden har inga lager att planera — ingen bil, pool eller batteri är kopplad till planeraren.',
@@ -312,6 +332,22 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
     setLoading(false);
   };
 
+  /**
+   * The ceiling a store that may not sell is held under, in this column.
+   *
+   * Infinity when the quarter is open to selling, or when the store's contract
+   * already allows it — there is nothing to hold it under then.
+   */
+  const ceilingFor = useCallback(
+    (row: WorkbenchRow, columnIndex: number): number => {
+      if (!bench || !model || !manual) return Infinity;
+      if (row.direction !== 'discharge' || row.storeKey !== gated?.key) return Infinity;
+      if (allowExport[columnIndex]) return Infinity;
+      return exportFreeCeilingKw(bench, model.columns[columnIndex], manual, row.storeKey);
+    },
+    [bench, model, manual, gated, allowExport],
+  );
+
   const setCell = (rowId: string, columnIndex: number, kw: number) => {
     if (!model) return;
     const row = model.rows.find(entry => entry.id === rowId);
@@ -320,8 +356,37 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
       const next = [...(current[rowId] ?? model.planned[rowId] ?? [])];
       next[columnIndex] = row.direction === 'charge'
         ? executableKw(row, kw)
-        : Math.max(0, Math.min(row.maxKw, kw));
+        : Math.max(0, Math.min(row.maxKw, ceilingFor(row, columnIndex), kw));
       return { ...current, [rowId]: next };
+    });
+  };
+
+  /**
+   * Open or close one quarter to selling from store.
+   *
+   * Closing it brings any figure already typed back under the cap, so the box
+   * agrees with the plan rather than showing a number the schedule has quietly
+   * dropped.
+   */
+  const togglePermit = (columnIndex: number) => {
+    const opening = !allowExport[columnIndex];
+    setAllowExport(current => {
+      const next = [...current];
+      next[columnIndex] = opening;
+      return next;
+    });
+    if (opening || !model || !bench || !manual || !gated) return;
+    const row = model.rows.find(
+      entry => entry.direction === 'discharge' && entry.storeKey === gated.key,
+    );
+    if (!row) return;
+    const ceiling = exportFreeCeilingKw(bench, model.columns[columnIndex], manual, gated.key);
+    setDraft(current => {
+      const values = current[row.id] ?? model.planned[row.id];
+      if (!values || (values[columnIndex] ?? 0) <= ceiling) return current;
+      const next = [...values];
+      next[columnIndex] = ceiling;
+      return { ...current, [row.id]: next };
     });
   };
 
@@ -740,11 +805,7 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
                         <button
                           type="button"
                           aria-pressed={allowExport[index] === true}
-                          onClick={() => setAllowExport(current => {
-                            const next = [...current];
-                            next[index] = !next[index];
-                            return next;
-                          })}
+                          onClick={() => togglePermit(index)}
                           className={`h-6 w-[52px] rounded border text-[10px] ${
                             allowExport[index]
                               ? 'bg-emerald-600 text-white border-emerald-600'

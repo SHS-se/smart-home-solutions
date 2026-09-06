@@ -3,6 +3,7 @@ import {
   buildWorkbenchChart,
   buildWorkbenchExport,
   buildWorkbenchModel,
+  exportFreeCeilingKw,
   gridWattsAt,
   storeValueSeries,
   compareWorkbench,
@@ -500,6 +501,9 @@ Deno.test('a hand-rounded overshoot is trimmed onto the load it meant to cover',
 });
 
 Deno.test('a sale the household actually asked for is left alone', () => {
+  // Half a kilowatt beyond the load is five times the editor's resolution, so
+  // it is a decision rather than hand-rounding — and in a quarter opened to
+  // selling, the trim must not quietly undo it.
   const bench = dispatchWorkbench(realSnapshot());
   assert(bench !== null);
   const model = buildWorkbenchModel(bench, 'quarter');
@@ -507,18 +511,24 @@ Deno.test('a sale the household actually asked for is left alone', () => {
   assert(battery !== undefined);
   const covers = bench.slots[0].fixed_load_w - bench.slots[0].pv_w;
 
-  // Half a kilowatt beyond the load is five times the editor's resolution.
-  const schedule = scheduleFromDraft(bench, model, {
-    [battery.id]: model.planned[battery.id].map(
-      (kw, i) => (i === 0 ? (covers + 500) / 1_000 : kw),
-    ),
-  });
+  const schedule = scheduleFromDraft(
+    bench,
+    model,
+    {
+      [battery.id]: model.planned[battery.id].map(
+        (kw, i) => (i === 0 ? (covers + 500) / 1_000 : kw),
+      ),
+    },
+    model.columns.map((_column, i) => i === 0),
+  );
 
   assertAlmostEquals(schedule.discharge_w.battery[0], covers + 500, 1e-6);
   assertAlmostEquals(netAt(bench, schedule, 0), 500, 1e-6);
 });
 
-Deno.test('a quarter opened to export prices the sale instead of refusing it', () => {
+Deno.test('the permit decides whether a sale can be asked for at all', () => {
+  // Not whether it is reported afterwards. With the switch off the quarter is
+  // held at the load and no breach can arise; with it on the same figure sells.
   const bench = dispatchWorkbench(realSnapshot());
   assert(bench !== null);
   const model = buildWorkbenchModel(bench, 'quarter');
@@ -531,20 +541,24 @@ Deno.test('a quarter opened to export prices the sale instead of refusing it', (
     ),
   };
 
-  const refused = compareWorkbench(bench, scheduleFromDraft(bench, model, selling));
-  const permitted = compareWorkbench(
-    bench,
-    scheduleFromDraft(bench, model, selling, model.columns.map((_c, i) => i === 0)),
+  const held = scheduleFromDraft(bench, model, selling);
+  const sold = scheduleFromDraft(
+    bench, model, selling, model.columns.map((_c, i) => i === 0),
   );
 
-  const soldAt = (comparison: typeof refused) => comparison.introduced.filter(
-    entry => entry.message.includes('discharges into export'),
-  );
-  assert(soldAt(refused).length > 0, 'without the permit the contract stands');
-  assertEquals(soldAt(permitted), []);
-  // The energy is priced either way — the permit changes what is allowed, not
-  // what it is worth — so the two schedules score identically.
-  assertAlmostEquals(permitted.manual.total_sek, refused.manual.total_sek, 1e-9);
+  assertAlmostEquals(held.discharge_w.battery[0], covers, 1e-6);
+  assertAlmostEquals(netAt(bench, held, 0), 0, 1e-6);
+  assertAlmostEquals(sold.discharge_w.battery[0], covers + 500, 1e-6);
+  assertAlmostEquals(netAt(bench, sold, 0), 500, 1e-6);
+
+  // Neither is a breach: one could not sell, the other was allowed to.
+  for (const schedule of [held, sold]) {
+    assertEquals(
+      compareWorkbench(bench, schedule).introduced
+        .filter(entry => entry.message.includes('discharges into export')),
+      [],
+    );
+  }
 });
 
 Deno.test('a quarter that balances reports no flow at all', () => {
@@ -584,4 +598,107 @@ Deno.test('what a store holds is priced per kWh delivered, not per its own unit'
   // A pool below its band is worth more than the dearest quarter of the day;
   // that is exactly why the planner heats it.
   assert(Math.max(...pool.sekPerKwh) > 1, `pool tops out at ${Math.max(...pool.sekPerKwh)}`);
+});
+
+Deno.test('with the permit off the pack is capped at the load it can cover', () => {
+  // The defect this replaced: the permit only suppressed the message, so a
+  // household could type the pack past the house load, watch the grid row go
+  // negative, and be told afterwards it was not allowed.
+  const bench = dispatchWorkbench(realSnapshot());
+  assert(bench !== null);
+  const model = buildWorkbenchModel(bench, 'quarter');
+  const battery = model.rows.find(row => row.direction === 'discharge');
+  assert(battery !== undefined);
+  const covers = bench.slots[0].fixed_load_w - bench.slots[0].pv_w;
+
+  // Ask for five kilowatts into a quarter that can absorb well under one.
+  const schedule = scheduleFromDraft(bench, model, {
+    [battery.id]: model.planned[battery.id].map((kw, i) => (i === 0 ? 5 : kw)),
+  });
+
+  assertAlmostEquals(schedule.discharge_w.battery[0], covers, 1e-6);
+  assertAlmostEquals(netAt(bench, schedule, 0), 0, 1e-6);
+  assertEquals(
+    compareWorkbench(bench, schedule).introduced
+      .filter(entry => entry.message.includes('discharges into export')),
+    [],
+  );
+});
+
+Deno.test('with the permit on the same figure is left to sell', () => {
+  const bench = dispatchWorkbench(realSnapshot());
+  assert(bench !== null);
+  const model = buildWorkbenchModel(bench, 'quarter');
+  const battery = model.rows.find(row => row.direction === 'discharge');
+  assert(battery !== undefined);
+  const covers = bench.slots[0].fixed_load_w - bench.slots[0].pv_w;
+
+  const schedule = scheduleFromDraft(
+    bench,
+    model,
+    { [battery.id]: model.planned[battery.id].map((kw, i) => (i === 0 ? 5 : kw)) },
+    model.columns.map((_column, i) => i === 0),
+  );
+
+  assertAlmostEquals(schedule.discharge_w.battery[0], 5_000, 1e-6);
+  assertAlmostEquals(netAt(bench, schedule, 0), 5_000 - covers, 1e-6);
+});
+
+Deno.test('what the editor snaps to is what the schedule then leaves alone', () => {
+  // Two code paths for one rule is how they drift. They are deliberately not
+  // identical — the editor takes the *column minimum* so an hourly figure
+  // cannot sell in any of its quarters, while the schedule caps each quarter at
+  // its own room — so the claim that matters is that the conservative one is
+  // survivable: type the editor's ceiling and nothing is trimmed afterwards.
+  const bench = dispatchWorkbench(realSnapshot());
+  assert(bench !== null);
+  const model = buildWorkbenchModel(bench, 'hour');
+  const battery = model.rows.find(row => row.direction === 'discharge');
+  assert(battery !== undefined);
+
+  const baseline = scheduleFromDraft(bench, model, {});
+  const ceilings = model.columns.map(
+    column => exportFreeCeilingKw(bench, column, baseline, 'battery'),
+  );
+  const schedule = scheduleFromDraft(bench, model, { [battery.id]: ceilings });
+
+  for (const [index, column] of model.columns.entries()) {
+    for (const slot of column.slots) {
+      assertAlmostEquals(
+        schedule.discharge_w.battery[slot],
+        ceilings[index] * 1_000,
+        1e-6,
+        `column ${index} slot ${slot} was trimmed below what the editor offered`,
+      );
+      // Sunshine may still push the quarter into export on its own; what the
+      // permit governs is whether the *pack* is part of that.
+      assert(
+        netAt(bench, schedule, slot) <= 1e-6 ||
+          schedule.discharge_w.battery[slot] <= 1e-6,
+        `slot ${slot} sells from the pack anyway`,
+      );
+    }
+  }
+});
+
+Deno.test('a figure above the ceiling never sells, whatever the resolution', () => {
+  const bench = dispatchWorkbench(realSnapshot());
+  assert(bench !== null);
+  for (const granularity of ['quarter', 'hour'] as const) {
+    const model = buildWorkbenchModel(bench, granularity);
+    const battery = model.rows.find(row => row.direction === 'discharge');
+    assert(battery !== undefined);
+
+    const schedule = scheduleFromDraft(bench, model, {
+      [battery.id]: model.columns.map(() => 9),
+    });
+
+    for (let slot = 0; slot < bench.slots.length; slot += 1) {
+      assert(
+        netAt(bench, schedule, slot) <= 1e-6 ||
+          schedule.discharge_w.battery[slot] <= 1e-6,
+        `${granularity} slot ${slot} sells from the pack with the permit off`,
+      );
+    }
+  }
 });

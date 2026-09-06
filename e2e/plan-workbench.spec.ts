@@ -206,8 +206,34 @@ test.describe('plan workbench', () => {
     await expect(permit).toBeVisible();
     const firstSwitch = permit.locator('button').first();
     await expect(firstSwitch).toHaveAttribute('aria-pressed', 'false');
+
+    // With the permit off, asking the pack for more than the house can use is
+    // held at the load rather than allowed and then complained about.
+    const out = page.locator('tr', { hasText: /Home battery — out|Home battery — ut/ }).first();
+    const cell = out.locator('input[type="number"]').first();
+    await cell.fill('9');
+    await cell.blur();
+    await expect(async () => {
+      expect(Number((await cell.inputValue()).replace(',', '.'))).toBeLessThan(9);
+    }).toPass({ timeout: 10_000 });
+    // Nothing was sold. Changing the pack's trajectory can still overfill it
+    // later, which is a real finding and stays reported — what must not appear
+    // is a sale the editor did not let the household make.
+    const mine = page.locator('[role="alert"]', {
+      hasText: /Your plan cannot be run|går inte att köra/,
+    });
+    if (await mine.count() > 0) {
+      await expect(mine.first()).not.toContainText('discharges into export');
+    }
+
+    // Turning the quarter on lets the same figure through.
     await firstSwitch.click();
     await expect(firstSwitch).toHaveAttribute('aria-pressed', 'true');
+    await cell.fill('9');
+    await cell.blur();
+    await expect(async () => {
+      expect(Number((await cell.inputValue()).replace(',', '.'))).toBe(9);
+    }).toPass({ timeout: 10_000 });
 
     // And the whole comparison leaves the machine as one file.
     const download = page.waitForEvent('download');
