@@ -345,6 +345,13 @@ export interface WorkbenchComparison {
   introduced: DispatchInfeasibility[];
   /** Manual minus planner. Negative means the hand-built plan costs less. */
   totalDeltaSek: number;
+  /**
+   * The same comparison in money alone, free of the utility curves.
+   *
+   * The objective's difference and this one answer different questions, and a
+   * household that suspects a curve needs the one the curve cannot reach.
+   */
+  billableDeltaSek: number;
   importDeltaKwh: number;
   exportDeltaKwh: number;
 }
@@ -372,6 +379,7 @@ export function compareWorkbench(
     manual: scored,
     introduced: scored.infeasibilities.filter(entry => !inherited.has(identity(entry))),
     totalDeltaSek: scored.total_sek - planner.total_sek,
+    billableDeltaSek: scored.billable_sek - planner.billable_sek,
     importDeltaKwh: scored.grid_import_kwh - planner.grid_import_kwh,
     exportDeltaKwh: scored.grid_export_kwh - planner.grid_export_kwh,
   };

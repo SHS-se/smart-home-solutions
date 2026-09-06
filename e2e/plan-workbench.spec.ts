@@ -197,6 +197,12 @@ test.describe('plan workbench', () => {
       expect(visible).toBe(true);
     }).toPass({ timeout: 15_000 });
 
+    // The bill: real money, free of the value curves.
+    await expect(page.getByText(/What the planner costs you|Vad planeraren kostar/)).toBeVisible();
+    await expect(page.getByText(/Difference on the bill|Skillnad på räkningen/)).toBeVisible();
+    await expect(page.locator('tr', { hasText: /On the bill|På räkningen/ }).first())
+      .toBeVisible();
+
     // What a stored kWh is worth, beside the price it is judged against.
     await expect(page.locator('tr', { hasText: /Home battery — worth|— värde/ }).first())
       .toBeVisible();
@@ -247,6 +253,9 @@ test.describe('plan workbench', () => {
     expect(payload.format).toBe('shs.plan-workbench.v1');
     expect(payload.quarters).toHaveLength(288);
     expect(payload.scores.planner.total_sek).toBeLessThan(0);
+    // The bill travels with the plan, separately from the objective.
+    expect(payload.scores.planner.billable_sek).toBeGreaterThan(0);
+    expect(payload.scores.planner.billable_sek).not.toBe(payload.scores.planner.total_sek);
     // The permit travels with the plan, so a schedule can be read back whole.
     expect(payload.quarters.filter((q: { allow_store_export: boolean }) => q.allow_store_export))
       .toHaveLength(1);

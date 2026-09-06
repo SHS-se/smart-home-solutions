@@ -4605,6 +4605,27 @@ only where the trajectory landed: a quarter of 5 kW into the pack raises it by
 **service delivered is broken out per store**, because it is the term that
 decides most comparisons and a single total cannot say which store carried it.
 
+#### 8.20.2 The bill, beside the score (2026-09-06)
+
+§8.1 is right that minimising cost alone is degenerate, and the objective is
+built accordingly: cost *net of the service delivered*. But that makes the score
+depend on the utility curves, and a household that suspects a curve — correctly,
+as it turned out — has no way to judge a plan without them. So `scoreDispatch`
+also reports `billable_sek`: energy bought less energy sold, and nothing else.
+
+What is deliberately not in it. Wear and start costs, because nobody invoices
+them. The peak term with them: §8.16's shadow price on power is a stated shaping
+choice, not a tariff, and this grid has no demand charge today. And the service
+delivered, which is the whole point — the bill says what a plan *costs*, never
+whether it was worth it, and a plan that charges nothing always wins on money.
+That trap is pinned by a test: doing nothing is cheapest on the bill and worst on
+the objective. The two figures are shown side by side for exactly that reason.
+
+`billable_quoted_sek` narrows it further, to the quarters the market has
+actually published. Two thirds of a 72-hour horizon is priced against a shaped
+prior (§1.4.3), so the whole-horizon figure is a forecast wearing a currency
+symbol; this one is money.
+
 Reading the result: **lower is better** — the score is cost net of service
 delivered, so it is routinely negative. A hand-built plan that scores lower is
 proof the search left money on the table, and the fix is a better solver. One

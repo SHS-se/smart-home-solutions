@@ -599,6 +599,29 @@ export interface DispatchScore {
   wear_sek: number;
   /** Utility delivered across every store, subtracted from the total. */
   service_value_sek: number;
+  /**
+   * What the plan costs in money: energy bought less energy sold, and nothing
+   * else.
+   *
+   * The objective is deliberately not this — it is cost net of the service
+   * delivered, because minimising cost alone is degenerate (§8.1). But that
+   * makes `total_sek` depend on the utility curves, and a household comparing
+   * two plans is entitled to the half of the answer that does not.
+   *
+   * Wear and start costs are excluded because nobody invoices them, and the
+   * peak term with them: §8.16's shadow price on power is a stated shaping
+   * choice, not a tariff, and there is no demand charge on this grid today.
+   * Each is reported separately above.
+   */
+  billable_sek: number;
+  /**
+   * The part of that the market has actually quoted.
+   *
+   * Two thirds of a 72-hour horizon is priced against a shaped prior (§1.4.3),
+   * so the whole-horizon figure is a forecast wearing a currency symbol. This
+   * one is money.
+   */
+  billable_quoted_sek: number;
   grid_import_kwh: number;
   grid_export_kwh: number;
   import_w: number[];
@@ -814,6 +837,7 @@ export function scoreDispatch(
   let importSek = 0;
   let peakSek = 0;
   let exportSek = 0;
+  let quotedSek = 0;
   let gridImportKwh = 0;
   let gridExportKwh = 0;
   for (let index = 0; index < count; index += 1) {
@@ -821,9 +845,12 @@ export function scoreDispatch(
     const exportKwh = exportW[index] / 1_000 * SLOT_HOURS;
     gridImportKwh += importKwh;
     gridExportKwh += exportKwh;
-    importSek += importKwh * slots[index].import_price_sek_per_kwh;
+    const bought = importKwh * slots[index].import_price_sek_per_kwh;
+    const sold = exportKwh * slots[index].export_price_sek_per_kwh;
+    importSek += bought;
     peakSek += importKwh * peakSekPerKwh(limits, 0, importW[index]);
-    exportSek += exportKwh * slots[index].export_price_sek_per_kwh;
+    exportSek += sold;
+    if (slots[index].published_price) quotedSek += bought - sold;
   }
 
   const scored: DispatchScoreStore[] = [];
@@ -877,6 +904,8 @@ export function scoreDispatch(
     start_sek: startSek,
     wear_sek: wearSek,
     service_value_sek: serviceValueSek,
+    billable_sek: importSek - exportSek,
+    billable_quoted_sek: quotedSek,
     grid_import_kwh: gridImportKwh,
     grid_export_kwh: gridExportKwh,
     import_w: importW,

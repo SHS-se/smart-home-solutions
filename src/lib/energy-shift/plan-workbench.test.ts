@@ -745,3 +745,61 @@ Deno.test('a quarter of grid charging lands in the pack, and the export says so'
   assertAlmostEquals(moved, 5 * 0.25 * battery.units_per_kwh(0, dark), 1e-6);
   assert(moved > 0, 'the pack fills');
 });
+
+// ---------------------------------------------------------------------------
+// The half of the answer the utility curves cannot reach.
+// ---------------------------------------------------------------------------
+
+Deno.test('the bill is bought minus sold, and nothing the curves touch', () => {
+  const bench = dispatchWorkbench(realSnapshot());
+  assert(bench !== null);
+  const score = compareWorkbench(bench, bench.planned).planner;
+
+  assertAlmostEquals(score.billable_sek, score.import_sek - score.export_sek, 1e-9);
+  // Explicitly not the objective: wear, starts, the peak shadow price and the
+  // service delivered are all real terms, and none of them is invoiced.
+  assert(score.wear_sek > 0, 'the fixture wears the pack');
+  assert(
+    Math.abs(score.total_sek - score.billable_sek) > 1,
+    'the two must not be the same number by accident',
+  );
+});
+
+Deno.test('the quoted part of the bill is the published quarters only', () => {
+  const bench = dispatchWorkbench(realSnapshot());
+  assert(bench !== null);
+  const score = compareWorkbench(bench, bench.planned).planner;
+
+  let expected = 0;
+  for (let index = 0; index < bench.slots.length; index += 1) {
+    if (!bench.slots[index].published_price) continue;
+    const slot = bench.slots[index];
+    expected += score.import_w[index] / 1_000 * 0.25 * slot.import_price_sek_per_kwh
+      - score.export_w[index] / 1_000 * 0.25 * slot.export_price_sek_per_kwh;
+  }
+
+  assertAlmostEquals(score.billable_quoted_sek, expected, 1e-9);
+  assert(
+    bench.slots.some(slot => !slot.published_price),
+    'the horizon runs past the quoted window, or this test proves nothing',
+  );
+});
+
+Deno.test('doing nothing is cheapest on the bill and worst on the objective', () => {
+  // The trap the caption warns about, and the reason the bill is shown beside
+  // the score rather than instead of it: a plan that serves nobody always wins
+  // on money.
+  const bench = dispatchWorkbench(realSnapshot());
+  assert(bench !== null);
+
+  const comparison = compareWorkbench(bench, { power_w: {}, discharge_w: {} });
+
+  assert(
+    comparison.billableDeltaSek < 0,
+    `doing nothing must cost less: ${comparison.billableDeltaSek}`,
+  );
+  assert(
+    comparison.totalDeltaSek > 0,
+    `and still score worse: ${comparison.totalDeltaSek}`,
+  );
+});

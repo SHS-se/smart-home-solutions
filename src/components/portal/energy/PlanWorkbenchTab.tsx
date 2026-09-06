@@ -491,6 +491,46 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
               </div>
             </div>
           </div>
+          <div className="grid gap-4 sm:grid-cols-3 border-t pt-4">
+            <div>
+              <div className="text-xs text-muted-foreground">
+                {t('Vad planeraren kostar dig', 'What the planner costs you')}
+              </div>
+              <div className="text-xl font-medium tabular-nums">
+                {comparison?.planner.billable_sek.toFixed(2)} SEK
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground">
+                {t('Vad din plan kostar dig', 'What your plan costs you')}
+              </div>
+              <div className="text-xl font-medium tabular-nums">
+                {comparison?.manual.billable_sek.toFixed(2)} SEK
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground">
+                {t('Skillnad på räkningen', 'Difference on the bill')}
+              </div>
+              <div
+                className={`text-xl font-medium tabular-nums ${
+                  (comparison?.billableDeltaSek ?? 0) < -0.005
+                    ? 'text-emerald-600 dark:text-emerald-400'
+                    : (comparison?.billableDeltaSek ?? 0) > 0.005
+                      ? 'text-rose-600 dark:text-rose-400'
+                      : ''
+                }`}
+              >
+                {comparison ? signed(comparison.billableDeltaSek, 2, 'SEK') : '—'}
+              </div>
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {t(
+              'Räkningen är köpt el minus såld el och inget annat — inga värdekurvor, inget slitage, ingen effektavgift (den är en styrsignal, inte en tariff). Den säger vad planen kostar, inte om den var värd det: en plan som inte laddar bilen är alltid billigare. Två tredjedelar av horisonten är modellerade priser, så bara den kvoterade delen är riktiga pengar.',
+              'The bill is energy bought minus energy sold and nothing else — no value curves, no wear, no peak charge (that is a shaping signal, not a tariff). It says what a plan costs, not whether it was worth it: a plan that never charges the car is always cheaper. Two thirds of the horizon is modelled prices, so only the quoted part is real money.',
+            )}
+          </p>
           <p className="text-xs text-muted-foreground">
             {t(
               'Lägre är bättre: talet är kostnad minus levererad nytta, så det är ofta negativt. Är din plan lägre hittade planeraren inte den bästa lösningen som målfunktionen tillåter — felet sitter i sökningen. Är den högre men känns bättre är det en värdekurva som är fel.',
@@ -556,6 +596,25 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
                       <td className="text-right py-1">{signed(right - left, 2, '')}</td>
                     </tr>
                   ))}
+                  <tr className="border-t border-border font-medium">
+                    <td className="py-1">{t('På räkningen', 'On the bill')}</td>
+                    <td className="text-right py-1">{comparison.planner.billable_sek.toFixed(2)}</td>
+                    <td className="text-right py-1">{comparison.manual.billable_sek.toFixed(2)}</td>
+                    <td className="text-right py-1">{signed(comparison.billableDeltaSek, 2, '')}</td>
+                  </tr>
+                  <tr className="border-t border-border/50">
+                    <td className="py-1">{t('därav kvoterat pris', 'of that, at quoted prices')}</td>
+                    <td className="text-right py-1">{comparison.planner.billable_quoted_sek.toFixed(2)}</td>
+                    <td className="text-right py-1">{comparison.manual.billable_quoted_sek.toFixed(2)}</td>
+                    <td className="text-right py-1">
+                      {signed(
+                        comparison.manual.billable_quoted_sek -
+                          comparison.planner.billable_quoted_sek,
+                        2,
+                        '',
+                      )}
+                    </td>
+                  </tr>
                   <tr className="border-t border-border">
                     <td className="py-1">{t('Köpt från nätet', 'Bought from grid')}</td>
                     <td className="text-right py-1">{comparison.planner.grid_import_kwh.toFixed(1)} kWh</td>
