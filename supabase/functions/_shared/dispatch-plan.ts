@@ -494,19 +494,18 @@ function headroomW(
  * it may reason about the prior freely. Inside it, the round trip needs a sell
  * leg the market has actually quoted.
  */
-function sellLegIsPublished(
-  slots: DispatchSlot[],
-  index: number,
-  roundTrip: number,
-): boolean {
-  if (slots[index].binding !== true) return true;
-  const needed = slots[index].import_price_sek_per_kwh /
-    Math.max(1e-9, roundTrip);
-  for (let ahead = index + 1; ahead < slots.length; ahead += 1) {
-    if (slots[ahead].published_price !== true) continue;
-    if (slots[ahead].import_price_sek_per_kwh > needed) return true;
+// The suffix excludes the current quarter: a purchase cannot be its own sell leg.
+// Prices are immutable for this auction, so this O(n) pass replaces every scan.
+function publishedSellPrices(slots: DispatchSlot[]): number[] {
+  const prices = new Array<number>(slots.length);
+  let highest = -Infinity;
+  for (let index = slots.length - 1; index >= 0; index -= 1) {
+    prices[index] = highest;
+    if (slots[index].published_price === true) {
+      highest = Math.max(highest, slots[index].import_price_sek_per_kwh);
+    }
   }
-  return false;
+  return prices;
 }
 
 /**
@@ -1137,6 +1136,7 @@ function dispatchAuction(
   { maxIterations = 20_000 }: { maxIterations?: number } = {},
 ): DispatchResult {
   const count = slots.length;
+  const sellPrices = publishedSellPrices(slots);
   const powerW: Record<string, number[]> = {};
   const dischargeW: Record<string, number[]> = {};
   const stateByKey: Record<string, number[]> = {};
@@ -1885,7 +1885,10 @@ function dispatchAuction(
             const slot = slots[slotIndex];
             const otherW = occupiedW[slotIndex] - schedule[slotIndex];
             const gridBarred = store.discharge !== undefined &&
-              !sellLegIsPublished(slots, slotIndex, roundTrip);
+              slots[slotIndex].binding === true &&
+              !(sellPrices[slotIndex] >
+                slots[slotIndex].import_price_sek_per_kwh /
+                  Math.max(1e-9, roundTrip));
             const limitW = Math.min(
               headroomW(
                 slot,
@@ -1907,6 +1910,43 @@ function dispatchAuction(
             if (limitW < fullW) fullW = limitW;
           }
           if (fullW <= previousW + 1e-6) continue;
+          if (fullW + 1e-9 < (store.min_power_w ?? 0)) continue;
+          // A fixed-power relay has one executable level. Curve and price
+          // breakpoints cannot introduce another, so price its run directly.
+          if (
+            store.min_power_w === store.max_power_w &&
+            fullW === store.max_power_w
+          ) {
+            const level = Math.round(fullW * 1e6) / 1e6;
+            if (level > previousW + 1e-6 && level <= fullW + 1e-9) {
+              chargeBest[index] = chargeCandidate(
+                store, indices, level, startsRun,
+              );
+            }
+            continue;
+          }
+          // Concavity bounds every charge's average value by the marginal
+          // value of its first unit. If even that cannot pay the cheapest
+          // source, no executable level in this quarter can win. Restrict this
+          // bound to a new single-slot bid: upgrades and drifting run blocks
+          // compare different trajectories.
+          if (
+            span === 1 && previousW === 0 && (store.start_cost_sek ?? 0) >= 0
+          ) {
+            const upperValue = marginalValue(store.curve, state[index]) *
+              store.units_per_kwh(state[index], index) * retention[index];
+            const slot = slots[index];
+            const hasSurplus = slot.pv_w > slot.fixed_load_w + occupiedW[index];
+            const lowerCost = (hasSurplus
+              ? Math.min(
+                slot.import_price_sek_per_kwh,
+                slot.export_price_sek_per_kwh,
+              )
+              : slot.import_price_sek_per_kwh) + (store.wear_sek_per_kwh ?? 0);
+            if (upperValue < lowerCost - 1e-9) {
+              continue;
+            }
+          }
           // Candidate levels stop wherever either the source cost or the curve
           // changes. This applies to every store: valuing an 11 kW EV quarter or
           // a four-quarter pool run at the first infinitesimal unit is precisely
@@ -2051,6 +2091,31 @@ function dispatchAuction(
               state[index],
               index,
             );
+            // Removing energy only moves up a concave marginal-value curve.
+            // Price the most optimistic first unit before enumerating levels.
+            // Peak relief is bounded by the marginal relief at today's import.
+            if (previousW === 0 && (store.min_state ?? -Infinity) >= 0) {
+              const lowerValue = marginalValue(store.curve, state[index]) *
+                statePerKwh * retention[index];
+              const rate = limits.peak_shaping_sek_per_kwh_per_kw;
+              const relief = rate > 0
+                ? rate * overThresholdKw(
+                  limits,
+                  gridImportW(slot, occupiedW[index], otherReturnedW),
+                )
+                : 0;
+              const upperPrice = (store.discharge.export_allowed
+                ? Math.max(
+                  slot.import_price_sek_per_kwh,
+                  slot.export_price_sek_per_kwh,
+                )
+                : slot.import_price_sek_per_kwh) + relief;
+              if (
+                upperPrice - (store.wear_sek_per_kwh ?? 0) < lowerValue - 1e-9
+              ) {
+                continue;
+              }
+            }
             const previousKwh = previousW / 1_000 * SLOT_HOURS;
             const previousSpent = previousKwh * statePerKwh;
             const importBeforeW = gridImportW(

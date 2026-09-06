@@ -1823,11 +1823,23 @@ serve(async (req) => {
         );
         snapshot = thermal.snapshot;
         thermalZones = thermal.zones;
+        const planningStarted = performance.now();
+        console.info("[ENERGY-OPTIMISATION] planning started", {
+          request_id: requestId,
+          slot_count: snapshot.slots.length,
+          device_count: snapshot.device_models.length,
+          thermal_zone_count: thermalZones.length,
+        });
         generated = generateOptimisationPlan(
           snapshot,
           new Date(),
           priceArchive,
         );
+        console.info("[ENERGY-OPTIMISATION] planning completed", {
+          request_id: requestId,
+          elapsed_ms: Math.round(performance.now() - planningStarted),
+          status: generated.status,
+        });
       } catch (error) {
         const detail = describeThrown(error);
         console.error("[ENERGY-OPTIMISATION] snapshot refused", detail, error);

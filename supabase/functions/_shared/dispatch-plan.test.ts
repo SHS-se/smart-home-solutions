@@ -1544,3 +1544,64 @@ Deno.test("start costs are counted per run, from the schedule itself", () => {
     "two runs must pay two start costs",
   );
 });
+
+Deno.test("a 72-hour auction reads published-price flags once", () => {
+  const count = 288;
+  let reads = 0;
+  const slots: DispatchSlot[] = Array.from({ length: count }, () => ({
+    pv_w: 0,
+    fixed_load_w: 600,
+    import_price_sek_per_kwh: 1,
+    export_price_sek_per_kwh: 0.2,
+    binding: true,
+    get published_price() {
+      reads += 1;
+      return false;
+    },
+  }));
+  const result = planDispatch(slots, [batteryStore(count, 1, 3)], LIMITS);
+  assertEquals(result.power_w.battery, new Array(count).fill(0));
+  assertEquals(result.discharge_w.battery, new Array(count).fill(0));
+  // One suffix pass in the auction and one pass in the final scorer.
+  assertEquals(reads, count * 2);
+});
+
+Deno.test("unprofitable dense-curve bids skip level enumeration", () => {
+  const count = 288;
+  let reads = 0;
+  const points = Array.from({ length: 1_000 }, (_, index) => ({
+    get at() {
+      reads += 1;
+      return (index + 1) / 50;
+    },
+    sek_per_unit: 3 - index / 1_000,
+  }));
+  const slots = buildSlots([new Array(count).fill(0)], { importPrice: 1 });
+  const battery = batteryStore(count, 18, 3);
+  battery.curve = { unit: "kwh", points };
+  const result = planDispatch(slots, [battery], LIMITS);
+  assertEquals(result.power_w.battery, new Array(count).fill(0));
+  assertEquals(result.discharge_w.battery, new Array(count).fill(0));
+  // Allows curve compilation, binary searches and final scoring, but not a
+  // thousand-point enumeration in each of 288 quarters. No wall-clock limit.
+  assert(reads < 50_000, `unprofitable bids read ${reads} breakpoints`);
+});
+
+Deno.test("charge pruning preserves negative-price purchases", () => {
+  const slots = buildSlots([new Array(8).fill(0)], { importPrice: -1 });
+  const store = evStore(slots.length, 100, slots.length - 1);
+  store.curve = { unit: "km", points: [{ at: 480, sek_per_unit: 0 }] };
+  const result = planDispatch(slots, [store], LIMITS);
+  assert(result.power_w.ev.some((watts) => watts > 0));
+});
+
+Deno.test("discharge pruning includes profitable marginal peak relief", () => {
+  const slots = buildSlots([new Array(8).fill(0)], { importPrice: 1 });
+  slots.forEach((slot) => slot.fixed_load_w = 10_000);
+  const result = planDispatch(slots, [batteryStore(slots.length, 18, 2)], {
+    ...LIMITS,
+    grid_import_shaping_w: 1_000,
+    peak_shaping_sek_per_kwh_per_kw: 1,
+  });
+  assert(result.discharge_w.battery.some((watts) => watts > 0));
+});
