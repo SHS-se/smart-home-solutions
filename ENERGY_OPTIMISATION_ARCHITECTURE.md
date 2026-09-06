@@ -4688,6 +4688,28 @@ all year: the household has asked for a comfort level its own charge limit
 forbids, so the car can never be satisfied and never stops bidding. Which of
 the two settings gives way is theirs to decide, not the planner's.
 
+#### 8.20.4 The workbench reads today's settings, not the snapshot's (2026-09-06)
+
+A snapshot carries the value curves it was captured with, and the workbench
+re-solves that snapshot — so editing a threshold and coming here showed the
+*old* curve. The worth row said 4.87 SEK/kWh where the curve editor's own chart
+said 2.05 for the same 239 km, and the two numbers were both correct about
+different curves.
+
+Worse than a stale figure, it made the question the editor exists to answer —
+*does this threshold stop the car outbidding the grid?* — unanswerable until a
+replan happened to land. The curves are now read from
+`energy_optimisation_value_curves` and merged over the snapshot's, so a row
+exists only where the household has stated something and the snapshot still
+answers for every other store. A badge says which source is in play.
+
+Both sides of the comparison are re-solved with them, deliberately: "what the
+planner would do under the preferences you hold now" is the useful question,
+and scoring two plans against different curves would not be a comparison at
+all. This is the same correction as the price outlook (§8.20.2's neighbour) —
+a workbench that re-derives an input the deployed plan was given is a workbench
+answering about a different day.
+
 Reading the result: **lower is better** — the score is cost net of service
 delivered, so it is routinely negative. A hand-built plan that scores lower is
 proof the search left money on the table, and the fix is a better solver. One

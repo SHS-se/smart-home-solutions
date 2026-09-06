@@ -124,6 +124,8 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [bench, setBench] = useState<DispatchWorkbench | null>(null);
+  /** Whether the curves in play came from settings or from the snapshot. */
+  const [curveSource, setCurveSource] = useState<'settings' | 'snapshot'>('snapshot');
   // Quarters by default: that is the planner's own resolution, so the editor
   // opens showing exactly what it chose, with the two scores identical and
   // nothing flagged. Anything coarser is already an edit.
@@ -294,11 +296,25 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
     if (!homeId) return;
     setLoading(true);
     setError(null);
-    const { data, error: queryError } = await supabase
-      .from('energy_optimisation_current')
-      .select('snapshot, plan')
-      .eq('home_id', homeId)
-      .maybeSingle();
+    const [{ data, error: queryError }, { data: curveRows }] = await Promise.all([
+      supabase
+        .from('energy_optimisation_current')
+        .select('snapshot, plan')
+        .eq('home_id', homeId)
+        .maybeSingle(),
+      // The curves as they are *now*, not as they were when the plan was made.
+      //
+      // A snapshot carries the value curves it was captured with, so editing a
+      // threshold and coming here showed the old one: the worth row said 4.87
+      // SEK/kWh while the curve editor's own chart said 2.05 for the same 239
+      // km. Worse than a stale number, it made the question the editor exists
+      // to answer — does this threshold stop the car outbidding the grid? —
+      // unanswerable until a replan happened to land.
+      supabase
+        .from('energy_optimisation_value_curves')
+        .select('store_key, unit, points')
+        .eq('home_id', homeId),
+    ]);
     if (queryError || !data?.snapshot) {
       setLoading(false);
       setError(t(
@@ -317,8 +333,21 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
       // was pricing stored energy against a different day from the one the
       // household was reading.
       const stored = data.plan as unknown as OptimisationPlan | null;
+      const snapshot = data.snapshot as unknown as OptimisationSnapshot;
+      // Merged rather than replaced: a row exists only for a curve the
+      // household has edited, and the rest of the snapshot's curves are still
+      // the right answer for the stores they describe.
+      const edited = Object.fromEntries(
+        (curveRows ?? [])
+          .filter(row => Array.isArray(row.points))
+          .map(row => [row.store_key, { unit: row.unit, points: row.points }]),
+      );
+      setCurveSource(Object.keys(edited).length > 0 ? 'settings' : 'snapshot');
       const built = dispatchWorkbench(
-        data.snapshot as unknown as OptimisationSnapshot,
+        {
+          ...snapshot,
+          value_curves: { ...snapshot.value_curves, ...edited },
+        } as OptimisationSnapshot,
         [],
         stored?.price_outlook,
       );
@@ -996,6 +1025,11 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
             </Badge>
             <Badge variant="outline" className="text-[10px]">
               {bench.slots.length} {t('kvartar', 'quarters')}
+            </Badge>
+            <Badge variant="outline" className="text-[10px]">
+              {curveSource === 'settings'
+                ? t('värdekurvor från inställningar', 'curves from settings')
+                : t('värdekurvor från ögonblicksbilden', 'curves from the snapshot')}
             </Badge>
           </div>
         </CardContent>

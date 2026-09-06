@@ -858,3 +858,37 @@ Deno.test('a store with no ceiling has nothing to reach past', () => {
 
   assertEquals(curvesBeyondReach(bench), []);
 });
+
+Deno.test('the worth row reads the curve the household is looking at', () => {
+  // Editing a threshold and coming here showed the curve the snapshot was
+  // captured with: 4.87 SEK/kWh against a curve editor saying 2.05 for the
+  // same 239 km. The workbench takes the snapshot's curves only where settings
+  // hold none, so the two views cannot disagree about what a store is worth.
+  const base = realSnapshot();
+  const edited = {
+    ...base,
+    value_curves: {
+      ...base.value_curves,
+      pool: {
+        unit: 'celsius',
+        points: [
+          { at: 20, sek_per_unit: 40 },
+          { at: 24, sek_per_unit: 0 },
+        ],
+      },
+    },
+  } as typeof base;
+
+  const before = dispatchWorkbench(base);
+  const after = dispatchWorkbench(edited);
+  assert(before !== null && after !== null);
+
+  const worthOf = (bench: DispatchWorkbench) =>
+    storeValueSeries(bench, compareWorkbench(bench, bench.planned).manual)
+      .find(series => series.key === 'pool')!.sekPerKwh[0];
+
+  // The fixture's pool sits at 27.1 °C: worth something on the shipped curve,
+  // worth nothing on one that stops caring at 24.
+  assert(worthOf(before) > 0, 'the shipped curve still values the pool');
+  assertEquals(worthOf(after), 0);
+});
