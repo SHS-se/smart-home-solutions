@@ -40,6 +40,7 @@ import {
   type WorkbenchModel,
   type SlotRange,
   storeLabel,
+  storeValueSeries,
 } from '@/lib/energy-shift/plan-workbench';
 import PlanPanels from './plan/PlanPanels';
 import { useHomeTimeZone } from './HomeTimeZoneContext';
@@ -120,6 +121,8 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
   // nothing flagged. Anything coarser is already an edit.
   const [granularity, setGranularity] = useState<Granularity>('quarter');
   const [draft, setDraft] = useState<WorkbenchDraft>({});
+  /** Quarters the household has opened to selling from store, by column. */
+  const [allowExport, setAllowExport] = useState<boolean[]>([]);
   // `'all'` is the whole horizon; a number indexes `days`. Focusing on one day
   // narrows the chart and the table together — they are two views of the same
   // quarters, and letting them disagree about which quarters is how a reader
@@ -211,8 +214,8 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
   }, [selectedColumn, granularity, day]);
 
   const manual = useMemo(
-    () => (bench && model ? scheduleFromDraft(bench, model, draft) : null),
-    [bench, model, draft],
+    () => (bench && model ? scheduleFromDraft(bench, model, draft, allowExport) : null),
+    [bench, model, draft, allowExport],
   );
 
   const comparison: WorkbenchComparison | null = useMemo(
@@ -221,6 +224,16 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
   );
 
   const [charted, setCharted] = useState<'manual' | 'planner'>('manual');
+
+  const values$ = useMemo(
+    () => (bench && comparison ? storeValueSeries(bench, comparison.manual) : []),
+    [bench, comparison],
+  );
+
+  /** The store whose contract the export row is asking the reader to relax. */
+  const gated = bench?.stores.find(
+    store => store.discharge !== undefined && !store.discharge.export_allowed,
+  );
 
   const chart = useMemo(() => {
     if (!bench || !comparison || !manual) return null;
@@ -290,6 +303,7 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
       } else {
         setBench(built);
         setDraft({});
+        setAllowExport([]);
         setDay(0);
       }
     } catch (thrown) {
@@ -575,12 +589,17 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
                   onClick={() => {
                     setGranularity(option);
                     setDraft({});
+                    setAllowExport([]);
                   }}
                 >
                   {option === 'hour' ? t('1 tim', '1 hour') : t('15 min', '15 min')}
                 </Button>
               ))}
-              <Button size="sm" variant="ghost" onClick={() => setDraft({})}>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => { setDraft({}); setAllowExport([]); }}
+              >
                 <RotateCcw className="w-3.5 h-3.5 mr-1" />
                 {t('Återställ', 'Reset')}
               </Button>
@@ -654,6 +673,34 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
                     </td>
                   ))}
                 </tr>
+                {values$.map(series => (
+                  <tr key={`${series.key}-value`} className="border-t">
+                    <td className="sticky left-0 z-10 bg-background py-1 pr-3 text-muted-foreground">
+                      <div>{series.label} — {t('värde', 'worth')}</div>
+                      <div className="text-[10px]">{t('SEK/kWh lagrad', 'SEK/kWh stored')}</div>
+                    </td>
+                    {shown.map(index => {
+                      const slots = model!.columns[index].slots;
+                      const sek = slots.reduce(
+                        (total, slot) => total + (series.sekPerKwh[slot] ?? 0),
+                        0,
+                      ) / slots.length;
+                      // Above what the quarter costs, another kWh pays for
+                      // itself; below what the grid charges, spending one does.
+                      const dear = sek > model!.columns[index].importSekPerKwh;
+                      return (
+                        <td
+                          key={index}
+                          className={`py-1 px-1 text-center whitespace-nowrap tabular-nums ${column(index)} ${
+                            dear ? 'text-sky-600 dark:text-sky-400 font-medium' : ''
+                          }`}
+                        >
+                          {sek.toFixed(2)}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
                 {model!.rows.map(row => (
                   <tr key={row.id} className="border-t">
                     <td className="sticky left-0 z-10 bg-background py-1 pr-3">
@@ -680,6 +727,36 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
                     ))}
                   </tr>
                 ))}
+                {gated && (
+                  <tr className="border-t">
+                    <td className="sticky left-0 z-10 bg-background py-1 pr-3">
+                      <div>{t('Tillåt export från batteri', 'Allow battery export')}</div>
+                      <div className="text-[10px] text-muted-foreground">
+                        {t('per kvart', 'per quarter')}
+                      </div>
+                    </td>
+                    {shown.map(index => (
+                      <td key={index} className={`py-0.5 px-0.5 text-center ${column(index)}`}>
+                        <button
+                          type="button"
+                          aria-pressed={allowExport[index] === true}
+                          onClick={() => setAllowExport(current => {
+                            const next = [...current];
+                            next[index] = !next[index];
+                            return next;
+                          })}
+                          className={`h-6 w-[52px] rounded border text-[10px] ${
+                            allowExport[index]
+                              ? 'bg-emerald-600 text-white border-emerald-600'
+                              : 'bg-background text-muted-foreground'
+                          }`}
+                        >
+                          {allowExport[index] ? t('på', 'on') : t('av', 'off')}
+                        </button>
+                      </td>
+                    ))}
+                  </tr>
+                )}
                 {comparison && (
                   <tr className="border-t">
                     <td className="sticky left-0 z-10 bg-background py-1 pr-3">

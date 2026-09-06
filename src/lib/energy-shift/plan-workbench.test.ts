@@ -4,6 +4,7 @@ import {
   buildWorkbenchExport,
   buildWorkbenchModel,
   gridWattsAt,
+  storeValueSeries,
   compareWorkbench,
   executableKw,
   scheduleFromDraft,
@@ -15,6 +16,7 @@ import {
 } from '../../../supabase/functions/_shared/energy-optimisation.ts';
 import { snapshot as realSnapshot } from './optimisation-snapshot.fixture.ts';
 import type { UtilityCurve } from '../../../supabase/functions/_shared/store-value.ts';
+import type { DispatchSchedule } from '../../../supabase/functions/_shared/dispatch-plan.ts';
 
 const START = Date.parse('2026-09-05T06:00:00.000Z');
 const SLOTS = 8;
@@ -455,4 +457,131 @@ Deno.test('an export carries both plans, their inputs and where they came from',
   // The heavy per-quarter series are in `quarters`, not duplicated in `scores`.
   assert(!('import_w' in parsed.scores.manual), 'no duplicated series');
   assert(!('state' in parsed.scores.planner), 'no duplicated trajectories');
+});
+
+// ---------------------------------------------------------------------------
+// Balancing a hand-typed figure, and asking what selling would be worth.
+// ---------------------------------------------------------------------------
+
+/** A quarter's net grid flow under a schedule, straight from the physics. */
+const netAt = (bench: DispatchWorkbench, schedule: DispatchSchedule, slot: number) =>
+  bench.slots[slot].pv_w
+  + bench.stores.reduce((t, s) => t + (schedule.discharge_w[s.key]?.[slot] ?? 0), 0)
+  - bench.slots[slot].fixed_load_w
+  - bench.stores.reduce((t, s) => t + (schedule.power_w[s.key]?.[slot] ?? 0), 0);
+
+Deno.test('a hand-rounded overshoot is trimmed onto the load it meant to cover', () => {
+  // 0.7 kW typed against a 676 W load is not a decision to sell 24 W, and the
+  // grid row should not read as one.
+  const bench = dispatchWorkbench(realSnapshot());
+  assert(bench !== null);
+  const model = buildWorkbenchModel(bench, 'quarter');
+  const battery = model.rows.find(row => row.direction === 'discharge');
+  assert(battery !== undefined, 'this home has a pack');
+  const covers = bench.slots[0].fixed_load_w - bench.slots[0].pv_w;
+  assert(covers > 200, 'the first quarter has a load to cover');
+
+  // Built on the planner's own row with one quarter changed: zeroing the rest
+  // would leave the pack overfull later and the breach under test would be
+  // buried in overflow the edit caused elsewhere.
+  const schedule = scheduleFromDraft(bench, model, {
+    [battery.id]: model.planned[battery.id].map(
+      (kw, i) => (i === 0 ? (covers + 50) / 1_000 : kw),
+    ),
+  });
+
+  assertAlmostEquals(schedule.discharge_w.battery[0], covers, 1e-6);
+  assertAlmostEquals(netAt(bench, schedule, 0), 0, 1e-6);
+  assertEquals(
+    compareWorkbench(bench, schedule).introduced
+      .filter(entry => entry.message.includes('discharges into export')),
+    [],
+  );
+});
+
+Deno.test('a sale the household actually asked for is left alone', () => {
+  const bench = dispatchWorkbench(realSnapshot());
+  assert(bench !== null);
+  const model = buildWorkbenchModel(bench, 'quarter');
+  const battery = model.rows.find(row => row.direction === 'discharge');
+  assert(battery !== undefined);
+  const covers = bench.slots[0].fixed_load_w - bench.slots[0].pv_w;
+
+  // Half a kilowatt beyond the load is five times the editor's resolution.
+  const schedule = scheduleFromDraft(bench, model, {
+    [battery.id]: model.planned[battery.id].map(
+      (kw, i) => (i === 0 ? (covers + 500) / 1_000 : kw),
+    ),
+  });
+
+  assertAlmostEquals(schedule.discharge_w.battery[0], covers + 500, 1e-6);
+  assertAlmostEquals(netAt(bench, schedule, 0), 500, 1e-6);
+});
+
+Deno.test('a quarter opened to export prices the sale instead of refusing it', () => {
+  const bench = dispatchWorkbench(realSnapshot());
+  assert(bench !== null);
+  const model = buildWorkbenchModel(bench, 'quarter');
+  const battery = model.rows.find(row => row.direction === 'discharge');
+  assert(battery !== undefined);
+  const covers = bench.slots[0].fixed_load_w - bench.slots[0].pv_w;
+  const selling = {
+    [battery.id]: model.planned[battery.id].map(
+      (kw, i) => (i === 0 ? (covers + 500) / 1_000 : kw),
+    ),
+  };
+
+  const refused = compareWorkbench(bench, scheduleFromDraft(bench, model, selling));
+  const permitted = compareWorkbench(
+    bench,
+    scheduleFromDraft(bench, model, selling, model.columns.map((_c, i) => i === 0)),
+  );
+
+  const soldAt = (comparison: typeof refused) => comparison.introduced.filter(
+    entry => entry.message.includes('discharges into export'),
+  );
+  assert(soldAt(refused).length > 0, 'without the permit the contract stands');
+  assertEquals(soldAt(permitted), []);
+  // The energy is priced either way — the permit changes what is allowed, not
+  // what it is worth — so the two schedules score identically.
+  assertAlmostEquals(permitted.manual.total_sek, refused.manual.total_sek, 1e-9);
+});
+
+Deno.test('a quarter that balances reports no flow at all', () => {
+  // Float error over 288 quarters produced 1.1e-13 W, which read as a sale.
+  const bench = dispatchWorkbench(realSnapshot());
+  assert(bench !== null);
+  const score = compareWorkbench(bench, bench.planned).manual;
+
+  for (let index = 0; index < bench.slots.length; index += 1) {
+    const flow = Math.abs(gridWattsAt(score, index));
+    assert(
+      flow === 0 || flow > 1e-6,
+      `slot ${index} reports ${flow} W, which is noise rather than power`,
+    );
+  }
+});
+
+Deno.test('what a store holds is priced per kWh delivered, not per its own unit', () => {
+  // The car's curve is over kilometres. Read raw it is nonsense beside a price;
+  // through its own efficiency it is the number the objective compares.
+  const bench = dispatchWorkbench(realSnapshot());
+  assert(bench !== null);
+  const score = compareWorkbench(bench, bench.planned).manual;
+
+  const series = storeValueSeries(bench, score);
+
+  assertEquals(series.length, bench.stores.length);
+  for (const entry of series) {
+    assertEquals(entry.sekPerKwh.length, bench.slots.length);
+    assert(
+      entry.sekPerKwh.every(value => Number.isFinite(value) && value >= 0),
+      `${entry.key} must be priced everywhere`,
+    );
+  }
+  const pool = series.find(entry => entry.key === 'pool');
+  assert(pool !== undefined);
+  // A pool below its band is worth more than the dearest quarter of the day;
+  // that is exactly why the planner heats it.
+  assert(Math.max(...pool.sekPerKwh) > 1, `pool tops out at ${Math.max(...pool.sekPerKwh)}`);
 });

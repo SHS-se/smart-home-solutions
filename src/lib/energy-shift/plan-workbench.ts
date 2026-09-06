@@ -21,6 +21,7 @@ import {
   type DispatchScore,
 } from '../../../supabase/functions/_shared/dispatch-plan';
 import type { DispatchStore } from '../../../supabase/functions/_shared/dispatch-plan';
+import { marginalValueHeld } from '../../../supabase/functions/_shared/store-value';
 import type { DispatchWorkbench } from '../../../supabase/functions/_shared/energy-optimisation';
 import { splitConsumption, type ConsumptionSeries } from './consumption-series';
 
@@ -183,14 +184,33 @@ function quarterWatts(
   return offset < held ? level * 1_000 : 0;
 }
 
+/**
+ * Residual grid flow a hand-typed figure is allowed to be wrong by.
+ *
+ * The editor's boxes are deliberately coarse — nobody wants to think in watts —
+ * so covering a 676 W load is typed as 0.7 kW and leaves 24 W going the other
+ * way. That residual is hand-rounding, not a decision: it makes the grid row
+ * read as a sale nobody meant to make, and it trips the pack's export contract
+ * over a twentieth of a kilowatt-hour. A tenth of a kilowatt is the editor's own
+ * resolution, so anything inside it is the typing, and anything outside it is
+ * the household actually asking to sell.
+ */
+const BALANCE_W = 100;
+
 /** Expand the edited columns back into the quarters the planner works in. */
 export function scheduleFromDraft(
   workbench: DispatchWorkbench,
   model: WorkbenchModel,
   draft: WorkbenchDraft,
+  /** Quarters the household has opened to selling from store. */
+  allowExportByColumn: boolean[] = [],
 ): DispatchSchedule {
   const count = workbench.slots.length;
-  const schedule: DispatchSchedule = { power_w: {}, discharge_w: {} };
+  const schedule: DispatchSchedule = {
+    power_w: {},
+    discharge_w: {},
+    allow_export: new Array<boolean>(count).fill(false),
+  };
   for (const store of workbench.stores) {
     schedule.power_w[store.key] = new Array<number>(count).fill(0);
     schedule.discharge_w[store.key] = new Array<number>(count).fill(0);
@@ -208,7 +228,69 @@ export function scheduleFromDraft(
       }
     });
   }
+  model.columns.forEach((column, columnIndex) => {
+    for (const slot of column.slots) {
+      schedule.allow_export![slot] = allowExportByColumn[columnIndex] === true;
+    }
+  });
+
+  // Trim a hand-rounded overshoot back onto the load it was meant to cover.
+  // Only ever downwards: this removes energy nobody asked to send, and never
+  // invents any to make a quarter look tidy.
+  for (let index = 0; index < count; index += 1) {
+    const slot = workbench.slots[index];
+    let occupied = 0;
+    let returned = 0;
+    for (const store of workbench.stores) {
+      occupied += schedule.power_w[store.key]?.[index] ?? 0;
+      returned += schedule.discharge_w[store.key]?.[index] ?? 0;
+    }
+    const net = slot.pv_w + returned - slot.fixed_load_w - occupied;
+    if (!(net > 0) || net > BALANCE_W || returned <= 0) continue;
+    const scale = Math.max(0, returned - net) / returned;
+    for (const store of workbench.stores) {
+      const out = schedule.discharge_w[store.key];
+      if (out) out[index] *= scale;
+    }
+  }
   return schedule;
+}
+
+/**
+ * What another kilowatt-hour is worth to each store, quarter by quarter.
+ *
+ * The number the whole objective turns on, and the one a reader needs beside
+ * the price to see why a quarter went the way it did: the pack charges while
+ * this sits above what the energy costs and discharges while it sits below what
+ * the grid is charging. Stated per kWh *delivered*, so a curve over kilometres
+ * is already through the car's own efficiency and can be read against a price.
+ *
+ * `marginalValueHeld` rather than `marginalValue`: what is *held* at the top of
+ * the curve is still worth the top of it, and the buy-side figure collapsing to
+ * zero at full would read as "this energy is worthless" beside a discharge that
+ * is being priced at anything but.
+ */
+export interface StoreValueSeries {
+  key: string;
+  label: string;
+  stateUnit: string;
+  sekPerKwh: number[];
+}
+
+export function storeValueSeries(
+  workbench: DispatchWorkbench,
+  score: DispatchScore,
+): StoreValueSeries[] {
+  return workbench.stores.map(store => ({
+    key: store.key,
+    label: storeLabel(store.key),
+    stateUnit: store.curve.unit,
+    sekPerKwh: workbench.slots.map((_slot, index) => {
+      const state = score.state[store.key]?.[index] ?? store.initial_state;
+      return marginalValueHeld(store.curve, state) *
+        store.units_per_kwh(state, index);
+    }),
+  }));
 }
 
 export interface WorkbenchComparison {
@@ -435,6 +517,8 @@ export interface WorkbenchExport {
   quarters: {
     start: string;
     binding: boolean;
+    /** Whether the household opened this quarter to selling from store. */
+    allow_store_export: boolean;
     pv_w: number;
     fixed_load_w: number;
     import_price_sek_per_kwh: number;
@@ -502,6 +586,7 @@ export function buildWorkbenchExport(
     quarters: bench.slots.map((slot, index) => ({
       start: new Date(bench.slot_start_ms[index]).toISOString(),
       binding: slot.binding !== false,
+      allow_store_export: manual.allow_export?.[index] === true,
       pv_w: slot.pv_w,
       fixed_load_w: slot.fixed_load_w,
       import_price_sek_per_kwh: slot.import_price_sek_per_kwh,

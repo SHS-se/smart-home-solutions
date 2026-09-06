@@ -197,6 +197,18 @@ test.describe('plan workbench', () => {
       expect(visible).toBe(true);
     }).toPass({ timeout: 15_000 });
 
+    // What a stored kWh is worth, beside the price it is judged against.
+    await expect(page.locator('tr', { hasText: /Home battery — worth|— värde/ }).first())
+      .toBeVisible();
+
+    // The export permit is a switch per quarter, not a setting for the horizon.
+    const permit = page.locator('tr', { hasText: /Allow battery export|Tillåt export/ }).first();
+    await expect(permit).toBeVisible();
+    const firstSwitch = permit.locator('button').first();
+    await expect(firstSwitch).toHaveAttribute('aria-pressed', 'false');
+    await firstSwitch.click();
+    await expect(firstSwitch).toHaveAttribute('aria-pressed', 'true');
+
     // And the whole comparison leaves the machine as one file.
     const download = page.waitForEvent('download');
     await page.getByRole('button', { name: /Export|Exportera/ }).click();
@@ -209,5 +221,8 @@ test.describe('plan workbench', () => {
     expect(payload.format).toBe('shs.plan-workbench.v1');
     expect(payload.quarters).toHaveLength(288);
     expect(payload.scores.planner.total_sek).toBeLessThan(0);
+    // The permit travels with the plan, so a schedule can be read back whole.
+    expect(payload.quarters.filter((q: { allow_store_export: boolean }) => q.allow_store_export))
+      .toHaveLength(1);
   });
 });

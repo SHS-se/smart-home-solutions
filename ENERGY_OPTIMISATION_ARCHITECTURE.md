@@ -4552,6 +4552,32 @@ And a breach now carries its quarter as data rather than in its sentence
 reader to that column — "slot 58" is a number nobody holds, and a plan is
 corrected by looking at 10:30.
 
+The editor also shows **what a stored kilowatt-hour is worth**, per store, per
+quarter, stated in SEK/kWh *delivered* so a curve over kilometres is already
+through the car's own efficiency and can be read directly against the price two
+rows above it. It uses `marginalValueHeld`, not `marginalValue`: what is held at
+the top of a curve is still worth the top of it, and a buy-side figure
+collapsing to zero at full would read as "this energy is worthless" beside a
+discharge being priced at anything but. This is the number the whole objective
+turns on, and until now it was only visible in the store-decisions table after
+the fact.
+
+Two things follow from the boxes being deliberately coarse. A hand-typed figure
+is **balanced onto the load it meant to cover**: 0.7 kW against a 676 W load is
+not a decision to sell 24 W, so a residual export inside the editor's own 0.1 kW
+resolution is trimmed off the discharge — downwards only, never inventing energy
+to make a quarter look tidy. Beyond that resolution it is left alone, because
+then it *is* a decision. And grid flow under a microwatt is reported as zero:
+288 quarters of float error produced 1.1e-13 W, which read as a sale and tripped
+the pack's export contract.
+
+Selling from store is a contract, not a capability, so the editor carries an
+**allow-export switch per quarter** (`DispatchSchedule.allow_export`). Asking
+what an hour of selling would be worth is a legitimate question to put to the
+objective; refusing to price it would make the answer unavailable. The permit
+changes what is *allowed*, never what it is *worth* — both sides score
+identically, which is what makes the answer usable.
+
 Reading the result: **lower is better** — the score is cost net of service
 delivered, so it is routinely negative. A hand-built plan that scores lower is
 proof the search left money on the table, and the fix is a better solver. One

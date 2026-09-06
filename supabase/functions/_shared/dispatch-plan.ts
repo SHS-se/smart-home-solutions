@@ -550,7 +550,27 @@ export interface DispatchSchedule {
   power_w: Record<string, number[]>;
   /** Discharge power per store per slot. Missing stores are treated as idle. */
   discharge_w: Record<string, number[]>;
+  /**
+   * Quarters in which a store may sell into the grid despite its contract.
+   *
+   * A pack whose `export_allowed` is false is not physically incapable of it —
+   * the household has simply not agreed to it. Asking "what would it be worth
+   * if I did, in this hour" is a legitimate question to put to the objective,
+   * and refusing to price it would make the answer unavailable. Absent means
+   * the contract stands.
+   */
+  allow_export?: boolean[];
 }
+
+/**
+ * Grid flow below which a figure is arithmetic noise rather than power.
+ *
+ * A 72-hour projection accumulates float error, and a quarter that balances
+ * exactly comes out as 1.1e-13 W. A sub-microwatt is not a quantity any meter
+ * or inverter represents, so reporting it as an export — or letting it trip the
+ * export contract — describes the arithmetic rather than the house.
+ */
+export const GRID_NOISE_W = 1e-6;
 
 export interface DispatchScoreStore {
   key: string;
@@ -756,8 +776,9 @@ export function scoreDispatch(
   const importW = zeros();
   const exportW = zeros();
   for (let index = 0; index < count; index += 1) {
-    const net = slots[index].pv_w + returnedW[index] -
+    const raw = slots[index].pv_w + returnedW[index] -
       slots[index].fixed_load_w - occupiedW[index];
+    const net = Math.abs(raw) < GRID_NOISE_W ? 0 : raw;
     if (net >= 0) {
       exportW[index] = Math.min(net, limits.grid_export_limit_w);
     } else {
@@ -777,8 +798,9 @@ export function scoreDispatch(
   for (const store of stores) {
     if (!store.discharge || store.discharge.export_allowed) continue;
     for (let index = 0; index < count; index += 1) {
+      if (schedule.allow_export?.[index]) continue;
       if (
-        dischargeByKey[store.key][index] > 1e-9 && exportW[index] > 1e-9
+        dischargeByKey[store.key][index] > 1e-9 && exportW[index] > GRID_NOISE_W
       ) {
         infeasibilities.push({
           slot: index,
