@@ -693,6 +693,19 @@ export function scoreDispatch(
    */
   range?: { from: number; to: number },
 ): DispatchScore {
+  return scoreDispatchWithReuse(slots, stores, limits, schedule, range);
+}
+
+// Only refinement uses this: exactly one store's power changes between trials.
+// Other trajectories, hardware checks and store accounts remain identical.
+function scoreDispatchWithReuse(
+  slots: DispatchSlot[],
+  stores: DispatchStore[],
+  limits: DispatchLimits,
+  schedule: DispatchSchedule,
+  range?: { from: number; to: number },
+  reuse?: { previous: DispatchScore; changedKey: string },
+): DispatchScore {
   const count = slots.length;
   const from = Math.max(0, range?.from ?? 0);
   const to = Math.min(count, range?.to ?? count);
@@ -703,15 +716,22 @@ export function scoreDispatch(
   const stateByKey: Record<string, number[]> = {};
 
   for (const store of stores) {
-    const power = (schedule.power_w[store.key] ?? zeros()).slice(0, count);
-    const discharge = (schedule.discharge_w[store.key] ?? zeros()).slice(
-      0,
-      count,
-    );
+    const inputPower = schedule.power_w[store.key];
+    const inputDischarge = schedule.discharge_w[store.key];
+    const power = inputPower?.length === count
+      ? inputPower
+      : (inputPower ?? zeros()).slice(0, count);
+    const discharge = inputDischarge?.length === count
+      ? inputDischarge
+      : (inputDischarge ?? zeros()).slice(0, count);
     while (power.length < count) power.push(0);
     while (discharge.length < count) discharge.push(0);
     powerByKey[store.key] = power;
     dischargeByKey[store.key] = discharge;
+    if (reuse && store.key !== reuse.changedKey) {
+      stateByKey[store.key] = reuse.previous.state[store.key];
+      continue;
+    }
 
     // Project the trajectory unclamped so a schedule that overfills or drains a
     // store is reported rather than quietly bounded into feasibility.
@@ -874,6 +894,17 @@ export function scoreDispatch(
   let wearSek = 0;
   let startSek = 0;
   for (const store of stores) {
+    if (reuse && store.key !== reuse.changedKey) {
+      const account = reuse.previous.stores.find((value) =>
+        value.key === store.key
+      )!;
+      serviceValueSek += account.service_value_sek;
+      wearSek += account.wear_sek;
+      startSek += account.start_sek;
+      continuitySek += account.runs * (limits.load_start_preference_sek ?? 0);
+      scored.push(account);
+      continue;
+    }
     const power = powerByKey[store.key];
     const discharge = dischargeByKey[store.key];
     const state = stateByKey[store.key];
@@ -885,13 +916,19 @@ export function scoreDispatch(
     let chargedKwh = 0;
     let dischargedKwh = 0;
     for (let index = from; index < to; index += 1) {
-      storeValue += (store.usage_weight[index] ?? 0) *
-        valueOfMove(store.curve, store.initial_state, state[index]);
+      const usageWeight = store.usage_weight[index] ?? 0;
+      if (usageWeight !== 0) {
+        storeValue += usageWeight *
+          valueOfMove(store.curve, store.initial_state, state[index]);
+      }
       storeWear += SLOT_HOURS / 1_000 *
         ((power[index] + discharge[index]) * (store.wear_sek_per_kwh ?? 0) +
-          discharge[index] *
-            (store.discharge?.state_per_kwh_out(state[index], index) ?? 0) *
-            (store.discharge?.cycling_cost_sek_per_unit ?? 0));
+          (discharge[index] > 0 &&
+              (store.discharge?.cycling_cost_sek_per_unit ?? 0) !== 0
+            ? discharge[index] *
+              store.discharge!.state_per_kwh_out(state[index], index) *
+              store.discharge!.cycling_cost_sek_per_unit!
+            : 0));
       chargedKwh += power[index] / 1_000 * SLOT_HOURS;
       dischargedKwh += discharge[index] / 1_000 * SLOT_HOURS;
     }
@@ -964,6 +1001,15 @@ export function refineDispatchCosts(
     for (const store of stores) {
       const power = schedule.power_w[store.key];
       if (!power) continue;
+      const executable = (power: number) => {
+        const minimum = store.min_power_w ?? 0;
+        const step = store.power_step_w ?? 0;
+        return power <= 1e-9 || (power + 1e-6 >= minimum &&
+          (step <= 0 || Math.abs(
+                (power - minimum) / step -
+                  Math.round((power - minimum) / step),
+              ) <= 1e-6));
+      };
       for (let from = 0; from < slots.length; from += 1) {
         if (power[from] <= GRID_NOISE_W) continue;
         for (
@@ -1021,9 +1067,22 @@ export function refineDispatchCosts(
                   slots[to].import_price_sek_per_kwh / roundTrip)
               ) continue;
             }
+            if (
+              !executable(beforeFrom - watts) || !executable(beforeTo + watts)
+            ) continue;
             power[from] = beforeFrom - watts;
             power[to] = beforeTo + watts;
-            const candidate = scoreDispatch(slots, stores, limits, schedule);
+            const candidate = scoreDispatchWithReuse(
+              slots,
+              stores,
+              limits,
+              schedule,
+              undefined,
+              {
+                previous: current,
+                changedKey: store.key,
+              },
+            );
             if (
               candidate.infeasibilities.length === 0 &&
               candidate.stores.every((value, index) =>

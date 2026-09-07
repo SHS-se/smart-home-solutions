@@ -12,6 +12,8 @@ import {
 import { type UtilityCurve, valueOfMove } from "./store-value.ts";
 
 const LIMITS: DispatchLimits = {
+  grid_import_shaping_w: 0,
+  peak_shaping_sek_per_kwh_per_kw: 0,
   grid_import_limit_w: 13_200,
   grid_export_limit_w: 13_200,
 };
@@ -357,6 +359,7 @@ Deno.test("§8.12 #3 — a cloudy tomorrow pulls pool heating into today", () =>
 Deno.test("§8.12 #4 — the ranking between car and pool reverses on state", () => {
   const slots = buildSlots([solarDay(4_000)]);
   const scarce: DispatchLimits = {
+    ...LIMITS,
     grid_import_limit_w: 0, // only surplus is available, so they must compete
     grid_export_limit_w: 13_200,
   };
@@ -388,6 +391,7 @@ Deno.test("the grid import limit is never exceeded", () => {
     importPrice: 0.05,
   });
   const tight: DispatchLimits = {
+    ...LIMITS,
     grid_import_limit_w: 4_000,
     grid_export_limit_w: 13_200,
   };
@@ -857,6 +861,7 @@ Deno.test("§8.12 #2 — the battery competes with the sinks, not against them",
   // nearly empty car must beat storing the same surplus for later.
   const slots = buildSlots([solarDay(5_000)]);
   const scarce: DispatchLimits = {
+    ...LIMITS,
     grid_import_limit_w: 0,
     grid_export_limit_w: 13_200,
   };
@@ -1711,3 +1716,66 @@ for (const kind of ["battery", "ev", "pool"] as const) {
     assertEquals(unavailable.power_w[kind][1], 0);
   });
 }
+
+Deno.test("refinement reuses unchanged nonlinear trajectories across candidate moves", () => {
+  const slots = buildSlots([new Array(8).fill(0)]);
+  const ev = evStore(8, 100, 7);
+  let projections = 0;
+  const pool = poolStore(8, 26);
+  pool.drift = (state) => {
+    projections += 1;
+    return state - (state - 20) * 0.01;
+  };
+  const schedule: DispatchSchedule = {
+    power_w: { ev: [3_000, 0, 3_000, 0, 0, 0, 0, 0] },
+    discharge_w: {},
+  };
+  const limits = {
+    ...LIMITS,
+    grid_ramp_sek_per_kw: 0.05,
+    load_start_preference_sek: 0.25,
+  };
+  const before = scoreDispatch(slots, [ev, pool], limits, schedule);
+  projections = 0;
+  assert(refineDispatchCosts(slots, [ev, pool], limits, schedule).has("ev"));
+  assertEquals(
+    projections,
+    slots.length,
+    "unchanged physics is projected once, not once per trial",
+  );
+  const after = scoreDispatch(slots, [ev, pool], limits, schedule);
+  assertEquals(after.infeasibilities, []);
+  assertEquals(after.state.pool, before.state.pool);
+  assertEquals(after.stores[1], before.stores[1]);
+  assert(
+    after.stores[0].service_value_sek >=
+      before.stores[0].service_value_sek - 1e-8,
+  );
+  assert(after.continuity_sek < before.continuity_sek);
+});
+
+Deno.test("refinement rechecks export restrictions on an unchanged discharging battery", () => {
+  const slots = buildSlots([new Array(4).fill(0)]);
+  const ev = evStore(4, 100, 3);
+  const battery = batteryStore(4, 10, 1);
+  battery.discharge!.export_allowed = false;
+  const schedule: DispatchSchedule = {
+    power_w: { ev: [3_000, 0, 3_000, 0] },
+    discharge_w: { battery: [3_600, 0, 3_600, 0] },
+  };
+  const limits = {
+    ...LIMITS,
+    grid_ramp_sek_per_kw: 0.05,
+    load_start_preference_sek: 0.25,
+  };
+  assertEquals(
+    scoreDispatch(slots, [ev, battery], limits, schedule).infeasibilities,
+    [],
+  );
+  refineDispatchCosts(slots, [ev, battery], limits, schedule);
+  assertEquals(schedule.power_w.ev, [3_000, 0, 3_000, 0]);
+  assertEquals(
+    scoreDispatch(slots, [ev, battery], limits, schedule).infeasibilities,
+    [],
+  );
+});
