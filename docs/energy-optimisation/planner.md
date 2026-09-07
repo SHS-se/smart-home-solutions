@@ -35,13 +35,15 @@ The time weights for continuous warmth, discrete usage, and terminal state must 
 
 Hard constraints restrict feasible schedules. Finite penalties express trade-offs and cannot guarantee compliance. `min_soc` is a physical/commissioned floor. A soft reserve valuation is distinct from it. There is no automatic instruction to reinstate a hard 80% end-of-solar target.
 
+There is no planner minimum-runtime setting. An executable quarter may stand alone; local equipment protection remains the device's responsibility. Optional start/switch costs are soft economic preferences and must be priced consistently by search and scoring, independently of run length. Removing minimum runtime does not introduce a new EV switching penalty.
+
 ## Joint physical model
 
 Every load contributes exactly once to the electrical balance. A separately planned device must be removed from the base-load estimate before its new scheduled power is added. Forecast and control authority are distinct fields.
 
 Optimise interacting resources together: grid import/export; battery charge, discharge, and SOC; EV supported current steps and availability; eligible pool heat; boiler permissions; and room heat. All compete against the same connection limits and any explicit planning ceiling. A separate heuristic placement followed by other loads being added is not evidence of joint optimality.
 
-Constraints include state transitions, capacity, electrical power, simultaneous-flow permissions, supported device modes, minimum run/off time, starts, service deadlines, overrides, and coupled/shared equipment. Initial state and ongoing-run obligations cross the horizon boundary. A device that may only be permitted or influenced must not be represented as fully controllable power without a justified execution model.
+Constraints include state transitions, capacity, electrical power, simultaneous-flow permissions, supported device modes, starts, service deadlines, overrides, and coupled/shared equipment. Initial state and ongoing-run obligations cross the horizon boundary. A device that may only be permitted or influenced must not be represented as fully controllable power without a justified execution model.
 
 Room and tank thermal mass are stores physically, even when their current contracts only expose comfort constraints or duty-cycle inhibition. Those implementation boundaries do not remove their time-shifting economics. [Models and forecasts](models-and-forecasts.md) defines the evidence and capability limits.
 

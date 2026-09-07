@@ -519,9 +519,7 @@ const StoreDecisions: React.FC<{
                                 <TableCell className={`p-2 align-top ${BODY.demand}`}>
                                   <div className="font-semibold text-foreground">{storeLabel(allocation.store_key)}</div>
                                   <div className="mt-1 text-[10px] leading-tight text-muted-foreground">
-                                    {allocation.trigger === 'minimum_run_continuation'
-                                      ? t('Fortsatt minimikörning', 'Minimum-run continuation')
-                                      : t('Accepterat bud', 'Accepted bid')}
+                                    {t('Accepterat bud', 'Accepted bid')}
                                   </div>
                                 </TableCell>
                                 <TableCell className={`p-2 align-top tabular-nums ${BODY.demand}`}>

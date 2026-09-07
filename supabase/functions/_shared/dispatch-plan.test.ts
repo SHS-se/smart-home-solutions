@@ -92,7 +92,7 @@ function poolStore(slots: number, waterC: number): DispatchStore {
     curve: poolCurve,
     initial_state: waterC,
     max_power_w: 3_500,
-    min_run_slots: 4,
+
     start_cost_sek: 0.5,
     retention_per_slot: 0.994,
     // Somebody might swim any afternoon; the weight says when warmth is wanted.
@@ -231,7 +231,7 @@ Deno.test("settling never leaves a compressor run below its minimum", () => {
   const result = planDispatch(slots, stores, LIMITS);
 
   for (const store of stores) {
-    const minRun = store.min_run_slots ?? 1;
+    const minRun = 1;
     if (minRun <= 1) continue;
     const short: string[] = [];
     let block: number[] = [];
@@ -382,27 +382,6 @@ Deno.test("§8.12 #4 — the ranking between car and pool reverses on state", ()
   );
 });
 
-Deno.test("a minimum run is honoured once a compressor starts", () => {
-  const slots = buildSlots([solarDay(9_000)]);
-  const pool = poolStore(slots.length, 24);
-
-  const schedule = planDispatch(slots, [pool], LIMITS).power_w.pool;
-  let run = 0;
-  const runs: number[] = [];
-  for (const value of schedule) {
-    if (value > 0) run += 1;
-    else if (run > 0) {
-      runs.push(run);
-      run = 0;
-    }
-  }
-  if (run > 0) runs.push(run);
-
-  assert(runs.length > 0, "a cold pool on a sunny day must be heated");
-  for (const length of runs) {
-    assert(length >= 4, `every run must respect min_run_slots, got ${length}`);
-  }
-});
 
 Deno.test("the grid import limit is never exceeded", () => {
   const slots = buildSlots([new Array(SLOTS_PER_DAY).fill(0)], {
@@ -1095,7 +1074,7 @@ Deno.test("a discrete charger chooses the best complete current setpoint", () =>
   assertEquals(result.power_w.charger, [4_000]);
 });
 
-Deno.test("a compressor minimum run must clear its complete block cost", () => {
+Deno.test("a fixed-power load can take a single cheap quarter", () => {
   const prices = [0.1, 10, 10, 10];
   const slots: DispatchSlot[] = prices.map((price) => ({
     pv_w: 0,
@@ -1111,7 +1090,6 @@ Deno.test("a compressor minimum run must clear its complete block cost", () => {
     },
     initial_state: 0,
     max_power_w: 1_000,
-    min_run_slots: 4,
     retention_per_slot: 1,
     usage_weight: new Array(slots.length).fill(0),
     terminal_weight: 1,
@@ -1121,7 +1099,7 @@ Deno.test("a compressor minimum run must clear its complete block cost", () => {
 
   const result = planDispatch(slots, [store], LIMITS);
 
-  assertEquals(result.power_w[store.key], [0, 0, 0, 0]);
+  assertEquals(result.power_w[store.key], [1_000, 0, 0, 0]);
 });
 
 Deno.test("load-cover discharge is valued at import, never export", () => {
@@ -1377,7 +1355,6 @@ function discreteSolarCar() {
     max_power_w: 11_040,
     min_power_w: 3_450,
     power_step_w: 690,
-    min_run_slots: 1,
     retention_per_slot: 1,
     terminal_weight: 1,
     usage_weight: new Array(8).fill(0),

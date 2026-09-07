@@ -136,7 +136,7 @@ const input = (
         deadline: new Date(start + 8 * 60 * 60_000).toISOString(),
         required_kwh: 2,
         control: { type: "fixed_power", power_w: 2_000 },
-        min_run_slots: 4,
+
         priority: 2,
         baseline_preferred_start: slots[12].start,
       },
@@ -221,7 +221,7 @@ const routedEvService = (snapshot: OptimisationSnapshot) => ({
     phase_count: 3,
     voltage_v: 230,
   },
-  min_run_slots: 2,
+
   priority: 3,
 });
 
@@ -1116,7 +1116,6 @@ Deno.test("EV charging is planned as valid discrete current setpoints", () => {
         phase_count: 3,
         voltage_v: 230,
       },
-      min_run_slots: 2,
       priority: 3,
       baseline_preferred_start: base.slots[0].start,
     }],
@@ -1267,7 +1266,6 @@ Deno.test("existing EV snapshots remain executable while telemetry rolls forward
         phase_count: 3,
         voltage_v: 230,
       },
-      min_run_slots: 2,
       priority: 3,
       baseline_preferred_start: base.slots[0].start,
     }],
@@ -1669,7 +1667,6 @@ Deno.test("overlapping commitments cannot double-book one physical device", () =
       deadline,
       required_kwh: 1.5,
       control: { type: "fixed_power", power_w: 3_000 },
-      min_run_slots: 2,
       priority: 1,
     },
     {
@@ -1679,7 +1676,6 @@ Deno.test("overlapping commitments cannot double-book one physical device", () =
       deadline,
       required_kwh: 1.5,
       control: { type: "fixed_power", power_w: 3_000 },
-      min_run_slots: 2,
       priority: 1,
     },
   ];
@@ -1708,7 +1704,7 @@ Deno.test("a schema 5 snapshot keeps the planner it was built for", () => {
   const plan = generateOptimisationPlan(input(), new Date(NOW));
 
   assertEquals(plan.schema_version, 5);
-  assertEquals(plan.model_version, "thermal-room-planner-v8");
+  assertEquals(plan.model_version, "thermal-room-planner-v9");
 });
 
 Deno.test("schema 6 with pool state dispatches by temperature, not by budget", () => {
@@ -1724,7 +1720,7 @@ Deno.test("schema 6 with pool state dispatches by temperature, not by budget", (
   const plan = generateOptimisationPlan(snapshot, new Date(NOW));
 
   assertEquals(plan.schema_version, 6);
-  assertEquals(plan.model_version, "marginal-value-planner-v22");
+  assertEquals(plan.model_version, "marginal-value-planner-v23");
   // Asserted explicitly: an earlier version of this test checked the pool
   // energy but not the status, and so passed while every schema 6 plan was
   // reported infeasible by validations that still assumed fixed blocks.
@@ -1924,14 +1920,7 @@ Deno.test("the battery only grid-charges the import spike and leaves room for so
   );
 });
 
-Deno.test("a store runs for as long as its service says it must", () => {
-  // The snapshot declares a minimum run per service, and schema 6 dispatches
-  // the pool and the car as stores rather than as service blocks — where the
-  // pool's minimum was hard-coded and the car's was dropped entirely. So a
-  // charger contract asking for half an hour got quarter-hour cycling, and a
-  // deployed plan switched the car on and off thirteen times in an evening.
-  // A price that alternates quarter by quarter is what a car chases: without a
-  // minimum the cheapest half of the evening is a comb, not a session.
+Deno.test("EV charging has no planner minimum runtime", () => {
   const base = horizon();
   const jagged = base.slots.map((slot, index) => ({
     ...slot,
@@ -1939,7 +1928,7 @@ Deno.test("a store runs for as long as its service says it must", () => {
       ? null
       : (index % 2 === 0 ? 1.1 : 2.3),
   }));
-  const evService = { ...routedEvService(base), min_run_slots: 4 };
+  const evService = routedEvService(base);
   const snapshot = horizon({
     slots: jagged,
     pool: { water_temperature_c: 28.4, volume_m3: 55 },
@@ -1983,11 +1972,8 @@ Deno.test("a store runs for as long as its service says it must", () => {
   if (block > 0 && block < 4) short.push(`${block} slots at the horizon end`);
 
   assert(charged > 0, "the car never charged, so nothing was tested");
-  assertEquals(
-    short.slice(0, 3),
-    [],
-    "a charger asked for four slots must not be cycled in one",
-  );
+  assert(short.length > 0, "a short economic charging run is permitted");
+
 });
 
 Deno.test("a half-charged car takes surplus rather than letting it be exported", () => {
@@ -2596,7 +2582,6 @@ Deno.test("a single-phase charger is planned at the power its cable delivers", (
       phase_count: phases,
       voltage_v: 230,
     },
-    min_run_slots: 1,
     priority: 3,
   });
   const peak = (phases: number) => {

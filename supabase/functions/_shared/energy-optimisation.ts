@@ -76,6 +76,8 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6] as const;
  * meaningless. v8 makes comfort schedules room-temperature constraints and
  * moves preheating inside the shared electrical objective. v10 replaces the
  * battery's peak-price step with the weighted merit order of displaced import.
+ * v23 removes planner minimum runtimes and enforces both state bounds and
+ * no-export permissions after settlement changes the schedule.
  * v22 keeps unplugged vehicles in planning and reschedules discrete charge across the horizon.
  * v21 evaluates solar charging and later load discharge as a joint transfer.
  * v20 reopens partial charge setpoints when the evolving schedule leaves room
@@ -103,11 +105,11 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6] as const;
  * by how much of the horizon remains, which is what lets it decline a dear day
  * and bank a sunny one (§8.13).
  * v11 integrates every sizeable curve move, applies configured EV curves,
- * prices minimum runs as complete blocks and records exact quarter evidence.
+ * prices executable setpoints and records exact quarter evidence.
  */
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v22";
-/** The planner a schema 5 snapshot still receives, unchanged. */
-export const LEGACY_MODEL_VERSION = "thermal-room-planner-v8";
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v23";
+/** Schema 5 service sizing also no longer pads energy to a minimum runtime. */
+export const LEGACY_MODEL_VERSION = "thermal-room-planner-v9";
 export const SLOT_MINUTES = 15;
 export const SLOT_HOURS = SLOT_MINUTES / 60;
 export const MAX_FORECAST_SLOTS = 72 * 4;
@@ -242,7 +244,6 @@ interface ServiceWindowInput {
 
 interface DispatchableServiceInputBase extends ServiceWindowInput {
   required_kwh: number;
-  min_run_slots: number;
   baseline_preferred_start?: string;
 }
 
@@ -1315,17 +1316,12 @@ export function validateSnapshot(snapshot: OptimisationSnapshot): string[] {
       !Number.isInteger(service?.priority) || service.priority < 1
     ) errors.push(`services[${index}] has invalid energy or priority`);
     const control = service?.control;
-    const minimumRunSlots = "min_run_slots" in service
-      ? service.min_run_slots
-      : Number.NaN;
     if (!control || typeof control !== "object") {
       errors.push(`services[${index}].control is missing`);
     } else if (control.type === "fixed_power") {
       if (
         service.device === "boiler" ||
-        !inRange(control.power_w, 100, 100_000) ||
-        !Number.isInteger(minimumRunSlots) ||
-        !inRange(minimumRunSlots, 1, 96)
+        !inRange(control.power_w, 100, 100_000)
       ) {
         errors.push(`services[${index}] has invalid fixed power`);
       }
@@ -1349,8 +1345,7 @@ export function validateSnapshot(snapshot: OptimisationSnapshot): string[] {
           control.max_current_a * wattsPerAmp(control),
           100,
           100_000,
-        ) || !Number.isInteger(minimumRunSlots) ||
-        !inRange(minimumRunSlots, 1, 96)
+        )
       ) {
         errors.push(`services[${index}] has invalid discrete current control`);
       }
@@ -1595,7 +1590,7 @@ function serviceShape(
   if (!isDiscreteCurrentService(service)) {
     const slotKwh = service.control.power_w / 1_000 * SLOT_HOURS;
     const count = Math.max(
-      service.min_run_slots,
+      1,
       ceilEnergySteps(service.required_kwh / slotKwh),
     );
     return {
@@ -1611,7 +1606,7 @@ function serviceShape(
   const maxSlotKwh = control.max_current_a * perAmpSlotKwh;
   const stepSlotKwh = control.current_step_a * perAmpSlotKwh;
   const minimumCount = Math.max(
-    service.min_run_slots,
+    1,
     ceilEnergySteps(service.required_kwh / maxSlotKwh),
   );
   const spreadCount = Math.max(
@@ -2343,32 +2338,10 @@ function buildDispatchStores(
   snapshot: OptimisationSnapshot,
   derivedBatteryValue: DerivedBatteryValueCurve | null,
 ): DispatchStore[] | null {
-  // The snapshot declares a minimum run per service, and it means the same
-  // thing whether the device is planned as a block or dispatched as a store:
-  // the hardware cannot be cycled faster than this. Schema 6 was reading
-  // neither — the pool's was hard-coded and the car's dropped — so a charger
-  // contract asking for half an hour got quarter-hour cycling, and a deployed
-  // plan switched the car on and off thirteen times in one evening.
-  const declaredMinRun = (
-    device: ServiceInput["device"],
-  ): number | undefined => {
-    for (const service of snapshot.services) {
-      if (service.device !== device) continue;
-      const declared = "min_run_slots" in service
-        ? service.min_run_slots
-        : undefined;
-      if (typeof declared === "number" && declared >= 1) {
-        return Math.round(declared);
-      }
-    }
-    return undefined;
-  };
-
   /**
    * The fixed power the installation states its pool heat pump draws.
    *
-   * Same argument as `declaredMinRun` above: a hard-coded seed is a guess about
-   * hardware the snapshot already describes. `fixed_power` is also a statement
+   * A hard-coded seed is a guess about hardware the snapshot already describes. `fixed_power` is also a statement
    * that the device has one power and no other, which is what makes the store's
    * minimum equal to its maximum below.
    */
@@ -2456,10 +2429,6 @@ function buildDispatchStores(
       // moment it stops dominating the plan schedules 38 W, 59 W and 340 W
       // tracking PV — a modulation the relay does not have (§8.13).
       min_power_w: poolPowerW,
-      // Four quarters where the installation states nothing: a heat pump that
-      // short-cycles wears out, and that is a property of the hardware rather
-      // than of this plan.
-      min_run_slots: declaredMinRun("pool") ?? 4,
       start_cost_sek: 0.5,
       // Heat is valued as state carried to the horizon edge, discounted by
       // what leaks on the way — the same construction as the battery below,
@@ -2533,7 +2502,6 @@ function buildDispatchStores(
           // occur. Every value below the limit is untouched.
           curve: curveWithinReach(curves.ev, reachableKm),
           initial_state: vehicle.soc * vehicle.capacity_kwh / perKm,
-          min_run_slots: declaredMinRun("ev"),
           // The vehicle refuses charge above its own limit, so this is a
           // hardware bound and not a preference the curve may outbid. Without
           // it `chargeRoomW` returns Infinity and the auction keeps buying
@@ -4103,11 +4071,7 @@ function simulate(
       }
       continue;
     }
-    if (indices.length > 0 && indices.length < service.min_run_slots) {
-      errors.push(
-        `${service.id}: run is shorter than ${service.min_run_slots} slots`,
-      );
-    }
+
     if (
       indices.some((value, index) =>
         index > 0 && value !== indices[index - 1] + 1

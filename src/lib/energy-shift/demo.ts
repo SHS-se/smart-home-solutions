@@ -129,7 +129,7 @@ export function createWebsiteDemoPlan(
         deadline: at(dayStart + 80),
         required_kwh: 8,
         control: { type: 'fixed_power', power_w: 4_000 },
-        min_run_slots: 4,
+
         priority: 2,
         baseline_preferred_start: at(dayStart + 44),
       },
@@ -149,7 +149,6 @@ export function createWebsiteDemoPlan(
       phase_count: 3,
       voltage_v: 230,
     },
-    min_run_slots: 2,
     priority: 3,
     baseline_preferred_start: at(0),
   });

@@ -112,7 +112,6 @@ export function dispatchedEvSnapshot(): OptimisationSnapshotV6 {
         phase_count: 3,
         voltage_v: 230,
       },
-      min_run_slots: 2,
       priority: 3,
       baseline_preferred_start: slots[0].start,
     }],

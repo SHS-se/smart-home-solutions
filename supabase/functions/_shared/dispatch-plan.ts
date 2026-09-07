@@ -72,8 +72,6 @@ export interface DispatchStore {
   min_power_w?: number;
   /** Executable power increment above `min_power_w`. */
   power_step_w?: number;
-  /** Slots a run must last once started. Compressor protection, not taste. */
-  min_run_slots?: number;
   /** Cost of starting a run: cycling wear, and lost efficiency on restart. */
   start_cost_sek?: number;
   /** Wear cost per kWh passed through the store. */
@@ -166,7 +164,7 @@ export interface DispatchLimits {
 export interface DispatchAllocationDiagnostic {
   store_key: string;
   direction: "charge" | "discharge";
-  trigger: "economic_winner" | "minimum_run_continuation";
+  trigger: "economic_winner";
   allocation_order: number;
   run_start_index: number;
   run_slots: number;
@@ -243,7 +241,7 @@ function supportsEnergyTransfers(store: DispatchStore): boolean {
   return store.discharge !== undefined && store.retention_per_slot === 1 &&
     store.usage_weight.every((weight) => weight === 0) &&
     (store.min_power_w ?? 0) === 0 && (store.power_step_w ?? 0) === 0 &&
-    (store.min_run_slots ?? 1) === 1 && (store.start_cost_sek ?? 0) === 0;
+    (store.start_cost_sek ?? 0) === 0;
 }
 
 /** Room for adding state at one quarter and removing it at another. */
@@ -787,19 +785,7 @@ export function scoreDispatch(
       }
     }
 
-    // A run truncated by the edge of the horizon is not a defect: the plan is
-    // receding, and the quarter before it started is not in view either.
-    const minimumRun = store.min_run_slots ?? 1;
-    for (const run of runsOf(power)) {
-      if (run.start === 0 || run.start + run.slots >= count) continue;
-      if (run.slots < minimumRun) {
-        infeasibilities.push({
-          slot: run.start,
-          store_key: store.key,
-          message: `${store.key} runs ${run.slots} quarter(s), short of its ${minimumRun}-quarter minimum`,
-        });
-      }
-    }
+
   }
 
   const occupiedW = zeros();
@@ -1048,7 +1034,7 @@ function cheapestDiscreteProfile(
   const units = store.units_per_kwh(store.initial_state, 0);
   if (
     store.discharge || step <= 0 || store.retention_per_slot !== 1 ||
-    (store.min_run_slots ?? 1) !== 1 || (store.start_cost_sek ?? 0) !== 0 ||
+    (store.start_cost_sek ?? 0) !== 0 ||
     Math.abs(minimum / step - Math.round(minimum / step)) > 1e-9 ||
     store.usage_weight.filter((weight) => weight > 0).length > 1 ||
     slots.some((_slot, i) =>
@@ -1259,7 +1245,7 @@ function dispatchAuction(
     let previousSurplus = 0;
     let addedKwh = 0;
 
-    for (const [offset, index] of indices.entries()) {
+    for (const index of indices) {
       const slot = slots[index];
       const before = candidateState;
       const units = store.units_per_kwh(before, index);
@@ -1321,8 +1307,7 @@ function dispatchAuction(
       parts.push({
         store_key: store.key,
         direction: "charge",
-        trigger: previousPart?.trigger ??
-          (offset === 0 ? "economic_winner" : "minimum_run_continuation"),
+        trigger: "economic_winner",
         allocation_order: 0,
         run_start_index: previousPart?.run_start_index ?? indices[0],
         run_slots: previousPart?.run_slots ?? indices.length,
@@ -1471,7 +1456,7 @@ function dispatchAuction(
    * between them. Beyond the second quarter the trajectory is unchanged.
    *
    * This neighbourhood applies to continuous, lossless storage valued at the
-   * horizon edge. Timed demand, leaking heat and minimum-run/discrete hardware
+   * horizon edge. Timed demand, leaking heat and discrete hardware
    * cannot exchange arbitrary fractions of a charge under that contract.
    */
   const bestSolarExchange = (): ChargeExchange | null => {
@@ -1682,39 +1667,18 @@ function dispatchAuction(
       : value + (part.average_value_sek_per_kwh - wear) * kwh;
   };
 
-  /**
-   * A charge block too short for the compressor that has to run it.
-   *
-   * The auction only ever starts a run at its full minimum length and then
-   * grows it a slot at a time, so each extension records itself as its own
-   * one-slot run. Releasing by that record can cut a contiguous block in half
-   * and strand the remainder: a deployed plan scheduled the pool heat pump for
-   * a single quarter at 04:30 against a four-quarter minimum. Contiguity is
-   * what the contract is about, so contiguity is what has to be repaired.
+  /** Settlement can remove the discharge that made room for a later charge,
+   * or the load another discharge was supplying. Check both physical bounds
+   * and the no-export contract against the changed schedule, without clamping.
    */
-  const shortBlock = (store: DispatchStore): number[] | null => {
-    const minRun = Math.max(1, store.min_run_slots ?? 1);
-    if (minRun <= 1) return null;
-    let block: number[] = [];
-    for (let index = 0; index <= count; index += 1) {
-      if (index < count && powerW[store.key][index] > 0) {
-        block.push(index);
-        continue;
-      }
-      if (block.length > 0 && block.length < minRun) return block;
-      block = [];
-    }
-    return null;
-  };
-
-  /** A discharge the released charge can no longer supply is not a price call. */
-  const overdrawn = (store: DispatchStore, index: number): boolean => {
-    const low = store.min_state;
-    if (low === undefined) return false;
+  const physicallyInvalid = (store: DispatchStore, index: number): boolean => {
+    const inW = powerW[store.key][index];
     const outW = dischargeW[store.key][index];
-    if (outW <= 0) return false;
-    return movedValue(store, index, powerW[store.key][index], outW).after <
-      low - 1e-9;
+    const after = nextState(store, stateByKey[store.key][index], inW, outW, index);
+    if (inW > 0 && after > (store.max_state ?? Infinity) + 1e-9) return true;
+    if (outW > 0 && after < (store.min_state ?? -Infinity) - 1e-9) return true;
+    return outW > 0 && store.discharge?.export_allowed === false &&
+      outW > gridImportW(slots[index], occupiedW[index], returnedW[index] - outW) + 1e-6;
   };
 
   const releaseRun = (store: DispatchStore, indices: number[]): void => {
@@ -1815,7 +1779,6 @@ function dispatchAuction(
         const dischargeByKey = dischargeW[store.key];
         const state = stateByKey[store.key];
         const retention = retentionByKey[store.key];
-        const minRun = Math.max(1, store.min_run_slots ?? 1);
         // Both directions read the same suffix extremes: charging is bounded by
         // the highest state still to come, discharging by the lowest.
         const suffixMin = suffixMinByKey[store.key];
@@ -1839,27 +1802,9 @@ function dispatchAuction(
           if (previousW >= store.max_power_w - 1e-6) continue;
           const adjacentRun = (schedule[index - 1] ?? 0) > 0 ||
             (schedule[index + 1] ?? 0) > 0;
-          const startsRun = previousW === 0 && minRun > 1 && !adjacentRun;
-          const span = startsRun ? minRun : 1;
-          if (index + span > count) continue;
-          // Walked rather than mapped: this runs for every quarter of every
-          // store on every iteration of the auction, and the closure and its
-          // array cost more here than the comparison they carry.
-          let blocked = false;
-          for (let offset = 0; offset < span; offset += 1) {
-            const slotIndex = index + offset;
-            if (
-              (slotIndex !== index && schedule[slotIndex] > 0) ||
-              dischargeByKey[slotIndex] > 0
-            ) {
-              blocked = true;
-              break;
-            }
-          }
-          if (blocked) continue;
-          const indices = startsRun
-            ? Array.from({ length: minRun }, (_, offset) => index + offset)
-            : [index];
+          const startsRun = previousW === 0 && !adjacentRun;
+          const span = 1;
+          const indices = [index];
 
           // Only a store that sells its charge back is doing arbitrage. A pool
           // buys warmth and a car buys range; neither is betting on a price.
@@ -2290,9 +2235,7 @@ function dispatchAuction(
         continue;
       }
 
-      // Apply exactly the candidate that won. A new compressor run reached this
-      // point only after the complete block cleared its complete cost; no
-      // unevaluated continuation is appended here.
+      // Apply exactly the executable setpoint that won.
       const schedule = powerW[best.store.key];
       const discharge = dischargeW[best.store.key];
       const changedIndices: number[] = [];
@@ -2340,7 +2283,7 @@ function dispatchAuction(
         // sides.
         markStaleWindow(
           store.key,
-          firstChanged - Math.max(1, store.min_run_slots ?? 1) + 1,
+          firstChanged,
           lastChanged,
         );
       }
@@ -2351,8 +2294,7 @@ function dispatchAuction(
     // one after another would leave whichever went first holding a price the
     // rest of the pass had already moved.
     //
-    // A minimum-run block cleared its cost as a block and is released as one, or
-    // the schedule would keep a compressor start it no longer pays for.
+    // Release allocations that no longer pay for their energy and start cost.
     for (let pass = 0; pass <= count * stores.length; pass += 1) {
       for (const store of stores) {
         project(
@@ -2366,15 +2308,10 @@ function dispatchAuction(
       for (let index = 0; index < count; index += 1) recostSlot(index);
 
       let starved: { store: DispatchStore; indices: number[] } | null = null;
-      let stranded: { store: DispatchStore; indices: number[] } | null = null;
       let worst:
         | { store: DispatchStore; indices: number[]; net: number }
         | null = null;
       for (const store of stores) {
-        if (stranded === null) {
-          const block = shortBlock(store);
-          if (block !== null) stranded = { store, indices: block };
-        }
         const runs = new Map<string, { indices: number[]; net: number }>();
         let starvedKey: string | null = null;
         for (let index = 0; index < count; index += 1) {
@@ -2385,7 +2322,7 @@ function dispatchAuction(
           run.indices.push(index);
           run.net += settledNet(store, index);
           runs.set(key, run);
-          if (starvedKey === null && overdrawn(store, index)) starvedKey = key;
+          if (starvedKey === null && physicallyInvalid(store, index)) starvedKey = key;
         }
         // Resolve the run only once the scan has collected all of its slots.
         if (starvedKey !== null && starved === null) {
@@ -2397,9 +2334,8 @@ function dispatchAuction(
           }
         }
       }
-      // Neither an unsupplied discharge nor a run the hardware cannot execute is
-      // a price call, so both go before anything that is merely unprofitable.
-      const target = starved ?? stranded ?? worst;
+      // An unsupplied discharge goes before anything merely unprofitable.
+      const target = starved ?? worst;
       if (target === null) break;
       releasedThisRound += 1;
       releasedRuns.push(

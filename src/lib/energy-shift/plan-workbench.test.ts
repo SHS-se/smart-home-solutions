@@ -159,16 +159,14 @@ Deno.test('an hourly average below the floor becomes a duty cycle at the floor',
   assertEquals(compareWorkbench(bench, schedule).manual.infeasibilities, []);
 });
 
-Deno.test('an hourly duty cycle is held for the minimum run', () => {
-  // A trickle far under the floor would otherwise be a single quarter, which a
-  // compressor that declares a longer minimum cannot do.
+Deno.test('an hourly duty cycle does not buy extra energy to pad a run', () => {
+  // Half a kilowatt averaged over an hour rounds down to zero quarters.
   const bench = workbench();
-  bench.stores[0] = { ...bench.stores[0], min_run_slots: 3 };
   const model = buildWorkbenchModel(bench, 'hour');
 
   const schedule = scheduleFromDraft(bench, model, { 'ev:charge': [0, 0.5] });
 
-  assertEquals(schedule.power_w.ev, [0, 0, 0, 0, 4_140, 4_140, 4_140, 0]);
+  assertEquals(schedule.power_w.ev, [0, 0, 0, 0, 0, 0, 0, 0]);
 });
 
 // ---------------------------------------------------------------------------
@@ -201,30 +199,10 @@ Deno.test('scoring the planner’s own plan reproduces the planner’s own answe
   assertEquals(comparison.importDeltaKwh, 0);
 });
 
-Deno.test('the only rule the planner’s own plan breaks is the export leak', () => {
-  // Found by the workbench on its first contact with a real snapshot, and left
-  // failing-if-it-spreads rather than asserted away.
-  //
-  // The battery is bid to cover a deficit — `discharge_destination: "load"` —
-  // and a later release removes the load it was covering without releasing the
-  // discharge. What is left discharges into export in a slot where the house
-  // is already exporting, which this pack is not permitted to do: 2.46 kW at
-  // slot 227 of the shared fixture, sold at an export price against a stored
-  // value booked at the import price it thought it was avoiding. It is the
-  // §8.18 auction/settlement drift with the signs that matter to a bill.
-  //
-  // The assertion is deliberately about the *class*: a new kind of breach in
-  // the planner's own output must fail here rather than hide behind this one.
+Deno.test('settlement leaves the real plan physically feasible', () => {
   const bench = dispatchWorkbench(realSnapshot());
   assert(bench !== null);
-
-  const { infeasibilities } = compareWorkbench(bench, bench.planned).planner;
-
-  assert(infeasibilities.length > 0, 'the leak is not fixed yet');
-  assertEquals(
-    infeasibilities.filter(entry => !entry.message.includes('discharges into export')),
-    [],
-  );
+  assertEquals(compareWorkbench(bench, bench.planned).planner.infeasibilities, []);
 });
 
 Deno.test('doing nothing is scored, and the planner beats it', () => {
@@ -242,14 +220,14 @@ Deno.test('doing nothing is scored, and the planner beats it', () => {
 });
 
 Deno.test('a breach the planner already had is not blamed on the household', () => {
-  // The editor opens on the planner's own schedule, so its export leak is in
-  // every draft from the first keystroke. Charging the household with it would
-  // mark every plan they build unrunnable for something they did not do.
+  // Simulate an imported plan with an excessive battery discharge. Its
+  // existing defect must not be attributed to an unchanged household draft.
   const bench = dispatchWorkbench(realSnapshot());
   assert(bench !== null);
 
+  bench.planned.discharge_w.battery[0] = 100_000;
   const untouched = compareWorkbench(bench, bench.planned);
-  assert(untouched.planner.infeasibilities.length > 0, 'the leak is still there');
+  assert(untouched.planner.infeasibilities.length > 0, 'the injected defect is detected');
   assertEquals(untouched.introduced, []);
 });
 
@@ -295,7 +273,10 @@ Deno.test('charging the pack is a flow, not consumption', () => {
     .findIndex(watts => watts > 100);
   assert(charging >= 0, 'the fixture charges the pack somewhere');
 
-  assertEquals(chart.rows[charging].loadW, bench.slots[charging].fixed_load_w);
+  const otherChargeW = bench.stores
+    .filter(store => store.key !== battery.key)
+    .reduce((sum, store) => sum + bench.planned.power_w[store.key][charging], 0);
+  assertEquals(chart.rows[charging].loadW, bench.slots[charging].fixed_load_w + otherChargeW);
   assert(
     (chart.rows[charging].batteryChargeW ?? 0) > 100,
     'and it still shows in the flow panel',

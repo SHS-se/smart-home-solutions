@@ -39,8 +39,6 @@ export interface WorkbenchRow {
   maxKw: number;
   /** Executable increment, 0 when the device is continuously variable. */
   stepKw: number;
-  /** Quarters a run must last once started. Compressor protection, not taste. */
-  minRunSlots: number;
   stateUnit: string;
 }
 
@@ -120,7 +118,6 @@ export function buildWorkbenchModel(
       minKw: (store.min_power_w ?? 0) / 1_000,
       maxKw: store.max_power_w / 1_000,
       stepKw: (store.power_step_w ?? 0) / 1_000,
-      minRunSlots: store.min_run_slots ?? 1,
       stateUnit: store.curve.unit,
     };
     rows.push(charge);
@@ -139,7 +136,6 @@ export function buildWorkbenchModel(
       minKw: 0,
       maxKw: store.discharge.max_power_w / 1_000,
       stepKw: 0,
-      minRunSlots: 1,
       stateUnit: store.curve.unit,
     };
     rows.push(discharge);
@@ -162,8 +158,7 @@ export function buildWorkbenchModel(
  * the 3.5 kW its compressor can run at, and the whole hour scores as
  * infeasible. A household editing by the hour means "about this much energy in
  * this hour", so an average under the device's floor becomes a duty cycle at
- * the floor instead — the same trade the planner makes — held for at least the
- * minimum run the hardware declares.
+ * the floor instead, rounded to the nearest number of quarters.
  *
  * At quarter resolution this is the identity, which is why that is the default:
  * loading the editor then reproduces the planner's plan exactly.
@@ -180,7 +175,7 @@ function quarterWatts(
   }
   const level = row.minKw;
   const wanted = Math.round((kw / level) * width);
-  const held = Math.min(width, Math.max(wanted, row.minRunSlots));
+  const held = Math.min(width, Math.max(wanted, 0));
   return offset < held ? level * 1_000 : 0;
 }
 
@@ -569,7 +564,6 @@ export interface WorkbenchExport {
     max_power_w: number;
     min_power_w: number;
     power_step_w: number;
-    min_run_slots: number;
     discharge_max_power_w: number | null;
     export_allowed: boolean | null;
     /**
@@ -665,7 +659,6 @@ export function buildWorkbenchExport(
       max_power_w: store.max_power_w,
       min_power_w: store.min_power_w ?? 0,
       power_step_w: store.power_step_w ?? 0,
-      min_run_slots: store.min_run_slots ?? 1,
       discharge_max_power_w: store.discharge?.max_power_w ?? null,
       export_allowed: store.discharge?.export_allowed ?? null,
       curve: store.curve.points.map(point => ({ ...point })),
