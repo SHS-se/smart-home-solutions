@@ -4,7 +4,9 @@ import {
   HA_API_VERSION,
   HA_SUPPORTED_PLAN_SCHEMA_VERSIONS,
   HA_SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS,
+  HA_UUID,
   haApiResponse,
+  pendingReplanRequestId,
   validatePlanningNegotiation,
 } from "./ha-api-contract.ts";
 import { dispatchedEvPlanFixture } from "../../../scripts/generate-ha-plan-fixture.ts";
@@ -133,4 +135,87 @@ Deno.test("something with nothing to say falls back rather than printing junk", 
   assertEquals(describeThrown(undefined), "invalid snapshot");
   assertEquals(describeThrown("a bare string"), "invalid snapshot");
   assertEquals(describeThrown({}), "invalid snapshot");
+});
+
+const REPLAN_ID = "2f1c0c74-9d31-4f0e-9a45-9c6f2f5f0a11";
+
+Deno.test("the replan handshake is declared at both ends of the contract", async () => {
+  // Two halves of one exchange: the device is told which replan is outstanding,
+  // and names it on the push that answers it. Either half alone would let a
+  // household wait on a request nothing can ever complete.
+  const contract = JSON.parse(await Deno.readTextFile(contractUrl));
+  const status = contract.components.schemas.IntegrationStatusData;
+  assertEquals(
+    status.properties.pending_replan_request_id.type,
+    ["string", "null"],
+  );
+  assertEquals(status.required.includes("pending_replan_request_id"), true);
+
+  const ingest = contract.components.schemas.OptimisationIngestRequest;
+  assertEquals(ingest.properties.replan_request_id.format, "uuid");
+  // Only a generated plan can settle a request, and only a snapshot makes one.
+  assertEquals(ingest.dependentRequired.replan_request_id, ["snapshot"]);
+
+  const failure = contract.components.schemas.ReplanFailureRequest;
+  assertEquals(failure.required, ["replan_request_id", "error"]);
+  assertEquals(
+    contract.paths["/integration-status"].post.operationId,
+    "reportReplanFailure",
+  );
+});
+
+Deno.test("a device is handed the replan the household is waiting on", () => {
+  assertEquals(
+    pendingReplanRequestId({
+      replan_request_id: REPLAN_ID,
+      replan_completed_request_id: null,
+      replan_error: null,
+    }),
+    REPLAN_ID,
+  );
+  assertEquals(
+    pendingReplanRequestId({
+      replan_request_id: null,
+      replan_completed_request_id: null,
+      replan_error: null,
+    }),
+    null,
+  );
+  assertEquals(pendingReplanRequestId(null), null);
+});
+
+Deno.test("an answered request is not handed out again on the next poll", () => {
+  // The ids stay on the row as the record of the last request. Read as "a
+  // request exists", every poll for the rest of the home's life would replan.
+  assertEquals(
+    pendingReplanRequestId({
+      replan_request_id: REPLAN_ID,
+      replan_completed_request_id: REPLAN_ID,
+      replan_error: null,
+    }),
+    null,
+  );
+});
+
+Deno.test("a request this device already failed is not retried at it", () => {
+  // The household has been told why. Handing it back would retry the same
+  // failure every poll; the next ordinary push settles it with real
+  // measurements instead.
+  assertEquals(
+    pendingReplanRequestId({
+      replan_request_id: REPLAN_ID,
+      replan_completed_request_id: null,
+      replan_error: "kitchen: no trained thermal model is available",
+    }),
+    null,
+  );
+});
+
+Deno.test("a correlation id must be one this server could have issued", () => {
+  assertEquals(HA_UUID.test(REPLAN_ID), true);
+  // gen_random_uuid() is v4. Anything else reaching the completion path came
+  // from the device rather than from a request the portal is waiting on.
+  assertEquals(HA_UUID.test("2f1c0c74-9d31-7f0e-9a45-9c6f2f5f0a11"), false);
+  assertEquals(HA_UUID.test("not-a-uuid"), false);
+  assertEquals(HA_UUID.test(""), false);
 });

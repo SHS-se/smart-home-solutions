@@ -2459,6 +2459,10 @@ export type Database = {
           plan: Json
           plan_id: string | null
           plan_schema_version: number | null
+          replan_completed_request_id: string | null
+          replan_error: string | null
+          replan_request_id: string | null
+          replan_requested_at: string | null
           snapshot: Json
           snapshot_id: string
           status: string
@@ -2482,6 +2486,10 @@ export type Database = {
           plan: Json
           plan_id?: string | null
           plan_schema_version?: number | null
+          replan_completed_request_id?: string | null
+          replan_error?: string | null
+          replan_request_id?: string | null
+          replan_requested_at?: string | null
           snapshot: Json
           snapshot_id: string
           status: string
@@ -2505,6 +2513,10 @@ export type Database = {
           plan?: Json
           plan_id?: string | null
           plan_schema_version?: number | null
+          replan_completed_request_id?: string | null
+          replan_error?: string | null
+          replan_request_id?: string | null
+          replan_requested_at?: string | null
           snapshot?: Json
           snapshot_id?: string
           status?: string
@@ -4970,6 +4982,14 @@ export type Database = {
         Args: { p_dataset_key: string }
         Returns: boolean
       }
+      complete_energy_optimisation_replan: {
+        Args: {
+          p_captured_at: string
+          p_home_id: string
+          p_request_id?: string
+        }
+        Returns: string
+      }
       create_energy_billing_document: {
         Args: {
           p_customer_id: string
@@ -5055,6 +5075,10 @@ export type Database = {
       prune_energy_optimisation_data: {
         Args: { p_home_id: string }
         Returns: undefined
+      }
+      request_energy_optimisation_replan: {
+        Args: { p_home_id: string }
+        Returns: string
       }
       record_energy_parse_failure: {
         Args: {

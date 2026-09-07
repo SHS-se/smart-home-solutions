@@ -1,44 +1,32 @@
-// Rebuild the plan from the snapshot already on file, on request.
+// Ask the house for a plan built on measurements taken from now.
 //
-// A curve change is a change to *how* the planner values things, not to what it
-// knows about the house. Waiting up to 45 minutes for Home Assistant's next
-// replan to see the effect makes the editor unusable — you cannot tune a
-// preference you cannot observe.
+// This used to re-solve the snapshot already on file with the current curves.
+// The reasoning was that a curve change is a change to *how* the planner values
+// things rather than to what it knows about the house, so the stored
+// measurements were still the right ones — and waiting for Home Assistant's
+// next push made a preference you cannot observe impossible to tune.
 //
-// So this re-runs the planner against the stored snapshot with the current
-// curves. That is legitimate rather than a shortcut: the resulting plan is
-// built from exactly the same measured state as the one it replaces, so it is
-// never staler than what was already published. The freshness rule still
-// applies — a snapshot older than the planner's limit is refused rather than
-// planned against, and Home Assistant's own push is a minute or two away in
-// that case anyway.
+// It does not survive contact with the freshness rule. The stored snapshot is
+// only replaced when Home Assistant pushes one, so for most of every quarter it
+// was already older than the planner's fifteen-minute limit and the button
+// answered `captured_at must describe a fresh snapshot`. That is not a bug in
+// the limit: a plan is a set of commitments about the next few hours, and one
+// solved against measurements of unknown age is not worth publishing.
 //
-// The thermal projection is deliberately not recomputed. It is descriptive
-// only, it needs the zone models and comfort schedules the ingest path
-// assembles, and rebuilding that here would duplicate the one piece of this
-// system it is most important to have a single copy of.
+// So the request is recorded and the house answers it on the ordinary ingest
+// path. That is one planning route rather than two, which also settles what
+// used to be quietly missing here: the thermal projection, the plan-run
+// history, and Home Assistant's acknowledgement that it can execute the plan.
+// The reply below is therefore an acknowledgement of the request, not a plan.
 
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
-import {
-  generateOptimisationPlan,
-  type OptimisationSnapshot,
-} from "../_shared/energy-optimisation.ts";
-import {
-  resolveValueCurves,
-  resolveValueSettings,
-} from "../_shared/value-curves.ts";
-import { sha256Hex } from "../_shared/ha-device-auth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type",
 };
-
-// Shorter than the ingest path's window. The shape only prices the tail beyond
-// day-ahead, a month is ample for that, and this endpoint is interactive.
-const PRICE_SHAPE_WINDOW_DAYS = 30;
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -103,106 +91,18 @@ serve(async (request) => {
       auth: { persistSession: false },
     });
 
-    const { data: current, error: currentError } = await service
-      .from("energy_optimisation_current")
-      .select("customer_id, home_id, snapshot")
-      .eq("home_id", homeId)
-      .maybeSingle();
-    if (currentError) {
-      console.error("[ENERGY-REPLAN] current read failed", currentError);
-      return json({ error: "read_failed", detail: currentError.message }, 500);
+    // One request per home at a time: a second click while one is outstanding
+    // returns the same id rather than queueing a request the house would answer
+    // twice with the same measurements.
+    const { data: queuedId, error: queueError } = await service.rpc(
+      "request_energy_optimisation_replan",
+      { p_home_id: homeId },
+    );
+    if (queueError) {
+      console.error("[ENERGY-REPLAN] queue failed", queueError);
+      return json({ error: "storage_failed", detail: queueError.message }, 500);
     }
-    if (!current?.snapshot) return json({ error: "no_snapshot" }, 404);
-
-    const stored = current.snapshot as OptimisationSnapshot;
-
-    const { data: curveRows } = await service
-      .from("energy_optimisation_value_curves")
-      .select("store_key, unit, points")
-      .eq("home_id", homeId);
-    const resolved = resolveValueCurves(curveRows ?? []);
-
-    const { data: settingsRow } = await service
-      .from("energy_optimisation_value_settings")
-      .select("battery_degradation_sek_per_kwh, vehicle_fallback_sek_per_km")
-      .eq("home_id", homeId)
-      .maybeSingle();
-    const settings = resolveValueSettings(settingsRow);
-
-    const shapeFrom = new Date(
-      Date.now() - PRICE_SHAPE_WINDOW_DAYS * 24 * 60 * 60_000,
-    ).toISOString();
-    const { data: shapeRows } = await service
-      .from("energy_optimisation_price_slots")
-      .select("start_ts, import_price_sek_per_kwh")
-      .eq("home_id", homeId)
-      .gte("start_ts", shapeFrom)
-      .order("start_ts");
-    // Raw observations: the planner owns the one estimator, so nothing here
-    // can hand it a shape built on different rules.
-    const priceArchive = shapeRows ?? [];
-
-    const snapshot: OptimisationSnapshot = {
-      ...stored,
-      value_curves: {
-        pool: resolved.curves.pool.curve,
-        ev: resolved.curves.ev.curve,
-      },
-      value_settings: settings,
-    };
-
-    let generated;
-    const solveTime = new Date();
-    try {
-      generated = generateOptimisationPlan(snapshot, solveTime, priceArchive);
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : "replan failed";
-      // The commonest case by far: the snapshot has aged past the planner's
-      // freshness limit. Say so plainly rather than returning a bare failure,
-      // because the remedy is simply to wait for the next push.
-      return json(
-        { error: "cannot_replan", detail, warnings: resolved.warnings },
-        409,
-      );
-    }
-
-    const inputHash = await sha256Hex(JSON.stringify(snapshot));
-    const { error: writeError } = await service
-      .from("energy_optimisation_current")
-      .update({
-        snapshot,
-        input_hash: inputHash,
-        plan: generated,
-        plan_id: generated.plan_id,
-        generation_request_id: `portal:${crypto.randomUUID()}`,
-        plan_schema_version: generated.schema_version,
-        ha_ack_status: "pending",
-        ha_acknowledged_at: null,
-        ha_integration_version: null,
-        ha_ack_request_id: null,
-        ha_ack_error: null,
-        issued_at: generated.issued_at,
-        valid_until: generated.valid_until,
-        binding_until: generated.binding_until,
-        status: generated.status,
-        model_version: generated.model_version,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("home_id", homeId);
-    if (writeError) {
-      console.error("[ENERGY-REPLAN] write failed", writeError);
-      return json({ error: "storage_failed", detail: writeError.message }, 500);
-    }
-
-    return json({
-      status: generated.status,
-      issued_at: generated.issued_at,
-      valid_until: generated.valid_until,
-      model_version: generated.model_version,
-      validation_errors: generated.validation_errors,
-      store_diagnostics: generated.plans.priority.store_diagnostics ?? [],
-      warnings: resolved.warnings,
-    });
+    return json({ status: "queued", replan_request_id: queuedId }, 202);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     console.error("[ENERGY-REPLAN] unhandled", detail, error);

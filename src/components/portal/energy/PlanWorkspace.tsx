@@ -123,7 +123,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
       ] = await Promise.all([
         supabase
           .from('energy_optimisation_current')
-          .select('home_id, plan, captured_at, updated_at, plan_id, generation_request_id, plan_schema_version, ha_ack_status, ha_acknowledged_at, ha_integration_version, ha_ack_request_id, ha_ack_error')
+          .select('home_id, plan, captured_at, updated_at, plan_id, generation_request_id, plan_schema_version, ha_ack_status, ha_acknowledged_at, ha_integration_version, ha_ack_request_id, ha_ack_error, replan_request_id, replan_requested_at, replan_completed_request_id, replan_error')
           .eq('customer_id', customerId)
           .eq('home_id', homeId)
           .maybeSingle(),
@@ -291,6 +291,10 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
       ha_integration_version: null,
       ha_ack_request_id: null,
       ha_ack_error: null,
+      replan_request_id: null,
+      replan_requested_at: null,
+      replan_completed_request_id: null,
+      replan_error: null,
     };
   }, [demoReferenceTime, demoSeason]);
   const demoActuals = useMemo(
@@ -434,6 +438,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
           now={clock}
           dayWindow={dayWindow}
           onDayWindowChange={setDayWindow}
+          onReplanChanged={() => void load(true)}
         />
       </div>
     );
@@ -502,6 +507,8 @@ const PlanView: React.FC<{
   now: number;
   dayWindow: DayWindow;
   onDayWindowChange: (value: DayWindow) => void;
+  /** Re-read the row, so a queued replan shows without waiting for a poll. */
+  onReplanChanged?: () => void;
 }> = ({
   section,
   customerId,
@@ -520,6 +527,7 @@ const PlanView: React.FC<{
   deviceActuals,
   prices,
   now,
+  onReplanChanged,
 }) => {
   const { t } = useLanguage();
   const homeTimeZone = useHomeTimeZone();
@@ -955,6 +963,8 @@ const PlanView: React.FC<{
               poolVolumeM3={plan?.pool?.volume_m3 ?? null}
               vehicleChargeEfficiency={plan?.ev_battery?.charge_efficiency ?? null}
               batteryValueCurve={plan.battery_value_curve}
+              replan={current}
+              onReplanChanged={onReplanChanged}
             />
           )}
         </CardContent>

@@ -10,6 +10,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { authenticateDevice, sha256Hex } from "../_shared/ha-device-auth.ts";
 import {
   HA_API_CORS_HEADERS,
+  HA_UUID,
   describeThrown,
   haApiResponse,
   haRequestId,
@@ -993,6 +994,7 @@ serve(async (req) => {
     let snapshot: OptimisationSnapshot | null = null;
     let deviceInventoryComplete = false;
     let integrationVersion: string | null = null;
+    let portalReplanId: string | null = null;
     try {
       const declaredLength = Number(req.headers.get("content-length") ?? 0);
       if (declaredLength > MAX_REQUEST_BYTES) {
@@ -1004,6 +1006,19 @@ serve(async (req) => {
       }
       const body = JSON.parse(rawBody);
       if (!body || typeof body !== "object") throw new Error("body");
+      // The portal request this push is answering, if it is answering one.
+      // Only meaningful alongside a snapshot: an actuals-only exchange produces
+      // no plan, so it cannot complete anything.
+      if (body.replan_request_id !== undefined) {
+        if (
+          typeof body.replan_request_id !== "string" ||
+          !HA_UUID.test(body.replan_request_id) ||
+          !body.snapshot
+        ) {
+          throw new Error("replan_request_id requires a snapshot");
+        }
+        portalReplanId = body.replan_request_id;
+      }
       if (
         body.actual_slots !== undefined && !Array.isArray(body.actual_slots)
       ) {
@@ -1929,6 +1944,27 @@ serve(async (req) => {
           runError,
         );
         return json({ error: "storage_failed" }, 500);
+      }
+
+      // Answer whatever the portal is waiting on. The device names the request
+      // when it knows about one; otherwise the snapshot's own capture time
+      // decides, so a home on an older integration still clears its request on
+      // its next ordinary push rather than waiting for a reply it cannot send.
+      // Failing the whole exchange over this would throw away a stored plan to
+      // report a stale button, so it is logged and left for the next push.
+      const { error: completionError } = await supabase.rpc(
+        "complete_energy_optimisation_replan",
+        {
+          p_home_id: auth.homeId,
+          p_captured_at: snapshot.captured_at,
+          p_request_id: portalReplanId,
+        },
+      );
+      if (completionError) {
+        console.error(
+          "[ENERGY-OPTIMISATION] replan completion failed",
+          completionError,
+        );
       }
 
       // Archive the forecasts exactly as they stood at this decision time.

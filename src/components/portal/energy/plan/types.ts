@@ -25,6 +25,14 @@ export interface CurrentRow {
     path?: string | null;
     details?: unknown;
   } | null;
+  /**
+   * A replan the household asked for, which the house answers by pushing fresh
+   * measurements. Read by `replanState` rather than interpreted here.
+   */
+  replan_request_id: string | null;
+  replan_requested_at: string | null;
+  replan_completed_request_id: string | null;
+  replan_error: string | null;
 }
 
 // A refused fit is usually seasonal rather than faulty, so each reason gets

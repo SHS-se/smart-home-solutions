@@ -55,6 +55,34 @@
           },
           "default": { "$ref": "#/components/responses/Error" }
         }
+      },
+      "post": {
+        "operationId": "reportReplanFailure",
+        "description": "Report that a requested replan could not be produced, and read status back. The response is the same discovery document the GET returns.",
+        "security": [{ "deviceToken": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplanFailureRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Subscription and compatibility discovery",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntegrationStatusResponse"
+                }
+              }
+            }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
       }
     },
     "/integration-tariff": {
@@ -296,6 +324,7 @@
           "minimum_snapshot_schema_version",
           "minimum_plan_schema_version",
           "latest_plan_request_id",
+          "pending_replan_request_id",
           "subscription_active",
           "home_id",
           "server_time"
@@ -311,6 +340,11 @@
               { "$ref": "#/components/schemas/RequestId" },
               { "type": "null" }
             ]
+          },
+          "pending_replan_request_id": {
+            "description": "A replan the household has asked for and not yet been given. The device answers it by pushing a snapshot to /energy-optimisation-ingest carrying this id.",
+            "type": ["string", "null"],
+            "format": "uuid"
           },
           "subscription_active": { "type": "boolean" },
           "subscription_expires_at": {
@@ -471,6 +505,11 @@
             "items": { "type": "object" }
           },
           "device_inventory_complete": { "type": "boolean" },
+          "replan_request_id": {
+            "description": "The pending_replan_request_id this push answers. Only meaningful with a snapshot, because only a generated plan can complete a request.",
+            "type": "string",
+            "format": "uuid"
+          },
           "snapshot": {
             "oneOf": [
               { "$ref": "#/components/schemas/SnapshotV5" },
@@ -479,6 +518,7 @@
           }
         },
         "dependentRequired": {
+          "replan_request_id": ["snapshot"],
           "api_version": [
             "accepted_plan_schema_versions",
             "integration_version"
@@ -876,6 +916,20 @@
             }
           }
         ],
+        "additionalProperties": false
+      },
+      "ReplanFailureRequest": {
+        "type": "object",
+        "required": ["replan_request_id", "error"],
+        "properties": {
+          "replan_request_id": { "type": "string", "format": "uuid" },
+          "error": {
+            "description": "Why this device could not build a snapshot to plan from, in the household's own terms.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
         "additionalProperties": false
       }
     }

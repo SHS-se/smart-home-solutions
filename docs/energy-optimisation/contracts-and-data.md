@@ -47,6 +47,8 @@ Lifecycle:
 4. Integration acknowledges acceptance or rejection for that plan/snapshot identity.
 5. Only a locally accepted, currently valid plan may drive requests; generation alone is not execution evidence.
 
+A household may ask for a replan from the portal. The request is recorded against the home and answered on the lifecycle above: the integration is told which request is outstanding, supplies a snapshot naming it, and the backend marks the request answered by the plan that snapshot produced. The portal may not rebuild a plan from a stored snapshot instead — a snapshot is only as fresh as the last push, so that route fails the planner's freshness rule for most of every replan interval. A request is also satisfied by any plan built from measurements captured after it was made, which is what settles requests for homes whose integration predates this exchange. An integration that cannot build a snapshot reports why, so the portal states a reason rather than an unbounded wait.
+
 The portal distinguishes no request, generation failure, awaiting acknowledgement, rejection, accepted validity, and expiry. It must not describe the latest generated plan as the currently executed plan without acceptance evidence. A rejected new plan does not retroactively change what happened under the old one.
 
 Plan requests are idempotent for their home and snapshot identity. Inventory, telemetry watermarks, planning, and acknowledgements have independent retry/ownership semantics even if a legacy route multiplexes them. A planning failure must not discard accepted telemetry or accidentally repeat a configuration mutation.

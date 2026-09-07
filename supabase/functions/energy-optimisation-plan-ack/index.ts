@@ -8,6 +8,7 @@ import {
   HA_API_CORS_HEADERS,
   HA_API_VERSION,
   HA_SUPPORTED_PLAN_SCHEMA_VERSIONS,
+  HA_UUID,
   haApiResponse,
   haRequestId,
 } from "../_shared/ha-api-contract.ts";
@@ -18,9 +19,6 @@ interface Rejection {
   path: string | null;
   details: unknown;
 }
-
-const UUID =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 serve(async (request) => {
   const requestId = haRequestId(request);
@@ -59,8 +57,8 @@ serve(async (request) => {
     const rejection = body.error as Rejection | null | undefined;
     if (
       body.api_version !== HA_API_VERSION ||
-      typeof body.plan_id !== "string" || !UUID.test(body.plan_id) ||
-      typeof body.snapshot_id !== "string" || !UUID.test(body.snapshot_id) ||
+      typeof body.plan_id !== "string" || !HA_UUID.test(body.plan_id) ||
+      typeof body.snapshot_id !== "string" || !HA_UUID.test(body.snapshot_id) ||
       !HA_SUPPORTED_PLAN_SCHEMA_VERSIONS.includes(
         planSchemaVersion as 5 | 6,
       ) ||

@@ -26,6 +26,41 @@ export interface HaApiError {
   retryable: boolean;
 }
 
+/**
+ * The correlation ids this server issues and the device echoes back.
+ *
+ * Plan ids and replan requests are both `gen_random_uuid()`, so the version and
+ * variant nibbles are checked rather than the shape alone: an id the device
+ * made up cannot complete a request the portal is waiting on.
+ */
+export const HA_UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** The replan columns of `energy_optimisation_current`. */
+export interface HaReplanState {
+  replan_request_id: string | null;
+  replan_completed_request_id: string | null;
+  replan_error: string | null;
+}
+
+/**
+ * The replan this device is being asked for, if any.
+ *
+ * Requests stay on the row after they are answered, as the record of the last
+ * one, so "asked for" is the difference between the requested and completed
+ * ids rather than the presence of a request. A request this device has already
+ * failed is withheld: it would otherwise be handed back on every poll, and the
+ * household has already been told why it failed. Nothing is lost by that — the
+ * next ordinary push carries fresh measurements and settles it anyway.
+ */
+export function pendingReplanRequestId(
+  row: HaReplanState | null | undefined,
+): string | null {
+  if (!row?.replan_request_id) return null;
+  if (row.replan_request_id === row.replan_completed_request_id) return null;
+  return row.replan_error ? null : row.replan_request_id;
+}
+
 const PLAIN_REQUEST_ID = /^[A-Za-z0-9._:-]{8,128}$/;
 
 /**

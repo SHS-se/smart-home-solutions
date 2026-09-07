@@ -55,9 +55,14 @@ import {
 } from '../../../../supabase/functions/_shared/value-preferences';
 import type { OptimisationSnapshot } from '../../../../supabase/functions/_shared/energy-optimisation';
 import { comparePreference, type PreviewComparison } from '@/lib/energy-shift/curve-preview';
+import {
+  replanCompleted,
+  replanState,
+  type ReplanRow,
+} from '@/lib/energy-shift/replan-request';
 import type { BatteryValueCurveDiagnostic } from '@/lib/energy-shift/contracts';
 import { useHomeTimeZone } from './HomeTimeZoneContext';
-import { formatHomeStamp, formatHomeTimeWithSeconds } from '@/lib/energy-shift/home-time';
+import { formatHomeStamp } from '@/lib/energy-shift/home-time';
 
 interface Props {
   customerId: string | null;
@@ -79,6 +84,14 @@ interface Props {
   vehicleChargeEfficiency?: number | null;
   /** Exact read-only curve published by the current planner solve. */
   batteryValueCurve?: BatteryValueCurveDiagnostic | null;
+  /**
+   * The replan columns of the row on file. A request is answered by the house
+   * rather than by this button, so its progress is read from shared state and
+   * not from anything remembered here.
+   */
+  replan?: ReplanRow | null;
+  /** Re-read the row, so a queued request appears without waiting for a poll. */
+  onReplanChanged?: () => void;
 }
 
 const EDITABLE: ValueStoreKey[] = ['pool', 'ev'];
@@ -114,6 +127,8 @@ const ValueCurvesTab: React.FC<Props> = ({
   poolVolumeM3,
   vehicleChargeEfficiency,
   batteryValueCurve,
+  replan,
+  onReplanChanged,
 }) => {
   const { t } = useLanguage();
   const homeTimeZone = useHomeTimeZone();
@@ -123,6 +138,7 @@ const ValueCurvesTab: React.FC<Props> = ({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
   const [replanning, setReplanning] = useState(false);
+  const [awaitedReplanId, setAwaitedReplanId] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [preview, setPreview] = useState<PreviewComparison | string | null>(null);
   const [snapshot, setSnapshot] = useState<OptimisationSnapshot | null>(null);
@@ -297,7 +313,22 @@ const ValueCurvesTab: React.FC<Props> = ({
     setPreviewing(false);
   };
 
-  const replan = async () => {
+  /**
+   * Ask the house for a plan built on measurements taken from now.
+   *
+   * This used to re-solve the snapshot stored beside the plan. That snapshot is
+   * only replaced when Home Assistant pushes one, so for most of every quarter
+   * it was already older than the planner's fifteen-minute freshness limit and
+   * the button answered `captured_at must describe a fresh snapshot`. Nothing
+   * was wrong with the request — it simply could not be answered from stored
+   * state.
+   *
+   * So the request is recorded and the house answers it on the ordinary ingest
+   * path, which keeps one planning route rather than two. What comes back here
+   * is therefore an acknowledgement; the plan itself arrives with the next
+   * push, and the panel below says so until it does.
+   */
+  const requestReplan = async () => {
     if (!homeId) return;
     setReplanning(true);
     const { data, error } = await supabase.functions.invoke('energy-optimisation-replan', {
@@ -320,11 +351,36 @@ const ValueCurvesTab: React.FC<Props> = ({
       toast({ title: t('Kunde inte planera om', 'Could not replan'), description: detail, variant: 'destructive' });
       return;
     }
+    // Held only to tell this browser's own request from one that was already
+    // outstanding when the page loaded; the wait itself is read from the row.
+    setAwaitedReplanId(
+      typeof data?.replan_request_id === 'string' ? data.replan_request_id : null,
+    );
+    onReplanChanged?.();
+  };
+
+  // The answer arrives through the row on the workspace's own refresh, not
+  // through the call that asked for it, so the confirmation is raised here.
+  useEffect(() => {
+    if (!replanCompleted(replan, awaitedReplanId)) return;
+    setAwaitedReplanId(null);
+    // The preview re-solves a cached copy of the snapshot. That copy is now the
+    // older measurement, and comparing against it would answer a question about
+    // a house that has moved on.
+    setSnapshot(null);
     toast({
       title: t('Planen är omräknad', 'Plan rebuilt'),
-      description: `${data?.status ?? ''} · ${formatHomeTimeWithSeconds(data?.issued_at ?? Date.now(), homeTimeZone)}`,
+      description: t(
+        'Hemmet skickade färska mätvärden och planerades om med dina värden.',
+        'The house sent fresh measurements and was replanned with your numbers.',
+      ),
     });
-  };
+  }, [awaitedReplanId, replan, t, toast]);
+
+  // Recomputed on every render rather than memoised: the wait is measured
+  // against the wall clock, and the workspace re-renders on its own refresh.
+  const replanProgress = replanState(replan);
+  const waitingForReplan = replanProgress.status === 'waiting';
 
   if (!homeId) {
     return <p className="text-sm text-muted-foreground">{t('Välj ett hem.', 'Select a home.')}</p>;
@@ -381,11 +437,55 @@ const ValueCurvesTab: React.FC<Props> = ({
           {previewing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
           {t('Vad skulle ändras?', 'What would change?')}
         </Button>
-        <Button onClick={() => void replan()} disabled={replanning} variant="secondary">
-          {replanning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+        <Button
+          onClick={() => void requestReplan()}
+          disabled={replanning || waitingForReplan}
+          variant="secondary"
+        >
+          {replanning || waitingForReplan
+            ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            : <RefreshCw className="w-4 h-4 mr-2" />}
           {t('Planera om nu', 'Replan now')}
         </Button>
       </div>
+
+      {replanProgress.status === 'waiting' && (
+        <Alert>
+          <RefreshCw className="w-4 h-4" />
+          <AlertTitle>{t('Omplanering beställd', 'Replan requested')}</AlertTitle>
+          <AlertDescription className="text-sm">
+            {t(
+              'Hemmet skickar färska mätvärden och planeras om med dina värden. Planen uppdaterar sig själv här när den är klar.',
+              'The house is sending fresh measurements and will be replanned with your numbers. The plan updates itself here when it is done.',
+            )}
+            {replanProgress.overdue && (
+              <>
+                {' '}
+                <span className="font-medium">
+                  {t(
+                    `Det har gått ${Math.round(replanProgress.waitedMs / 60_000)} minuter utan svar — kontrollera att Home Assistant är igång och uppkopplat.`,
+                    `${Math.round(replanProgress.waitedMs / 60_000)} minutes have passed without an answer — check that Home Assistant is running and connected.`,
+                  )}
+                </span>
+              </>
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {replanProgress.status === 'failed' && (
+        <Alert variant="destructive">
+          <AlertTitle>{t('Hemmet kunde inte planera om', 'The house could not replan')}</AlertTitle>
+          <AlertDescription className="text-sm">
+            {replanProgress.detail}
+            {' '}
+            {t(
+              'Hemmet försöker igen av sig självt vid nästa kvart; du kan också begära en ny omplanering här.',
+              'The house tries again by itself on the next quarter; you can also request another replan here.',
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
 
       {preview !== null && (
         <PreviewPanel preview={preview} dirty={dirty} />
