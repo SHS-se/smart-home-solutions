@@ -76,6 +76,8 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6] as const;
  * meaningless. v8 makes comfort schedules room-temperature constraints and
  * moves preheating inside the shared electrical objective. v10 replaces the
  * battery's peak-price step with the weighted merit order of displaced import.
+ * v24 prices joint battery trades in cash, caps continuation value, and
+ * refines feasible schedules for smoother import without reducing service.
  * v23 removes planner minimum runtimes and enforces both state bounds and
  * no-export permissions after settlement changes the schedule.
  * v22 keeps unplugged vehicles in planning and reschedules discrete charge across the horizon.
@@ -107,7 +109,7 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6] as const;
  * v11 integrates every sizeable curve move, applies configured EV curves,
  * prices executable setpoints and records exact quarter evidence.
  */
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v23";
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v24";
 /** Schema 5 service sizing also no longer pads energy to a minimum runtime. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v9";
 export const SLOT_MINUTES = 15;
@@ -455,6 +457,7 @@ export interface BatteryValueCurveDiagnostic {
     residual_load_ac_kwh: number;
     battery_energy_kwh: number;
   }>;
+  terminal_replacement_sek_per_kwh: number;
   curve_input: {
     future_surplus_kwh: number;
     usable_kwh: number;
@@ -652,7 +655,12 @@ export interface OptimisationPlan {
    * answer to. Constants rather than policy, which is why they sit beside
    * `grid` instead of inside the echoed `policy`.
    */
-  peak_shaping: { threshold_w: number; sek_per_kwh_per_kw: number };
+  peak_shaping: {
+    threshold_w: number;
+    sek_per_kwh_per_kw: number;
+    grid_ramp_sek_per_kw: number;
+    load_start_preference_sek: number;
+  };
   device_models: EmpiricalDeviceModelInput[];
   services: ServiceInput[];
   service_requirement_sample_days: Record<string, number>;
@@ -1979,9 +1987,13 @@ function applyDutyCycleServices(
     if (key !== "baseline") {
       for (const index of indices) {
         const otherPlannedLoad = occupiedW[index];
-        const nonBoilerLoad = fixedLoadW(slots[index]) + otherPlannedLoad;
-        const relativelyHighLoad = otherPlannedLoad > 0 ||
-          nonBoilerLoad >= snapshot.grid.import_limit_w * 0.65;
+        const nonBoilerLoad = fixedLoadW(slots[index]) + otherPlannedLoad +
+          schedule.batteryChargeW[index] - schedule.batteryDischargeW[index];
+        // Permission changes interrupt a real thermostat/heat pump. Concurrent
+        // charging alone is not a reason to inhibit it; only connection pressure is.
+        const relativelyHighLoad =
+          nonBoilerLoad + service.control.rated_power_w -
+              slots[index].pv_w > snapshot.grid.import_limit_w;
         if (
           !relativelyHighLoad ||
           wouldExceedInhibitLimit(
@@ -2083,47 +2095,10 @@ const SEEDED_POOL_HEAT_PUMP = {
 /** Until a fitted kWh/km exists, a mid-size EV at a mild temperature. */
 const SEEDED_VEHICLE_KWH_PER_KM = 0.16;
 
-/**
- * Where power starts costing something beyond the energy, as a share of the
- * connection.
- *
- * Half. Ordinary household load sits far below it — the reference home averages
- * 1.74 kW against a 13.2 kW service — so nothing the plan cannot move is
- * shaped, while a store adding several kilowatts on top of it is. A share
- * rather than a figure in watts because it is a statement about the
- * installation's own headroom, and the connection is the only measure of that
- * the snapshot carries.
- */
-const PEAK_SHAPING_THRESHOLD_SHARE = 0.5;
-
-/**
- * What a kilowatt above the threshold adds to every kilowatt-hour drawn beside
- * it, SEK/kWh per kW.
- *
- * One and a half, which is a stated choice and not a measured figure.
- *
- * The rate has to be comparable to the gap between what a store believes its
- * energy is worth and what the quarter costs — 1.5–2 SEK/kWh for a battery
- * mid-winter — or nothing moves at all: 0.05 was inert. Across a no-solar
- * winter horizon 1.5 spreads charging from 17 quarters to 55, brings peak
- * charge power down from 8.8 kW to 5.5 and the grid peak from 13.2 kW to 8.0,
- * and buys the same energy while doing it. Higher shapes harder, with little
- * left to gain past about 3.
- *
- * It was 0.6, measured against a cost that averaged the endpoints of the shaped
- * interval instead of integrating it. That overcharged any block crossing the
- * threshold, so the same shaping came out of a smaller number; the arithmetic
- * is exact now and the scale moved with it.
- *
- * §8.16 leaves the calibration open, and it can be anchored to the last
- * published effektavgift when one returns. Until then this is where a household
- * is asked to sit rather than something derivable, which is why the plan
- * publishes it: two plans shaped with different constants are otherwise
- * indistinguishable, and a replay cannot say which one produced the schedule it
- * is holding. It ships as a constant — there is no per-home setting. Zero
- * restores the pure energy objective exactly.
- */
-const PEAK_SHAPING_SEK_PER_KWH_PER_KW = 1.5;
+/** Soft power preference, separate from the electricity bill or a demand tariff.
+ * Apply a modest convex price from zero import, rather than leaving a free
+ * 6.6 kW band in which tiny price differences create full-power pulses. */
+const PEAK_SHAPING_SEK_PER_KWH_PER_KW = 0.1;
 
 /**
  * The shadow price on power this plan is shaped with (§8.16).
@@ -2135,7 +2110,7 @@ const PEAK_SHAPING_SEK_PER_KWH_PER_KW = 1.5;
  */
 function derivePeakShaping(
   snapshot: OptimisationSnapshot,
-): { threshold_w: number; sek_per_kwh_per_kw: number } {
+): OptimisationPlan["peak_shaping"] {
   const policy = snapshot.policy as OptimisationSnapshot["policy"] & {
     peak_shaping_threshold_w?: number | null;
     peak_shaping_sek_per_kwh_per_kw?: number | null;
@@ -2146,9 +2121,11 @@ function derivePeakShaping(
       : null;
   return {
     threshold_w: stated(policy.peak_shaping_threshold_w) ??
-      snapshot.grid.import_limit_w * PEAK_SHAPING_THRESHOLD_SHARE,
+      0,
     sek_per_kwh_per_kw: stated(policy.peak_shaping_sek_per_kwh_per_kw) ??
       PEAK_SHAPING_SEK_PER_KWH_PER_KW,
+    grid_ramp_sek_per_kw: 0.05,
+    load_start_preference_sek: 0.25,
   };
 }
 
@@ -2311,7 +2288,25 @@ function deriveBatteryValueCurve(
       .battery_degradation_sek_per_kwh,
     expectedDrawKwh: expectedDrawKwh / battery.discharge_efficiency,
   };
-  const curve = batteryValueCurve(curveInput);
+  // Terminal energy can replace an ordinary purchase after the horizon. The
+  // dearest in-horizon hour is already available to the arbitrage search; using
+  // it again as terminal value rewards buying charge that is never spent.
+  const terminalPrices = slots.slice(-96).map((slot) =>
+    slot.shadow_import_sek_per_kwh
+  ).sort((a, b) => a - b);
+  const terminalReplacement = Math.max(
+    0,
+    (terminalPrices[Math.floor(terminalPrices.length / 2)] ?? 0) *
+        battery.discharge_efficiency - curveInput.degradationSekPerKwh,
+  );
+  const generated = batteryValueCurve(curveInput);
+  const curve = {
+    ...generated,
+    points: generated.points.map((point) => ({
+      ...point,
+      sek_per_unit: Math.min(point.sek_per_unit, terminalReplacement),
+    })),
+  };
   return {
     curve,
     diagnostic: {
@@ -2329,6 +2324,7 @@ function deriveBatteryValueCurve(
         residual_load_ac_kwh: slice.ac_kwh,
         battery_energy_kwh: storedDrawKwh[index],
       })),
+      terminal_replacement_sek_per_kwh: terminalReplacement,
       curve_input: {
         future_surplus_kwh: curveInput.futureSurplusKwh,
         usable_kwh: curveInput.usableKwh,
@@ -2508,7 +2504,8 @@ function buildDispatchStores(
         // curve is stated over. The limit is a state of charge and does not
         // move; the kilometres it buys move a long way between January and
         // July, which is why this is recomputed every solve.
-        const reachableKm = vehicle.departure_target_soc * vehicle.capacity_kwh /
+        const reachableKm = vehicle.departure_target_soc *
+          vehicle.capacity_kwh /
           perKm;
         stores.push({
           key: "ev",
@@ -2762,6 +2759,8 @@ function scheduleServices(
           grid_export_limit_w: snapshot.grid.export_limit_w,
           grid_import_shaping_w: peakShaping.threshold_w,
           peak_shaping_sek_per_kwh_per_kw: peakShaping.sek_per_kwh_per_kw,
+          grid_ramp_sek_per_kw: peakShaping.grid_ramp_sek_per_kw,
+          load_start_preference_sek: peakShaping.load_start_preference_sek,
         }),
       };
     } else {
@@ -2809,10 +2808,8 @@ function scheduleServices(
         // limit you set" names a thing the household can change, and "it is
         // above its curve" names a consequence of that. Ordered the other way,
         // the specific answer became unreachable the moment clamping landed.
-        reason: plannedKwh > 0
-          ? "scheduled"
-          : store.max_state !== undefined &&
-              store.initial_state >= store.max_state - 1e-9
+        reason: plannedKwh > 0 ? "scheduled" : store.max_state !== undefined &&
+            store.initial_state >= store.max_state - 1e-9
           ? "at_state_cap"
           : value <= 0
           ? "state_above_curve"
@@ -4348,6 +4345,8 @@ export function dispatchWorkbench(
       grid_export_limit_w: snapshot.grid.export_limit_w,
       grid_import_shaping_w: peakShaping.threshold_w,
       peak_shaping_sek_per_kwh_per_kw: peakShaping.sek_per_kwh_per_kw,
+      grid_ramp_sek_per_kw: peakShaping.grid_ramp_sek_per_kw,
+      load_start_preference_sek: peakShaping.load_start_preference_sek,
     },
     slot_start_ms: slots.map((slot) => slot.epoch_ms),
     planned: {

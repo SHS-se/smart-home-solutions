@@ -318,7 +318,7 @@ Deno.test("all scenarios use equal discrete contiguous service workloads", () =>
   }
 });
 
-Deno.test("duty-cycle boiler is inhibited around planned loads without invented on blocks", () => {
+Deno.test("hot water stays permitted beside planned loads when the connection has room", () => {
   const result = generateOptimisationPlan(
     input(),
     new Date("2026-08-10T07:55:00Z"),
@@ -327,8 +327,8 @@ Deno.test("duty-cycle boiler is inhibited around planned loads without invented 
   const planned = result.plans.priority;
   const inhibited = planned.service_inhibited_slots["boiler:2026-08-10"];
   assert(
-    inhibited.length > 0,
-    "boiler was never inhibited around a planned load",
+    inhibited.length === 0,
+    "spare connection capacity must not trigger thermostat interruptions",
   );
   assert(
     baseline.service_inhibited_slots["boiler:2026-08-10"].length === 0,
@@ -559,7 +559,7 @@ Deno.test("deferred hot water comes back at the cheapest hours, not the quietest
   const slots = Array.from({ length: 288 }, (_value, index) => {
     // A heavy stretch up front is what defers the water in the first place:
     // the boiler is inhibited whenever the rest of the house is already
-    // drawing more than 65% of the connection.
+    // drawing enough to exceed the connection once hot water is added.
     const heavy = index < 12;
     const priced = index < 96;
     const price = index === quiet ? 3.3 : heavy ? 2.0 : 1.2;
@@ -1720,7 +1720,7 @@ Deno.test("schema 6 with pool state dispatches by temperature, not by budget", (
   const plan = generateOptimisationPlan(snapshot, new Date(NOW));
 
   assertEquals(plan.schema_version, 6);
-  assertEquals(plan.model_version, "marginal-value-planner-v23");
+  assertEquals(plan.model_version, "marginal-value-planner-v24");
   // Asserted explicitly: an earlier version of this test checked the pool
   // energy but not the status, and so passed while every schema 6 plan was
   // reported infeasible by validations that still assumed fixed blocks.
@@ -1973,7 +1973,6 @@ Deno.test("EV charging has no planner minimum runtime", () => {
 
   assert(charged > 0, "the car never charged, so nothing was tested");
   assert(short.length > 0, "a short economic charging run is permitted");
-
 });
 
 Deno.test("a half-charged car takes surplus rather than letting it be exported", () => {
@@ -3115,9 +3114,8 @@ Deno.test("a battery that charges in winter also discharges", () => {
 });
 
 Deno.test("a shaped peak spreads a charge instead of concentrating it", () => {
-  // §8.12 #10 and #13. Off by default (see `PEAK_SHAPING_SEK_PER_KWH_PER_KW`),
-  // so the rate is stated here; what is under test is that the mechanism moves
-  // power without moving energy.
+  // Compare explicit shaping rates so this regression does not follow a
+  // changed default. Charging must spread while still doing useful arbitrage.
   const start = Date.parse("2026-08-10T08:00:00.000Z");
   const base = horizon();
   const dark = base.slots.map((slot, index) => {
@@ -3166,7 +3164,7 @@ Deno.test("a shaped peak spreads a charge instead of concentrating it", () => {
   };
 
   const flat = at(0);
-  const shaped = at(0.6);
+  const shaped = at(0.1);
 
   assertEquals(flat.status, "ready");
   assertEquals(shaped.status, "ready");
@@ -3248,8 +3246,8 @@ Deno.test("§8.12 #12 — a winter covering window is the dear stretch, not the 
     cheapestCovered > median,
     `even the cheapest covered quarter (${cheapestCovered}) beats the median ${median}`,
   );
-  // Which puts what a stored kWh is worth where the arithmetic says it should
-  // be: the dearest price it displaces, less the discharge loss and the wear.
+  // Covering-window value is capped by ordinary replacement cost. The dear
+  // in-horizon load is priced separately by the joint transaction search.
   const dearestCovered = Math.max(
     ...window.map((quarter) => quarter.import_price_sek_per_kwh),
   );
@@ -3258,8 +3256,11 @@ Deno.test("§8.12 #12 — a winter covering window is the dear stretch, not the 
   // shipped default back would assert nothing when that default moves.
   assertAlmostEquals(
     curve.curve.points[0].sek_per_unit,
-    dearestCovered * battery.discharge_efficiency -
-      curve.curve_input.degradation_sek_per_kwh,
+    Math.min(
+      curve.terminal_replacement_sek_per_kwh,
+      dearestCovered * battery.discharge_efficiency -
+        curve.curve_input.degradation_sek_per_kwh,
+    ),
     0.02,
   );
 });
@@ -3315,7 +3316,7 @@ Deno.test("§8.12 #11 — charge power gives way to the load already in the quar
         // full power is then the right answer, not a defect.
         policy: {
           ...base.policy,
-          peak_shaping_sek_per_kwh_per_kw: 2,
+          peak_shaping_sek_per_kwh_per_kw: 0.1,
         } as OptimisationSnapshot["policy"],
         battery: {
           ...base.battery!,
@@ -3362,16 +3363,10 @@ Deno.test("§8.12 #11 — charge power gives way to the load already in the quar
   );
 });
 
-Deno.test("a battery below its reserve climbs back to it", () => {
-  // §8.15 left the reserve unenforced *and* unpriced, which was honest and
-  // incomplete: `terminal_soc_min` did nothing at all for a dispatched battery.
-  // It is now the price of the bottom of the pack rather than a floor under it,
-  // so a battery that starts below its reserve refills toward it when that is
-  // affordable, and is not failed for having started there.
-  // A sunless horizon, because a sunny one fills the pack to the brim whatever
-  // the reserve says and the comparison would measure nothing. The wear is
-  // stated for the same reason: cheap enough throughput and the battery fills
-  // to 100% on this price shape alone, and again nothing is being compared.
+Deno.test("a soft battery reserve cannot inflate terminal value beyond replacement cost", () => {
+  // A sunless horizon isolates the reserve from free capacity-filling solar.
+  // Starting below a soft reserve stays feasible, and a requested reserve may
+  // not invent a worst-hour premium on energy left after the horizon.
   const start = Date.parse("2026-08-10T08:00:00.000Z");
   const base = horizon();
   const dark = base.slots.map((slot, index) => {
@@ -3417,13 +3412,11 @@ Deno.test("a battery below its reserve climbs back to it", () => {
   // Starting under the reserve is not a fault, and never was the plan's doing.
   assertEquals(held.errors, []);
   assert(
-    held.end > none.end,
-    `asking for a reserve leaves more in the pack: ${none.end} against ${held.end}`,
+    held.end >= none.end - 1e-6,
+    `a soft reserve may preserve energy without an artificial spike premium`,
   );
 
-  // And the published curve says what it was priced at, so the premium is
-  // legible rather than buried: a figure the plan already had, not one the
-  // household was asked for.
+  // Publish both the requested reserve and the effective replacement cap.
   const curve = held.curve!;
   assert(
     curve.curve_input.reserve_kwh > 0,
@@ -3431,9 +3424,7 @@ Deno.test("a battery below its reserve climbs back to it", () => {
   );
   assertAlmostEquals(
     curve.curve.points[0].sek_per_unit,
-    curve.curve_input.worst_import_sek_per_kwh *
-        curve.curve_input.discharge_efficiency -
-      curve.curve_input.degradation_sek_per_kwh,
+    curve.terminal_replacement_sek_per_kwh,
     0.02,
   );
   assertEquals(none.curve!.curve_input.reserve_kwh, 0);

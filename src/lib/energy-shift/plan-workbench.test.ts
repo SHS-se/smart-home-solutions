@@ -691,6 +691,10 @@ Deno.test('a quarter of grid charging lands in the pack, and the export says so'
   // axis — which reads as export until the arithmetic is checked. It is not.
   const bench = dispatchWorkbench(realSnapshot());
   assert(bench !== null);
+  // Isolate the manual-edit arithmetic from the optimiser's choice to serve
+  // every dark quarter from storage.
+  bench.planned.power_w.battery.fill(0);
+  bench.planned.discharge_w.battery.fill(0);
   const model = buildWorkbenchModel(bench, 'quarter');
   const charge = model.rows.find(row => row.storeKey === 'battery' && row.direction === 'charge');
   assert(charge !== undefined);

@@ -35,7 +35,27 @@ The time weights for continuous warmth, discrete usage, and terminal state must 
 
 Hard constraints restrict feasible schedules. Finite penalties express trade-offs and cannot guarantee compliance. `min_soc` is a physical/commissioned floor. A soft reserve valuation is distinct from it. There is no automatic instruction to reinstate a hard 80% end-of-solar target.
 
-There is no planner minimum-runtime setting. An executable quarter may stand alone; local equipment protection remains the device's responsibility. Optional start/switch costs are soft economic preferences and must be priced consistently by search and scoring, independently of run length. Removing minimum runtime does not introduce a new EV switching penalty.
+There is no planner minimum-runtime setting. An executable quarter may stand alone; local equipment protection remains the device's responsibility. Optional start/switch costs are soft economic preferences and must be priced consistently by search and scoring, independently of run length. The v24 cost refinement prices charge starts for all stores as an explicit soft preference; it does not guarantee a minimum on/off time or carry compressor protection timers across replans.
+
+## Cost and continuity policy (v24)
+
+Battery charging and later discharge can now be considered as one transaction. Its benefit is avoided grid purchase, less charging cost, conversion losses and configured cycling wear; terminal utility cancels because closing storage is unchanged. A committed grid purchase requires a published price for the later use. Transactions worth at most 0.001 SEK are ignored to avoid numerical micro-adjustments. Solar is still priced at foregone export revenue.
+
+The generated battery continuation curve is capped at the median import price in the final 24 hours of the horizon, multiplied by discharge efficiency and reduced by configured degradation. The cap is reported as `terminal_replacement_sek_per_kwh`. This remains an estimate, but an expensive hour already inside the plan no longer sets a second premium on leftover charge. The physical SOC floor remains enforced; a soft reserve cannot override the replacement-cost cap.
+
+After the auction and joint transactions, up to eight local refinement sweeps exchange charging between quarters within one hour. The refinement minimises energy cost plus wear, starts and explicitly reported shaping preferences. Every accepted move must preserve each store's service value and pass the independent physical scorer, including state limits and executable current steps. It cannot buy a utility improvement at the expense of that cost objective. Availability is checked before moving energy. The search is local and does not guarantee the globally cheapest or smoothest schedule.
+
+The default soft preferences are:
+
+- Grid shaping: `0.1 SEK/kWh/kW`, applied from zero import, integrated as `0.5 × rate × import_kW² × 0.25 h` per quarter.
+- Import changes: `0.05 SEK/kW` of absolute change between adjacent quarters, without inventing an initial or final zero-load boundary.
+- Charge starts: `0.25 SEK` per run, in addition to any separately modelled equipment start cost.
+
+These are scheduling preferences, not billed charges or measured equipment wear. They are published in `peak_shaping`; the scorer reports continuity separately in `continuity_sek`, and neither preference enters `billable_sek`. No Ellevio demand charge is assumed while the household has none. A future tariff requires its actual measurement windows and carried billing state.
+
+Hot-water thermostat permission is inhibited only when the other planned net load plus the heater's rated draw would exceed the connection limit. Merely charging another device no longer interrupts hot water. Existing maximum inhibition and recovery rules remain enforced. Local equipment controls retain responsibility for compressor safety and actual duty cycle.
+
+Replay comparison: `deno run --allow-read scripts/compare-planner-replay.ts capsule.json [from-ISO to-ISO]`. This runs the current implementation against captured input data and compares it with the recorded plan; it never executes instructions from the capsule. Compare closing inventory as well as spending.
 
 ## Joint physical model
 

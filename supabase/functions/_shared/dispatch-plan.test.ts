@@ -5,6 +5,7 @@ import {
   type DispatchSlot,
   type DispatchStore,
   planDispatch,
+  refineDispatchCosts,
   scoreDispatch,
   SLOT_HOURS,
 } from "./dispatch-plan.ts";
@@ -381,7 +382,6 @@ Deno.test("§8.12 #4 — the ranking between car and pool reverses on state", ()
     "and a nearly full one must not — no static priority can do this",
   );
 });
-
 
 Deno.test("the grid import limit is never exceeded", () => {
   const slots = buildSlots([new Array(SLOTS_PER_DAY).fill(0)], {
@@ -1177,12 +1177,18 @@ Deno.test("§8.18 — the settled schedule is one the auction would have stopped
     const kwh = powerW / 1_000 * SLOT_HOURS;
     const spent = kwh / 0.95;
     if (suffixMin[index] - spent < -1e-9) continue;
-    const givenUp = -valueOfMove(
-      battery.curve,
-      state[index],
-      state[index] - spent,
-    ) / kwh;
-    const surplus = (slots[index].import_price_sek_per_kwh - givenUp) * kwh;
+    const candidate = scoreDispatch(slots, [battery], LIMITS, {
+      power_w: result.power_w,
+      discharge_w: {
+        battery: result.discharge_w.battery.map((w, i) =>
+          w + (i === index ? powerW : 0)
+        ),
+      },
+    });
+    const baseScore = scoreDispatch(slots, [battery], LIMITS, result);
+    const givenUp =
+      (baseScore.service_value_sek - candidate.service_value_sek) / kwh;
+    const surplus = baseScore.total_sek - candidate.total_sek;
     assert(
       surplus <= 1e-9,
       `slot ${index} imported ${result.import_w[index].toFixed(0)} W at ` +
@@ -1254,7 +1260,7 @@ for (const reverse of [false, true]) {
       "preserve the future full pack",
     );
     const part = result.allocations[load][0];
-    const pair = part.solar_transfers![0];
+    const pair = part.energy_transfers![0];
     assert(Math.abs(pair.discharged_kwh - pair.charged_kwh * 0.9025) < 1e-9);
     const saving = 0.9025 * 0.25 - 0.1 * 0.25 - 0.05 * 0.95 * 0.25;
     assert(
@@ -1296,7 +1302,7 @@ for (
     const { slots, battery } = solarTransferCase(false, exportPrice, wear);
     const result = planDispatch(slots, [battery], LIMITS);
     assertEquals(result.discharge_w.battery[1], 0);
-    assert(result.allocations.flat().every((part) => !part.solar_transfers));
+    assert(result.allocations.flat().every((part) => !part.energy_transfers));
   });
 }
 
@@ -1336,7 +1342,7 @@ Deno.test("joint transfers do not bypass discrete hardware or intermediate utili
     const { slots, battery } = solarTransferCase();
     change(battery);
     const result = planDispatch(slots, [battery], LIMITS);
-    assert(result.allocations.flat().every((part) => !part.solar_transfers));
+    assert(result.allocations.flat().every((part) => !part.energy_transfers));
   }
 });
 
@@ -1385,7 +1391,6 @@ Deno.test("a real departure before the sun still allows fast grid charging", () 
   assert(Math.max(...result.power_w.ev) >= 9_000);
   assert(result.state.ev[2] >= 5);
 });
-
 
 // ---------------------------------------------------------------------------
 // Scoring a schedule the planner did not produce (§8.12).
@@ -1478,8 +1483,12 @@ Deno.test("a schedule above the connection is reported", () => {
   }, over);
 
   assert(
-    scored.infeasibilities.some((entry) => entry.message.includes("connection")),
-    `expected a connection breach, got ${JSON.stringify(scored.infeasibilities)}`,
+    scored.infeasibilities.some((entry) =>
+      entry.message.includes("connection")
+    ),
+    `expected a connection breach, got ${
+      JSON.stringify(scored.infeasibilities)
+    }`,
   );
 });
 
@@ -1497,7 +1506,9 @@ Deno.test("a hardware increment the schedule misses is reported", () => {
 
   assert(
     scored.infeasibilities.some((entry) => entry.message.includes("increment")),
-    `expected an increment breach, got ${JSON.stringify(scored.infeasibilities)}`,
+    `expected an increment breach, got ${
+      JSON.stringify(scored.infeasibilities)
+    }`,
   );
 });
 
@@ -1508,8 +1519,12 @@ Deno.test("start costs are counted per run, from the schedule itself", () => {
   const once = idle(slots.length, [pool]);
   for (let index = 40; index < 48; index += 1) once.power_w.pool[index] = 3_500;
   const twice = idle(slots.length, [pool]);
-  for (let index = 40; index < 44; index += 1) twice.power_w.pool[index] = 3_500;
-  for (let index = 46; index < 50; index += 1) twice.power_w.pool[index] = 3_500;
+  for (let index = 40; index < 44; index += 1) {
+    twice.power_w.pool[index] = 3_500;
+  }
+  for (let index = 46; index < 50; index += 1) {
+    twice.power_w.pool[index] = 3_500;
+  }
 
   const single = scoreDispatch(slots, [pool], LIMITS, once);
   const split = scoreDispatch(slots, [pool], LIMITS, twice);
@@ -1539,8 +1554,8 @@ Deno.test("a 72-hour auction reads published-price flags once", () => {
   const result = planDispatch(slots, [batteryStore(count, 1, 3)], LIMITS);
   assertEquals(result.power_w.battery, new Array(count).fill(0));
   assertEquals(result.discharge_w.battery, new Array(count).fill(0));
-  // One suffix pass in the auction and one pass in the final scorer.
-  assertEquals(reads, count * 2);
+  // Slot inputs are resolved once before all searches and scoring.
+  assertEquals(reads, count);
 });
 
 Deno.test("unprofitable dense-curve bids skip level enumeration", () => {
@@ -1582,3 +1597,117 @@ Deno.test("discharge pruning includes profitable marginal peak relief", () => {
   });
   assert(result.discharge_w.battery.some((watts) => watts > 0));
 });
+
+Deno.test("grid arbitrage earns money even with zero generated terminal utility", () => {
+  const slots: DispatchSlot[] = [0.5, 2].map((price, i) => ({
+    pv_w: 0,
+    fixed_load_w: i === 1 ? 2_000 : 0,
+    import_price_sek_per_kwh: price,
+    export_price_sek_per_kwh: 0,
+    binding: true,
+    published_price: true,
+  }));
+  const battery: DispatchStore = {
+    key: "battery",
+    curve: { unit: "kwh", points: [{ at: 10, sek_per_unit: 0 }] },
+    initial_state: 0,
+    min_state: 0,
+    max_state: 10,
+    max_power_w: 4_000,
+    retention_per_slot: 1,
+    usage_weight: [0, 0],
+    terminal_weight: 1,
+    units_per_kwh: () => 0.9,
+    drift: (state) => state,
+    discharge: {
+      max_power_w: 4_000,
+      state_per_kwh_out: () => 1 / 0.9,
+      export_allowed: false,
+      cycling_cost_sek_per_unit: 0.05,
+    },
+  };
+  const result = planDispatch(slots, [battery], LIMITS);
+  const score = scoreDispatch(slots, [battery], LIMITS, result);
+  assertEquals(score.infeasibilities, []);
+  assert(result.power_w.battery[0] > 0);
+  assert(result.discharge_w.battery[1] > 0);
+  assert(Math.abs(result.state.battery[2]) < 1e-8);
+  assert(
+    score.billable_sek + score.wear_sek < 0.4,
+    "losses and wear still leave a cash saving",
+  );
+  assert(result.allocations[0][0].energy_transfers![0].grid_charged_kwh > 0);
+
+  slots[1].published_price = false;
+  const speculative = planDispatch(slots, [battery], LIMITS);
+  assertEquals(
+    speculative.power_w.battery,
+    [0, 0],
+    "a forecast alone cannot fund a committed grid purchase",
+  );
+  slots[1].published_price = true;
+  slots[1].import_price_sek_per_kwh = 0.55;
+  assertEquals(
+    planDispatch(slots, [battery], LIMITS).power_w.battery,
+    [0, 0],
+    "a spread that cannot pay round-trip losses is declined",
+  );
+});
+
+for (const kind of ["battery", "ev", "pool"] as const) {
+  Deno.test(`cost refinement smooths ${kind} without sacrificing its service`, () => {
+    const fixed = kind === "pool";
+    const watts = fixed ? 2_000 : 3_000;
+    const slots: DispatchSlot[] = [0, 1, 2, 3].map(() => ({
+      pv_w: 0,
+      fixed_load_w: 500,
+      import_price_sek_per_kwh: 1,
+      export_price_sek_per_kwh: 0,
+    }));
+    const store: DispatchStore = {
+      key: kind,
+      curve: { unit: "kwh", points: [{ at: 10, sek_per_unit: 10 }] },
+      initial_state: 0,
+      min_state: 0,
+      max_state: 10,
+      max_power_w: watts,
+      min_power_w: kind === "battery" ? 0 : fixed ? watts : 1_000,
+      power_step_w: kind === "ev" ? 1_000 : 0,
+      retention_per_slot: 1,
+      usage_weight: [0, 0, 0, 0],
+      terminal_weight: 1,
+      units_per_kwh: () => 1,
+      drift: (state) => state,
+    };
+    const limits = {
+      ...LIMITS,
+      grid_import_shaping_w: 0,
+      peak_shaping_sek_per_kwh_per_kw: 0.1,
+      grid_ramp_sek_per_kw: 0.05,
+      load_start_preference_sek: 0.25,
+    };
+    const schedule: DispatchSchedule = {
+      power_w: { [kind]: [watts, 0, watts, 0] },
+      discharge_w: { [kind]: [0, 0, 0, 0] },
+    };
+    const before = scoreDispatch(slots, [store], limits, schedule);
+    assert(refineDispatchCosts(slots, [store], limits, schedule).has(kind));
+    const after = scoreDispatch(slots, [store], limits, schedule);
+    assertEquals(after.infeasibilities, []);
+    assertEquals(after.stores[0].charged_kwh, before.stores[0].charged_kwh);
+    assertEquals(after.stores[0].end_state, before.stores[0].end_state);
+    assert(after.billable_sek <= before.billable_sek + 1e-9);
+    assert(after.continuity_sek < before.continuity_sek);
+    if (!fixed) {
+      assert(Math.max(...after.import_w) < Math.max(...before.import_w));
+    } else assert(after.stores[0].runs < before.stores[0].runs);
+    // Equipment availability cannot be overridden by smoothing.
+    store.units_per_kwh = (_state, index) => index === 1 ? 0 : 1;
+    const unavailable: DispatchSchedule = {
+      power_w: { [kind]: [watts, 0, watts, 0] },
+      discharge_w: { [kind]: [0, 0, 0, 0] },
+    };
+    refineDispatchCosts(slots, [store], limits, unavailable);
+    assertEquals(unavailable.power_w[kind][1], 0);
+  });
+}

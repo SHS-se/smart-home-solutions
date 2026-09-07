@@ -657,7 +657,8 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
                 <tbody className="tabular-nums">
                   {([
                     [t('Köpt el', 'Energy bought'), comparison.planner.import_sek, comparison.manual.import_sek],
-                    [t('Effekttillägg', 'Peak charge'), comparison.planner.peak_sek, comparison.manual.peak_sek],
+                    [t('Effektutjämning (preferens)', 'Peak smoothing (preference)'), comparison.planner.peak_sek, comparison.manual.peak_sek],
+                    [t('Jämn drift (preferens)', 'Steady operation (preference)'), comparison.planner.continuity_sek, comparison.manual.continuity_sek],
                     [t('Såld el', 'Energy sold'), -comparison.planner.export_sek, -comparison.manual.export_sek],
                     [t('Slitage', 'Wear'), comparison.planner.wear_sek, comparison.manual.wear_sek],
                     [t('Starter', 'Starts'), comparison.planner.start_sek, comparison.manual.start_sek],
