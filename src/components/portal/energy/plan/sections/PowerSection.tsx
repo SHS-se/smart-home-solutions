@@ -30,7 +30,7 @@ import {
 import { DayWindowToggle } from '../ui';
 import type { PlanModel } from '../usePlanModel';
 import DeviceEnergyTable from '../DeviceEnergyTable';
-import StoreDecisions from '../StoreDecisions';
+import PlanReplayDownload from '../PlanReplayDownload';
 import PlanPanels, { type PlanPanelRow } from '../PlanPanels';
 import { loadColour, PLAN_COLOURS } from '../types';
 import { useHomeTimeZone } from '../../HomeTimeZoneContext';
@@ -76,7 +76,6 @@ const PowerSection: React.FC<{
   const { t } = useLanguage();
   const homeTimeZone = useHomeTimeZone();
   const [selectedQuarterStart, setSelectedQuarterStart] = useState<string | null>(null);
-  const [selectionRequest, setSelectionRequest] = useState(0);
 
   const view = useMemo(() => rows.slice(range.from, range.to), [range.from, range.to, rows]);
 
@@ -187,10 +186,7 @@ const PowerSection: React.FC<{
         selectedIndex={selectedIndex}
         onQuarterClick={index => {
           const row = view[index];
-          if (row && plannedStarts.has(Date.parse(row.start))) {
-            setSelectedQuarterStart(row.start);
-            setSelectionRequest(current => current + 1);
-          }
+          if (row && plannedStarts.has(Date.parse(row.start))) setSelectedQuarterStart(row.start);
         }}
       />
       <PanelLegend
@@ -199,19 +195,12 @@ const PowerSection: React.FC<{
         hasBattery={hasBattery}
         hasEvBattery={hasEvBattery}
       />
-      {/*
-        Above the per-device table on purpose. The device table says how much
-        each thing used; this says why the plan chose that at all, and a reader
-        working down the page wants the reason before the arithmetic.
-      */}
       <div className="mt-6 border-t pt-6">
-        <StoreDecisions
+        <PlanReplayDownload
           model={model}
           rows={rows}
           range={range}
           selectedStart={selectedQuarterStart}
-          selectionRequest={selectionRequest}
-          onSelectedStartChange={setSelectedQuarterStart}
         />
       </div>
       <div className="mt-6">
