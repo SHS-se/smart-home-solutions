@@ -45,6 +45,48 @@ That makes its continuation interpretation questionable, but simply lowering the
 
 The HA update must be installed before deploying server plans without the removed service field: the old HA validator required it. No deployment or release is part of this change.
 
+## A second case: an unpaired discharge, 7 September
+
+Source: `plan-2026-09-07-09-30.json`, captured at 09:30 UTC on 7 September. EV and battery, 288 quarters, no pool.
+
+| Complete 72-hour forecast | Planner | Manual |
+| --- | ---: | ---: |
+| Existing objective, SEK; lower is better | -15.2009 | **-15.9240** |
+| Variable electricity bill, SEK | 47.8493 | 44.6633 |
+| Modelled wear, SEK | 0.7224 | 0.8184 |
+| Battery charged / discharged, kWh | 18.2654 / 13.7250 | 18.2654 / 15.5497 |
+| Final battery energy above the hard floor, kWh | 6.7558 | 4.8350 |
+| Final EV range, km | 355.3333 | 355.3333 |
+
+The two schedules differ in **nine consecutive quarters and nowhere else**: slots 77–85, 05:00 to 07:00 UTC on 8 September. Battery charging is byte-identical across the whole horizon, and the EV's schedule is untouched. The manual plan discharges 1.8247 kWh more and imports that much less.
+
+In each of those nine quarters the planner imports at **1.6485–1.7833 SEK/kWh** while holding 3.8788 kWh it prices at **1.4063 SEK/kWh** — its own published `worth_sek_per_kwh`. The production scorer reports no infeasibilities against the manual schedule.
+
+### Why this is not the case above
+
+The first case needed the equal-final-state construction to win: its raw manual plan *lost* on the existing objective (-6.9908 against -7.3737) and only won once the missing energy was replenished (-8.4212). This one wins outright, by 0.7230 SEK, with no replenishment at all and no pairing to construct.
+
+The paired defect is present here too — `audit-battery-valuation.ts` restores the 1.9208 kWh and reports a 1.0262 SEK bill saving and a 0.9302 SEK objective saving — but it is not required to demonstrate the loss. A single-leg discharge, priced below the import it would displace, was available and not taken.
+
+That matters for sequencing. The recommended next step above is an all-pairs discharge/replenishment search, which the same section warns may worsen ingest's worker-limit failures. This case is not reachable by pairing and does not need it: if unpaired discharges priced below the prevailing import are being declined, that is both cheaper to fix and strictly prior to the paired search.
+
+### Where to look
+
+This export also stopped at `settle_cycle`, after 1030 iterations. A discharge that improves the whole plan while scoring negative in isolation is the shape settlement releases and the auction re-bids, and what ships is whatever the loop held when cycle detection stopped it. That is a hypothesis, not a finding: the v1 export carries schedules and prices but neither the allocation diagnostics nor the store weights, so it cannot distinguish a discharge never bid from one bid and outranked from one bid, won and released. The v2 export below carries all three; re-run this case against it before choosing a fix.
+
+### Limits
+
+Slots 77–85 fall outside the plan's binding window, which ends at 21:45 UTC on 7 September. This stretch is indicative and will be regenerated before it executes, and its prices come from the shaped prior rather than the market. The objective defect is real and reproducible; the 3.1860 SEK is a forecast-window figure and not money off a bill.
+
+## Export format v2
+
+v1 recorded what each plan did and not what it was decided against, so an audit could compare the two schedules it was handed but never check either. `shs.plan-workbench.v2` adds:
+
+- **Per store:** `usage_weight`, `terminal_weight`, `retention_per_slot`, `wear_sek_per_kwh`, `start_cost_sek`, `cycling_cost_sek_per_unit`, and the conversion coefficients sampled on the planner's own trajectory (`units_per_kwh_by_slot`, `state_per_kwh_out_by_slot`, `drift_by_slot`) with `*_is_constant` flags. The curve was already carried.
+- **Per quarter:** `published_price`, the omission that stopped this audit recomputing quoted-price savings; and `planner_allocations` and `planner_battery`, the accepted moves and the pack's charge/hold/discharge comparison.
+
+The audit accepts both versions. On v2 it prefers the stated weights and coefficients over the ones it recovers from measured transitions, and cross-checks the two: a stated coefficient that disagrees with the schedule's own movement now fails rather than being silently overridden. Quoted-price columns are reported when the flags are present and null otherwise.
+
 ## Reproduce
 
 ```sh

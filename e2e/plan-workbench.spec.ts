@@ -180,10 +180,35 @@ test.describe('plan workbench', () => {
     await expect(gridRow).toBeVisible();
     await expect(gridRow).toContainText(/[+−-]?\d+\.\d/);
 
-    // A breach names a time, and clicking it takes the table there. The fixture
-    // supplies real ones: the planner's own export leak (§8.20.1).
+    // A breach names a time, and clicking it takes the table there.
+    //
+    // The breach is injected rather than borrowed. This used to lean on the
+    // planner's own export leak, which settlement's physical checks have since
+    // fixed — so the test was asserting a defect stayed put. Charging the pack
+    // flat out for a whole day overfills it, which the editor cannot snap away.
+    // The snapshot starts at 22:45, so its first day holds five quarters. Fill
+    // on the second tab, which is a whole one.
+    await page.getByRole('button', { name: /^\d{2}\/\d{2}$/ }).nth(1).click();
+    await page.getByRole('button', { name: /^(1 hour|1 tim)$/ }).click();
+    // Editable rows in order: each store's charge, then each discharge. The
+    // pack's charge row is the one whose label is the pack itself, not its
+    // "— out" twin, so the label is asserted rather than assumed.
+    const editableRows = page.locator('tr').filter({
+      has: page.locator('input[type="number"]'),
+    });
+    const packRow = editableRows.filter({ hasText: 'Home battery' }).first();
+    await expect(packRow).toContainText('max 8.8 kW');
+    const chargeCells = packRow.locator('input[type="number"]');
+    const cells = await chargeCells.count();
+    expect(cells).toBeGreaterThan(8);
+    // Six hours at 8.8 kW is far past the pack's 17.176 kWh from any state, and
+    // each keystroke re-scores 288 quarters — so stop at six rather than filling
+    // the day for a breach the third one already guarantees.
+    for (let at = 0; at < 6; at += 1) {
+      await chargeCells.nth(at).fill('8.8');
+    }
     const breach = page.locator('button', { hasText: /^\d{2}\/\d{2} \d{2}:\d{2}$/ }).first();
-    await expect(breach).toBeVisible();
+    await expect(breach).toBeVisible({ timeout: 30_000 });
     await breach.click();
     const grid = page.getByTestId('workbench-grid');
     await expect(async () => {
@@ -196,6 +221,15 @@ test.describe('plan workbench', () => {
       });
       expect(visible).toBe(true);
     }).toPass({ timeout: 15_000 });
+
+    // Put the editor back before the checks that need a pristine schedule: six
+    // hours of pack charging changes what the load can absorb, and the export
+    // ceiling below is measured against exactly that.
+    await page.getByRole('button', { name: /^(15 min)$/ }).click();
+    await page.getByRole('button', { name: /^\d{2}\/\d{2}$/ }).first().click();
+    await expect(
+      page.locator('[role="alert"]', { hasText: /Your plan cannot be run|går inte att köra/ }),
+    ).toHaveCount(0);
 
     // The bill: real money, free of the value curves.
     await expect(page.getByText(/What the planner costs you|Vad planeraren kostar/)).toBeVisible();
@@ -250,7 +284,14 @@ test.describe('plan workbench', () => {
     const chunks: Buffer[] = [];
     for await (const chunk of stream) chunks.push(chunk as Buffer);
     const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-    expect(payload.format).toBe('shs.plan-workbench.v1');
+    expect(payload.format).toBe('shs.plan-workbench.v2');
+    // v2 carries what the objective was computed from, not only what it decided.
+    const pack = payload.stores.find((s: { key: string }) => s.key === 'battery');
+    expect(pack.curve.length).toBeGreaterThan(0);
+    expect(pack.units_per_kwh_by_slot).toHaveLength(288);
+    expect(pack.terminal_weight).toBeGreaterThan(0);
+    expect(payload.quarters[0]).toHaveProperty('published_price');
+    expect(payload.quarters[0]).toHaveProperty('planner_allocations');
     expect(payload.quarters).toHaveLength(288);
     expect(payload.scores.planner.total_sek).toBeLessThan(0);
     // The bill travels with the plan, separately from the objective.

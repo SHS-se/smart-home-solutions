@@ -4283,6 +4283,18 @@ export interface DispatchWorkbench {
   planned: DispatchSchedule;
   stopped_because: DispatchResult["stopped_because"];
   iterations: number;
+  /**
+   * Why each accepted move was accepted, quarter by quarter.
+   *
+   * The schedule says what the planner did; these say what it thought it was
+   * worth at the moment it decided. Without them a comparison can show that a
+   * discharge was declined but not whether it was never bid, bid and outranked,
+   * or bid, won and then released by settlement — three findings with three
+   * different fixes, and the schedule looks identical in all three.
+   */
+  allocations: DispatchResult["allocations"];
+  /** The battery's charge/hold/discharge comparison in every quarter. */
+  battery: DispatchResult["battery"];
 }
 
 export function dispatchWorkbench(
@@ -4325,6 +4337,8 @@ export function dispatchWorkbench(
     },
     stopped_because: bundle.result.stopped_because,
     iterations: bundle.result.iterations,
+    allocations: bundle.result.allocations,
+    battery: bundle.result.battery,
   };
 }
 

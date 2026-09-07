@@ -11,13 +11,30 @@ import type { WorkbenchExport } from "../src/lib/energy-shift/plan-workbench.ts"
 export function auditBatteryValuation(plan: WorkbenchExport) {
   const quarters = plan.quarters;
   const count = quarters.length;
+  const version = plan.format === "shs.plan-workbench.v2"
+    ? 2
+    : plan.format === "shs.plan-workbench.v1"
+    ? 1
+    : 0;
   if (
-    plan.format !== "shs.plan-workbench.v1" || !count ||
+    !version || !count ||
     plan.stores.length !== 2 || !plan.stores.some((s) => s.key === "ev") ||
     !plan.stores.some((s) => s.key === "battery")
   ) {
     throw new Error("This audit requires an EV-and-battery workbench export");
   }
+  /**
+   * The weights and coefficients the objective actually used, when the file
+   * carries them.
+   *
+   * v1 forced this audit to infer the store model — constant efficiencies from
+   * measured transitions, a terminal weight assumed for the battery, a usage
+   * weight assumed at the horizon's end for the car. Every one of those is now
+   * stated, so v2 reproduces the objective from the planner's own inputs rather
+   * than from a reconstruction that happened to agree.
+   */
+  const stated = (key: string) =>
+    version >= 2 ? plan.stores.find((s) => s.key === key) : undefined;
   const storeScore = (side: "planner" | "manual", key: string) => {
     const result = plan.scores[side].stores.find((s) => s.key === key);
     if (!result) throw new Error(`Missing ${side} ${key} score`);
@@ -56,6 +73,26 @@ export function auditBatteryValuation(plan: WorkbenchExport) {
   const chargeEfficiency = rate("battery", "charge");
   const dischargeUnits = rate("battery", "discharge");
   const vehicleUnits = rate("ev", "charge");
+  // A stated coefficient and a measured one must agree, or the file describes a
+  // schedule its own physics could not have produced.
+  if (version >= 2) {
+    for (
+      const [key, measured, series] of [
+        ["battery", chargeEfficiency, "units_per_kwh_by_slot"],
+        ["ev", vehicleUnits, "units_per_kwh_by_slot"],
+        ["battery", dischargeUnits, "state_per_kwh_out_by_slot"],
+      ] as const
+    ) {
+      const values = plan.stores.find((s) => s.key === key)
+        ?.[series] as number[] | null | undefined;
+      const first = values?.[0];
+      if (typeof first === "number" && Math.abs(first - measured) > 1e-6) {
+        throw new Error(
+          `${key} ${series} states ${first} but the schedule moves at ${measured}`,
+        );
+      }
+    }
+  }
   const batteryScore = storeScore("planner", "battery");
   if (!(batteryScore.discharged_kwh > 0)) {
     throw new Error("No battery discharge to establish wear");
@@ -71,11 +108,13 @@ export function auditBatteryValuation(plan: WorkbenchExport) {
     max_power_w: s.max_power_w,
     min_power_w: s.min_power_w,
     power_step_w: s.power_step_w,
-    retention_per_slot: 1,
-    terminal_weight: s.key === "battery" ? 1 : 0,
-    usage_weight: quarters.map((_, i) =>
-      s.key === "ev" && i === count - 1 ? 1 : 0
-    ),
+    retention_per_slot: stated(s.key)?.retention_per_slot ?? 1,
+    terminal_weight: stated(s.key)?.terminal_weight ??
+      (s.key === "battery" ? 1 : 0),
+    usage_weight: stated(s.key)?.usage_weight ??
+      quarters.map((_, i) => (s.key === "ev" && i === count - 1 ? 1 : 0)),
+    wear_sek_per_kwh: stated(s.key)?.wear_sek_per_kwh ?? 0,
+    start_cost_sek: stated(s.key)?.start_cost_sek ?? 0,
     units_per_kwh: () => s.key === "battery" ? chargeEfficiency : vehicleUnits,
     drift: (state) => state,
     ...(s.key === "battery"
@@ -187,9 +226,27 @@ export function auditBatteryValuation(plan: WorkbenchExport) {
   ) {
     throw new Error("Replenished plan failed physical validation");
   }
+  const quoted = (side: "planner" | "manual" | "replenished") => {
+    if (version < 2) return null;
+    let total = 0;
+    for (let i = 0; i < count; i += 1) {
+      if (!quarters[i].published_price) continue;
+      const watts = side === "replenished"
+        ? result.import_w[i] - result.export_w[i]
+        : quarters[i][side].grid_w;
+      const price = watts >= 0
+        ? quarters[i].import_price_sek_per_kwh
+        : quarters[i].export_price_sek_per_kwh;
+      total += watts / 1_000 * 0.25 * price;
+    }
+    return total;
+  };
+  const quotedPlanner = quoted("planner");
+  const quotedReplenished = quoted("replenished");
   return {
-    note:
-      "Forecast comparison; v1 omits published-price flags, so quoted-price savings cannot be recomputed.",
+    note: version >= 2
+      ? "Complete-horizon comparison; quoted-price figures cover only the quarters the market has published."
+      : "Forecast comparison; v1 omits published-price flags, so quoted-price savings cannot be recomputed.",
     planner_bill_sek: plan.scores.planner.billable_sek,
     manual_bill_sek: manual.billable_sek,
     replenished_bill_sek: result.billable_sek,
@@ -197,6 +254,12 @@ export function auditBatteryValuation(plan: WorkbenchExport) {
       result.billable_sek,
     equal_end_state_objective_saving_sek: plan.scores.planner.total_sek -
       result.total_sek,
+    quoted_planner_bill_sek: quotedPlanner,
+    quoted_manual_bill_sek: quoted("manual"),
+    quoted_equal_end_state_saving_sek: quotedPlanner === null ||
+        quotedReplenished === null
+      ? null
+      : quotedPlanner - quotedReplenished,
     final_battery_kwh: result.state.battery[count],
     final_ev_km: result.state.ev[count],
     infeasibilities: result.infeasibilities,

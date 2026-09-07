@@ -549,7 +549,7 @@ export interface QuarterSide {
 }
 
 export interface WorkbenchExport {
-  format: 'shs.plan-workbench.v1';
+  format: 'shs.plan-workbench.v2';
   exported_at: string;
   snapshot_id: string;
   captured_at: string;
@@ -575,6 +575,35 @@ export interface WorkbenchExport {
      * the disagreement is the finding.
      */
     curve: { at: number; sek_per_unit: number }[];
+    /**
+     * The rest of what the objective priced this store with.
+     *
+     * Without these the file shows *what* was decided and not what it was
+     * decided against: the objective cannot be recomputed, so an audit can
+     * only compare two schedules it is handed and never check either.
+     */
+    usage_weight: number[];
+    terminal_weight: number;
+    retention_per_slot: number;
+    wear_sek_per_kwh: number;
+    start_cost_sek: number;
+    cycling_cost_sek_per_unit: number | null;
+    /**
+     * Conversion coefficients, sampled on the planner's own trajectory.
+     *
+     * These are functions of state and quarter, so they are sampled rather than
+     * stated. `*_is_constant` says whether a single number would have done —
+     * when it is false, the series is exact for the planner's schedule only,
+     * and a hand-built one that reaches different states needs re-solving
+     * rather than arithmetic on this file.
+     */
+    units_per_kwh_by_slot: number[];
+    units_per_kwh_is_constant: boolean;
+    /** State spent per kWh returned to the house. Null for a pure sink. */
+    state_per_kwh_out_by_slot: number[] | null;
+    state_per_kwh_out_is_constant: boolean;
+    /** What one idle quarter costs the state: leak, ambient drift, standby. */
+    drift_by_slot: number[];
   }[];
   /** One entry per quarter: what it was solved against and what both plans do. */
   quarters: {
@@ -586,8 +615,26 @@ export interface WorkbenchExport {
     fixed_load_w: number;
     import_price_sek_per_kwh: number;
     export_price_sek_per_kwh: number;
+    /**
+     * Whether the market has quoted this quarter's price.
+     *
+     * The v1 omission that stopped `audit-battery-valuation.ts` recomputing
+     * quoted-price savings: a saving made entirely in the shaped tail is a
+     * forecast, and one made inside the published window is money.
+     */
+    published_price: boolean;
     planner: QuarterSide;
     manual: QuarterSide;
+    /**
+     * Why the planner did what it did here — the accepted moves, and the
+     * battery's charge/hold/discharge comparison.
+     *
+     * The schedule cannot distinguish a discharge that was never bid from one
+     * bid and outranked from one bid, won and released by settlement. Those are
+     * three findings with three different fixes and identical schedules.
+     */
+    planner_allocations: DispatchWorkbench['allocations'][number];
+    planner_battery: DispatchWorkbench['battery'][number];
   }[];
   scores: {
     planner: Omit<DispatchScore, 'import_w' | 'export_w' | 'state'>;
@@ -611,11 +658,37 @@ const withoutSeries = (score: DispatchScore) => {
   return rest;
 };
 
+
+/**
+ * Whether a coefficient is one number or a function of where the store is.
+ *
+ * Probed rather than declared: the store exposes closures, and an exporter that
+ * assumed constancy would write a single figure that silently lied for a pool
+ * whose COP moves with the weather. Sampled across the state range the curve
+ * spans and across the horizon's ends, which is where any dependence shows.
+ */
+function coefficientIsConstant(
+  at: (state: number, index: number) => number,
+  store: DispatchStore,
+  slots: number,
+): boolean {
+  const low = store.min_state ?? store.curve.points[0]?.at ?? 0;
+  const high = store.max_state ?? store.curve.points.at(-1)?.at ?? low + 1;
+  const reference = at(low, 0);
+  for (const state of [low, (low + high) / 2, high]) {
+    for (const index of [0, Math.floor(slots / 2), Math.max(0, slots - 1)]) {
+      if (Math.abs(at(state, index) - reference) > 1e-9) return false;
+    }
+  }
+  return true;
+}
+
 export function buildWorkbenchExport(
   bench: DispatchWorkbench,
   manual: DispatchSchedule,
   comparison: WorkbenchComparison,
 ): WorkbenchExport {
+  const count = bench.slots.length;
   const worth = new Map(
     [
       ['planner', storeValueSeries(bench, comparison.planner)],
@@ -644,25 +717,58 @@ export function buildWorkbenchExport(
   });
 
   return {
-    format: 'shs.plan-workbench.v1',
+    format: 'shs.plan-workbench.v2',
     exported_at: new Date().toISOString(),
     snapshot_id: bench.snapshot_id,
     captured_at: bench.captured_at,
     slot_minutes: 15,
     limits: bench.limits,
-    stores: bench.stores.map(store => ({
-      key: store.key,
-      state_unit: store.curve.unit,
-      initial_state: store.initial_state,
-      min_state: store.min_state ?? null,
-      max_state: store.max_state ?? null,
-      max_power_w: store.max_power_w,
-      min_power_w: store.min_power_w ?? 0,
-      power_step_w: store.power_step_w ?? 0,
-      discharge_max_power_w: store.discharge?.max_power_w ?? null,
-      export_allowed: store.discharge?.export_allowed ?? null,
-      curve: store.curve.points.map(point => ({ ...point })),
-    })),
+    stores: bench.stores.map(store => {
+      // Sampled on the planner's own trajectory, so the series is exact for the
+      // schedule this file carries whether or not the coefficient is constant.
+      const trajectory = comparison.planner.state[store.key] ??
+        new Array<number>(count).fill(store.initial_state);
+      const stateAt = (index: number) => trajectory[index] ?? store.initial_state;
+      const discharge = store.discharge;
+      return {
+        key: store.key,
+        state_unit: store.curve.unit,
+        initial_state: store.initial_state,
+        min_state: store.min_state ?? null,
+        max_state: store.max_state ?? null,
+        max_power_w: store.max_power_w,
+        min_power_w: store.min_power_w ?? 0,
+        power_step_w: store.power_step_w ?? 0,
+        discharge_max_power_w: discharge?.max_power_w ?? null,
+        export_allowed: discharge?.export_allowed ?? null,
+        curve: store.curve.points.map(point => ({ ...point })),
+        usage_weight: [...store.usage_weight],
+        terminal_weight: store.terminal_weight ?? 0,
+        retention_per_slot: store.retention_per_slot,
+        wear_sek_per_kwh: store.wear_sek_per_kwh ?? 0,
+        start_cost_sek: store.start_cost_sek ?? 0,
+        cycling_cost_sek_per_unit: discharge?.cycling_cost_sek_per_unit ?? null,
+        units_per_kwh_by_slot: bench.slots.map(
+          (_slot, index) => store.units_per_kwh(stateAt(index), index),
+        ),
+        units_per_kwh_is_constant: coefficientIsConstant(
+          store.units_per_kwh,
+          store,
+          count,
+        ),
+        state_per_kwh_out_by_slot: discharge
+          ? bench.slots.map(
+            (_slot, index) => discharge.state_per_kwh_out(stateAt(index), index),
+          )
+          : null,
+        state_per_kwh_out_is_constant: discharge
+          ? coefficientIsConstant(discharge.state_per_kwh_out, store, count)
+          : true,
+        drift_by_slot: bench.slots.map(
+          (_slot, index) => store.drift(stateAt(index), index) - stateAt(index),
+        ),
+      };
+    }),
     quarters: bench.slots.map((slot, index) => ({
       start: new Date(bench.slot_start_ms[index]).toISOString(),
       binding: slot.binding !== false,
@@ -671,8 +777,11 @@ export function buildWorkbenchExport(
       fixed_load_w: slot.fixed_load_w,
       import_price_sek_per_kwh: slot.import_price_sek_per_kwh,
       export_price_sek_per_kwh: slot.export_price_sek_per_kwh,
+      published_price: slot.published_price === true,
       planner: per('planner', bench.planned, comparison.planner, index),
       manual: per('manual', manual, comparison.manual, index),
+      planner_allocations: bench.allocations[index] ?? [],
+      planner_battery: bench.battery[index] ?? null,
     })),
     scores: {
       planner: withoutSeries(comparison.planner),

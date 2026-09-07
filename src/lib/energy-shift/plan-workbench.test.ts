@@ -425,7 +425,7 @@ Deno.test('an export carries both plans, their inputs and where they came from',
   // It has to survive the trip out as JSON, which is the whole point.
   const parsed = JSON.parse(JSON.stringify(exported)) as typeof exported;
 
-  assertEquals(parsed.format, 'shs.plan-workbench.v1');
+  assertEquals(parsed.format, 'shs.plan-workbench.v2');
   assertEquals(parsed.snapshot_id, bench.snapshot_id);
   assertEquals(parsed.quarters.length, 288);
   assertEquals(parsed.stores.length, bench.stores.length);
@@ -930,5 +930,96 @@ Deno.test('a window is projected from the start, not from its own edge', () => {
   assert(
     windowed.state.battery[192] !== bench.stores.find(s => s.key === 'battery')!.initial_state,
     'the third day does not start where the first did',
+  );
+});
+
+
+Deno.test('a v2 export carries what the objective was computed from', () => {
+  // v1 showed what was decided and not what it was decided against, so an audit
+  // could compare the two schedules it was handed but never check either.
+  const bench = dispatchWorkbench(realSnapshot());
+  assert(bench !== null);
+  const comparison = compareWorkbench(bench, bench.planned);
+
+  const exported = JSON.parse(JSON.stringify(
+    buildWorkbenchExport(bench, bench.planned, comparison),
+  )) as ReturnType<typeof buildWorkbenchExport>;
+
+  assertEquals(exported.format, 'shs.plan-workbench.v2');
+  const battery = exported.stores.find(store => store.key === 'battery')!;
+  assert(battery.curve.length > 0, 'the curve the objective priced it against');
+  assertEquals(battery.usage_weight.length, bench.stores[0].usage_weight.length);
+  assertEquals(battery.units_per_kwh_by_slot.length, 288);
+  assertEquals(battery.drift_by_slot.length, 288);
+  assert(battery.state_per_kwh_out_by_slot !== null, 'the pack can discharge');
+  assert(battery.terminal_weight > 0, 'the pack is valued at the horizon edge');
+
+  // The publication flag v1 omitted, which is what separates a forecast saving
+  // from money.
+  assert(
+    exported.quarters.some(quarter => quarter.published_price),
+    'some of the horizon is quoted',
+  );
+  assert(
+    exported.quarters.some(quarter => !quarter.published_price),
+    'and some of it is the shaped tail',
+  );
+});
+
+Deno.test('a v2 export says why, not only what', () => {
+  // A declined discharge looks identical in the schedule whether it was never
+  // bid, bid and outranked, or bid, won and released by settlement.
+  const bench = dispatchWorkbench(realSnapshot());
+  assert(bench !== null);
+  const exported = buildWorkbenchExport(
+    bench,
+    bench.planned,
+    compareWorkbench(bench, bench.planned),
+  );
+
+  assertEquals(exported.quarters.length, 288);
+  assert(
+    exported.quarters.some(quarter => quarter.planner_allocations.length > 0),
+    'the planner accepted moves somewhere, and they must be recorded',
+  );
+  assert(
+    exported.quarters.some(quarter => quarter.planner_battery !== null),
+    'the pack is compared in every quarter it exists',
+  );
+  // Every recorded move names the store, direction and what it was worth.
+  for (const quarter of exported.quarters) {
+    for (const part of quarter.planner_allocations) {
+      assert(typeof part.store_key === 'string');
+      assert(part.direction === 'charge' || part.direction === 'discharge');
+      assert(Number.isFinite(part.net_value_sek));
+    }
+  }
+});
+
+Deno.test('an export covers the whole horizon whatever day is on screen', () => {
+  // The scores on screen follow the day tabs; a file does not. An audit
+  // reproduces complete-horizon figures, and an export whose meaning depended
+  // on an invisible tab selection would be silently incomparable with the last.
+  const bench = dispatchWorkbench(realSnapshot());
+  assert(bench !== null);
+
+  const whole = buildWorkbenchExport(
+    bench,
+    bench.planned,
+    compareWorkbench(bench, bench.planned),
+  );
+  const windowed = buildWorkbenchExport(
+    bench,
+    bench.planned,
+    compareWorkbench(bench, bench.planned, { from: 96, to: 192 }),
+  );
+
+  assertEquals(whole.quarters.length, 288);
+  assertEquals(windowed.quarters.length, 288);
+  // The quarters are always the full horizon; only a windowed *comparison*
+  // would narrow the scores, which is why the component must not pass one.
+  assert(
+    whole.scores.planner.billable_sek !== windowed.scores.planner.billable_sek,
+    'a windowed comparison really does change the file, so the caller matters',
   );
 });

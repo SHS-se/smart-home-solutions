@@ -272,8 +272,17 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
    * they have to leave this machine for anyone else to look at them.
    */
   const exportPlan = () => {
-    if (!bench || !manual || !comparison) return;
-    const payload = buildWorkbenchExport(bench, manual, comparison);
+    if (!bench || !manual) return;
+    // Always the whole horizon, whatever day is on screen. The scores above
+    // follow the window because a reader is asking about the day in front of
+    // them; a file is read elsewhere, later, by an audit that reproduces
+    // complete-horizon figures — and a export whose meaning depended on an
+    // invisible tab selection would be silently incomparable with the last one.
+    const payload = buildWorkbenchExport(
+      bench,
+      manual,
+      compareWorkbench(bench, manual),
+    );
     const url = URL.createObjectURL(
       new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }),
     );
