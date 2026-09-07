@@ -643,6 +643,16 @@ export interface OptimisationPlan {
   /** Echoed like the batteries, so a reader can see the state it was planned from. */
   pool: PoolStateInput | null;
   grid: OptimisationSnapshot["grid"];
+  /**
+   * The shaping constants this solve used (§8.16).
+   *
+   * Published because they are recoverable from nothing else the plan carries:
+   * the same snapshot under a different threshold produces a different
+   * schedule, so without these a stored plan cannot say which shaping it is an
+   * answer to. Constants rather than policy, which is why they sit beside
+   * `grid` instead of inside the echoed `policy`.
+   */
+  peak_shaping: { threshold_w: number; sek_per_kwh_per_kw: number };
   device_models: EmpiricalDeviceModelInput[];
   services: ServiceInput[];
   service_requirement_sample_days: Record<string, number>;
@@ -2107,13 +2117,22 @@ const PEAK_SHAPING_THRESHOLD_SHARE = 0.5;
  *
  * §8.16 leaves the calibration open, and it can be anchored to the last
  * published effektavgift when one returns. Until then this is where a household
- * is asked to sit rather than something derivable, which is why it is published
- * in the plan and can be overridden per home. Zero restores the pure energy
- * objective exactly.
+ * is asked to sit rather than something derivable, which is why the plan
+ * publishes it: two plans shaped with different constants are otherwise
+ * indistinguishable, and a replay cannot say which one produced the schedule it
+ * is holding. It ships as a constant — there is no per-home setting. Zero
+ * restores the pure energy objective exactly.
  */
 const PEAK_SHAPING_SEK_PER_KWH_PER_KW = 1.5;
 
-/** The shadow price on power this plan is shaped with (§8.16). */
+/**
+ * The shadow price on power this plan is shaped with (§8.16).
+ *
+ * The policy fields read here are a test seam rather than a per-home setting:
+ * `OptimisationSnapshot["policy"]` does not declare them, and nothing in the
+ * portal, the snapshot builder or the schema writes them. They exist so a case
+ * can state the rate it depends on instead of tracking the shipped default.
+ */
 function derivePeakShaping(
   snapshot: OptimisationSnapshot,
 ): { threshold_w: number; sek_per_kwh_per_kw: number } {
@@ -4477,6 +4496,7 @@ export function generateOptimisationPlan(
     ev_battery: snapshot.ev_battery ?? null,
     pool: snapshot.pool ?? null,
     grid: snapshot.grid,
+    peak_shaping: derivePeakShaping(snapshot),
     device_models: snapshot.device_models,
     services: snapshot.services,
     service_requirement_sample_days: snapshot.service_requirement_sample_days,

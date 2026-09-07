@@ -195,6 +195,10 @@
       "import_limit_w": 15000,
       "export_limit_w": 15000
     },
+    "peak_shaping": {
+      "threshold_w": 7500,
+      "sek_per_kwh_per_kw": 1.5
+    },
     "device_models": [],
     "services": [
       {
