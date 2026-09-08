@@ -43,9 +43,19 @@ const QUARTER_W_TO_KWH = 4_000;
  * quarter at (ENERGY_OPTIMISATION_ARCHITECTURE.md §1.4.2). The plan acts on the
  * modelled number, so a chart that omitted it would show the plan spending
  * against a blank stretch of axis.
+ *
+ * The two are drawn, but never merged silently. Nord Pool publishes one day
+ * ahead and the horizon is three, so most of a plan is priced by the shape
+ * estimator rather than by the market — and an estimate presented as a quote
+ * does not read as an estimate, it reads as the market being wrong. Whether a
+ * quarter was actually quoted therefore travels beside the number, so the
+ * chart can say which of the two a reader is looking at.
  */
+const isQuoted = (quoted: number | null): boolean =>
+  quoted !== null && Number.isFinite(quoted);
+
 const priced = (quoted: number | null, modelled: number | null): number | null =>
-  quoted !== null && Number.isFinite(quoted) ? quoted
+  isQuoted(quoted) ? quoted
     : modelled !== null && Number.isFinite(modelled) ? modelled
       : null;
 
@@ -97,6 +107,7 @@ const PowerSection: React.FC<{
         evSoc: row.evSoc === null ? null : row.evSoc * 100,
         importPriceSekPerKwh: priced(row.importPriceSekPerKwh, row.shadowImportSekPerKwh),
         exportPriceSekPerKwh: priced(row.exportPriceSekPerKwh, row.shadowExportSekPerKwh),
+        importPriceQuoted: isQuoted(row.importPriceSekPerKwh),
         cumulativeCostSek: running,
       };
     });

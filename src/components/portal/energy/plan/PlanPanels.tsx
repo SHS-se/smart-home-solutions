@@ -51,6 +51,12 @@ export interface PlanPanelRow {
   evSoc: number | null;
   importPriceSekPerKwh: number | null;
   exportPriceSekPerKwh: number | null;
+  /**
+   * Whether the market actually quoted this quarter, or the planner's shape
+   * estimator supplied the number. Day-ahead covers one day of a three-day
+   * horizon, so this is false for most of a plan.
+   */
+  importPriceQuoted: boolean;
   /** Running net cost from the start of the window. */
   cumulativeCostSek: number;
 }
@@ -173,6 +179,12 @@ const PlanPanels: React.FC<{
     // --- Price ------------------------------------------------------------
     const buy = rows.map(row => row.importPriceSekPerKwh);
     const sell = rows.map(row => row.exportPriceSekPerKwh);
+    // Quoted and estimated quarters are drawn as separate runs so the line can
+    // change weight where the market stops. A step run spans [x(i), x(i + 1)),
+    // so the two abut exactly at the changeover with no seam and no overlap.
+    const quotedBuy = rows.map(row => row.importPriceQuoted ? row.importPriceSekPerKwh : null);
+    const modelledBuy = rows.map(row => row.importPriceQuoted ? null : row.importPriceSekPerKwh);
+    const hasModelledPrice = modelledBuy.some(value => value !== null);
     const bands = priceBands(buy);
     const priceMax = Math.max(0.5, ...buy.filter((v): v is number => v !== null)) * 1.15;
     const priceY = linearScale([0, priceMax], [price.top + price.height, price.top]);
@@ -221,6 +233,7 @@ const PlanPanels: React.FC<{
     return {
       x, axisY, height: axisY + 42,
       price, priceY, priceMax, buy, sell, bands,
+      quotedBuy, modelledBuy, hasModelledPrice,
       flow, flowY, flowMin, flowMax, supply, disposal, flowLabels,
       load, loadY, loadMax, loadBands, loadLabels,
       soc, socY, cost, costY, cumulative, costMin, costMax,
@@ -229,6 +242,7 @@ const PlanPanels: React.FC<{
 
   const {
     x, axisY, height, price, priceY, priceMax, buy, sell, bands,
+    quotedBuy, modelledBuy, hasModelledPrice,
     flow, flowY, flowMin, flowMax, supply, disposal, flowLabels,
     load, loadY, loadMax, loadBands, loadLabels,
     soc, socY, cost, costY, cumulative, costMin, costMax,
@@ -351,7 +365,12 @@ const PlanPanels: React.FC<{
           {/* ---------------------------------------------------- Price --- */}
           <PanelHeading
             title={t('Pris', 'Price')}
-            unit={t('SEK/kWh · köp, färgat billigt → dyrt', 'SEK/kWh · buy, shaded cheap → dear')}
+            unit={hasModelledPrice
+              ? t(
+                'SEK/kWh · köp, färgat billigt → dyrt · streckat = uppskattat, inte marknadspris',
+                'SEK/kWh · buy, shaded cheap → dear · dashed = estimated, not a market price',
+              )
+              : t('SEK/kWh · köp, färgat billigt → dyrt', 'SEK/kWh · buy, shaded cheap → dear')}
             y={price.top - 14}
           />
           {bands && (
@@ -376,7 +395,10 @@ const PlanPanels: React.FC<{
             </g>
           )}
           <Gridlines ticks={niceTicks(0, priceMax, 3)} y={priceY} format={tick => tick.toFixed(1)} />
-          <path d={stepAreaPath(buy, x, priceY, 0)} fill={priceStroke} fillOpacity={0.2} />
+          {/* A thinner wash under the estimated stretch, so the difference is
+              legible from across the room rather than only on hover. */}
+          <path d={stepAreaPath(quotedBuy, x, priceY, 0)} fill={priceStroke} fillOpacity={0.2} />
+          <path d={stepAreaPath(modelledBuy, x, priceY, 0)} fill={priceStroke} fillOpacity={0.08} />
           {bands && [bands.cheapAt, bands.dearAt].map(level => (
             <line
               key={level} x1={MARGIN_LEFT} x2={RIGHT} y1={priceY(level)} y2={priceY(level)}
@@ -388,8 +410,15 @@ const PlanPanels: React.FC<{
             className="stroke-muted-foreground" strokeWidth={1.25}
           />
           <path
-            d={stepLinePath(buy, x, priceY)} fill="none"
+            d={stepLinePath(quotedBuy, x, priceY)} fill="none"
             stroke={priceStroke} strokeWidth={3} strokeLinejoin="round"
+          />
+          {/* Same colour and same position — only the continuity differs, so a
+              forecast never masquerades as a quote the market has published. */}
+          <path
+            d={stepLinePath(modelledBuy, x, priceY)} fill="none"
+            stroke={priceStroke} strokeWidth={2} strokeLinejoin="round"
+            strokeDasharray="5 4"
           />
 
           {/* ---------------------------------------------------- Flows --- */}
@@ -710,7 +739,12 @@ const PlanTooltip: React.FC<{
           />
         )}
         {row.importPriceSekPerKwh !== null && (
-          <Reading name={t('Köp', 'Buy')} value={`${row.importPriceSekPerKwh.toFixed(2)} SEK/kWh`} />
+          <Reading
+            name={row.importPriceQuoted
+              ? t('Köp', 'Buy')
+              : t('Köp (uppskattat)', 'Buy (estimated)')}
+            value={`${row.importPriceSekPerKwh.toFixed(2)} SEK/kWh`}
+          />
         )}
         <Reading
           name={t('Kostnad hittills', 'Cost so far')}

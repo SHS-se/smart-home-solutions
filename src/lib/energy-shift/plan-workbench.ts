@@ -425,6 +425,7 @@ export interface WorkbenchPanelRow {
   evSoc: number | null;
   importPriceSekPerKwh: number | null;
   exportPriceSekPerKwh: number | null;
+  importPriceQuoted: boolean;
   cumulativeCostSek: number;
 }
 
@@ -499,6 +500,9 @@ export function buildWorkbenchChart(
       evSoc: vehicle ? percentOf(vehicle, score.state[vehicle.key]?.[index]) : null,
       importPriceSekPerKwh: slot.import_price_sek_per_kwh,
       exportPriceSekPerKwh: slot.export_price_sek_per_kwh,
+      // The workbench solves against the shaped prior exactly as the planner
+      // does, so the same quarters are forecasts here as on the plan chart.
+      importPriceQuoted: slot.published_price === true,
       cumulativeCostSek: running,
     });
   }

@@ -214,6 +214,127 @@ const roomMapping = (
   return { key, name, controlled_devices: [...new Set(controlled)] };
 };
 
+const DEVICE_LOAD_TYPES = new Set<DeviceLoadType>([
+  "fixed_full_load",
+  "variable_full_load",
+  "duty_cycle",
+  "inverter",
+]);
+const DEVICE_PLANNING_ROLES = new Set<DevicePlanningRole>([
+  "base_load",
+  "controllable",
+]);
+const DEVICE_CONTROL_TYPES = new Set<DeviceControlType>([
+  "switch_schedule",
+  "variable_power",
+  "permit_inhibit",
+  "setpoint",
+]);
+const DEVICE_MAPPING_STATUSES = new Set<DeviceMappingStatus>([
+  "not_configured",
+  "ready",
+  "invalid",
+]);
+const DEVICE_CATEGORIES = new Set([
+  "heating",
+  "hot_water",
+  "cooling",
+  "property_energy",
+  "pool_heating",
+  "ev_charging",
+  "household",
+]);
+
+const boundedText = (value: unknown, max: number) =>
+  typeof value === "string" && value.length >= 1 && value.length <= max;
+
+/**
+ * Which field breaks one device's contract, or null when none does.
+ *
+ * The predicates are the ones this endpoint has always applied, in the order it
+ * always applied them. What changed is that they no longer collapse into a
+ * single boolean whose rejection said `devices[3]` and nothing more — one of
+ * fourteen fields is wrong, go and work out which. That mattered because this
+ * is the push carrying the plan *and* the price slots, and it is refused before
+ * either is stored: a home stops being planned and its prices stop arriving for
+ * as long as the guessing takes, while the portal goes on drawing the last plan
+ * it got. Naming the field costs a string and makes that a one-line diagnosis.
+ *
+ * One ordering change is deliberate. `mapping_summary` is type-checked before
+ * the per-status blocks rather than after them, because `roomMapping` reads
+ * through it: a `setpoint` device arriving with a null summary used to throw
+ * inside the validator and answer 500, which reports a broken server for what
+ * is a malformed request.
+ */
+const deviceContractBreach = (
+  device: IncomingDevice,
+  claimedKeys: ReadonlySet<string>,
+): string | null => {
+  if (!boundedText(device?.key, 255)) return "key";
+  if (claimedKeys.has(device.key)) return "key (duplicate)";
+  if (!boundedText(device.statistic_id, 255)) return "statistic_id";
+  if (!boundedText(device.name, 255)) return "name";
+  if (!DEVICE_CATEGORIES.has(device.category)) return "category";
+  if (!DEVICE_LOAD_TYPES.has(device.suggested_load_type)) {
+    return "suggested_load_type";
+  }
+  if (!DEVICE_PLANNING_ROLES.has(device.suggested_planning_role)) {
+    return "suggested_planning_role";
+  }
+  // Only a controllable meter carries a control type; base load must not.
+  if (
+    device.suggested_planning_role === "base_load"
+      ? device.suggested_control_type !== null
+      : !DEVICE_CONTROL_TYPES.has(
+        device.suggested_control_type as DeviceControlType,
+      )
+  ) return "suggested_control_type";
+  if (
+    device.active_power_w !== null &&
+    (typeof device.active_power_w !== "number" ||
+      !Number.isFinite(device.active_power_w) ||
+      device.active_power_w < 0 || device.active_power_w > 100_000)
+  ) return "active_power_w";
+  if (
+    !Number.isInteger(device.profile_sample_count) ||
+    device.profile_sample_count < 0
+  ) return "profile_sample_count";
+  if (
+    !device.inference || typeof device.inference !== "object" ||
+    Array.isArray(device.inference)
+  ) return "inference";
+  if (!DEVICE_MAPPING_STATUSES.has(device.mapping_status)) {
+    return "mapping_status";
+  }
+  if (
+    !device.mapping_summary || typeof device.mapping_summary !== "object" ||
+    Array.isArray(device.mapping_summary)
+  ) return "mapping_summary";
+  if (device.mapping_status === "not_configured") {
+    if (device.mapped_control_type !== null) return "mapped_control_type";
+    if (device.mapping_error !== null) return "mapping_error";
+  }
+  if (device.mapping_status === "ready") {
+    if (
+      !DEVICE_CONTROL_TYPES.has(device.mapped_control_type as DeviceControlType)
+    ) return "mapped_control_type";
+    if (device.mapping_error !== null) return "mapping_error";
+    // A setpoint always controls a room, and a meter carrying any room
+    // metadata must carry all of it — half a room cannot be scheduled.
+    if (
+      (device.mapped_control_type === "setpoint" ||
+        hasRoomMappingMetadata(device)) && roomMapping(device) === null
+    ) return "mapping_summary.room_key/room_name/controlled_devices";
+  }
+  if (device.mapping_status === "invalid") {
+    if (
+      !DEVICE_CONTROL_TYPES.has(device.mapped_control_type as DeviceControlType)
+    ) return "mapped_control_type";
+    if (!boundedText(device.mapping_error, 1000)) return "mapping_error";
+  }
+  return null;
+};
+
 const effectivePlanning = (device: StoredDevice) => ({
   planning_role: device.planning_role_override,
   control_type: device.control_type_override,
@@ -1097,81 +1218,13 @@ serve(async (req) => {
       return json({ error: "too_many_devices" }, 400);
     }
 
-    const loadTypes = new Set<DeviceLoadType>([
-      "fixed_full_load",
-      "variable_full_load",
-      "duty_cycle",
-      "inverter",
-    ]);
-    const planningRoles = new Set<DevicePlanningRole>([
-      "base_load",
-      "controllable",
-    ]);
-    const controlTypes = new Set<DeviceControlType>([
-      "switch_schedule",
-      "variable_power",
-      "permit_inhibit",
-      "setpoint",
-    ]);
-    const mappingStatuses = new Set<DeviceMappingStatus>([
-      "not_configured",
-      "ready",
-      "invalid",
-    ]);
-    const deviceCategories = new Set([
-      "heating",
-      "hot_water",
-      "cooling",
-      "property_energy",
-      "pool_heating",
-      "ev_charging",
-      "household",
-    ]);
     const deviceKeys = new Set<string>();
     const deviceRows: Record<string, unknown>[] = [];
     for (const [index, device] of devices.entries()) {
-      if (
-        typeof device?.key !== "string" || device.key.length < 1 ||
-        device.key.length > 255 || deviceKeys.has(device.key) ||
-        typeof device.statistic_id !== "string" ||
-        device.statistic_id.length < 1 || device.statistic_id.length > 255 ||
-        typeof device.name !== "string" || device.name.length < 1 ||
-        device.name.length > 255 || !deviceCategories.has(device.category) ||
-        !loadTypes.has(device.suggested_load_type) ||
-        !planningRoles.has(device.suggested_planning_role) ||
-        (device.suggested_planning_role === "base_load"
-          ? device.suggested_control_type !== null
-          : !controlTypes.has(
-            device.suggested_control_type as DeviceControlType,
-          )) ||
-        (device.active_power_w !== null &&
-          (typeof device.active_power_w !== "number" ||
-            !Number.isFinite(device.active_power_w) ||
-            device.active_power_w < 0 || device.active_power_w > 100_000)) ||
-        !Number.isInteger(device.profile_sample_count) ||
-        device.profile_sample_count < 0 ||
-        !device.inference || typeof device.inference !== "object" ||
-        Array.isArray(device.inference) ||
-        !mappingStatuses.has(device.mapping_status) ||
-        (device.mapping_status === "not_configured" &&
-          (device.mapped_control_type !== null ||
-            device.mapping_error !== null)) ||
-        (device.mapping_status === "ready" &&
-          (!controlTypes.has(device.mapped_control_type as DeviceControlType) ||
-            device.mapping_error !== null ||
-            ((device.mapped_control_type === "setpoint" ||
-              hasRoomMappingMetadata(device)) &&
-              roomMapping(device) === null))) ||
-        (device.mapping_status === "invalid" &&
-          (!controlTypes.has(device.mapped_control_type as DeviceControlType) ||
-            typeof device.mapping_error !== "string" ||
-            device.mapping_error.length < 1 ||
-            device.mapping_error.length > 1000)) ||
-        !device.mapping_summary || typeof device.mapping_summary !== "object" ||
-        Array.isArray(device.mapping_summary)
-      ) {
+      const breach = deviceContractBreach(device, deviceKeys);
+      if (breach !== null) {
         return json(
-          { error: "invalid_device", detail: `devices[${index}]` },
+          { error: "invalid_device", detail: `devices[${index}].${breach}` },
           400,
         );
       }
