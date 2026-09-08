@@ -71,3 +71,21 @@ The portal now renders `planning_role_override`, `control_type_override` and
 not need to reselect them. A browser regression test covers all four included
 control methods, exclusion, a battery with no timestamp, page reload, no writes
 on viewing, and an intentional edit.
+
+## Per-device inclusion toggles
+
+Every device now has an Include in the plan switch and a separate control-method
+selector. The battery uses the same switch presentation. Turning inclusion off
+retains the saved method, including across reloads; changing a method while off
+does not include the device. Devices with no selected method ask for one before
+allowing inclusion. Existing inclusion choices and methods are not rewritten.
+
+Apply `20260909003000_preserve_method_when_excluding_device.sql` before deploying
+the portal. It allows excluded rows to retain their method and changes the
+existing save RPC to preserve that method when exclusion is saved without one.
+The existing authorization checks remain in place, and included rows still
+require a supported method. No rows are backfilled or reset.
+
+Browser coverage checks all supported methods through off/reload/on, initial
+choices without timestamps, method selection while excluded, keyboard operation,
+failed-save state, no writes from viewing, and the battery toggle.

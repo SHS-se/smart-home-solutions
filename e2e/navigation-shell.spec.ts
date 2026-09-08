@@ -438,9 +438,9 @@ test.describe('staff navigation shell', () => {
     await mockSupabase(context, 'staff');
   });
 
-  test('existing planning choices remain visible without review timestamps and reading never saves them', async ({ page, context }) => {
+  test('planning toggles preserve methods across exclusion and reload without rewriting existing choices', async ({ page, context }) => {
     const methods = [null, 'switch_schedule', 'variable_power', 'permit_inhibit', 'setpoint'];
-    const labels = ['Exkluderat', 'Inkluderat · På/av-schema', 'Inkluderat · Variabel effekt', 'Inkluderat · Tillåt/blockera', 'Inkluderat · Börvärde'];
+    const labels = ['Välj metod', 'På/av-schema', 'Variabel effekt', 'Tillåt/blockera', 'Börvärde'];
     const devices = methods.map((method, index) => ({
       id: `device-${index}`, device_key: `sensor.device_${index}`, statistic_id: `sensor.device_${index}`,
       name: `Device ${index}`, category: 'heating', load_type_override: 'duty_cycle',
@@ -448,30 +448,70 @@ test.describe('staff navigation shell', () => {
       planning_choice_at: null, mapping_status: method ? 'ready' : 'not_configured', mapped_control_type: method,
       mapping_error: null, mapping_summary: {}, active_power_w: 1000, profile_sample_count: 937,
     }));
+    const battery = { battery_present: true, battery_included: false, battery_choice_at: null };
     const writes: unknown[] = [];
+    let failNextSave = false;
     await context.route('**/rest/v1/energy_optimisation_devices?**', route => route.fulfill({ json: devices }));
-    await context.route('**/rest/v1/energy_optimisation_home_planning?**', route => route.fulfill({
-      json: { battery_present: true, battery_included: false, battery_choice_at: null },
-    }));
+    await context.route('**/rest/v1/energy_optimisation_home_planning?**', route => route.fulfill({ json: battery }));
     await context.route('**/rest/v1/rpc/get_energy_optimisation_*', route => route.fulfill({ json: [] }));
     await context.route('**/rest/v1/rpc/set_energy_*', async route => {
-      writes.push(route.request().postDataJSON());
-      await route.fulfill({ json: null });
+      const body = route.request().postDataJSON();
+      if (failNextSave) {
+        failNextSave = false;
+        await route.fulfill({ status: 500, json: { message: 'Save failed' } });
+        return;
+      }
+      writes.push(body);
+      const device = devices.find(d => d.id === body.p_device_id);
+      if (device) {
+        device.planning_role_override = body.p_planning_role;
+        device.control_type_override = body.p_control_type ?? device.control_type_override;
+      } else battery.battery_included = body.p_included;
+      await route.fulfill({ json: device ?? battery });
     });
+    const toggle = (i: number) => page.getByRole('switch', { name: `Inkludera Device ${i} i planen`, exact: true });
+    const method = (i: number) => page.getByRole('combobox', { name: `Styrmetod för Device ${i}`, exact: true });
     await login(page);
     await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-modeling?tab=devices`);
     for (let pass = 0; pass < 2; pass++) {
       for (let i = 0; i < methods.length; i++) {
-        await expect(page.getByRole('combobox', { name: `Include Device ${i} in the plan`, exact: true })).toHaveText(labels[i]);
+        await expect(method(i)).toHaveText(labels[i]);
+        await expect(toggle(i)).toBeChecked({ checked: i > 0 });
       }
-      await expect(page.getByRole('combobox', { name: 'Include house battery in the plan', exact: true })).toHaveText('Exkluderat');
+      await expect(page.getByRole('switch', { name: 'Inkludera husbatteriet i planen', exact: true })).not.toBeChecked();
       expect(writes).toEqual([]);
       if (pass === 0) await page.reload();
     }
-    // An intentional edit still uses the existing RPC and stable device ID.
-    await page.getByRole('combobox', { name: 'Include Device 4 in the plan', exact: true }).click();
-    await page.getByRole('option', { name: 'Exkluderat', exact: true }).click();
-    await expect.poll(() => writes).toEqual([{ p_device_id: 'device-4', p_planning_role: 'base_load', p_control_type: null }]);
+    // Every existing method survives off → reload → on.
+    for (let i = 1; i < methods.length; i++) {
+      await toggle(i).click();
+      await expect(toggle(i)).not.toBeChecked();
+      await page.reload();
+      await expect(method(i)).toHaveText(labels[i]);
+      await expect(toggle(i)).not.toBeChecked();
+      await toggle(i).click();
+      await expect(toggle(i)).toBeChecked();
+      expect(writes.slice(-2)).toEqual([
+        { p_device_id: `device-${i}`, p_planning_role: 'base_load', p_control_type: methods[i] },
+        { p_device_id: `device-${i}`, p_planning_role: 'controllable', p_control_type: methods[i] },
+      ]);
+    }
+    // Choosing a method does not itself grant inclusion.
+    await expect(toggle(0)).toBeDisabled();
+    await method(0).click();
+    await page.getByRole('option', { name: 'Börvärde', exact: true }).click();
+    await expect(toggle(0)).toBeEnabled();
+    await expect(toggle(0)).not.toBeChecked();
+    expect(writes.at(-1)).toEqual({ p_device_id: 'device-0', p_planning_role: 'base_load', p_control_type: 'setpoint' });
+    // Keyboard operation and failed-save state are both truthful.
+    failNextSave = true;
+    await toggle(0).focus();
+    await page.keyboard.press('Space');
+    await expect(page.getByText('Save failed').first()).toBeVisible();
+    await expect(toggle(0)).not.toBeChecked();
+    await page.getByRole('switch', { name: 'Inkludera husbatteriet i planen', exact: true }).click();
+    await expect(page.getByRole('switch', { name: 'Inkludera husbatteriet i planen', exact: true })).toBeChecked();
+    expect(writes.at(-1)).toEqual({ p_home_id: PRIMARY_HOME_ID, p_included: true });
   });
 
   test('staff sees grouped sidebar with integrated accounting', async ({ page }) => {

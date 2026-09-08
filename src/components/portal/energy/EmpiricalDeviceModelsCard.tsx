@@ -3,6 +3,7 @@ import { AlertTriangle, CheckCircle2, Clock3, Database, Loader2 } from 'lucide-r
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useToast } from '@/hooks/use-toast';
@@ -47,6 +48,17 @@ const CONTROL_TYPES: DeviceControlType[] = [
   'setpoint',
 ];
 
+const PlanningToggle: React.FC<{
+  name: string; included: boolean; disabled: boolean; onChange: (included: boolean) => void;
+}> = ({ name, included, disabled, onChange }) => {
+  const { t } = useLanguage();
+  return <label className="inline-flex items-center gap-2 whitespace-nowrap">
+    <Switch checked={included} disabled={disabled} onCheckedChange={onChange}
+      aria-label={t(`Inkludera ${name} i planen`, `Include ${name} in the plan`)} />
+    <span>{included ? t('Inkluderat', 'Included') : t('Exkluderat', 'Excluded')}</span>
+  </label>;
+};
+
 const EmpiricalDeviceModelsCard: React.FC<{
   devices: EmpiricalEnergyDevice[];
   homeId: string;
@@ -65,9 +77,9 @@ const EmpiricalDeviceModelsCard: React.FC<{
       });
     return () => { active = false; };
   }, [homeId]);
-  const chooseBattery = async (value: string) => {
+  const chooseBattery = async (included: boolean) => {
     setSavingId('battery'); setChoiceError("");
-    const { data, error } = await supabase.rpc('set_energy_battery_planning', { p_home_id: homeId, p_included: value === 'included' });
+    const { data, error } = await supabase.rpc('set_energy_battery_planning', { p_home_id: homeId, p_included: included });
     if (error) setChoiceError(error.message);
     else { setBattery(data); await onChanged(); }
     setSavingId(null);
@@ -77,10 +89,6 @@ const EmpiricalDeviceModelsCard: React.FC<{
     variable_full_load: t('Variabel full last', 'Variable full load'),
     duty_cycle: t('Termostat / driftcykel', 'Thermostat / duty cycle'),
     inverter: t('Inverterlast', 'Inverter load'),
-  };
-  const roleLabel: Record<DevicePlanningRole, string> = {
-    base_load: t('Exkluderat', 'Excluded'),
-    controllable: t('Inkluderat', 'Included'),
   };
   const controlLabel: Record<DeviceControlType, string> = {
     switch_schedule: t('På/av-schema', 'On/off schedule'),
@@ -127,13 +135,12 @@ const EmpiricalDeviceModelsCard: React.FC<{
     t('Kunde inte spara lasttypen', 'Could not save load type'),
   );
 
-  const updatePlanning = (device: EmpiricalEnergyDevice, value: string) => {
-    const [role, control] = value.split(':') as [DevicePlanningRole, DeviceControlType | undefined];
+  const updatePlanning = (device: EmpiricalEnergyDevice, included: boolean, control: DeviceControlType | null = device.control_type_override) => {
     return persist(
       device,
       supabase.rpc('set_energy_device_planning', {
         p_device_id: device.id,
-        p_planning_role: role,
+        p_planning_role: included ? 'controllable' : 'base_load',
         p_control_type: control ?? null,
       }),
       t('Kunde inte spara planeringsrollen', 'Could not save planning role'),
@@ -153,17 +160,14 @@ const EmpiricalDeviceModelsCard: React.FC<{
         {battery?.battery_present && <div className="rounded-md border p-3">
           <strong>{t('Husbatteri', 'House battery')}</strong>
           <label className="mt-2 block text-sm">{t('Inkludera i planen', 'Include in the plan')}</label>
-          <Select value={battery.battery_included ? 'included' : 'excluded'}
-            onValueChange={value => void chooseBattery(value)} disabled={savingId !== null}>
-            <SelectTrigger aria-label="Include house battery in the plan"><SelectValue /></SelectTrigger>
-            <SelectContent><SelectItem value="included">{t('Inkluderat', 'Included')}</SelectItem><SelectItem value="excluded">{t('Exkluderat', 'Excluded')}</SelectItem></SelectContent>
-          </Select>
+          <PlanningToggle name={t('husbatteriet', 'house battery')} included={battery.battery_included}
+            disabled={savingId !== null} onChange={included => void chooseBattery(included)} />
           <p className="mt-2 text-xs text-muted-foreground">{t('Tillåt styrning i Home Assistant.', 'Permission to operate it is chosen in Home Assistant.')}</p>
         </div>}
         <p className="text-sm text-muted-foreground">
           {t(
-            'Alla nya enheter börjar som baslast och lärs från verkliga 15-minutersvärden. När du väljer en styrtyp här blir den en begäran till Home Assistant. Enheten stannar i baslasten tills en matchande lokal entitetsmappning har bekräftats; först då visas den som en egen planserie.',
-            'Every new device starts in base load and is learned from real 15-minute values. Selecting a control type here creates a request for Home Assistant. The device stays in base load until a matching local entity mapping is confirmed; only then does it become a separate plan series.',
+            'Alla nya enheter börjar som baslast och lärs från verkliga 15-minutersvärden. Reglaget inkluderar en enhet i planen. Styrmetoden sparas separat och behålls när reglaget är av. Enheten stannar i baslasten tills en matchande lokal entitetsmappning har bekräftats; först då visas den som en egen planserie.',
+            'Every new device starts in base load and is learned from real 15-minute values. The toggle includes a device in the plan. Its control method is saved separately and is retained when the toggle is off. The device stays in base load until a matching local entity mapping is confirmed; only then does it become a separate plan series.',
           )}
         </p>
         {(pendingCount > 0 || invalidCount > 0) && (
@@ -196,7 +200,8 @@ const EmpiricalDeviceModelsCard: React.FC<{
                 <TableRow>
                   <TableHead>{t('Enhet', 'Device')}</TableHead>
                   <TableHead>{t('Kategori', 'Category')}</TableHead>
-                  <TableHead>{t('Planeringsroll / styrning', 'Include in the plan')}</TableHead>
+                  <TableHead>{t('Inkludera i planen', 'Include in the plan')}</TableHead>
+                  <TableHead>{t('Styrmetod', 'Control method')}</TableHead>
                   <TableHead>{t('Lastkaraktär', 'Load characteristic')}</TableHead>
                   <TableHead className="text-right">{t('Aktiv effekt', 'Active power')}</TableHead>
                   <TableHead className="text-right">{t('Historik', 'History')}</TableHead>
@@ -210,22 +215,23 @@ const EmpiricalDeviceModelsCard: React.FC<{
                       <div className="max-w-[300px] truncate text-xs text-muted-foreground" title={device.statistic_id}>{device.statistic_id}</div>
                     </TableCell>
                     <TableCell><Badge variant="outline">{device.category.replace(/_/g, ' ')}</Badge></TableCell>
-                    <TableCell className="min-w-[250px]">
-                      <Select
-                        value={device.planning_role_override === 'base_load'
-                          ? 'base_load'
-                          : `controllable:${device.control_type_override}`}
-                        onValueChange={value => void updatePlanning(device, value)}
-                        disabled={savingId === device.id}
-                      >
-                        <SelectTrigger className="h-8" aria-label={`Include ${device.name} in the plan`}><SelectValue /></SelectTrigger>
+                    <TableCell>
+                      <PlanningToggle name={device.name} included={device.planning_role_override === 'controllable'}
+                        disabled={savingId !== null || (!device.control_type_override && device.planning_role_override !== 'controllable')}
+                        onChange={included => void updatePlanning(device, included)} />
+                      {!device.control_type_override && <p className="mt-1 text-xs text-muted-foreground">
+                        {t('Välj en styrmetod först.', 'Choose a control method first.')}
+                      </p>}
+                    </TableCell>
+                    <TableCell className="min-w-[200px]">
+                      <Select value={device.control_type_override ?? ''}
+                        onValueChange={value => void updatePlanning(device, device.planning_role_override === 'controllable', value as DeviceControlType)}
+                        disabled={savingId !== null}>
+                        <SelectTrigger className="h-8" aria-label={t(`Styrmetod för ${device.name}`, `Control method for ${device.name}`)}>
+                          <SelectValue placeholder={t('Välj metod', 'Choose method')} />
+                        </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="base_load">{roleLabel.base_load}</SelectItem>
-                          {CONTROL_TYPES.map(type => (
-                            <SelectItem key={type} value={`controllable:${type}`}>
-                              {roleLabel.controllable} · {controlLabel[type]}
-                            </SelectItem>
-                          ))}
+                          {CONTROL_TYPES.map(type => <SelectItem key={type} value={type}>{controlLabel[type]}</SelectItem>)}
                         </SelectContent>
                       </Select>
                       <div className="mt-1.5 flex items-center gap-1 text-xs text-muted-foreground">
@@ -245,7 +251,7 @@ const EmpiricalDeviceModelsCard: React.FC<{
                         <Select
                           value={device.load_type_override}
                           onValueChange={value => void updateLoadType(device, value)}
-                          disabled={savingId === device.id}
+                          disabled={savingId !== null}
                         >
                           <SelectTrigger className="h-8">
                             <SelectValue />
