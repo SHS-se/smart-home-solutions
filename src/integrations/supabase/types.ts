@@ -2362,6 +2362,7 @@ export type Database = {
           mapping_status: string
           mapping_summary: Json
           name: string
+          planning_choice_at: string | null
           planning_role_override: string
           profile_sample_count: number
           retired_at: string | null
@@ -2389,6 +2390,7 @@ export type Database = {
           mapping_status?: string
           mapping_summary?: Json
           name: string
+          planning_choice_at?: string | null
           planning_role_override: string
           profile_sample_count?: number
           retired_at?: string | null
@@ -2416,6 +2418,7 @@ export type Database = {
           mapping_status?: string
           mapping_summary?: Json
           name?: string
+          planning_choice_at?: string | null
           planning_role_override?: string
           profile_sample_count?: number
           retired_at?: string | null
@@ -2761,6 +2764,12 @@ export type Database = {
             referencedColumns: ["dataset_key"]
           },
         ]
+      }
+      energy_optimisation_home_planning: {
+        Row: { home_id: string; customer_id: string; battery_present: boolean; battery_included: boolean; battery_choice_at: string | null }
+        Insert: { home_id: string; customer_id: string; battery_present?: boolean; battery_included?: boolean; battery_choice_at?: string | null }
+        Update: { battery_present?: boolean; battery_included?: boolean; battery_choice_at?: string | null }
+        Relationships: []
       }
       energy_home_settings: {
         Row: {
@@ -5105,6 +5114,10 @@ export type Database = {
       set_energy_device_load_type: {
         Args: { p_device_id: string; p_load_type: string }
         Returns: Database["public"]["Tables"]["energy_optimisation_devices"]["Row"]
+      }
+      set_energy_battery_planning: {
+        Args: { p_home_id: string; p_included: boolean }
+        Returns: Database["public"]["Tables"]["energy_optimisation_home_planning"]["Row"]
       }
       set_energy_device_planning: {
         Args: {

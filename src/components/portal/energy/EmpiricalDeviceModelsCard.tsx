@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Clock3, Database, Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -21,6 +21,7 @@ export interface EmpiricalEnergyDevice {
   category: string;
   load_type_override: DeviceLoadType;
   planning_role_override: DevicePlanningRole;
+  planning_choice_at: string | null;
   control_type_override: DeviceControlType | null;
   mapping_status: 'not_configured' | 'ready' | 'invalid';
   mapped_control_type: DeviceControlType | null;
@@ -48,11 +49,29 @@ const CONTROL_TYPES: DeviceControlType[] = [
 
 const EmpiricalDeviceModelsCard: React.FC<{
   devices: EmpiricalEnergyDevice[];
+  homeId: string;
   onChanged: () => Promise<void> | void;
-}> = ({ devices, onChanged }) => {
+}> = ({ devices, homeId, onChanged }) => {
   const { t } = useLanguage();
   const { toast } = useToast();
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [battery, setBattery] = useState<{ battery_present: boolean; battery_included: boolean; battery_choice_at: string | null } | null>(null);
+  const [choiceError, setChoiceError] = useState("");
+  useEffect(() => {
+    let active = true;
+    supabase.from('energy_optimisation_home_planning').select('battery_present, battery_included, battery_choice_at')
+      .eq('home_id', homeId).maybeSingle().then(({ data, error }) => {
+        if (active) { setBattery(data); setChoiceError(error?.message ?? ""); }
+      });
+    return () => { active = false; };
+  }, [homeId]);
+  const chooseBattery = async (value: string) => {
+    setSavingId('battery'); setChoiceError("");
+    const { data, error } = await supabase.rpc('set_energy_battery_planning', { p_home_id: homeId, p_included: value === 'included' });
+    if (error) setChoiceError(error.message);
+    else { setBattery(data); await onChanged(); }
+    setSavingId(null);
+  };
   const loadLabel: Record<DeviceLoadType, string> = {
     fixed_full_load: t('Fast full last', 'Fixed full load'),
     variable_full_load: t('Variabel full last', 'Variable full load'),
@@ -60,8 +79,8 @@ const EmpiricalDeviceModelsCard: React.FC<{
     inverter: t('Inverterlast', 'Inverter load'),
   };
   const roleLabel: Record<DevicePlanningRole, string> = {
-    base_load: t('Baslast', 'Base load'),
-    controllable: t('Styrbar', 'Controllable'),
+    base_load: t('Exkluderat', 'Excluded'),
+    controllable: t('Inkluderat', 'Included'),
   };
   const controlLabel: Record<DeviceControlType, string> = {
     switch_schedule: t('På/av-schema', 'On/off schedule'),
@@ -130,6 +149,17 @@ const EmpiricalDeviceModelsCard: React.FC<{
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        {choiceError && <p role="alert" className="text-destructive">{choiceError}</p>}
+        {battery?.battery_present && <div className="rounded-md border p-3">
+          <strong>{t('Husbatteri', 'House battery')}</strong>
+          <label className="mt-2 block text-sm">{t('Inkludera i planen', 'Include in the plan')}</label>
+          <Select value={battery.battery_choice_at ? (battery.battery_included ? 'included' : 'excluded') : ''}
+            onValueChange={value => void chooseBattery(value)} disabled={savingId !== null}>
+            <SelectTrigger aria-label="Include house battery in the plan"><SelectValue placeholder={t('Inkluderat — inte granskat', 'Included — not reviewed')} /></SelectTrigger>
+            <SelectContent><SelectItem value="included">{t('Inkluderat', 'Included')}</SelectItem><SelectItem value="excluded">{t('Exkluderat', 'Excluded')}</SelectItem></SelectContent>
+          </Select>
+          <p className="mt-2 text-xs text-muted-foreground">{t('Tillåt styrning i Home Assistant.', 'Permission to operate it is chosen in Home Assistant.')}</p>
+        </div>}
         <p className="text-sm text-muted-foreground">
           {t(
             'Alla nya enheter börjar som baslast och lärs från verkliga 15-minutersvärden. När du väljer en styrtyp här blir den en begäran till Home Assistant. Enheten stannar i baslasten tills en matchande lokal entitetsmappning har bekräftats; först då visas den som en egen planserie.',
@@ -166,7 +196,7 @@ const EmpiricalDeviceModelsCard: React.FC<{
                 <TableRow>
                   <TableHead>{t('Enhet', 'Device')}</TableHead>
                   <TableHead>{t('Kategori', 'Category')}</TableHead>
-                  <TableHead>{t('Planeringsroll / styrning', 'Planning role / control')}</TableHead>
+                  <TableHead>{t('Planeringsroll / styrning', 'Include in the plan')}</TableHead>
                   <TableHead>{t('Lastkaraktär', 'Load characteristic')}</TableHead>
                   <TableHead className="text-right">{t('Aktiv effekt', 'Active power')}</TableHead>
                   <TableHead className="text-right">{t('Historik', 'History')}</TableHead>
@@ -182,13 +212,13 @@ const EmpiricalDeviceModelsCard: React.FC<{
                     <TableCell><Badge variant="outline">{device.category.replace(/_/g, ' ')}</Badge></TableCell>
                     <TableCell className="min-w-[250px]">
                       <Select
-                        value={device.planning_role_override === 'base_load'
+                        value={!device.planning_choice_at ? '' : device.planning_role_override === 'base_load'
                           ? 'base_load'
                           : `controllable:${device.control_type_override}`}
                         onValueChange={value => void updatePlanning(device, value)}
                         disabled={savingId === device.id}
                       >
-                        <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                        <SelectTrigger className="h-8" aria-label={`Include ${device.name} in the plan`}><SelectValue placeholder={t("Inte granskat", "Not reviewed")} /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="base_load">{roleLabel.base_load}</SelectItem>
                           {CONTROL_TYPES.map(type => (

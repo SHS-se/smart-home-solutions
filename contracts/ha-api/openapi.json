@@ -476,6 +476,7 @@
       "OptimisationIngestRequest": {
         "type": "object",
         "properties": {
+          "equipment": { "type": "object", "required": ["battery"], "properties": { "battery": { "type": "boolean" } }, "additionalProperties": false },
           "api_version": { "const": 1 },
           "accepted_plan_schema_versions": {
             "type": "array",
@@ -1001,7 +1002,8 @@
           "plan_id",
           "snapshot_id",
           "plan",
-          "device_configuration"
+          "device_configuration",
+          "home_configuration"
         ],
         "properties": {
           "actual_slots_accepted": { "type": "integer", "minimum": 0 },
@@ -1019,7 +1021,16 @@
           },
           "device_configuration": {
             "type": "array",
-            "items": { "type": "object" }
+            "items": { "type": "object", "required": ["key", "planning_role", "planning_choice_at"],
+              "properties": { "key": { "type": "string" }, "planning_role": { "enum": ["base_load", "controllable"] },
+                "planning_choice_at": { "type": ["string", "null"], "format": "date-time", "description": "Actual website decision; null means never reviewed. Inventory pushes do not change it." } } }
+          },
+          "home_configuration": {
+            "type": "object", "required": ["battery"], "properties": {
+              "battery": { "type": "object", "required": ["included", "choice_at"], "properties": {
+                "included": { "type": "boolean" }, "choice_at": { "type": ["string", "null"], "format": "date-time" }
+              } }
+            }
           }
         },
         "additionalProperties": true

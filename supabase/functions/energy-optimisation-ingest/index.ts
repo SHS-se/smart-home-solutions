@@ -1,3 +1,4 @@
+import { applyBatteryChoice } from "../_shared/home-planning.ts";
 // Device-authenticated exchange for the live 15-minute energy model.
 //
 // Home Assistant sends only completed quarter-hour aggregates and, at most
@@ -169,6 +170,7 @@ interface IncomingDevice {
 }
 
 interface StoredDevice extends IncomingDevice {
+  planning_choice_at: string | null;
   id: string;
   load_type_override: DeviceLoadType;
   planning_role_override: DevicePlanningRole;
@@ -337,15 +339,17 @@ const deviceContractBreach = (
 };
 
 const effectivePlanning = (device: StoredDevice) => ({
+  planning_choice_at: device.planning_choice_at,
   planning_role: device.planning_role_override,
   control_type: device.control_type_override,
 });
 
 const STORED_DEVICE_COLUMNS =
-  "id, device_key, statistic_id, name, category, suggested_load_type, load_type_override, suggested_planning_role, planning_role_override, suggested_control_type, control_type_override, active_power_w, profile_sample_count, inference, mapping_status, mapped_control_type, mapping_error, mapping_summary";
+  "id, device_key, statistic_id, name, category, suggested_load_type, load_type_override, suggested_planning_role, planning_role_override, planning_choice_at, suggested_control_type, control_type_override, active_power_w, profile_sample_count, inference, mapping_status, mapped_control_type, mapping_error, mapping_summary";
 
 const storedDeviceFromRow = (row: Record<string, unknown>): StoredDevice => ({
   id: row.id as string,
+  planning_choice_at: row.planning_choice_at as string | null,
   key: row.device_key as string,
   statistic_id: row.statistic_id as string,
   name: row.name as string,
@@ -1115,6 +1119,7 @@ serve(async (req) => {
     let pools: IncomingPoolSlot[] = [];
     let snapshot: OptimisationSnapshot | null = null;
     let deviceInventoryComplete = false;
+    let equipment: { battery: boolean } | undefined;
     let integrationVersion: string | null = null;
     let portalReplanId: string | null = null;
     try {
@@ -1179,6 +1184,10 @@ serve(async (req) => {
       pools = body.pool_slots ?? [];
       snapshot = body.snapshot ?? null;
       deviceInventoryComplete = body.device_inventory_complete ?? false;
+      if (body.equipment !== undefined) {
+        if (!body.equipment || typeof body.equipment.battery !== "boolean") throw new Error("equipment");
+        equipment = { battery: body.equipment.battery };
+      }
       integrationVersion = typeof body.integration_version === "string"
         ? body.integration_version
         : null;
@@ -1327,6 +1336,19 @@ serve(async (req) => {
       );
       return json({ error: "storage_failed" }, 500);
     }
+    const { error: homeCreateError } = await supabase.from("energy_optimisation_home_planning")
+      .upsert({ home_id: auth.homeId, customer_id: auth.customerId }, { onConflict: "home_id", ignoreDuplicates: true });
+    if (homeCreateError) return json({ error: "home_planning_storage_failed" }, 500);
+    if (equipment !== undefined) {
+      const { error } = await supabase.from("energy_optimisation_home_planning")
+        .update({ battery_present: equipment.battery }).eq("home_id", auth.homeId);
+      if (error) return json({ error: "home_planning_storage_failed" }, 500);
+    }
+    const { data: homePlanning, error: homePlanningError } = await supabase
+      .from("energy_optimisation_home_planning").select("battery_present, battery_included, battery_choice_at")
+      .eq("home_id", auth.homeId).single();
+    if (homePlanningError) return json({ error: "home_planning_unavailable" }, 500);
+    if (snapshot) snapshot = applyBatteryChoice(snapshot, homePlanning.battery_included);
     const storedDevices = (storedRows ?? []).map(storedDeviceFromRow);
     const storedDeviceByKey = new Map(
       storedDevices.map((device) => [device.key, device]),
@@ -2113,6 +2135,7 @@ serve(async (req) => {
       plan_id: generated?.plan_id ?? null,
       snapshot_id: generated?.snapshot_id ?? null,
       plan: generated,
+      home_configuration: { battery: { included: homePlanning.battery_included, choice_at: homePlanning.battery_choice_at } },
       device_configuration: storedDevices.map((device) => ({
         key: device.key,
         statistic_id: device.statistic_id,
