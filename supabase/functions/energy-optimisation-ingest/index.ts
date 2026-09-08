@@ -8,6 +8,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { authenticateDevice, sha256Hex } from "../_shared/ha-device-auth.ts";
+import { devicePowerReport } from "../_shared/device-power-report.ts";
 import {
   HA_API_CORS_HEADERS,
   HA_UUID,
@@ -1221,12 +1222,24 @@ serve(async (req) => {
     const deviceKeys = new Set<string>();
     const deviceRows: Record<string, unknown>[] = [];
     for (const [index, device] of devices.entries()) {
+      // A bad descriptive estimate must not block prices, actuals and the
+      // plan. Do not alter snapshot device_models: their scheduling inputs
+      // still have to pass the planner's independent safety validation.
+      const powerReport = devicePowerReport(device?.active_power_w);
+      if (device && typeof device === "object" && !Array.isArray(device)) {
+        device.active_power_w = powerReport.power;
+      }
       const breach = deviceContractBreach(device, deviceKeys);
       if (breach !== null) {
         return json(
           { error: "invalid_device", detail: `devices[${index}].${breach}` },
           400,
         );
+      }
+      if (powerReport.rejected) {
+        console.warn("[ENERGY-OPTIMISATION] ignored invalid inventory power", {
+          device_key: device.key,
+        });
       }
       deviceKeys.add(device.key);
       deviceRows.push({
@@ -1241,7 +1254,12 @@ serve(async (req) => {
         suggested_control_type: device.suggested_control_type,
         active_power_w: device.active_power_w,
         profile_sample_count: device.profile_sample_count,
-        inference: device.inference,
+        inference: {
+          ...device.inference,
+          ...(powerReport.rejected ? {
+            power_warning: "The reported power could not be used. A fresh estimate is needed.",
+          } : {}),
+        },
         mapping_status: device.mapping_status,
         mapped_control_type: device.mapped_control_type,
         mapping_error: device.mapping_error,

@@ -540,9 +540,6 @@ const PlanView: React.FC<{
   const acknowledgementPending = !isDemo && current.ha_ack_status === 'pending';
   const acknowledgementRejected = !isDemo && current.ha_ack_status === 'rejected';
   const acknowledgedReady = ready && (isDemo || current.ha_ack_status === 'accepted');
-  const acknowledgementMessage = current.ha_ack_error?.message
-    ?? current.ha_ack_error?.code
-    ?? null;
 
   // When Home Assistant will next ask for a plan. It refreshes 30 minutes
   // before expiry, and only ever on a quarter boundary, so the honest answer is
@@ -673,16 +670,7 @@ const PlanView: React.FC<{
         </Alert>
       )}
       {(!acknowledgedReady || validationMessages.length > 0) && (() => {
-        // Every one of these states used to be reported in the planner's own
-        // vocabulary — "valid_until passed", "advisory, unpriced slots" —
-        // repeated once per forecast source. For an expired plan that is the
-        // same fact four times over: the sources all carry the same deadline,
-        // so when the plan lapses they lapse together and listing them says
-        // nothing the headline did not. What a household actually needs to
-        // know is what its home is doing right now, and whether anyone is
-        // waiting on them. The wording below answers those two questions
-        // first; the original detail is kept, one disclosure away, for
-        // whoever is debugging rather than living here.
+        // Explain expiry separately from the reason a replacement failed.
         const lastSeenMs = connectionLastSeenAt
           ? Date.parse(connectionLastSeenAt)
           : Number.NaN;
@@ -714,11 +702,11 @@ const PlanView: React.FC<{
           outdoor_temperature: ['väderprognosen', 'the weather forecast'],
         };
         const staleNames = [...new Set(sourceStale.map(source =>
-          SOURCE_NAMES[source] ? t(...SOURCE_NAMES[source]) : source))];
+          SOURCE_NAMES[source] ? t(...SOURCE_NAMES[source]) : t('en av prognoserna', 'one of the forecasts')))];
 
         const runningNormally = t(
-          'Värme, varmvatten och batteri går på sina vanliga inställningar under tiden, så ingenting är avstängt — hemmet planeras bara inte för lägsta kostnad just nu.',
-          'Your heating, hot water and battery are running on their usual settings meanwhile, so nothing is switched off — your home just is not being planned for lowest cost right now.',
+          'Den här planen kan inte längre användas för att styra hemmet efter elpriset. Home Assistant visar vilka inställningar varje enhet använder under tiden.',
+          'This plan can no longer be used to control your home according to electricity prices. Home Assistant shows which settings each device is using meanwhile.',
         );
         const notYours = t(
           'Det här är något vi behöver rätta till, inte något du behöver göra.',
@@ -753,8 +741,8 @@ const PlanView: React.FC<{
               ? connectionLive
                 ? [
                   t(
-                    `Ingen ny plan har skapats sedan kl. ${clockTime(current.plan.valid_until)}.`,
-                    `No new plan has been produced since ${clockTime(current.plan.valid_until)}.`,
+                    `Den senaste planen skapades kl. ${clockTime(plan.issued_at)} och slutade gälla kl. ${clockTime(current.plan.valid_until)}. Ingen ny plan har ersatt den.`,
+                    `The latest plan was created at ${clockTime(plan.issued_at)} and expired at ${clockTime(current.plan.valid_until)}. No replacement has arrived.`,
                   ),
                   runningNormally,
                   ago ? t(
@@ -795,15 +783,31 @@ const PlanView: React.FC<{
                     'Home Assistant uses its usual settings until a valid plan is available.',
                   )];
 
-        // The original wording, kept whole. A household never needs it; the
-        // person diagnosing the home always does, and losing it to make the
-        // banner friendlier would have traded one bad message for another.
         const details = [
-          ...(acknowledgementRejected && acknowledgementMessage ? [acknowledgementMessage] : []),
-          ...(stale ? [`plan valid_until ${current.plan.valid_until}`] : []),
-          ...(bindingExpired ? [`binding_until ${plan.binding_until}`] : []),
-          ...sourceStale.map(source => `${source}: valid_until passed`),
-          ...validationMessages,
+          ...(acknowledgementRejected ? [t(
+            'Home Assistant kunde inte godkänna planen. Anslutningens diagnostik visar orsaken.',
+            'Home Assistant could not accept the plan. The integration diagnostics show the reason.',
+          )] : []),
+          ...(stale ? [t(
+            `Planen behövde ersättas senast ${formatHomeStamp(current.plan.valid_until, homeTimeZone)}.`,
+            `The plan needed replacing by ${formatHomeStamp(current.plan.valid_until, homeTimeZone)}.`,
+          )] : []),
+          ...(bindingExpired ? [t(
+            `Tillgängliga elpriser täcker bara tiden fram till ${formatHomeStamp(plan.binding_until, homeTimeZone)}.`,
+            `Available electricity prices only cover the period up to ${formatHomeStamp(plan.binding_until, homeTimeZone)}.`,
+          )] : []),
+          ...(sourceStale.length > 0 ? [t(
+            `Underlaget för ${staleNames.join(', ')} behöver uppdateras innan en ny plan kan användas.`,
+            `The information for ${staleNames.join(', ')} needs updating before a new plan can be used.`,
+          )] : []),
+          ...(stale ? [t(
+            'Detta visar när planen slutade gälla, inte varför nästa plan saknas. Det senaste planeringsfelet finns i Home Assistants diagnostik.',
+            'This explains when the plan expired, not why the next plan is missing. Home Assistant diagnostics contain the latest planning error.',
+          )] : []),
+          ...(validationMessages.length > 0 ? [t(
+            'Planen klarade inte alla kontroller och behöver räknas om med aktuella uppgifter.',
+            'The plan did not pass all checks and needs to be recalculated with current information.',
+          )] : []),
         ];
 
         return (
@@ -815,7 +819,7 @@ const PlanView: React.FC<{
               {details.length > 0 && (
                 <details className="mt-2">
                   <summary className="cursor-pointer text-xs opacity-70">
-                    {t('Tekniska detaljer', 'Technical details')}
+                    {t('Vad det betyder', 'What this means')}
                   </summary>
                   <p className="mt-1 text-xs opacity-70">{details.slice(0, 8).join(' · ')}</p>
                 </details>
