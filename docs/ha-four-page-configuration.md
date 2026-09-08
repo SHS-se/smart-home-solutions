@@ -60,3 +60,14 @@ The SQL migration has been reviewed but not applied to a database. No code has
 been pushed or deployed, and no live HA configuration or actuator was changed.
 Database migration, coordinated deployment, HA restart and physical execution
 confirmation remain Phase 5.
+
+## Correction: preserve visible planning selections
+
+The initial portal incorrectly displayed an empty “Not reviewed” selection when
+`planning_choice_at` was null. That timestamp is new, so existing choices had no
+timestamp even though their role and control method were still stored and used.
+The portal now renders `planning_role_override`, `control_type_override` and
+`battery_included` directly. No database values are rewritten, and customers do
+not need to reselect them. A browser regression test covers all four included
+control methods, exclusion, a battery with no timestamp, page reload, no writes
+on viewing, and an intentional edit.

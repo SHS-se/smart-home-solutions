@@ -153,9 +153,9 @@ const EmpiricalDeviceModelsCard: React.FC<{
         {battery?.battery_present && <div className="rounded-md border p-3">
           <strong>{t('Husbatteri', 'House battery')}</strong>
           <label className="mt-2 block text-sm">{t('Inkludera i planen', 'Include in the plan')}</label>
-          <Select value={battery.battery_choice_at ? (battery.battery_included ? 'included' : 'excluded') : ''}
+          <Select value={battery.battery_included ? 'included' : 'excluded'}
             onValueChange={value => void chooseBattery(value)} disabled={savingId !== null}>
-            <SelectTrigger aria-label="Include house battery in the plan"><SelectValue placeholder={t('Inkluderat — inte granskat', 'Included — not reviewed')} /></SelectTrigger>
+            <SelectTrigger aria-label="Include house battery in the plan"><SelectValue /></SelectTrigger>
             <SelectContent><SelectItem value="included">{t('Inkluderat', 'Included')}</SelectItem><SelectItem value="excluded">{t('Exkluderat', 'Excluded')}</SelectItem></SelectContent>
           </Select>
           <p className="mt-2 text-xs text-muted-foreground">{t('Tillåt styrning i Home Assistant.', 'Permission to operate it is chosen in Home Assistant.')}</p>
@@ -212,13 +212,13 @@ const EmpiricalDeviceModelsCard: React.FC<{
                     <TableCell><Badge variant="outline">{device.category.replace(/_/g, ' ')}</Badge></TableCell>
                     <TableCell className="min-w-[250px]">
                       <Select
-                        value={!device.planning_choice_at ? '' : device.planning_role_override === 'base_load'
+                        value={device.planning_role_override === 'base_load'
                           ? 'base_load'
                           : `controllable:${device.control_type_override}`}
                         onValueChange={value => void updatePlanning(device, value)}
                         disabled={savingId === device.id}
                       >
-                        <SelectTrigger className="h-8" aria-label={`Include ${device.name} in the plan`}><SelectValue placeholder={t("Inte granskat", "Not reviewed")} /></SelectTrigger>
+                        <SelectTrigger className="h-8" aria-label={`Include ${device.name} in the plan`}><SelectValue /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="base_load">{roleLabel.base_load}</SelectItem>
                           {CONTROL_TYPES.map(type => (

@@ -438,6 +438,42 @@ test.describe('staff navigation shell', () => {
     await mockSupabase(context, 'staff');
   });
 
+  test('existing planning choices remain visible without review timestamps and reading never saves them', async ({ page, context }) => {
+    const methods = [null, 'switch_schedule', 'variable_power', 'permit_inhibit', 'setpoint'];
+    const labels = ['Exkluderat', 'Inkluderat · På/av-schema', 'Inkluderat · Variabel effekt', 'Inkluderat · Tillåt/blockera', 'Inkluderat · Börvärde'];
+    const devices = methods.map((method, index) => ({
+      id: `device-${index}`, device_key: `sensor.device_${index}`, statistic_id: `sensor.device_${index}`,
+      name: `Device ${index}`, category: 'heating', load_type_override: 'duty_cycle',
+      planning_role_override: method ? 'controllable' : 'base_load', control_type_override: method,
+      planning_choice_at: null, mapping_status: method ? 'ready' : 'not_configured', mapped_control_type: method,
+      mapping_error: null, mapping_summary: {}, active_power_w: 1000, profile_sample_count: 937,
+    }));
+    const writes: unknown[] = [];
+    await context.route('**/rest/v1/energy_optimisation_devices?**', route => route.fulfill({ json: devices }));
+    await context.route('**/rest/v1/energy_optimisation_home_planning?**', route => route.fulfill({
+      json: { battery_present: true, battery_included: false, battery_choice_at: null },
+    }));
+    await context.route('**/rest/v1/rpc/get_energy_optimisation_*', route => route.fulfill({ json: [] }));
+    await context.route('**/rest/v1/rpc/set_energy_*', async route => {
+      writes.push(route.request().postDataJSON());
+      await route.fulfill({ json: null });
+    });
+    await login(page);
+    await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-modeling?tab=devices`);
+    for (let pass = 0; pass < 2; pass++) {
+      for (let i = 0; i < methods.length; i++) {
+        await expect(page.getByRole('combobox', { name: `Include Device ${i} in the plan`, exact: true })).toHaveText(labels[i]);
+      }
+      await expect(page.getByRole('combobox', { name: 'Include house battery in the plan', exact: true })).toHaveText('Exkluderat');
+      expect(writes).toEqual([]);
+      if (pass === 0) await page.reload();
+    }
+    // An intentional edit still uses the existing RPC and stable device ID.
+    await page.getByRole('combobox', { name: 'Include Device 4 in the plan', exact: true }).click();
+    await page.getByRole('option', { name: 'Exkluderat', exact: true }).click();
+    await expect.poll(() => writes).toEqual([{ p_device_id: 'device-4', p_planning_role: 'base_load', p_control_type: null }]);
+  });
+
   test('staff sees grouped sidebar with integrated accounting', async ({ page }) => {
     await login(page);
     const sidebar = page.locator('[data-sidebar="sidebar"]');
