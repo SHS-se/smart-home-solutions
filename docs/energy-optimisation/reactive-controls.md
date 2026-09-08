@@ -82,6 +82,24 @@ For an EV, start from the planned target and change only in declared steps withi
 
 For rooms, coordinate thermostat requests within the heating/home budget. Rank comparable requests by measured deficit, time waiting, forecast loss, and room priority; rotate comparable requests without violating timers. A grant permits heating when the thermostat calls; it does not force a warm room on. Product comfort semantics remain [D1](../../ENERGY_OPTIMISATION_ARCHITECTURE_REVIEW.md#d1-comfort-and-service-promises).
 
+### Pool: translating planned watts into a temperature band
+
+The plan gives each slot a `pool_w`, while equipment like the surveyed Nibe is driven by a start/stop temperature band and its own permission. Mapping those registers does not by itself say which band to write for a given slot, so the executor needs a stated rule.
+
+The gap is narrower than it looks. The pool service is built with a `fixed_power` control at the devices' summed rating, so the planner already treats the pool as running at rating or not at all, and `pool_w` is effectively a per-slot yes or no. Translating it into a band position therefore discards nothing the plan actually expressed.
+
+The rule:
+
+- **Capture the installed band once**, at commissioning, and treat its width as the equipment's hysteresis. That width is a property of the machine and is preserved, never narrowed to force a duty cycle.
+- **A slot with power** writes the band at its heat position — the captured band.
+- **A slot without power** writes the band down far enough that the machine stops calling for heat, keeping the same width.
+- **Both positions are clamped** to the pool store's reviewed `minimum` and `maximum`. A clamp is not a setpoint: the bounds exist to stop a request leaving the reviewed range, and are not themselves the two positions.
+- **Confirm from the water**, not from the write. A band accepted by the register is not heat delivered, and `sensor.priority_31029` with the diverter valve will show the shared compressor serving hot water instead.
+
+This deliberately inherits the household's existing target rather than choosing one. How warm the pool should be is [D1](../../ENERGY_OPTIMISATION_ARCHITECTURE_REVIEW.md#d1-comfort-and-service-promises), and until that is answered the planner may defer pool heating but must not decide the pool should be warmer than the band it found.
+
+That limit is the reason to expect this rule to be temporary. Schema 6 added measured pool state to the snapshot so the pool could be planned as a store with a temperature rather than a fixed daily energy budget, and the pool store is described as something the planner schedules water temperature against — but the plan slot still emits watts alone. The boiler shows the shape the pool is missing: it carries `boiler_expected_w` *and* `boiler_permitted`, an expectation plus an authority, which is what lets a device keep its own duty cycle under a plan. Giving the pool the same permission flag, or a `pool_target_c` trajectory, removes the translation entirely. Either is a plan-contract change and goes through [versioning and validation](contracts-and-data.md#versioning-and-validation) rather than being introduced by an executor.
+
 ## Surveyed control surfaces
 
 Read on 8 September 2026 from the reference installation. This records which levers and confirmations exist, not that any of them has been commissioned, calibrated, or authorised to write. Entity ids are that installation's; the executor contracts above remain the product interface, and a second installation may expose the same lever under a different id.

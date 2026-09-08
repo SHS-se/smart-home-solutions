@@ -61,6 +61,7 @@ These items require implementation or evidence, not repeated preference question
 - Verify mixed-heater executability and identify whether fitted coefficients are effective or physical. Test out-of-sample trajectories.
 - Implement the residual and confirmation-aware allocator in the integration; calibrate thresholds/response times and test expiry/restoration per executor.
 - Verify that current wire schemas, status readers, and provider-generated corpus agree before changing execution semantics.
+- Carry the pool's authority in the plan, as a permission flag or a target-temperature trajectory, so equipment driven by a temperature band no longer depends on the executor translating watts. The [interim rule](reactive-controls.md#pool-translating-planned-watts-into-a-temperature-band) is bounded by the band the household already set.
 
 These are requirements clarified by the split, not claims that the corresponding code has already been corrected. Product choices that affect their acceptance criteria are retained in the review.
 
