@@ -71,7 +71,7 @@ Deno.test("planning negotiation fails before an unreadable plan can be emitted",
   const accepted = validatePlanningNegotiation({
     api_version: 1,
     integration_version: "0.7.0-beta.30",
-    accepted_plan_schema_versions: [5, 6],
+    accepted_plan_schema_versions: [5, 6, 7],
   }, 6);
   assertEquals(accepted, null);
 });

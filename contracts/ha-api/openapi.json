@@ -7,8 +7,8 @@
   },
   "x-shs-versioning": {
     "api_version": 1,
-    "supported_snapshot_schema_versions": [5, 6],
-    "supported_plan_schema_versions": [5, 6],
+    "supported_snapshot_schema_versions": [5, 6, 7],
+    "supported_plan_schema_versions": [5, 6, 7],
     "minimum_snapshot_schema_version": 5,
     "minimum_plan_schema_version": 5
   },
@@ -331,8 +331,8 @@
         ],
         "properties": {
           "api_version": { "const": 1 },
-          "supported_snapshot_schema_versions": { "const": [5, 6] },
-          "supported_plan_schema_versions": { "const": [5, 6] },
+          "supported_snapshot_schema_versions": { "const": [5, 6, 7] },
+          "supported_plan_schema_versions": { "const": [5, 6, 7] },
           "minimum_snapshot_schema_version": { "const": 5 },
           "minimum_plan_schema_version": { "const": 5 },
           "latest_plan_request_id": {
@@ -455,6 +455,15 @@
           }
         ]
       },
+      "SnapshotV7": {
+        "allOf": [
+          { "$ref": "#/components/schemas/SnapshotCommon" },
+          {
+            "type": "object",
+            "properties": { "schema_version": { "const": 7 } }
+          }
+        ]
+      },
       "SnapshotV6": {
         "allOf": [
           { "$ref": "#/components/schemas/SnapshotCommon" },
@@ -472,7 +481,7 @@
             "type": "array",
             "minItems": 1,
             "uniqueItems": true,
-            "items": { "enum": [5, 6] }
+            "items": { "enum": [5, 6, 7] }
           },
           "integration_version": {
             "type": "string",
@@ -513,7 +522,8 @@
           "snapshot": {
             "oneOf": [
               { "$ref": "#/components/schemas/SnapshotV5" },
-              { "$ref": "#/components/schemas/SnapshotV6" }
+              { "$ref": "#/components/schemas/SnapshotV6" },
+              { "$ref": "#/components/schemas/SnapshotV7" }
             ]
           }
         },
@@ -811,6 +821,168 @@
           }
         ]
       },
+      "DeviceCommandV7": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "reason"
+            ],
+            "properties": {
+              "type": {
+                "const": "unavailable"
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "target_c",
+              "minimum_c",
+              "maximum_c"
+            ],
+            "properties": {
+              "type": {
+                "const": "setpoint"
+              },
+              "target_c": {
+                "type": "number",
+                "minimum": 5,
+                "maximum": 35
+              },
+              "minimum_c": {
+                "type": "number",
+                "minimum": 5,
+                "maximum": 35
+              },
+              "maximum_c": {
+                "type": "number",
+                "minimum": 5,
+                "maximum": 35
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "on_seconds"
+            ],
+            "properties": {
+              "type": {
+                "const": "switch_schedule"
+              },
+              "on_seconds": {
+                "enum": [
+                  0,
+                  900
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "permitted"
+            ],
+            "properties": {
+              "type": {
+                "const": "permit_inhibit"
+              },
+              "permitted": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "value",
+              "unit"
+            ],
+            "properties": {
+              "type": {
+                "const": "variable_power"
+              },
+              "value": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100
+              },
+              "unit": {
+                "const": "A"
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "PlannedSlotV7": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PlannedSlot"
+          },
+          {
+            "type": "object",
+            "required": [
+              "device_commands"
+            ],
+            "properties": {
+              "device_commands": {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/DeviceCommandV7"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "GeneratedPlanV7": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/GeneratedPlan"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "slots": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/PlannedSlotV7"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "PlanV7": {
+        "allOf": [
+          { "$ref": "#/components/schemas/PlanCommon" },
+          {
+            "type": "object",
+            "properties": { "schema_version": { "const": 7 }, "plans": {
+              "type": "object", "properties": {
+                "baseline": { "$ref": "#/components/schemas/GeneratedPlanV7" },
+                "priority": { "$ref": "#/components/schemas/GeneratedPlanV7" },
+                "cost": { "$ref": "#/components/schemas/GeneratedPlanV7" }
+              }
+            } }
+          }
+        ]
+      },
       "PlanV6": {
         "allOf": [
           { "$ref": "#/components/schemas/PlanCommon" },
@@ -841,6 +1013,7 @@
             "oneOf": [
               { "$ref": "#/components/schemas/PlanV5" },
               { "$ref": "#/components/schemas/PlanV6" },
+              { "$ref": "#/components/schemas/PlanV7" },
               { "type": "null" }
             ]
           },
@@ -888,7 +1061,7 @@
           "api_version": { "const": 1 },
           "plan_id": { "type": "string", "format": "uuid" },
           "snapshot_id": { "type": "string", "format": "uuid" },
-          "plan_schema_version": { "enum": [5, 6] },
+          "plan_schema_version": { "enum": [5, 6, 7] },
           "integration_version": {
             "type": "string",
             "minLength": 1,

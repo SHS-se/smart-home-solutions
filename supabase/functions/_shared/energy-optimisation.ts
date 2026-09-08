@@ -17,6 +17,8 @@ import {
   projectZoneTemperature,
   type ThermalZoneModel,
 } from "./thermal-model.ts";
+import { deviceCommands, type DeviceCommand } from "./device-commands.ts";
+import { discreteRoomPlan } from "./discrete-room-plan.ts";
 import {
   type DispatchAllocationDiagnostic,
   type DispatchBatteryDiagnostic,
@@ -64,8 +66,8 @@ import {
  * difference between the pool being a temperature the planner schedules against
  * and a daily energy budget it has to believe.
  */
-export const OPTIMISATION_SCHEMA_VERSION = 6;
-export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6] as const;
+export const OPTIMISATION_SCHEMA_VERSION = 7;
+export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6, 7] as const;
 /**
  * The planner's own version. It lives here because the planner lives here — the
  * integration only validates the string, against a set since beta.19, so this
@@ -339,7 +341,7 @@ export interface ThermalZonePlanningInput {
 }
 
 export interface OptimisationSnapshot {
-  schema_version: 5 | 6;
+  schema_version: 5 | 6 | 7;
   // Only Home Assistant live snapshots cross the ingestion boundary. The
   // website's promotional demo is a client-side plan fixture, not a snapshot.
   mode: "live";
@@ -485,6 +487,8 @@ export type OptimisationSnapshotV6 =
     schema_version: 6;
   };
 
+export type OptimisationSnapshotV7 = Omit<OptimisationSnapshot, "schema_version"> & { schema_version: 7 };
+
 export interface QuarterGridBalanceDiagnostic {
   load_w: number;
   pv_w: number;
@@ -537,6 +541,7 @@ export interface PlannedSlot {
   ev_w: number;
   room_heating_w: Record<string, number>;
   device_loads_w: Record<string, number>;
+  device_commands?: Record<string, DeviceCommand>;
   ev_target_current_a: number;
   ev_min_current_a: number;
   ev_max_current_a: number;
@@ -601,7 +606,7 @@ export interface GeneratedPlan {
 }
 
 export interface OptimisationPlan {
-  schema_version: 5 | 6;
+  schema_version: 5 | 6 | 7;
   mode: PlanMode;
   capabilities: OptimisationCapabilities;
   model_version: string;
@@ -676,6 +681,8 @@ export type OptimisationPlanV6 = Omit<OptimisationPlan, "schema_version"> & {
   schema_version: 6;
 };
 
+export type OptimisationPlanV7 = Omit<OptimisationPlan, "schema_version"> & { schema_version: 7 };
+
 interface PreparedSlot extends ForecastSlotInput {
   index: number;
   epoch_ms: number;
@@ -716,6 +723,7 @@ interface Schedule {
   evMinCurrentA: number[];
   evMaxCurrentA: number[];
   roomHeating: Record<string, number[]>;
+  roomDevicePower: Record<string, number[]>;
   serviceSlots: Record<string, number[]>;
   serviceCurrentsA: Record<string, number[]>;
   serviceInhibitedSlots: Record<string, number[]>;
@@ -910,10 +918,10 @@ export function validateSnapshot(snapshot: OptimisationSnapshot): string[] {
   const errors: string[] = [];
   if (
     !SUPPORTED_SNAPSHOT_VERSIONS.includes(
-      snapshot?.schema_version as 5 | 6,
+      snapshot?.schema_version as 5 | 6 | 7,
     )
   ) {
-    errors.push("schema_version must be 5 or 6");
+    errors.push("schema_version must be 5, 6 or 7");
   }
   if (snapshot?.mode !== "live") {
     errors.push("mode must be live");
@@ -1676,6 +1684,7 @@ function emptySchedule(length: number): Schedule {
     evMinCurrentA: new Array(length).fill(0),
     evMaxCurrentA: new Array(length).fill(0),
     roomHeating: {},
+    roomDevicePower: {},
     serviceSlots: {},
     serviceCurrentsA: {},
     serviceInhibitedSlots: {},
@@ -3236,6 +3245,17 @@ function scheduleRoomHeating(
   const outdoor = snapshot.outdoor_temperature_c as number[];
   const errors: string[] = [];
   for (const zone of zones) {
+    if (snapshot.schema_version === 7) {
+      try {
+        const discrete = discreteRoomPlan(snapshot, zone, schedule.roomHeating[zone.key]);
+        if (discrete) {
+          schedule.roomHeating[zone.key] = discrete.powers;
+          Object.assign(schedule.roomDevicePower, discrete.devicePower);
+        }
+      } catch (error) {
+        errors.push(String(error));
+      }
+    }
     const powers = schedule.roomHeating[zone.key];
     const temperatures = projectZoneTemperature(
       zone.model,
@@ -3666,6 +3686,7 @@ function simulate(
       pool: poolW,
       ev: evW,
     }, roomHeating);
+    for (const [key, powers] of Object.entries(schedule.roomDevicePower)) deviceLoads[key] = powers[slot.index];
     const unrepresentedControlledW =
       (representedCategories.has("pool_heating") ? 0 : poolW) +
       (representedCategories.has("hot_water") ? 0 : boilerW) +
@@ -3919,6 +3940,11 @@ function simulate(
         ]),
       ),
       device_loads_w: deviceLoads,
+      ...(snapshot.schema_version === 7 ? { device_commands: deviceCommands(snapshot, {
+        index: slot.index, roomHeating: schedule.roomHeating,
+        boilerPermitted: schedule.boilerPermitted[slot.index],
+        poolW, evCurrentA: schedule.evTargetCurrentA[slot.index], relayPower: schedule.roomDevicePower,
+      }) } : {}),
       ev_target_current_a: schedule.evTargetCurrentA[slot.index],
       ev_min_current_a: schedule.evMinCurrentA[slot.index],
       ev_max_current_a: schedule.evMaxCurrentA[slot.index],

@@ -92,7 +92,7 @@ export function isOptimisationPlan(value: unknown): value is PortalOptimisationP
   // Both live schemas are readable. Schema 6 adds pool state to the snapshot
   // and marginal-value dispatch to the plan; every field this reader touches is
   // unchanged, so pinning to one version only breaks the portal on a rollout.
-  return (plan.schema_version === 5 || plan.schema_version === 6)
+  return (plan.schema_version === 5 || plan.schema_version === 6 || plan.schema_version === 7)
     && plan.mode === 'live'
     && plan.slot_minutes === 15
     && typeof plan.issued_at === 'string'
