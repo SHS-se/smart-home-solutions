@@ -74,12 +74,59 @@ The same allocator handles both excess sun and unexpected imports. Forecast-base
 | Binary process | Typed run/stop or permit/inhibit, according to mapped control type | Presence, thermostat/completion, pump coupling, minimum run/off, physical confirmation |
 | Variable power | Target and permitted envelope at supported current/power steps | Live clamps, cable/SOC, delivered-energy tracking, transition rate, confirmation |
 | Thermal | Bounded temperature target/offset, mode, or permission supported by the reviewed installation | Local thermostat, sensor selection, hysteresis, hard bounds, confirmation |
+| Storage | Mode plus a signed power target within a charge/discharge envelope, or release to the inverter's own mode | Authority handshake, sign convention, SOC floor/ceiling, rated power clamp, grid import/export limits, confirmation |
 
 A boiler permission is never a promise that its element is drawing its rating. A heat pump influenced through Modbus is not assumed to accept arbitrary watts. Battery direct control requires separately commissioned inverter mode/sign/confirmation semantics.
 
 For an EV, start from the planned target and change only in declared steps within its valid envelope. Presence, start/stop, cooldown, and charge-limit enforcement remain local. Preserve delivered-energy drift across slot boundaries so a quiet cloud-driven deficit does not become a missed departure.
 
 For rooms, coordinate thermostat requests within the heating/home budget. Rank comparable requests by measured deficit, time waiting, forecast loss, and room priority; rotate comparable requests without violating timers. A grant permits heating when the thermostat calls; it does not force a warm room on. Product comfort semantics remain [D1](../../ENERGY_OPTIMISATION_ARCHITECTURE_REVIEW.md#d1-comfort-and-service-promises).
+
+## Surveyed control surfaces
+
+Read on 8 September 2026 from the reference installation. This records which levers and confirmations exist, not that any of them has been commissioned, calibrated, or authorised to write. Entity ids are that installation's; the executor contracts above remain the product interface, and a second installation may expose the same lever under a different id.
+
+### Storage — Sigenergy SigenStor EC 12.0 TP
+
+Authority is a handshake, not a single write. `switch.sigen_plant_remote_ems_controlled_by_home_assistant` claims remote control; `sensor.sigen_plant_ems_work_mode` reporting `Remote EMS` is the confirmation that it was granted. Losing that confirmation is a loss of a required control source under expiry and baseline handover, and the inverter's own mode is the baseline to hand back to.
+
+`select.sigen_plant_remote_ems_control_mode` selects the behaviour: `Standby`, `Maximum Self Consumption`, command charging (`Grid First` / `PV First`), command discharging (`PV First` / `ESS First`), and `PCS Remote Control`. Charge-first and discharge-first are separate modes rather than the sign of one request, so a planner flow reversal is a mode change plus a power write, and the ordering and confirmation of that pair is a commissioning question.
+
+`number.sigen_inverter_active_power_fixed_adjustment` carries the signed target in **kW**, not W, over a nominal −100…100 kW that is far wider than the plant. Real limits come from `sensor.sigen_plant_ess_rated_charging_power` (8.8 kW), `sensor.sigen_plant_ess_rated_discharging_power` (9.6 kW), `sensor.sigen_plant_max_active_power` (13.2 kW), and `sensor.sigen_plant_rated_energy_capacity` (18.08 kWh). Clamp to the measured ratings; the writable range is not a permission.
+
+Envelopes exist for ESS charge/discharge, grid import/export, and PV: `number.sigen_plant_ess_max_charging_limit`, `..._ess_max_discharging_limit`, `..._grid_import_limitation`, `..._grid_export_limitation`, `..._pv_max_power_limit`. Each reads back `4294967.295` when unset — the register's all-ones sentinel scaled to kW, and outside the entity's own 0…100 bound. Treat that value as "no limit configured" rather than as a limit, and never round-trip it as a setpoint.
+
+The discharge floor `sensor.sigen_plant_discharge_cut_off_soc` (5.0%) is **read-only**: the inviolable floor is enforced by the inverter and cannot be written or lowered from the integration. Any planner reserve is therefore necessarily a second, higher, spendable figure — which is the distinction [D3](../../ENERGY_OPTIMISATION_ARCHITECTURE_REVIEW.md#d3-preferences-risk-and-battery-economics) has to name, not invent.
+
+Confirm from measurement, not from the command: `sensor.sigen_plant_battery_power` (signed kW) with its `..._inverted` twin, `binary_sensor.sigen_plant_battery_charging` / `..._discharging`, `sensor.sigen_plant_battery_state_of_charge`, `sensor.sigen_plant_plant_running_state`, and the plant/inverter alarm sensors. The existence of both a signed power sensor and an inverted copy is exactly the sign ambiguity the executor contract requires to be settled once, by measurement, at commissioning.
+
+### Thermal — Nibe S1256 with pool accessory
+
+One modulating ground-source compressor serves rooms, hot water, and the pool. `sensor.brine_in_bt10_30011` and `sensor.brine_out_bt11_30012` establish the source loop, so the ground-source model is an observed fact for this installation rather than the unauthorised default that models and forecasts warns against.
+
+The three sinks have genuinely different levers, and none of them is arbitrary watts:
+
+- **Rooms:** `climate.s1256_climate_system_s1`, with `switch.permit_heating_40182` as permission, `number.heating_offset_climate_system_1_40031` and `number.external_adjustment_climate_system_1_40052` as bounded influence, and `select.oper_mode_40238` as mode.
+- **Hot water:** `water_heater.s1256_hot_water` and `select.hot_water_demand_mode_40057`, measured by `sensor.hot_water_top_bt7_30009` and `sensor.hot_water_charging_bt6_30010`.
+- **Pool:** `switch.pool_1_activated_40692` plus a hysteresis window, `number.pool_1_start_temperature_40688` / `number.pool_1_stop_temperature_40690`, and `number.desired_charge_power_pool_1_main_unit_43040`, measured by `sensor.pool_bt51_30028`.
+
+The pool is therefore a temperature window and a desired charge power, not a schedulable on/off. A run/stop schedule can only switch the accessory in and out; the machine still decides when to run within the window it has been given.
+
+Attribution between sinks is available and does not have to be inferred from a shared meter: `binary_sensor.diverter_valve_hot_water_qn10_32197` and `sensor.priority_31029` say which sink is being served now, and the energy log reports used and produced energy per sink over the past hour (`sensor.energy_log_used_energy_for_pool_over_the_past_hour_32296`, `..._for_hot_water_..._32294`, and their `produced` counterparts). With `sensor.compressor_power_input_31049` and `sensor.compressor_frequency_current_31047`, both electrical input and delivered heat are separable per sink, which is what a per-sink COP requires.
+
+Interlocks are observable and must gate any request: `sensor.blocked_31060`, `sensor.blocked_compressors_32175`, `sensor.compressor_time_to_start_eb100_ep14_31531`, and `binary_sensor.compressor_status_31101`. `number.max_internal_additional_heat_40103` and `number.max_internal_additional_heat_sg_ready_41053` cap the resistive addition separately from the compressor; they are a cost lever, not a heat request.
+
+Shared capacity remains the binding constraint. Priority and the diverter valve are evidence that the sinks compete, so simultaneous independent promises to pool and hot water are not physically available whatever the levers allow. That is the substance of [D6](../../ENERGY_OPTIMISATION_ARCHITECTURE_REVIEW.md#d6-device-control-scope-and-commissioning).
+
+### Integration gap
+
+The integration's mapped control types are `switch_schedule`, `variable_power`, `permit_inhibit`, and `setpoint`, routed by `planning_path` to room, pool, boiler, and EV. Against the surfaces above:
+
+- There is **no storage control type and no battery actuator mapping**. Battery options are modelling parameters and two read entities (SOC, minimum SOC); nothing in the integration can command mode, power, or an envelope. The planner decides battery flows that no executor can currently carry out.
+- The thermal mapping has no field for a **bounded offset, a demand mode, or a permission switch**, though the executor contract already specifies all three. `setpoint` carries a temperature and an actuator only.
+- The pool's `switch_schedule` mapping cannot express a **start/stop temperature window or a desired charge power**, which is the only way this installation's pool is actually controlled.
+
+Closing these is integration work, not a household decision; the scope belongs with [D6](../../ENERGY_OPTIMISATION_ARCHITECTURE_REVIEW.md#d6-device-control-scope-and-commissioning) and the [engineering backlog](verification-and-delivery.md#engineering-backlog-not-household-decisions).
 
 ## Expiry and baseline handover
 

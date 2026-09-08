@@ -68,7 +68,7 @@ An equipment change creates a training epoch boundary. Pool loss samples may cro
 
 The Nibe shared pool/hot-water installation requires confirmed operating-demand attribution, electrical input, sensor validity, modulation, available control levers, response times, and hard interlocks. A shared compressor cannot simultaneously promise full independent capacity to both sinks. Automatic retraining of the auxiliary boiler's energy profile does not solve that shared-resource constraint.
 
-This commissioning scope remains [D6](../../ENERGY_OPTIMISATION_ARCHITECTURE_REVIEW.md#d6-device-scope-and-shared-heat-pump-commissioning). No ground-source default or register write is authorised by the documentation split.
+This commissioning scope remains [D6](../../ENERGY_OPTIMISATION_ARCHITECTURE_REVIEW.md#d6-device-control-scope-and-commissioning). The reference installation has since been surveyed and its source loop observed to be ground source (see [control surfaces](reactive-controls.md#surveyed-control-surfaces)); that is one installation's measured fact, and it still authorises no default for another home and no register write anywhere.
 
 ## Forecast sources and evidence
 

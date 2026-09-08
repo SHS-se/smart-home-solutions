@@ -1,6 +1,6 @@
 # Energy optimisation — decisions requiring attention
 
-Updated: 2026-09-06 after the [architecture split](ENERGY_OPTIMISATION_ARCHITECTURE.md).
+Updated: 2026-09-08. Split from the [architecture](ENERGY_OPTIMISATION_ARCHITECTURE.md) on 6 September; D3 and D6 narrowed on 8 September against the [battery valuation investigation](docs/energy-optimisation/battery-valuation-investigation.md) and a survey of the reference installation's [control surfaces](docs/energy-optimisation/reactive-controls.md#surveyed-control-surfaces).
 
 This file now contains only unresolved product or commissioning choices. Clear mathematical errors, arithmetic mistakes, stale statuses, and conflicting definitions have been corrected in the current specifications. Their disposition is in the [reconciliation record](docs/energy-optimisation/reconciliation.md); technical implementation and validation work is in the [engineering backlog](docs/energy-optimisation/verification-and-delivery.md#engineering-backlog-not-household-decisions).
 
@@ -18,23 +18,29 @@ See [planner commitments](docs/energy-optimisation/planner.md#objective-units-an
 
 ## D2. EV readiness without a trip and unreachable preferences
 
-**Conflict remaining:** an absent departure means a continually advancing 72-hour deadline in one design and a learned departure distribution in another. The new workbench notes also identify a desired range inconsistent with the vehicle's charge cap.
+**Conflict remaining:** an absent departure means a continually advancing 72-hour deadline in one design and a learned departure distribution in another. The workbench notes also identify a desired range inconsistent with the vehicle's charge cap.
 
 **Decision needed:** state the minimum everyday readiness you expect while connected, without entering a trip each day. An explicit trip can still supply a higher target and deadline. When your range preference exceeds the range available under the SOC limit, decide which should change: the preference or the vehicle's charge limit. The system must not change either silently.
 
 **Why it matters:** a moving deadline can postpone charging indefinitely; an unreachable comfort threshold can keep the car economically unsatisfied at its allowed cap. Neither can be resolved by selecting a better current schedule alone.
 
-See [battery and EV](docs/energy-optimisation/models-and-forecasts.md#battery-and-ev) and [workbench comparisons](docs/energy-optimisation/portal-and-reporting.md#workbench-modes-and-comparison-validity). Former finding 14 and the new §8.20.3 evidence.
+See [battery and EV](docs/energy-optimisation/models-and-forecasts.md#battery-and-ev) and [workbench comparisons](docs/energy-optimisation/portal-and-reporting.md#workbench-modes-and-comparison-validity). Former finding 14 and the [§8.20.3 evidence](docs/energy-optimisation/history/planner-experiments.md#legacy-section-8.20.3).
 
 ## D3. Preferences, risk, and battery economics
 
-**Conflict remaining:** household thresholds, price-derived bids, outage reserve, and a parameter called degradation currently express overlapping and sometimes different policies. Hardware physics alone cannot decide willingness to pay for comfort or insurance.
+**Conflict remaining:** household thresholds, price-derived bids, outage reserve, and a parameter called degradation currently express overlapping and sometimes different policies. Hardware physics alone cannot decide willingness to pay for comfort or insurance. This item owns the battery's economics; its control path is in [D6](#d6-device-control-scope-and-commissioning).
 
-**Decision needed:** establish which optional service and protection trade-offs the product should make. In particular, distinguish an inviolable backup SOC floor from a reserve the planner may spend, and state whether backup protection is part of the first control scope. Decide whether the battery margin is intended to represent actual wear, protection against uncertain arbitrage, or separately identified contributions from both. Numerical calibration can then be engineering work rather than another household tuning exercise.
+**Already settled, so not part of this decision:** the inviolable floor is not a product choice. `discharge_cut_off_soc` is enforced inside the inverter and is read-only, so any planner reserve is necessarily a second, higher figure the planner may spend, and the planner already treats the physical floor as beyond a soft reserve's reach.
+
+**Sharper than when this was written:** the ambiguity now has an exact location. Wear is scored as its own quantity per schedule, while the parameter named `degradation` separately reduces the continuation-curve cap reported as `terminal_replacement_sek_per_kwh`. One name is therefore doing two jobs in two places at once, rather than one parameter being merely under-defined.
+
+**Decision needed:** establish which optional service and protection trade-offs the product should make. State whether backup protection is part of the first control scope. Decide what the margin above the hard floor represents — wear, protection against uncertain arbitrage, an outage reserve, or separately identified contributions — and, given the above, whether the continuation cap should keep being reduced by the same parameter that scores wear. Numerical calibration can then be engineering work rather than another household tuning exercise.
 
 **Why it matters:** these valuations directly affect grid purchases, solar storage, and battery discharge. A maximum forecast price is not an outage valuation, and nominal cycle life does not establish that actual wear is zero. The split did not select a new coefficient.
 
-See [storage value and uncertainty](docs/energy-optimisation/planner.md#storage-value-and-uncertainty). Former findings 3, 5, 6, 9, and 13.
+**Sequencing:** the [7 September investigation](docs/energy-optimisation/battery-valuation-investigation.md) found a cheaper feasible schedule under the existing curve, and recommends fixing the paired discharge/replenishment search before tuning any level. This decision is therefore not on the controller's critical path, and answering it early would risk attributing a search defect to a valuation.
+
+See [storage value and uncertainty](docs/energy-optimisation/planner.md#storage-value-and-uncertainty) and the [battery valuation investigation](docs/energy-optimisation/battery-valuation-investigation.md). Former findings 3, 5, 6, 9, and 13.
 
 ## D4. Grid headroom and peak spending
 
@@ -56,15 +62,19 @@ See [power costs](docs/energy-optimisation/planner.md#power-costs-and-demand-cha
 
 See [plan time and lifecycle](docs/energy-optimisation/contracts-and-data.md#plan-lifecycle-and-time) and [baseline handover](docs/energy-optimisation/reactive-controls.md#expiry-and-baseline-handover). Former finding 19.
 
-## D6. Device scope and shared heat-pump commissioning
+## D6. Device control scope and commissioning
 
-**Conflict remaining:** the Nibe pool/hot-water unit is sometimes treated as schedulable watts and sometimes as an internally controlled device the planner can only permit or influence. Mixed room heaters create a related gap between requested watts and achievable heat.
+**Conflict remaining:** the Nibe pool/hot-water unit is sometimes treated as schedulable watts and sometimes as an internally controlled device the planner can only permit or influence. Mixed room heaters create a related gap between requested watts and achievable heat. This item owns the control path for both the heat pump and the battery; the battery's economics stay in [D3](#d3-preferences-risk-and-battery-economics).
 
-**Decision needed:** confirm the first device scope and arrange the relevant installation facts: current machine and accessory configuration, source/sink sensors, compressor-demand attribution, actual control registers, blocking behaviour, and response/confirmation. Decide whether pool optimisation waits for this commissioning or the pool stays outside the first enabled scope. Battery direct control likewise needs its own approved inverter commissioning.
+**Now surveyed, so no longer part of this decision:** the [control surfaces](docs/energy-optimisation/reactive-controls.md#surveyed-control-surfaces) were read from the reference installation on 8 September 2026. The machine is ground source, the three sinks have distinct levers, per-sink attribution and interlocks are directly observable, the pool is a temperature window plus a desired charge power rather than a schedulable on/off, and the inverter exposes a mode, a signed kW target, envelopes, and an authority handshake. What remains unknown is behaviour under write, not inventory.
 
-**Why it matters:** no algorithm can schedule unavailable independent capacity or identify which sink received energy from an unattributed shared meter. The required physical tests and model formulation are engineering work; guessed register behaviour is not a household preference.
+**Decision needed:** confirm the first device scope — which of rooms, hot water, pool, and battery may be written to at all — and authorise the commissioning writes needed to establish response, confirmation, sign, and blocking behaviour for that scope. Decide whether pool optimisation waits for this or the pool stays outside the first enabled scope. Decide the same for battery direct control, which is a separate authorisation from the heat pump's.
 
-See [shared heat pumps](docs/energy-optimisation/models-and-forecasts.md#pool-hot-water-and-shared-heat-pumps) and [executor contracts](docs/energy-optimisation/reactive-controls.md#executor-contracts). Former findings 20 and 21.
+**Why it matters:** no algorithm can schedule unavailable independent capacity, and a shared compressor cannot promise pool and hot water simultaneously however many levers exist. Reading a register is not permission to write it, and the surveyed inventory does not establish how the equipment responds. Guessed register behaviour is not a household preference.
+
+**Blocks the controller:** the integration has no storage control type and no battery actuator mapping at all, and its thermal mapping cannot express an offset, a demand mode, a permission switch, or a temperature window. That gap is engineering work in the [backlog](docs/energy-optimisation/verification-and-delivery.md#engineering-backlog-not-household-decisions), but its scope follows this decision.
+
+See [shared heat pumps](docs/energy-optimisation/models-and-forecasts.md#pool-hot-water-and-shared-heat-pumps), [executor contracts](docs/energy-optimisation/reactive-controls.md#executor-contracts), and the [integration gap](docs/energy-optimisation/reactive-controls.md#integration-gap). Former findings 20 and 21.
 
 ## D7. Retention, audit, and savings claims
 
