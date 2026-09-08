@@ -72,9 +72,9 @@ See [plan time and lifecycle](docs/energy-optimisation/contracts-and-data.md#pla
 
 **Why it matters:** no algorithm can schedule unavailable independent capacity, and a shared compressor cannot promise pool and hot water simultaneously however many levers exist. Reading a register is not permission to write it, and the surveyed inventory does not establish how the equipment responds. Guessed register behaviour is not a household preference.
 
-**Blocks the controller:** the integration has no storage control type and no battery actuator mapping at all, and its thermal mapping cannot express an offset, a demand mode, a permission switch, or a temperature window. That gap is engineering work in the [backlog](docs/energy-optimisation/verification-and-delivery.md#engineering-backlog-not-household-decisions), but its scope follows this decision.
+**Blocks the controller:** the storage and thermal mappings now exist (`0.8.0-beta.16`), so the executor has somewhere to read mode, signed power, confirmation, authority, offset, demand mode and permission from. Battery control ships switched off, and turning it on with an incomplete mapping warns rather than writes. What no mapping can supply is how the equipment responds — which is this decision. The pool's temperature window remains unmapped and is [engineering work](docs/energy-optimisation/verification-and-delivery.md#engineering-backlog-not-household-decisions).
 
-See [shared heat pumps](docs/energy-optimisation/models-and-forecasts.md#pool-hot-water-and-shared-heat-pumps), [executor contracts](docs/energy-optimisation/reactive-controls.md#executor-contracts), and the [integration gap](docs/energy-optimisation/reactive-controls.md#integration-gap). Former findings 20 and 21.
+See [shared heat pumps](docs/energy-optimisation/models-and-forecasts.md#pool-hot-water-and-shared-heat-pumps), [executor contracts](docs/energy-optimisation/reactive-controls.md#executor-contracts), and the [integration mapping](docs/energy-optimisation/reactive-controls.md#integration-mapping). Former findings 20 and 21.
 
 ## D7. Retention, audit, and savings claims
 

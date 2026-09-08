@@ -118,15 +118,15 @@ Interlocks are observable and must gate any request: `sensor.blocked_31060`, `se
 
 Shared capacity remains the binding constraint. Priority and the diverter valve are evidence that the sinks compete, so simultaneous independent promises to pool and hot water are not physically available whatever the levers allow. That is the substance of [D6](../../ENERGY_OPTIMISATION_ARCHITECTURE_REVIEW.md#d6-device-control-scope-and-commissioning).
 
-### Integration gap
+### Integration mapping
 
-The integration's mapped control types are `switch_schedule`, `variable_power`, `permit_inhibit`, and `setpoint`, routed by `planning_path` to room, pool, boiler, and EV. Against the surfaces above:
+The integration's mapped control types are `switch_schedule`, `variable_power`, `permit_inhibit`, and `setpoint`, routed by `planning_path` to room, pool, boiler, and EV. Against the surfaces above, as of `0.8.0-beta.16`:
 
-- There is **no storage control type and no battery actuator mapping**. Battery options are modelling parameters and two read entities (SOC, minimum SOC); nothing in the integration can command mode, power, or an envelope. The planner decides battery flows that no executor can currently carry out.
-- The thermal mapping has no field for a **bounded offset, a demand mode, or a permission switch**, though the executor contract already specifies all three. `setpoint` carries a temperature and an actuator only.
-- The pool's `switch_schedule` mapping cannot express a **start/stop temperature window or a desired charge power**, which is the only way this installation's pool is actually controlled.
+- **Storage is mapped, plant-level.** The battery's mode entity, the option values meaning charge, discharge and hold, a signed power target with its unit and sign convention, the measured-power entity used for confirmation, and the optional authority claim and its read-back now have configuration. It is deliberately *not* a device control type: there is one battery, the planner already models it as a store with its own charge and discharge variables, and routing it through `planning_path` would additionally schedule it as a controllable load and subtract it from base load — counting the same plant twice.
+- **The thermal mapping carries the executor's three levers.** `setpoint` now also accepts a permission switch, a demand or operating mode, and a bounded offset. The offset's bounds are required with it rather than optional beside it: an unbounded offset is the one lever here that can drive equipment past what was reviewed. All three are optional, so existing mappings are unchanged.
+- **The pool's `switch_schedule` mapping still cannot express a start/stop temperature window or a desired charge power**, which is the only way this installation's pool is actually controlled. A run/stop schedule can switch the accessory in and out and no more. This gap is open.
 
-Closing these is integration work, not a household decision; the scope belongs with [D6](../../ENERGY_OPTIMISATION_ARCHITECTURE_REVIEW.md#d6-device-control-scope-and-commissioning) and the [engineering backlog](verification-and-delivery.md#engineering-backlog-not-household-decisions).
+Configuration is not authorisation. Battery control is off by default and, once switched on, an incomplete mapping raises a warning rather than being written to; a complete mapping is still not a commissioned one. What the equipment does when written to remains [D6](../../ENERGY_OPTIMISATION_ARCHITECTURE_REVIEW.md#d6-device-control-scope-and-commissioning), and the remaining pool gap belongs with the [engineering backlog](verification-and-delivery.md#engineering-backlog-not-household-decisions).
 
 ## Expiry and baseline handover
 
