@@ -2452,6 +2452,9 @@ export type Database = {
       }
       energy_optimisation_current: {
         Row: {
+          fixed_plan: Json | null
+          fixed_plan_revision: number
+          fixed_plan_generation_revision: number
           binding_until: string
           captured_at: string
           customer_id: string
@@ -2481,6 +2484,9 @@ export type Database = {
           valid_until: string
         }
         Insert: {
+          fixed_plan?: Json | null
+          fixed_plan_revision?: number
+          fixed_plan_generation_revision?: number
           binding_until: string
           captured_at: string
           customer_id: string
@@ -2510,6 +2516,9 @@ export type Database = {
           valid_until: string
         }
         Update: {
+          fixed_plan?: Json | null
+          fixed_plan_revision?: number
+          fixed_plan_generation_revision?: number
           binding_until?: string
           captured_at?: string
           customer_id?: string

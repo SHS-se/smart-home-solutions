@@ -51,6 +51,7 @@ import {
   type WorkbenchRow,
 } from '@/lib/energy-shift/plan-workbench';
 import PlanPanels from './plan/PlanPanels';
+import FixedPlanControls from './FixedPlanControls';
 import { useHomeTimeZone } from './HomeTimeZoneContext';
 import {
   formatHomeDayMonth,
@@ -454,9 +455,11 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
   const column = (index: number): string =>
     index === selectedColumn ? 'bg-primary/10' : '';
 
+  const fixedControls = <FixedPlanControls homeId={homeId} bench={bench} manual={manual} model={model} draft={draft} allowExport={allowExport} />;
+
   if (!bench) {
     return (
-      <Card>
+      <div className="space-y-4">{fixedControls}<Card>
         <CardHeader>
           <CardTitle className="text-base">
             {t('Bygg en plan själv', 'Build a plan yourself')}
@@ -483,7 +486,7 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
             {t('Läs in planerarens plan', 'Load the planner’s plan')}
           </Button>
         </CardContent>
-      </Card>
+      </Card></div>
     );
   }
 
@@ -493,6 +496,7 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
 
   return (
     <div className="space-y-4">
+      {fixedControls}
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base">

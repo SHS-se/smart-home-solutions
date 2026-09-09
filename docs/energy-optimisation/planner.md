@@ -116,3 +116,44 @@ The previously proposed Python/solver service remains an implementation directio
 Publish the resolved inputs, effective curves, physical constraints, objective components, final state trajectories, and tested alternatives needed to explain a decision. A hold reason must distinguish at-cap, unavailable, unmodelled, not considered, and economically declined. Search ordering and later-added loads must not be presented as economic comparisons that never occurred.
 
 A request that raises a target or changes a deadline enters the next snapshot. Device state and deviation from the preceding plan are also inputs; unconfirmed actuator changes are not treated as delivered energy.
+
+## Fixed plans from the workbench
+
+The household can activate an edited schedule starting at the next 15-minute
+boundary. The fixed interval ends after the last modified editor period (a whole
+hour in hourly editing). Every allocation in that interval is retained, including
+unchanged devices and off slots. Reverting the last edit shortens the interval.
+The day filter only changes what is visible. Explicit workbench export permission
+is retained for its selected slots; it does not change automatic export policy.
+
+`energy-optimisation-fixed-plan` authorises the household through the current
+plan's RLS policy, validates the complete allocation shape, and materialises
+executable targets through the ordinary planner simulator. Submission requires
+the snapshot and fixed-plan revision the household reviewed. Passing a start
+boundary or receiving a newer snapshot requires resubmission. Preflight does not
+publish a historical snapshot to HA: persistence atomically requests fresh
+measurements through the existing replan exchange.
+
+One fixed schedule is stored per home in `energy_optimisation_current`. A new
+activation replaces it; the previous current quarter is retained until the new
+start boundary. Ingest reads its revision before solving, and a database trigger
+rejects a generated write if replacement or rescission happened during the solve.
+The fixed interval uses absolute timestamps, so rolling horizons and DST never
+shift allocations between quarters. Storage is projected through the fixed
+prefix before the automatic suffix is solved. Thermal searches also retain the
+fixed device decisions. Prices, forecasts and measured state remain fresh.
+Changed equipment or an infeasible fixed trajectory is reported, never silently
+rewritten. HA still enforces its equipment protections and confirms execution.
+
+The portal distinguishes queued generation, HA acceptance/rejection, scheduled
+activation, active fixed control, and an expired execution lease. Returning to
+automatic planning clears the stored fixed schedule and requests a fresh plan;
+the UI reports the switch only after the matching generation is accepted by HA.
+Expiry of the fixed interval removes its constraints from subsequent automatic
+plans, without extending HA's ordinary execution lease.
+
+Rollout requires migration `20260909120000_fixed_energy_plans.sql`, deployment of
+`energy-optimisation-fixed-plan` and the updated `energy-optimisation-ingest`,
+then the portal build. Executable plan schemas remain unchanged; `fixed_plan`
+is descriptive metadata. The fixed controls are available before loading the
+editor so a stored schedule can be rescinded after reloading the page.

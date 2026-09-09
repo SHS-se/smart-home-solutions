@@ -302,3 +302,50 @@ test.describe('plan workbench', () => {
       .toHaveLength(1);
   });
 });
+
+test('fixed plan activation, replacement and rescission use the edited interval', async ({ context, page }) => {
+  await mockBackend(context);
+  await page.clock.setFixedTime(new Date('2026-08-17T20:45:00Z'));
+  let state = { fixed_plan: null as null | { id: string; starts_at: string; ends_at: string }, revision: 0, generated_revision: 0, generated_fixed_plan_id: null as string | null, ha_ack_status: 'accepted', ha_ack_error: null, valid_until: '2026-08-17T22:00:00Z', error: null, pending: false };
+  const submissions: Record<string, unknown>[] = [];
+  await context.route('**/functions/v1/energy-optimisation-fixed-plan*', async route => {
+    const body = route.request().postDataJSON();
+    if (body.action === 'status') return route.fulfill({ json: state });
+    submissions.push(body);
+    state = { ...state, revision: state.revision + 1, pending: true,
+      fixed_plan: body.action === 'rescind' ? null : { id: `fixed-${state.revision + 1}`, starts_at: '2026-08-17T21:00:00Z', ends_at: body.ends_at } };
+    return route.fulfill({ status: 202, json: { status: 'queued' } });
+  });
+  await page.goto('/login');
+  await page.fill('#email', 'whoever@example.com');
+  await page.fill('#password', 'mock-password');
+  await page.getByRole('button', { name: 'Logga in' }).click();
+  await page.waitForURL(url => !url.pathname.endsWith('/login'));
+  await page.goto('/portal/energy-modeling?tab=workbench');
+  await page.getByRole('button', { name: /Load the planner|Läs in planerarens/ }).click();
+  await expect(page.getByRole('button', { name: /Aktivera fast plan|Activate fixed plan/ })).toBeDisabled();
+  const cells = page.locator('input[type="number"]');
+  await cells.nth(2).fill('3');
+  await cells.nth(2).blur();
+  await page.getByRole('button', { name: /Aktivera fast plan|Activate fixed plan/ }).click();
+  await expect(page.getByText(/Väntar på Home Assistant|Waiting for Home Assistant/)).toBeVisible();
+  expect(submissions[0].ends_at).toBe('2026-08-17T21:30:00.000Z');
+  expect(submissions[0].action).toBe('activate');
+  await cells.nth(3).fill('3');
+  await cells.nth(3).blur();
+  await page.getByRole('button', { name: /Ersätt fast plan|Replace fixed plan/ }).click();
+  await expect.poll(() => submissions.length).toBe(2);
+  expect(submissions[1].revision).toBe(1);
+  expect(submissions[1].ends_at).toBe('2026-08-17T21:45:00.000Z');
+  state = { ...state, generated_revision: 2, pending: false, generated_fixed_plan_id: state.fixed_plan!.id };
+  // Persistence and cancellation remain accessible before loading the editor.
+  await page.reload();
+  await expect(page.getByText(/Home Assistant har accepterat|Home Assistant accepted/)).toBeVisible();
+  await page.getByRole('button', { name: /Återgå till automatisk|Return to automatic/ }).click();
+  await expect.poll(() => submissions.length).toBe(3);
+  expect(submissions[2].action).toBe('rescind');
+  await expect(page.getByText(/Väntar på Home Assistant|Waiting for Home Assistant/)).toBeVisible();
+  state = { ...state, generated_revision: 3, generated_fixed_plan_id: null, pending: false };
+  await page.reload();
+  await expect(page.getByText(/^(Automatisk planering|Automatic planning)$/)).toBeVisible();
+});

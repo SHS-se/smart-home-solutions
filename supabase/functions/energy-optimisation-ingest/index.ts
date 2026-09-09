@@ -1,3 +1,4 @@
+import type { FixedEnergyPlan } from "../_shared/fixed-energy-plan.ts";
 import { applyBatteryChoice } from "../_shared/home-planning.ts";
 // Device-authenticated exchange for the live 15-minute energy model.
 //
@@ -1920,6 +1921,13 @@ serve(async (req) => {
         }
       }
 
+      const { data: fixedState, error: fixedReadError } = await supabase
+        .from("energy_optimisation_current")
+        .select("fixed_plan, fixed_plan_revision")
+        .eq("home_id", auth.homeId).maybeSingle();
+      if (fixedReadError) return json({ error: "fixed_plan_read_failed" }, 500);
+      const fixedPlan = fixedState?.fixed_plan as FixedEnergyPlan | null;
+      const fixedRevision = fixedState?.fixed_plan_revision ?? 0;
       let thermalZones: ProjectionZoneInput[] = [];
       try {
         const thermal = await prepareThermalPlanning(
@@ -1942,6 +1950,8 @@ serve(async (req) => {
           snapshot,
           new Date(),
           priceArchive,
+          undefined,
+          fixedPlan,
         );
         console.info("[ENERGY-OPTIMISATION] planning completed", {
           request_id: requestId,
@@ -1950,6 +1960,9 @@ serve(async (req) => {
         });
       } catch (error) {
         const detail = describeThrown(error);
+        if (fixedPlan) await supabase.from("energy_optimisation_current")
+          .update({ replan_error: detail }).eq("home_id", auth.homeId)
+          .eq("fixed_plan_revision", fixedRevision);
         console.error("[ENERGY-OPTIMISATION] snapshot refused", detail, error);
         return json({ error: "invalid_snapshot", detail }, 400);
       }
@@ -1977,6 +1990,8 @@ serve(async (req) => {
 
       const inputHash = await sha256Hex(JSON.stringify(snapshot));
       const currentRow = {
+        fixed_plan_generation_revision: fixedRevision,
+        replan_error: null,
         home_id: auth.homeId,
         customer_id: auth.customerId,
         snapshot_id: snapshot.snapshot_id,

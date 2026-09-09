@@ -1,3 +1,4 @@
+import type { FixedEnergyPlan } from "./fixed-energy-plan.ts";
 /** Convert room optimisation into full-quarter relay decisions before simulation.
  * A bounded beam search checks both comfort bounds on every transition. No HA
  * client may reconstruct these decisions from fractional energy allocations.
@@ -15,6 +16,7 @@ export function discreteRoomPlan(
   snapshot: OptimisationSnapshot,
   zone: ThermalZonePlanningInput,
   preferred: number[],
+  fixed?: FixedEnergyPlan | null,
 ) {
   const models = zone.device_keys.map((key) =>
     snapshot.device_models.find((m) => m.key === key)!
@@ -48,11 +50,14 @@ export function discreteRoomPlan(
     powers: [],
     devicePower: Object.fromEntries(models.map((m) => [m.key, []])),
   }];
+  const frozen = new Map(fixed?.slots.map(s => [Date.parse(s.start), s.targets]) ?? []);
   for (let i = 0; i < outdoor.length; i++) {
+    const locked = frozen.get(Date.parse(snapshot.slots[i].start));
     const next = new Map<number, Node>();
     const at = Math.min(i + 1, zone.comfort_min_c.length - 1);
     for (const prior of beam) {
       for (let mask = 0; mask < (1 << relays.length); mask++) {
+        if (locked && relays.some((m, bit) => Boolean(mask & (1 << bit)) !== (locked.device_loads_w[m.key] > 0))) continue;
         const relayW = relays.reduce(
           (sum, m, bit) => sum + ((mask & (1 << bit)) ? m.active_power_w! : 0),
           0,
@@ -62,6 +67,7 @@ export function discreteRoomPlan(
           Math.max(0, preferred[i] - relayW),
         );
         const watts = relayW + continuousW;
+        if (locked && Math.abs(watts - locked.room_heating_w[zone.key]) > 0.01) continue;
         if (watts > zone.maximum_power_w_by_slot[i] + 0.01) {
           continue;
         }

@@ -8,6 +8,8 @@
  * verified before it may be published as `ready`.
  */
 
+import { dispatchWithFixedPlan, type FixedEnergyPlan } from "./fixed-energy-plan.ts";
+
 import {
   buildPriceOutlook,
   type PriceOutlook,
@@ -27,7 +29,6 @@ import {
   type DispatchSchedule,
   type DispatchSlot,
   type DispatchStore,
-  planDispatch,
 } from "./dispatch-plan.ts";
 import {
   poolCop,
@@ -608,6 +609,7 @@ export interface GeneratedPlan {
 }
 
 export interface OptimisationPlan {
+  fixed_plan?: { id: string; starts_at: string; ends_at: string };
   schema_version: 5 | 6 | 7;
   mode: PlanMode;
   capabilities: OptimisationCapabilities;
@@ -1981,7 +1983,9 @@ function applyDutyCycleServices(
   services: DutyCycleServiceInput[],
   occupiedW: number[],
   schedule: Schedule,
+  fixed?: FixedEnergyPlan | null,
 ): void {
+  const frozen = new Map(fixed?.slots.map(s => [Date.parse(s.start), s.targets]) ?? []);
   for (const service of services) {
     const earliest = isoMs(service.earliest_start);
     const deadline = isoMs(service.deadline);
@@ -1990,13 +1994,18 @@ function applyDutyCycleServices(
     ).map((slot) => slot.index);
     const expected = service.control.expected_power_w_by_slot;
 
-    for (const index of indices) {
-      schedule.boiler[index] += expected[index];
-    }
-
     const inhibited: number[] = [];
+    for (const index of indices) {
+      const locked = frozen.get(slots[index].epoch_ms);
+      if (locked) {
+        schedule.boiler[index] = locked.boiler_expected_w;
+        schedule.boilerPermitted[index] = locked.boiler_permitted;
+        if (!locked.boiler_permitted) inhibited.push(index);
+      } else schedule.boiler[index] += expected[index];
+    }
     if (key !== "baseline") {
       for (const index of indices) {
+        if (frozen.has(slots[index].epoch_ms)) continue;
         const otherPlannedLoad = occupiedW[index];
         const nonBoilerLoad = fixedLoadW(slots[index]) + otherPlannedLoad +
           schedule.batteryChargeW[index] - schedule.batteryDischargeW[index];
@@ -2026,6 +2035,8 @@ function applyDutyCycleServices(
         (sum, index) => sum + expected[index],
         0,
       );
+      deferredW = Math.max(0, deferredW - indices.reduce((sum, i) =>
+        sum + (frozen.has(slots[i].epoch_ms) ? Math.max(0, schedule.boiler[i] - expected[i]) : 0), 0));
       //
       // Where it goes is a price decision. Ranking on residual load alone put
       // the catch-up in the quietest quarter — quiet precisely because PV was
@@ -2038,7 +2049,7 @@ function applyDutyCycleServices(
       // convex peak term still separates two quarters at the same price.
       const firstInhibited = inhibited[0] ?? Number.POSITIVE_INFINITY;
       const recovery = indices.filter((index) =>
-        index > firstInhibited && schedule.boilerPermitted[index]
+        index > firstInhibited && schedule.boilerPermitted[index] && !frozen.has(slots[index].epoch_ms)
       );
       // Room is bounded by the connection as well as by the element. A quarter
       // the stores have already filled cannot take the catch-up, and putting it
@@ -2689,6 +2700,7 @@ function scheduleServices(
   reservedW: number[],
   dispatchCache: Map<string, DispatchBundle | null>,
   derivedBatteryValue: DerivedBatteryValueCurve | null,
+  fixed?: FixedEnergyPlan | null,
 ): { schedule: Schedule; errors: string[] } {
   const schedule = emptySchedule(slots.length);
   const occupiedW = new Array(slots.length).fill(0);
@@ -2725,6 +2737,7 @@ function scheduleServices(
     }
   }
 
+  const frozen = new Map(fixed?.slots.map(s => [Date.parse(s.start), s]) ?? []);
   const dispatchKey = reservedW.every((watts) => Math.abs(watts) < 1e-9)
     ? "unreserved"
     : reservedW.join(",");
@@ -2735,7 +2748,9 @@ function scheduleServices(
     if (stores) {
       const dispatchSlots = slots.map((slot, index) => ({
         pv_w: slot.pv_w,
-        fixed_load_w: fixedLoadW(slot) + reservedW[index] + dutyCycleW[index],
+        fixed_load_w: fixedLoadW(slot) + reservedW[index] + (frozen.has(slot.epoch_ms)
+          ? frozen.get(slot.epoch_ms)!.targets.boiler_expected_w + Object.values(frozen.get(slot.epoch_ms)!.targets.room_heating_w).reduce((a, b) => a + b, 0)
+          : dutyCycleW[index]),
         import_price_sek_per_kwh: slot.shadow_import_sek_per_kwh,
         export_price_sek_per_kwh: slot.shadow_export_sek_per_kwh,
         // Which quarters the plan commits to, and which of them the market has
@@ -2747,16 +2762,17 @@ function scheduleServices(
       dispatchBundle = {
         stores,
         slots: dispatchSlots,
-        result: planDispatch(dispatchSlots, stores, {
+        result: dispatchWithFixedPlan(dispatchSlots, stores, {
           grid_import_limit_w: snapshot.grid.import_limit_w,
           grid_export_limit_w: snapshot.grid.export_limit_w,
           grid_import_shaping_w: peakShaping.threshold_w,
           peak_shaping_sek_per_kwh_per_kw: peakShaping.sek_per_kwh_per_kw,
           grid_ramp_sek_per_kw: peakShaping.grid_ramp_sek_per_kw,
           load_start_preference_sek: peakShaping.load_start_preference_sek,
-        }),
+        }, slots.map(s => s.epoch_ms), fixed),
       };
     } else {
+      if (slots.some(slot => frozen.has(slot.epoch_ms))) throw new Error("Fixed plan stores are no longer available; rescind the fixed plan.");
       dispatchBundle = null;
     }
     dispatchCache.set(dispatchKey, dispatchBundle);
@@ -2846,6 +2862,7 @@ function scheduleServices(
       snapshot.services.filter(isDutyCycleService),
       occupiedW,
       schedule,
+      fixed,
     );
     for (const service of snapshot.services.filter(isDispatchableService)) {
       // The schema 6 plan carries no per-service block, because there are no
@@ -3013,6 +3030,7 @@ function scheduleServices(
     snapshot.services.filter(isDutyCycleService),
     occupiedW,
     schedule,
+    fixed,
   );
   applyEvCurrentEnvelopes(schedule, slots, services);
   return { schedule, errors };
@@ -3062,7 +3080,9 @@ function optimiseRoomPreheating(
   snapshot: OptimisationSnapshot,
   schedule: Schedule,
   reservedW: number[],
+  fixed?: FixedEnergyPlan | null,
 ): void {
+  const frozen = new Map(fixed?.slots.map(s => [Date.parse(s.start), s]) ?? []);
   const outdoor = snapshot.outdoor_temperature_c as number[];
   const occupiedW = slots.map((slot) =>
     scheduledServiceW(schedule, slot.index) +
@@ -3094,6 +3114,7 @@ function optimiseRoomPreheating(
     );
 
     for (let source = powers.length - 1; source > 0; source -= 1) {
+      if (frozen.has(slots[source].epoch_ms)) continue;
       let movedFromSource = false;
       while (powers[source] > 0.01) {
         let best: {
@@ -3128,6 +3149,7 @@ function optimiseRoomPreheating(
           candidate < source;
           candidate += 1
         ) {
+          if (frozen.has(slots[candidate].epoch_ms)) continue;
           const retention = retentionByLag[source - candidate];
           if (!(retention > 1e-6)) continue;
           const maxAddW = Math.min(
@@ -3216,14 +3238,21 @@ function scheduleRoomHeating(
   snapshot: OptimisationSnapshot,
   schedule: Schedule,
   reservedW: number[],
+  fixed?: FixedEnergyPlan | null,
 ): string[] {
+  const frozen = new Map(fixed?.slots.map(s => [Date.parse(s.start), s]) ?? []);
   const zones = snapshot.thermal_zones ?? [];
   if (zones.length === 0) return [];
   for (const zone of zones) {
-    schedule.roomHeating[zone.key] = [...zone.unplanned_power_w];
+    schedule.roomHeating[zone.key] = zone.unplanned_power_w.map((w, i) => {
+      const locked = frozen.get(slots[i].epoch_ms);
+      if (!locked) return w;
+      if (!(zone.key in locked.targets.room_heating_w)) throw new Error('Fixed plan room configuration changed; rescind the plan.');
+      return locked.targets.room_heating_w[zone.key];
+    });
   }
   if (key !== "baseline") {
-    optimiseRoomPreheating(key, slots, snapshot, schedule, reservedW);
+    optimiseRoomPreheating(key, slots, snapshot, schedule, reservedW, fixed);
   }
 
   const outdoor = snapshot.outdoor_temperature_c as number[];
@@ -3231,7 +3260,7 @@ function scheduleRoomHeating(
   for (const zone of zones) {
     if (snapshot.schema_version === 7) {
       try {
-        const discrete = discreteRoomPlan(snapshot, zone, schedule.roomHeating[zone.key]);
+        const discrete = discreteRoomPlan(snapshot, zone, schedule.roomHeating[zone.key], fixed);
         if (discrete) {
           schedule.roomHeating[zone.key] = discrete.powers;
           Object.assign(schedule.roomDevicePower, discrete.devicePower);
@@ -3596,6 +3625,7 @@ function simulate(
   snapshot: OptimisationSnapshot,
   schedule: Schedule,
   protectedSoc: (number | null)[],
+  fixed?: FixedEnergyPlan | null,
 ): { slots: PlannedSlot[]; summary: PlanSummary; errors: string[] } {
   const battery = snapshot.battery ?? {
     capacity_kwh: 1,
@@ -3642,12 +3672,14 @@ function simulate(
   const evDeparture = snapshot.ev_battery?.departure == null
     ? slots.at(-1)!.epoch_ms + SLOT_MS
     : isoMs(snapshot.ev_battery.departure);
+  const frozen = new Map(fixed?.slots.map(s => [Date.parse(s.start), s]) ?? []);
   const dispatchOwnsBattery = schedule.dispatched.has("battery");
   const replacementCosts = dispatchOwnsBattery
     ? null
     : replacementCostsBySlot(slots, snapshot);
 
   for (const slot of slots) {
+    const locked = frozen.get(slot.epoch_ms)?.targets;
     const poolW = schedule.pool[slot.index];
     const boilerW = schedule.boiler[slot.index];
     const evW = schedule.ev[slot.index];
@@ -3659,6 +3691,10 @@ function simulate(
         values[slot.index],
       ]),
     );
+    if (locked && Object.keys(locked.room_heating_w).sort().join('|') !== Object.keys(roomHeating).sort().join('|')) throw new Error('Fixed plan room configuration changed; rescind the plan.');
+    if (locked && (Math.abs(locked.boiler_expected_w - boilerW) > 0.01 || locked.boiler_permitted !== schedule.boilerPermitted[slot.index])) throw new Error('Fixed plan hot-water service changed; rescind the plan.');
+    if (locked && Math.abs(locked.ev_w - evW) < 0.01 && locked.ev_target_current_a !== schedule.evTargetCurrentA[slot.index]) throw new Error('Fixed plan charger configuration changed; rescind the plan.');
+    if (locked && snapshot.schema_version === 7 && !locked.device_commands) throw new Error('Fixed plan device command schema changed; rescind the plan.');
     const roomHeatingW = Object.values(roomHeating).reduce(
       (sum, watts) => sum + watts,
       0,
@@ -3671,6 +3707,13 @@ function simulate(
       ev: evW,
     }, roomHeating);
     for (const [key, powers] of Object.entries(schedule.roomDevicePower)) deviceLoads[key] = powers[slot.index];
+    if (locked && Object.keys(locked.device_loads_w).sort().join('|') !== snapshot.device_models.map(m => m.key).sort().join('|')) throw new Error('Fixed plan device inventory changed; rescind the plan.');
+    if (locked) for (const model of snapshot.device_models) {
+      if (model.category === "pool_heating" && Math.abs(locked.pool_w - poolW) > 0.01) continue;
+      if (model.category === "ev_charging" && Math.abs(locked.ev_w - evW) > 0.01) continue;
+      if (!(model.key in locked.device_loads_w)) throw new Error(`Fixed plan device ${model.key} changed; rescind the plan.`);
+      deviceLoads[model.key] = locked.device_loads_w[model.key];
+    }
     const unrepresentedControlledW =
       (representedCategories.has("pool_heating") ? 0 : poolW) +
       (representedCategories.has("hot_water") ? 0 : boilerW) +
@@ -3747,6 +3790,9 @@ function simulate(
         schedule.batteryDischargeW[slot.index],
         maxDischargeW,
       );
+      if (locked && (Math.abs(batteryChargeW - schedule.batteryChargeW[slot.index]) > 0.01 || Math.abs(batteryDischargeW - schedule.batteryDischargeW[slot.index]) > 0.01)) {
+        errors.push(`${slot.start}: fixed battery allocation exceeds physical limits`);
+      }
       const balanceW = netW - batteryChargeW + batteryDischargeW;
       if (balanceW >= 0) {
         gridExportW = Math.min(balanceW, snapshot.grid.export_limit_w);
@@ -3924,7 +3970,7 @@ function simulate(
         ]),
       ),
       device_loads_w: deviceLoads,
-      ...(snapshot.schema_version === 7 ? { device_commands: deviceCommands(snapshot, {
+      ...(snapshot.schema_version === 7 ? { device_commands: locked && Math.abs(locked.ev_w - evW) < 0.01 ? locked.device_commands : deviceCommands(snapshot, {
         index: slot.index, roomHeating: schedule.roomHeating,
         boilerPermitted: schedule.boilerPermitted[slot.index],
         poolW, evCurrentA: schedule.evTargetCurrentA[slot.index], relayPower: schedule.roomDevicePower,
@@ -4230,6 +4276,7 @@ function buildPlan(
   protectedSoc: (number | null)[],
   dispatchCache: Map<string, DispatchBundle | null>,
   derivedBatteryValue: DerivedBatteryValueCurve | null,
+  fixed?: FixedEnergyPlan | null,
 ): GeneratedPlan {
   const scheduled = scheduleServices(
     key,
@@ -4238,6 +4285,7 @@ function buildPlan(
     key === "priority" ? reservedW : new Array(slots.length).fill(0),
     dispatchCache,
     derivedBatteryValue,
+    fixed,
   );
   const thermalErrors = scheduleRoomHeating(
     key,
@@ -4245,6 +4293,7 @@ function buildPlan(
     snapshot,
     scheduled.schedule,
     key === "priority" ? reservedW : new Array(slots.length).fill(0),
+    fixed,
   );
   const simulated = simulate(
     key,
@@ -4252,6 +4301,7 @@ function buildPlan(
     snapshot,
     scheduled.schedule,
     key === "priority" ? protectedSoc : new Array(slots.length).fill(null),
+    fixed,
   );
   const validationErrors = [
     ...scheduled.errors,
@@ -4413,6 +4463,7 @@ export function generateOptimisationPlan(
   priceArchive: StoredPriceRow[] = [],
   /** Exact resolved price vector from a replay capsule, bypassing estimation. */
   resolvedPriceOutlook?: OptimisationPlan["price_outlook"],
+  fixed?: FixedEnergyPlan | null,
 ): OptimisationPlan {
   const validationErrors = validateSnapshot(snapshot);
   const snapshotAge = now.getTime() - isoMs(snapshot.captured_at);
@@ -4443,6 +4494,7 @@ export function generateOptimisationPlan(
     protectedSoc,
     dispatchCache,
     derivedBatteryValue,
+    fixed,
   );
   const priority = buildPlan(
     "priority",
@@ -4452,6 +4504,7 @@ export function generateOptimisationPlan(
     protectedSoc,
     dispatchCache,
     derivedBatteryValue,
+    fixed,
   );
   const cost = buildPlan(
     "cost",
@@ -4461,6 +4514,7 @@ export function generateOptimisationPlan(
     protectedSoc,
     dispatchCache,
     derivedBatteryValue,
+    fixed,
   );
   const plans = { baseline, priority, cost };
   const batteryCurveWasUsed = [...dispatchCache.values()].some((bundle) =>
@@ -4500,6 +4554,7 @@ export function generateOptimisationPlan(
     : "ready";
 
   return {
+    ...(fixed && slots.some(slot => fixed.slots.some(s => isoMs(s.start) === slot.epoch_ms)) ? { fixed_plan: { id: fixed.id, starts_at: fixed.starts_at, ends_at: fixed.ends_at } } : {}),
     schema_version: snapshot.schema_version,
     mode: snapshot.mode,
     capabilities: snapshot.capabilities,
