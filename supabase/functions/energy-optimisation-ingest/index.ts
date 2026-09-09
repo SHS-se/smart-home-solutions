@@ -1862,7 +1862,7 @@ serve(async (req) => {
       // with a warning instead of failing the plan.
       const { data: curveRows } = await supabase
         .from("energy_optimisation_value_curves")
-        .select("store_key, unit, points, max_value_sek_per_kwh")
+        .select("store_key, unit, points, max_value_sek_per_kwh, urgent_price_multiplier")
         .eq("home_id", auth.homeId);
       const resolved = resolveValueCurves(curveRows ?? []);
       for (const warning of resolved.warnings) {

@@ -321,7 +321,7 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
       // unanswerable until a replan happened to land.
       supabase
         .from('energy_optimisation_value_curves')
-        .select('store_key, unit, points, max_value_sek_per_kwh')
+        .select('store_key, unit, points, max_value_sek_per_kwh, urgent_price_multiplier')
         .eq('home_id', homeId),
     ]);
     if (queryError || !data?.snapshot) {
@@ -349,7 +349,7 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
       const edited = Object.fromEntries(
         (curveRows ?? [])
           .filter(row => Array.isArray(row.points))
-          .map(row => [row.store_key, { unit: row.unit, points: row.points, max_value_sek_per_kwh: row.max_value_sek_per_kwh }]),
+          .map(row => [row.store_key, { unit: row.unit, points: row.points, max_value_sek_per_kwh: row.max_value_sek_per_kwh, urgent_price_multiplier: row.urgent_price_multiplier }]),
       );
       setCurveSource(Object.keys(edited).length > 0 ? 'settings' : 'snapshot');
       const built = dispatchWorkbench(

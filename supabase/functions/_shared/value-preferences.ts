@@ -20,10 +20,9 @@
 // pool degree and a kilometre of range come out on the same footing without
 // anyone converting anything by hand.
 
-import type { UtilityCurve } from "./store-value.ts";
+import { validateValuePricing, type UtilityCurve, type ValuePricing } from "./store-value.ts";
 
-export interface StorePreference {
-  max_value_sek_per_kwh?: number | null;
+export interface StorePreference extends ValuePricing {
   /** Below this, the household wants the service enough to buy energy for it. */
   urgent_below: number;
   /** Where they would like the store to sit. */
@@ -44,7 +43,7 @@ export interface PreferenceScale {
   /**
    * The energy price the levels are anchored to, SEK per kWh.
    *
-   * The home's own typical all-in import price. Callers should pass a measured
+   * The cheapest-tenth all-in import price in the planning horizon. Callers pass a resolved
    * figure; `DEFAULT_REFERENCE_SEK_PER_KWH` exists only so a home with no price
    * history is still plannable, and is a fallback rather than a claim.
    */
@@ -64,12 +63,26 @@ export const DEFAULT_REFERENCE_SEK_PER_KWH = 2;
 /**
  * How much more an urgently wanted unit is worth than an ordinary one.
  *
- * Three, so that the steep segment clears the dearest hour a household would
- * ever face rather than merely the average one. Below the urgent threshold the
- * planner will buy from the grid at almost any price, which is the intended
- * reading of "I really want this dealt with".
+ * Three is the default; the household can choose another multiplier or an
+ * absolute maximum. This is a preference, not a guarantee to outbid all prices.
  */
-const URGENT_MULTIPLE = 3;
+export const DEFAULT_URGENT_PRICE_MULTIPLIER = 3;
+
+/** Switch pricing mode while keeping today's urgent value unchanged. */
+export function preferenceWithPriceMode(
+  preference: StorePreference,
+  mode: "absolute" | "relative",
+  reference: number,
+): StorePreference {
+  if (!Number.isFinite(reference) || reference <= 0) throw new Error("reference price must be positive and finite");
+  const maximum = preference.max_value_sek_per_kwh ??
+    (preference.urgent_price_multiplier ?? DEFAULT_URGENT_PRICE_MULTIPLIER) * reference;
+  return {
+    ...preference,
+    max_value_sek_per_kwh: mode === "absolute" ? maximum : null,
+    urgent_price_multiplier: mode === "relative" ? maximum / reference : null,
+  };
+}
 
 /**
  * Turn three thresholds into the concave curve the planner consumes.
@@ -94,14 +107,17 @@ export function curveFromPreference(
   const rejection = validatePreference(preference);
   if (rejection) throw new Error(rejection);
   const maximum = preference.max_value_sek_per_kwh;
-  const costPerUnit = Math.min(reference, maximum ?? Infinity) / unitsPerKwh;
+  const multiplier = preference.urgent_price_multiplier;
+  const urgentValue = maximum ?? (multiplier ?? DEFAULT_URGENT_PRICE_MULTIPLIER) * reference;
+  const costPerUnit = Math.min(reference, urgentValue) / unitsPerKwh;
   return {
     unit,
     ...(maximum != null ? { max_value_sek_per_kwh: maximum } : {}),
+    ...(multiplier != null ? { urgent_price_multiplier: multiplier } : {}),
     points: [
       {
         at: round(preference.urgent_below),
-        sek_per_unit: round((maximum ?? URGENT_MULTIPLE * reference) / unitsPerKwh),
+        sek_per_unit: round(urgentValue / unitsPerKwh),
       },
       {
         at: round(preference.comfortable),
@@ -137,6 +153,7 @@ export function preferenceFromCurve(
   if (points.length !== 3) return null;
   return {
     ...(curve.max_value_sek_per_kwh != null ? { max_value_sek_per_kwh: curve.max_value_sek_per_kwh } : {}),
+    ...(curve.urgent_price_multiplier != null ? { urgent_price_multiplier: curve.urgent_price_multiplier } : {}),
     urgent_below: points[0].at,
     comfortable: points[1].at,
     indifferent_above: points[2].at,
@@ -187,9 +204,8 @@ export function vehiclePreference(targetRangeKm: number): StorePreference {
 export function validatePreference(
   preference: StorePreference,
 ): string | null {
-  if (preference.max_value_sek_per_kwh != null && (!Number.isFinite(preference.max_value_sek_per_kwh) || preference.max_value_sek_per_kwh < 0)) {
-    return "maximum value must be finite and non-negative";
-  }
+  const pricingError = validateValuePricing(preference);
+  if (pricingError) return pricingError;
   const values = [
     preference.urgent_below,
     preference.comfortable,

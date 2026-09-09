@@ -141,3 +141,12 @@ Deno.test("persisted maximum is retained in the resolved curve", () => {
   assertEquals(resolved.warnings, []);
   assertEquals(resolved.curves.pool.curve.max_value_sek_per_kwh, 4.25);
 });
+
+Deno.test("stored multiplier is resolved and conflicting price modes are rejected", () => {
+  const row = { store_key: "pool", unit: "celsius", urgent_price_multiplier: 2.5,
+    points: [{ at: 24, sek_per_unit: 60 }, { at: 30, sek_per_unit: 20 }, { at: 32, sek_per_unit: 0 }] };
+  const resolved = resolveValueCurves([row]);
+  assertEquals(resolved.warnings, []);
+  assertEquals(resolved.curves.pool.curve.urgent_price_multiplier, 2.5);
+  assertEquals(resolveValueCurves([{ ...row, max_value_sek_per_kwh: 3 }]).warnings.length, 1);
+});

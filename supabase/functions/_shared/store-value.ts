@@ -22,6 +22,21 @@
 // is no priority ordering anywhere; priority is an *output*, obtained by
 // sorting marginal values (§8.9).
 
+/** Optional pricing policy for three-threshold preferences, at initial efficiency. */
+export interface ValuePricing {
+  max_value_sek_per_kwh?: number | null;
+  urgent_price_multiplier?: number | null;
+}
+
+/** The maximum is either absolute or relative to the forecast, never both. */
+export function validateValuePricing(pricing: ValuePricing): string | null {
+  const { max_value_sek_per_kwh: maximum, urgent_price_multiplier: multiplier } = pricing;
+  if (maximum != null && multiplier != null) return "choose an absolute maximum or a forecast multiplier, not both";
+  if (maximum != null && (!Number.isFinite(maximum) || maximum < 0)) return "maximum value must be finite and non-negative";
+  if (multiplier != null && (!Number.isFinite(multiplier) || multiplier < 0)) return "price multiplier must be finite and non-negative";
+  return null;
+}
+
 /**
  * One concave utility curve, given as breakpoints over a physical state.
  *
@@ -30,11 +45,9 @@
  * it is, the more another unit is worth", which no store in a house behaves
  * like and which would let a solver justify filling something without limit.
  */
-export interface UtilityCurve {
+export interface UtilityCurve extends ValuePricing {
   /** What the curve is over: "kwh", "celsius", "km". Carried for display. */
   unit: string;
-  /** Explicit urgent value at the reference equipment conditions; null means automatic. */
-  max_value_sek_per_kwh?: number | null;
   points: { at: number; sek_per_unit: number }[];
 }
 
@@ -98,9 +111,8 @@ const breakpointAtOrAbove = (
 
 /** Validate concavity and ordering; a bad curve must never reach the solver. */
 export function validateCurve(curve: UtilityCurve): CurveRejection | null {
-  if (curve.max_value_sek_per_kwh != null && (!finite(curve.max_value_sek_per_kwh) || curve.max_value_sek_per_kwh < 0)) {
-    return { reason: "negative_value", detail: "maximum value must be finite and non-negative" };
-  }
+  const pricingError = validateValuePricing(curve);
+  if (pricingError) return { reason: "negative_value", detail: pricingError };
   const points = curve.points;
   if (points.length === 0) {
     return {

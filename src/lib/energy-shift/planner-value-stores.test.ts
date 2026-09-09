@@ -57,4 +57,10 @@ Deno.test('vehicle chart preserves the saved curve and charge-limit clipping; ex
   source.value_curves.ev = { ...saved, max_value_sek_per_kwh: 3.5 };
   const capped = plannerValueStores(source, plan.price_outlook).find(store => store.key === 'ev')!;
   assert(Math.abs(capped.curve.points[0].sek_per_unit * capped.units_per_kwh(capped.initial_state, 0) - 3.5) < 1e-5);
+  source.value_curves.ev = { ...saved, urgent_price_multiplier: 2.5 };
+  for (const reference of [0.6, 1.2]) {
+    const outlook = { ...plan.price_outlook, shadow_import_sek_per_kwh: plan.price_outlook.shadow_import_sek_per_kwh.map(() => reference) };
+    const relative = plannerValueStores(source, outlook).find(store => store.key === 'ev')!;
+    assert(Math.abs(relative.curve.points[0].sek_per_unit * relative.units_per_kwh(relative.initial_state, 0) - 2.5 * reference) < 1e-5);
+  }
 });

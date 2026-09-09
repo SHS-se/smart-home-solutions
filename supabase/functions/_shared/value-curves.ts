@@ -175,6 +175,7 @@ export interface StoredCurveRow {
   unit: string;
   points: unknown;
   max_value_sek_per_kwh?: number | null;
+  urgent_price_multiplier?: number | null;
 }
 
 export interface ResolvedCurve {
@@ -211,7 +212,7 @@ export function parseStoredCurve(row: StoredCurveRow): UtilityCurve | string {
     }
     points.push({ at, sek_per_unit: value });
   }
-  const curve: UtilityCurve = { unit: row.unit, points, ...(row.max_value_sek_per_kwh != null ? { max_value_sek_per_kwh: row.max_value_sek_per_kwh } : {}) };
+  const curve: UtilityCurve = { unit: row.unit, points, ...(row.max_value_sek_per_kwh != null ? { max_value_sek_per_kwh: row.max_value_sek_per_kwh } : {}), ...(row.urgent_price_multiplier != null ? { urgent_price_multiplier: row.urgent_price_multiplier } : {}) };
   const rejection = validateCurve(curve);
   if (rejection) return `${rejection.reason}: ${rejection.detail}`;
   return curve;

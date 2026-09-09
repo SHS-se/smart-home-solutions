@@ -2528,7 +2528,7 @@ function buildDispatchStores(
           // a curve holding opinions above it describes states that cannot
           // occur. Every value below the limit is untouched.
           curve: curveWithinReach(
-            curves.ev.max_value_sek_per_kwh != null
+            curves.ev.max_value_sek_per_kwh != null || curves.ev.urgent_price_multiplier != null
               ? anchorToHorizon(curves.ev, vehicle.charge_efficiency / perKm)
               : curves.ev,
             reachableKm,

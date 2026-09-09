@@ -33,8 +33,10 @@ import { WATER_KWH_PER_M3_K } from '../../../../supabase/functions/_shared/store
 import {
   curveFromPreference,
   DEFAULT_POOL_PREFERENCE,
+  DEFAULT_URGENT_PRICE_MULTIPLIER,
   horizonReferenceSekPerKwh,
   preferenceFromCurve,
+  preferenceWithPriceMode,
   validatePreference,
   vehiclePreference,
   type StorePreference,
@@ -161,7 +163,11 @@ const ValueCurvesTab: React.FC<Props> = ({
 
   const curveOf = useCallback(
     (key: ValueStoreKey, preference: StorePreference) =>
-      curveFromPreference(preference, DEFAULT_VALUE_CURVES[key].unit, scales[key]),
+      curveFromPreference({
+        ...preference,
+        urgent_price_multiplier: preference.max_value_sek_per_kwh != null
+          ? null : preference.urgent_price_multiplier ?? DEFAULT_URGENT_PRICE_MULTIPLIER,
+      }, DEFAULT_VALUE_CURVES[key].unit, scales[key]),
     [scales],
   );
 
@@ -184,7 +190,7 @@ const ValueCurvesTab: React.FC<Props> = ({
     setSourcePlan(source.plan as unknown as OptimisationPlan);
     const { data, error } = await supabase
       .from('energy_optimisation_value_curves')
-      .select('store_key, unit, points, max_value_sek_per_kwh')
+      .select('store_key, unit, points, max_value_sek_per_kwh, urgent_price_multiplier')
       .eq('home_id', homeId);
     if (error) { setCurveError(error.message); setLoading(false); return; }
     const nextDrafts: Drafts = {};
@@ -192,7 +198,7 @@ const ValueCurvesTab: React.FC<Props> = ({
     for (const key of EDITABLE) {
       const row = (data ?? []).find(entry => entry.store_key === key);
       const curve: UtilityCurve = row && Array.isArray(row.points)
-        ? { unit: row.unit, points: row.points as UtilityCurve['points'], max_value_sek_per_kwh: row.max_value_sek_per_kwh }
+        ? { unit: row.unit, points: row.points as UtilityCurve['points'], max_value_sek_per_kwh: row.max_value_sek_per_kwh, urgent_price_multiplier: row.urgent_price_multiplier }
         : DEFAULT_VALUE_CURVES[key];
       nextStored[key] = curve;
       // Only a curve this editor generated can be read back exactly. Anything
@@ -220,11 +226,23 @@ const ValueCurvesTab: React.FC<Props> = ({
           edited: true,
           preference: {
             ...draft.preference,
-            [field]: field === 'max_value_sek_per_kwh' && value === '' ? null : numeric(value, draft.preference[field] ?? 0),
+            [field]: numeric(value, draft.preference[field] ?? 0),
           },
         },
       };
     });
+
+  const changePriceMode = (key: ValueStoreKey, mode: 'absolute' | 'relative') => {
+    setPreview(null);
+    setDrafts(current => {
+      const draft = current[key];
+      if (!draft) return current;
+      return { ...current, [key]: {
+        ...draft, edited: true,
+        preference: preferenceWithPriceMode(draft.preference, mode, scales[key].reference_sek_per_kwh),
+      } };
+    });
+  };
 
   const save = async (key: ValueStoreKey) => {
     const draft = drafts[key];
@@ -245,6 +263,7 @@ const ValueCurvesTab: React.FC<Props> = ({
         unit: curve.unit,
         points: curve.points,
         max_value_sek_per_kwh: curve.max_value_sek_per_kwh ?? null,
+        urgent_price_multiplier: curve.urgent_price_multiplier ?? null,
         updated_at: new Date().toISOString(),
       }, { onConflict: 'home_id,store_key' });
     setSaving(null);
@@ -373,7 +392,8 @@ const ValueCurvesTab: React.FC<Props> = ({
       from.urgent_below !== draft.preference.urgent_below ||
       from.comfortable !== draft.preference.comfortable ||
       from.indifferent_above !== draft.preference.indifferent_above ||
-      from.max_value_sek_per_kwh !== draft.preference.max_value_sek_per_kwh
+      from.max_value_sek_per_kwh !== draft.preference.max_value_sek_per_kwh ||
+      from.urgent_price_multiplier !== draft.preference.urgent_price_multiplier
     );
   });
   const batteryChart = batteryValueCurve?.curve.points.length
@@ -402,8 +422,8 @@ const ValueCurvesTab: React.FC<Props> = ({
         <AlertTitle>{t('Vad varje tjänst är värd för dig', 'What each service is worth to you')}</AlertTitle>
         <AlertDescription className="text-sm">
           {t(
-            'Diagrammet visar planerarens marginalvärden vid planens ursprungliga verkningsgrad. Du kan ange ditt högsta värde i SEK/kWh. Poolens värde per kWh kan ändras när verkningsgraden ändras under planen.',
-            'Three numbers per service, in the unit you think in. The chart shows the planner’s marginal values at its initial equipment conditions. Set an optional maximum willingness to pay in SEK/kWh. Pool values per kWh can change with efficiency during the plan.',
+            'Diagrammet visar planerarens marginalvärden vid planens ursprungliga verkningsgrad. Välj ett fast högsta värde i SEK/kWh eller en multipel av prognospriset. Poolens värde per kWh kan ändras när verkningsgraden ändras under planen.',
+            'Three numbers per service, in the unit you think in. The chart shows the planner’s marginal values at its initial equipment conditions. Choose a fixed maximum in SEK/kWh or a multiplier of the forecast reference price. Pool values per kWh can change with efficiency during the plan.',
           )}
         </AlertDescription>
       </Alert>
@@ -575,6 +595,9 @@ const ValueCurvesTab: React.FC<Props> = ({
         }, sourcePlan.price_outlook).find(store => store.key === key) : null;
         const isPool = key === 'pool';
         const unitSuffix = isPool ? '°C' : 'km';
+        const absolute = draft.preference.max_value_sek_per_kwh != null;
+        const multiplier = draft.preference.urgent_price_multiplier ?? DEFAULT_URGENT_PRICE_MULTIPLIER;
+        const reference = scales[key].reference_sek_per_kwh;
         const state = isPool ? poolTemperatureC : vehicleRangeKm;
         const perUnitKwh = 1 / scales[key].units_per_kwh;
         const changed = editedStore && JSON.stringify(editedStore.curve.points) !== JSON.stringify(plannedStore.curve.points);
@@ -658,17 +681,32 @@ const ValueCurvesTab: React.FC<Props> = ({
                 ))}
               </div>
 
-              <label className="block space-y-1">
-                <span className="text-sm font-medium">{t('Högsta värde när behovet är stort', 'Maximum value when urgently needed')} (SEK/kWh)</span>
-                <Input type="number" min={0} step={0.1} className="max-w-xs"
-                  placeholder={`${t('Automatiskt', 'Automatic')} (${(plannedStore.curve.points[0].sek_per_unit * scales[key].units_per_kwh).toFixed(2)})`}
-                  value={draft.preference.max_value_sek_per_kwh ?? ''}
-                  onChange={event => edit(key, 'max_value_sek_per_kwh', event.target.value)} />
-                <span className="block text-xs text-muted-foreground">{t(
-                  'Lämna tomt för automatiskt värde. Angivet värde behålls när elpriset ändras. Gäller vid planens ursprungliga verkningsgrad.',
-                  'Leave blank for automatic value. An explicit value stays fixed when electricity prices change. Expressed at the plan’s initial equipment efficiency.',
-                )}</span>
-              </label>
+              <div className="space-y-2">
+                <label className="block space-y-1">
+                  <span className="text-sm font-medium">{t('Värde när behovet är stort', 'Value when urgently needed')}</span>
+                  <select className="flex h-10 w-full max-w-xs rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    value={absolute ? 'absolute' : 'relative'}
+                    onChange={event => changePriceMode(key, event.target.value as 'absolute' | 'relative')}>
+                    <option value="relative">{t('Multipel av prognospriset', 'Forecast price multiplier')}</option>
+                    <option value="absolute">{t('Fast pris (SEK/kWh)', 'Fixed price (SEK/kWh)')}</option>
+                  </select>
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-sm font-medium">{absolute
+                    ? t('Högsta värde (SEK/kWh)', 'Maximum value (SEK/kWh)')
+                    : t('Multiplikationsfaktor', 'Multiplier')}</span>
+                  <Input type="number" min={0} step="any" className="max-w-xs"
+                    value={absolute ? draft.preference.max_value_sek_per_kwh : multiplier}
+                    onChange={event => edit(key, absolute ? 'max_value_sek_per_kwh' : 'urgent_price_multiplier', event.target.value)} />
+                </label>
+                <p className="text-xs text-muted-foreground">{absolute ? t(
+                  'Angivet värde behålls när elpriset ändras. Gäller vid planens ursprungliga verkningsgrad.',
+                  'This value stays fixed when electricity prices change. Expressed at the plan’s initial equipment efficiency.',
+                ) : t(
+                  `${multiplier.toFixed(2)} × ${reference.toFixed(2)} SEK/kWh = ${(multiplier * reference).toFixed(2)} SEK/kWh. Referensen är priset vid den billigaste tiondelen av prognosen. Räknas om för varje plan.`,
+                  `${multiplier.toFixed(2)} × ${reference.toFixed(2)} SEK/kWh = ${(multiplier * reference).toFixed(2)} SEK/kWh. The reference is the cheapest-tenth price in the forecast. Recalculated for every plan.`,
+                )}</p>
+              </div>
               <p className="text-xs text-muted-foreground">{t(
                 'Blå: aktuell plan. Orange: sparade eller ändrade inställningar för nästa plan. Raka segment beskriver avtagande värde; de är ingen mätning av dina önskemål.',
                 'Blue: current plan. Orange: saved or edited settings for the next plan. Straight segments model diminishing value; they are not a measurement of your preferences.',

@@ -5,6 +5,7 @@ import {
   DEFAULT_REFERENCE_SEK_PER_KWH,
   horizonReferenceSekPerKwh,
   preferenceFromCurve,
+  preferenceWithPriceMode,
   validatePreference,
   vehiclePreference,
 } from "./value-preferences.ts";
@@ -278,4 +279,38 @@ Deno.test("zero maximum declines all energy; invalid maxima are rejected", () =>
   for (const maximum of [-1, NaN, Infinity]) {
     assert(validatePreference({ ...preference, max_value_sek_per_kwh: maximum }) !== null);
   }
+});
+
+Deno.test("relative pricing follows the forecast and survives round trips", () => {
+  const preference = { ...DEFAULT_POOL_PREFERENCE, urgent_price_multiplier: 2.5 };
+  for (const reference of [0.6, 1.2, 3]) {
+    const scale = { ...POOL_SCALE, reference_sek_per_kwh: reference };
+    const curve = curveFromPreference(preference, "celsius", scale);
+    assertEquals(preferenceFromCurve(curve), preference);
+    assert(Math.abs(marginalValue(curve, 20) * scale.units_per_kwh - 2.5 * reference) < 1e-6);
+    assertEquals(validateCurve(curve), null);
+  }
+});
+
+Deno.test("switching price modes preserves the current value and clears the other mode", () => {
+  const relative = { ...DEFAULT_POOL_PREFERENCE, urgent_price_multiplier: 2.5 };
+  const absolute = preferenceWithPriceMode(relative, "absolute", 1.2);
+  assertEquals(absolute.max_value_sek_per_kwh, 3);
+  assertEquals(absolute.urgent_price_multiplier, null);
+  const switched = preferenceWithPriceMode(absolute, "relative", 1.5);
+  assertEquals(switched.urgent_price_multiplier, 2);
+  assertEquals(switched.max_value_sek_per_kwh, null);
+  assertEquals(validatePreference(switched), null);
+});
+
+Deno.test("relative pricing allows small and zero factors but rejects invalid or conflicting modes", () => {
+  for (const factor of [0, 0.5]) {
+    const curve = curveFromPreference({ ...DEFAULT_POOL_PREFERENCE, urgent_price_multiplier: factor }, "celsius", POOL_SCALE);
+    assertEquals(validateCurve(curve), null);
+    assert(Math.abs(marginalValue(curve, 20) * POOL_SCALE.units_per_kwh - factor * POOL_SCALE.reference_sek_per_kwh) < 1e-6);
+  }
+  for (const factor of [-1, NaN, Infinity]) {
+    assert(validatePreference({ ...DEFAULT_POOL_PREFERENCE, urgent_price_multiplier: factor }) !== null);
+  }
+  assert(validatePreference({ ...DEFAULT_POOL_PREFERENCE, urgent_price_multiplier: 2, max_value_sek_per_kwh: 3 }) !== null);
 });
