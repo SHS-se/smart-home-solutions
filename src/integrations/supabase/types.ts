@@ -2452,6 +2452,8 @@ export type Database = {
           generation_request_id: string | null
           ha_ack_error: Json | null
           ha_ack_request_id: string | null
+          ha_runtime: Json | null
+          ha_runtime_received_at: string | null
           ha_ack_status: string
           ha_acknowledged_at: string | null
           ha_integration_version: string | null
@@ -2479,6 +2481,8 @@ export type Database = {
           generation_request_id?: string | null
           ha_ack_error?: Json | null
           ha_ack_request_id?: string | null
+          ha_runtime?: Json | null
+          ha_runtime_received_at?: string | null
           ha_ack_status?: string
           ha_acknowledged_at?: string | null
           ha_integration_version?: string | null
@@ -2506,6 +2510,8 @@ export type Database = {
           generation_request_id?: string | null
           ha_ack_error?: Json | null
           ha_ack_request_id?: string | null
+          ha_runtime?: Json | null
+          ha_runtime_received_at?: string | null
           ha_ack_status?: string
           ha_acknowledged_at?: string | null
           ha_integration_version?: string | null

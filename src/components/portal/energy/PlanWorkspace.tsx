@@ -1,3 +1,4 @@
+import { haRuntimeStatus } from '@/lib/energy-shift/ha-runtime';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, Loader2, Sparkles } from 'lucide-react';
@@ -123,7 +124,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
       ] = await Promise.all([
         supabase
           .from('energy_optimisation_current')
-          .select('home_id, plan, captured_at, updated_at, plan_id, generation_request_id, plan_schema_version, ha_ack_status, ha_acknowledged_at, ha_integration_version, ha_ack_request_id, ha_ack_error, replan_request_id, replan_requested_at, replan_completed_request_id, replan_error')
+          .select('home_id, plan, captured_at, updated_at, plan_id, generation_request_id, plan_schema_version, ha_runtime, ha_runtime_received_at, ha_ack_status, ha_acknowledged_at, ha_integration_version, ha_ack_request_id, ha_ack_error, replan_request_id, replan_requested_at, replan_completed_request_id, replan_error')
           .eq('customer_id', customerId)
           .eq('home_id', homeId)
           .maybeSingle(),
@@ -229,6 +230,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
       setCurrent({
         ...data,
         plan: data.plan,
+        ha_runtime: data.ha_runtime as unknown as CurrentRow['ha_runtime'],
         ha_ack_status: data.ha_ack_status as CurrentRow['ha_ack_status'],
         ha_ack_error: data.ha_ack_error as CurrentRow['ha_ack_error'],
       });
@@ -286,6 +288,8 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
       plan_id: plan.plan_id,
       generation_request_id: null,
       plan_schema_version: plan.schema_version,
+      ha_runtime: null,
+      ha_runtime_received_at: null,
       ha_ack_status: 'accepted',
       ha_acknowledged_at: plan.issued_at,
       ha_integration_version: null,
@@ -538,9 +542,26 @@ const PlanView: React.FC<{
     sourceStale, bindingExpired, ready, pct, costDelta, costTone, costMeaning,
     validationMessages,
   } = model;
-  const acknowledgementPending = !isDemo && current.ha_ack_status === 'pending';
-  const acknowledgementRejected = !isDemo && current.ha_ack_status === 'rejected';
-  const acknowledgedReady = ready && (isDemo || current.ha_ack_status === 'accepted');
+  const runtimeStatus = haRuntimeStatus(current, now);
+  const runtimeReady = ready && (isDemo || runtimeStatus.ready);
+  const runtimeLabel = runtimeStatus.state === 'unconfirmed' ? t('HA-status obekräftad', 'HA status unconfirmed')
+    : runtimeStatus.state === 'different_plan' ? t('Annan plan i HA', 'Different plan in HA')
+    : runtimeStatus.state === 'ready' ? t('Tillgänglig i HA', 'Available in HA')
+    : runtimeStatus.state === 'disabled' ? t('Avstängd i HA', 'Disabled in HA')
+    : runtimeStatus.state === 'expired' ? t('Utgången', 'Expired')
+    : runtimeStatus.state === 'advisory_only' ? t('Endast rådgivande', 'Advisory only')
+    : runtimeStatus.state === 'not_configured' ? t('Konfiguration krävs i HA', 'HA configuration required')
+    : runtimeStatus.state === 'invalid' ? t('Ogiltig plan i HA', 'Invalid plan in HA')
+    : t('Plan otillgänglig i HA', 'Plan unavailable in HA');
+  const runtimeDetail = runtimeStatus.state === 'unconfirmed'
+    ? t('Ingen aktuell status har mottagits från Home Assistant. Tidigare acceptans bekräftar inte att planen fortfarande är tillgänglig.', 'No recent status received from Home Assistant. Earlier acceptance does not confirm that the plan is still available.')
+    : runtimeStatus.state === 'different_plan'
+      ? t('Home Assistant rapporterar en annan plan än den som visas här.', 'Home Assistant reports a different plan from the one shown here.')
+      : runtimeStatus.state === 'expired'
+        ? t('Den senaste planen har gått ut.', 'The last plan has expired.')
+        : runtimeStatus.state === 'advisory_only'
+          ? t('Inga bindande instruktioner återstår i planen.', 'No binding instructions remain in this plan.')
+          : runtimeStatus.runtime?.reason ?? runtimeLabel;
 
   // When Home Assistant will next ask for a plan. It refreshes 30 minutes
   // before expiry, and only ever on a quarter boundary, so the honest answer is
@@ -670,7 +691,7 @@ const PlanView: React.FC<{
           </AlertDescription>
         </Alert>
       )}
-      {(!acknowledgedReady || validationMessages.length > 0) && (() => {
+      {(!runtimeReady || validationMessages.length > 0) && (() => {
         // Explain expiry separately from the reason a replacement failed.
         const lastSeenMs = connectionLastSeenAt
           ? Date.parse(connectionLastSeenAt)
@@ -714,11 +735,9 @@ const PlanView: React.FC<{
           'This is something for us to put right, not something you need to do.',
         );
 
-        const title = acknowledgementRejected
-          ? t('Home Assistant kunde inte använda den senaste planen', 'Home Assistant could not use the latest plan')
-          : acknowledgementPending
-            ? t('Väntar på Home Assistant', 'Waiting for Home Assistant')
-            : stale
+        const title = !isDemo && !runtimeStatus.ready
+          ? runtimeLabel
+          : stale
               ? connectionLive
                 ? t('Planen är inaktuell', 'Your plan is out of date')
                 : t('Hemmet har slutat skicka data', 'Your home has stopped sending data')
@@ -728,17 +747,9 @@ const PlanView: React.FC<{
                   ? t('En del av prognosen är inaktuell', 'Part of the forecast is out of date')
                   : t('Planen går inte att genomföra', 'This plan cannot be carried out');
 
-        const body = acknowledgementRejected
-          ? [t(
-            'Home Assistant kunde inte köra planen och har gått tillbaka till dina vanliga inställningar.',
-            'Home Assistant could not run the plan and has gone back to your usual settings.',
-          ), notYours]
-          : acknowledgementPending
-            ? [t(
-              'Planen är klar och väntar på att Home Assistant ska bekräfta att den kan köras. Det tar normalt några sekunder.',
-              'The plan is ready and waiting for Home Assistant to confirm it can run it. That usually takes a few seconds.',
-            )]
-            : stale
+        const body = !isDemo && !runtimeStatus.ready
+          ? [runtimeDetail]
+          : stale
               ? connectionLive
                 ? [
                   t(
@@ -785,10 +796,6 @@ const PlanView: React.FC<{
                   )];
 
         const details = [
-          ...(acknowledgementRejected ? [t(
-            'Home Assistant kunde inte godkänna planen. Anslutningens diagnostik visar orsaken.',
-            'Home Assistant could not accept the plan. The integration diagnostics show the reason.',
-          )] : []),
           ...(stale ? [t(
             `Planen behövde ersättas senast ${formatHomeStamp(current.plan.valid_until, homeTimeZone)}.`,
             `The plan needed replacing by ${formatHomeStamp(current.plan.valid_until, homeTimeZone)}.`,
@@ -812,7 +819,7 @@ const PlanView: React.FC<{
         ];
 
         return (
-          <Alert variant={acknowledgementRejected || stale || bindingExpired || sourceStale.length > 0 ? 'destructive' : 'default'}>
+          <Alert variant={stale || bindingExpired || sourceStale.length > 0 ? 'destructive' : 'default'}>
             <AlertTriangle className="h-4 w-4" />
             <AlertTitle>{title}</AlertTitle>
             <AlertDescription>
@@ -836,20 +843,10 @@ const PlanView: React.FC<{
             <div>
               <div className="flex items-center gap-2">
                 <CardTitle className="text-lg">{isDemo ? t('Demoplan med 15-minutersupplösning', '15-minute demo energy plan') : t('Liveplan för 15-minutersstyrning', 'Live 15-minute energy plan')}</CardTitle>
-                <Badge variant={acknowledgedReady ? 'secondary' : acknowledgementPending ? 'outline' : 'destructive'}>
-                  {isDemo
-                    ? t('Demo', 'Demo')
-                    : acknowledgementRejected
-                      ? t('Avvisad av HA', 'Rejected by HA')
-                      : acknowledgementPending
-                        ? t('Väntar på HA', 'Awaiting HA')
-                        : ready
-                          ? t('Accepterad', 'Accepted')
-                          : stale
-                            ? t('Utgången', 'Expired')
-                            : bindingExpired
-                              ? t('Endast rådgivande', 'Advisory only')
-                              : plan.status}
+                <Badge variant={runtimeReady ? 'secondary' : 'destructive'}>
+                  {isDemo ? t('Demo', 'Demo') : stale ? t('Utgången', 'Expired')
+                    : bindingExpired ? t('Endast rådgivande', 'Advisory only')
+                    : runtimeLabel}
                 </Badge>
               </div>
               <p className="mt-1 text-sm text-muted-foreground">
@@ -857,14 +854,21 @@ const PlanView: React.FC<{
               </p>
               {!isDemo && lastCheckedAt && (
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {t('Portalen kontrollerade senast', 'Portal last checked')} {formatHomeTimeWithSeconds(lastCheckedAt, homeTimeZone)} · {current.ha_ack_status === 'accepted'
-                    ? t('Home Assistant accepterade denna plan', 'Home Assistant accepted this plan')
-                    : t('Planen körs inte som accepterad', 'The plan is not acknowledged as executable')}
+                  {t('Portalen kontrollerade senast', 'Portal last checked')} {formatHomeTimeWithSeconds(lastCheckedAt, homeTimeZone)} · {runtimeDetail}
+                </p>
+              )}
+              {!isDemo && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {t('Senaste status från HA', 'Last status from HA')}: {current.ha_runtime_received_at ? formatHomeStamp(current.ha_runtime_received_at, homeTimeZone) : t('Inte mottagen', 'Not received')}.
+                  {runtimeStatus.runtime?.recovering ? t(' Begär automatiskt en ny plan.', ' Automatically requesting a fresh plan.')
+                    : runtimeStatus.runtime?.retry_at && !runtimeStatus.ready ? ` ${t('Automatiskt nytt försök', 'Automatic retry')}: ${formatHomeTimeWithSeconds(runtimeStatus.runtime.retry_at, homeTimeZone)}.` : ''}
+                  {runtimeStatus.runtime?.last_error ? ` ${runtimeStatus.runtime.last_error}` : ''}
+                  {current.ha_ack_status === 'accepted' ? ` ${t('Tidigare accepterad', 'Previously accepted')}: ${current.ha_acknowledged_at ? formatHomeStamp(current.ha_acknowledged_at, homeTimeZone) : '—'}.` : ''}
                 </p>
               )}
               {!isDemo && current.generation_request_id && (
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {t('Begäran', 'Request')} {current.generation_request_id} {current.ha_integration_version ? `· HA ${current.ha_integration_version}` : ''}
+                  {t('Begäran', 'Request')} {current.generation_request_id} {current.ha_integration_version ? `· ${t('Accepterad/avvisad av HA', 'Acknowledged by HA')} ${current.ha_integration_version}` : ''}
                 </p>
               )}
               {!isDemo && nextReplanAt && (

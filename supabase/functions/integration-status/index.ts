@@ -23,6 +23,8 @@ import {
   pendingReplanRequestId,
 } from "../_shared/ha-api-contract.ts";
 
+import { validRuntime } from '../_shared/ha-runtime.ts';
+
 // Long enough for a Home Assistant exception with its remedy, short enough that
 // the column cannot be used as storage.
 const MAX_REPLAN_ERROR_CHARS = 1000;
@@ -52,6 +54,7 @@ serve(async (req) => {
     // why instead of spinning until the person gives up. The failure is written
     // against its own request id: a late report must not bury a newer request,
     // and must not contradict a plan that has meanwhile arrived.
+    let runtimeReceived: boolean | null = null;
     if (req.method === "POST") {
       let body: Record<string, unknown>;
       try {
@@ -59,7 +62,19 @@ serve(async (req) => {
       } catch {
         return json({ error: "invalid_body" }, 400);
       }
-      if (body?.replan_request_id !== undefined) {
+      if (body?.runtime !== undefined) {
+        if (body.api_version !== HA_API_VERSION || !validRuntime(body.runtime)) {
+          return json({ error: "invalid_runtime" }, 400);
+        }
+        const { data: received, error } = await supabase.rpc("report_energy_runtime", {
+          p_home_id: auth.homeId, p_runtime: body.runtime,
+        });
+        if (error) {
+          console.error("[INTEGRATION-STATUS] runtime write failed", error);
+          return json({ error: "storage_failed" }, 500);
+        }
+        runtimeReceived = received === true;
+      } else if (body?.replan_request_id !== undefined) {
         const replanId = body.replan_request_id;
         const detail = body.error;
         if (
@@ -85,14 +100,15 @@ serve(async (req) => {
           );
           return json({ error: "storage_failed" }, 500);
         }
+      } else {
+        return json({ error: "invalid_body" }, 400);
       }
     }
 
     const { data: current, error: currentError } = await supabase
       .from("energy_optimisation_current")
       .select(
-        "generation_request_id, replan_request_id, " +
-          "replan_completed_request_id, replan_error",
+        "generation_request_id, replan_request_id, replan_completed_request_id, replan_error",
       )
       .eq("home_id", auth.homeId)
       .maybeSingle();
@@ -106,6 +122,7 @@ serve(async (req) => {
 
     return json({
       api_version: HA_API_VERSION,
+      runtime_received: runtimeReceived,
       supported_snapshot_schema_versions: HA_SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS,
       supported_plan_schema_versions: HA_SUPPORTED_PLAN_SCHEMA_VERSIONS,
       minimum_snapshot_schema_version: HA_MINIMUM_SNAPSHOT_SCHEMA_VERSION,

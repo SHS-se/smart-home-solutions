@@ -57,15 +57,18 @@
         }
       },
       "post": {
-        "operationId": "reportReplanFailure",
-        "description": "Report that a requested replan could not be produced, and read status back. The response is the same discovery document the GET returns.",
+        "operationId": "reportIntegrationStatus",
+        "description": "Report current HA runtime readiness or a requested replan failure, and read status back. The response is the same discovery document the GET returns.",
         "security": [{ "deviceToken": [] }],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ReplanFailureRequest"
+                "oneOf": [
+                  { "$ref": "#/components/schemas/ReplanFailureRequest" },
+                  { "$ref": "#/components/schemas/RuntimeStatusRequest" }
+                ]
               }
             }
           }
@@ -245,6 +248,95 @@
       }
     },
     "schemas": {
+      "RuntimeStatusRequest": {
+        "type": "object",
+        "required": [
+          "api_version",
+          "runtime"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "api_version": {
+            "const": 1
+          },
+          "runtime": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "observed_at",
+              "plan_id",
+              "state",
+              "reason",
+              "binding_until",
+              "valid_until",
+              "recovering",
+              "retry_at",
+              "last_error"
+            ],
+            "properties": {
+              "observed_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "plan_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "uuid"
+              },
+              "state": {
+                "enum": [
+                  "unavailable",
+                  "disabled",
+                  "not_configured",
+                  "expired",
+                  "invalid",
+                  "advisory_only",
+                  "ready",
+                  "incomplete",
+                  "infeasible"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "maxLength": 1000
+              },
+              "binding_until": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "valid_until": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "retry_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "recovering": {
+                "type": "boolean"
+              },
+              "last_error": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 1000
+              }
+            }
+          }
+        }
+      },
       "RequestId": { "type": "string", "minLength": 8, "maxLength": 128 },
       "ApiSuccess": {
         "type": "object",
@@ -363,6 +455,7 @@
           {
             "type": "object",
             "properties": {
+          "runtime_received": { "type": ["boolean", "null"], "description": "True only when this request stored the runtime report; false for ignored reports, null for other status requests." },
               "data": { "$ref": "#/components/schemas/IntegrationStatusData" }
             }
           }

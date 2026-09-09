@@ -4,6 +4,7 @@
 // sections can live in their own files (ENERGY_OPTIMISATION_ARCHITECTURE.md
 // §1.3.5a). Nothing here changed in the move.
 
+import type { HaRuntime } from '@/lib/energy-shift/ha-runtime';
 import type { PortalOptimisationPlan } from '@/lib/energy-shift/contracts';
 import type { ThermalObservationSummary } from '@/lib/energy-shift/thermal-readiness';
 
@@ -15,6 +16,8 @@ export interface CurrentRow {
   plan_id: string | null;
   generation_request_id: string | null;
   plan_schema_version: number | null;
+  ha_runtime: HaRuntime | null;
+  ha_runtime_received_at: string | null;
   ha_ack_status: 'pending' | 'accepted' | 'rejected';
   ha_acknowledged_at: string | null;
   ha_integration_version: string | null;
