@@ -158,9 +158,16 @@ Deno.test("the replan handshake is declared at both ends of the contract", async
 
   const failure = contract.components.schemas.ReplanFailureRequest;
   assertEquals(failure.required, ["replan_request_id", "error"]);
+  const report = contract.paths["/integration-status"].post;
+  assertEquals(report.operationId, "reportIntegrationStatus");
+  // Status reporting also accepts runtime readiness. The replan handshake
+  // requires its failure payload to remain an accepted request variant.
   assertEquals(
-    contract.paths["/integration-status"].post.operationId,
-    "reportReplanFailure",
+    report.requestBody.content["application/json"].schema.oneOf.some(
+      (variant: { $ref: string }) =>
+        variant.$ref === "#/components/schemas/ReplanFailureRequest",
+    ),
+    true,
   );
 });
 
