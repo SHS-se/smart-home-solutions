@@ -132,3 +132,12 @@ Deno.test("a nonsense degradation cost falls back rather than disabling wear", (
     "zero wear would let the solver cycle the pack for pennies",
   );
 });
+
+Deno.test("persisted maximum is retained in the resolved curve", () => {
+  const resolved = resolveValueCurves([{
+    store_key: "pool", unit: "celsius", max_value_sek_per_kwh: 4.25,
+    points: [{ at: 24, sek_per_unit: 60 }, { at: 30, sek_per_unit: 20 }, { at: 32, sek_per_unit: 0 }],
+  }]);
+  assertEquals(resolved.warnings, []);
+  assertEquals(resolved.curves.pool.curve.max_value_sek_per_kwh, 4.25);
+});

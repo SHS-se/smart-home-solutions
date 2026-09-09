@@ -33,6 +33,8 @@
 export interface UtilityCurve {
   /** What the curve is over: "kwh", "celsius", "km". Carried for display. */
   unit: string;
+  /** Explicit urgent value at the reference equipment conditions; null means automatic. */
+  max_value_sek_per_kwh?: number | null;
   points: { at: number; sek_per_unit: number }[];
 }
 
@@ -96,6 +98,9 @@ const breakpointAtOrAbove = (
 
 /** Validate concavity and ordering; a bad curve must never reach the solver. */
 export function validateCurve(curve: UtilityCurve): CurveRejection | null {
+  if (curve.max_value_sek_per_kwh != null && (!finite(curve.max_value_sek_per_kwh) || curve.max_value_sek_per_kwh < 0)) {
+    return { reason: "negative_value", detail: "maximum value must be finite and non-negative" };
+  }
   const points = curve.points;
   if (points.length === 0) {
     return {

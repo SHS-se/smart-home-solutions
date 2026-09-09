@@ -256,3 +256,26 @@ Deno.test("re-anchoring moves the level and leaves the thresholds alone", () => 
     Math.round(stored.points[0].sek_per_unit / stored.points[1].sek_per_unit),
   );
 });
+
+Deno.test("explicit maximum survives storage and re-anchoring at different prices and efficiency", () => {
+  const preference = { urgent_below: 24, comfortable: 30, indifferent_above: 32, max_value_sek_per_kwh: 4.25 };
+  const saved = curveFromPreference(preference, "celsius", POOL_SCALE);
+  assertEquals(preferenceFromCurve(saved), preference);
+  for (const price of [0.3, 10]) {
+    const scale = { units_per_kwh: 0.08, reference_sek_per_kwh: price };
+    const rebuilt = curveFromPreference(preferenceFromCurve(saved)!, "celsius", scale);
+    assertEquals(validateCurve(rebuilt), null);
+    assert(Math.abs(marginalValue(rebuilt, 23) * scale.units_per_kwh - 4.25) < 1e-6);
+    assert(marginalValue(rebuilt, 30) * scale.units_per_kwh <= 4.25 + 1e-6);
+  }
+});
+
+Deno.test("zero maximum declines all energy; invalid maxima are rejected", () => {
+  const preference = { ...DEFAULT_POOL_PREFERENCE, max_value_sek_per_kwh: 0 };
+  const curve = curveFromPreference(preference, "celsius", POOL_SCALE);
+  assertEquals(validateCurve(curve), null);
+  assertEquals(marginalValue(curve, 20), 0);
+  for (const maximum of [-1, NaN, Infinity]) {
+    assert(validatePreference({ ...preference, max_value_sek_per_kwh: maximum }) !== null);
+  }
+});

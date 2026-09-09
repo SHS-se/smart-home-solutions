@@ -2527,7 +2527,12 @@ function buildDispatchStores(
           // Clamped to the charge limit: the car refuses a command past it, so
           // a curve holding opinions above it describes states that cannot
           // occur. Every value below the limit is untouched.
-          curve: curveWithinReach(curves.ev, reachableKm),
+          curve: curveWithinReach(
+            curves.ev.max_value_sek_per_kwh != null
+              ? anchorToHorizon(curves.ev, vehicle.charge_efficiency / perKm)
+              : curves.ev,
+            reachableKm,
+          ),
           initial_state: vehicle.soc * vehicle.capacity_kwh / perKm,
           // The vehicle refuses charge above its own limit, so this is a
           // hardware bound and not a preference the curve may outbid. Without
@@ -4339,6 +4344,17 @@ export interface DispatchWorkbench {
   allocations: DispatchResult["allocations"];
   /** The battery's charge/hold/discharge comparison in every quarter. */
   battery: DispatchResult["battery"];
+}
+
+/** Pool and EV curve inputs from the dispatch constructor and its exact resolved forecast.
+ * No auction or battery derivation is needed to inspect these preference curves.
+ */
+export function plannerValueStores(
+  snapshot: OptimisationSnapshot,
+  priceOutlook: OptimisationPlan["price_outlook"],
+): DispatchStore[] {
+  const { slots } = preparedSlots(snapshot, [], priceOutlook);
+  return buildDispatchStores(slots, snapshot, null) ?? [];
 }
 
 export function dispatchWorkbench(

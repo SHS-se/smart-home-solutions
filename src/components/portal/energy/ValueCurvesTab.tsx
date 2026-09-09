@@ -1,19 +1,5 @@
-// What each service is worth, stated as three thresholds instead of a curve.
-//
-// ENERGY_OPTIMISATION_ARCHITECTURE.md §8.3 and §8.10. The previous editor here
-// asked for the curve directly — a table of "at this level, one unit is worth
-// this many kronor" — and nobody can hold that opinion. The shipped pool curve
-// values a degree at 80 SEK falling to zero, and knowing whether 80 is sane
-// requires knowing first that a 55 m³ pool takes about 14 kWh per degree. That
-// is arithmetic, not taste, and asking a household for it guarantees either an
-// untouched default or a number picked at random.
-//
-// So the editor asks for the three thresholds people actually hold — really
-// want it below here, would like it around here, do not care above here — and
-// `value-preferences.ts` supplies the levels from the physics. And because a
-// threshold is still abstract until you see what it does, the panel re-solves
-// the persisted snapshot with the edited curve and reports the difference in
-// hours, kilowatt-hours, kronor and where the store ends up.
+// Planner curves and editable thresholds, replayed against the saved price outlook.
+// Values are shown at the solve's initial equipment efficiency.
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -47,13 +33,13 @@ import { WATER_KWH_PER_M3_K } from '../../../../supabase/functions/_shared/store
 import {
   curveFromPreference,
   DEFAULT_POOL_PREFERENCE,
-  DEFAULT_REFERENCE_SEK_PER_KWH,
+  horizonReferenceSekPerKwh,
   preferenceFromCurve,
   validatePreference,
   vehiclePreference,
   type StorePreference,
 } from '../../../../supabase/functions/_shared/value-preferences';
-import type { OptimisationSnapshot } from '../../../../supabase/functions/_shared/energy-optimisation';
+import { plannerValueStores, type OptimisationPlan, type OptimisationSnapshot } from '../../../../supabase/functions/_shared/energy-optimisation';
 import { comparePreference, type PreviewComparison } from '@/lib/energy-shift/curve-preview';
 import {
   replanCompleted,
@@ -65,6 +51,7 @@ import { useHomeTimeZone } from './HomeTimeZoneContext';
 import { formatHomeStamp } from '@/lib/energy-shift/home-time';
 
 interface Props {
+  planSnapshotId?: string;
   customerId: string | null;
   homeId: string | null;
   /** All-in prices from the live plan, so the chart compares like with like. */
@@ -96,13 +83,10 @@ interface Props {
 
 const EDITABLE: ValueStoreKey[] = ['pool', 'ev'];
 
-/** Seeded until a fitted figure exists, matching the planner's own assumptions. */
-const SEEDED_POOL_COP = 4.6;
-const SEEDED_VEHICLE_KWH_PER_KM = 0.16;
-
 interface Draft {
   preference: StorePreference;
   source: 'customer' | 'default';
+  edited?: boolean;
 }
 
 type Drafts = Partial<Record<ValueStoreKey, Draft>>;
@@ -117,6 +101,7 @@ const numeric = (value: string, fallback: number) => {
 const ValueCurvesTab: React.FC<Props> = ({
   customerId,
   homeId,
+  planSnapshotId,
   importPriceSekPerKwh,
   exportPriceSekPerKwh,
   poolTemperatureC,
@@ -143,29 +128,21 @@ const ValueCurvesTab: React.FC<Props> = ({
   const [preview, setPreview] = useState<PreviewComparison | string | null>(null);
   const [snapshot, setSnapshot] = useState<OptimisationSnapshot | null>(null);
 
-  /**
-   * How many physical units one kWh of electricity buys, on this home's kit.
-   *
-   * The conversion that makes a threshold comparable to a price at all, and the
-   * reason the customer never has to state a level: they say where the
-   * threshold is, this says what it is worth.
-   */
+  const [sourcePlan, setSourcePlan] = useState<OptimisationPlan | null>(null);
+  const [curveError, setCurveError] = useState<string | null>(null);
+  const plannedStores = useMemo(() => {
+    if (!snapshot || !sourcePlan) return [];
+    return plannerValueStores(snapshot, sourcePlan.price_outlook);
+  }, [snapshot, sourcePlan]);
   const scales = useMemo(() => {
-    const reference = typeof importPriceSekPerKwh === 'number' && importPriceSekPerKwh > 0
-      ? importPriceSekPerKwh
-      : DEFAULT_REFERENCE_SEK_PER_KWH;
-    const volume = poolVolumeM3 && poolVolumeM3 > 0 ? poolVolumeM3 : 55;
-    return {
-      pool: {
-        units_per_kwh: SEEDED_POOL_COP / (volume * WATER_KWH_PER_M3_K),
-        reference_sek_per_kwh: reference,
-      },
-      ev: {
-        units_per_kwh: (vehicleChargeEfficiency ?? 0.9) / SEEDED_VEHICLE_KWH_PER_KM,
-        reference_sek_per_kwh: reference,
-      },
-    } as const;
-  }, [importPriceSekPerKwh, poolVolumeM3, vehicleChargeEfficiency]);
+    const reference = sourcePlan
+      ? horizonReferenceSekPerKwh(sourcePlan.price_outlook.shadow_import_sek_per_kwh)
+      : 0;
+    return Object.fromEntries(plannedStores.map(store => [store.key, {
+      units_per_kwh: store.units_per_kwh(store.initial_state, 0),
+      reference_sek_per_kwh: reference,
+    }])) as Record<string, { units_per_kwh: number; reference_sek_per_kwh: number }>;
+  }, [plannedStores, sourcePlan]);
 
   /**
    * What the editor opens on when the stored shape is not one of ours.
@@ -192,16 +169,30 @@ const ValueCurvesTab: React.FC<Props> = ({
     if (!homeId) return;
     setLoading(true);
     setPreview(null);
-    const { data } = await supabase
+    setCurveError(null);
+    const { data: source, error: sourceError } = await supabase
+      .from('energy_optimisation_current')
+      .select('snapshot, plan')
+      .eq('home_id', homeId)
+      .maybeSingle();
+    if (sourceError || !source?.snapshot || !source?.plan) {
+      setCurveError(sourceError?.message ?? 'No planner snapshot is available. Replan to see the curves.');
+      setLoading(false);
+      return;
+    }
+    setSnapshot(source.snapshot as unknown as OptimisationSnapshot);
+    setSourcePlan(source.plan as unknown as OptimisationPlan);
+    const { data, error } = await supabase
       .from('energy_optimisation_value_curves')
-      .select('store_key, unit, points')
+      .select('store_key, unit, points, max_value_sek_per_kwh')
       .eq('home_id', homeId);
+    if (error) { setCurveError(error.message); setLoading(false); return; }
     const nextDrafts: Drafts = {};
     const nextStored: Partial<Record<ValueStoreKey, UtilityCurve>> = {};
     for (const key of EDITABLE) {
       const row = (data ?? []).find(entry => entry.store_key === key);
       const curve: UtilityCurve = row && Array.isArray(row.points)
-        ? { unit: row.unit, points: row.points as UtilityCurve['points'] }
+        ? { unit: row.unit, points: row.points as UtilityCurve['points'], max_value_sek_per_kwh: row.max_value_sek_per_kwh }
         : DEFAULT_VALUE_CURVES[key];
       nextStored[key] = curve;
       // Only a curve this editor generated can be read back exactly. Anything
@@ -215,7 +206,7 @@ const ValueCurvesTab: React.FC<Props> = ({
     setLoading(false);
   }, [defaultPreference, homeId]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(); }, [load, planSnapshotId]);
 
   const edit = (key: ValueStoreKey, field: keyof StorePreference, value: string) =>
     setDrafts(current => {
@@ -226,9 +217,10 @@ const ValueCurvesTab: React.FC<Props> = ({
         ...current,
         [key]: {
           ...draft,
+          edited: true,
           preference: {
             ...draft.preference,
-            [field]: numeric(value, draft.preference[field]),
+            [field]: field === 'max_value_sek_per_kwh' && value === '' ? null : numeric(value, draft.preference[field] ?? 0),
           },
         },
       };
@@ -252,6 +244,7 @@ const ValueCurvesTab: React.FC<Props> = ({
         store_key: key,
         unit: curve.unit,
         points: curve.points,
+        max_value_sek_per_kwh: curve.max_value_sek_per_kwh ?? null,
         updated_at: new Date().toISOString(),
       }, { onConflict: 'home_id,store_key' });
     setSaving(null);
@@ -276,40 +269,20 @@ const ValueCurvesTab: React.FC<Props> = ({
     void load();
   };
 
-  /**
-   * Re-solve the persisted snapshot with the edited thresholds.
-   *
-   * The snapshot is fetched only when asked for: it carries 288 slots plus the
-   * device and zone models, and loading that on every page view to support a
-   * button most visits never press would be a poor trade.
-   */
+  /** Compare with the same resolved forecast used to construct the charts. */
   const runPreview = async () => {
-    if (!homeId) return;
+    if (!snapshot || !sourcePlan) return;
     setPreviewing(true);
-    let source = snapshot;
-    if (!source) {
-      const { data, error } = await supabase
-        .from('energy_optimisation_current')
-        .select('snapshot')
-        .eq('home_id', homeId)
-        .maybeSingle();
-      if (error || !data?.snapshot) {
-        setPreviewing(false);
-        setPreview(t(
-          'Ingen sparad ögonblicksbild att räkna om mot.',
-          'No stored snapshot to re-solve against.',
-        ));
-        return;
-      }
-      source = data.snapshot as unknown as OptimisationSnapshot;
-      setSnapshot(source);
-    }
     const edited: Partial<Record<ValueStoreKey, UtilityCurve>> = { ...stored };
     for (const key of EDITABLE) {
       const draft = drafts[key];
-      if (draft) edited[key] = curveOf(key, draft.preference);
+      if (draft?.edited && scales[key]) {
+        const rejection = validatePreference(draft.preference);
+        if (rejection) { setPreview(rejection); setPreviewing(false); return; }
+        edited[key] = curveOf(key, draft.preference);
+      }
     }
-    setPreview(comparePreference(source, stored, edited));
+    setPreview(comparePreference(snapshot, snapshot.value_curves ?? {}, edited, sourcePlan.price_outlook));
     setPreviewing(false);
   };
 
@@ -367,7 +340,7 @@ const ValueCurvesTab: React.FC<Props> = ({
     // The preview re-solves a cached copy of the snapshot. That copy is now the
     // older measurement, and comparing against it would answer a question about
     // a house that has moved on.
-    setSnapshot(null);
+    void load();
     toast({
       title: t('Planen är omräknad', 'Plan rebuilt'),
       description: t(
@@ -375,7 +348,7 @@ const ValueCurvesTab: React.FC<Props> = ({
         'The house sent fresh measurements and was replanned with your numbers.',
       ),
     });
-  }, [awaitedReplanId, replan, t, toast]);
+  }, [awaitedReplanId, replan, t, toast, load]);
 
   // Recomputed on every render rather than memoised: the wait is measured
   // against the wall clock, and the workspace re-renders on its own refresh.
@@ -389,6 +362,8 @@ const ValueCurvesTab: React.FC<Props> = ({
     return <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />;
   }
 
+  if (curveError) return <Alert variant="destructive"><AlertDescription>{curveError}</AlertDescription></Alert>;
+
   const dirty = EDITABLE.some(key => {
     const draft = drafts[key];
     const base = stored[key];
@@ -397,7 +372,8 @@ const ValueCurvesTab: React.FC<Props> = ({
     return (
       from.urgent_below !== draft.preference.urgent_below ||
       from.comfortable !== draft.preference.comfortable ||
-      from.indifferent_above !== draft.preference.indifferent_above
+      from.indifferent_above !== draft.preference.indifferent_above ||
+      from.max_value_sek_per_kwh !== draft.preference.max_value_sek_per_kwh
     );
   });
   const batteryChart = batteryValueCurve?.curve.points.length
@@ -426,8 +402,8 @@ const ValueCurvesTab: React.FC<Props> = ({
         <AlertTitle>{t('Vad varje tjänst är värd för dig', 'What each service is worth to you')}</AlertTitle>
         <AlertDescription className="text-sm">
           {t(
-            'Tre tal per tjänst, i den enhet du själv tänker i. Planeraren räknar om dem till kronor per kWh el med husets egen fysik, och jämför sedan mot köp- och säljpriset. Du behöver aldrig ange ett värde per grad eller per kilometer.',
-            'Three numbers per service, in the unit you think in. The planner converts them into SEK per kWh of electricity using your own equipment, then compares that with the import and export price. You never state a value per degree or per kilometre.',
+            'Diagrammet visar planerarens marginalvärden vid planens ursprungliga verkningsgrad. Du kan ange ditt högsta värde i SEK/kWh. Poolens värde per kWh kan ändras när verkningsgraden ändras under planen.',
+            'Three numbers per service, in the unit you think in. The chart shows the planner’s marginal values at its initial equipment conditions. Set an optional maximum willingness to pay in SEK/kWh. Pool values per kWh can change with efficiency during the plan.',
           )}
         </AlertDescription>
       </Alert>
@@ -588,36 +564,38 @@ const ValueCurvesTab: React.FC<Props> = ({
       {EDITABLE.map(key => {
         const draft = drafts[key];
         if (!draft) return null;
+        const plannedStore = plannedStores.find(store => store.key === key);
+        if (!plannedStore || !scales[key] || !snapshot || !sourcePlan) return (
+          <Alert key={key}><AlertDescription>{key}: {t('Ingen aktiv planerarkurva. Planera om efter att enheten anslutits.', 'No active planner curve. Replan after connecting the device.')}</AlertDescription></Alert>
+        );
         const rejection = validatePreference(draft.preference);
-        const curve = rejection ? null : curveOf(key, draft.preference);
+        const candidate = rejection ? null : draft.edited ? curveOf(key, draft.preference) : stored[key];
+        const editedStore = candidate ? plannerValueStores({
+          ...snapshot, value_curves: { ...snapshot.value_curves, [key]: candidate },
+        }, sourcePlan.price_outlook).find(store => store.key === key) : null;
         const isPool = key === 'pool';
         const unitSuffix = isPool ? '°C' : 'km';
         const state = isPool ? poolTemperatureC : vehicleRangeKm;
         const perUnitKwh = 1 / scales[key].units_per_kwh;
-
-        // Sampled across the curve's own range so the shape is visible, in the
-        // units the prices are quoted in — the only footing on which a
-        // threshold and a tariff can be compared.
-        const chart = curve
-          ? Array.from({ length: 80 }, (_value, step) => {
-            const first = curve.points[0].at;
-            const last = curve.points[curve.points.length - 1].at;
-            const span = Math.max(1e-6, last - first);
-            const at = first - span * 0.15 + (span * 1.3 * step) / 79;
-            return {
-              at: Number(at.toFixed(2)),
-              sekPerKwh: Number(
-                (marginalValue(curve, at) * scales[key].units_per_kwh).toFixed(4),
-              ),
-            };
-          })
-          : [];
+        const changed = editedStore && JSON.stringify(editedStore.curve.points) !== JSON.stringify(plannedStore.curve.points);
+        // Include every actual breakpoint. Sampling alone cuts across corners.
+        // SEK/kWh is evaluated at the solve's initial equipment conditions.
+        const points = [...plannedStore.curve.points, ...(changed ? editedStore.curve.points : [])];
+        const first = Math.min(...points.map(p => p.at));
+        const last = Math.max(...points.map(p => p.at));
+        const span = Math.max(1, last - first);
+        const positions = [...new Set([...Array.from({ length: 80 }, (_, index) => first - span * 0.15 + span * 1.3 * index / 79), ...points.flatMap(p => [p.at, p.at + 1e-7]), last, last + span * 0.15])].sort((a, b) => a - b);
+        const chart = positions.map(at => ({
+          at,
+          sekPerKwh: marginalValue(plannedStore.curve, at) * scales[key].units_per_kwh,
+          ...(changed ? { editedSekPerKwh: marginalValue(editedStore.curve, at) * scales[key].units_per_kwh } : {}),
+        }));
 
         const fields: Array<{ field: keyof StorePreference; label: [string, string]; hint: [string, string] }> = [
           {
             field: 'urgent_below',
             label: isPool ? ['Under detta vill jag ha värme', 'Below this I really want heat'] : ['Under detta vill jag alltid ladda', 'Below this I always want to charge'],
-            hint: ['Planeraren köper el även dyrt', 'The planner buys energy even when it is dear'],
+            hint: ['Använder ditt högsta värde under denna gräns', 'Uses your maximum value below this threshold'],
           },
           {
             field: 'comfortable',
@@ -680,6 +658,21 @@ const ValueCurvesTab: React.FC<Props> = ({
                 ))}
               </div>
 
+              <label className="block space-y-1">
+                <span className="text-sm font-medium">{t('Högsta värde när behovet är stort', 'Maximum value when urgently needed')} (SEK/kWh)</span>
+                <Input type="number" min={0} step={0.1} className="max-w-xs"
+                  placeholder={`${t('Automatiskt', 'Automatic')} (${(plannedStore.curve.points[0].sek_per_unit * scales[key].units_per_kwh).toFixed(2)})`}
+                  value={draft.preference.max_value_sek_per_kwh ?? ''}
+                  onChange={event => edit(key, 'max_value_sek_per_kwh', event.target.value)} />
+                <span className="block text-xs text-muted-foreground">{t(
+                  'Lämna tomt för automatiskt värde. Angivet värde behålls när elpriset ändras. Gäller vid planens ursprungliga verkningsgrad.',
+                  'Leave blank for automatic value. An explicit value stays fixed when electricity prices change. Expressed at the plan’s initial equipment efficiency.',
+                )}</span>
+              </label>
+              <p className="text-xs text-muted-foreground">{t(
+                'Blå: aktuell plan. Orange: sparade eller ändrade inställningar för nästa plan. Raka segment beskriver avtagande värde; de är ingen mätning av dina önskemål.',
+                'Blue: current plan. Orange: saved or edited settings for the next plan. Straight segments model diminishing value; they are not a measurement of your preferences.',
+              )}</p>
               {rejection && (
                 <p className="text-sm text-destructive">{rejection}</p>
               )}
@@ -687,12 +680,12 @@ const ValueCurvesTab: React.FC<Props> = ({
               <p className="text-xs text-muted-foreground">
                 {isPool
                   ? t(
-                    `Din pool tar ca ${perUnitKwh.toFixed(1)} kWh per grad (${(poolVolumeM3 ?? 55)} m³, COP ${SEEDED_POOL_COP}). Det är därför en grad är värd mer här än i en liten pool — du anger bara gränserna.`,
-                    `Your pool takes about ${perUnitKwh.toFixed(1)} kWh per degree (${(poolVolumeM3 ?? 55)} m³, COP ${SEEDED_POOL_COP}). That is why a degree is worth more here than in a small pool — you only state the thresholds.`,
+                    `Din pool tar ca ${perUnitKwh.toFixed(1)} kWh per grad (${(poolVolumeM3 ?? 55)} m³, COP ${(scales[key].units_per_kwh * (snapshot.pool?.volume_m3 ?? 0) * WATER_KWH_PER_M3_K).toFixed(2)}). Det är därför en grad är värd mer här än i en liten pool.`,
+                    `Your pool takes about ${perUnitKwh.toFixed(1)} kWh per degree (${(poolVolumeM3 ?? 55)} m³, COP ${(scales[key].units_per_kwh * (snapshot.pool?.volume_m3 ?? 0) * WATER_KWH_PER_M3_K).toFixed(2)}). That is why a degree is worth more here than in a small pool.`,
                   )
                   : t(
                     `En kWh el ger ca ${scales.ev.units_per_kwh.toFixed(1)} km räckvidd. På vintern räcker samma laddning kortare, så samma gränser gör bilen viktigare utan att du ändrar något.`,
-                    `One kWh of electricity buys about ${scales.ev.units_per_kwh.toFixed(1)} km of range, and a full battery is about ${(vehicleFullRangeKm ?? 0).toFixed(0)} km — so ${vehicleChargeLimitSoc !== null ? `your ${(vehicleChargeLimitSoc * 100).toFixed(0)}% charge limit is about ${((vehicleFullRangeKm ?? 0) * vehicleChargeLimitSoc).toFixed(0)} km. ` : ''}A threshold above that is one the car can never reach, so it never stops being worth charging. In winter the same charge goes less far, so the same thresholds make the car matter more without you changing anything.`,
+                    `One kWh of electricity buys about ${scales.ev.units_per_kwh.toFixed(1)} km of range, and a full battery is about ${(vehicleFullRangeKm ?? 0).toFixed(0)} km — so ${vehicleChargeLimitSoc !== null ? `your ${(vehicleChargeLimitSoc * 100).toFixed(0)}% charge limit is about ${((vehicleFullRangeKm ?? 0) * vehicleChargeLimitSoc).toFixed(0)} km. ` : ''}The planner clips the curve at the charge limit, even if your desired range is higher.`,
                   )}
               </p>
 
@@ -709,10 +702,11 @@ const ValueCurvesTab: React.FC<Props> = ({
                       />
                       <YAxis tick={{ fontSize: 11 }} width={56} label={{ value: 'SEK/kWh', angle: -90, position: 'insideLeft', fontSize: 11 }} />
                       <ChartTooltip
-                        formatter={(value: number) => [`${value.toFixed(2)} SEK/kWh`, t('Värde', 'Value')]}
-                        labelFormatter={(label: number) => `${label} ${unitSuffix}`}
+                        formatter={(value: number, name: string) => [`${value.toFixed(2)} SEK/kWh`, name]}
+                        labelFormatter={(label: number) => `${Number(label).toFixed(2)} ${unitSuffix}`}
                       />
-                      <Line type="linear" dataKey="sekPerKwh" stroke="#2563eb" dot={false} strokeWidth={2} />
+                      <Line type="linear" dataKey="sekPerKwh" name={t('Aktuell plan', 'Current plan')} stroke="#2563eb" dot={false} strokeWidth={2} />
+                      {changed && <Line type="linear" dataKey="editedSekPerKwh" name={t('Nästa plan', 'Next plan')} stroke="#ea580c" dot={false} strokeWidth={2} />}
                       {typeof importPriceSekPerKwh === 'number' && (
                         <ReferenceLine y={importPriceSekPerKwh} stroke="#dc2626" strokeDasharray="4 4" label={{ value: t('Köppris', 'Import'), fontSize: 11, fill: '#dc2626', position: 'right' }} />
                       )}
@@ -728,7 +722,7 @@ const ValueCurvesTab: React.FC<Props> = ({
               )}
 
               <div className="flex flex-wrap gap-2 pt-1">
-                <Button onClick={() => void save(key)} disabled={saving === key || rejection !== null}>
+                <Button onClick={() => void save(key)} disabled={saving === key || rejection !== null || !draft.edited}>
                   {saving === key ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
                   {t('Spara', 'Save')}
                 </Button>

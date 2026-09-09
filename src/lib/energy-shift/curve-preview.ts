@@ -16,6 +16,7 @@
 import {
   generateOptimisationPlan,
   type OptimisationSnapshot,
+  type OptimisationPlan,
 } from '../../../supabase/functions/_shared/energy-optimisation';
 import type { UtilityCurve } from '../../../supabase/functions/_shared/store-value';
 import type { ValueStoreKey } from '../../../supabase/functions/_shared/value-curves';
@@ -54,12 +55,15 @@ const POWER_FIELD: Record<string, 'pool_w' | 'ev_w' | 'battery_charge_w'> = {
 export function solveWith(
   snapshot: OptimisationSnapshot,
   curves: Partial<Record<ValueStoreKey, UtilityCurve>>,
+  priceOutlook?: OptimisationPlan['price_outlook'],
 ): PlanOutcome | string {
   let plan;
   try {
     plan = generateOptimisationPlan(
       { ...snapshot, value_curves: curves },
       new Date(Date.parse(snapshot.captured_at) + 60_000),
+      [],
+      priceOutlook,
     );
   } catch (error) {
     return error instanceof Error ? error.message : String(error);
@@ -107,22 +111,16 @@ export interface PreviewComparison {
   costDeltaSek: number;
 }
 
-/**
- * Both sides are solved locally, never compared against the stored plan.
- *
- * The stored plan was built with a measured price shape the portal does not
- * hold, so it would differ from a local solve for reasons that have nothing to
- * do with the edit. Solving both sides here makes the difference attributable
- * to the one thing that changed.
- */
+/** Compare preferences against the same snapshot and resolved price forecast. */
 export function comparePreference(
   snapshot: OptimisationSnapshot,
   current: Partial<Record<ValueStoreKey, UtilityCurve>>,
   edited: Partial<Record<ValueStoreKey, UtilityCurve>>,
+  priceOutlook?: OptimisationPlan['price_outlook'],
 ): PreviewComparison | string {
-  const before = solveWith(snapshot, current);
+  const before = solveWith(snapshot, current, priceOutlook);
   if (typeof before === 'string') return before;
-  const after = solveWith(snapshot, edited);
+  const after = solveWith(snapshot, edited, priceOutlook);
   if (typeof after === 'string') return after;
 
   const keys = [...new Set([...before.stores, ...after.stores].map(store => store.key))];

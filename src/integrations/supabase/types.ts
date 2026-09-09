@@ -2173,6 +2173,7 @@ export type Database = {
           customer_id: string
           home_id: string
           id: string
+          max_value_sek_per_kwh: number | null
           points: Json
           store_key: string
           unit: string
@@ -2183,6 +2184,7 @@ export type Database = {
           customer_id: string
           home_id: string
           id?: string
+          max_value_sek_per_kwh?: number | null
           points: Json
           store_key: string
           unit: string
@@ -2193,6 +2195,7 @@ export type Database = {
           customer_id?: string
           home_id?: string
           id?: string
+          max_value_sek_per_kwh?: number | null
           points?: Json
           store_key?: string
           unit?: string

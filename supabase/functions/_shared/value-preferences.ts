@@ -23,6 +23,7 @@
 import type { UtilityCurve } from "./store-value.ts";
 
 export interface StorePreference {
+  max_value_sek_per_kwh?: number | null;
   /** Below this, the household wants the service enough to buy energy for it. */
   urgent_below: number;
   /** Where they would like the store to sit. */
@@ -90,13 +91,17 @@ export function curveFromPreference(
   // SEK of electricity to move this store one physical unit. Every level below
   // is a multiple of it, which is what keeps a degree and a kilometre
   // comparable without anyone doing the conversion by hand.
-  const costPerUnit = reference / unitsPerKwh;
+  const rejection = validatePreference(preference);
+  if (rejection) throw new Error(rejection);
+  const maximum = preference.max_value_sek_per_kwh;
+  const costPerUnit = Math.min(reference, maximum ?? Infinity) / unitsPerKwh;
   return {
     unit,
+    ...(maximum != null ? { max_value_sek_per_kwh: maximum } : {}),
     points: [
       {
         at: round(preference.urgent_below),
-        sek_per_unit: round(URGENT_MULTIPLE * costPerUnit),
+        sek_per_unit: round((maximum ?? URGENT_MULTIPLE * reference) / unitsPerKwh),
       },
       {
         at: round(preference.comfortable),
@@ -131,6 +136,7 @@ export function preferenceFromCurve(
   const points = curve.points;
   if (points.length !== 3) return null;
   return {
+    ...(curve.max_value_sek_per_kwh != null ? { max_value_sek_per_kwh: curve.max_value_sek_per_kwh } : {}),
     urgent_below: points[0].at,
     comfortable: points[1].at,
     indifferent_above: points[2].at,
@@ -181,6 +187,9 @@ export function vehiclePreference(targetRangeKm: number): StorePreference {
 export function validatePreference(
   preference: StorePreference,
 ): string | null {
+  if (preference.max_value_sek_per_kwh != null && (!Number.isFinite(preference.max_value_sek_per_kwh) || preference.max_value_sek_per_kwh < 0)) {
+    return "maximum value must be finite and non-negative";
+  }
   const values = [
     preference.urgent_below,
     preference.comfortable,

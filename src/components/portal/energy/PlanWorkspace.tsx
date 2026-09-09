@@ -962,6 +962,7 @@ const PlanView: React.FC<{
             <ValueCurvesTab
               customerId={customerId}
               homeId={homeId}
+              planSnapshotId={plan.snapshot_id}
               importPriceSekPerKwh={livePrices.import}
               exportPriceSekPerKwh={livePrices.export}
               poolTemperatureC={plan?.pool?.water_temperature_c ?? null}
