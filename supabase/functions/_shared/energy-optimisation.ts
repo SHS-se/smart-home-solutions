@@ -160,6 +160,8 @@ export interface SourceProvenance {
   valid_until: string;
   quality: "measured" | "calibrated" | "provider_raw" | "synthetic";
   sample_count?: number;
+  /** Measured household quarters whose device subtraction needed estimation. */
+  estimated_sample_count?: number;
   mape_percent?: number;
   bias_percent?: number;
   location?: {

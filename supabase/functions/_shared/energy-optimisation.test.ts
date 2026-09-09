@@ -248,8 +248,18 @@ Deno.test("a new pool is dispatched at its declared power without a historical b
     profile_sample_count: 0,
     forecast_w_by_slot: snapshot.slots.map(() => 0),
   }];
+  // A new meter makes residual subtraction estimated. The household source
+  // is still measured recorder data, not a synthetic/demo source.
+  snapshot.sources.base_load = {
+    ...snapshot.sources.base_load,
+    quality: "measured",
+    sample_count: 960,
+    estimated_sample_count: 960,
+  };
   assertEquals(validateSnapshot(snapshot), []);
-  const plan = generateOptimisationPlan(snapshot, new Date(NOW)).plans.priority;
+  const generated = generateOptimisationPlan(snapshot, new Date(NOW));
+  assertEquals(generated.sources.base_load.estimated_sample_count, 960);
+  const plan = generated.plans.priority;
   assertEquals(plan.status, "ready");
   assert(plan.slots.some((slot) => slot.pool_w === 772), "new pool was never scheduled");
   assert(plan.slots.every((slot) => slot.pool_w === 0 || slot.pool_w === 772),
