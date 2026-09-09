@@ -94,6 +94,24 @@ const numeric = (value: string, fallback: number) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+/** Keep a text draft so typing a decimal separator does not reset the input. */
+export const MultiplierInput = ({ value, onChange }: { value: number; onChange: (value: string) => void }) => {
+  const [text, setText] = useState(value.toFixed(1));
+  const [focused, setFocused] = useState(false);
+  useEffect(() => { if (!focused) setText(value.toFixed(1)); }, [value, focused]);
+  return <Input type="number" min={0} step={0.1} className="h-9" value={text}
+    onFocus={() => setFocused(true)}
+    onChange={event => {
+      const raw = event.target.value;
+      const parsed = Number(raw);
+      if (raw === '' || !Number.isFinite(parsed)) { setText(raw); return; }
+      const rounded = parsed.toFixed(1);
+      setText((raw.split('.')[1]?.length ?? 0) > 1 ? rounded : raw);
+      onChange(rounded);
+    }}
+    onBlur={() => { setFocused(false); setText(value.toFixed(1)); }} />;
+};
+
 const ValueCurvesTab: React.FC<Props> = ({
   customerId,
   homeId,
@@ -227,10 +245,11 @@ const ValueCurvesTab: React.FC<Props> = ({
     setDrafts(current => {
       const draft = current[key];
       if (!draft) return current;
-      return { ...current, [key]: {
-        ...draft, edited: true,
-        preference: preferenceWithPriceMode(draft.preference, mode, scales[key].reference_sek_per_kwh),
-      } };
+      const preference = preferenceWithPriceMode(draft.preference, mode, scales[key].reference_sek_per_kwh);
+      if (preference.urgent_price_multiplier != null) {
+        preference.urgent_price_multiplier = Number(preference.urgent_price_multiplier.toFixed(1));
+      }
+      return { ...current, [key]: { ...draft, edited: true, preference } };
     });
   };
 
@@ -688,14 +707,15 @@ const ValueCurvesTab: React.FC<Props> = ({
                 </label>
                 <label className="min-w-0 space-y-1">
                   <span className="block text-xs font-medium">{absolute ? t('Max SEK/kWh', 'Max SEK/kWh') : t('Faktor', 'Multiplier')}</span>
-                  <Input type="number" min={0} step="any" className="h-9"
-                    value={absolute ? draft.preference.max_value_sek_per_kwh : multiplier}
-                    onChange={event => edit(key, absolute ? 'max_value_sek_per_kwh' : 'urgent_price_multiplier', event.target.value)} />
+                  {absolute ? <Input type="number" min={0} step="any" className="h-9"
+                    value={draft.preference.max_value_sek_per_kwh}
+                    onChange={event => edit(key, 'max_value_sek_per_kwh', event.target.value)} />
+                    : <MultiplierInput value={multiplier} onChange={value => edit(key, 'urgent_price_multiplier', value)} />}
                 </label>
               </fieldset>
               <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
                 <span>{absolute ? `${t('Fast max', 'Fixed maximum')}: ${draft.preference.max_value_sek_per_kwh?.toFixed(2)} SEK/kWh`
-                  : `${multiplier.toFixed(2)} × ${reference.toFixed(2)} = ${(multiplier * reference).toFixed(2)} SEK/kWh`}</span>
+                  : `${multiplier.toFixed(1)} × ${reference.toFixed(2)} = ${(multiplier * reference).toFixed(2)} SEK/kWh`}</span>
                 <span className="flex gap-3"><span className="text-blue-600">━ {seriesName}</span>{changed && <span className="text-orange-600">━ {t('Nästa plan', 'Next plan')}</span>}</span>
               </div>
               {rejection && <p className="text-xs text-destructive">{rejection}</p>}
