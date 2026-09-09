@@ -152,7 +152,7 @@ the UI reports the switch only after the matching generation is accepted by HA.
 Expiry of the fixed interval removes its constraints from subsequent automatic
 plans, without extending HA's ordinary execution lease.
 
-Rollout requires migration `20260909120000_fixed_energy_plans.sql`, deployment of
+Rollout requires migration `20260909120100_fixed_energy_plans.sql`, deployment of
 `energy-optimisation-fixed-plan` and the updated `energy-optimisation-ingest`,
 then the portal build. Executable plan schemas remain unchanged; `fixed_plan`
 is descriptive metadata. The fixed controls are available before loading the
