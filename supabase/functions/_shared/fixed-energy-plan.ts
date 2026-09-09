@@ -113,6 +113,7 @@ export function dispatchWithFixedPlan(
   const suffixStores = stores.map((s) => ({
     ...s,
     initial_state: prefix.state[s.key][end],
+    initially_charging: schedule.power_w[s.key][end - 1] > 0,
     usage_weight: s.usage_weight.slice(end),
     units_per_kwh: (state: number, i: number) =>
       s.units_per_kwh(state, i + end),

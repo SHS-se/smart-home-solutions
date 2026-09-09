@@ -74,6 +74,8 @@ export interface DispatchStore {
   power_step_w?: number;
   /** Cost of starting a run: cycling wear, and lost efficiency on restart. */
   start_cost_sek?: number;
+  /** Confirmed charging at the horizon boundary; unknown telemetry does not waive a start. */
+  initially_charging?: boolean;
   /** Wear cost per kWh passed through the store. */
   wear_sek_per_kwh?: number;
   /**
@@ -901,7 +903,11 @@ function scoreDispatchWithReuse(
       serviceValueSek += account.service_value_sek;
       wearSek += account.wear_sek;
       startSek += account.start_sek;
-      continuitySek += account.runs * (limits.load_start_preference_sek ?? 0);
+      const starts = account.runs - (from === 0 && store.initially_charging &&
+          powerByKey[store.key][0] > GRID_NOISE_W
+        ? 1
+        : 0);
+      continuitySek += starts * (limits.load_start_preference_sek ?? 0);
       scored.push(account);
       continue;
     }
@@ -935,8 +941,10 @@ function scoreDispatchWithReuse(
     const runs = runsOf(power).filter(
       (run) => run.start >= from && run.start < to,
     );
-    const storeStart = runs.length * (store.start_cost_sek ?? 0);
-    continuitySek += runs.length * (limits.load_start_preference_sek ?? 0);
+    const starts = runs.length -
+      (runs[0]?.start === 0 && store.initially_charging ? 1 : 0);
+    const storeStart = starts * (store.start_cost_sek ?? 0);
+    continuitySek += starts * (limits.load_start_preference_sek ?? 0);
     serviceValueSek += storeValue;
     wearSek += storeWear;
     startSek += storeStart;
@@ -1405,6 +1413,7 @@ function dispatchAuction(
     indices: number[],
     powerLevel: number,
     startsRun: boolean,
+    bestPrefix = false,
   ): Candidate | null => {
     const state = stateByKey[store.key];
     const retention = retentionByKey[store.key];
@@ -1434,25 +1443,43 @@ function dispatchAuction(
     let gainedUnits = 0;
     let previousSurplus = 0;
     let addedKwh = 0;
+    let prefixSurplus = 0;
+    let bestLength = 0;
+    let bestScore = 0;
+    let prefixStartCost = 0;
 
     for (const index of indices) {
       const slot = slots[index];
       const before = candidateState;
       const units = store.units_per_kwh(before, index);
-      if (units <= 0) return null;
+      if (units <= 0) {
+        if (bestPrefix) break;
+        return null;
+      }
+      if (
+        bestPrefix && (dischargeW[store.key][index] > 0 ||
+          headroomW(slot, limits, occupiedW[index], returnedW[index]) + 1e-9 <
+            powerLevel)
+      ) break;
       const kwh = powerLevel / 1_000 * SLOT_HOURS;
       const previousW = powerW[store.key][index];
       const previousKwh = previousW / 1_000 * SLOT_HOURS;
       const otherW = occupiedW[index] - previousW;
       addedKwh += kwh - previousKwh;
       const afterInput = before + kwh * units;
-      if (afterInput < low - 1e-9 || afterInput > high + 1e-9) return null;
+      if (afterInput < low - 1e-9 || afterInput > high + 1e-9) {
+        if (bestPrefix) break;
+        return null;
+      }
       // Drift only ever removes some of what was added — a leaky store loses
       // heat, it does not gain it — so charging the whole block raises every
       // later state by at most the total put in, and refusing on that total is
       // safe for a drifting store and exact for one that holds.
       gainedUnits += (kwh - previousKwh) * units;
-      if (ceilingFrom + gainedUnits > high + 1e-9) return null;
+      if (ceilingFrom + gainedUnits > high + 1e-9) {
+        if (bestPrefix) break;
+        return null;
+      }
       const retained = retention[index];
       const valueSek = valueOfMove(store.curve, before, afterInput) * retained;
       const valuePerKwh = valueSek / kwh;
@@ -1477,7 +1504,9 @@ function dispatchAuction(
           break;
         }
       }
-      const costOfStart = previousPart?.start_cost_sek ?? startShare;
+      const costOfStart = bestPrefix
+        ? 0
+        : previousPart?.start_cost_sek ?? startShare;
       const netSek = (valuePerKwh - sourceCost - wear) * kwh - costOfStart;
       if (previousKwh > 0) {
         previousSurplus += valueOfMove(
@@ -1516,12 +1545,37 @@ function dispatchAuction(
         grid_w: gridW,
         discharge_destination: null,
       });
+      if (bestPrefix) {
+        prefixSurplus += netSek;
+        const cost = (indices[0] === 0 && store.initially_charging) ||
+            (powerW[store.key][indices[0] - 1] ?? 0) > 0 ||
+            (powerW[store.key][index + 1] ?? 0) > 0
+          ? 0
+          : startCost;
+        const score = (prefixSurplus - cost) / addedKwh;
+        if (prefixSurplus - cost > 1e-9 && score > bestScore + 1e-12) {
+          bestLength = parts.length;
+          bestScore = score;
+          prefixStartCost = cost;
+        }
+      }
       candidateState = Math.min(
         high,
         Math.max(low, store.drift(afterInput, index)),
       );
     }
 
+    if (bestPrefix) {
+      if (!bestLength) return null;
+      parts.length = bestLength;
+      indices = indices.slice(0, bestLength);
+      addedKwh = bestLength * powerLevel / 1_000 * SLOT_HOURS;
+      for (const part of parts) {
+        part.run_slots = bestLength;
+        part.start_cost_sek = prefixStartCost / bestLength;
+        part.net_value_sek -= part.start_cost_sek;
+      }
+    }
     const totalSurplus = parts.reduce(
       (total, part) => total + part.net_value_sek,
       0,
@@ -1998,7 +2052,8 @@ function dispatchAuction(
           // and accepting it replaces that setpoint rather than charging twice.
           const previousW = schedule[index];
           if (previousW >= store.max_power_w - 1e-6) continue;
-          const adjacentRun = (schedule[index - 1] ?? 0) > 0 ||
+          const adjacentRun = (index === 0 && store.initially_charging) ||
+            (schedule[index - 1] ?? 0) > 0 ||
             (schedule[index + 1] ?? 0) > 0;
           const startsRun = previousW === 0 && !adjacentRun;
           const span = 1;
@@ -2392,6 +2447,38 @@ function dispatchAuction(
         }
       }
 
+      if (!best) {
+        // A relay's first quarter need not repay the entire startup cost.
+        // Search every executable run length only once single-quarter bids
+        // are exhausted. Each prefix is priced incrementally, so this is
+        // quadratic in the horizon, not a fresh simulation for every block.
+        // These are economic candidates, never mandatory minimum runtimes.
+        for (const store of stores) {
+          if (
+            store.discharge || store.min_power_w !== store.max_power_w ||
+            (store.start_cost_sek ?? 0) <= 0
+          ) continue;
+          const schedule = powerW[store.key];
+          for (let start = 0; start < count; start += 1) {
+            if (schedule[start] > 0) continue;
+            const indices: number[] = [];
+            for (
+              let end = start;
+              end < count && schedule[end] === 0;
+              end += 1
+            ) indices.push(end);
+            if (indices.length < 2) continue;
+            const candidate = chargeCandidate(
+              store,
+              indices,
+              store.max_power_w,
+              true,
+              true,
+            );
+            if (candidate && outranks(candidate, best)) best = candidate;
+          }
+        }
+      }
       if (!best) {
         const exchange = bestSolarExchange();
         if (!exchange) break;
@@ -2921,7 +3008,8 @@ function dispatchAuction(
             limits,
             returnedW[index],
           );
-          const start = (powerW[store.key][index - 1] ?? 0) <= GRID_NOISE_W
+          const start = !(index === 0 && store.initially_charging) &&
+              (powerW[store.key][index - 1] ?? 0) <= GRID_NOISE_W
             ? store.start_cost_sek ?? 0
             : 0;
           const wear = store.wear_sek_per_kwh ?? 0;

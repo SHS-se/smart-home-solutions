@@ -112,7 +112,8 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6, 7] as const;
  * v11 integrates every sizeable curve move, applies configured EV curves,
  * prices executable setpoints and records exact quarter evidence.
  */
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v24";
+// v25 prices complete relay runs and recognises measured run continuation.
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v25";
 /** Schema 5 service sizing also no longer pads energy to a minimum runtime. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v9";
 export const SLOT_MINUTES = 15;
@@ -209,6 +210,8 @@ export interface BatteryInput {
 export interface PoolStateInput {
   water_temperature_c: number;
   volume_m3: number;
+  /** Confirmed actuator continuation, null when its state could not be read. */
+  heating_running?: boolean | null;
   source_entity_ids?: Record<string, string>;
 }
 
@@ -1093,7 +1096,8 @@ export function validateSnapshot(snapshot: OptimisationSnapshot): string[] {
       !finite(pool.water_temperature_c) ||
       !inRange(pool.water_temperature_c, -5, 60) ||
       !finite(pool.volume_m3) ||
-      !inRange(pool.volume_m3, 0.5, 5_000)
+      !inRange(pool.volume_m3, 0.5, 5_000) ||
+      (pool.heating_running != null && typeof pool.heating_running !== "boolean")
     ) {
       errors.push("pool state is invalid");
     }
@@ -2470,6 +2474,7 @@ function buildDispatchStores(
       // tracking PV — a modulation the relay does not have (§8.13).
       min_power_w: poolPowerW,
       start_cost_sek: 0.5,
+      initially_charging: pool.heating_running === true,
       // Heat is valued as state carried to the horizon edge, discounted by
       // what leaks on the way — the same construction as the battery below,
       // with a real decay instead of one.

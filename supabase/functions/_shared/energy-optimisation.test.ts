@@ -1,5 +1,6 @@
 import {
   generateOptimisationPlan,
+  dispatchWorkbench,
   type OptimisationSnapshot,
   validateSnapshot,
 } from "./energy-optimisation.ts";
@@ -1761,7 +1762,7 @@ Deno.test("schema 6 with pool state dispatches by temperature, not by budget", (
   const plan = generateOptimisationPlan(snapshot, new Date(NOW));
 
   assertEquals(plan.schema_version, 6);
-  assertEquals(plan.model_version, "marginal-value-planner-v24");
+  assertEquals(plan.model_version, "marginal-value-planner-v25");
   // Asserted explicitly: an earlier version of this test checked the pool
   // energy but not the status, and so passed while every schema 6 plan was
   // reported infeasible by validations that still assumed fixed blocks.
@@ -3567,4 +3568,21 @@ Deno.test("unplugging preserves the car's planned energy while cable telemetry s
     unplugged.plans.priority.slots.every((slot) => !slot.ev_connected),
     "do not invent a cable connection",
   );
+});
+
+
+Deno.test("pool running telemetry is validated and carried into dispatch", () => {
+  const base = input();
+  for (const running of [true, false, null, undefined]) {
+    const snapshot = input({
+      schema_version: 6,
+      pool: { water_temperature_c: 23, volume_m3: 55, heating_running: running },
+      outdoor_temperature_c: base.slots.map(() => 22),
+    });
+    assertEquals(validateSnapshot(snapshot), []);
+    const workbench = dispatchWorkbench(snapshot)!;
+    assertEquals(workbench.stores.find((store) => store.key === "pool")!.initially_charging, running === true);
+  }
+  const invalid = input({ pool: { water_temperature_c: 23, volume_m3: 55, heating_running: "on" as unknown as boolean } });
+  assert(validateSnapshot(invalid).includes("pool state is invalid"), "invalid actuator state must be rejected");
 });

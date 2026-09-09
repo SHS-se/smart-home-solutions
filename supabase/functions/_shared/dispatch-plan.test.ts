@@ -1779,3 +1779,101 @@ Deno.test("refinement rechecks export restrictions on an unchanged discharging b
     [],
   );
 });
+
+/** A quarter earns 0.25 SEK before a 0.50 SEK start: a run can pay when no isolated bid can. */
+function startupProblem(prices = new Array(8).fill(1)) {
+  const slots: DispatchSlot[] = prices.map((price) => ({
+    pv_w: 0,
+    fixed_load_w: 0,
+    import_price_sek_per_kwh: price,
+    export_price_sek_per_kwh: 0,
+  }));
+  const store: DispatchStore = {
+    key: "pool",
+    curve: {
+      unit: "celsius",
+      points: [{ at: 0, sek_per_unit: 2 }, { at: 100, sek_per_unit: 2 }],
+    },
+    initial_state: 0,
+    min_power_w: 1000,
+    max_power_w: 1000,
+    start_cost_sek: 0.5,
+    retention_per_slot: 1,
+    terminal_weight: 1,
+    usage_weight: prices.map(() => 0),
+    units_per_kwh: () => 1,
+    drift: (state) => state,
+  };
+  return { slots, store };
+}
+
+Deno.test("relay starts a profitable run even when every isolated quarter loses to startup cost", () => {
+  const { slots, store } = startupProblem();
+  const result = planDispatch(slots, [store], LIMITS);
+  assertEquals(result.power_w.pool, slots.map(() => 1000));
+  const score = scoreDispatch(slots, [store], LIMITS, result);
+  assertEquals(score.infeasibilities, []);
+  assertEquals(score.start_sek, 0.5);
+  assertEquals(score.total_sek, -1.5);
+});
+
+Deno.test("economic runs stop at expensive quarters and pay separately to restart", () => {
+  const { slots, store } = startupProblem([1, 1, 1, 100, 1, 1, 1]);
+  const result = planDispatch(slots, [store], LIMITS);
+  assertEquals(result.power_w.pool, [1000, 1000, 1000, 0, 1000, 1000, 1000]);
+  const score = scoreDispatch(slots, [store], LIMITS, result);
+  assertEquals(score.infeasibilities, []);
+  assertEquals(score.start_sek, 1);
+  assert(score.total_sek < 0);
+});
+
+Deno.test("run search neither forces unprofitable heating nor imposes a minimum runtime", () => {
+  for (
+    const [prices, expected] of [
+      [[3, 3, 3, 3], [0, 0, 0, 0]],
+      [[1, 1], [0, 0]],
+      [[-1, 100], [1000, 0]],
+    ]
+  ) {
+    const { slots, store } = startupProblem(prices);
+    assertEquals(planDispatch(slots, [store], LIMITS).power_w.pool, expected);
+  }
+});
+
+Deno.test("multi-quarter startup respects both store capacity and connection headroom", () => {
+  const { slots, store } = startupProblem();
+  store.max_state = 1;
+  const result = planDispatch(slots, [store], LIMITS);
+  const score = scoreDispatch(slots, [store], LIMITS, result);
+  assertEquals(score.infeasibilities, []);
+  assertEquals(score.stores[0].charged_kwh, 1);
+  assert(score.total_sek < 0);
+  const constrained = { ...LIMITS, grid_import_limit_w: 500 };
+  assertEquals(
+    planDispatch(slots, [store], constrained).power_w.pool,
+    slots.map(() => 0),
+  );
+});
+
+Deno.test("running telemetry waives only a continuation at the first quarter", () => {
+  const { slots, store } = startupProblem([1]);
+  const limits = { ...LIMITS, load_start_preference_sek: 0.25 };
+  store.initially_charging = true;
+  const result = planDispatch(slots, [store], limits);
+  assertEquals(result.power_w.pool, [1000]);
+  const score = scoreDispatch(slots, [store], limits, result);
+  assertEquals(score.start_sek, 0);
+  assertEquals(score.continuity_sek, 0);
+  for (const running of [false, undefined]) {
+    store.initially_charging = running;
+    assertEquals(planDispatch(slots, [store], limits).power_w.pool, [0]);
+  }
+  const restart = startupProblem([100, 1, 1, 1]);
+  restart.store.initially_charging = true;
+  const later = planDispatch(restart.slots, [restart.store], limits);
+  assertEquals(later.power_w.pool, [0, 1000, 1000, 1000]);
+  assertEquals(
+    scoreDispatch(restart.slots, [restart.store], limits, later).start_sek,
+    0.5,
+  );
+});

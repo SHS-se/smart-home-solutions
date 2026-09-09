@@ -375,3 +375,22 @@ Deno.test("hot-water permissions and demand remain fixed when the forecast chang
   );
   assertEquals(result.plans.priority.slots[4].boiler_expected_w, 200);
 });
+
+
+Deno.test("fixed-plan suffix inherits actual boundary running state", () => {
+  const relay: DispatchStore = {
+    ...store,
+    max_state: 10,
+    min_power_w: 1000,
+    start_cost_sek: 0.5,
+    curve: { unit: "kwh", points: [{ at: 0, sek_per_unit: 2 }, { at: 10, sek_per_unit: 2 }] },
+    initially_charging: false,
+  };
+  // Only the final quarter remains automatic. It pays for continuation but
+  // cannot justify a fresh start after an off quarter in the fixed prefix.
+  const on = dispatchWithFixedPlan(slots, [relay], limits, starts, fixed([1000, 1000, 1000, 1000, 1000, 1000, 1000]));
+  assertEquals(on.power_w.battery[7], 1000);
+  relay.initially_charging = true;
+  const off = dispatchWithFixedPlan(slots, [relay], limits, starts, fixed([1000, 1000, 1000, 1000, 1000, 1000, 0]));
+  assertEquals(off.power_w.battery[7], 0);
+});
