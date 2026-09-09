@@ -97,6 +97,7 @@ const PowerSection: React.FC<{
         startMs: row.startMs,
         label: formatHomeDayMonthTime(row.start, homeTimeZone),
         measured: row.measured,
+        missing: row.missing,
         solarW: row.solarW,
         loadW: row.loadW,
         gridImportW: row.gridImportW,

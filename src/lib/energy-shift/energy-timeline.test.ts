@@ -121,6 +121,53 @@ Deno.test('a plan slot never overwrites a quarter already measured', () => {
   assert(rows[0].measured, 'and stays marked as measured');
 });
 
+Deno.test('late measurements and a next-quarter plan preserve every quarter at now', () => {
+  const rows = build({
+    nowMs: NOW + SLOT_MS + 5 * 60_000,
+    actuals: [actual(NOW - SLOT_MS)],
+    planSlots: [planned(NOW + 2 * SLOT_MS)],
+  });
+  assertEquals(rows.map(row => row.startMs), [
+    NOW - SLOT_MS, NOW, NOW + SLOT_MS, NOW + 2 * SLOT_MS,
+  ], '11:45 to 12:30 includes 12:00 and 12:15');
+  assertEquals(rows.map(row => !!row.missing), [false, true, true, false], 'missing quarters remain visible');
+  assertEquals(rows.map(row => row.measured), [true, true, false, false], 'gap spans both sides of now');
+  assertEquals(nowDividerIndex(rows, { from: 0, to: rows.length }), 2, 'now stays at 12:15, not the first plan at 12:30');
+  assertEquals(rows[1].loadW, null, 'missing measurement is not zero consumption');
+  assertEquals(rows[2].batterySoc, null, 'missing plan does not invent a battery level');
+  const summary = summariseTimeline(rows, { from: 0, to: rows.length });
+  assertEquals(summary.slotCount, 4, 'all quarters occupy time');
+  assertEquals(summary.measuredSlotCount, 1, 'missing history is not counted as measured');
+  assertEquals(summary.plannedSlotCount, 1, 'missing plan is not counted as planned');
+  assertEquals(summary.consumptionKwh, 0.5, 'only known energy is totalled');
+  assert(!summary.fullyPriced, 'incomplete totals remain flagged');
+});
+
+Deno.test('elapsed forecasts do not become measurements while actuals are delayed', () => {
+  const rows = build({
+    actuals: [actual(NOW - 2 * SLOT_MS)],
+    planSlots: [planned(NOW - SLOT_MS), planned(NOW)],
+  });
+  assertEquals(rows[1].missing, true, 'elapsed forecast is explicitly missing history');
+  assertEquals(rows[1].solarW, null, 'stale forecast is not substituted');
+  const updated = build({
+    actuals: [actual(NOW - 2 * SLOT_MS), actual(NOW - SLOT_MS)],
+    planSlots: [planned(NOW)],
+  });
+  assertEquals(updated.map(row => row.startMs), rows.map(row => row.startMs), 'late data does not move the time axis');
+  assertEquals(updated[1].solarW, 2_000, 'late measurement fills its own quarter');
+  assert(!updated[1].missing, 'quarter is now available');
+});
+
+Deno.test('missing whole days do not become selectable history', () => {
+  const rows = build({
+    actuals: [actual(dayBounds(NOW, -2, TZ).startMs)],
+    planSlots: [planned(NOW)],
+  });
+  assertEquals(availableDayWindows(rows, NOW, TZ), [-2, 0, 'all'], 'a day of placeholders is not data');
+  assertEquals(build(), [], 'empty inputs remain empty');
+});
+
 Deno.test('measured state of charge is read, never derived', () => {
   const rows = build({
     actuals: [actual(NOW - SLOT_MS, { battery_soc: 0.31, ev_soc: 0.44 })],

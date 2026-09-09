@@ -36,8 +36,10 @@ export const SIGNIFICANT_POWER_W = 10;
 export interface TimelineRow {
   startMs: number;
   start: string;
-  /** True for a measured quarter, false for a planned one. */
+  /** True on the history side, false on the plan side. Check missing for gaps. */
   measured: boolean;
+  /** No measurement or current plan exists for this quarter. */
+  missing?: boolean;
   solarW: number | null;
   /** Whole-house consumption. */
   loadW: number | null;
@@ -210,7 +212,38 @@ export const buildEnergyTimeline = ({
     });
   }
 
-  return [...rows.values()].sort((left, right) => left.startMs - right.startMs);
+  const ordered = [...rows.values()].sort((left, right) => left.startMs - right.startMs);
+  if (ordered.length === 0) return [];
+
+  // The chart uses one equal-width column per quarter. Omitting an absent
+  // quarter compresses time, especially while measurements lag behind now
+  // or the new plan starts at the next quarter. Preserve those columns with
+  // explicit missing data; an elapsed forecast is not a measurement.
+  const timeline: TimelineRow[] = [];
+  for (let startMs = ordered[0].startMs; startMs <= ordered[ordered.length - 1].startMs; startMs += SLOT_MS) {
+    timeline.push(rows.get(startMs) ?? {
+      startMs,
+      start: new Date(startMs).toISOString(),
+      measured: startMs < boundary,
+      missing: true,
+      solarW: null,
+      loadW: null,
+      baseW: null,
+      gridImportW: null,
+      gridExportW: null,
+      batteryChargeW: null,
+      batteryDischargeW: null,
+      batterySoc: null,
+      evSoc: null,
+      deviceW: {},
+      costSek: null,
+      importPriceSekPerKwh: priceByStart.get(startMs)?.import_price_sek_per_kwh ?? null,
+      exportPriceSekPerKwh: priceByStart.get(startMs)?.export_price_sek_per_kwh ?? null,
+      shadowImportSekPerKwh: null,
+      shadowExportSekPerKwh: null,
+    });
+  }
+  return timeline;
 };
 
 export interface TimelineRange {
@@ -244,9 +277,9 @@ export const availableDayWindows = (
   nowMs: number,
   timeZone: string,
 ): DayWindow[] => DAY_WINDOW_OPTIONS.filter(window => {
-  if (window === 'all') return rows.length > 0;
+  if (window === 'all') return rows.some(row => !row.missing);
   const range = dayWindowRange(rows, window, nowMs, timeZone);
-  return range.to > range.from;
+  return rows.slice(range.from, range.to).some(row => !row.missing);
 });
 
 export interface TimelineSummary {
@@ -279,6 +312,10 @@ export const summariseTimeline = (
   };
   for (const row of rows.slice(range.from, range.to)) {
     summary.slotCount += 1;
+    if (row.missing) {
+      summary.fullyPriced = false;
+      continue;
+    }
     if (row.measured) summary.measuredSlotCount += 1;
     else summary.plannedSlotCount += 1;
     summary.solarKwh += (row.solarW ?? 0) / QUARTER_W_TO_KWH;
@@ -307,7 +344,7 @@ export const activeDeviceKeys = (
 };
 
 /**
- * Index of the first planned row, which is where the divider goes. Returns the
+ * Index of the first quarter on the plan side, including missing quarters. Returns the
  * row count when everything in view is measured, so a past day draws no line.
  */
 export const nowDividerIndex = (
@@ -341,5 +378,4 @@ export const unpricedMeasuredQuarters = (
   }
   return missing;
 };
-
 

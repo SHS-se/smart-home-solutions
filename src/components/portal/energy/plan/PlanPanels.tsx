@@ -35,6 +35,7 @@ export interface PlanPanelRow {
   /** Axis label for this quarter, already localised. */
   label: string;
   measured: boolean;
+  missing?: boolean;
   /**
    * Power, in watts. Signs are ignored: import and export are separate fields,
    * as are charge and discharge, so which way the energy went is already
@@ -145,7 +146,7 @@ const PlanPanels: React.FC<{
   series: ConsumptionSeries[];
   /** Base load plus every meter that did not. */
   baseValues: number[];
-  /** First planned quarter; equals rows.length when the window is all history. */
+  /** First quarter on the plan side, including quarters with missing data. */
   dividerIndex: number;
   hasBattery: boolean;
   hasEvBattery: boolean;
@@ -225,9 +226,10 @@ const PlanPanels: React.FC<{
 
     const socY = linearScale([0, 100], [soc.top + soc.height, soc.top]);
 
-    const cumulative = rows.map(row => row.cumulativeCostSek);
-    const costMin = Math.min(0, ...cumulative);
-    const costMax = Math.max(1, ...cumulative) * 1.18;
+    const cumulative = rows.map(row => row.missing ? null : row.cumulativeCostSek);
+    const knownCosts = cumulative.filter((value): value is number => value !== null);
+    const costMin = Math.min(0, ...knownCosts);
+    const costMax = Math.max(1, ...knownCosts) * 1.18;
     const costY = linearScale([costMin, costMax], [cost.top + cost.height, cost.top]);
 
     return {
@@ -561,6 +563,16 @@ const PlanPanels: React.FC<{
           </EndLabel>
 
           {/* ------------------------------------------------- Chrome ----- */}
+          {rows.map((row, index) => row.missing && (
+            <rect
+              key={row.startMs}
+              x={x(index)} y={flow.top}
+              width={x(index + 1) - x(index)} height={axisY - flow.top}
+              className="fill-muted" fillOpacity={0.6}
+            >
+              <title>{`${row.label}: ${t('Data saknas', 'Data missing')}`}</title>
+            </rect>
+          ))}
           {dividerIndex < n && (
             <g>
               <line
@@ -703,9 +715,16 @@ const PlanTooltip: React.FC<{
       <div className="mb-1 flex items-baseline justify-between gap-2 font-medium">
         <span>{row.label}</span>
         <span className="rounded border px-1 text-[9px] uppercase tracking-wide text-muted-foreground">
-          {measured ? t('uppmätt', 'measured') : t('plan', 'plan')}
+          {row.missing ? t('saknas', 'missing') : measured ? t('uppmätt', 'measured') : t('plan', 'plan')}
         </span>
       </div>
+      {row.missing ? (
+        <p className="text-muted-foreground">
+          {measured
+            ? t('Mätdata saknas för denna kvart.', 'Measurement data is missing for this quarter.')
+            : t('Plan saknas för denna kvart.', 'No plan is available for this quarter.')}
+        </p>
+      ) : <>
       {flows.filter(([, value]) => value >= 0.02).map(([name, value, colour]) => (
         <Reading key={name} name={name} colour={colour} value={`${value.toFixed(2)} kW`} />
       ))}
@@ -751,6 +770,7 @@ const PlanTooltip: React.FC<{
           value={`${row.cumulativeCostSek.toFixed(2)} kr`}
         />
       </div>
+      </>}
     </div>
   );
 };
