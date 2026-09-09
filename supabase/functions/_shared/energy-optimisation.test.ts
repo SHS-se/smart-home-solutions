@@ -225,6 +225,37 @@ const routedEvService = (snapshot: OptimisationSnapshot) => ({
   priority: 3,
 });
 
+Deno.test("a new pool is dispatched at its declared power without a historical budget", () => {
+  const snapshot = horizon({
+    capabilities: { pv: true, battery: true, pool: true, boiler: false, ev: false },
+    pool: { water_temperature_c: 24, volume_m3: 55 },
+  });
+  snapshot.services = [{
+    id: "pool:horizon",
+    device: "pool",
+    earliest_start: snapshot.slots[0].start,
+    deadline: new Date(Date.parse(snapshot.slots.at(-1)!.start) + 15 * 60_000)
+      .toISOString(),
+    required_kwh: 0,
+    control: { type: "fixed_power", power_w: 772 },
+    priority: 2,
+  }];
+  snapshot.device_models = [{
+    key: "pool-heater", name: "Pool heater", statistic_id: "sensor.pool_energy",
+    category: "pool_heating", suggested_load_type: "fixed_full_load",
+    load_type: "fixed_full_load", planning_role: "controllable",
+    control_type: "switch_schedule", active_power_w: 772,
+    profile_sample_count: 0,
+    forecast_w_by_slot: snapshot.slots.map(() => 0),
+  }];
+  assertEquals(validateSnapshot(snapshot), []);
+  const plan = generateOptimisationPlan(snapshot, new Date(NOW)).plans.priority;
+  assertEquals(plan.status, "ready");
+  assert(plan.slots.some((slot) => slot.pool_w === 772), "new pool was never scheduled");
+  assert(plan.slots.every((slot) => slot.pool_w === 0 || slot.pool_w === 772),
+    "the declared relay power was lost");
+});
+
 Deno.test("the unpriced tail prefers the hours the shape says are cheap", () => {
   // Before §1.4 every unpriced slot scored `gridW / 100`, so 03:00 and 18:00
   // were indistinguishable and a deferrable load landed on the tie-break.
