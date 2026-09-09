@@ -2349,6 +2349,34 @@ function deriveBatteryValueCurve(
   };
 }
 
+/** Re-anchor only a three-threshold preference; keep absolute hand-written curves intact. */
+function anchorPreferenceCurve(stored: UtilityCurve, unitsPerKwh: number, reference: number): UtilityCurve {
+  const preference = preferenceFromCurve(stored);
+  if (!preference || !(unitsPerKwh > 0)) return stored;
+  return curveFromPreference(preference, stored.unit, {
+    units_per_kwh: unitsPerKwh,
+    reference_sek_per_kwh: reference,
+  });
+}
+
+/** Valuation needs vehicle measurements, independently of charger control availability. */
+function vehicleValueState(vehicle: EvBatteryInput, stored: UtilityCurve, reference: number) {
+  const perKm = vehicleKwhPerKm(vehicle);
+  const unitsPerKwh = vehicle.charge_efficiency / perKm;
+  const reachableKm = vehicle.departure_target_soc * vehicle.capacity_kwh / perKm;
+  return {
+    key: "ev",
+    curve: curveWithinReach(
+      stored.max_value_sek_per_kwh != null || stored.urgent_price_multiplier != null
+        ? anchorPreferenceCurve(stored, unitsPerKwh, reference) : stored,
+      reachableKm,
+    ),
+    initial_state: vehicle.soc * vehicle.capacity_kwh / perKm,
+    max_state: reachableKm,
+    units_per_kwh: (_state: number, _index: number) => unitsPerKwh,
+  };
+}
+
 /**
  * Build the stores the marginal-value planner dispatches, or null.
  *
@@ -2387,32 +2415,7 @@ function buildDispatchStores(
   const stores: DispatchStore[] = [];
   const count = slots.length;
   const outdoor = snapshot.outdoor_temperature_c as number[] | null;
-  /**
-   * Re-state a stored preference curve against this horizon's own prices.
-   *
-   * The customer states *where* their thresholds are and the arithmetic states
-   * what they are worth (§8.10). The editor did both, once, against whatever
-   * price was showing at the time, and froze the result — so the levels went on
-   * describing a week that had already happened. Rebuilding them here keeps the
-   * thresholds exactly as stated and lets only the level move.
-   *
-   * Only a curve this system generated is re-anchored. `preferenceFromCurve`
-   * returns null for any other shape, and a hand-written curve is a statement
-   * in absolute money that nobody asked us to reinterpret.
-   */
-  const anchorToHorizon = (
-    stored: UtilityCurve,
-    unitsPerKwh: number,
-  ): UtilityCurve => {
-    const preference = preferenceFromCurve(stored);
-    if (!preference || !(unitsPerKwh > 0)) return stored;
-    return curveFromPreference(preference, stored.unit, {
-      units_per_kwh: unitsPerKwh,
-      reference_sek_per_kwh: horizonReferenceSekPerKwh(
-        slots.map((slot) => slot.shadow_import_sek_per_kwh),
-      ),
-    });
-  };
+  const reference = horizonReferenceSekPerKwh(slots.map(slot => slot.shadow_import_sek_per_kwh));
 
   const curves = {
     pool: snapshot.value_curves?.pool ?? DEFAULT_VALUE_CURVES.pool,
@@ -2445,7 +2448,7 @@ function buildDispatchStores(
       capacityKwhPerK;
     stores.push({
       key: "pool",
-      curve: anchorToHorizon(curves.pool, poolUnitsPerKwh),
+      curve: anchorPreferenceCurve(curves.pool, poolUnitsPerKwh, reference),
       initial_state: pool.water_temperature_c,
       max_power_w: poolPowerW,
       // A `fixed_power` heat pump has one power and off, so the auction may
@@ -2486,7 +2489,6 @@ function buildDispatchStores(
     if (vehicle) {
       // Cable state is telemetry, not a forecast of whether the household can
       // plug in. Always plan measured range using the declared charger limits.
-      const perKm = vehicleKwhPerKm(vehicle);
       const control = evCurrentControl(snapshot);
       // A capability is a concrete actuator contract, not permission to
       // invent one. Legacy snapshots could omit the EV service once its
@@ -2515,38 +2517,13 @@ function buildDispatchStores(
         // curve is stated over. The limit is a state of charge and does not
         // move; the kilometres it buys move a long way between January and
         // July, which is why this is recomputed every solve.
-        const reachableKm = vehicle.departure_target_soc *
-          vehicle.capacity_kwh /
-          perKm;
         stores.push({
-          key: "ev",
-          // This is the resolved customer/default curve supplied by the edge.
-          // Rebuilding a fresh default here made the editor a placebo: the
-          // persisted curve preview changed while the live planner ignored it.
-          //
-          // Clamped to the charge limit: the car refuses a command past it, so
-          // a curve holding opinions above it describes states that cannot
-          // occur. Every value below the limit is untouched.
-          curve: curveWithinReach(
-            curves.ev.max_value_sek_per_kwh != null || curves.ev.urgent_price_multiplier != null
-              ? anchorToHorizon(curves.ev, vehicle.charge_efficiency / perKm)
-              : curves.ev,
-            reachableKm,
-          ),
-          initial_state: vehicle.soc * vehicle.capacity_kwh / perKm,
-          // The vehicle refuses charge above its own limit, so this is a
-          // hardware bound and not a preference the curve may outbid. Without
-          // it `chargeRoomW` returns Infinity and the auction keeps buying
-          // range the car cannot take: three consecutive replays planned the
-          // Model Y to 160% SOC, 49.9 kWh of it undeliverable. The published
-          // `ev_soc` clamps at 1, so only the km state showed it.
-          max_state: reachableKm,
+          ...vehicleValueState(vehicle, curves.ev, reference),
           max_power_w: wattsPerAmp(control) * control.max_current_a,
           min_power_w: wattsPerAmp(control) * control.min_current_a,
           power_step_w: wattsPerAmp(control) * control.current_step_a,
           usage_weight: usage,
           retention_per_slot: 1,
-          units_per_kwh: () => vehicle.charge_efficiency / perKm,
           drift: (state) => state,
         });
       }
@@ -4346,15 +4323,32 @@ export interface DispatchWorkbench {
   battery: DispatchResult["battery"];
 }
 
-/** Pool and EV curve inputs from the dispatch constructor and its exact resolved forecast.
- * No auction or battery derivation is needed to inspect these preference curves.
- */
+export interface PlannerValueStore extends Pick<DispatchStore, "key" | "curve" | "initial_state" | "max_state" | "units_per_kwh"> {
+  active: boolean;
+  inactive_reason?: "ev_capability_disabled" | "ev_control_missing" | "snapshot_not_dispatchable";
+}
+
+/** Curves for configuration, with dispatch eligibility stated separately. */
 export function plannerValueStores(
   snapshot: OptimisationSnapshot,
   priceOutlook: OptimisationPlan["price_outlook"],
-): DispatchStore[] {
+): PlannerValueStore[] {
   const { slots } = preparedSlots(snapshot, [], priceOutlook);
-  return buildDispatchStores(slots, snapshot, null) ?? [];
+  const stores: PlannerValueStore[] = (buildDispatchStores(slots, snapshot, null) ?? [])
+    .map(store => ({ ...store, active: true }));
+  if (snapshot.ev_battery && !stores.some(store => store.key === "ev")) {
+    stores.push({
+      ...vehicleValueState(
+        snapshot.ev_battery,
+        snapshot.value_curves?.ev ?? DEFAULT_VALUE_CURVES.ev,
+        horizonReferenceSekPerKwh(slots.map(slot => slot.shadow_import_sek_per_kwh)),
+      ),
+      active: false,
+      inactive_reason: !snapshot.capabilities.ev ? "ev_capability_disabled"
+        : !evCurrentControl(snapshot) ? "ev_control_missing" : "snapshot_not_dispatchable",
+    });
+  }
+  return stores;
 }
 
 export function dispatchWorkbench(

@@ -59,18 +59,12 @@ interface Props {
   /** All-in prices from the live plan, so the chart compares like with like. */
   importPriceSekPerKwh?: number | null;
   exportPriceSekPerKwh?: number | null;
-  /** Live state, so the chart can mark where the store actually sits. */
-  poolTemperatureC?: number | null;
-  vehicleRangeKm?: number | null;
   /** The range the customer's own charge limit asks for, anchoring the curve. */
   vehicleTargetRangeKm?: number | null;
   /** Range at 100% SOC, so a kilometre threshold can be read as a percentage. */
   vehicleFullRangeKm?: number | null;
   /** The charge limit the car enforces, as a fraction. */
   vehicleChargeLimitSoc?: number | null;
-  /** Reviewed installation figures, so the physics is this home's own. */
-  poolVolumeM3?: number | null;
-  vehicleChargeEfficiency?: number | null;
   /** Exact read-only curve published by the current planner solve. */
   batteryValueCurve?: BatteryValueCurveDiagnostic | null;
   /**
@@ -106,13 +100,9 @@ const ValueCurvesTab: React.FC<Props> = ({
   planSnapshotId,
   importPriceSekPerKwh,
   exportPriceSekPerKwh,
-  poolTemperatureC,
-  vehicleRangeKm,
   vehicleTargetRangeKm,
   vehicleFullRangeKm,
   vehicleChargeLimitSoc,
-  poolVolumeM3,
-  vehicleChargeEfficiency,
   batteryValueCurve,
   replan,
   onReplanChanged,
@@ -422,18 +412,19 @@ const ValueCurvesTab: React.FC<Props> = ({
         <AlertTitle>{t('Vad varje tjänst är värd för dig', 'What each service is worth to you')}</AlertTitle>
         <AlertDescription className="text-sm">
           {t(
-            'Diagrammet visar planerarens marginalvärden vid planens ursprungliga verkningsgrad. Välj ett fast högsta värde i SEK/kWh eller en multipel av prognospriset. Poolens värde per kWh kan ändras när verkningsgraden ändras under planen.',
-            'Three numbers per service, in the unit you think in. The chart shows the planner’s marginal values at its initial equipment conditions. Choose a fixed maximum in SEK/kWh or a multiplier of the forecast reference price. Pool values per kWh can change with efficiency during the plan.',
+            'Ange dina gränser och välj ett fast eller prognosrelativt högsta värde. Läs mer i hjälpen under varje kurva.',
+            'Set your thresholds and choose a fixed or forecast-relative maximum. Expand the help below each curve for details.',
           )}
         </AlertDescription>
       </Alert>
 
       <div className="flex flex-wrap justify-end gap-2">
-        <Button onClick={() => void runPreview()} disabled={previewing} variant="outline">
+        <Button size="sm" onClick={() => void runPreview()} disabled={previewing} variant="outline">
           {previewing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
           {t('Vad skulle ändras?', 'What would change?')}
         </Button>
         <Button
+          size="sm"
           onClick={() => void requestReplan()}
           disabled={replanning || waitingForReplan}
           variant="secondary"
@@ -585,11 +576,13 @@ const ValueCurvesTab: React.FC<Props> = ({
         const draft = drafts[key];
         if (!draft) return null;
         const plannedStore = plannedStores.find(store => store.key === key);
-        if (!plannedStore || !scales[key] || !snapshot || !sourcePlan) return (
-          <Alert key={key}><AlertDescription>{key}: {t('Ingen aktiv planerarkurva. Planera om efter att enheten anslutits.', 'No active planner curve. Replan after connecting the device.')}</AlertDescription></Alert>
-        );
+        if (!snapshot || !sourcePlan) return null;
+        const conversion = scales[key]?.units_per_kwh ?? null;
+        const canEdit = conversion !== null;
+        const baselineCurve = plannedStore?.curve ?? stored[key];
+        if (!baselineCurve) return null;
         const rejection = validatePreference(draft.preference);
-        const candidate = rejection ? null : draft.edited ? curveOf(key, draft.preference) : stored[key];
+        const candidate = rejection || !canEdit ? null : draft.edited ? curveOf(key, draft.preference) : stored[key];
         const editedStore = candidate ? plannerValueStores({
           ...snapshot, value_curves: { ...snapshot.value_curves, [key]: candidate },
         }, sourcePlan.price_outlook).find(store => store.key === key) : null;
@@ -597,181 +590,145 @@ const ValueCurvesTab: React.FC<Props> = ({
         const unitSuffix = isPool ? '°C' : 'km';
         const absolute = draft.preference.max_value_sek_per_kwh != null;
         const multiplier = draft.preference.urgent_price_multiplier ?? DEFAULT_URGENT_PRICE_MULTIPLIER;
-        const reference = scales[key].reference_sek_per_kwh;
-        const state = isPool ? poolTemperatureC : vehicleRangeKm;
-        const perUnitKwh = 1 / scales[key].units_per_kwh;
-        const changed = editedStore && JSON.stringify(editedStore.curve.points) !== JSON.stringify(plannedStore.curve.points);
-        // Include every actual breakpoint. Sampling alone cuts across corners.
-        // SEK/kWh is evaluated at the solve's initial equipment conditions.
-        const points = [...plannedStore.curve.points, ...(changed ? editedStore.curve.points : [])];
+        const reference = horizonReferenceSekPerKwh(sourcePlan.price_outlook.shadow_import_sek_per_kwh);
+        const state = plannedStore?.initial_state;
+        const yUnit = canEdit ? 'SEK/kWh' : `SEK/${unitSuffix}`;
+        const seriesName = plannedStore?.active ? t('Aktuell plan', 'Current plan')
+          : plannedStore ? t('Ögonblicksbildens kurva', 'Snapshot curve') : t('Sparad kurva', 'Saved curve');
+        const changed = editedStore && JSON.stringify(editedStore.curve.points) !== JSON.stringify(baselineCurve.points);
+        const points = [...baselineCurve.points, ...(changed ? editedStore.curve.points : [])];
         const first = Math.min(...points.map(p => p.at));
         const last = Math.max(...points.map(p => p.at));
         const span = Math.max(1, last - first);
+        // Keep exact breakpoints, including the drop immediately past a charge limit.
         const positions = [...new Set([...Array.from({ length: 80 }, (_, index) => first - span * 0.15 + span * 1.3 * index / 79), ...points.flatMap(p => [p.at, p.at + 1e-7]), last, last + span * 0.15])].sort((a, b) => a - b);
         const chart = positions.map(at => ({
           at,
-          sekPerKwh: marginalValue(plannedStore.curve, at) * scales[key].units_per_kwh,
-          ...(changed ? { editedSekPerKwh: marginalValue(editedStore.curve, at) * scales[key].units_per_kwh } : {}),
+          sekPerKwh: marginalValue(baselineCurve, at) * (conversion ?? 1),
+          ...(changed ? { editedSekPerKwh: marginalValue(editedStore.curve, at) * conversion! } : {}),
         }));
+        const inactiveMessage = !plannedStore ? t(
+          'Mätvärden saknas. Sparad kurva visas i ursprungsenheten; redigering kräver aktuella mätvärden.',
+          'Measurements are missing. Showing the saved curve in its original units; editing needs current measurements.',
+        ) : plannedStore.inactive_reason === 'ev_control_missing' ? t(
+          'Laddarstyrning saknas i ögonblicksbilden. Bilens värdekurva kan fortfarande redigeras.',
+          'Charger controls are missing from this snapshot. Vehicle preferences are still editable.',
+        ) : plannedStore.inactive_reason === 'ev_capability_disabled' ? t(
+          'Billaddning är inte aktiverad i den här planen. Bilens värdekurva kan fortfarande redigeras.',
+          'EV charging is not enabled in this plan. Vehicle preferences are still editable.',
+        ) : plannedStore.inactive_reason === 'snapshot_not_dispatchable' ? t(
+          'Ögonblicksbilden saknar underlag för schemaläggning. Bilens värdekurva kan fortfarande redigeras.',
+          'This snapshot cannot support store dispatch. Vehicle preferences are still editable.',
+        ) : null;
 
         const fields: Array<{ field: keyof StorePreference; label: [string, string]; hint: [string, string] }> = [
           {
             field: 'urgent_below',
-            label: isPool ? ['Under detta vill jag ha värme', 'Below this I really want heat'] : ['Under detta vill jag alltid ladda', 'Below this I always want to charge'],
+            label: ['Stort behov under', 'Urgent below'],
             hint: ['Använder ditt högsta värde under denna gräns', 'Uses your maximum value below this threshold'],
           },
           {
             field: 'comfortable',
-            label: isPool ? ['Så varm vill jag ha den', 'This is where I want it'] : ['Så mycket räckvidd vill jag ha', 'This is the range I want'],
+            label: ['Önskad nivå', 'Preferred level'],
             hint: ['Tar solöverskott och billig el, tackar nej till dyra timmar', 'Takes surplus and cheap grid, declines expensive hours'],
           },
           {
             field: 'indifferent_above',
-            label: isPool ? ['Över detta behövs inget mer', 'Above this, do not bother'] : ['Över detta behövs ingen mer laddning', 'Above this, no more charging is needed'],
+            label: ['Sluta vid', 'Stop at'],
             hint: ['Värd noll — planeraren slutar bjuda', 'Worth nothing, so the store stops bidding'],
           },
         ];
 
         return (
-          <Card key={key}>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0">
-              <CardTitle className="text-base">
-                {isPool ? t('Pool', 'Pool') : t('Elbil', 'Vehicle')}
-              </CardTitle>
-              <Badge variant={draft.source === 'customer' ? 'secondary' : 'outline'}>
-                {draft.source === 'customer' ? t('Egna inställningar', 'Your settings') : t('Standard', 'Default')}
-              </Badge>
+          <Card key={key} data-testid={`value-curve-${key}`}>
+            <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0 px-4 py-3">
+              <div className="flex items-center gap-2">
+                <CardTitle className="text-base">{isPool ? t('Pool', 'Pool') : t('Elbil', 'Vehicle')}</CardTitle>
+                <Badge className="hidden sm:inline-flex" variant="outline">{plannedStore?.active ? t('I planen', 'In plan') : t('Inte schemalagd', 'Not dispatched')}</Badge>
+              </div>
+              <div className="flex items-center gap-1">
+                {draft.source === 'customer' && <Button size="sm" variant="ghost" onClick={() => void reset(key)} disabled={saving === key}>
+                  {t('Återställ', 'Reset')}
+                </Button>}
+                <Button size="sm" onClick={() => void save(key)} disabled={!canEdit || saving === key || rejection !== null || !draft.edited}>
+                  {saving === key ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}
+                  {t('Spara', 'Save')}
+                </Button>
+              </div>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-3 md:grid-cols-3">
+            <CardContent className="space-y-2 px-4 pb-3">
+              {inactiveMessage && <p className="text-xs text-muted-foreground" role="status">{inactiveMessage}</p>}
+              <fieldset disabled={!canEdit} className="grid grid-cols-3 gap-x-3 gap-y-2 xl:grid-cols-[repeat(3,minmax(0,1fr))_minmax(180px,1.3fr)_minmax(100px,0.7fr)] disabled:opacity-60">
                 {fields.map(({ field, label, hint }) => (
-                  <label key={field} className="space-y-1">
-                    <span className="block text-sm font-medium">{t(label[0], label[1])}</span>
-                    <div className="flex items-center gap-2">
-                      <Input
-                        value={String(draft.preference[field])}
-                        inputMode="decimal"
-                        step={STEP[key]}
-                        type="number"
-                        onChange={event => edit(key, field, event.target.value)}
-                      />
-                      <span className="text-sm text-muted-foreground">{unitSuffix}</span>
+                  <label key={field} className="min-w-0 space-y-1" title={t(hint[0], hint[1])}>
+                    <span className="block text-xs font-medium">{t(label[0], label[1])}</span>
+                    <div className="relative">
+                      <Input className="h-9 pr-10" aria-label={`${t(label[0], label[1])} (${unitSuffix})`}
+                        value={String(draft.preference[field])} inputMode="decimal" step={STEP[key]} type="number"
+                        onChange={event => edit(key, field, event.target.value)} />
+                      <span className="pointer-events-none absolute right-3 top-2 text-xs text-muted-foreground">{unitSuffix}</span>
                     </div>
-                    {!isPool && vehicleFullRangeKm !== null && vehicleFullRangeKm > 0 && (() => {
-                      // The hardware enforces a state of charge; the curve is
-                      // stated in kilometres. A threshold beyond the charge
-                      // limit is one the car can never reach, so the store
-                      // never stops bidding — and in kilometres alone that is
-                      // invisible.
+                    {!isPool && vehicleFullRangeKm != null && vehicleFullRangeKm > 0 && (() => {
                       const soc = numeric(String(draft.preference[field]), 0) / vehicleFullRangeKm;
-                      const beyond = vehicleChargeLimitSoc !== null &&
-                        soc > vehicleChargeLimitSoc + 1e-9;
-                      return (
-                        <span className={`block text-[11px] tabular-nums ${
-                          beyond ? 'text-destructive font-medium' : 'text-muted-foreground'
-                        }`}>
-                          {`= ${(soc * 100).toFixed(0)}% SOC`}
-                          {beyond && ` · ${t('över laddgränsen', 'past the charge limit')} ${
-                            ((vehicleChargeLimitSoc ?? 0) * 100).toFixed(0)}%`}
-                        </span>
-                      );
+                      const beyond = vehicleChargeLimitSoc != null && soc > vehicleChargeLimitSoc + 1e-9;
+                      return <span className={`block text-[10px] tabular-nums ${beyond ? 'font-medium text-destructive' : 'text-muted-foreground'}`}>
+                        {(soc * 100).toFixed(0)}% SOC{beyond && ` · ${t('över gränsen', 'above limit')} ${(vehicleChargeLimitSoc! * 100).toFixed(0)}%`}
+                      </span>;
                     })()}
-                    <span className="block text-[11px] text-muted-foreground">{t(hint[0], hint[1])}</span>
                   </label>
                 ))}
-              </div>
-
-              <div className="space-y-2">
-                <label className="block space-y-1">
-                  <span className="text-sm font-medium">{t('Värde när behovet är stort', 'Value when urgently needed')}</span>
-                  <select className="flex h-10 w-full max-w-xs rounded-md border border-input bg-background px-3 py-2 text-sm"
+                <label className="col-span-2 min-w-0 space-y-1 xl:col-span-1">
+                  <span className="block text-xs font-medium">{t('Prismodell', 'Price basis')}</span>
+                  <select className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
                     value={absolute ? 'absolute' : 'relative'}
                     onChange={event => changePriceMode(key, event.target.value as 'absolute' | 'relative')}>
-                    <option value="relative">{t('Multipel av prognospriset', 'Forecast price multiplier')}</option>
-                    <option value="absolute">{t('Fast pris (SEK/kWh)', 'Fixed price (SEK/kWh)')}</option>
+                    <option value="relative">{t('Prognos × faktor', 'Forecast × multiplier')}</option>
+                    <option value="absolute">{t('Fast pris', 'Fixed price')}</option>
                   </select>
                 </label>
-                <label className="block space-y-1">
-                  <span className="text-sm font-medium">{absolute
-                    ? t('Högsta värde (SEK/kWh)', 'Maximum value (SEK/kWh)')
-                    : t('Multiplikationsfaktor', 'Multiplier')}</span>
-                  <Input type="number" min={0} step="any" className="max-w-xs"
+                <label className="min-w-0 space-y-1">
+                  <span className="block text-xs font-medium">{absolute ? t('Max SEK/kWh', 'Max SEK/kWh') : t('Faktor', 'Multiplier')}</span>
+                  <Input type="number" min={0} step="any" className="h-9"
                     value={absolute ? draft.preference.max_value_sek_per_kwh : multiplier}
                     onChange={event => edit(key, absolute ? 'max_value_sek_per_kwh' : 'urgent_price_multiplier', event.target.value)} />
                 </label>
-                <p className="text-xs text-muted-foreground">{absolute ? t(
-                  'Angivet värde behålls när elpriset ändras. Gäller vid planens ursprungliga verkningsgrad.',
-                  'This value stays fixed when electricity prices change. Expressed at the plan’s initial equipment efficiency.',
-                ) : t(
-                  `${multiplier.toFixed(2)} × ${reference.toFixed(2)} SEK/kWh = ${(multiplier * reference).toFixed(2)} SEK/kWh. Referensen är priset vid den billigaste tiondelen av prognosen. Räknas om för varje plan.`,
-                  `${multiplier.toFixed(2)} × ${reference.toFixed(2)} SEK/kWh = ${(multiplier * reference).toFixed(2)} SEK/kWh. The reference is the cheapest-tenth price in the forecast. Recalculated for every plan.`,
-                )}</p>
+              </fieldset>
+              <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+                <span>{absolute ? `${t('Fast max', 'Fixed maximum')}: ${draft.preference.max_value_sek_per_kwh?.toFixed(2)} SEK/kWh`
+                  : `${multiplier.toFixed(2)} × ${reference.toFixed(2)} = ${(multiplier * reference).toFixed(2)} SEK/kWh`}</span>
+                <span className="flex gap-3"><span className="text-blue-600">━ {seriesName}</span>{changed && <span className="text-orange-600">━ {t('Nästa plan', 'Next plan')}</span>}</span>
               </div>
-              <p className="text-xs text-muted-foreground">{t(
-                'Blå: aktuell plan. Orange: sparade eller ändrade inställningar för nästa plan. Raka segment beskriver avtagande värde; de är ingen mätning av dina önskemål.',
-                'Blue: current plan. Orange: saved or edited settings for the next plan. Straight segments model diminishing value; they are not a measurement of your preferences.',
-              )}</p>
-              {rejection && (
-                <p className="text-sm text-destructive">{rejection}</p>
-              )}
-
-              <p className="text-xs text-muted-foreground">
-                {isPool
-                  ? t(
-                    `Din pool tar ca ${perUnitKwh.toFixed(1)} kWh per grad (${(poolVolumeM3 ?? 55)} m³, COP ${(scales[key].units_per_kwh * (snapshot.pool?.volume_m3 ?? 0) * WATER_KWH_PER_M3_K).toFixed(2)}). Det är därför en grad är värd mer här än i en liten pool.`,
-                    `Your pool takes about ${perUnitKwh.toFixed(1)} kWh per degree (${(poolVolumeM3 ?? 55)} m³, COP ${(scales[key].units_per_kwh * (snapshot.pool?.volume_m3 ?? 0) * WATER_KWH_PER_M3_K).toFixed(2)}). That is why a degree is worth more here than in a small pool.`,
-                  )
-                  : t(
-                    `En kWh el ger ca ${scales.ev.units_per_kwh.toFixed(1)} km räckvidd. På vintern räcker samma laddning kortare, så samma gränser gör bilen viktigare utan att du ändrar något.`,
-                    `One kWh of electricity buys about ${scales.ev.units_per_kwh.toFixed(1)} km of range, and a full battery is about ${(vehicleFullRangeKm ?? 0).toFixed(0)} km — so ${vehicleChargeLimitSoc !== null ? `your ${(vehicleChargeLimitSoc * 100).toFixed(0)}% charge limit is about ${((vehicleFullRangeKm ?? 0) * vehicleChargeLimitSoc).toFixed(0)} km. ` : ''}The planner clips the curve at the charge limit, even if your desired range is higher.`,
-                  )}
-              </p>
-
-              {chart.length > 0 && (
-                <div className="h-48">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={chart} margin={{ top: 20, right: 60, bottom: 4, left: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                      <XAxis
-                        dataKey="at"
-                        type="number"
-                        domain={['dataMin', 'dataMax']}
-                        tick={{ fontSize: 11 }}
-                      />
-                      <YAxis tick={{ fontSize: 11 }} width={56} label={{ value: 'SEK/kWh', angle: -90, position: 'insideLeft', fontSize: 11 }} />
-                      <ChartTooltip
-                        formatter={(value: number, name: string) => [`${value.toFixed(2)} SEK/kWh`, name]}
-                        labelFormatter={(label: number) => `${Number(label).toFixed(2)} ${unitSuffix}`}
-                      />
-                      <Line type="linear" dataKey="sekPerKwh" name={t('Aktuell plan', 'Current plan')} stroke="#2563eb" dot={false} strokeWidth={2} />
-                      {changed && <Line type="linear" dataKey="editedSekPerKwh" name={t('Nästa plan', 'Next plan')} stroke="#ea580c" dot={false} strokeWidth={2} />}
-                      {typeof importPriceSekPerKwh === 'number' && (
-                        <ReferenceLine y={importPriceSekPerKwh} stroke="#dc2626" strokeDasharray="4 4" label={{ value: t('Köppris', 'Import'), fontSize: 11, fill: '#dc2626', position: 'right' }} />
-                      )}
-                      {typeof exportPriceSekPerKwh === 'number' && (
-                        <ReferenceLine y={exportPriceSekPerKwh} stroke="#059669" strokeDasharray="4 4" label={{ value: t('Säljpris', 'Export'), fontSize: 11, fill: '#059669', position: 'right' }} />
-                      )}
-                      {typeof state === 'number' && (
-                        <ReferenceLine x={state} stroke="#64748b" label={{ value: `${t('Nu', 'Now')} ${state.toFixed(1)} ${unitSuffix}`, fontSize: 11, fill: '#475569', position: 'top' }} />
-                      )}
-                    </LineChart>
-                  </ResponsiveContainer>
+              {rejection && <p className="text-xs text-destructive">{rejection}</p>}
+              <div className="h-44 min-w-0" data-testid={`value-chart-${key}`}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={chart} margin={{ top: 20, right: 48, bottom: 0, left: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                    <XAxis dataKey="at" type="number" domain={['dataMin', 'dataMax']} tick={{ fontSize: 10 }} tickFormatter={value => Number(value).toFixed(isPool ? 1 : 0)} />
+                    <YAxis tick={{ fontSize: 10 }} width={48} label={{ value: yUnit, angle: -90, position: 'insideLeft', fontSize: 10 }} />
+                    <ChartTooltip formatter={(value: number, name: string) => [`${value.toFixed(2)} ${yUnit}`, name]}
+                      labelFormatter={(label: number) => `${Number(label).toFixed(2)} ${unitSuffix}`} />
+                    <Line isAnimationActive={false} type="linear" dataKey="sekPerKwh" name={seriesName} stroke="#2563eb" dot={false} strokeWidth={2} />
+                    {changed && <Line isAnimationActive={false} type="linear" dataKey="editedSekPerKwh" name={t('Nästa plan', 'Next plan')} stroke="#ea580c" dot={false} strokeWidth={2} />}
+                    {canEdit && typeof importPriceSekPerKwh === 'number' && <ReferenceLine y={importPriceSekPerKwh} stroke="#dc2626" strokeDasharray="4 4" label={{ value: t('Köp', 'Import'), fontSize: 10, fill: '#dc2626', position: 'right' }} />}
+                    {canEdit && typeof exportPriceSekPerKwh === 'number' && <ReferenceLine y={exportPriceSekPerKwh} stroke="#059669" strokeDasharray="4 4" label={{ value: t('Sälj', 'Export'), fontSize: 10, fill: '#059669', position: 'right' }} />}
+                    {typeof state === 'number' && <ReferenceLine x={state} stroke="#64748b" label={{ value: `${t('Nu', 'Now')} ${state.toFixed(1)} ${unitSuffix}`, fontSize: 10, position: 'top' }} />}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+              <details className="text-xs text-muted-foreground">
+                <summary className="cursor-pointer select-none">{t('Om kurvan och utrustningen', 'About this curve and equipment')}</summary>
+                <div className="space-y-1 pt-2">
+                  {fields.map(({ field, label, hint }) => <p key={field}><strong>{t(label[0], label[1])}:</strong> {t(hint[0], hint[1])}</p>)}
+                  <p>{t('Prognospriset är priset vid den billigaste tiondelen av horisonten. Faktorn räknas om för varje plan; fast pris behåller sitt värde.', 'The forecast reference is the cheapest-tenth price across the horizon. A multiplier is recalculated for every plan; a fixed price keeps its value.')}</p>
+                  <p>{t('Raka segment modellerar avtagande värde. SEK/kWh visas vid planens ursprungliga verkningsgrad.', 'Straight segments model diminishing value. SEK/kWh is shown at the plan’s initial equipment efficiency.')}</p>
+                  {conversion != null && <p>{isPool
+                    ? `${(1 / conversion).toFixed(1)} kWh/°C · ${snapshot.pool?.volume_m3} m³ · COP ${(conversion * (snapshot.pool?.volume_m3 ?? 0) * WATER_KWH_PER_M3_K).toFixed(2)}`
+                    : `${conversion.toFixed(1)} km/kWh · ${t('Kurvan slutar vid bilens laddgräns.', 'The curve ends at the vehicle’s charge limit.')}`}</p>}
                 </div>
-              )}
-
-              <div className="flex flex-wrap gap-2 pt-1">
-                <Button onClick={() => void save(key)} disabled={saving === key || rejection !== null || !draft.edited}>
-                  {saving === key ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
-                  {t('Spara', 'Save')}
-                </Button>
-                {draft.source === 'customer' && (
-                  <Button variant="ghost" onClick={() => void reset(key)} disabled={saving === key}>
-                    {t('Återställ standard', 'Reset to default')}
-                  </Button>
-                )}
-              </div>
+              </details>
             </CardContent>
           </Card>
+
         );
       })}
     </div>

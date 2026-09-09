@@ -64,3 +64,43 @@ Deno.test('vehicle chart preserves the saved curve and charge-limit clipping; ex
     assert(Math.abs(relative.curve.points[0].sek_per_unit * relative.units_per_kwh(relative.initial_state, 0) - 2.5 * reference) < 1e-5);
   }
 });
+
+Deno.test('EV configuration remains available without dispatch controls or capability', () => {
+  const source = snapshot();
+  source.capabilities.ev = true;
+  source.ev_battery = {
+    name: 'Idle EV', connected: false, capacity_kwh: 75, soc: 0.8,
+    source_entity_ids: { connected: 'binary_sensor.connected', soc: 'sensor.soc', target_soc: 'number.target_soc', energy_remaining: null, charge_current: null },
+    departure_target_soc: 0.8, charge_efficiency: 0.94,
+    available_from: source.slots[0].start, departure: null, priority: 3,
+  };
+  const saved = curveFromPreference(
+    { urgent_below: 100, comfortable: 300, indifferent_above: 390, urgent_price_multiplier: 2 },
+    'km', { units_per_kwh: 5.875, reference_sek_per_kwh: 1.2 },
+  );
+  source.value_curves = { ev: saved };
+  const plan = generateOptimisationPlan(source, new Date(source.captured_at));
+  const configured = plannerValueStores(source, plan.price_outlook).find(store => store.key === 'ev')!;
+  assert(configured, 'a configured vehicle must not vanish when charger controls are absent');
+  assertEquals(configured.active, false);
+  assertEquals(configured.inactive_reason, 'ev_control_missing');
+  assertEquals(configured.max_state, 375);
+  assert(Math.abs(configured.units_per_kwh(configured.initial_state, 0) - 5.875) < 1e-10);
+  assertEquals(dispatchWorkbench(source, [], plan.price_outlook)!.stores.some(store => store.key === 'ev'), false);
+  source.capabilities.ev = false;
+  const disabled = plannerValueStores(source, plan.price_outlook).find(store => store.key === 'ev')!;
+  assertEquals(disabled.active, false);
+  assertEquals(disabled.inactive_reason, 'ev_capability_disabled');
+  assertEquals(disabled.curve, configured.curve);
+  source.capabilities.ev = true;
+  source.schema_version = 5;
+  source.services.push({
+    id: 'ev', device: 'ev', earliest_start: source.slots[0].start,
+    deadline: source.slots[48].start, required_kwh: 0, priority: 3,
+    baseline_preferred_start: source.slots[0].start,
+    control: { type: 'discrete_current', min_current_a: 5, max_current_a: 16, current_step_a: 1, phase_count: 3, voltage_v: 230 },
+  });
+  assertEquals(plannerValueStores(source, plan.price_outlook).find(store => store.key === 'ev')!.inactive_reason, 'snapshot_not_dispatchable');
+  source.ev_battery = null;
+  assertEquals(plannerValueStores(source, plan.price_outlook).some(store => store.key === 'ev'), false);
+});

@@ -965,13 +965,9 @@ const PlanView: React.FC<{
               planSnapshotId={plan.snapshot_id}
               importPriceSekPerKwh={livePrices.import}
               exportPriceSekPerKwh={livePrices.export}
-              poolTemperatureC={plan?.pool?.water_temperature_c ?? null}
-              vehicleRangeKm={vehicleRangeKm}
               vehicleTargetRangeKm={vehicleTargetRangeKm}
               vehicleFullRangeKm={vehicleFullRangeKm}
               vehicleChargeLimitSoc={vehicleChargeLimitSoc}
-              poolVolumeM3={plan?.pool?.volume_m3 ?? null}
-              vehicleChargeEfficiency={plan?.ev_battery?.charge_efficiency ?? null}
               batteryValueCurve={plan.battery_value_curve}
               replan={current}
               onReplanChanged={onReplanChanged}
