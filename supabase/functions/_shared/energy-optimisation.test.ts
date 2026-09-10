@@ -1762,7 +1762,7 @@ Deno.test("schema 6 with pool state dispatches by temperature, not by budget", (
   const plan = generateOptimisationPlan(snapshot, new Date(NOW));
 
   assertEquals(plan.schema_version, 6);
-  assertEquals(plan.model_version, "marginal-value-planner-v25");
+  assertEquals(plan.model_version, "marginal-value-planner-v26");
   // Asserted explicitly: an earlier version of this test checked the pool
   // energy but not the status, and so passed while every schema 6 plan was
   // reported infeasible by validations that still assumed fixed blocks.
@@ -2323,9 +2323,9 @@ Deno.test("every allocation is priced where it lands, and none of them loses", (
     const battery = slot.decision.battery;
     for (const part of slot.decision.store_allocations) {
       allocations += 1;
-      // A minimum-run block clears its cost as a block: a heat pump that must
-      // run four quarters cannot stop three in, so the run is the unit that
-      // has to pay, not every quarter inside it.
+      // A continuous heat-pump run repays its startup cost together. A mildly
+      // losing quarter can be worth keeping when removing it adds a restart;
+      // this is an economic trade-off, not a minimum runtime.
       if (part.run_net_value_sek < -1e-6) {
         losing.push(
           `${part.store_key} ${part.direction} run from ${part.run_start_index}: ${

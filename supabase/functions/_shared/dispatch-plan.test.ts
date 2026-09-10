@@ -1877,3 +1877,65 @@ Deno.test("running telemetry waives only a continuation at the first quarter", (
     0.5,
   );
 });
+
+Deno.test("settlement keeps a heat-pump run connected when a marginal quarter turns negative", () => {
+  // Later accepted heat lowers the value of slot 3. Previously settlement
+  // removed it alone and left slots 4–5 carrying a stale free-continuation bid.
+  const { slots, store } = startupProblem([2.4, 2.1, 0.4, 2.1, 1.2, 0.2]);
+  store.initially_charging = true;
+  store.curve.points = [{ at: 0, sek_per_unit: 3 }, { at: 2, sek_per_unit: 0 }];
+  const result = planDispatch(slots, [store], LIMITS);
+  assertEquals(result.power_w.pool, slots.map(() => 1000));
+  const parts = result.allocations.map((parts) => parts.find((p) => p.store_key === "pool")!);
+  assert(parts[3].net_value_sek < 0, "the bridge quarter must lose in isolation");
+  const net = parts.reduce((sum, part) => sum + part.net_value_sek, 0);
+  assert(net > 0);
+  for (const part of parts) {
+    assertEquals(part.run_start_index, 0);
+    assertEquals(part.run_slots, slots.length);
+    assertEquals(part.start_cost_sek, 0);
+    assert(Math.abs(part.run_net_value_sek - net) < 1e-9);
+  }
+  assertEquals(scoreDispatch(slots, [store], LIMITS, result).infeasibilities, []);
+});
+
+Deno.test("settlement can split heating when the saving covers the newly exposed restart", () => {
+  const { slots, store } = startupProblem([12, 10.5, 2, 10.5, 6, 1]);
+  store.initially_charging = true;
+  store.curve.points = [{ at: 0, sek_per_unit: 15 }, { at: 2, sek_per_unit: 0 }];
+  const result = planDispatch(slots, [store], LIMITS);
+  assertEquals(result.power_w.pool, [1000, 1000, 1000, 0, 1000, 1000]);
+  const restart = result.allocations.flat().filter((part) => part.run_start_index === 4);
+  assertEquals(restart.length, 2);
+  assertEquals(restart.reduce((sum, part) => sum + part.start_cost_sek, 0), 0.5);
+  assert(restart.every((part) => part.run_slots === 2 && part.run_net_value_sek > 0));
+});
+
+Deno.test("heat-pump run diagnostics charge exactly once per actual restart", () => {
+  const { slots, store } = startupProblem([1, 1, 1, 100, 1, 1, 1]);
+  const result = planDispatch(slots, [store], LIMITS);
+  const parts = result.allocations.flat();
+  for (const start of [0, 4]) {
+    const run = parts.filter((part) => part.run_start_index === start);
+    assertEquals(run.length, 3);
+    assert(run.every((part) => part.run_slots === 3));
+    assert(Math.abs(run.reduce((sum, part) => sum + part.start_cost_sek, 0) - 0.5) < 1e-9);
+  }
+  const charged = parts.reduce((sum, part) => sum + part.start_cost_sek, 0);
+  assert(Math.abs(charged - scoreDispatch(slots, [store], LIMITS, result).start_sek) < 1e-9);
+});
+
+for (const key of ["battery", "ev"]) {
+  Deno.test(`${key} charging has no equipment or continuity start penalty`, () => {
+    const { slots, store } = startupProblem([1, 100, 1]);
+    store.key = key;
+    delete store.start_cost_sek;
+    const limits = { ...LIMITS, load_start_preference_sek: 0.25 };
+    const result = planDispatch(slots, [store], limits);
+    assertEquals(result.power_w[key], [1000, 0, 1000]);
+    const score = scoreDispatch(slots, [store], limits, result);
+    assertEquals(score.start_sek, 0);
+    assertEquals(score.continuity_sek, 0);
+    assert(result.allocations.flat().every((part) => part.start_cost_sek === 0));
+  });
+}

@@ -112,8 +112,8 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6, 7] as const;
  * v11 integrates every sizeable curve move, applies configured EV curves,
  * prices executable setpoints and records exact quarter evidence.
  */
-// v25 prices complete relay runs and recognises measured run continuation.
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v25";
+// v26 settles physical heat-pump runs and excludes batteries from start preferences.
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v26";
 /** Schema 5 service sizing also no longer pads energy to a minimum runtime. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v9";
 export const SLOT_MINUTES = 15;

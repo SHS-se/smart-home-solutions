@@ -163,6 +163,7 @@ export interface DispatchLimits {
   peak_shaping_sek_per_kwh_per_kw: number;
   /** Soft preferences, not invoiced costs. Used by the service-preserving refinement. */
   grid_ramp_sek_per_kw?: number;
+  /** Applies only to equipment with an explicit heat-pump start cost. */
   load_start_preference_sek?: number;
 }
 
@@ -907,7 +908,9 @@ function scoreDispatchWithReuse(
           powerByKey[store.key][0] > GRID_NOISE_W
         ? 1
         : 0);
-      continuitySek += starts * (limits.load_start_preference_sek ?? 0);
+      continuitySek += (store.start_cost_sek ?? 0) > 0
+        ? starts * (limits.load_start_preference_sek ?? 0)
+        : 0;
       scored.push(account);
       continue;
     }
@@ -944,7 +947,9 @@ function scoreDispatchWithReuse(
     const starts = runs.length -
       (runs[0]?.start === 0 && store.initially_charging ? 1 : 0);
     const storeStart = starts * (store.start_cost_sek ?? 0);
-    continuitySek += starts * (limits.load_start_preference_sek ?? 0);
+    continuitySek += (store.start_cost_sek ?? 0) > 0
+      ? starts * (limits.load_start_preference_sek ?? 0)
+      : 0;
     serviceValueSek += storeValue;
     wearSek += storeWear;
     startSek += storeStart;
@@ -1911,6 +1916,35 @@ function dispatchAuction(
       : value + (part.average_value_sek_per_kwh - wear) * kwh;
   };
 
+  /** Rebuild heat-pump runs from executable power, not auction bid identities.
+   * A continuation can outlive the bid it joined. Settlement must price the
+   * whole physical run, including any newly exposed restart.
+   * Only stores explicitly carrying compressor start costs use this accounting;
+   * battery and EV allocations retain their energy-trade identities.
+   */
+  const reconcileChargeRuns = (): void => {
+    for (const store of stores) {
+      if ((store.start_cost_sek ?? 0) <= 0) continue;
+      for (const run of runsOf(powerW[store.key])) {
+        const startCost = run.start === 0 && store.initially_charging
+          ? 0
+          : store.start_cost_sek!;
+        const parts = Array.from({ length: run.slots }, (_, offset) =>
+          partAt(store, run.start + offset)!
+        );
+        for (const part of parts) {
+          const share = startCost / run.slots;
+          part.net_value_sek += part.start_cost_sek - share;
+          part.start_cost_sek = share;
+          part.run_start_index = run.start;
+          part.run_slots = run.slots;
+        }
+        const net = parts.reduce((sum, part) => sum + part.net_value_sek, 0);
+        for (const part of parts) part.run_net_value_sek = net;
+      }
+    }
+  };
+
   /** Settlement can remove the discharge that made room for a later charge,
    * or the load another discharge was supplying. Check both physical bounds
    * and the no-export contract against the changed schedule, without clamping.
@@ -2596,6 +2630,7 @@ function dispatchAuction(
         );
       }
       for (let index = 0; index < count; index += 1) recostSlot(index);
+      reconcileChargeRuns();
 
       let starved: { store: DispatchStore; indices: number[] } | null = null;
       let worst:
@@ -2621,7 +2656,30 @@ function dispatchAuction(
           starved = { store, indices: runs.get(starvedKey)!.indices };
         }
         for (const run of runs.values()) {
-          if (run.net < -1e-9 && (worst === null || run.net < worst.net)) {
+          const startCost = store.start_cost_sek ?? 0;
+          if (startCost > 0) {
+            // Trimming a run is allowed, but cutting a gap creates a restart.
+            // Include that change in cost BEFORE removing any quarters. Price
+            // every contiguous cut so we can also release an expensive prefix,
+            // suffix, or whole run without making the run indivisible.
+            const continuing = run.indices[0] === 0 && store.initially_charging;
+            const originalStart = continuing ? 0 : startCost;
+            const margins = run.indices.map((index) =>
+              settledNet(store, index) + partAt(store, index)!.start_cost_sek
+            );
+            for (let from = 0; from < run.indices.length; from += 1) {
+              let margin = 0;
+              for (let to = from; to < run.indices.length; to += 1) {
+                margin += margins[to];
+                const remainingStarts = (from > 0 ? originalStart : 0) +
+                  (to + 1 < run.indices.length ? startCost : 0);
+                const net = margin + remainingStarts - originalStart;
+                if (net < -1e-9 && (worst === null || net < worst.net)) {
+                  worst = { store, indices: run.indices.slice(from, to + 1), net };
+                }
+              }
+            }
+          } else if (run.net < -1e-9 && (worst === null || run.net < worst.net)) {
             worst = { store, indices: run.indices, net: run.net };
           }
         }
@@ -3049,6 +3107,8 @@ function dispatchAuction(
       for (let index = 0; index < count; index += 1) recostSlot(index);
     }
   }
+
+  reconcileChargeRuns();
 
   const importW = new Array(count).fill(0);
   const exportW = new Array(count).fill(0);

@@ -35,7 +35,7 @@ The time weights for continuous warmth, discrete usage, and terminal state must 
 
 Hard constraints restrict feasible schedules. Finite penalties express trade-offs and cannot guarantee compliance. `min_soc` is a physical/commissioned floor. A soft reserve valuation is distinct from it. There is no automatic instruction to reinstate a hard 80% end-of-solar target.
 
-There is no planner minimum-runtime setting. An executable quarter may stand alone; local equipment protection remains the device's responsibility. Optional start/switch costs are soft economic preferences and must be priced consistently by search and scoring, independently of run length. The v24 cost refinement prices charge starts for all stores as an explicit soft preference; it does not guarantee a minimum on/off time or carry compressor protection timers across replans.
+There is no planner minimum-runtime setting. An executable quarter may stand alone; local equipment protection remains the device's responsibility. Optional start/switch costs are soft economic preferences and must be priced consistently by search and scoring, independently of run length. Start costs and the start preference apply only to heat pumps, currently the pool store with its explicit equipment start cost. Home batteries and EV batteries pay neither start nor stop penalties; energy-throughput degradation remains a separate cost. These preferences do not guarantee a minimum on/off time or carry compressor protection timers across replans.
 
 ## Cost and continuity policy (v24)
 
@@ -49,13 +49,19 @@ The default soft preferences are:
 
 - Grid shaping: `0.1 SEK/kWh/kW`, applied from zero import, integrated as `0.5 × rate × import_kW² × 0.25 h` per quarter.
 - Import changes: `0.05 SEK/kW` of absolute change between adjacent quarters, without inventing an initial or final zero-load boundary.
-- Charge starts: `0.25 SEK` per run, in addition to any separately modelled equipment start cost.
+- Heat-pump starts: `0.25 SEK` per run in refinement, in addition to the pool’s `0.50 SEK` equipment start cost. Batteries, including EV batteries, are excluded.
 
 These are scheduling preferences, not billed charges or measured equipment wear. They are published in `peak_shaping`; the scorer reports continuity separately in `continuity_sek`, and neither preference enters `billable_sek`. No Ellevio demand charge is assumed while the household has none. A future tariff requires its actual measurement windows and carried billing state.
 
 Hot-water thermostat permission is inhibited only when the other planned net load plus the heater's rated draw would exceed the connection limit. Merely charging another device no longer interrupts hot water. Existing maximum inhibition and recovery rules remain enforced. Local equipment controls retain responsibility for compressor safety and actual duty cycle.
 
 Replay comparison: `deno run --allow-read scripts/compare-planner-replay.ts capsule.json [from-ISO to-ISO]`. This runs the current implementation against captured input data and compares it with the recorded plan; it never executes instructions from the capsule. Compare closing inventory as well as spending.
+
+## Heat-pump run settlement (v26)
+
+Settlement rebuilds continuous heat-pump runs from the actual power schedule and accounts for one equipment start per run. Confirmed operation at the first quarter waives that continuation’s start. Settlement considers trimming or removing any contiguous portion of a run, including the cost of any restart the cut creates. A slightly losing quarter therefore cannot be removed in isolation and leave its neighbour incorrectly priced as a free continuation. Diagnostics describe these actual runs and their combined net value, including after cost refinement.
+
+Decision, 2026-09-10: fix this accounting defect first, without adding a minimum runtime or changing the existing start cost. If isolated short heating runs recur, prefer adding a separate stopping cost (discussed at 0.50 SEK), rather than increasing the start cost. A new run would need to justify its start and eventual stop across the whole run. This is a future option, not an implemented penalty; any such start/stop costs apply only to heat pumps, never home or EV batteries.
 
 ## Joint physical model
 
