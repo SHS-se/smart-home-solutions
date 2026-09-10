@@ -47,6 +47,8 @@ sensor.sigen_plant_battery_state_of_charge   %
 
 ### 2.1 Control surface
 
+Historical survey: for current battery mode policy and implementation, use the [accepted 10 September battery control design](https://github.com/SHS-se/shs-ha-integration/blob/main/docs/battery-control.md). The mode inventory below includes ESS First, which is excluded from routine optimisation, and does not define the current executor contract.
+
 The `sigen` integration **ships read-only** and drops writes silently:
 
 ```python
