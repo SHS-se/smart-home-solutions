@@ -243,7 +243,7 @@ Deno.test("a new pool is dispatched at its declared power without a historical b
   }];
   snapshot.device_models = [{
     key: "pool-heater", name: "Pool heater", statistic_id: "sensor.pool_energy",
-    category: "pool_heating", suggested_load_type: "fixed_full_load",
+    category: "pool_heating", planning_service: "pool", suggested_load_type: "fixed_full_load",
     load_type: "fixed_full_load", planning_role: "controllable",
     control_type: "switch_schedule", active_power_w: 772,
     profile_sample_count: 0,
@@ -774,6 +774,7 @@ Deno.test("a device is never credited with more power than it can draw", () => {
       key: "pool-pump",
       name: "Pool pump",
       statistic_id: "sensor.pool_pump_energy",
+      planning_service: "pool",
       category: "pool_heating",
       suggested_load_type: "fixed_full_load",
       load_type: "fixed_full_load",
@@ -787,6 +788,7 @@ Deno.test("a device is never credited with more power than it can draw", () => {
       key: "pool-heater",
       name: "Pool heater",
       statistic_id: "sensor.pool_heater_energy",
+      planning_service: "pool",
       category: "pool_heating",
       suggested_load_type: "duty_cycle",
       load_type: "duty_cycle",
@@ -797,6 +799,9 @@ Deno.test("a device is never credited with more power than it can draw", () => {
       forecast_w_by_slot: snapshot.slots.map(() => 0),
     },
   ];
+
+  const poolService = snapshot.services.find(service => service.device === "pool")!;
+  poolService.control = { type: "fixed_power", power_w: 412 + 3439 };
 
   const plan = generateOptimisationPlan(snapshot, new Date(NOW));
   const overdrawn: string[] = [];
@@ -878,6 +883,7 @@ Deno.test("a room heater sharing a service's meter category keeps the service wh
         key: "pool-heater",
         name: "Pool heater",
         statistic_id: "sensor.pool_heater_energy",
+        planning_service: "pool",
         category: "pool_heating",
         suggested_load_type: "fixed_full_load",
         load_type: "fixed_full_load",
@@ -1762,7 +1768,7 @@ Deno.test("schema 6 with pool state dispatches by temperature, not by budget", (
   const plan = generateOptimisationPlan(snapshot, new Date(NOW));
 
   assertEquals(plan.schema_version, 6);
-  assertEquals(plan.model_version, "marginal-value-planner-v26");
+  assertEquals(plan.model_version, "marginal-value-planner-v27");
   // Asserted explicitly: an earlier version of this test checked the pool
   // energy but not the status, and so passed while every schema 6 plan was
   // reported infeasible by validations that still assumed fixed blocks.
@@ -3585,4 +3591,45 @@ Deno.test("pool running telemetry is validated and carried into dispatch", () =>
   }
   const invalid = input({ pool: { water_temperature_c: 23, volume_m3: 55, heating_running: "on" as unknown as boolean } });
   assert(validateSnapshot(invalid).includes("pool state is invalid"), "invalid actuator state must be rejected");
+});
+
+Deno.test("pool runs preserve each meter's learned draw despite conflicting quarter profiles", () => {
+  const snapshot = input({ schema_version: 7, pool: { water_temperature_c: 23, volume_m3: 55 }, thermal_zones: [] });
+  snapshot.outdoor_temperature_c = snapshot.slots.map(() => 20);
+  snapshot.device_models = [
+    { key: "pump", name: "Pump", statistic_id: "sensor.pump", category: "pool_heating",
+      suggested_load_type: "fixed_full_load", load_type: "variable_full_load", planning_role: "controllable",
+      control_type: "switch_schedule", planning_service: "pool", active_power_w: 764, profile_sample_count: 4,
+      forecast_w_by_slot: snapshot.slots.map((_, i) => i % 2 ? 0 : 764) },
+    { key: "heater", name: "Heater", statistic_id: "sensor.heater", category: "pool_heating",
+      suggested_load_type: "duty_cycle", load_type: "inverter", planning_role: "controllable",
+      control_type: "setpoint", planning_service: "pool", active_power_w: 1156, profile_sample_count: 4,
+      forecast_w_by_slot: snapshot.slots.map((_, i) => i % 2 ? 1156 : 0) },
+    { key: "floor", name: "Floor", statistic_id: "sensor.floor", category: "pool_heating",
+      suggested_load_type: "duty_cycle", load_type: "duty_cycle", planning_role: "controllable",
+      control_type: "setpoint", active_power_w: 800, profile_sample_count: 4,
+      forecast_w_by_slot: snapshot.slots.map(() => 80) },
+  ];
+  const service = snapshot.services.find(service => service.device === "pool")!;
+  service.control = { type: "fixed_power", power_w: 1920 };
+  assertEquals(validateSnapshot(snapshot), []);
+  const generated = generateOptimisationPlan(snapshot, new Date(NOW));
+  for (const plan of Object.values(generated.plans)) {
+    assert(plan.slots.some(slot => slot.pool_w > 0), "pool never ran");
+    for (const slot of plan.slots) {
+      assertEquals(slot.device_loads_w.pump, slot.pool_w > 0 ? 764 : 0);
+      assertEquals(slot.device_loads_w.heater, slot.pool_w > 0 ? 1156 : 0);
+      assertEquals(slot.device_loads_w.floor, 80);
+      assertAlmostEquals(slot.load_w, slot.base_w + slot.pool_w + slot.boiler_expected_w + 80, .01);
+      assertAlmostEquals(slot.grid_import_w + slot.pv_w + slot.battery_discharge_w,
+        slot.load_w + slot.grid_export_w + slot.battery_charge_w + slot.curtailed_w, .05);
+    }
+  }
+  service.control.power_w = 764;
+  assert(validateSnapshot(snapshot).includes("pool service power must equal its devices' running power"),
+    "the original pump-only service rating must be refused");
+  service.control.power_w = 1920;
+  for (const model of snapshot.device_models) delete model.planning_service;
+  assert(validateSnapshot(snapshot).includes("pool planning requires explicit device membership from Home Assistant"),
+    "a snapshot without pool ownership must not silently revert to category allocation");
 });

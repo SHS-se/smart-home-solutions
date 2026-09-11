@@ -112,8 +112,8 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6, 7] as const;
  * v11 integrates every sizeable curve move, applies configured EV curves,
  * prices executable setpoints and records exact quarter evidence.
  */
-// v26 settles physical heat-pump runs and excludes batteries from start preferences.
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v26";
+// v27 models pool meters at their own running power with explicit service membership.
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v27";
 /** Schema 5 service sizing also no longer pads energy to a minimum runtime. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v9";
 export const SLOT_MINUTES = 15;
@@ -314,6 +314,8 @@ export interface EmpiricalDeviceModelInput {
   planning_role: "controllable";
   control_type: DeviceControlType;
   active_power_w: number | null;
+  /** Explicit membership resolved from the installation mapping, never category alone. */
+  planning_service?: "pool";
   profile_sample_count: number;
   /**
    * Named explicitly because this series is consumed as the baseline control
@@ -1402,6 +1404,28 @@ export function validateSnapshot(snapshot: OptimisationSnapshot): string[] {
     }
   }
 
+  const poolModels = (snapshot.device_models ?? []).filter(model => model.planning_service === "pool");
+  if (snapshot.schema_version === 7 && snapshot.capabilities.pool && poolModels.length === 0) {
+    errors.push("pool planning requires explicit device membership from Home Assistant");
+  }
+  for (const model of snapshot.device_models ?? []) {
+    if (model.planning_service !== undefined && model.planning_service !== "pool") {
+      errors.push(`device ${model.key} has an invalid planning service`);
+    }
+  }
+  if (poolModels.length > 0) {
+    const totalW = poolModels.reduce((sum, model) => sum + (model.active_power_w ?? 0), 0);
+    if (poolModels.some(model =>
+      model.category !== "pool_heating" || !finite(model.active_power_w) || model.active_power_w! <= 0 ||
+      !["setpoint", "switch_schedule"].includes(model.control_type) ||
+      (snapshot.thermal_zones ?? []).some(zone => zone.device_keys.includes(model.key))
+    )) errors.push("pool device ownership or running power is invalid");
+    const services = snapshot.services.filter(service => service.device === "pool");
+    if (snapshot.capabilities.pool && (!services.length || services.some(service =>
+      service.control.type !== "fixed_power" || Math.abs(service.control.power_w - totalW) > 0.01
+    ))) errors.push("pool service power must equal its devices' running power");
+  }
+
   const requiredSources = [
     "base_load",
     "import_price",
@@ -1508,7 +1532,6 @@ function preparedSlots(
   const captured = isoMs(snapshot.captured_at);
   const controlledCategories = new Set<string>();
   if (snapshot.capabilities.boiler) controlledCategories.add("hot_water");
-  if (snapshot.capabilities.pool) controlledCategories.add("pool_heating");
   if (snapshot.capabilities.ev) controlledCategories.add("ev_charging");
   const thermalDeviceKeys = new Set(
     (snapshot.thermal_zones ?? []).flatMap((zone) => zone.device_keys),
@@ -1578,6 +1601,7 @@ function preparedSlots(
         (sum, model) =>
           sum +
           (controlledCategories.has(model.category) ||
+              (snapshot.capabilities.pool && model.planning_service === "pool") ||
               thermalDeviceKeys.has(model.key)
             ? 0
             : model.forecast_w_by_slot[index]),
@@ -3430,16 +3454,15 @@ function deviceLoadRules(snapshot: OptimisationSnapshot): DeviceLoadRule[] {
   if (snapshot.capabilities.boiler) {
     controlledServiceByCategory.set("hot_water", "boiler");
   }
-  if (snapshot.capabilities.pool) {
-    controlledServiceByCategory.set("pool_heating", "pool");
-  }
   if (snapshot.capabilities.ev) {
     controlledServiceByCategory.set("ev_charging", "ev");
   }
 
   for (const model of snapshot.device_models) {
     if (thermalDeviceKeys.has(model.key)) continue;
-    const service = controlledServiceByCategory.get(model.category);
+    const service = snapshot.capabilities.pool && model.planning_service === "pool"
+      ? "pool"
+      : controlledServiceByCategory.get(model.category);
     if (!service) {
       rules.push({
         key: model.key,
@@ -3448,10 +3471,13 @@ function deviceLoadRules(snapshot: OptimisationSnapshot): DeviceLoadRule[] {
       });
       continue;
     }
-    // A category can contain both a service meter and a room heater. Thermal
-    // meters are excluded here and receive their room allocation below.
+    // Pool membership is explicit even when a room has no fitted model.
+    // Each pool meter keeps its running draw; time-of-day averages describe
+    // prior schedules, not the equipment draw during this scheduled run.
     const categoryModels = snapshot.device_models.filter((candidate) =>
-      candidate.category === model.category &&
+      (service === "pool"
+        ? candidate.planning_service === "pool"
+        : candidate.category === model.category) &&
       !thermalDeviceKeys.has(candidate.key)
     );
     const activeTotal = categoryModels.reduce(
@@ -3469,7 +3495,9 @@ function deviceLoadRules(snapshot: OptimisationSnapshot): DeviceLoadRule[] {
       kind: "controlled",
       service,
       shareBySlot: forecastTotalBySlot.map((forecastTotal, index) =>
-        forecastTotal > 0
+        service === "pool"
+          ? (model.active_power_w ?? 0) / activeTotal
+          : forecastTotal > 0
           ? model.forecast_w_by_slot[index] / forecastTotal
           : activeTotal > 0
           ? (model.active_power_w ?? 0) / activeTotal
@@ -3714,13 +3742,13 @@ function simulate(
     for (const [key, powers] of Object.entries(schedule.roomDevicePower)) deviceLoads[key] = powers[slot.index];
     if (locked && Object.keys(locked.device_loads_w).sort().join('|') !== snapshot.device_models.map(m => m.key).sort().join('|')) throw new Error('Fixed plan device inventory changed; rescind the plan.');
     if (locked) for (const model of snapshot.device_models) {
-      if (model.category === "pool_heating" && Math.abs(locked.pool_w - poolW) > 0.01) continue;
+      if (model.planning_service === "pool" && Math.abs(locked.pool_w - poolW) > 0.01) continue;
       if (model.category === "ev_charging" && Math.abs(locked.ev_w - evW) > 0.01) continue;
       if (!(model.key in locked.device_loads_w)) throw new Error(`Fixed plan device ${model.key} changed; rescind the plan.`);
       deviceLoads[model.key] = locked.device_loads_w[model.key];
     }
     const unrepresentedControlledW =
-      (representedCategories.has("pool_heating") ? 0 : poolW) +
+      (snapshot.device_models.some(model => model.planning_service === "pool") ? 0 : poolW) +
       (representedCategories.has("hot_water") ? 0 : boilerW) +
       (representedCategories.has("ev_charging") ? 0 : evW);
     const loadW = slot.base_load_forecast_w +

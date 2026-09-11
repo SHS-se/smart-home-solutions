@@ -23,6 +23,7 @@ import type { TimelineRange, TimelineRow } from '@/lib/energy-shift/energy-timel
 import type { PlanModel } from './usePlanModel';
 import { useHomeTimeZone } from '../HomeTimeZoneContext';
 import { formatHomeStamp } from '@/lib/energy-shift/home-time';
+import { replayHistory } from '@/lib/energy-shift/plan-replay';
 
 const PlanReplayDownload: React.FC<{
   model: PlanModel;
@@ -56,15 +57,14 @@ const PlanReplayDownload: React.FC<{
     () => new Map(model.active.slots.map((slot, index) => [Date.parse(slot.start), index])),
     [model.active.slots],
   );
-  // Falling back to the first quarter on screen keeps the file downloadable
-  // before anything has been clicked: the plan is the payload, and the quarter
-  // is a bookmark into it.
+  // A historical selection is recorded in history; the replay bookmark must
+  // still point to a planned quarter, including on a history-only chart day.
   const replaySlot = React.useMemo(() => {
     const chosen = selectedStart
       ? inWindow.find(slot => Date.parse(slot.start) === Date.parse(selectedStart))
       : undefined;
-    return (chosen ?? inWindow[0]) as PlannedSlot | undefined;
-  }, [inWindow, selectedStart]);
+    return (chosen ?? inWindow[0] ?? model.active.slots[0]) as PlannedSlot | undefined;
+  }, [inWindow, selectedStart, model.active.slots]);
 
   const canReplay = Boolean(
     model.current.home_id &&
@@ -95,7 +95,7 @@ const PlanReplayDownload: React.FC<{
       const { thermal_projection: thermalProjection, ...plannerOutput } = model.plan;
       const bundle = {
         format: 'shs-energy-optimisation-quarter-replay',
-        schema_version: 1,
+        schema_version: 2,
         entrypoint: {
           module: 'supabase/functions/_shared/energy-optimisation.ts',
           export: 'generateOptimisationPlan',
@@ -115,6 +115,7 @@ const PlanReplayDownload: React.FC<{
           quarter_index: slotIndex,
           quarter_start: slot.start,
         },
+        history: replayHistory(timeline, range, homeTimeZone, selectedStart),
         expected: {
           planner_output: plannerOutput,
           thermal_projection: thermalProjection ?? null,
@@ -143,8 +144,7 @@ const PlanReplayDownload: React.FC<{
     }
   };
 
-  // The chart shows measurements before the plan begins. There is no plan to
-  // download for that stretch, and saying so would only restate the chart.
+  // A replay needs a plan, but its selected chart window can be all history.
   if (!replaySlot) return null;
 
   const quarter = formatHomeStamp(replaySlot.start, homeTimeZone);
@@ -153,8 +153,8 @@ const PlanReplayDownload: React.FC<{
     <div className="flex flex-wrap items-center justify-between gap-3">
       <p className="text-xs text-muted-foreground">
         {t(
-          'Hela planen med de mätvärden och priser den byggdes av, och anropet som återskapar den.',
-          'The whole plan with the measurements and prices it was built from, and the call that reproduces it.',
+          'Hela planen med indata, uppmätt historik och anropet som återskapar den.',
+          'The whole plan with its inputs, measured history, and the call that reproduces it.',
         )}
       </p>
       <Button

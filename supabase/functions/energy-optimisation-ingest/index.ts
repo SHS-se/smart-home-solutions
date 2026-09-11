@@ -664,6 +664,7 @@ async function prepareThermalPlanning(
     storedDevices.map((device) => [device.key, device]),
   );
   const roomModels = snapshot.device_models.filter((model) => {
+    if (model.planning_service === "pool") return false;
     if (model.control_type === "setpoint") return true;
     if (model.control_type !== "switch_schedule") return false;
     const stored = storedByKey.get(model.key);
@@ -1888,8 +1889,8 @@ serve(async (req) => {
       // fit produced. A refusal leaves `pool_model` absent and the planner
       // falls back to its seeded figures.
       if (snapshot.pool) {
-        const poolKeys = storedDevices
-          .filter((device) => device.category === "pool_heating")
+        const poolKeys = snapshot.device_models
+          .filter((device) => device.planning_service === "pool")
           .map((device) => device.key);
         try {
           await refitPoolModel(
