@@ -1,6 +1,7 @@
 import {
   generateOptimisationPlan,
   type OptimisationSnapshotV6,
+  type OptimisationSnapshotV8,
 } from "../supabase/functions/_shared/energy-optimisation.ts";
 
 const NOW = new Date("2026-08-20T08:55:00.000Z");
@@ -131,7 +132,31 @@ export function dispatchedEvPlanFixture() {
   };
 }
 
+export function batterySnapshot(): OptimisationSnapshotV8 {
+  const snapshot = dispatchedEvSnapshot();
+  return {...snapshot, schema_version: 8,
+    capabilities: {...snapshot.capabilities, ev: false, battery: true},
+    ev_battery: null, services: [],
+    policy: {...snapshot.policy, battery_end_of_solar_target_soc: .8, terminal_soc_min: .2, battery_export_reserve_soc: .8},
+    battery: {capacity_kwh: 18.08, soc: .5, min_soc: .05, max_soc: 1,
+      charge_max_w: 8800, discharge_max_w: 9600, charge_efficiency: .95, discharge_efficiency: .95},
+    sources: {...snapshot.sources, battery: {...snapshot.sources.base_load,
+      entity_ids: ["sensor.sigen_plant_battery_state_of_charge"]}},
+    slots: snapshot.slots.map((slot, index) => ({...slot,
+      import_price_sek_per_kwh: index < 8 ? .1 : 3})),
+  };
+}
+
+export function batteryPlanFixture() {
+  return {contract_fixture: "schema-8-battery", generated_by: "generateOptimisationPlan",
+    validation_time: "2026-08-20T09:00:00.000Z",
+    plan: {...generateOptimisationPlan(batterySnapshot(), NOW),
+      plan_id: "c22f37ca-7791-4b9c-a1ec-793ba6e226bd"}};
+}
+
 if (import.meta.main) {
+  await Deno.writeTextFile(new URL("../contracts/ha-api/fixtures/schema-8-battery-plan.json", import.meta.url),
+    `${JSON.stringify(batteryPlanFixture(), null, 2)}\n`);
   const target = new URL(
     "../contracts/ha-api/fixtures/schema-6-dispatched-ev-plan.json",
     import.meta.url,

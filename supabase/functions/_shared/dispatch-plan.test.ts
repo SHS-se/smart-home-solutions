@@ -1939,3 +1939,28 @@ for (const key of ["battery", "ev"]) {
     assert(result.allocations.flat().every((part) => part.start_cost_sek === 0));
   });
 }
+
+Deno.test("export allocation and settlement enforce slot eligibility and reserve", () => {
+  const slots = buildSlots([new Array(8).fill(0)], {importPrice: 4, exportPrice: 6});
+  const battery = batteryStore(slots.length, 17, .1, {exportAllowed: true});
+  battery.discharge!.export_allowed_by_slot = slots.map((_, index) => index >= 4);
+  battery.discharge!.export_min_state = 14;
+  const result = planDispatch(slots, [battery], LIMITS);
+  const scored = scoreDispatch(slots, [battery], LIMITS, result);
+  assertEquals(scored.infeasibilities, []);
+  for (let index = 0; index < slots.length; index++) {
+    const out = result.discharge_w.battery[index];
+    if (index < 4) assert(out <= slots[index].fixed_load_w + .01);
+    if (out > slots[index].fixed_load_w + .01) assert(scored.state.battery[index + 1] >= 14 - 1e-6);
+  }
+  assert(result.discharge_w.battery.some((out, index) => index >= 4 && out > slots[index].fixed_load_w));
+  const invalid = structuredClone(result);
+  invalid.power_w.battery.fill(0);
+  invalid.discharge_w.battery.fill(0);
+  invalid.discharge_w.battery[0] = 4000;
+  assertEquals(scoreDispatch(slots, [battery], LIMITS, invalid).infeasibilities.length > 0, true);
+  invalid.discharge_w.battery.fill(0);
+  invalid.discharge_w.battery[4] = 9600;
+  invalid.discharge_w.battery[5] = 9600;
+  assertEquals(scoreDispatch(slots, [battery], LIMITS, invalid).infeasibilities.length > 0, true);
+});

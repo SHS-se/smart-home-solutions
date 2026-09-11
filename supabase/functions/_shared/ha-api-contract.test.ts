@@ -9,7 +9,7 @@ import {
   pendingReplanRequestId,
   validatePlanningNegotiation,
 } from "./ha-api-contract.ts";
-import { dispatchedEvPlanFixture } from "../../../scripts/generate-ha-plan-fixture.ts";
+import { batteryPlanFixture, dispatchedEvPlanFixture } from "../../../scripts/generate-ha-plan-fixture.ts";
 
 const contractUrl = new URL(
   "../../../contracts/ha-api/openapi.json",
@@ -225,4 +225,24 @@ Deno.test("a correlation id must be one this server could have issued", () => {
   assertEquals(HA_UUID.test("2f1c0c74-9d31-7f0e-9a45-9c6f2f5f0a11"), false);
   assertEquals(HA_UUID.test("not-a-uuid"), false);
   assertEquals(HA_UUID.test(""), false);
+});
+
+Deno.test("the schema-8 battery fixture is emitted by the real planner", async () => {
+  const stored = JSON.parse(await Deno.readTextFile(new URL(
+    "../../../contracts/ha-api/fixtures/schema-8-battery-plan.json", import.meta.url)));
+  assertEquals(stored, batteryPlanFixture());
+  for (const [key, scenario] of Object.entries(stored.plan.plans) as [string, any][]) {
+    assertEquals(scenario.status, "ready", JSON.stringify(scenario.validation_errors));
+    for (const slot of scenario.slots) {
+      assertEquals(slot.battery_command.schema_version, 1);
+      assertEquals(slot.battery_command.allow_battery_export, false);
+      if (key === "baseline") {
+        assertEquals(slot.battery_command.operation, "self_consumption");
+        assertEquals(slot.battery_command.charge_limit_w, 8800);
+        assertEquals(slot.battery_command.discharge_limit_w, 9600);
+      }
+    }
+  }
+  assertEquals(validatePlanningNegotiation({api_version: 1, integration_version: "0.7.0-beta.56",
+    accepted_plan_schema_versions: [8]}, 8), null);
 });

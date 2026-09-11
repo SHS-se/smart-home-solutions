@@ -6,8 +6,8 @@
  */
 
 export const HA_API_VERSION = 1 as const;
-export const HA_SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS = [5, 6, 7] as const;
-export const HA_SUPPORTED_PLAN_SCHEMA_VERSIONS = [5, 6, 7] as const;
+export const HA_SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS = [5, 6, 7, 8] as const;
+export const HA_SUPPORTED_PLAN_SCHEMA_VERSIONS = [5, 6, 7, 8] as const;
 export const HA_MINIMUM_SNAPSHOT_SCHEMA_VERSION = 5 as const;
 export const HA_MINIMUM_PLAN_SCHEMA_VERSION = 5 as const;
 
@@ -218,7 +218,7 @@ export function validatePlanningNegotiation(
   }
   if (
     !HA_SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS.includes(
-      snapshotSchemaVersion as 5 | 6 | 7,
+      snapshotSchemaVersion as 5 | 6 | 7 | 8,
     ) ||
     !accepted.includes(snapshotSchemaVersion)
   ) {

@@ -132,6 +132,8 @@ export interface DispatchStore {
     state_per_kwh_out: (state: number, index: number) => number;
     /** Whether discharging into export is permitted, not merely to cover load. */
     export_allowed: boolean;
+    export_allowed_by_slot?: boolean[];
+    export_min_state?: number;
     /** Cycling cost per unit of state, already embedded in the utility curve.
      * Balanced transfers leave terminal utility unchanged, so pay it explicitly. */
     cycling_cost_sek_per_unit?: number;
@@ -852,18 +854,17 @@ function scoreDispatchWithReuse(
   }
 
   for (const store of stores) {
-    if (!store.discharge || store.discharge.export_allowed) continue;
+    if (!store.discharge) continue;
     for (let index = 0; index < count; index += 1) {
-      if (schedule.allow_export?.[index]) continue;
-      if (
-        dischargeByKey[store.key][index] > 1e-9 && exportW[index] > GRID_NOISE_W
-      ) {
-        infeasibilities.push({
-          slot: index,
-          store_key: store.key,
-          message:
-            `${store.key} discharges into export, which it is not permitted to do`,
-        });
+      const permitted = store.discharge.export_allowed &&
+        (store.discharge.export_allowed_by_slot?.[index] ?? true);
+      const reserved = stateByKey[store.key][index + 1] >=
+        (store.discharge.export_min_state ?? -Infinity) - 1e-6;
+      if (!store.discharge.export_allowed_by_slot && schedule.allow_export?.[index]) continue;
+      if (dischargeByKey[store.key][index] > 1e-9 && exportW[index] > GRID_NOISE_W &&
+          (!permitted || !reserved)) {
+        infeasibilities.push({slot: index, store_key: store.key,
+          message: `${store.key} discharges into export without permission, price eligibility or reserved energy`});
       }
     }
   }
@@ -1961,10 +1962,10 @@ function dispatchAuction(
     );
     if (inW > 0 && after > (store.max_state ?? Infinity) + 1e-9) return true;
     if (outW > 0 && after < (store.min_state ?? -Infinity) - 1e-9) return true;
-    return outW > 0 && store.discharge?.export_allowed === false &&
-      outW >
-        gridImportW(slots[index], occupiedW[index], returnedW[index] - outW) +
-          1e-6;
+    const exporting = outW > gridImportW(slots[index], occupiedW[index], returnedW[index] - outW) + 1e-6;
+    return outW > 0 && exporting && (!store.discharge?.export_allowed ||
+      store.discharge.export_allowed_by_slot?.[index] === false ||
+      after < (store.discharge.export_min_state ?? -Infinity) - 1e-9);
   };
 
   const releaseRun = (store: DispatchStore, indices: number[]): void => {
@@ -2309,9 +2310,14 @@ function dispatchAuction(
                 otherReturnedW,
             );
             const coverW = Math.min(store.discharge.max_power_w, deficitW);
-            const exportW = store.discharge.export_allowed
+            const statePerKwh = store.discharge.state_per_kwh_out(state[index], index);
+            const exportPermitted = store.discharge.export_allowed &&
+              (store.discharge.export_allowed_by_slot?.[index] ?? true);
+            const exportW = exportPermitted
               ? Math.min(
                 store.discharge.max_power_w - coverW,
+                Math.max(0, (state[index] - (store.discharge.export_min_state ?? -Infinity)) /
+                  statePerKwh * 1000 / SLOT_HOURS - coverW),
                 Math.max(
                   0,
                   limits.grid_export_limit_w -
@@ -2322,10 +2328,6 @@ function dispatchAuction(
             const maximumW = coverW + exportW;
             if (maximumW <= previousW + 1e-6) continue;
             const rawLevels = [coverW, maximumW];
-            const statePerKwh = store.discharge.state_per_kwh_out(
-              state[index],
-              index,
-            );
             // Removing energy only moves up a concave marginal-value curve.
             // Price the most optimistic first unit before enumerating levels.
             // Peak relief is bounded by the marginal relief at today's import.
@@ -2339,7 +2341,7 @@ function dispatchAuction(
                   gridImportW(slot, occupiedW[index], otherReturnedW),
                 )
                 : 0;
-              const upperPrice = (store.discharge.export_allowed
+              const upperPrice = (exportPermitted
                 ? Math.max(
                   slot.import_price_sek_per_kwh,
                   slot.export_price_sek_per_kwh,

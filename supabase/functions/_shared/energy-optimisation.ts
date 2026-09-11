@@ -8,6 +8,7 @@
  * verified before it may be published as `ready`.
  */
 
+import { batteryCommand, type BatteryCommand } from "./battery-command.ts";
 import { dispatchWithFixedPlan, type FixedEnergyPlan } from "./fixed-energy-plan.ts";
 
 import {
@@ -65,10 +66,11 @@ import {
  *
  * Schema 6 adds measured pool state. That is not decoration: it is the
  * difference between the pool being a temperature the planner schedules against
- * and a daily energy budget it has to believe.
+ * and a daily energy budget it has to believe. Schema 7 adds device commands;
+ * schema 8 adds explicit battery operations and source/destination permissions.
  */
-export const OPTIMISATION_SCHEMA_VERSION = 7;
-export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6, 7] as const;
+export const OPTIMISATION_SCHEMA_VERSION = 8;
+export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6, 7, 8] as const;
 /**
  * The planner's own version. It lives here because the planner lives here — the
  * integration only validates the string, against a set since beta.19, so this
@@ -112,8 +114,8 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6, 7] as const;
  * v11 integrates every sizeable curve move, applies configured EV curves,
  * prices executable setpoints and records exact quarter evidence.
  */
-// v27 models pool meters at their own running power with explicit service membership.
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v27";
+// v28 emits battery operations and enforces export eligibility and reserves in dispatch.
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v28";
 /** Schema 5 service sizing also no longer pads energy to a minimum runtime. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v9";
 export const SLOT_MINUTES = 15;
@@ -349,7 +351,7 @@ export interface ThermalZonePlanningInput {
 }
 
 export interface OptimisationSnapshot {
-  schema_version: 5 | 6 | 7;
+  schema_version: 5 | 6 | 7 | 8;
   // Only Home Assistant live snapshots cross the ingestion boundary. The
   // website's promotional demo is a client-side plan fixture, not a snapshot.
   mode: "live";
@@ -497,6 +499,8 @@ export type OptimisationSnapshotV6 =
 
 export type OptimisationSnapshotV7 = Omit<OptimisationSnapshot, "schema_version"> & { schema_version: 7 };
 
+export type OptimisationSnapshotV8 = Omit<OptimisationSnapshot, "schema_version"> & { schema_version: 8 };
+
 export interface QuarterGridBalanceDiagnostic {
   load_w: number;
   pv_w: number;
@@ -559,6 +563,7 @@ export interface PlannedSlot {
   battery_charge_w: number;
   battery_discharge_w: number;
   battery_export_w: number;
+  battery_command?: BatteryCommand | null;
   battery_soc: number;
   grid_import_w: number;
   grid_export_w: number;
@@ -615,7 +620,7 @@ export interface GeneratedPlan {
 
 export interface OptimisationPlan {
   fixed_plan?: { id: string; starts_at: string; ends_at: string };
-  schema_version: 5 | 6 | 7;
+  schema_version: 5 | 6 | 7 | 8;
   mode: PlanMode;
   capabilities: OptimisationCapabilities;
   model_version: string;
@@ -689,6 +694,8 @@ export type OptimisationPlanV5 = Omit<OptimisationPlan, "schema_version"> & {
 export type OptimisationPlanV6 = Omit<OptimisationPlan, "schema_version"> & {
   schema_version: 6;
 };
+
+export type OptimisationPlanV8 = Omit<OptimisationPlan, "schema_version"> & { schema_version: 8 };
 
 export type OptimisationPlanV7 = Omit<OptimisationPlan, "schema_version"> & { schema_version: 7 };
 
@@ -927,10 +934,10 @@ export function validateSnapshot(snapshot: OptimisationSnapshot): string[] {
   const errors: string[] = [];
   if (
     !SUPPORTED_SNAPSHOT_VERSIONS.includes(
-      snapshot?.schema_version as 5 | 6 | 7,
+      snapshot?.schema_version as 5 | 6 | 7 | 8,
     )
   ) {
-    errors.push("schema_version must be 5, 6 or 7");
+    errors.push("schema_version must be 5, 6, 7 or 8");
   }
   if (snapshot?.mode !== "live") {
     errors.push("mode must be live");
@@ -1405,7 +1412,7 @@ export function validateSnapshot(snapshot: OptimisationSnapshot): string[] {
   }
 
   const poolModels = (snapshot.device_models ?? []).filter(model => model.planning_service === "pool");
-  if (snapshot.schema_version === 7 && snapshot.capabilities.pool && poolModels.length === 0) {
+  if (snapshot.schema_version >= 7 && snapshot.capabilities.pool && poolModels.length === 0) {
     errors.push("pool planning requires explicit device membership from Home Assistant");
   }
   for (const model of snapshot.device_models ?? []) {
@@ -2613,6 +2620,11 @@ function buildDispatchStores(
           max_power_w: battery.discharge_max_w,
           state_per_kwh_out: () => 1 / battery.discharge_efficiency,
           export_allowed: snapshot.policy.battery_export_enabled,
+          ...(snapshot.schema_version >= 8 ? {
+            export_allowed_by_slot: slots.map(slot => slot.binding && slot.export_price_sek_per_kwh !== null &&
+              slot.export_price_sek_per_kwh >= snapshot.policy.battery_export_min_price_sek_per_kwh),
+            export_min_state: Math.max(0, (snapshot.policy.battery_export_reserve_soc - battery.min_soc) * battery.capacity_kwh),
+          } : {}),
           cycling_cost_sek_per_unit:
             resolveValueSettings(snapshot.value_settings)
               .battery_degradation_sek_per_kwh,
@@ -3287,7 +3299,7 @@ function scheduleRoomHeating(
   const outdoor = snapshot.outdoor_temperature_c as number[];
   const errors: string[] = [];
   for (const zone of zones) {
-    if (snapshot.schema_version === 7) {
+    if (snapshot.schema_version >= 7) {
       try {
         const discrete = discreteRoomPlan(snapshot, zone, schedule.roomHeating[zone.key], fixed);
         if (discrete) {
@@ -3727,7 +3739,8 @@ function simulate(
     if (locked && Object.keys(locked.room_heating_w).sort().join('|') !== Object.keys(roomHeating).sort().join('|')) throw new Error('Fixed plan room configuration changed; rescind the plan.');
     if (locked && (Math.abs(locked.boiler_expected_w - boilerW) > 0.01 || locked.boiler_permitted !== schedule.boilerPermitted[slot.index])) throw new Error('Fixed plan hot-water service changed; rescind the plan.');
     if (locked && Math.abs(locked.ev_w - evW) < 0.01 && locked.ev_target_current_a !== schedule.evTargetCurrentA[slot.index]) throw new Error('Fixed plan charger configuration changed; rescind the plan.');
-    if (locked && snapshot.schema_version === 7 && !locked.device_commands) throw new Error('Fixed plan device command schema changed; rescind the plan.');
+    if (locked && snapshot.schema_version >= 8 && snapshot.battery && !locked.battery_command) throw new Error('Fixed plan battery command schema changed; rescind the plan.');
+    if (locked && snapshot.schema_version >= 7 && !locked.device_commands) throw new Error('Fixed plan device command schema changed; rescind the plan.');
     const roomHeatingW = Object.values(roomHeating).reduce(
       (sum, watts) => sum + watts,
       0,
@@ -3825,6 +3838,13 @@ function simulate(
       );
       if (locked && (Math.abs(batteryChargeW - schedule.batteryChargeW[slot.index]) > 0.01 || Math.abs(batteryDischargeW - schedule.batteryDischargeW[slot.index]) > 0.01)) {
         errors.push(`${slot.start}: fixed battery allocation exceeds physical limits`);
+      }
+      batteryExportW = Math.max(0, batteryDischargeW - Math.max(0, -netW));
+      if (snapshot.schema_version >= 8 && batteryExportW > 0.01 &&
+          (!snapshot.policy.battery_export_enabled || !slot.binding ||
+           slot.export_price_sek_per_kwh === null || slot.export_price_sek_per_kwh < snapshot.policy.battery_export_min_price_sek_per_kwh ||
+           soc - batteryDischargeW / 1000 * SLOT_HOURS / battery.discharge_efficiency / battery.capacity_kwh < snapshot.policy.battery_export_reserve_soc - 1e-6)) {
+        errors.push(`${slot.start}: battery export violates permission, price or reserve`);
       }
       const balanceW = netW - batteryChargeW + batteryDischargeW;
       if (balanceW >= 0) {
@@ -4003,7 +4023,7 @@ function simulate(
         ]),
       ),
       device_loads_w: deviceLoads,
-      ...(snapshot.schema_version === 7 ? { device_commands: locked && Math.abs(locked.ev_w - evW) < 0.01 ? locked.device_commands : deviceCommands(snapshot, {
+      ...(snapshot.schema_version >= 7 ? { device_commands: locked && Math.abs(locked.ev_w - evW) < 0.01 ? locked.device_commands : deviceCommands(snapshot, {
         index: slot.index, roomHeating: schedule.roomHeating,
         boilerPermitted: schedule.boilerPermitted[slot.index],
         poolW, evCurrentA: schedule.evTargetCurrentA[slot.index], relayPower: schedule.roomDevicePower,
@@ -4017,6 +4037,11 @@ function simulate(
       battery_charge_w: round(batteryChargeW, 2),
       battery_discharge_w: round(batteryDischargeW, 2),
       battery_export_w: round(batteryExportW, 2),
+      ...(snapshot.schema_version >= 8 ? { battery_command: snapshot.battery ? (locked ? locked.battery_command : batteryCommand({
+        baseline: key === "baseline", chargeW: round(batteryChargeW, 2), dischargeW: round(batteryDischargeW, 2),
+        loadW, pvW: slot.pv_w, chargeMaxW: battery.charge_max_w, dischargeMaxW: battery.discharge_max_w,
+        exportEnabled: snapshot.policy.battery_export_enabled,
+      })) : null } : {}),
       battery_soc: round(soc, 6),
       grid_import_w: round(gridImportW, 2),
       grid_export_w: round(gridExportW, 2),
