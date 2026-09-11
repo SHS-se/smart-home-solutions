@@ -11,11 +11,12 @@ export interface HaRuntime {
   last_error: string | null;
 }
 export const HA_RUNTIME_LEASE_MS = 150_000;
-export function haRuntimeStatus(row: {
+export interface HaRuntimeRow {
   plan_id: string | null;
   ha_runtime: HaRuntime | null;
   ha_runtime_received_at: string | null;
-}, now: number) {
+}
+export function haRuntimeStatus(row: HaRuntimeRow, now: number) {
   const runtime = row.ha_runtime;
   const observed = Date.parse(runtime?.observed_at ?? '');
   const received = Date.parse(row.ha_runtime_received_at ?? '');

@@ -1,4 +1,5 @@
-import { haRuntimeStatus } from '@/lib/energy-shift/ha-runtime';
+import { readPlanRefresh } from '@/lib/energy-shift/plan-refresh';
+import { haRuntimeStatus, type HaRuntimeRow } from '@/lib/energy-shift/ha-runtime';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, Loader2, Sparkles } from 'lucide-react';
@@ -10,7 +11,6 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
 import {
   effectivePlanningRole,
-  isOptimisationPlan,
   type ActualEnergySlot,
   type ThermalFixtureSeason,
 } from '@/lib/energy-shift/contracts';
@@ -75,6 +75,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
   const { t } = useLanguage();
   const homeTimeZone = useHomeTimeZone();
   const [current, setCurrent] = useState<CurrentRow | null>(null);
+  const [latestRuntime, setLatestRuntime] = useState<HaRuntimeRow | null>(null);
   const [actuals, setActuals] = useState<ActualEnergySlot[]>([]);
   const [prices, setPrices] = useState<PriceSlotRow[]>([]);
   const [empiricalDevices, setEmpiricalDevices] = useState<EmpiricalEnergyDevice[]>([]);
@@ -97,6 +98,8 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
   const load = useCallback(async (background = false) => {
     if (!customerId || !homeId) {
       setCurrent(null);
+      setLatestRuntime(null);
+      setError(null);
       setActuals([]);
       setPrices([]);
       setEmpiricalDevices([]);
@@ -107,7 +110,6 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
       return;
     }
     if (!background) setLoading(true);
-    setError(null);
     try {
       const toMs = Math.floor(Date.now() / (15 * 60_000)) * 15 * 60_000;
       const from = new Date(toMs - 72 * 60 * 60_000).toISOString();
@@ -184,6 +186,16 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
       ]);
       const { data, error: planError } = planResult;
       if (planError) throw planError;
+      const refreshed = readPlanRefresh(data ? {
+        ...data,
+        ha_runtime: data.ha_runtime as unknown as CurrentRow['ha_runtime'],
+        ha_ack_status: data.ha_ack_status as CurrentRow['ha_ack_status'],
+        ha_ack_error: data.ha_ack_error as CurrentRow['ha_ack_error'],
+      } : null);
+      // Update the report even if the plan format or an auxiliary read fails.
+      setLatestRuntime(refreshed.runtime);
+      setCurrent(refreshed.current);
+
       const { data: actualRows, error: actualError } = actualResult;
       if (actualError) throw actualError;
       // A price gap must not blank the measured chart: the history tab still
@@ -220,20 +232,11 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
           })),
       );
       setConnections((connectionRows ?? []) as HomeAssistantConnection[]);
-      if (!data) {
-        setCurrent(null);
-        return;
+      if (refreshed.unsupported) {
+        throw new Error(t('Webbplatsen kan inte visa det mottagna planformatet. Ladda om sidan för att hämta den senaste versionen.',
+          'The website cannot display the received plan format. Reload the page to load the latest website version.'));
       }
-      if (!isOptimisationPlan(data.plan)) {
-        throw new Error(t('Planformatet stöds inte.', 'The stored plan format is not supported.'));
-      }
-      setCurrent({
-        ...data,
-        plan: data.plan,
-        ha_runtime: data.ha_runtime as unknown as CurrentRow['ha_runtime'],
-        ha_ack_status: data.ha_ack_status as CurrentRow['ha_ack_status'],
-        ha_ack_error: data.ha_ack_error as CurrentRow['ha_ack_error'],
-      });
+      setError(null);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : String(loadError));
     } finally {
@@ -359,7 +362,13 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
       <Alert variant="destructive">
         <AlertTriangle className="h-4 w-4" />
         <AlertTitle>{t('Kunde inte läsa energiplanen', 'Could not load the energy plan')}</AlertTitle>
-        <AlertDescription>{error}</AlertDescription>
+        <AlertDescription>
+          {error}
+          {latestRuntime && haRuntimeStatus(latestRuntime, clock).ready && (
+            <p className="mt-1">{t('Home Assistant rapporterar att en giltig plan är tillgänglig. Felet gäller webbplatsens visning.',
+              'Home Assistant reports that a validated plan is available. This error affects the website display.')}</p>
+          )}
+        </AlertDescription>
       </Alert>
     );
   } else if (!current) {
@@ -418,18 +427,13 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
   } else {
     content = (
       <div className="space-y-4">
-        {error && (
-          <Alert variant="destructive">
-            <AlertTriangle className="h-4 w-4" />
-            <AlertTitle>{t('Den senaste uppdateringen misslyckades', 'The latest refresh failed')}</AlertTitle>
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
         <PlanView
           section={section}
           customerId={customerId}
           homeId={homeId}
           current={current}
+          refreshError={error}
+          latestRuntime={latestRuntime}
           actuals={actuals}
           empiricalDevices={empiricalDevices}
           thermalObservations={thermalObservations}
@@ -493,6 +497,8 @@ const PlanView: React.FC<{
   customerId: string | null;
   homeId: string | null;
   current: CurrentRow;
+  refreshError?: string | null;
+  latestRuntime?: HaRuntimeRow | null;
   actuals: ActualEnergySlot[];
   empiricalDevices: EmpiricalEnergyDevice[];
   thermalObservations: ThermalObservationSummary;
@@ -519,6 +525,8 @@ const PlanView: React.FC<{
   customerId,
   homeId,
   current,
+  refreshError = null,
+  latestRuntime,
   actuals,
   empiricalDevices,
   thermalObservations,
@@ -542,7 +550,7 @@ const PlanView: React.FC<{
     sourceStale, bindingExpired, ready, pct, costDelta, costTone, costMeaning,
     validationMessages,
   } = model;
-  const runtimeStatus = haRuntimeStatus(current, now);
+  const runtimeStatus = haRuntimeStatus(latestRuntime ?? current, now);
   const runtimeReady = ready && (isDemo || runtimeStatus.ready);
   const runtimeLabel = runtimeStatus.state === 'unconfirmed' ? t('HA-status obekräftad', 'HA status unconfirmed')
     : runtimeStatus.state === 'different_plan' ? t('Annan plan i HA', 'Different plan in HA')
@@ -691,7 +699,13 @@ const PlanView: React.FC<{
           </AlertDescription>
         </Alert>
       )}
-      {(!runtimeReady || validationMessages.length > 0) && (() => {
+      {refreshError ? (
+        <Alert variant="destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>{t('Webbplatsen kunde inte uppdateras', 'The website could not refresh')}</AlertTitle>
+          <AlertDescription>{refreshError} {t('Visade uppgifter kan vara inaktuella.', 'Displayed information may be out of date.')}</AlertDescription>
+        </Alert>
+      ) : (!runtimeReady || validationMessages.length > 0) && (() => {
         // Explain expiry separately from the reason a replacement failed.
         const lastSeenMs = connectionLastSeenAt
           ? Date.parse(connectionLastSeenAt)
@@ -843,38 +857,40 @@ const PlanView: React.FC<{
             <div>
               <div className="flex items-center gap-2">
                 <CardTitle className="text-lg">{isDemo ? t('Demoplan med 15-minutersupplösning', '15-minute demo energy plan') : t('Liveplan för 15-minutersstyrning', 'Live 15-minute energy plan')}</CardTitle>
-                <Badge variant={runtimeReady ? 'secondary' : 'destructive'}>
-                  {isDemo ? t('Demo', 'Demo') : stale ? t('Utgången', 'Expired')
-                    : bindingExpired ? t('Endast rådgivande', 'Advisory only')
-                    : runtimeLabel}
-                </Badge>
+                {(isDemo || (!refreshError && runtimeReady && validationMessages.length === 0)) && (
+                  <Badge variant="secondary">{isDemo ? t('Demo', 'Demo') : runtimeLabel}</Badge>
+                )}
               </div>
               <p className="mt-1 text-sm text-muted-foreground">
-                {t('Utfärdad', 'Issued')} {formatHomeStamp(plan.issued_at, homeTimeZone)} · {plan.model_version} · {actuals.length} {t('faktiska kvartar', 'actual quarters')}
+                {t('Utfärdad', 'Issued')} {formatHomeStamp(plan.issued_at, homeTimeZone)}
               </p>
-              {!isDemo && lastCheckedAt && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {t('Portalen kontrollerade senast', 'Portal last checked')} {formatHomeTimeWithSeconds(lastCheckedAt, homeTimeZone)} · {runtimeDetail}
-                </p>
-              )}
               {!isDemo && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {t('Senaste status från HA', 'Last status from HA')}: {current.ha_runtime_received_at ? formatHomeStamp(current.ha_runtime_received_at, homeTimeZone) : t('Inte mottagen', 'Not received')}.
-                  {runtimeStatus.runtime?.recovering ? t(' Begär automatiskt en ny plan.', ' Automatically requesting a fresh plan.')
-                    : runtimeStatus.runtime?.retry_at && !runtimeStatus.ready ? ` ${t('Automatiskt nytt försök', 'Automatic retry')}: ${formatHomeTimeWithSeconds(runtimeStatus.runtime.retry_at, homeTimeZone)}.` : ''}
-                  {runtimeStatus.runtime?.last_error ? ` ${runtimeStatus.runtime.last_error}` : ''}
-                  {current.ha_ack_status === 'accepted' ? ` ${t('Tidigare accepterad', 'Previously accepted')}: ${current.ha_acknowledged_at ? formatHomeStamp(current.ha_acknowledged_at, homeTimeZone) : '—'}.` : ''}
-                </p>
-              )}
-              {!isDemo && current.generation_request_id && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {t('Begäran', 'Request')} {current.generation_request_id} {current.ha_integration_version ? `· ${t('Accepterad/avvisad av HA', 'Acknowledged by HA')} ${current.ha_integration_version}` : ''}
-                </p>
-              )}
-              {!isDemo && nextReplanAt && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {t('Nästa omplanering', 'Next replan')} {formatHomeTimeWithSeconds(nextReplanAt, homeTimeZone)} · {t('planen gäller till', 'plan valid until')} {formatHomeTimeWithSeconds(plan.valid_until, homeTimeZone)}
-                </p>
+                <details className="mt-2 text-xs text-muted-foreground">
+                  <summary className="cursor-pointer">{t('Statusdetaljer', 'Status details')}</summary>
+                  <p className="mt-1">{plan.model_version} · {actuals.length} {t('faktiska kvartar', 'actual quarters')}</p>
+                  {lastCheckedAt && (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {t('Portalen kontrollerade senast', 'Portal last checked')} {formatHomeTimeWithSeconds(lastCheckedAt, homeTimeZone)}
+                    </p>
+                  )}
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {t('Senaste status från HA', 'Last status from HA')}: {(latestRuntime ?? current).ha_runtime_received_at ? formatHomeStamp((latestRuntime ?? current).ha_runtime_received_at!, homeTimeZone) : t('Inte mottagen', 'Not received')}.
+                    {runtimeStatus.runtime?.recovering ? t(' Begär automatiskt en ny plan.', ' Automatically requesting a fresh plan.')
+                      : runtimeStatus.runtime?.retry_at && !runtimeStatus.ready ? ` ${t('Automatiskt nytt försök', 'Automatic retry')}: ${formatHomeTimeWithSeconds(runtimeStatus.runtime.retry_at, homeTimeZone)}.` : ''}
+                    {runtimeStatus.runtime?.last_error ? ` ${runtimeStatus.runtime.last_error}` : ''}
+                    {current.ha_ack_status === 'accepted' ? ` ${t('Tidigare accepterad', 'Previously accepted')}: ${current.ha_acknowledged_at ? formatHomeStamp(current.ha_acknowledged_at, homeTimeZone) : '—'}.` : ''}
+                  </p>
+                  {current.generation_request_id && (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {t('Begäran', 'Request')} {current.generation_request_id} {current.ha_integration_version ? `· ${t('Accepterad/avvisad av HA', 'Acknowledged by HA')} ${current.ha_integration_version}` : ''}
+                    </p>
+                  )}
+                  {nextReplanAt && (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {t('Nästa omplanering', 'Next replan')} {formatHomeTimeWithSeconds(nextReplanAt, homeTimeZone)} · {t('planen gäller till', 'plan valid until')} {formatHomeTimeWithSeconds(plan.valid_until, homeTimeZone)}
+                    </p>
+                  )}
+                </details>
               )}
             </div>
             <div className="space-y-1.5 text-right">
