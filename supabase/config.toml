@@ -107,6 +107,10 @@ verify_jwt = false
 [functions.energy-optimisation-ingest]
 verify_jwt = false
 
+# Internal planning stages require ENERGY_PLANNING_SECRET in the handler.
+[functions.energy-optimisation-plan-step]
+verify_jwt = false
+
 [functions.energy-optimisation-plan-ack]
 verify_jwt = false
 

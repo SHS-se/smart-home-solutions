@@ -171,7 +171,9 @@ jobs:
         # Deploys every function under supabase/functions (per-function settings come from
         # config.toml). --use-api bundles without Docker; auth is the access token above, so no DB
         # password is needed. Runs after migrate so functions can rely on the latest schema/RPCs.
-        run: supabase functions deploy --project-ref "$SUPABASE_PROJECT_REF" --use-api --yes
+        run: |
+          bash scripts/deploy-energy-planning.sh "$SUPABASE_PROJECT_REF"
+          supabase functions deploy --project-ref "$SUPABASE_PROJECT_REF" --use-api --yes
 
   deploy:
     name: Deploy to Cloudflare Pages

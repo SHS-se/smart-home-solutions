@@ -218,16 +218,22 @@ run_pull() {
   echo "→ Don't forget to commit any new migration files."
 }
 
+deploy_edge_functions() {
+  (
+    cd "$PROJECT_DIR"
+    # The ingest caller must never deploy before its internal stage endpoint.
+    bash scripts/deploy-energy-planning.sh "$PROJECT_REF"
+    supabase functions deploy --project-ref "$PROJECT_REF" --use-api --yes
+  )
+}
+
 run_edge_function_deploy() {
   link_project
   EDGE_FUNCTION_FINGERPRINT="$(compute_edge_function_fingerprint)"
 
   if [ "$FORCE_DEPLOY" -eq 1 ]; then
     echo "→ Force deploying edge functions to $ENV ($PROJECT_REF)..."
-    (
-      cd "$PROJECT_DIR"
-      supabase functions deploy --project-ref "$PROJECT_REF" --use-api --yes
-    )
+    deploy_edge_functions
     record_edge_function_deploy
     echo "✓ Edge functions deployed"
     return 0
@@ -235,10 +241,7 @@ run_edge_function_deploy() {
 
   if [ ! -f "$DEPLOY_STATE_FILE" ]; then
     echo "→ No previous $ENV edge function deploy fingerprint found; deploying..."
-    (
-      cd "$PROJECT_DIR"
-      supabase functions deploy --project-ref "$PROJECT_REF" --use-api --yes
-    )
+    deploy_edge_functions
     record_edge_function_deploy
     echo "✓ Edge functions deployed"
     return 0
@@ -246,10 +249,7 @@ run_edge_function_deploy() {
 
   if edge_functions_changed_since_last_deploy; then
     echo "→ Edge functions changed since the last $ENV deploy; deploying..."
-    (
-      cd "$PROJECT_DIR"
-      supabase functions deploy --project-ref "$PROJECT_REF" --use-api --yes
-    )
+    deploy_edge_functions
     record_edge_function_deploy
     echo "✓ Edge functions deployed"
     return 0
@@ -267,10 +267,7 @@ run_edge_function_deploy() {
     echo "→ Could not verify remote edge functions; deploying to be safe..."
   fi
 
-  (
-    cd "$PROJECT_DIR"
-    supabase functions deploy --project-ref "$PROJECT_REF" --use-api --yes
-  )
+  deploy_edge_functions
   record_edge_function_deploy
   echo "✓ Edge functions deployed"
 }

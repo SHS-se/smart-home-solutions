@@ -27,6 +27,7 @@ import {
   type DispatchBatteryDiagnostic,
   type DispatchLimits,
   type DispatchResult,
+  type DispatchAuctionSolver,
   type DispatchSchedule,
   type DispatchSlot,
   type DispatchStore,
@@ -2742,6 +2743,7 @@ function scheduleServices(
   dispatchCache: Map<string, DispatchBundle | null>,
   derivedBatteryValue: DerivedBatteryValueCurve | null,
   fixed?: FixedEnergyPlan | null,
+  solveAuction?: DispatchAuctionSolver,
 ): { schedule: Schedule; errors: string[] } {
   const schedule = emptySchedule(slots.length);
   const occupiedW = new Array(slots.length).fill(0);
@@ -2810,7 +2812,7 @@ function scheduleServices(
           peak_shaping_sek_per_kwh_per_kw: peakShaping.sek_per_kwh_per_kw,
           grid_ramp_sek_per_kw: peakShaping.grid_ramp_sek_per_kw,
           load_start_preference_sek: peakShaping.load_start_preference_sek,
-        }, slots.map(s => s.epoch_ms), fixed),
+        }, slots.map(s => s.epoch_ms), fixed, solveAuction),
       };
     } else {
       if (slots.some(slot => frozen.has(slot.epoch_ms))) throw new Error("Fixed plan stores are no longer available; rescind the fixed plan.");
@@ -4335,6 +4337,7 @@ function buildPlan(
   dispatchCache: Map<string, DispatchBundle | null>,
   derivedBatteryValue: DerivedBatteryValueCurve | null,
   fixed?: FixedEnergyPlan | null,
+  solveAuction?: DispatchAuctionSolver,
 ): GeneratedPlan {
   const scheduled = scheduleServices(
     key,
@@ -4344,6 +4347,7 @@ function buildPlan(
     dispatchCache,
     derivedBatteryValue,
     fixed,
+    solveAuction,
   );
   const thermalErrors = scheduleRoomHeating(
     key,
@@ -4522,6 +4526,7 @@ export function generateOptimisationPlan(
   /** Exact resolved price vector from a replay capsule, bypassing estimation. */
   resolvedPriceOutlook?: OptimisationPlan["price_outlook"],
   fixed?: FixedEnergyPlan | null,
+  solveAuction?: DispatchAuctionSolver,
 ): OptimisationPlan {
   const validationErrors = validateSnapshot(snapshot);
   const snapshotAge = now.getTime() - isoMs(snapshot.captured_at);
@@ -4553,6 +4558,7 @@ export function generateOptimisationPlan(
     dispatchCache,
     derivedBatteryValue,
     fixed,
+    solveAuction,
   );
   const priority = buildPlan(
     "priority",
@@ -4563,6 +4569,7 @@ export function generateOptimisationPlan(
     dispatchCache,
     derivedBatteryValue,
     fixed,
+    solveAuction,
   );
   const cost = buildPlan(
     "cost",
@@ -4573,6 +4580,7 @@ export function generateOptimisationPlan(
     dispatchCache,
     derivedBatteryValue,
     fixed,
+    solveAuction,
   );
   const plans = { baseline, priority, cost };
   const batteryCurveWasUsed = [...dispatchCache.values()].some((bundle) =>

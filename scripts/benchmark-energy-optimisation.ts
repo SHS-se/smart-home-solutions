@@ -5,6 +5,8 @@ import {
   snapshot,
 } from "../src/lib/energy-shift/optimisation-snapshot.fixture.ts";
 import { generateOptimisationPlan } from "../supabase/functions/_shared/energy-optimisation.ts";
+import { energyPlanningStep } from "../supabase/functions/_shared/energy-planning-step.ts";
+import type { EnergyPlanningContinuation } from "../supabase/functions/_shared/energy-planning-protocol.ts";
 
 for (const season of ["sunny", "dark"] as const) {
   const input = snapshot();
@@ -20,7 +22,29 @@ for (const season of ["sunny", "dark"] as const) {
   Deno.bench(`72-hour ${season} ingest plan`, () => {
     const result = generateOptimisationPlan(input, new Date(CAPTURED_AT));
     if (result.status !== "ready") {
-      throw new Error(`Benchmark plan failed: ${result.validation_errors.join(", ")}`);
+      throw new Error(
+        `Benchmark plan failed: ${result.validation_errors.join(", ")}`,
+      );
     }
   });
+  let continuation: EnergyPlanningContinuation | undefined;
+  for (let stage = 0; stage < 32; stage++) {
+    const payload = JSON.stringify({
+      input: { snapshot: input, now: CAPTURED_AT, price_archive: [] },
+      continuation,
+    });
+    const run = () => {
+      const request = JSON.parse(payload);
+      return energyPlanningStep(request.input, request.continuation);
+    };
+    const result = run();
+    const name = result.done
+      ? "assembly"
+      : continuation?.checkpoint?.next ?? "auction";
+    Deno.bench(`72-hour ${season} stage ${stage}: ${name}`, () => {
+      JSON.stringify(run());
+    });
+    if (result.done === true) break;
+    continuation = result.continuation;
+  }
 }

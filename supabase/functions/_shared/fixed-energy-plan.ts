@@ -1,4 +1,5 @@
 import {
+  type DispatchAuctionSolver,
   type DispatchLimits,
   type DispatchResult,
   type DispatchSchedule,
@@ -63,6 +64,7 @@ export function dispatchWithFixedPlan(
   limits: DispatchLimits,
   starts: number[],
   fixed?: FixedEnergyPlan | null,
+  solveAuction?: DispatchAuctionSolver,
 ): DispatchResult {
   const matching = new Map(
     fixed?.slots.map((s) => [Date.parse(s.start), s]) ?? [],
@@ -71,11 +73,11 @@ export function dispatchWithFixedPlan(
   for (let i = 0; i < starts.length; i++) {
     if (matching.has(starts[i])) end = i + 1;
   }
-  if (!end) return planDispatch(slots, stores, limits);
+  if (!end) return planDispatch(slots, stores, limits, { solveAuction });
   const keys = stores.map((s) => s.key).sort().join("|");
   const before = matching.has(starts[0])
     ? null
-    : planDispatch(slots, stores, limits);
+    : planDispatch(slots, stores, limits, { solveAuction });
   const schedule: DispatchSchedule = {
     power_w: {},
     discharge_w: {},
@@ -127,7 +129,7 @@ export function dispatchWithFixedPlan(
       : undefined,
   }));
   const suffix = end < slots.length
-    ? planDispatch(slots.slice(end), suffixStores, limits)
+    ? planDispatch(slots.slice(end), suffixStores, limits, { solveAuction })
     : null;
   for (const field of ["power_w", "discharge_w"] as const) {
     for (const store of stores) {

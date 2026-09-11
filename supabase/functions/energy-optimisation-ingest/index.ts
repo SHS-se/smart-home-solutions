@@ -23,9 +23,13 @@ import {
   type DeviceControlType,
   type DeviceLoadType,
   type DevicePlanningRole,
-  generateOptimisationPlan,
+  type generateOptimisationPlan,
   type OptimisationSnapshot,
 } from "../_shared/energy-optimisation.ts";
+import {
+  EnergyPlanningError,
+  generateRemoteOptimisationPlan,
+} from "../_shared/energy-planning-client.ts";
 import { type StoredPriceRow } from "../_shared/energy-price-shape.ts";
 import {
   buildThermalProjection,
@@ -1947,13 +1951,16 @@ serve(async (req) => {
           device_count: snapshot.device_models.length,
           thermal_zone_count: thermalZones.length,
         });
-        generated = generateOptimisationPlan(
+        generated = await generateRemoteOptimisationPlan({
           snapshot,
-          new Date(),
-          priceArchive,
-          undefined,
-          fixedPlan,
-        );
+          now: new Date().toISOString(),
+          price_archive: priceArchive,
+          fixed_plan: fixedPlan,
+        }, {
+          url: Deno.env.get("SUPABASE_URL") ?? "",
+          planningSecret: Deno.env.get("ENERGY_PLANNING_SECRET") ?? "",
+          requestId,
+        });
         console.info("[ENERGY-OPTIMISATION] planning completed", {
           request_id: requestId,
           elapsed_ms: Math.round(performance.now() - planningStarted),
@@ -1965,6 +1972,9 @@ serve(async (req) => {
           .update({ replan_error: detail }).eq("home_id", auth.homeId)
           .eq("fixed_plan_revision", fixedRevision);
         console.error("[ENERGY-OPTIMISATION] snapshot refused", detail, error);
+        if (error instanceof EnergyPlanningError && error.status === 502) {
+          return json({ error: "planning_failed", detail, retryable: true }, 502);
+        }
         return json({ error: "invalid_snapshot", detail }, 400);
       }
 
