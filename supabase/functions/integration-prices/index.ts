@@ -1,3 +1,4 @@
+import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
 // Device-authenticated supplier prices. SHS fetches the public Swedish spot
 // market and applies the effective-dated terms selected on the customer's home.
 
@@ -81,7 +82,7 @@ const answerValue = (
   answer: { answer_value: unknown; answer_text: string | null } | undefined,
 ) => answer?.answer_value ?? answer?.answer_text ?? null;
 
-serve(async (req) => {
+serve(withTrafficMetrics("integration-prices", async (req, traffic) => {
   const requestId = haRequestId(req);
   const json = (body: unknown, status = 200) =>
     haApiResponse(requestId, body, status, {
@@ -95,7 +96,7 @@ serve(async (req) => {
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-    { auth: { persistSession: false } },
+    { auth: { persistSession: false }, global: { fetch: traffic.fetch } },
   );
 
   try {
@@ -261,4 +262,4 @@ serve(async (req) => {
     console.error("[INTEGRATION-PRICES] unexpected", error);
     return json({ error: "price_lookup_failed" }, 502);
   }
-});
+}));

@@ -1,3 +1,4 @@
+import { downloadTrafficReport, recordPortalSync } from '@/lib/network-traffic';
 import { HistoryCache, type HistoryDelta, type ChangedValue } from '@/lib/energy-shift/portal-sync';
 import { readPlanRefresh } from '@/lib/energy-shift/plan-refresh';
 import { haRuntimeStatus, type HaRuntimeRow } from '@/lib/energy-shift/ha-runtime';
@@ -145,6 +146,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
         zone_models: ChangedValue<ThermalZoneModelSummary[]>;
         thermal: ChangedValue<ThermalObservationSummary>;
       };
+      recordPortalSync(delta, !cache.initialized);
       const row = delta.current ? { ...delta.current,
         plan: delta.plan ?? (cache.current?.plan_id === delta.current.plan_id ? cache.current?.plan : null),
       } : null;
@@ -426,6 +428,15 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
         </div>
       )}
       {content}
+      {view === 'live' && (
+        <details className="text-xs text-muted-foreground">
+          <summary className="cursor-pointer">{t('Trafikdiagnostik', 'Traffic diagnostics')}</summary>
+          <p className="mt-1">{t('Trafik i denna flik sedan sidan laddades. Datastorlek före komprimering, inte fakturerad trafik.', 'Traffic in this tab since page load. Payload sizes before compression, not billed traffic.')}</p>
+          <Button size="sm" variant="outline" className="mt-2" onClick={downloadTrafficReport}>
+            {t('Ladda ned trafikrapport', 'Download traffic report')}
+          </Button>
+        </details>
+      )}
     </div>
   );
 };

@@ -1,3 +1,4 @@
+import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
 import type { FixedEnergyPlan } from "../_shared/fixed-energy-plan.ts";
 import { applyBatteryChoice } from "../_shared/home-planning.ts";
 // Device-authenticated exchange for the live 15-minute energy model.
@@ -1096,7 +1097,7 @@ async function prepareThermalPlanning(
   };
 }
 
-serve(async (req) => {
+serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
   const requestId = haRequestId(req);
   const json = (body: unknown, status = 200) =>
     haApiResponse(requestId, body, status);
@@ -1108,7 +1109,7 @@ serve(async (req) => {
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-    { auth: { persistSession: false } },
+    { auth: { persistSession: false }, global: { fetch: traffic.fetch } },
   );
 
   try {
@@ -1960,7 +1961,7 @@ serve(async (req) => {
           url: Deno.env.get("SUPABASE_URL") ?? "",
           planningSecret: Deno.env.get("ENERGY_PLANNING_SECRET") ?? "",
           requestId,
-        });
+        }, traffic.fetch);
         console.info("[ENERGY-OPTIMISATION] planning completed", {
           request_id: requestId,
           elapsed_ms: Math.round(performance.now() - planningStarted),
@@ -2178,4 +2179,4 @@ serve(async (req) => {
     console.error("[ENERGY-OPTIMISATION] unexpected", error);
     return json({ error: "internal_error" }, 500);
   }
-});
+}));

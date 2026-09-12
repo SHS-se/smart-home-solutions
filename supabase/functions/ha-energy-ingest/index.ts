@@ -1,3 +1,4 @@
+import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
 // Receives daily category-level kWh readings and monthly tariff calculations
 // pushed by the SHS Home Assistant integration. Device-token authenticated;
 // subscription-gated (402 when inactive so the integration can raise a repair
@@ -81,6 +82,7 @@ interface IncomingCalculation {
   coverage_start: string;
   coverage_end: string;
   is_complete: boolean;
+  missing_days?: string[];
   currency: string;
   calculation_model: string;
   calculation_version: number;
@@ -105,7 +107,7 @@ const round = (value: number, decimals: number) => {
   return Math.round((value + Number.EPSILON) * multiplier) / multiplier;
 };
 
-serve(async (req) => {
+serve(withTrafficMetrics("ha-energy-ingest", async (req, traffic) => {
   const requestId = haRequestId(req);
   const json = (body: unknown, status = 200) =>
     haApiResponse(requestId, body, status);
@@ -119,7 +121,7 @@ serve(async (req) => {
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-    { auth: { persistSession: false } },
+    { auth: { persistSession: false }, global: { fetch: traffic.fetch } },
   );
 
   try {
@@ -559,4 +561,4 @@ serve(async (req) => {
     console.error("[HA-ENERGY-INGEST] unexpected", error);
     return json({ error: "internal_error" }, 500);
   }
-});
+}));

@@ -2,6 +2,7 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 import { recoverFromSchemaDrift } from '@/lib/app-recovery';
+import { browserTraffic } from '@/lib/network-traffic';
 import { pinFunctionRegion } from '@/lib/function-region';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
@@ -40,7 +41,7 @@ async function fetchWithSchemaDriftRecovery(
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<Response> {
-  const response = await fetch(toDatabaseRegion(input), init);
+  const response = await browserTraffic.fetch(toDatabaseRegion(input), init);
   if (response.status !== 400 && response.status !== 404) return response;
   if (!response.headers.get('content-type')?.includes('json')) return response;
 

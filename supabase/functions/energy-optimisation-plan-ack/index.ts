@@ -1,3 +1,4 @@
+import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
 // Home Assistant's explicit accept/reject acknowledgement for one generated
 // optimisation plan. Generation and local executability are separate states.
 
@@ -20,7 +21,7 @@ interface Rejection {
   details: unknown;
 }
 
-serve(async (request) => {
+serve(withTrafficMetrics("energy-optimisation-plan-ack", async (request, traffic) => {
   const requestId = haRequestId(request);
   const json = (body: unknown, status = 200) =>
     haApiResponse(requestId, body, status);
@@ -34,7 +35,7 @@ serve(async (request) => {
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-    { auth: { persistSession: false } },
+    { auth: { persistSession: false }, global: { fetch: traffic.fetch } },
   );
 
   try {
@@ -113,4 +114,4 @@ serve(async (request) => {
     console.error("[ENERGY-OPTIMISATION-ACK] unexpected", error);
     return json({ error: "internal_error" }, 500);
   }
-});
+}));

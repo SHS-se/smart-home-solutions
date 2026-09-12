@@ -1,3 +1,4 @@
+import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
 // Delivers the global, staff-published Ellevio catalogue plus customer facts
 // derived from the primary-home questionnaire. Customers never select a tariff.
 
@@ -16,7 +17,7 @@ const answerValue = (
   answer: { answer_value: unknown; answer_text: string | null } | undefined,
 ) => answer?.answer_value ?? answer?.answer_text ?? null;
 
-serve(async (req) => {
+serve(withTrafficMetrics("integration-tariff", async (req, traffic) => {
   const requestId = haRequestId(req);
   const json = (body: unknown, status = 200) =>
     haApiResponse(requestId, body, status);
@@ -28,7 +29,7 @@ serve(async (req) => {
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-    { auth: { persistSession: false } },
+    { auth: { persistSession: false }, global: { fetch: traffic.fetch } },
   );
 
   try {
@@ -188,4 +189,4 @@ serve(async (req) => {
     console.error("[INTEGRATION-TARIFF] unexpected", error);
     return json({ error: "internal_error" }, 500);
   }
-});
+}));

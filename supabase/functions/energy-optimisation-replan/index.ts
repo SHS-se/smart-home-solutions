@@ -1,3 +1,4 @@
+import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
 // Ask the house for a plan built on measurements taken from now.
 //
 // This used to re-solve the snapshot already on file with the current curves.
@@ -34,7 +35,7 @@ const json = (body: unknown, status = 200) =>
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 
-serve(async (request) => {
+serve(withTrafficMetrics("energy-optimisation-replan", async (request, traffic) => {
   if (request.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -69,7 +70,7 @@ serve(async (request) => {
     // Authorise with the caller's own token: a row-level-security-checked read
     // is what proves they may touch this home.
     const asCaller = createClient(url, anonKey, {
-      global: { headers: { Authorization: authorization } },
+      global: { headers: { Authorization: authorization }, fetch: traffic.fetch },
       auth: { persistSession: false },
     });
     const { data: readable, error: readError } = await asCaller
@@ -88,6 +89,7 @@ serve(async (request) => {
     // device's table — so an update with the caller's token silently matches no
     // rows and the replan appears to succeed while changing nothing.
     const service = createClient(url, serviceKey, {
+      global: { fetch: traffic.fetch },
       auth: { persistSession: false },
     });
 
@@ -108,4 +110,4 @@ serve(async (request) => {
     console.error("[ENERGY-REPLAN] unhandled", detail, error);
     return json({ error: "replan_failed", detail }, 500);
   }
-});
+}));

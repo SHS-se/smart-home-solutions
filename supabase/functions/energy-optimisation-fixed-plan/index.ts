@@ -1,3 +1,4 @@
+import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import {
@@ -27,7 +28,7 @@ const json = (body: unknown, status = 200) =>
     headers: { ...cors, "Content-Type": "application/json" },
   });
 
-serve(async (request) => {
+serve(withTrafficMetrics("energy-optimisation-fixed-plan", async (request, traffic) => {
   if (request.method === "OPTIONS") {
     return new Response("ok", { headers: cors });
   }
@@ -43,7 +44,7 @@ serve(async (request) => {
     ) return json({ error: "invalid_request" }, 400);
     const url = Deno.env.get("SUPABASE_URL")!;
     const caller = createClient(url, Deno.env.get("SUPABASE_ANON_KEY")!, {
-      global: { headers: { Authorization: authorization } },
+      global: { headers: { Authorization: authorization }, fetch: traffic.fetch },
       auth: { persistSession: false },
     });
     const { data: row, error } = await caller.from(
@@ -82,7 +83,7 @@ serve(async (request) => {
     const service = createClient(
       url,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-      { auth: { persistSession: false } },
+      { auth: { persistSession: false }, global: { fetch: traffic.fetch } },
     );
     let fixed: FixedEnergyPlan | null = null;
     if (body.action === "activate") {
@@ -243,4 +244,4 @@ serve(async (request) => {
       error: error instanceof Error ? error.message : String(error),
     }, 400);
   }
-});
+}));

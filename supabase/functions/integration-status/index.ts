@@ -1,3 +1,4 @@
+import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
 // Lightweight status endpoint for the SHS Home Assistant integration.
 // Device-token authenticated. The integration polls this to know whether the
 // subscription is active, and raises/clears an HA repair issue accordingly.
@@ -29,7 +30,7 @@ import { validRuntime } from '../_shared/ha-runtime.ts';
 // the column cannot be used as storage.
 const MAX_REPLAN_ERROR_CHARS = 1000;
 
-serve(async (req) => {
+serve(withTrafficMetrics("integration-status", async (req, traffic) => {
   const requestId = haRequestId(req);
   const json = (body: unknown, status = 200) =>
     haApiResponse(requestId, body, status);
@@ -43,7 +44,7 @@ serve(async (req) => {
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-    { auth: { persistSession: false } },
+    { auth: { persistSession: false }, global: { fetch: traffic.fetch } },
   );
 
   try {
@@ -139,4 +140,4 @@ serve(async (req) => {
     console.error("[INTEGRATION-STATUS] unexpected", error);
     return json({ error: "internal_error" }, 500);
   }
-});
+}));
