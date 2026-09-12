@@ -1,4 +1,4 @@
-import { assertEquals } from "jsr:@std/assert@1";
+import { assert, assertEquals } from "jsr:@std/assert@1";
 import {
   describeThrown,
   HA_API_VERSION,
@@ -15,6 +15,25 @@ const contractUrl = new URL(
   "../../../contracts/ha-api/openapi.json",
   import.meta.url,
 );
+
+Deno.test("declared v1 readers receive one lossless copy of the plan", async () => {
+  const body = { plan: dispatchedEvPlanFixture().plan, actuals_accepted_until: "2026-09-12T05:45:00Z" };
+  const legacy = haApiResponse("request-id", body);
+  const modern = haApiResponse("request-id", body, 200, { "Cache-Control": "private, max-age=300" }, "1");
+  const legacyText = await legacy.text();
+  const modernText = await modern.text();
+  const legacyPayload = JSON.parse(legacyText);
+  const modernPayload = JSON.parse(modernText);
+  assertEquals(modernPayload.data, legacyPayload.data);
+  assertEquals(legacyPayload.plan, body.plan);
+  assertEquals(Object.keys(modernPayload).sort(), ["api_version", "data", "ok", "request_id"]);
+  assert(modernText.length < legacyText.length * 0.51);
+  assertEquals(modern.headers.get("vary"), "X-SHS-API-Version");
+  assertEquals(modern.headers.get("cache-control"), "private, max-age=300");
+  const failure = await haApiResponse("request-id", { error: "invalid_body" }, 400, {}, "1").json();
+  assertEquals(failure.error_info.code, "invalid_body");
+  assertEquals(failure.ok, false);
+});
 
 Deno.test("runtime API versions match the normative OpenAPI contract", async () => {
   const contract = JSON.parse(await Deno.readTextFile(contractUrl));

@@ -2,7 +2,7 @@
  *
  * Normative source: contracts/ha-api/openapi.json. The legacy top-level fields
  * remain during the reader-first rollout described in architecture §5.7.6;
- * new clients consume `data` and `error_info`.
+ * clients declaring API v1 receive a single copy in `data`.
  */
 
 export const HA_API_VERSION = 1 as const;
@@ -112,8 +112,8 @@ const retryableCode = (code: string): boolean =>
   ].includes(code);
 
 /**
- * Return the v1 envelope plus legacy aliases while installed clients roll
- * forward. This is deliberately the only response constructor used by the HA
+ * Return the v1 envelope, retaining rollout aliases only for clients which
+ * have not declared the v1 reader. This is the response constructor for the HA
  * routes, so request correlation and errors cannot drift endpoint by endpoint.
  */
 export function haApiResponse(
@@ -121,6 +121,7 @@ export function haApiResponse(
   body: unknown,
   status = 200,
   extraHeaders: Record<string, string> = {},
+  clientApiVersion: string | null = null,
 ): Response {
   const headers = {
     ...HA_API_CORS_HEADERS,
@@ -164,7 +165,8 @@ export function haApiResponse(
     );
   }
 
-  const aliases = body && typeof body === "object" && !Array.isArray(body)
+  const aliases = clientApiVersion !== String(HA_API_VERSION) &&
+      body && typeof body === "object" && !Array.isArray(body)
     ? body as Record<string, unknown>
     : {};
   return new Response(
@@ -175,7 +177,9 @@ export function haApiResponse(
       ok: true,
       data: body,
     }),
-    { status, headers },
+    { status, headers: { ...headers,
+      Vary: [extraHeaders.Vary, "X-SHS-API-Version"].filter(Boolean).join(", "),
+    } },
   );
 }
 

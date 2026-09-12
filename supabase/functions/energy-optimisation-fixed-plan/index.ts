@@ -47,6 +47,14 @@ serve(withTrafficMetrics("energy-optimisation-fixed-plan", async (request, traff
       global: { headers: { Authorization: authorization }, fetch: traffic.fetch },
       auth: { persistSession: false },
     });
+    if (body.action === "status") {
+      const { data: status, error } = await caller.rpc("get_energy_fixed_plan_status", {
+        p_home_id: body.home_id,
+      });
+      if (error) throw new Error(error.message);
+      if (!status) return json({ error: "not_found" }, 404);
+      return json(status);
+    }
     const { data: row, error } = await caller.from(
       "energy_optimisation_current",
     )
@@ -56,25 +64,6 @@ serve(withTrafficMetrics("energy-optimisation-fixed-plan", async (request, traff
       .eq("home_id", body.home_id).maybeSingle();
     if (error) throw new Error(error.message);
     if (!row) return json({ error: "not_found" }, 404);
-    if (body.action === "status") {
-      return json({
-        fixed_plan: row.fixed_plan
-          ? {
-            id: row.fixed_plan.id,
-            starts_at: row.fixed_plan.starts_at,
-            ends_at: row.fixed_plan.ends_at,
-          }
-          : null,
-        revision: row.fixed_plan_revision,
-        generated_revision: row.fixed_plan_generation_revision,
-        generated_fixed_plan_id: row.plan?.fixed_plan?.id ?? null,
-        ha_ack_status: row.ha_ack_status,
-        ha_ack_error: row.ha_ack_error,
-        valid_until: row.valid_until,
-        error: row.replan_error,
-        pending: row.replan_request_id !== row.replan_completed_request_id,
-      });
-    }
     if (body.revision !== row.fixed_plan_revision) {
       return json({
         error: "The fixed plan changed. Refresh before submitting.",

@@ -47,6 +47,7 @@ export type DeviceAuthResult = DeviceAuthSuccess | DeviceAuthFailure;
 export async function authenticateDevice(
   supabase: SupabaseClient,
   req: Request,
+  options: { includeCustomerName?: boolean } = {},
 ): Promise<DeviceAuthResult> {
   const authHeader = req.headers.get("Authorization") ?? "";
   const token = authHeader.startsWith("Bearer ")
@@ -78,8 +79,8 @@ export async function authenticateDevice(
     return { ok: false, status: 401, error: "token_not_bound_to_home" };
   }
 
-  // customers has no name column — identity lives on the linked contact and
-  // is exposed via the customers_with_identity view (fetched best-effort).
+  // Entitlement is checked on every request; identity is display data and is
+  // fetched only by the status endpoint that actually returns it.
   const { data: customer, error: customerError } = await supabase
     .from("customers")
     .select("id, subscription_active, subscription_expires_at")
@@ -92,12 +93,14 @@ export async function authenticateDevice(
   }
 
   let customerName: string | null = null;
-  const { data: identity } = await supabase
-    .from("customers_with_identity")
-    .select("name")
-    .eq("id", tokenRow.customer_id)
-    .maybeSingle();
-  customerName = identity?.name ?? null;
+  if (options.includeCustomerName) {
+    const { data: identity } = await supabase
+      .from("customers_with_identity")
+      .select("name")
+      .eq("id", tokenRow.customer_id)
+      .maybeSingle();
+    customerName = identity?.name ?? null;
+  }
 
   // Freshness marker; awaited because the edge runtime may not run work
   // scheduled after the response is returned. Failures must not block auth.

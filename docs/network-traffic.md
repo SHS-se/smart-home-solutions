@@ -71,3 +71,32 @@ Use Supabase's usage statistics for the actual billed daily/monthly total.
 These reports explain traffic sources within their stated coverage; they cannot
 prove a monthly allowance will be met. Direct database clients, other backend
 functions and other users/tabs are not all covered by a single report.
+
+## Reductions following the instrumentation
+
+The September 12 follow-up removes redundant work without changing polling
+intervals, plan generation, history retention or offline execution:
+
+- Fixed-plan status polling calls `get_energy_fixed_plan_status`, returning only
+  status metadata. The full planning snapshot and schedules stay in the database
+  for status requests; activation still reads everything it needs. This RPC is
+  security-invoker and uses the same current-plan row-level access policy.
+- Thermal planning calls `get_energy_latest_room_temperatures`, selecting the
+  latest reading per room with the existing six-hour cutoff and index. For six
+  hours of complete quarter readings, this returns one row instead of 24 per
+  room. The planner receives the same latest temperatures as before.
+- Successful HA responses contain only one payload copy for clients declaring
+  `X-SHS-API-Version: 1`. Undeclared readers retain their existing rollout aliases;
+  error envelopes are unchanged. `Vary` distinguishes the success representations.
+  This roughly halves large **decoded payloads**, not necessarily compressed
+  wire bytes or the whole project's billed traffic.
+- Device authentication reads the customer display-name view only for the status
+  endpoint that returns it. Token validity, entitlement and the last-seen marker
+  remain fresh on every request.
+- Battery-presence updates only touch the row when the reported boolean changes.
+
+Deploy migration `20260912100000_narrow_energy_status_and_temperature_reads.sql`
+before deploying the changed Edge Functions. Current HA builds already send the
+API-version header; no additional HA release is needed for this follow-up. The
+existing traffic reports can compare these endpoints over equivalent activity
+windows after deployment.

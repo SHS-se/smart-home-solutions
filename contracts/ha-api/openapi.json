@@ -483,7 +483,7 @@
           "data": {}
         },
         "additionalProperties": true,
-        "description": "Top-level data aliases are temporarily accepted during the documented reader-first rollout."
+        "description": "Clients declaring X-SHS-API-Version: 1 receive payloads once, inside data. Top-level data aliases remain for undeclared readers during the documented reader-first rollout."
       },
       "ErrorInfo": {
         "type": "object",

@@ -890,12 +890,11 @@ async function prepareThermalPlanning(
       .eq("trained", true),
     // The trajectory starts from a real room reading no more than six hours
     // old. A guessed midpoint would describe a different house.
-    supabase
-      .from("energy_optimisation_thermal_slots")
-      .select("room_key, room_temperature_c, start_ts")
-      .eq("home_id", homeId)
-      .gte("start_ts", new Date(now - 6 * 3_600_000).toISOString())
-      .order("start_ts", { ascending: false }),
+    supabase.rpc("get_energy_latest_room_temperatures", {
+      p_customer_id: customerId,
+      p_home_id: homeId,
+      p_from: new Date(now - 6 * 3_600_000).toISOString(),
+    }),
     supabase
       .from("energy_optimisation_comfort_schedules")
       .select(
@@ -1100,7 +1099,7 @@ async function prepareThermalPlanning(
 serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
   const requestId = haRequestId(req);
   const json = (body: unknown, status = 200) =>
-    haApiResponse(requestId, body, status);
+    haApiResponse(requestId, body, status, {}, req.headers.get("X-SHS-API-Version"));
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: HA_API_CORS_HEADERS });
   }
@@ -1348,7 +1347,8 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
     if (homeCreateError) return json({ error: "home_planning_storage_failed" }, 500);
     if (equipment !== undefined) {
       const { error } = await supabase.from("energy_optimisation_home_planning")
-        .update({ battery_present: equipment.battery }).eq("home_id", auth.homeId);
+        .update({ battery_present: equipment.battery }).eq("home_id", auth.homeId)
+        .neq("battery_present", equipment.battery);
       if (error) return json({ error: "home_planning_storage_failed" }, 500);
     }
     const { data: homePlanning, error: homePlanningError } = await supabase

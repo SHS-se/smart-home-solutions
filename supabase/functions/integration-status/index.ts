@@ -33,7 +33,7 @@ const MAX_REPLAN_ERROR_CHARS = 1000;
 serve(withTrafficMetrics("integration-status", async (req, traffic) => {
   const requestId = haRequestId(req);
   const json = (body: unknown, status = 200) =>
-    haApiResponse(requestId, body, status);
+    haApiResponse(requestId, body, status, {}, req.headers.get("X-SHS-API-Version"));
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: HA_API_CORS_HEADERS });
   }
@@ -48,7 +48,7 @@ serve(withTrafficMetrics("integration-status", async (req, traffic) => {
   );
 
   try {
-    const auth = await authenticateDevice(supabase, req);
+    const auth = await authenticateDevice(supabase, req, { includeCustomerName: true });
     if (auth.ok === false) return json({ error: auth.error }, auth.status);
 
     // A device that cannot answer a replan says so here, so the portal reports

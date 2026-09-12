@@ -87,7 +87,7 @@ serve(withTrafficMetrics("integration-prices", async (req, traffic) => {
   const json = (body: unknown, status = 200) =>
     haApiResponse(requestId, body, status, {
       "Cache-Control": "private, max-age=300",
-    });
+    }, req.headers.get("X-SHS-API-Version"));
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: HA_API_CORS_HEADERS });
   }

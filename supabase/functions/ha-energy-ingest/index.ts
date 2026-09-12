@@ -110,7 +110,7 @@ const round = (value: number, decimals: number) => {
 serve(withTrafficMetrics("ha-energy-ingest", async (req, traffic) => {
   const requestId = haRequestId(req);
   const json = (body: unknown, status = 200) =>
-    haApiResponse(requestId, body, status);
+    haApiResponse(requestId, body, status, {}, req.headers.get("X-SHS-API-Version"));
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: HA_API_CORS_HEADERS });
   }

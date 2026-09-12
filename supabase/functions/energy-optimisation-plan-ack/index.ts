@@ -24,7 +24,7 @@ interface Rejection {
 serve(withTrafficMetrics("energy-optimisation-plan-ack", async (request, traffic) => {
   const requestId = haRequestId(request);
   const json = (body: unknown, status = 200) =>
-    haApiResponse(requestId, body, status);
+    haApiResponse(requestId, body, status, {}, request.headers.get("X-SHS-API-Version"));
   if (request.method === "OPTIONS") {
     return new Response(null, { headers: HA_API_CORS_HEADERS });
   }
