@@ -26,6 +26,7 @@ import {
 } from '@/lib/energy-shift/price-bands';
 import type { ConsumptionSeries } from '@/lib/energy-shift/consumption-series';
 import { powerFlowMagnitudes } from '@/lib/energy-shift/power-flows';
+import { timelineGapDescription } from '@/lib/energy-shift/timeline-gap';
 import { loadColour, PLAN_COLOURS } from './types';
 import { useHomeTimeZone } from '../HomeTimeZoneContext';
 import { formatHomeDayMonth, formatHomeTime, homeHourMinute } from '@/lib/energy-shift/home-time';
@@ -570,7 +571,7 @@ const PlanPanels: React.FC<{
               width={x(index + 1) - x(index)} height={axisY - flow.top}
               className="fill-muted" fillOpacity={0.6}
             >
-              <title>{`${row.label}: ${t('Data saknas', 'Data missing')}`}</title>
+              <title>{`${row.label}: ${timelineGapDescription(row.startMs, Date.now(), t).label}`}</title>
             </rect>
           ))}
           {dividerIndex < n && (
@@ -682,6 +683,7 @@ const PlanTooltip: React.FC<{
   row, series, baseValue, index, measured, hasBattery, hasEvBattery, left, top, bounds,
 }) => {
   const { t } = useLanguage();
+  const gap = row.missing ? timelineGapDescription(row.startMs, Date.now(), t) : null;
 
   // Magnitudes, like the panel: "Battery in −3.59 kW" says the same thing
   // twice, once in the label and once in a minus sign that disagrees with the
@@ -715,15 +717,11 @@ const PlanTooltip: React.FC<{
       <div className="mb-1 flex items-baseline justify-between gap-2 font-medium">
         <span>{row.label}</span>
         <span className="rounded border px-1 text-[9px] uppercase tracking-wide text-muted-foreground">
-          {row.missing ? t('saknas', 'missing') : measured ? t('uppmätt', 'measured') : t('plan', 'plan')}
+          {gap ? gap.label : measured ? t('uppmätt', 'measured') : t('plan', 'plan')}
         </span>
       </div>
-      {row.missing ? (
-        <p className="text-muted-foreground">
-          {measured
-            ? t('Mätdata saknas för denna kvart.', 'Measurement data is missing for this quarter.')
-            : t('Plan saknas för denna kvart.', 'No plan is available for this quarter.')}
-        </p>
+      {gap ? (
+        <p className="text-muted-foreground">{gap.detail}</p>
       ) : <>
       {flows.filter(([, value]) => value >= 0.02).map(([name, value, colour]) => (
         <Reading key={name} name={name} colour={colour} value={`${value.toFixed(2)} kW`} />
