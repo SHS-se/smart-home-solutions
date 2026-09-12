@@ -1,3 +1,4 @@
+import { HistoryCache, type HistoryDelta, type ChangedValue } from '@/lib/energy-shift/portal-sync';
 import { readPlanRefresh } from '@/lib/energy-shift/plan-refresh';
 import { haRuntimeStatus, type HaRuntimeRow } from '@/lib/energy-shift/ha-runtime';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -25,9 +26,6 @@ import {
   type EmpiricalDeviceSlotMatrix,
   type HomeAssistantConnection,
   type PriceSlotRow,
-  type ZoneModelRow,
-  type ThermalSlotRow,
-  summariseThermalSlots,
 } from './plan/types';
 import { useHomeTimeZone } from './HomeTimeZoneContext';
 import {
@@ -84,7 +82,6 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
     EMPTY_THERMAL_OBSERVATIONS,
   );
   const [zoneModels, setZoneModels] = useState<ThermalZoneModelSummary[]>([]);
-  const [connections, setConnections] = useState<HomeAssistantConnection[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<'live' | 'demo'>('live');
@@ -95,153 +92,91 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
   const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
   const [clock, setClock] = useState(Date.now());
 
+  // Cache survives 30-second refreshes, but is never shared across customers or
+  // homes. In-flight responses are discarded when the selected home changes.
+  const syncScope = `${customerId ?? ''}:${homeId ?? ''}`;
+  const syncRef = useRef<{
+    scope: string;
+    busy: boolean;
+    initialized: boolean;
+    current: CurrentRow | null;
+    known: Record<string, string | Record<string, string>>;
+    actuals: HistoryCache<ActualEnergySlot>;
+    prices: HistoryCache<PriceSlotRow>;
+    deviceActuals: HistoryCache<EmpiricalDeviceSlotMatrix>;
+  } | null>(null);
+  if (syncRef.current?.scope !== syncScope) {
+    syncRef.current = { scope: syncScope, busy: false, initialized: false, current: null, known: {},
+      actuals: new HistoryCache(), prices: new HistoryCache(), deviceActuals: new HistoryCache() };
+  }
+
   const load = useCallback(async (background = false) => {
-    if (!customerId || !homeId) {
+    const cache = syncRef.current!;
+    if (cache.scope !== `${customerId ?? ''}:${homeId ?? ''}` || cache.busy) return;
+    if (!cache.initialized) {
       setCurrent(null);
       setLatestRuntime(null);
-      setError(null);
       setActuals([]);
       setPrices([]);
       setEmpiricalDevices([]);
       setDeviceActuals([]);
       setThermalObservations(EMPTY_THERMAL_OBSERVATIONS);
       setZoneModels([]);
-      setConnections([]);
-      return;
+      setError(null);
     }
+    if (!customerId || !homeId) { setLoading(false); return; }
+    cache.busy = true;
     if (!background) setLoading(true);
     try {
-      const toMs = Math.floor(Date.now() / (15 * 60_000)) * 15 * 60_000;
-      const from = new Date(toMs - 72 * 60 * 60_000).toISOString();
-      const to = new Date(toMs).toISOString();
-      const [
-        planResult,
-        actualResult,
-        priceResult,
-        connectionResult,
-        deviceResult,
-        deviceActualResult,
-        thermalResult,
-        zoneModelResult,
-      ] = await Promise.all([
-        supabase
-          .from('energy_optimisation_current')
-          .select('home_id, plan, captured_at, updated_at, plan_id, generation_request_id, plan_schema_version, ha_runtime, ha_runtime_received_at, ha_ack_status, ha_acknowledged_at, ha_integration_version, ha_ack_request_id, ha_ack_error, replan_request_id, replan_requested_at, replan_completed_request_id, replan_error')
-          .eq('customer_id', customerId)
-          .eq('home_id', homeId)
-          .maybeSingle(),
-        supabase
-          .from('energy_optimisation_actual_slots')
-          .select('start_ts, total_load_kwh, solar_production_kwh, grid_import_kwh, grid_export_kwh, battery_charge_kwh, battery_discharge_kwh, battery_soc, ev_soc')
-          .eq('customer_id', customerId)
-          .eq('home_id', homeId)
-          .gte('start_ts', from)
-          .lt('start_ts', to)
-          .order('start_ts'),
-        // The only historical price the portal has: Home Assistant sends the
-        // all-in figure the planner used, because reproducing the grid transfer
-        // and energy tax here would be a second pricing implementation free to
-        // drift (ENERGY_OPTIMISATION_ARCHITECTURE.md §1.3.7.1).
-        supabase
-          .from('energy_optimisation_price_slots')
-          .select('start_ts, import_price_sek_per_kwh, export_price_sek_per_kwh')
-          .eq('customer_id', customerId)
-          .eq('home_id', homeId)
-          .gte('start_ts', from)
-          .lt('start_ts', to)
-          .order('start_ts'),
-        supabase
-          .from('ha_device_tokens')
-          .select('device_name, home_id, last_seen_at')
-          .eq('customer_id', customerId)
-          .is('revoked_at', null)
-          .order('created_at', { ascending: false }),
-        supabase
-          .from('energy_optimisation_devices')
-          .select('id, device_key, statistic_id, name, category, load_type_override, planning_role_override, planning_choice_at, control_type_override, mapping_status, mapped_control_type, mapping_error, mapping_summary, mapping_reported_at, active_power_w, profile_sample_count, last_seen_at')
-          .eq('customer_id', customerId)
-          .eq('home_id', homeId)
-          .is('retired_at', null)
-          .order('name'),
-        supabase.rpc('get_energy_optimisation_device_slots', {
-          p_customer_id: customerId,
-          p_home_id: homeId,
-          p_from: from,
-          p_to: to,
-        }),
-        // The readiness panel reports on the whole training window, not the
-        // 72 hours the charts draw, so a zone that stopped reporting
-        // yesterday still shows the history it did deliver.
-        supabase.rpc('get_energy_optimisation_thermal_slots', {
-          p_customer_id: customerId,
-          p_home_id: homeId,
-          p_from: new Date(toMs - 30 * 24 * 60 * 60_000).toISOString(),
-          p_to: to,
-        }),
-        supabase
-          .from('energy_optimisation_zone_models')
-          .select('room_key, trained, rejection_reason, sample_count')
-          .eq('customer_id', customerId)
-          .eq('home_id', homeId),
-      ]);
-      const { data, error: planError } = planResult;
-      if (planError) throw planError;
-      const refreshed = readPlanRefresh(data ? {
-        ...data,
-        ha_runtime: data.ha_runtime as unknown as CurrentRow['ha_runtime'],
-        ha_ack_status: data.ha_ack_status as CurrentRow['ha_ack_status'],
-        ha_ack_error: data.ha_ack_error as CurrentRow['ha_ack_error'],
-      } : null);
-      // Update the report even if the plan format or an auxiliary read fails.
+      const { data, error: syncError } = await supabase.rpc('get_energy_portal_delta', {
+        p_customer_id: customerId, p_home_id: homeId,
+        p_known: { ...cache.known, actuals: cache.actuals.hashes(),
+          prices: cache.prices.hashes(), device_actuals: cache.deviceActuals.hashes() },
+      });
+      if (syncRef.current !== cache) return;
+      if (syncError) throw syncError;
+      const delta = data as unknown as {
+        current: Omit<CurrentRow, 'plan'> | null;
+        plan: CurrentRow['plan'] | null;
+        actuals: HistoryDelta<ActualEnergySlot>;
+        prices: HistoryDelta<PriceSlotRow>;
+        device_actuals: HistoryDelta<EmpiricalDeviceSlotMatrix>;
+        devices: ChangedValue<EmpiricalEnergyDevice[]>;
+        zone_models: ChangedValue<ThermalZoneModelSummary[]>;
+        thermal: ChangedValue<ThermalObservationSummary>;
+      };
+      const row = delta.current ? { ...delta.current,
+        plan: delta.plan ?? (cache.current?.plan_id === delta.current.plan_id ? cache.current?.plan : null),
+      } : null;
+      const refreshed = readPlanRefresh(row);
       setLatestRuntime(refreshed.runtime);
       setCurrent(refreshed.current);
-
-      const { data: actualRows, error: actualError } = actualResult;
-      if (actualError) throw actualError;
-      // A price gap must not blank the measured chart: the history tab still
-      // reports energy and marks the unpriced quarters.
-      const { data: priceRows, error: priceError } = priceResult;
-      if (priceError) console.warn('[ENERGY] price slots unavailable', priceError);
-      const { data: connectionRows, error: connectionError } = connectionResult;
-      if (connectionError) throw connectionError;
-      const { data: deviceRows, error: deviceError } = deviceResult;
-      if (deviceError) throw deviceError;
-      const { data: deviceActualRows, error: deviceActualError } = deviceActualResult;
-      if (deviceActualError) throw deviceActualError;
-      setActuals(actualRows ?? []);
-      setPrices(priceError ? [] : ((priceRows ?? []) as PriceSlotRow[]));
-      setEmpiricalDevices((deviceRows ?? []) as EmpiricalEnergyDevice[]);
-      setDeviceActuals((deviceActualRows ?? []) as EmpiricalDeviceSlotMatrix[]);
-      // A thermal read failure must not blank the electrical plan; the panel
-      // simply reports nothing received.
-      setThermalObservations(
-        thermalResult.error
-          ? EMPTY_THERMAL_OBSERVATIONS
-          : summariseThermalSlots(
-            thermalResult.data as unknown as ThermalSlotRow[] | null,
-          ),
-      );
-      setZoneModels(
-        zoneModelResult.error
-          ? []
-          : ((zoneModelResult.data ?? []) as ZoneModelRow[]).map(row => ({
-            room_key: row.room_key,
-            trained: row.trained,
-            rejection_reason: row.rejection_reason,
-            sample_count: row.sample_count,
-          })),
-      );
-      setConnections((connectionRows ?? []) as HomeAssistantConnection[]);
-      if (refreshed.unsupported) {
-        throw new Error(t('Webbplatsen kan inte visa det mottagna planformatet. Ladda om sidan för att hämta den senaste versionen.',
-          'The website cannot display the received plan format. Reload the page to load the latest website version.'));
+      // Cache only validated plans; an unsupported response is retried and
+      // cannot make a later metadata-only response appear usable.
+      cache.current = refreshed.current;
+      cache.known.plan_id = refreshed.current?.plan_id ?? '';
+      setActuals(cache.actuals.apply(delta.actuals));
+      setPrices(cache.prices.apply(delta.prices));
+      setDeviceActuals(cache.deviceActuals.apply(delta.device_actuals));
+      if (delta.devices.value !== null) setEmpiricalDevices(delta.devices.value);
+      if (delta.zone_models.value !== null) setZoneModels(delta.zone_models.value);
+      if (delta.thermal.value !== null) setThermalObservations(delta.thermal.value);
+      cache.known.devices = delta.devices.hash;
+      cache.known.zone_models = delta.zone_models.hash;
+      cache.known.thermal = delta.thermal.hash;
+      cache.initialized = true;
+      if (refreshed.unsupported && delta.current?.plan_id) {
+        throw new Error(t('Webbplatsen kan inte visa det mottagna planformatet.', 'The website cannot display the received plan format.'));
       }
       setError(null);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : String(loadError));
+      if (syncRef.current === cache) setError(loadError instanceof Error ? loadError.message : String(loadError));
     } finally {
-      setLastCheckedAt(Date.now());
-      if (!background) setLoading(false);
+      cache.busy = false;
+      if (syncRef.current === cache) {
+        setLastCheckedAt(Date.now());
+        setLoading(false);
+      }
     }
   }, [customerId, homeId, t]);
 
@@ -271,8 +206,16 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
 
   useEffect(() => { void load(false); }, [load]);
   useEffect(() => {
-    const timer = window.setInterval(() => void load(true), 30_000);
-    return () => window.clearInterval(timer);
+    // Poll small metadata and content deltas. Hidden tabs resume on visibility.
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void load(true);
+    }, 30_000);
+    const resume = () => { if (document.visibilityState === 'visible') void load(true); };
+    document.addEventListener('visibilitychange', resume);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', resume);
+    };
   }, [load]);
   useEffect(() => {
     const timer = window.setInterval(() => setClock(Date.now()), 30_000);
@@ -308,7 +251,9 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
     () => createWebsiteDemoActuals(demoReferenceTime),
     [demoReferenceTime],
   );
-  const activeConnection = connections.find(connection => connection.home_id === homeId);
+  const activeConnection: HomeAssistantConnection | undefined = latestRuntime?.ha_runtime_received_at
+    ? { device_name: 'Home Assistant', home_id: homeId!, last_seen_at: latestRuntime.ha_runtime_received_at }
+    : undefined;
 
   let content: React.ReactNode;
   if (section === 'devices') {
@@ -372,7 +317,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
       </Alert>
     );
   } else if (!current) {
-    const hasConnectionForAnotherHome = connections.length > 0 && !activeConnection;
+
     content = (
       <div className="space-y-6">
         <Card>
@@ -380,10 +325,8 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
             <div>
               <p className="font-medium">
                 {activeConnection
-                  ? t('Home Assistant är ansluten — väntar på den första godkända planen', 'Home Assistant is connected — waiting for the first accepted plan')
-                  : hasConnectionForAnotherHome
-                    ? t('Home Assistant är ansluten till ett annat hem', 'Home Assistant is connected to another home')
-                    : t('Det här hemmet har ingen aktiv Home Assistant-anslutning', 'This home has no active Home Assistant connection')}
+                  ? t('Home Assistant är ansluten — väntar på den första godkända planen', 'Home Assistant has reported — waiting for the first accepted plan')
+                  : t('Väntar på den första statusrapporten från Home Assistant', 'Waiting for the first status report from Home Assistant')}
               </p>
               <p className="mt-1 text-sm text-muted-foreground">
                 {activeConnection
@@ -391,12 +334,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
                     `Anslutningen ${activeConnection.device_name} sågs senast ${activeConnection.last_seen_at ? formatHomeStamp(activeConnection.last_seen_at, homeTimeZone) : 'aldrig'}. Portalen kontrollerar efter en plan var 30:e sekund.`,
                     `The ${activeConnection.device_name} connection was last seen ${activeConnection.last_seen_at ? formatHomeStamp(activeConnection.last_seen_at, homeTimeZone) : 'never'}. The portal checks for a plan every 30 seconds.`,
                   )
-                  : hasConnectionForAnotherHome
-                    ? t(
-                      'Den aktiva anslutningen är bunden till ett annat hem. Välj det hemmet ovan eller skapa en anslutning för det valda hemmet.',
-                      'The active connection is bound to another home. Select that home above or create a connection for the selected home.',
-                    )
-                    : t(
+                  : t(
                       'Skapa en parningskod på kontosidan och anslut Smart Home Solutions Energy i Home Assistant.',
                       'Create a pairing code on the Account page and connect Smart Home Solutions Energy in Home Assistant.',
                     )}
@@ -554,7 +492,7 @@ const PlanView: React.FC<{
   const runtimeReady = ready && (isDemo || runtimeStatus.ready);
   const runtimeLabel = runtimeStatus.state === 'unconfirmed' ? t('HA-status obekräftad', 'HA status unconfirmed')
     : runtimeStatus.state === 'different_plan' ? t('Annan plan i HA', 'Different plan in HA')
-    : runtimeStatus.state === 'ready' ? t('Tillgänglig i HA', 'Available in HA')
+    : runtimeStatus.state === 'ready' ? t('Senast rapporterad redo i HA', 'Last reported ready in HA')
     : runtimeStatus.state === 'disabled' ? t('Avstängd i HA', 'Disabled in HA')
     : runtimeStatus.state === 'expired' ? t('Utgången', 'Expired')
     : runtimeStatus.state === 'advisory_only' ? t('Endast rådgivande', 'Advisory only')
@@ -562,7 +500,7 @@ const PlanView: React.FC<{
     : runtimeStatus.state === 'invalid' ? t('Ogiltig plan i HA', 'Invalid plan in HA')
     : t('Plan otillgänglig i HA', 'Plan unavailable in HA');
   const runtimeDetail = runtimeStatus.state === 'unconfirmed'
-    ? t('Ingen aktuell status har mottagits från Home Assistant. Tidigare acceptans bekräftar inte att planen fortfarande är tillgänglig.', 'No recent status received from Home Assistant. Earlier acceptance does not confirm that the plan is still available.')
+    ? t('Ingen statusrapport har mottagits från Home Assistant.', 'No status report has been received from Home Assistant.')
     : runtimeStatus.state === 'different_plan'
       ? t('Home Assistant rapporterar en annan plan än den som visas här.', 'Home Assistant reports a different plan from the one shown here.')
       : runtimeStatus.state === 'expired'
@@ -571,11 +509,6 @@ const PlanView: React.FC<{
           ? t('Inga bindande instruktioner återstår i planen.', 'No binding instructions remain in this plan.')
           : runtimeStatus.runtime?.reason ?? runtimeLabel;
 
-  // When Home Assistant will next ask for a plan. It refreshes 30 minutes
-  // before expiry, and only ever on a quarter boundary, so the honest answer is
-  // the first quarter at or after that threshold rather than the threshold
-  // itself. Shown because "is this plan stale or is the planner ignoring me?"
-  // was previously unanswerable from the page.
   // The price the planner is comparing against right now, and where each store
   // actually sits, so the curve chart marks real positions rather than a
   // textbook example.

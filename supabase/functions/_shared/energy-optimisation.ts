@@ -116,7 +116,7 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6, 7, 8] as const;
  * prices executable setpoints and records exact quarter evidence.
  */
 // v28 emits battery operations and enforces export eligibility and reserves in dispatch.
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v28";
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v29";
 /** Schema 5 service sizing also no longer pads energy to a minimum runtime. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v9";
 export const SLOT_MINUTES = 15;
@@ -4633,7 +4633,9 @@ export function generateOptimisationPlan(
     plan_id: snapshot.snapshot_id,
     snapshot_id: snapshot.snapshot_id,
     issued_at: now.toISOString(),
-    valid_until: new Date(now.getTime() + 75 * 60_000).toISOString(),
+    // Local execution covers the complete cached schedule, including forecast
+    // prices. binding_until remains the published-price accounting boundary.
+    valid_until: new Date(slots[slots.length - 1].epoch_ms + SLOT_MINUTES * 60_000).toISOString(),
     binding_until: bindingUntil,
     timezone: snapshot.timezone,
     slot_minutes: 15,

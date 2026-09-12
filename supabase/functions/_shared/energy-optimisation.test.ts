@@ -1768,7 +1768,7 @@ Deno.test("schema 6 with pool state dispatches by temperature, not by budget", (
   const plan = generateOptimisationPlan(snapshot, new Date(NOW));
 
   assertEquals(plan.schema_version, 6);
-  assertEquals(plan.model_version, "marginal-value-planner-v28");
+  assertEquals(plan.model_version, "marginal-value-planner-v29");
   // Asserted explicitly: an earlier version of this test checked the pool
   // energy but not the status, and so passed while every schema 6 plan was
   // reported infeasible by validations that still assumed fixed blocks.
@@ -3632,4 +3632,13 @@ Deno.test("pool runs preserve each meter's learned draw despite conflicting quar
   for (const model of snapshot.device_models) delete model.planning_service;
   assert(validateSnapshot(snapshot).includes("pool planning requires explicit device membership from Home Assistant"),
     "a snapshot without pool ownership must not silently revert to category allocation");
+});
+
+Deno.test('cached plan validity covers the full 72-hour schedule beyond published prices', () => {
+  const snapshot = horizon({}, { pricedSlots: 20 });
+  const start = Date.parse(snapshot.slots[0].start);
+  const plan = generateOptimisationPlan(snapshot, new Date(NOW));
+  assertEquals(plan.valid_until, new Date(start + 72 * 60 * 60_000).toISOString());
+  assertEquals(plan.binding_until, new Date(start + 5 * 60 * 60_000).toISOString());
+  assertEquals(plan.plans.priority.slots.length, 288);
 });

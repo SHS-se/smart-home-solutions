@@ -120,7 +120,7 @@ export function usePlanModel(
     .filter(([, source]) => source !== null && Date.parse(source.valid_until) < Date.now())
     .map(([name]) => name);
   const bindingExpired = Date.now() >= Date.parse(plan.binding_until);
-  const ready = !stale && !bindingExpired && plan.status === 'ready' && executed.status === 'ready' && sourceStale.length === 0;
+  const ready = !stale && plan.status === 'ready' && executed.status === 'ready';
   const pct = (value: number) => `${(value * 100).toFixed(0)}%`;
   const seriesByKey: Record<Exclude<PlanChartSeriesKey, `device:${string}`>, PlanChartSeries> = {
     pv: { key: 'pv', label: t('Solprognos', 'Solar forecast'), color: COLORS.pv },
