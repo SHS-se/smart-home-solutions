@@ -1,10 +1,10 @@
 import { assertEquals } from 'jsr:@std/assert@1';
 import { authenticateDevice } from '../supabase/functions/_shared/ha-device-auth.ts';
 
-function database(overrides: Record<string, any> = {}) {
+function database(overrides: Record<string, Record<string, unknown> | null> = {}) {
   const reads: string[] = [];
   const writes: string[] = [];
-  const rows: Record<string, any> = {
+  const rows: Record<string, Record<string, unknown> | null> = {
     ha_device_tokens: { id: 'token', customer_id: 'customer', home_id: 'home', revoked_at: null },
     customers: { id: 'customer', subscription_active: true, subscription_expires_at: '2999-01-01' },
     customers_with_identity: { name: 'Customer' },

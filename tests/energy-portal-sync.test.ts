@@ -1,6 +1,16 @@
 import { PGlite } from 'npm:@electric-sql/pglite@0.3.14';
 import { assertEquals, assertRejects } from 'jsr:@std/assert@1';
-import { HistoryCache } from '../src/lib/energy-shift/portal-sync.ts';
+import { HistoryCache, type ChangedValue, type HistoryDelta } from '../src/lib/energy-shift/portal-sync.ts';
+import type { ThermalObservationSummary } from '../src/lib/energy-shift/thermal-readiness.ts';
+
+interface ActualSlotRow { start_ts: string; total_load_kwh: number }
+interface PortalDelta {
+  plan: { plan_id: string } | null;
+  actuals: HistoryDelta<ActualSlotRow>;
+  devices: ChangedValue<{ name: string }[]>;
+  thermal: ChangedValue<ThermalObservationSummary>;
+  zone_models: ChangedValue<unknown[]>;
+}
 
 Deno.test('portal delta: access control, unchanged content, corrections, removals and home isolation', async () => {
   const db = new PGlite();
@@ -37,7 +47,7 @@ Deno.test('portal delta: access control, unchanged content, corrections, removal
     await db.exec(await Deno.readTextFile('supabase/migrations/20260912090000_add_incremental_energy_portal_sync.sql'));
     const id = '11111111-1111-4111-8111-111111111111';
     const other = '22222222-2222-4222-8222-222222222222';
-    const sync = async (known = {}, home = id) => (await db.query<{ delta: any }>(
+    const sync = async (known = {}, home = id) => (await db.query<{ delta: PortalDelta }>(
       'SELECT get_energy_portal_delta($1, $2, $3::jsonb) AS delta', [id, home, JSON.stringify(known)])).rows[0].delta;
     await assertRejects(() => sync(), Error, 'access denied');
     await db.exec(`SET test.uid = '${id}';`);
@@ -58,7 +68,7 @@ Deno.test('portal delta: access control, unchanged content, corrections, removal
     assertEquals(initial.thermal.value.outdoorSlotCount, 1);
     assertEquals(initial.thermal.value.observedRoomKeys, ['room']);
     assertEquals(initial.plan.plan_id, id);
-    const cache = new HistoryCache<{ start_ts: string; total_load_kwh: number }>();
+    const cache = new HistoryCache<ActualSlotRow>();
     cache.apply(initial.actuals);
     const known = { plan_id: id, actuals: cache.hashes(), devices: initial.devices.hash,
       thermal: initial.thermal.hash, zone_models: initial.zone_models.hash };

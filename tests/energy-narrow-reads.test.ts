@@ -1,5 +1,24 @@
 import { PGlite } from 'npm:@electric-sql/pglite@0.3.14';
 import { assert, assertEquals, assertRejects } from 'jsr:@std/assert@1';
+import type { FixedPlanStatus } from '../src/lib/energy-shift/fixed-plan.ts';
+
+interface CurrentEnergyRow {
+  fixed_plan: FixedPlanStatus['fixed_plan'];
+  fixed_plan_revision: number;
+  fixed_plan_generation_revision: number;
+  plan: { fixed_plan: { id: string } };
+  ha_ack_status: string;
+  ha_ack_error: unknown;
+  replan_error: string | null;
+  replan_request_id: string | null;
+  replan_completed_request_id: string | null;
+}
+
+interface RoomTemperatureRow {
+  room_key: string;
+  room_temperature_c: number;
+  start_ts: Date;
+}
 
 const home = '11111111-1111-4111-8111-111111111111';
 const other = '22222222-2222-4222-8222-222222222222';
@@ -33,8 +52,8 @@ Deno.test('narrow reads preserve status, latest temperatures, freshness and acce
     await db.query(`INSERT INTO energy_optimisation_current(home_id, customer_id, plan)
       VALUES ($1, $1, '{"private":"other home"}')`, [other]);
     await db.exec(`SET test.customer_id = '${home}'; SET ROLE authenticated;`);
-    const raw = (await db.query<any>('SELECT * FROM energy_optimisation_current WHERE home_id=$1', [home])).rows[0];
-    const status = async (id = home) => (await db.query<{ value: any }>(
+    const raw = (await db.query<CurrentEnergyRow>('SELECT * FROM energy_optimisation_current WHERE home_id=$1', [home])).rows[0];
+    const status = async (id = home) => (await db.query<{ value: FixedPlanStatus | null }>(
       'SELECT get_energy_fixed_plan_status($1) AS value', [id])).rows[0].value;
     const slim = await status();
     assertEquals(slim, {
@@ -65,10 +84,10 @@ Deno.test('narrow reads preserve status, latest temperatures, freshness and acce
       ($1,$1,'old-room',18,'2026-09-11T23:59:59Z'),
       ($2,$2,'kitchen',35,'2026-09-12T05:59:00Z')`, [home, other]);
     await db.exec('SET ROLE service_role');
-    const oldRows = (await db.query<any>(`SELECT room_key,room_temperature_c,start_ts
+    const oldRows = (await db.query<RoomTemperatureRow>(`SELECT room_key,room_temperature_c,start_ts
       FROM energy_optimisation_thermal_slots WHERE home_id=$1 AND start_ts >= $2 ORDER BY start_ts DESC`,
       [home, '2026-09-12T00:00:00Z'])).rows;
-    const expected = new Map<string, any>();
+    const expected = new Map<string, RoomTemperatureRow>();
     for (const row of oldRows) if (!expected.has(row.room_key)) expected.set(row.room_key, row);
     const latest = (await db.query('SELECT * FROM get_energy_latest_room_temperatures($1,$1,$2)',
       [home, '2026-09-12T00:00:00Z'])).rows;

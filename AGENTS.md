@@ -1,3 +1,11 @@
+# Lint validation
+
+Before committing code changes, run `npm run lint` from the repository root and
+fix all errors. Run the full repository command, including for test-only or
+backend changes; focused tests and typechecks do not replace ESLint. Do not
+disable rules or exclude files to make the check pass. Report the lint result
+and any remaining warnings in the final response.
+
 # Planner changes
 
 Whenever the planner model version or generated plan output changes, run
