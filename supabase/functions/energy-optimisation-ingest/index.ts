@@ -1,3 +1,5 @@
+import { replanReference } from "../_shared/replan-continuity.ts";
+import type { OptimisationPlan } from "../_shared/energy-optimisation.ts";
 import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
 import type { FixedEnergyPlan } from "../_shared/fixed-energy-plan.ts";
 import { applyBatteryChoice } from "../_shared/home-planning.ts";
@@ -1929,7 +1931,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
 
       const { data: fixedState, error: fixedReadError } = await supabase
         .from("energy_optimisation_current")
-        .select("fixed_plan, fixed_plan_revision")
+        .select("fixed_plan, fixed_plan_revision, plan")
         .eq("home_id", auth.homeId).maybeSingle();
       if (fixedReadError) return json({ error: "fixed_plan_read_failed" }, 500);
       const fixedPlan = fixedState?.fixed_plan as FixedEnergyPlan | null;
@@ -1945,6 +1947,8 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         );
         snapshot = thermal.snapshot;
         thermalZones = thermal.zones;
+        const planningNow = new Date();
+        snapshot = { ...snapshot, replan_reference: replanReference(fixedState?.plan as OptimisationPlan | null, snapshot, planningNow) };
         const planningStarted = performance.now();
         console.info("[ENERGY-OPTIMISATION] planning started", {
           request_id: requestId,
@@ -1954,7 +1958,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         });
         generated = await generateRemoteOptimisationPlan({
           snapshot,
-          now: new Date().toISOString(),
+          now: planningNow.toISOString(),
           price_archive: priceArchive,
           fixed_plan: fixedPlan,
         }, {

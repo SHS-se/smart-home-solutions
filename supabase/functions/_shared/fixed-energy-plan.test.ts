@@ -1,6 +1,7 @@
 import { assert, assertEquals, assertThrows } from "jsr:@std/assert@1";
 import {
   dispatchWithFixedPlan,
+  dispatchWithPrefix,
   type FixedEnergyPlan,
   QUARTER_MS,
   validateFixedSchedule,
@@ -393,4 +394,19 @@ Deno.test("fixed-plan suffix inherits actual boundary running state", () => {
   relay.initially_charging = true;
   const off = dispatchWithFixedPlan(slots, [relay], limits, starts, fixed([1000, 1000, 1000, 1000, 1000, 1000, 0]));
   assertEquals(off.power_w.battery[7], 0);
+});
+
+Deno.test("prefix continuation shifts per-slot export eligibility", () => {
+  const exporting = {
+    ...store, initial_state: 1,
+    curve: { unit: "kwh" as const, points: [{ at: 0, sek_per_unit: 0 }, { at: 1, sek_per_unit: 0 }] },
+    discharge: { max_power_w: 1000, state_per_kwh_out: () => 1, export_allowed: true,
+      export_allowed_by_slot: [false, true, false, false, false, false, false, false] },
+  };
+  const priced = slots.map(s => ({ ...s, export_price_sek_per_kwh: 10 }));
+  const result = dispatchWithPrefix(priced, [exporting], limits,
+    { power_w: { battery: [0] }, discharge_w: { battery: [0] } }, 1);
+  assertEquals(result.discharge_w.battery[0], 0);
+  assert(result.discharge_w.battery[1] > 0);
+  assert(result.discharge_w.battery.slice(2).every(w => w === 0));
 });

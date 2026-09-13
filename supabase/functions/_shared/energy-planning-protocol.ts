@@ -6,7 +6,7 @@ import type { DispatchCheckpoint, DispatchResult } from "./dispatch-plan.ts";
 import type { StoredPriceRow } from "./energy-price-shape.ts";
 import type { FixedEnergyPlan } from "./fixed-energy-plan.ts";
 
-export const ENERGY_PLANNING_PROTOCOL = 1;
+export const ENERGY_PLANNING_PROTOCOL = 2;
 
 export interface EnergyPlanningInput {
   snapshot: OptimisationSnapshot;

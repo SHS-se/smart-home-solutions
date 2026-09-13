@@ -1,3 +1,4 @@
+import { replanReference } from "./replan-continuity.ts";
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { snapshot } from "../../../src/lib/energy-shift/optimisation-snapshot.fixture.ts";
 import { dispatchedEvSnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
@@ -227,4 +228,17 @@ Deno.test("invalid snapshot remains a caller error across the worker boundary", 
     EnergyPlanningError,
   );
   assertEquals(error.status, 400);
+});
+
+Deno.test("distributed planning preserves continuity candidates and selection", () => {
+  const input = inputFor(snapshot());
+  input.snapshot.slots.forEach(s => {
+    if (s.import_price_sek_per_kwh !== null) s.import_price_sek_per_kwh *= .1;
+    if (s.export_price_sek_per_kwh !== null) s.export_price_sek_per_kwh *= .1;
+  });
+  const previous = generateOptimisationPlan(input.snapshot, new Date(input.now));
+  input.snapshot.snapshot_id = "00000000-0000-4000-8000-000000000002";
+  input.snapshot.replan_reference = replanReference(previous, input.snapshot, new Date(input.now));
+  input.snapshot.replan_reference!.battery!.discharge_w -= 10;
+  assertStagesMatch(input);
 });

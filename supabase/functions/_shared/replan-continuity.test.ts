@@ -1,0 +1,258 @@
+import {
+  assert,
+  assertAlmostEquals,
+  assertEquals,
+  assertThrows,
+} from "jsr:@std/assert@1";
+import { snapshot } from "../../../src/lib/energy-shift/optimisation-snapshot.fixture.ts";
+import {
+  dispatchWorkbench,
+  generateOptimisationPlan,
+} from "./energy-optimisation.ts";
+import {
+  continuityCandidates,
+  REPLAN_DEADBAND_SEK,
+  replanReference,
+} from "./replan-continuity.ts";
+import { scoreDispatch } from "./dispatch-plan.ts";
+
+function referencedSnapshot(cheap = false) {
+  const input = snapshot();
+  if (cheap) {
+    input.slots.forEach((s) => {
+      if (s.import_price_sek_per_kwh !== null) s.import_price_sek_per_kwh *= .1;
+      if (s.export_price_sek_per_kwh !== null) s.export_price_sek_per_kwh *= .1;
+    });
+  }
+  const previous = generateOptimisationPlan(input, new Date(input.captured_at));
+  input.snapshot_id = "00000000-0000-4000-8000-000000000002";
+  input.replan_reference = replanReference(
+    previous,
+    input,
+    new Date(input.captured_at),
+  );
+  assert(input.replan_reference);
+  return { input, previous };
+}
+
+Deno.test("reference rejects expired, future, self, schema and capability mismatches", () => {
+  const { input, previous } = referencedSnapshot();
+  const now = new Date(input.captured_at);
+  for (
+    const bad of [
+      { ...previous, valid_until: now.toISOString() },
+      { ...previous, issued_at: new Date(now.getTime() + 1).toISOString() },
+      { ...previous, plan_id: input.snapshot_id },
+      { ...previous, schema_version: 5 as const },
+      {
+        ...previous,
+        capabilities: { ...previous.capabilities, battery: false },
+      },
+    ]
+  ) assertEquals(replanReference(bad, input, now), null);
+  assertEquals(
+    replanReference(previous, input, new Date(now.getTime() + 900000)),
+    null,
+  );
+});
+
+Deno.test("agreement skips suffix search and replay inputs stay immutable", () => {
+  const { input } = referencedSnapshot();
+  const bench = dispatchWorkbench({ ...input, replan_reference: null })!;
+  const result = generateOptimisationPlan(input, new Date(input.captured_at));
+  assertEquals(result.plans.priority.continuity!.reason, "agrees");
+  const before = structuredClone(input.replan_reference);
+  const alternatives = continuityCandidates(
+    {
+      ...bench,
+      result: {
+        ...bench.planned,
+        state: {},
+        import_w: [],
+        export_w: [],
+        allocations: [],
+        battery: [],
+        stopped_because: "no_profitable_candidate",
+        iterations: 0,
+      },
+    },
+    input.replan_reference!,
+    () => {
+      throw new Error("unnecessary solve");
+    },
+  );
+  assertEquals(alternatives.reason, "agrees");
+  assertEquals(input.replan_reference, before);
+});
+
+Deno.test("small battery changes retain a feasible request while material gains switch immediately", () => {
+  const { input } = referencedSnapshot(true);
+  input.replan_reference!.battery!.discharge_w -= 10;
+  const stable = generateOptimisationPlan(input, new Date(input.captured_at));
+  assertEquals(stable.plans.priority.continuity!.selected, "direct");
+  assertEquals(
+    stable.plans.priority.slots[0].battery_discharge_w,
+    input.replan_reference!.battery!.discharge_w,
+  );
+  assert(
+    stable.plans.priority.continuity!.reference_sek! <=
+      stable.plans.priority.continuity!.proposed_sek! + REPLAN_DEADBAND_SEK,
+  );
+  const bench = dispatchWorkbench(input, [], stable.price_outlook)!;
+  assertAlmostEquals(
+    bench.planned.discharge_w.battery[0],
+    stable.plans.priority.slots[0].battery_discharge_w,
+    .005,
+  );
+  input.replan_reference!.battery = { charge_w: 0, discharge_w: 0 };
+  const changed = generateOptimisationPlan(input, new Date(input.captured_at));
+  assertEquals(changed.plans.priority.continuity!.selected, "proposed");
+  assertEquals(changed.plans.priority.continuity!.reason, "material_benefit");
+  assert(changed.plans.priority.slots[0].battery_discharge_w > 0);
+});
+
+Deno.test("old battery rating and export requests cannot become command authority", () => {
+  const { input } = referencedSnapshot();
+  input.replan_reference!.battery = { charge_w: 1e6, discharge_w: 0 };
+  const result = generateOptimisationPlan(input, new Date(input.captured_at));
+  assertEquals(result.plans.priority.continuity!.selected, "proposed");
+  assertEquals(
+    result.plans.priority.continuity!.reason,
+    "reference_infeasible",
+  );
+  const bench = dispatchWorkbench({ ...input, replan_reference: null })!;
+  input.replan_reference!.battery = { charge_w: 0, discharge_w: 2000 };
+  const bundle = {
+    ...bench,
+    result: {
+      ...bench.planned,
+      ...scoreDispatch(bench.slots, bench.stores, bench.limits, bench.planned),
+      allocations: [],
+      battery: [],
+      stopped_because: "no_profitable_candidate" as const,
+      iterations: 0,
+    },
+  };
+  const candidates = continuityCandidates(bundle, input.replan_reference!);
+  assertEquals(candidates.candidates.length, 0);
+});
+
+Deno.test("pool continuity preserves the heat action using the current learned power", () => {
+  const { input } = referencedSnapshot();
+  const bench = dispatchWorkbench({ ...input, replan_reference: null })!;
+  const pool = bench.stores.find((s) => s.key === "pool")!;
+  const stores = bench.stores.map((s) =>
+    s.key === "pool" ? { ...s, max_power_w: 2148, min_power_w: 2148 } : s
+  );
+  input.replan_reference!.pool_heat = true;
+  const alternatives = continuityCandidates({
+    ...bench,
+    stores,
+    result: {
+      ...bench.planned,
+      state: {},
+      import_w: [],
+      export_w: [],
+      allocations: [],
+      battery: [],
+      stopped_because: "no_profitable_candidate",
+      iterations: 0,
+    },
+  }, input.replan_reference!);
+  assert(alternatives.candidates.length > 0);
+  for (const candidate of alternatives.candidates) {
+    assertEquals(candidate.result.power_w.pool[0], 2148);
+  }
+  assertEquals(pool.initially_charging, false);
+});
+
+Deno.test("continuation sentinels and unexpected solver errors are not swallowed", () => {
+  const { input } = referencedSnapshot();
+  const bench = dispatchWorkbench({ ...input, replan_reference: null })!;
+  input.replan_reference!.battery!.discharge_w -= 10;
+  assertThrows(
+    () =>
+      continuityCandidates(
+        {
+          ...bench,
+          result: {
+            ...bench.planned,
+            state: {},
+            import_w: [],
+            export_w: [],
+            allocations: [],
+            battery: [],
+            stopped_because: "no_profitable_candidate",
+            iterations: 0,
+          },
+        },
+        input.replan_reference!,
+        () => {
+          throw new Error("continuation");
+        },
+      ),
+    Error,
+    "continuation",
+  );
+});
+
+Deno.test("fixed plan authority and changed store inventory exclude continuity", () => {
+  const { input, previous } = referencedSnapshot(true);
+  const bench = dispatchWorkbench({ ...input, replan_reference: null })!;
+  input.replan_reference!.battery!.discharge_w -= 10;
+  const fixed = {
+    id: "manual",
+    source_snapshot_id: previous.snapshot_id,
+    starts_at: input.slots[0].start,
+    ends_at: input.slots[1].start,
+    slots: [{
+      start: input.slots[0].start,
+      power_w: Object.fromEntries(
+        bench.stores.map((s) => [s.key, bench.planned.power_w[s.key][0]]),
+      ),
+      discharge_w: Object.fromEntries(
+        bench.stores.map((s) => [s.key, bench.planned.discharge_w[s.key][0]]),
+      ),
+      targets: previous.plans.priority.slots[0],
+      allow_export: false,
+    }],
+  };
+  const manual = generateOptimisationPlan(
+    input,
+    new Date(input.captured_at),
+    [],
+    undefined,
+    fixed,
+  );
+  assertEquals(
+    manual.plans.priority.continuity!.reason,
+    "fixed_plan_authority",
+  );
+  assertEquals(
+    manual.plans.priority.slots[0].battery_discharge_w,
+    fixed.slots[0].discharge_w.battery,
+  );
+  input.replan_reference!.store_keys.push("unknown");
+  const changed = generateOptimisationPlan(input, new Date(input.captured_at));
+  assertEquals(
+    changed.plans.priority.continuity!.reason,
+    "store_inventory_changed",
+  );
+});
+
+Deno.test("workbench uses the frozen planning time when capture preceded issuance", () => {
+  const { input, previous } = referencedSnapshot(true);
+  const now = new Date(input.captured_at);
+  input.captured_at = new Date(now.getTime() - 1000).toISOString();
+  input.replan_reference = replanReference(previous, input, now);
+  assert(input.replan_reference);
+  input.replan_reference.battery!.discharge_w -= 10;
+  const generated = generateOptimisationPlan(input, now);
+  const bench = dispatchWorkbench(input, [], generated.price_outlook)!;
+  assertEquals(generated.plans.priority.continuity!.selected, "direct");
+  assertAlmostEquals(
+    bench.planned.discharge_w.battery[0],
+    generated.plans.priority.slots[0].battery_discharge_w,
+    .005,
+  );
+});

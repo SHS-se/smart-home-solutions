@@ -8,6 +8,7 @@
  * verified before it may be published as `ready`.
  */
 
+import { continuityCandidates, REPLAN_DEADBAND_SEK, type ReplanDecision, type ReplanReference, usableReference } from "./replan-continuity.ts";
 import { batteryCommand, type BatteryCommand } from "./battery-command.ts";
 import { dispatchWithFixedPlan, type FixedEnergyPlan } from "./fixed-energy-plan.ts";
 
@@ -31,6 +32,7 @@ import {
   type DispatchSchedule,
   type DispatchSlot,
   type DispatchStore,
+  scoreDispatch,
 } from "./dispatch-plan.ts";
 import {
   poolCop,
@@ -116,7 +118,7 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6, 7, 8] as const;
  * prices executable setpoints and records exact quarter evidence.
  */
 // v28 emits battery operations and enforces export eligibility and reserves in dispatch.
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v29";
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v30";
 /** Schema 5 service sizing also no longer pads energy to a minimum runtime. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v9";
 export const SLOT_MINUTES = 15;
@@ -352,6 +354,8 @@ export interface ThermalZonePlanningInput {
 }
 
 export interface OptimisationSnapshot {
+  /** Server-derived economic reference, frozen with the replay input; never physical authority. */
+  replan_reference?: ReplanReference | null;
   schema_version: 5 | 6 | 7 | 8;
   // Only Home Assistant live snapshots cross the ingestion boundary. The
   // website's promotional demo is a client-side plan fixture, not a snapshot.
@@ -597,6 +601,7 @@ export interface PlanSummary {
 }
 
 export interface GeneratedPlan {
+  continuity?: ReplanDecision;
   key: PlanKey;
   label: string;
   status: "ready" | "infeasible";
@@ -2733,6 +2738,7 @@ interface DispatchBundle {
   stores: DispatchStore[];
   slots: DispatchSlot[];
   result: DispatchResult;
+  limits: DispatchLimits;
 }
 
 function scheduleServices(
@@ -2802,17 +2808,17 @@ function scheduleServices(
         binding: slot.binding,
         published_price: slot.import_price_sek_per_kwh !== null,
       }));
+      const limits: DispatchLimits = {
+        grid_import_limit_w: snapshot.grid.import_limit_w,
+        grid_export_limit_w: snapshot.grid.export_limit_w,
+        grid_import_shaping_w: peakShaping.threshold_w,
+        peak_shaping_sek_per_kwh_per_kw: peakShaping.sek_per_kwh_per_kw,
+        grid_ramp_sek_per_kw: peakShaping.grid_ramp_sek_per_kw,
+        load_start_preference_sek: peakShaping.load_start_preference_sek,
+      };
       dispatchBundle = {
-        stores,
-        slots: dispatchSlots,
-        result: dispatchWithFixedPlan(dispatchSlots, stores, {
-          grid_import_limit_w: snapshot.grid.import_limit_w,
-          grid_export_limit_w: snapshot.grid.export_limit_w,
-          grid_import_shaping_w: peakShaping.threshold_w,
-          peak_shaping_sek_per_kwh_per_kw: peakShaping.sek_per_kwh_per_kw,
-          grid_ramp_sek_per_kw: peakShaping.grid_ramp_sek_per_kw,
-          load_start_preference_sek: peakShaping.load_start_preference_sek,
-        }, slots.map(s => s.epoch_ms), fixed, solveAuction),
+        stores, slots: dispatchSlots, limits,
+        result: dispatchWithFixedPlan(dispatchSlots, stores, limits, slots.map(s => s.epoch_ms), fixed, solveAuction),
       };
     } else {
       if (slots.some(slot => frozen.has(slot.epoch_ms))) throw new Error("Fixed plan stores are no longer available; rescind the fixed plan.");
@@ -4389,6 +4395,55 @@ function buildPlan(
   };
 }
 
+/** The same selection and materialization serve generation, staged replay and the workbench. */
+function buildPriorityPlan(
+  slots: PreparedSlot[], snapshot: OptimisationSnapshot, reservedW: number[],
+  protectedSoc: (number | null)[], dispatchCache: Map<string, DispatchBundle | null>,
+  derived: DerivedBatteryValueCurve | null, now: Date,
+  fixed?: FixedEnergyPlan | null, solveAuction?: DispatchAuctionSolver,
+): GeneratedPlan {
+  const materialize = (cache: Map<string, DispatchBundle | null>) =>
+    buildPlan("priority", slots, snapshot, reservedW, protectedSoc, cache, derived, fixed, solveAuction);
+  const proposed = materialize(dispatchCache);
+  const reference = snapshot.replan_reference;
+  if (!reference) return proposed;
+  const decision: ReplanDecision = {
+    source_plan_id: reference.source_plan_id, selected: "proposed", reason: "invalid_reference",
+    proposed_sek: null, reference_sek: null, deadband_sek: REPLAN_DEADBAND_SEK,
+  };
+  proposed.continuity = decision;
+  if (fixed) { decision.reason = "fixed_plan_authority"; return proposed; }
+  if (!usableReference(reference, snapshot.snapshot_id, slots[0].epoch_ms, now.getTime())) return proposed;
+  if (proposed.status !== "ready") { decision.reason = "invalid_proposed_plan"; return proposed; }
+  const cacheKey = reservedW.every(w => Math.abs(w) < 1e-9) ? "unreserved" : reservedW.join(",");
+  const bundle = dispatchCache.get(cacheKey);
+  if (!bundle) { decision.reason = "no_dispatch_stores"; return proposed; }
+  const score = scoreDispatch(bundle.slots, bundle.stores, bundle.limits, bundle.result);
+  if (score.infeasibilities.length || !Number.isFinite(score.total_sek)) {
+    decision.reason = "invalid_proposed_dispatch"; return proposed;
+  }
+  decision.proposed_sek = score.total_sek;
+  const alternatives = continuityCandidates(bundle, reference, solveAuction);
+  decision.reason = alternatives.reason;
+  const ancillary = (plan: GeneratedPlan) => JSON.stringify(plan.slots.map(s => [
+    s.boiler_expected_w, s.boiler_permitted, s.room_heating_w,
+  ]));
+  const proposedAncillary = ancillary(proposed);
+  for (const candidate of alternatives.candidates) {
+    decision.reference_sek ??= candidate.objective_sek;
+    if (candidate.objective_sek > score.total_sek + REPLAN_DEADBAND_SEK) continue;
+    const selectedBundle = { ...bundle, result: candidate.result };
+    const cache = new Map(dispatchCache).set(cacheKey, selectedBundle);
+    const plan = materialize(cache);
+    if (plan.status !== "ready") { decision.reason = "reference_plan_infeasible"; continue; }
+    if (ancillary(plan) !== proposedAncillary) { decision.reason = "ancillary_divergence"; continue; }
+    plan.continuity = { ...decision, selected: candidate.construction, reason: "within_deadband", reference_sek: candidate.objective_sek };
+    dispatchCache.set(cacheKey, selectedBundle);
+    return plan;
+  }
+  return proposed;
+}
+
 /**
  * The exact inputs the store auction was given, so a person can answer it back.
  *
@@ -4469,19 +4524,13 @@ export function dispatchWorkbench(
   resolvedPriceOutlook?: OptimisationPlan["price_outlook"],
 ): DispatchWorkbench | null {
   const { slots } = preparedSlots(snapshot, priceArchive, resolvedPriceOutlook);
-  const { reservedW } = batteryReservation(slots, snapshot);
+  const { reservedW, protectedSoc } = batteryReservation(slots, snapshot);
   const derivedBatteryValue = snapshot.schema_version >= 6
     ? deriveBatteryValueCurve(slots, snapshot)
     : null;
   const dispatchCache = new Map<string, DispatchBundle | null>();
-  scheduleServices(
-    "priority",
-    slots,
-    snapshot,
-    reservedW,
-    dispatchCache,
-    derivedBatteryValue,
-  );
+  buildPriorityPlan(slots, snapshot, reservedW, protectedSoc, dispatchCache,
+                    derivedBatteryValue, new Date(snapshot.replan_reference?.evaluated_at ?? snapshot.captured_at));
   const bundle = [...dispatchCache.values()].find((entry) => entry !== null);
   if (!bundle) return null;
   const peakShaping = derivePeakShaping(snapshot);
@@ -4560,17 +4609,6 @@ export function generateOptimisationPlan(
     fixed,
     solveAuction,
   );
-  const priority = buildPlan(
-    "priority",
-    slots,
-    snapshot,
-    reservedW,
-    protectedSoc,
-    dispatchCache,
-    derivedBatteryValue,
-    fixed,
-    solveAuction,
-  );
   const cost = buildPlan(
     "cost",
     slots,
@@ -4582,6 +4620,8 @@ export function generateOptimisationPlan(
     fixed,
     solveAuction,
   );
+  const priority = buildPriorityPlan(slots, snapshot, reservedW, protectedSoc, dispatchCache,
+                                    derivedBatteryValue, now, fixed, solveAuction);
   const plans = { baseline, priority, cost };
   const batteryCurveWasUsed = [...dispatchCache.values()].some((bundle) =>
     bundle?.stores.some((store) => store.key === "battery")

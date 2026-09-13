@@ -98,6 +98,22 @@ export function dispatchWithFixedPlan(
       });
     }
   }
+  return dispatchWithPrefix(slots, stores, limits, schedule, end, solveAuction);
+}
+
+/** Expected constraint rejection, distinct from worker continuation and solver errors. */
+export class DispatchPrefixInfeasible extends Error {}
+
+/** Project a specified prefix and jointly solve its remaining horizon. */
+export function dispatchWithPrefix(
+  slots: DispatchSlot[],
+  stores: DispatchStore[],
+  limits: DispatchLimits,
+  allocation: DispatchSchedule,
+  end: number,
+  solveAuction?: DispatchAuctionSolver,
+): DispatchResult {
+  const schedule = structuredClone(allocation);
   const prefix = scoreDispatch(
     slots.slice(0, end),
     stores.map((s) => ({ ...s, usage_weight: s.usage_weight.slice(0, end) })),
@@ -106,7 +122,7 @@ export function dispatchWithFixedPlan(
   );
   // Do not silently clamp an invalid fixed trajectory and then optimise from it.
   if (prefix.infeasibilities.length) {
-    throw new Error(
+    throw new DispatchPrefixInfeasible(
       `Fixed plan cannot execute: ${
         prefix.infeasibilities.map((i) => i.message).join("; ")
       }`,
@@ -123,6 +139,7 @@ export function dispatchWithFixedPlan(
     discharge: s.discharge
       ? {
         ...s.discharge,
+        export_allowed_by_slot: s.discharge.export_allowed_by_slot?.slice(end),
         state_per_kwh_out: (state: number, i: number) =>
           s.discharge!.state_per_kwh_out(state, i + end),
       }
@@ -136,10 +153,10 @@ export function dispatchWithFixedPlan(
       schedule[field][store.key].push(...(suffix?.[field][store.key] ?? []));
     }
   }
-  schedule.allow_export!.push(...starts.slice(end).map(() => false));
+  schedule.allow_export?.push(...slots.slice(end).map(() => false));
   const scored = scoreDispatch(slots, stores, limits, schedule);
   if (scored.infeasibilities.length) {
-    throw new Error(
+    throw new DispatchPrefixInfeasible(
       `Fixed plan continuation is infeasible: ${
         scored.infeasibilities.map((i) => i.message).join("; ")
       }`,
@@ -152,13 +169,13 @@ export function dispatchWithFixedPlan(
     export_w: scored.export_w,
     // A fixed decision is not an economic bid. Do not invent auction evidence.
     allocations: [
-      ...starts.slice(0, end).map(() => []),
+      ...slots.slice(0, end).map(() => []),
       ...(suffix?.allocations.map((parts) =>
         parts.map((p) => ({ ...p, run_start_index: p.run_start_index + end }))
       ) ?? []),
     ],
     battery: [
-      ...starts.slice(0, end).map(() => null),
+      ...slots.slice(0, end).map(() => null),
       ...(suffix?.battery ?? []),
     ],
     stopped_because: suffix?.stopped_because ?? "no_profitable_candidate",
