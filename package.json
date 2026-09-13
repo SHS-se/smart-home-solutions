@@ -18,6 +18,7 @@
     "deploy": "npm run build && wrangler pages deploy",
     "cf:dev": "npm run build && wrangler pages dev",
     "test:e2e": "playwright test",
+    "test:e2e:local": "playwright test --config playwright.local.config.ts",
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:migration": "playwright test e2e/migration-validation.spec.ts",
     "test:e2e:migration:headed": "playwright test e2e/migration-validation.spec.ts --headed"

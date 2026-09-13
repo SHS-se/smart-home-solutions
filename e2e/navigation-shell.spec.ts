@@ -9,6 +9,7 @@
  *   E2E_BASE_URL=http://localhost:8080 npx playwright test e2e/navigation-shell.spec.ts
  */
 import { test, expect, type BrowserContext, type Page } from '../playwright-fixture';
+import { portalDelta } from './helpers/portal-delta';
 
 const CUSTOMER_ID = '11111111-2222-4333-8444-555555555555';
 const STAFF_USER_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
@@ -451,7 +452,9 @@ test.describe('staff navigation shell', () => {
     const battery = { battery_present: true, battery_included: false, battery_choice_at: null };
     const writes: unknown[] = [];
     let failNextSave = false;
-    await context.route('**/rest/v1/energy_optimisation_devices?**', route => route.fulfill({ json: devices }));
+    await context.route('**/rest/v1/rpc/get_energy_portal_delta', route => route.fulfill({
+      json: portalDelta(route.request().postDataJSON().p_known, { devices }),
+    }));
     await context.route('**/rest/v1/energy_optimisation_home_planning?**', route => route.fulfill({ json: battery }));
     await context.route('**/rest/v1/rpc/get_energy_optimisation_*', route => route.fulfill({ json: [] }));
     await context.route('**/rest/v1/rpc/set_energy_*', async route => {

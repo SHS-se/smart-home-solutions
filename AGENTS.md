@@ -6,6 +6,17 @@ backend changes; focused tests and typechecks do not replace ESLint. Do not
 disable rules or exclude files to make the check pass. Report the lint result
 and any remaining warnings in the final response.
 
+# End-to-end validation
+
+Before committing code changes, build the frontend (`npm run build:test` on
+`dev`, `npm run build` otherwise) and run `npm run test:e2e:local`. This runs all
+four mocked-backend Playwright suites against the freshly built bundle and
+starts/stops its own preview server on port 4173. Install Chromium with
+`npx playwright install chromium` if needed. Fix failures and report the result;
+lint, typechecks, unit tests, and a successful build do not replace E2E tests.
+Keep this command aligned with `.github/workflows/ci-deploy.yml`. The separate
+`test:e2e:migration` suite requires configured live services and test accounts.
+
 # Planner changes
 
 Whenever the planner model version or generated plan output changes, run

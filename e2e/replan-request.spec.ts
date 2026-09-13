@@ -16,6 +16,7 @@
 import { test, expect, type BrowserContext } from '../playwright-fixture';
 import { CAPTURED_AT, snapshot } from '../src/lib/energy-shift/optimisation-snapshot.fixture';
 import { generateOptimisationPlan } from '../supabase/functions/_shared/energy-optimisation';
+import { portalDelta } from './helpers/portal-delta';
 
 const CUSTOMER_ID = '11111111-2222-4333-8444-555555555555';
 const CUSTOMER_USER_ID = 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff';
@@ -112,6 +113,28 @@ async function mockBackend(context: BrowserContext, replan: { row: ReplanColumns
 
   await context.route('**/rest/v1/**', async route => {
     const url = new URL(route.request().url());
+    if (url.pathname.endsWith('/rpc/get_energy_portal_delta')) {
+      await route.fulfill({ json: portalDelta(route.request().postDataJSON().p_known, {
+        current: {
+          home_id: HOME_ID,
+          captured_at: CAPTURED_AT,
+          updated_at: CAPTURED_AT,
+          plan_id: PLAN.plan_id,
+          generation_request_id: null,
+          plan_schema_version: PLAN.schema_version,
+          ha_runtime: null,
+          ha_runtime_received_at: null,
+          ha_ack_status: 'accepted',
+          ha_acknowledged_at: CAPTURED_AT,
+          ha_integration_version: null,
+          ha_ack_request_id: null,
+          ha_ack_error: null,
+          ...replan.row,
+        },
+        plan: PLAN,
+      }) });
+      return;
+    }
     if (url.pathname.includes('/rpc/')) {
       // The quarter-series readers return rows; access checks return a boolean.
       await route.fulfill({
@@ -127,22 +150,8 @@ async function mockBackend(context: BrowserContext, replan: { row: ReplanColumns
       : table === 'customers'
       ? [{ id: CUSTOMER_ID, primary_home_id: HOME_ID }]
       : table === 'energy_optimisation_current'
-      ? [{
-        home_id: HOME_ID,
-        snapshot: snapshot(),
-        plan: PLAN,
-        captured_at: CAPTURED_AT,
-        updated_at: CAPTURED_AT,
-        plan_id: PLAN.plan_id,
-        generation_request_id: null,
-        plan_schema_version: PLAN.schema_version,
-        ha_ack_status: 'accepted',
-        ha_acknowledged_at: CAPTURED_AT,
-        ha_integration_version: null,
-        ha_ack_request_id: null,
-        ha_ack_error: null,
-        ...replan.row,
-      }]
+      // The economics editor loads its snapshot on demand, separately from sync.
+      ? [{ snapshot: snapshot(), plan: PLAN }]
       : [];
     const single = (route.request().headers().accept || '').includes('vnd.pgrst.object');
     await route.fulfill({
