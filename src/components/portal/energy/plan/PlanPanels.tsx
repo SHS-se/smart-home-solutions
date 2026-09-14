@@ -757,6 +757,14 @@ const PlanTooltip: React.FC<{
             value={`${row.importPriceSekPerKwh.toFixed(2)} SEK/kWh`}
           />
         )}
+        {row.exportPriceSekPerKwh !== null && (
+          <Reading
+            name={row.importPriceQuoted
+              ? t('Sälj', 'Sell')
+              : t('Sälj (uppskattat)', 'Sell (estimated)')}
+            value={`${row.exportPriceSekPerKwh.toFixed(2)} SEK/kWh`}
+          />
+        )}
         <Reading
           name={t('Kostnad hittills', 'Cost so far')}
           value={`${row.cumulativeCostSek.toFixed(2)} kr`}

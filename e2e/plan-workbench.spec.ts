@@ -133,6 +133,10 @@ test.describe('plan workbench', () => {
     }).first();
     await expect(chart).toBeVisible();
 
+    // The shared plan tooltip exposes both sides of the tariff.
+    await chart.hover({ position: { x: 100, y: 100 } });
+    await expect(page.getByText(/^(Sell|Sälj)( \((estimated|uppskattat)\))?$/)).toBeVisible();
+
     // Flipping to the planner's plan must redraw rather than freeze.
     const shape = await chart.textContent();
     await page.getByRole('button', { name: /The planner’s|Planerarens$/ }).click();
