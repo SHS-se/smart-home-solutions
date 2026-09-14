@@ -253,7 +253,7 @@ Deno.test("the schema-8 battery fixture is emitted by the real planner", async (
   for (const [key, scenario] of Object.entries(stored.plan.plans) as [string, any][]) {
     assertEquals(scenario.status, "ready", JSON.stringify(scenario.validation_errors));
     for (const slot of scenario.slots) {
-      assertEquals(slot.battery_command.schema_version, 1);
+      assertEquals(slot.battery_command.schema_version, 2);
       assertEquals(slot.battery_command.allow_battery_export, false);
       if (key === "baseline") {
         assertEquals(slot.battery_command.operation, "self_consumption");

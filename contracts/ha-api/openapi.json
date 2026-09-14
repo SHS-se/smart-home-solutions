@@ -331,7 +331,7 @@
               "battery_command": {
                 "oneOf": [
                   {
-                    "$ref": "#/components/schemas/BatteryCommandV1"
+                    "$ref": "#/components/schemas/BatteryCommandV2"
                   },
                   {
                     "type": "null"
@@ -342,7 +342,7 @@
           }
         ]
       },
-      "BatteryCommandV1": {
+      "BatteryCommandV2": {
         "type": "object",
         "additionalProperties": false,
         "required": [
@@ -355,7 +355,7 @@
         ],
         "properties": {
           "schema_version": {
-            "const": 1
+            "const": 2
           },
           "operation": {
             "enum": [

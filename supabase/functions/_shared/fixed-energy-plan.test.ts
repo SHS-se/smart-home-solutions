@@ -16,7 +16,7 @@ import {
   generateOptimisationPlan,
   type PlannedSlot,
 } from "./energy-optimisation.ts";
-import { dispatchedEvSnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
+import { batterySnapshot, dispatchedEvSnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
 
 const starts = Array.from(
   { length: 8 },
@@ -409,4 +409,25 @@ Deno.test("prefix continuation shifts per-slot export eligibility", () => {
   assertEquals(result.discharge_w.battery[0], 0);
   assert(result.discharge_w.battery[1] > 0);
   assert(result.discharge_w.battery.slice(2).every(w => w === 0));
+});
+
+
+Deno.test("fixed battery commands preserve v2 ceilings and reject the old execution contract", () => {
+  const snapshot = batterySnapshot();
+  const now = new Date(snapshot.captured_at);
+  const original = generateOptimisationPlan(snapshot, now);
+  const first = original.plans.priority.slots[0];
+  const f: FixedEnergyPlan = {
+    id: "battery-fixed", source_snapshot_id: snapshot.snapshot_id,
+    starts_at: first.start, ends_at: snapshot.slots[1].start,
+    slots: [{start: first.start, power_w: {battery: first.battery_charge_w},
+      discharge_w: {battery: first.battery_discharge_w}, targets: first,
+      allow_export: false}],
+  };
+  const current = generateOptimisationPlan(snapshot, now, [], original.price_outlook, f);
+  assertEquals(current.plans.priority.slots[0].battery_command, first.battery_command);
+  const old = JSON.parse(JSON.stringify(f));
+  old.slots[0].targets.battery_command.schema_version = 1;
+  assertThrows(() => generateOptimisationPlan(snapshot, now, [], original.price_outlook, old),
+    Error, "Fixed plan battery command schema changed");
 });

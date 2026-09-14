@@ -36,3 +36,20 @@ Deno.test("source and destination produce distinct executable operations", () =>
     "not authorized",
   );
 });
+
+Deno.test("solar capture permits rated charging while grid replenishment retains its ceiling", () => {
+  const input = {baseline: false, loadW: 2712.6, pvW: 3236.54,
+    chargeW: 523.94, dischargeW: 0, chargeMaxW: 8800, dischargeMaxW: 9600,
+    exportEnabled: false};
+  assertEquals(batteryCommand(input), {schema_version: 2, operation: "solar_charge",
+    charge_limit_w: 8800, discharge_limit_w: 0,
+    allow_grid_charge: false, allow_battery_export: false});
+  const grid = batteryCommand({...input, pvW: 0});
+  assertEquals(grid.operation, "grid_charge");
+  assertEquals(grid.charge_limit_w, 523.94);
+  assertEquals(grid.allow_grid_charge, true);
+  const supply = batteryCommand({...input, pvW: 0, chargeW: 0, dischargeW: 2712});
+  assertEquals(supply.operation, "supply_house");
+  assertEquals(supply.discharge_limit_w, 2712);
+  assertEquals(supply.charge_limit_w, 0);
+});

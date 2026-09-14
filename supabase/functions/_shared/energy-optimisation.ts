@@ -118,7 +118,7 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6, 7, 8] as const;
  * prices executable setpoints and records exact quarter evidence.
  */
 // v28 emits battery operations and enforces export eligibility and reserves in dispatch.
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v31";
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v32";
 /** Schema 5 service sizing also no longer pads energy to a minimum runtime. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v10";
 export const SLOT_MINUTES = 15;
@@ -3780,7 +3780,7 @@ function simulate(
     if (locked && Object.keys(locked.room_heating_w).sort().join('|') !== Object.keys(roomHeating).sort().join('|')) throw new Error('Fixed plan room configuration changed; rescind the plan.');
     if (locked && (Math.abs(locked.boiler_expected_w - boilerW) > 0.01 || locked.boiler_permitted !== schedule.boilerPermitted[slot.index])) throw new Error('Fixed plan hot-water service changed; rescind the plan.');
     if (locked && Math.abs(locked.ev_w - evW) < 0.01 && locked.ev_target_current_a !== schedule.evTargetCurrentA[slot.index]) throw new Error('Fixed plan charger configuration changed; rescind the plan.');
-    if (locked && snapshot.schema_version >= 8 && snapshot.battery && !locked.battery_command) throw new Error('Fixed plan battery command schema changed; rescind the plan.');
+    if (locked && snapshot.schema_version >= 8 && snapshot.battery && locked.battery_command?.schema_version !== 2) throw new Error('Fixed plan battery command schema changed; rescind the plan.');
     if (locked && snapshot.schema_version >= 7 && !locked.device_commands) throw new Error('Fixed plan device command schema changed; rescind the plan.');
     const roomHeatingW = Object.values(roomHeating).reduce(
       (sum, watts) => sum + watts,

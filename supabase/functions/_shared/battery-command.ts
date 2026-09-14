@@ -7,7 +7,7 @@ export type BatteryOperation =
   | "export"
   | "hold";
 export interface BatteryCommand {
-  schema_version: 1;
+  schema_version: 2;
   operation: BatteryOperation;
   charge_limit_w: number;
   discharge_limit_w: number;
@@ -40,9 +40,10 @@ export function batteryCommand(input: {
     throw new Error("Battery export was not authorized");
   }
   return {
-    schema_version: 1,
+    schema_version: 2,
     operation,
-    charge_limit_w: input.baseline ? input.chargeMaxW : chargeW,
+    // Solar capture is a permission, not a forecast-sized charging request.
+    charge_limit_w: input.baseline || operation === "solar_charge" ? input.chargeMaxW : chargeW,
     discharge_limit_w: input.baseline ? input.dischargeMaxW : dischargeW,
     allow_grid_charge: operation === "grid_charge",
     allow_battery_export: operation === "export",
