@@ -573,14 +573,6 @@ const PlanView: React.FC<{
     return typeof target === 'number' ? target : null;
   }, [plan]);
 
-  const nextReplanAt = useMemo(() => {
-    if (!plan?.valid_until) return null;
-    const validUntil = Date.parse(plan.valid_until);
-    if (!Number.isFinite(validUntil)) return null;
-    const threshold = validUntil - 30 * 60_000;
-    const quarter = 15 * 60_000;
-    return new Date(Math.ceil(threshold / quarter) * quarter);
-  }, [plan?.valid_until]);
   // One timeline: measured quarters up to now, planned quarters after it.
   // Every headline number describes the day on screen, so a total can be
   // checked against the chart under it.
@@ -806,12 +798,27 @@ const PlanView: React.FC<{
                 )}
               </div>
               <p className="mt-1 text-sm text-muted-foreground">
-                {t('Utfärdad', 'Issued')} {formatHomeStamp(plan.issued_at, homeTimeZone)}
+                {t('Plan', 'Plan')} <code title={plan.plan_id}>{plan.plan_id.slice(0, 8)}</code>
+                {' · '}{t('Utfärdad', 'Issued')} {formatHomeStamp(plan.issued_at, homeTimeZone)}
               </p>
+              {!isDemo && (
+                <p className="mt-1 text-sm text-muted-foreground" data-testid="ha-plan-identity">
+                  {t('Senast rapporterad plan i HA', 'Last reported plan in HA')}: {runtimeStatus.runtime?.plan_id
+                    ? <><code title={runtimeStatus.runtime.plan_id}>{runtimeStatus.runtime.plan_id.slice(0, 8)}</code>{' · '}{runtimeStatus.runtime.plan_id === plan.plan_id
+                      ? t('Samma plan', 'Same plan') : t('Annan plan', 'Different plan')}
+                    {' · '}{formatHomeStamp(runtimeStatus.runtime.observed_at, homeTimeZone)}</>
+                    : t('Inte bekräftad', 'Unconfirmed')}
+                </p>
+              )}
               {!isDemo && (
                 <details className="mt-2 text-xs text-muted-foreground">
                   <summary className="cursor-pointer">{t('Statusdetaljer', 'Status details')}</summary>
                   <p className="mt-1">{plan.model_version} · {actuals.length} {t('faktiska kvartar', 'actual quarters')}</p>
+                  <p className="mt-1 break-all">{t('Visat plan-ID', 'Displayed plan ID')}: <code>{plan.plan_id}</code></p>
+                  {runtimeStatus.runtime?.plan_id && (
+                    <p className="mt-1 break-all">{t('Senast rapporterat plan-ID i HA', 'Last reported plan ID in HA')}: <code>{runtimeStatus.runtime.plan_id}</code></p>
+                  )}
+                  <p className="mt-1">{t('Jämför plan-ID med schemat i SHS-integrationen. Varje ersättningsplan får ett nytt ID.', 'Compare the plan ID with the schedule in the SHS integration. Each replacement plan gets a new ID.')}</p>
                   {lastCheckedAt && (
                     <p className="mt-1 text-xs text-muted-foreground">
                       {t('Portalen kontrollerade senast', 'Portal last checked')} {formatHomeTimeWithSeconds(lastCheckedAt, homeTimeZone)}
@@ -829,11 +836,8 @@ const PlanView: React.FC<{
                       {t('Begäran', 'Request')} {current.generation_request_id} {current.ha_integration_version ? `· ${t('Accepterad/avvisad av HA', 'Acknowledged by HA')} ${current.ha_integration_version}` : ''}
                     </p>
                   )}
-                  {nextReplanAt && (
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {t('Nästa omplanering', 'Next replan')} {formatHomeTimeWithSeconds(nextReplanAt, homeTimeZone)} · {t('planen gäller till', 'plan valid until')} {formatHomeTimeWithSeconds(plan.valid_until, homeTimeZone)}
-                    </p>
-                  )}
+                  <p className="mt-1">{t('SHS söker normalt en ny plan var 15:e minut. En sparad plan kan fortsätta tills den löper ut om ingen ersättare kommer.', 'SHS normally checks for a new plan every 15 minutes. A cached plan can continue until it expires if no replacement arrives.')}</p>
+                  <p className="mt-1">{t('Publicerade priser till', 'Published prices until')} {formatHomeStamp(plan.binding_until, homeTimeZone)}{' · '}{t('Planen gäller till', 'Plan valid until')} {formatHomeStamp(plan.valid_until, homeTimeZone)}</p>
                 </details>
               )}
             </div>

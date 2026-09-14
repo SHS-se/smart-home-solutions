@@ -56,7 +56,7 @@ const idle: ReplanColumns = {
  * control. Held in a mutable cell so pressing the button can change what the
  * next read returns, which is the whole behaviour being checked.
  */
-async function mockBackend(context: BrowserContext, replan: { row: ReplanColumns }) {
+async function mockBackend(context: BrowserContext, replan: { row: ReplanColumns; reportedPlanId?: string }) {
   const nowIso = new Date().toISOString();
   const email = 'ana@example.com';
   const user = {
@@ -122,8 +122,12 @@ async function mockBackend(context: BrowserContext, replan: { row: ReplanColumns
           plan_id: PLAN.plan_id,
           generation_request_id: null,
           plan_schema_version: PLAN.schema_version,
-          ha_runtime: null,
-          ha_runtime_received_at: null,
+          ha_runtime: replan.reportedPlanId ? {
+            plan_id: replan.reportedPlanId, observed_at: CAPTURED_AT, state: 'ready',
+            reason: 'A validated plan is available', binding_until: PLAN.binding_until,
+            valid_until: PLAN.valid_until, recovering: false, retry_at: null, last_error: null,
+          } : null,
+          ha_runtime_received_at: replan.reportedPlanId ? CAPTURED_AT : null,
           ha_ack_status: 'accepted',
           ha_acknowledged_at: CAPTURED_AT,
           ha_integration_version: null,
@@ -165,7 +169,7 @@ async function mockBackend(context: BrowserContext, replan: { row: ReplanColumns
 const replanButton = /Planera om nu|Replan now/;
 
 test.describe('requesting a replan', () => {
-  let replan: { row: ReplanColumns };
+  let replan: { row: ReplanColumns; reportedPlanId?: string };
 
   test.beforeEach(async ({ context, page }) => {
     replan = { row: { ...idle } };
@@ -182,6 +186,22 @@ test.describe('requesting a replan', () => {
     await page.getByRole('button', { name: 'Logga in' }).click();
     await page.waitForURL(url => !url.pathname.endsWith('/login'));
   });
+
+  for (const samePlan of [true, false]) {
+    test(`shows the displayed and HA plan identities when they ${samePlan ? 'match' : 'differ'}`, async ({ page }) => {
+      replan.reportedPlanId = samePlan ? PLAN.plan_id : REQUEST_ID;
+      await page.goto('/portal/energy-modeling?tab=plan');
+      const identity = page.getByTestId('ha-plan-identity');
+      await expect(identity).toContainText(replan.reportedPlanId.slice(0, 8));
+      await expect(identity).toContainText(samePlan ? /Samma plan|Same plan/ : /Annan plan|Different plan/);
+      await expect(page.locator(`code[title="${PLAN.plan_id}"]`).first()).toHaveText(PLAN.plan_id.slice(0, 8));
+      await page.getByText(/Statusdetaljer|Status details/, { exact: true }).click();
+      await expect(page.getByText(/Visat plan-ID|Displayed plan ID/)).toContainText(PLAN.plan_id);
+      await expect(page.getByText(/Senast rapporterat plan-ID i HA|Last reported plan ID in HA/)).toContainText(replan.reportedPlanId);
+      await expect(page.getByText(/var 15:e minut|every 15 minutes/)).toBeVisible();
+      await expect(page.getByText(/Nästa omplanering|Next replan/)).toHaveCount(0);
+    });
+  }
 
   test('pressing it records a request and says the house is answering', async ({ page }) => {
     await page.goto('/portal/energy-modeling?tab=economics');
