@@ -3,36 +3,46 @@ import { PRICE_RAMP_STEPS, priceBands, priceGradientStops } from './price-bands.
 
 const spread = [0.4, 0.8, 1.2, 1.6, 2.0, 2.4, 2.8];
 
-Deno.test('the cheapest quarter gets the first step and the dearest the last', () => {
+Deno.test('seven equal bands cover 0–5 SEK/kWh with clamped endpoint colours', () => {
   const bands = priceBands(spread)!;
-  assertEquals(bands.step(0.4), 1);
-  assertEquals(bands.step(2.8), PRICE_RAMP_STEPS);
+  assertEquals(bands.min, 0);
+  assertEquals(bands.max, 5);
+  for (let index = 0; index < PRICE_RAMP_STEPS; index++) {
+    assertEquals(bands.step((index + 0.5) * 5 / PRICE_RAMP_STEPS), index + 1);
+  }
+  for (let index = 1; index < PRICE_RAMP_STEPS; index++) {
+    const boundary = index * 5 / PRICE_RAMP_STEPS;
+    assertEquals(bands.step(boundary - 0.000001), index);
+    assertEquals(bands.step(boundary + 0.000001), index + 1);
+  }
+  assertEquals(bands.step(0), 1);
+  assertEquals(bands.step(-1), 1);
+  assertEquals(bands.step(5), PRICE_RAMP_STEPS);
+  assertEquals(bands.step(10), PRICE_RAMP_STEPS);
 });
 
-Deno.test('the ramp is relative to the window on screen', () => {
-  // A day that never leaves 1.20–1.40 still uses the whole ramp: the question
-  // the colour answers is "cheap or dear compared with the rest of what I can
-  // see", not "cheap or dear compared with last winter".
-  const flatish = priceBands([1.2, 1.25, 1.3, 1.35, 1.4])!;
-  assertEquals(flatish.step(1.2), 1);
-  assertEquals(flatish.step(1.4), PRICE_RAMP_STEPS);
+Deno.test('the same price keeps its colour across windows and on flat-price days', () => {
+  const windows = [[1.2, 1.3, 1.4], [0, 1.3, 10], [1.3, 1.3], [1.3, 1.3001]];
+  for (const prices of windows) {
+    const bands = priceBands(prices)!;
+    assertEquals(bands.step(1.3), 2);
+    assertEquals(bands.min, 0);
+    assertEquals(bands.max, 5);
+  }
+  assertEquals(priceBands([5, 5])!.step(5), PRICE_RAMP_STEPS);
 });
 
-Deno.test('a price that never moves gets no ramp at all', () => {
-  // Colouring float noise on a fixed-price contract would read as a real swing.
-  assertEquals(priceBands([1.5, 1.5, 1.5]), null);
-  assertEquals(priceBands([1.5, 1.5001]), null);
-});
-
-Deno.test('no prices means nothing to colour', () => {
+Deno.test('no finite prices means nothing to colour', () => {
   assertEquals(priceBands([]), null);
   assertEquals(priceBands([null, null]), null);
+  assertEquals(priceBands([Number.NaN, Infinity]), null);
 });
 
-Deno.test('unpriced quarters do not drag the ends of the ramp', () => {
+Deno.test('unpriced quarters do not change the fixed scale', () => {
   const bands = priceBands([null, 1.0, null, 3.0])!;
-  assertEquals(bands.min, 1.0);
-  assertEquals(bands.max, 3.0);
+  assertEquals(bands.min, 0);
+  assertEquals(bands.max, 5);
+  assertEquals(bands.step(1), 2);
 });
 
 Deno.test('every step is inside the ramp, including outside the window', () => {
@@ -44,13 +54,6 @@ Deno.test('every step is inside the ramp, including outside the window', () => {
       `${price} produced step ${step}`,
     );
   }
-});
-
-Deno.test('the quartile rules sit inside the range and in order', () => {
-  const bands = priceBands(spread)!;
-  assert(bands.min <= bands.cheapAt, 'cheap rule below the range');
-  assert(bands.cheapAt <= bands.dearAt, 'quartiles out of order');
-  assert(bands.dearAt <= bands.max, 'dear rule above the range');
 });
 
 Deno.test('gradient stops step at quarter edges rather than blending', () => {

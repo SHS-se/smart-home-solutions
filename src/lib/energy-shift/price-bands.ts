@@ -4,10 +4,9 @@
 // quarter is, so a reader can see "expensive evening, cheap night" without
 // reading the axis at all. Two decisions live here rather than in the chart:
 //
-// 1. The scale is *relative to the window on screen*. A day that never leaves
-//    1.20–1.40 SEK/kWh still gets the full ramp, because the question the
-//    colour answers is "cheap or dear compared with the rest of what I can
-//    see", not "cheap or dear compared with last winter".
+// 1. The scale is fixed at 0–5 SEK/kWh, with seven equal bands (~0.71 each).
+//    The same price always has the same colour, including on flat-price days.
+//    Prices outside this range keep the nearest endpoint colour.
 //
 // 2. The ramp is diverging blue↔red with a neutral middle, not Tibber's
 //    green→yellow→red. A three-hue rainbow has no meaningful midpoint — there
@@ -21,17 +20,12 @@ export const PRICE_RAMP_STEPS = 7;
 export interface PriceBands {
   min: number;
   max: number;
-  /** Top of the cheapest quarter of the window. */
-  cheapAt: number;
-  /** Bottom of the dearest quarter of the window. */
-  dearAt: number;
   /** A ramp step, 1 (cheapest) to PRICE_RAMP_STEPS (dearest). */
   step: (price: number) => number;
 }
 
 /**
- * Null when there is nothing to colour: no prices at all, or a window whose
- * price never moves, where a ramp would invent a distinction that is not there.
+ * Null only when there are no finite prices to colour.
  */
 export const priceBands = (
   prices: readonly (number | null)[],
@@ -41,28 +35,18 @@ export const priceBands = (
   );
   if (known.length === 0) return null;
 
-  const min = Math.min(...known);
-  const max = Math.max(...known);
-  // A tenth of an öre across a whole window is a flat price with float noise on
-  // it, and colouring that noise would read as a real swing.
-  if (max - min < 0.001) return null;
-
-  const sorted = [...known].sort((left, right) => left - right);
-  const at = (fraction: number) =>
-    sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * fraction))];
-
+  const min = 0;
+  const max = 5;
   const span = max - min;
   return {
     min,
     max,
-    cheapAt: at(0.25),
-    dearAt: at(0.75),
     step: (price: number) => {
       if (!Number.isFinite(price)) return Math.ceil(PRICE_RAMP_STEPS / 2);
       const share = (price - min) / span;
       return Math.min(
         PRICE_RAMP_STEPS,
-        Math.max(1, Math.ceil(share * PRICE_RAMP_STEPS)),
+        Math.max(1, Math.floor(share * PRICE_RAMP_STEPS) + 1),
       );
     },
   };

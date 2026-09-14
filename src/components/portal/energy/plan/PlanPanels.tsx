@@ -370,10 +370,10 @@ const PlanPanels: React.FC<{
             title={t('Pris', 'Price')}
             unit={hasModelledPrice
               ? t(
-                'SEK/kWh · köp, färgat billigt → dyrt · streckat = uppskattat, inte marknadspris',
-                'SEK/kWh · buy, shaded cheap → dear · dashed = estimated, not a market price',
+                'SEK/kWh · köp, fast färgskala · streckat = uppskattat, inte marknadspris',
+                'SEK/kWh · buy, fixed colour scale · dashed = estimated, not a market price',
               )
-              : t('SEK/kWh · köp, färgat billigt → dyrt', 'SEK/kWh · buy, shaded cheap → dear')}
+              : t('SEK/kWh · köp, fast färgskala', 'SEK/kWh · buy, fixed colour scale')}
             y={price.top - 14}
           />
           {bands && (
@@ -393,7 +393,7 @@ const PlanPanels: React.FC<{
                 {bands.min.toFixed(2)}
               </text>
               <text x={RIGHT + 2} y={price.top - 15} className={AXIS_TEXT}>
-                {bands.max.toFixed(2)}
+                {bands.max.toFixed(2)}+
               </text>
             </g>
           )}
@@ -402,12 +402,6 @@ const PlanPanels: React.FC<{
               legible from across the room rather than only on hover. */}
           <path d={stepAreaPath(quotedBuy, x, priceY, 0)} fill={priceStroke} fillOpacity={0.2} />
           <path d={stepAreaPath(modelledBuy, x, priceY, 0)} fill={priceStroke} fillOpacity={0.08} />
-          {bands && [bands.cheapAt, bands.dearAt].map(level => (
-            <line
-              key={level} x1={MARGIN_LEFT} x2={RIGHT} y1={priceY(level)} y2={priceY(level)}
-              className="stroke-muted-foreground" strokeWidth={1} strokeOpacity={0.5}
-            />
-          ))}
           <path
             d={stepLinePath(sell, x, priceY)} fill="none"
             className="stroke-muted-foreground" strokeWidth={1.25}
