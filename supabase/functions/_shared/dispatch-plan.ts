@@ -46,6 +46,8 @@ export const SLOT_HOURS = 0.25;
 const MAX_SETTLE_ROUNDS = 24;
 
 export interface DispatchSlot {
+  /** Remaining physical duration; standalone quarter problems omit it. */
+  duration_hours?: number;
   pv_w: number;
   /** Base load plus anything not being scheduled here. */
   fixed_load_w: number;
@@ -63,6 +65,8 @@ export interface DispatchSlot {
 }
 
 export interface DispatchStore {
+  /** Aligned physical durations, including a partially elapsed first quarter. */
+  slot_hours?: number[];
   key: string;
   curve: UtilityCurve;
   /** Measured state now, in the curve's own units. */
@@ -292,11 +296,13 @@ function retentionBySlot(store: DispatchStore, slots: number): number[] {
   let tail = store.terminal_weight ?? 0;
   for (let index = slots - 1; index >= 0; index -= 1) {
     const nextWeight = store.usage_weight[index + 1] ?? 0;
-    tail = nextWeight + decay * tail;
+    tail = nextWeight + Math.pow(decay, hoursAt(store, index) / SLOT_HOURS) * tail;
     retention[index] = tail;
   }
   return retention;
 }
+
+const hoursAt = (store: DispatchStore, index: number): number => store.slot_hours?.[index] ?? SLOT_HOURS;
 
 /** The physical transition before applying the store's state bounds. */
 function nextState(
@@ -306,10 +312,10 @@ function nextState(
   dischargeW: number,
   index: number,
 ): number {
-  const gained = chargeW / 1_000 * SLOT_HOURS *
+  const gained = chargeW / 1_000 * hoursAt(store, index) *
     store.units_per_kwh(current, index);
   const spent = dischargeW > 0
-    ? dischargeW / 1_000 * SLOT_HOURS *
+    ? dischargeW / 1_000 * hoursAt(store, index) *
       (store.discharge?.state_per_kwh_out(current, index) ?? 0)
     : 0;
   return store.drift(current + gained - spent, index);
@@ -376,11 +382,12 @@ function chargeRoomW(
   store: DispatchStore,
   highestState: number,
   unitsPerKwh: number,
+  index: number,
 ): number {
   if (store.max_state === undefined) return Infinity;
   const roomUnits = store.max_state - highestState;
   if (roomUnits <= 0) return 0;
-  return roomUnits / unitsPerKwh / SLOT_HOURS * 1_000;
+  return roomUnits / unitsPerKwh / hoursAt(store, index) * 1_000;
 }
 
 /**
@@ -886,8 +893,8 @@ function scoreDispatchWithReuse(
   let gridImportKwh = 0;
   let gridExportKwh = 0;
   for (let index = from; index < to; index += 1) {
-    const importKwh = importW[index] / 1_000 * SLOT_HOURS;
-    const exportKwh = exportW[index] / 1_000 * SLOT_HOURS;
+    const importKwh = importW[index] / 1_000 * (slots[index].duration_hours ?? SLOT_HOURS);
+    const exportKwh = exportW[index] / 1_000 * (slots[index].duration_hours ?? SLOT_HOURS);
     gridImportKwh += importKwh;
     gridExportKwh += exportKwh;
     const bought = importKwh * slots[index].import_price_sek_per_kwh;
@@ -941,7 +948,7 @@ function scoreDispatchWithReuse(
         storeValue += usageWeight *
           valueOfMove(store.curve, store.initial_state, state[index]);
       }
-      storeWear += SLOT_HOURS / 1_000 *
+      storeWear += hoursAt(store, index) / 1_000 *
         ((power[index] + discharge[index]) * (store.wear_sek_per_kwh ?? 0) +
           (discharge[index] > 0 &&
               (store.discharge?.cycling_cost_sek_per_unit ?? 0) !== 0
@@ -949,8 +956,8 @@ function scoreDispatchWithReuse(
               store.discharge!.state_per_kwh_out(state[index], index) *
               store.discharge!.cycling_cost_sek_per_unit!
             : 0));
-      chargedKwh += power[index] / 1_000 * SLOT_HOURS;
-      dischargedKwh += discharge[index] / 1_000 * SLOT_HOURS;
+      chargedKwh += power[index] / 1_000 * hoursAt(store, index);
+      dischargedKwh += discharge[index] / 1_000 * hoursAt(store, index);
     }
     const runs = runsOf(power).filter(
       (run) => run.start >= from && run.start < to,
@@ -1052,12 +1059,13 @@ export function refineDispatchCosts(
           }
           const beforeFrom = power[from];
           const beforeTo = power[to];
-          const room = Math.min(beforeFrom, store.max_power_w - beforeTo);
+          const ratio = hoursAt(store, from) / hoursAt(store, to);
+          const room = Math.min(beforeFrom, (store.max_power_w - beforeTo) / ratio);
           if (room <= GRID_NOISE_W) continue;
           // Full moves merge relay runs; equalisation smooths variable loads.
           const equalise = Math.max(
             0,
-            (current.import_w[from] - current.import_w[to]) / 2,
+            (current.import_w[from] - current.import_w[to]) / (1 + ratio),
           );
           const levels = new Set([room, Math.min(room, equalise)]);
           if ((store.power_step_w ?? 0) > 0) {
@@ -1086,16 +1094,16 @@ export function refineDispatchCosts(
                   ),
               );
               if (
-                watts > spare + GRID_NOISE_W &&
+                watts * ratio > spare + GRID_NOISE_W &&
                 !(sellPrices[to] >
                   slots[to].import_price_sek_per_kwh / roundTrip)
               ) continue;
             }
             if (
-              !executable(beforeFrom - watts) || !executable(beforeTo + watts)
+              !executable(beforeFrom - watts) || !executable(beforeTo + watts * ratio)
             ) continue;
             power[from] = beforeFrom - watts;
-            power[to] = beforeTo + watts;
+            power[to] = beforeTo + watts * ratio;
             const candidate = scoreDispatchWithReuse(
               slots,
               stores,
@@ -1119,7 +1127,7 @@ export function refineDispatchCosts(
             }
           }
           power[from] = beforeFrom - accepted;
-          power[to] = beforeTo + accepted;
+          power[to] = beforeTo + accepted * ratio;
           if (accepted > 0) {
             current = best;
             changed.add(store.key);
@@ -1202,7 +1210,7 @@ export function planDispatch(
     for (let i = 0; i < slots.length; i += 1) {
       const watts = profile[i];
       if (watts <= 0) continue;
-      const kwh = watts / 1_000 * SLOT_HOURS;
+      const kwh = watts / 1_000 * hoursAt(store, i);
       const value = valueOfMove(store.curve, state[i], state[i + 1]) *
         retention[i];
       const otherW = Object.entries(candidate.power_w).reduce(
@@ -1275,6 +1283,7 @@ function cheapestDiscreteProfile(
     Math.abs(minimum / step - Math.round(minimum / step)) > 1e-9 ||
     store.usage_weight.filter((weight) => weight > 0).length > 1 ||
     slots.some((_slot, i) =>
+      hoursAt(store, i) !== hoursAt(store, 0) ||
       store.units_per_kwh(store.initial_state, i) !== units ||
       store.drift(store.initial_state, i) !== store.initial_state
     )
@@ -1308,7 +1317,7 @@ function cheapestDiscreteProfile(
     ) {
       choices.push({
         steps: Math.round(watts / step),
-        cost: watts / 1_000 * SLOT_HOURS *
+        cost: watts / 1_000 * hoursAt(store, i) *
           energyCostSekPerKwh(slots[i], 0, watts, limits),
       });
     }
@@ -1518,9 +1527,9 @@ export function* dispatchAuctionSteps(
           headroomW(slot, limits, occupiedW[index], returnedW[index]) + 1e-9 <
             powerLevel)
       ) break;
-      const kwh = powerLevel / 1_000 * SLOT_HOURS;
+      const kwh = powerLevel / 1_000 * hoursAt(store, index);
       const previousW = powerW[store.key][index];
-      const previousKwh = previousW / 1_000 * SLOT_HOURS;
+      const previousKwh = previousW / 1_000 * hoursAt(store, index);
       const otherW = occupiedW[index] - previousW;
       addedKwh += kwh - previousKwh;
       const afterInput = before + kwh * units;
@@ -1626,7 +1635,7 @@ export function* dispatchAuctionSteps(
       if (!bestLength) return null;
       parts.length = bestLength;
       indices = indices.slice(0, bestLength);
-      addedKwh = bestLength * powerLevel / 1_000 * SLOT_HOURS;
+      addedKwh = indices.reduce((sum, index) => sum + powerLevel / 1_000 * hoursAt(store, index), 0);
       for (const part of parts) {
         part.run_slots = bestLength;
         part.start_cost_sek = prefixStartCost / bestLength;
@@ -1721,10 +1730,10 @@ export function* dispatchAuctionSteps(
     const before = state[index];
     // Drift belongs to the slot, not to the allocation, so the move is valued
     // before it — exactly as the candidate that won was.
-    const gained = inW / 1_000 * SLOT_HOURS *
+    const gained = inW / 1_000 * hoursAt(store, index) *
       store.units_per_kwh(before, index);
     const spent = outW > 0
-      ? outW / 1_000 * SLOT_HOURS *
+      ? outW / 1_000 * hoursAt(store, index) *
         (store.discharge?.state_per_kwh_out(before, index) ?? 0)
       : 0;
     const after = before + gained - spent;
@@ -1774,7 +1783,7 @@ export function* dispatchAuctionSteps(
         store.units_per_kwh(state[index], index)
       );
       const chargeCost = (index: number, watts: number) =>
-        watts / 1_000 * SLOT_HOURS * energyCostSekPerKwh(
+        watts / 1_000 * hoursAt(store, index) * energyCostSekPerKwh(
           slots[index],
           occupiedW[index] - schedule[index],
           watts,
@@ -1803,11 +1812,11 @@ export function* dispatchAuctionSteps(
           }
           const maxUnits = Math.min(
             room[from],
-            schedule[from] / 1_000 * SLOT_HOURS * units[from],
-            availableW / 1_000 * SLOT_HOURS * units[to],
+            schedule[from] / 1_000 * hoursAt(store, from) * units[from],
+            availableW / 1_000 * hoursAt(store, to) * units[to],
           );
           if (maxUnits <= 1e-9) continue;
-          const maximumW = maxUnits / units[from] / SLOT_HOURS * 1_000;
+          const maximumW = maxUnits / units[from] / hoursAt(store, from) * 1_000;
           const importBeforeW = gridImportW(
             slots[from],
             occupiedW[from],
@@ -1835,17 +1844,17 @@ export function* dispatchAuctionSteps(
           }
           for (const removedW of new Set(levels)) {
             if (removedW <= 1e-6) continue;
-            const addedW = removedW * units[from] / units[to];
+            const addedW = removedW * units[from] / units[to] * hoursAt(store, from) / hoursAt(store, to);
             const saving = sourceCosts[from] -
               chargeCost(from, schedule[from] - removedW) -
-              addedW / 1_000 * SLOT_HOURS * energyCostSekPerKwh(
+              addedW / 1_000 * hoursAt(store, to) * energyCostSekPerKwh(
                   slots[to],
                   occupiedW[to],
                   addedW,
                   limits,
                   returnedW[to],
                 ) +
-              (removedW - addedW) / 1_000 * SLOT_HOURS * wear;
+              (removedW * hoursAt(store, from) - addedW * hoursAt(store, to)) / 1_000 * wear;
             if (saving <= (best?.saving_sek ?? 0) + 1e-9) continue;
 
             // Verify the actual dynamics without clamping. In particular, a
@@ -1954,7 +1963,7 @@ export function* dispatchAuctionSteps(
     const part = partAt(store, index);
     if (!part) return 0;
     const wear = store.wear_sek_per_kwh ?? 0;
-    const kwh = part.power_w / 1_000 * SLOT_HOURS;
+    const kwh = part.power_w / 1_000 * hoursAt(store, index);
     const charging = part.direction === "charge";
     const { value } = movedValue(
       store,
@@ -2185,7 +2194,7 @@ export function* dispatchAuctionSteps(
                   returnedW[slotIndex],
                 ),
                 schedule[slotIndex] +
-                  chargeRoomW(store, suffixMax[slotIndex], units),
+                  chargeRoomW(store, suffixMax[slotIndex], units, slotIndex),
                 // Barred from the grid, it may still take what the roof is
                 // giving away: that energy costs no committed money.
                 gridBarred
@@ -2316,7 +2325,7 @@ export function* dispatchAuctionSteps(
               }
               for (const point of store.curve.points) {
                 const toPointW = (point.at - state[slotIndex]) / units /
-                  SLOT_HOURS *
+                  hoursAt(store, slotIndex) *
                   1_000;
                 if (toPointW > 1e-9 && toPointW < fullW - 1e-9) {
                   rawPowers.push(toPointW);
@@ -2381,7 +2390,7 @@ export function* dispatchAuctionSteps(
                     0,
                     (state[index] -
                           (store.discharge.export_min_state ?? -Infinity)) /
-                        statePerKwh * 1000 / SLOT_HOURS - coverW,
+                        statePerKwh * 1000 / hoursAt(store, index) - coverW,
                   ),
                   Math.max(
                     0,
@@ -2418,7 +2427,7 @@ export function* dispatchAuctionSteps(
                   continue;
                 }
               }
-              const previousKwh = previousW / 1_000 * SLOT_HOURS;
+              const previousKwh = previousW / 1_000 * hoursAt(store, index);
               const previousSpent = previousKwh * statePerKwh;
               const importBeforeW = gridImportW(
                 slot,
@@ -2443,7 +2452,7 @@ export function* dispatchAuctionSteps(
                   ) * retention[index];
               for (const point of store.curve.points) {
                 const toPointW = (state[index] - point.at) / statePerKwh /
-                  SLOT_HOURS * 1_000;
+                  hoursAt(store, index) * 1_000;
                 if (toPointW > 1e-9 && toPointW < maximumW - 1e-9) {
                   rawLevels.push(toPointW);
                 }
@@ -2464,7 +2473,7 @@ export function* dispatchAuctionSteps(
                   : loadW <= 1e-9
                   ? "export" as const
                   : "mixed" as const;
-                const kwh = powerLevel / 1_000 * SLOT_HOURS;
+                const kwh = powerLevel / 1_000 * hoursAt(store, index);
                 const spent = kwh * statePerKwh;
                 // Feasible only if the lowest state still to come can absorb it.
                 if (
@@ -2790,7 +2799,7 @@ export function* dispatchAuctionSteps(
         const part = partAt(store, index);
         if (!part) continue;
         const wear = store.wear_sek_per_kwh ?? 0;
-        const kwh = part.power_w / 1_000 * SLOT_HOURS;
+        const kwh = part.power_w / 1_000 * hoursAt(store, index);
         const charging = part.direction === "charge";
         const { after, value } = movedValue(
           store,
@@ -2892,15 +2901,15 @@ export function* dispatchAuctionSteps(
             if (spent <= 0) continue;
             const stored = Math.min(
               room[load],
-              availableW / 1_000 * SLOT_HOURS * units,
+              availableW / 1_000 * hoursAt(store, charge) * units,
               Math.min(
                 importW,
                 store.discharge!.max_power_w - discharge[load],
               ) /
-                1_000 * SLOT_HOURS * spent,
+                1_000 * hoursAt(store, load) * spent,
             );
             if (stored <= 1e-9) continue;
-            let maximumW = stored / spent / SLOT_HOURS * 1_000;
+            let maximumW = stored / spent / hoursAt(store, load) * 1_000;
             const solarW = Math.max(
               0,
               slots[charge].pv_w -
@@ -2909,13 +2918,13 @@ export function* dispatchAuctionSteps(
             // Committed grid purchases need a quoted sell opportunity, never a
             // speculative tail price. Solar keeps its opportunity-cost economics.
             if (slots[charge].binding && !slots[load].published_price) {
-              maximumW = Math.min(maximumW, solarW * units / spent);
+              maximumW = Math.min(maximumW, solarW * units / spent * hoursAt(store, charge) / hoursAt(store, load));
             }
             if (maximumW <= GRID_NOISE_W) continue;
             const economics = (outW: number) => {
-              const inW = outW * spent / units;
-              const inKwh = inW / 1_000 * SLOT_HOURS;
-              const outKwh = outW / 1_000 * SLOT_HOURS;
+              const inW = outW * spent / units * hoursAt(store, load) / hoursAt(store, charge);
+              const inKwh = inW / 1_000 * hoursAt(store, charge);
+              const outKwh = outW / 1_000 * hoursAt(store, load);
               const cost = inKwh *
                 energyCostSekPerKwh(
                   slots[charge],
@@ -2945,7 +2954,7 @@ export function* dispatchAuctionSteps(
             ) continue;
             const levels = [
               maximumW,
-              Math.min(maximumW, solarW * units / spent),
+              Math.min(maximumW, solarW * units / spent * hoursAt(store, charge) / hoursAt(store, load)),
             ];
             // Equal marginal source and destination costs give the convex optimum.
             const rate = limits.peak_shaping_sek_per_kwh_per_kw;
@@ -2954,7 +2963,7 @@ export function* dispatchAuctionSteps(
               const netSource = slots[charge].fixed_load_w + occupiedW[charge] -
                 slots[charge].pv_w - returnedW[charge];
               const marginalSaving = (out: number) => {
-                const source = netSource + out * ratio;
+                const source = netSource + out * ratio * hoursAt(store, load) / hoursAt(store, charge);
                 const buy = source > 0
                   ? slots[charge].import_price_sek_per_kwh
                   : slots[charge].export_price_sek_per_kwh;
@@ -3050,10 +3059,10 @@ export function* dispatchAuctionSteps(
       const transfer = {
         charge_index: charge,
         discharge_index: discharge,
-        charged_kwh: inW / 1_000 * SLOT_HOURS,
-        discharged_kwh: outW / 1_000 * SLOT_HOURS,
+        charged_kwh: inW / 1_000 * hoursAt(store, charge),
+        discharged_kwh: outW / 1_000 * hoursAt(store, discharge),
         saving_sek: saving,
-        grid_charged_kwh: (inW - solarW) / 1_000 * SLOT_HOURS,
+        grid_charged_kwh: (inW - solarW) / 1_000 * hoursAt(store, charge),
       };
       // Attribute the opportunity cost to the discharge it funds. Charging this
       // energy has zero standalone profit; the load leg records the joint saving.
@@ -3065,8 +3074,8 @@ export function* dispatchAuctionSteps(
         ]] as const
       ) {
         const old = partAt(store, index);
-        const oldKwh = (old?.power_w ?? 0) / 1_000 * SLOT_HOURS;
-        const kwh = watts / 1_000 * SLOT_HOURS;
+        const oldKwh = (old?.power_w ?? 0) / 1_000 * hoursAt(store, index);
+        const kwh = watts / 1_000 * hoursAt(store, index);
         const total = oldKwh + kwh;
         const part: DispatchAllocationDiagnostic = {
           store_key: store.key,
@@ -3178,7 +3187,7 @@ export function* dispatchAuctionSteps(
           }
           const watts = powerW[store.key][index];
           if (watts <= GRID_NOISE_W) continue;
-          const kwh = watts / 1_000 * SLOT_HOURS;
+          const kwh = watts / 1_000 * hoursAt(store, index);
           const { value } = movedValue(store, index, watts, 0);
           const cost = energyCostSekPerKwh(
             slots[index],
@@ -3286,7 +3295,7 @@ export function* dispatchAuctionSteps(
           batteryStore.discharge.max_power_w,
           importW[index],
         );
-        const kwh = possibleW / 1_000 * SLOT_HOURS;
+        const kwh = possibleW / 1_000 * hoursAt(batteryStore, index);
         const statePerKwh = batteryStore.discharge.state_per_kwh_out(
           state[index],
           index,
@@ -3338,7 +3347,7 @@ export function* dispatchAuctionSteps(
         const possibleW = Math.min(
           batteryStore.max_power_w,
           exportW[index],
-          chargeRoomW(batteryStore, suffixMax[index], units),
+          chargeRoomW(batteryStore, suffixMax[index], units, index),
         );
         if (possibleW <= 1e-9) {
           const ceiling = batteryStore.max_state ?? Infinity;
@@ -3359,7 +3368,7 @@ export function* dispatchAuctionSteps(
           };
           continue;
         }
-        const kwh = possibleW / 1_000 * SLOT_HOURS;
+        const kwh = possibleW / 1_000 * hoursAt(batteryStore, index);
         const after = state[index] + kwh * units;
         const storedValue = valueOfMove(
           batteryStore.curve,

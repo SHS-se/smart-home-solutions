@@ -104,6 +104,7 @@ export function stepPoolTemperature(
   airC: number,
   electricalW: number,
   irradianceWm2 = 0,
+  durationHours = SLOT_HOURS,
 ): number {
   const capacityKwhPerK = model.volume_m3 * WATER_KWH_PER_M3_K;
   if (capacityKwhPerK <= 0) return waterC;
@@ -111,7 +112,7 @@ export function stepPoolTemperature(
     1_000;
   const lossKw = model.loss_kw_per_k * (waterC - airC);
   const solarKw = (model.solar_gain_kw_per_wm2 ?? 0) * irradianceWm2;
-  const netKwh = (heatKw - lossKw + solarKw) * SLOT_HOURS;
+  const netKwh = (heatKw - lossKw + solarKw) * durationHours;
   return waterC + netKwh / capacityKwhPerK;
 }
 

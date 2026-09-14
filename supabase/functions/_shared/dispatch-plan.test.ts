@@ -1964,3 +1964,21 @@ Deno.test("export allocation and settlement enforce slot eligibility and reserve
   invalid.discharge_w.battery[5] = 9600;
   assertEquals(scoreDispatch(slots, [battery], LIMITS, invalid).infeasibilities.length > 0, true);
 });
+
+Deno.test("cost refinement moves energy, not equal watts, between unequal durations", () => {
+  const slots: DispatchSlot[] = [
+    {pv_w: 0, fixed_load_w: 0, import_price_sek_per_kwh: 1, export_price_sek_per_kwh: 0, duration_hours: .125},
+    {pv_w: 0, fixed_load_w: 0, import_price_sek_per_kwh: 2, export_price_sek_per_kwh: 0, duration_hours: .25},
+  ];
+  const store: DispatchStore = {key: "battery", curve: {unit: "kwh", points: [{at: 10, sek_per_unit: 3}]},
+    initial_state: 0, max_state: 10, max_power_w: 4000, retention_per_slot: 1,
+    usage_weight: [0, 0], terminal_weight: 1, units_per_kwh: () => 1, drift: s => s,
+    slot_hours: [.125, .25]};
+  const schedule: DispatchSchedule = {power_w: {battery: [0, 1000]}, discharge_w: {battery: [0, 0]}};
+  refineDispatchCosts(slots, [store], LIMITS, schedule);
+  assertEquals(schedule.power_w.battery, [2000, 0]);
+  const score = scoreDispatch(slots, [store], LIMITS, schedule);
+  assertEquals(score.infeasibilities, []);
+  assertEquals(score.stores[0].end_state, .25);
+  assertEquals(score.billable_sek, .25);
+});

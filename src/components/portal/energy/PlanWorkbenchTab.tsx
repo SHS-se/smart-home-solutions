@@ -360,6 +360,7 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
         } as OptimisationSnapshot,
         [],
         stored?.price_outlook,
+        stored ? new Date(stored.issued_at) : undefined,
       );
       if (!built) {
         setError(t(

@@ -87,6 +87,10 @@ export function buildWorkbenchModel(
   workbench: DispatchWorkbench,
   granularity: Granularity,
 ): WorkbenchModel {
+  const hours = (index: number) => workbench.slots[index].duration_hours ?? .25;
+  const mean = (indices: number[], pick: (index: number) => number) =>
+    indices.reduce((total, index) => total + pick(index) * hours(index), 0) /
+    indices.reduce((total, index) => total + hours(index), 0);
   const width = GRANULARITY_SLOTS[granularity];
   const columns: WorkbenchColumn[] = [];
   for (let start = 0; start < workbench.slots.length; start += width) {
@@ -94,15 +98,13 @@ export function buildWorkbenchModel(
     for (let i = start; i < Math.min(start + width, workbench.slots.length); i += 1) {
       slots.push(i);
     }
-    const mean = (pick: (index: number) => number) =>
-      slots.reduce((total, index) => total + pick(index), 0) / slots.length;
     columns.push({
       startMs: workbench.slot_start_ms[start],
       slots,
-      importSekPerKwh: mean(i => workbench.slots[i].import_price_sek_per_kwh),
-      exportSekPerKwh: mean(i => workbench.slots[i].export_price_sek_per_kwh),
-      solarKw: mean(i => workbench.slots[i].pv_w) / 1_000,
-      fixedLoadKw: mean(i => workbench.slots[i].fixed_load_w) / 1_000,
+      importSekPerKwh: mean(slots, i => workbench.slots[i].import_price_sek_per_kwh),
+      exportSekPerKwh: mean(slots, i => workbench.slots[i].export_price_sek_per_kwh),
+      solarKw: mean(slots, i => workbench.slots[i].pv_w) / 1_000,
+      fixedLoadKw: mean(slots, i => workbench.slots[i].fixed_load_w) / 1_000,
       binding: slots.every(i => workbench.slots[i].binding !== false),
     });
   }
@@ -122,10 +124,7 @@ export function buildWorkbenchModel(
     };
     rows.push(charge);
     planned[charge.id] = columns.map(column =>
-      column.slots.reduce(
-        (total, index) => total + (workbench.planned.power_w[store.key]?.[index] ?? 0),
-        0,
-      ) / column.slots.length / 1_000
+      mean(column.slots, index => workbench.planned.power_w[store.key]?.[index] ?? 0) / 1_000
     );
     if (!store.discharge) continue;
     const discharge: WorkbenchRow = {
@@ -140,10 +139,7 @@ export function buildWorkbenchModel(
     };
     rows.push(discharge);
     planned[discharge.id] = columns.map(column =>
-      column.slots.reduce(
-        (total, index) => total + (workbench.planned.discharge_w[store.key]?.[index] ?? 0),
-        0,
-      ) / column.slots.length / 1_000
+      mean(column.slots, index => workbench.planned.discharge_w[store.key]?.[index] ?? 0) / 1_000
     );
   }
   return { rows, columns, granularity, planned };
@@ -482,8 +478,8 @@ export function buildWorkbenchChart(
       slot.fixed_load_w,
     );
     houseDemandW.push(demandW);
-    const importKwh = score.import_w[index] / 1_000 * 0.25;
-    const exportKwh = score.export_w[index] / 1_000 * 0.25;
+    const importKwh = score.import_w[index] / 1_000 * (slot.duration_hours ?? .25);
+    const exportKwh = score.export_w[index] / 1_000 * (slot.duration_hours ?? .25);
     running += importKwh * slot.import_price_sek_per_kwh -
       exportKwh * slot.export_price_sek_per_kwh;
     rows.push({

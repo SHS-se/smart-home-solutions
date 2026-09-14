@@ -1752,7 +1752,7 @@ Deno.test("a schema 5 snapshot keeps the planner it was built for", () => {
   const plan = generateOptimisationPlan(input(), new Date(NOW));
 
   assertEquals(plan.schema_version, 5);
-  assertEquals(plan.model_version, "thermal-room-planner-v9");
+  assertEquals(plan.model_version, "thermal-room-planner-v10");
 });
 
 Deno.test("schema 6 with pool state dispatches by temperature, not by budget", () => {
@@ -1768,7 +1768,7 @@ Deno.test("schema 6 with pool state dispatches by temperature, not by budget", (
   const plan = generateOptimisationPlan(snapshot, new Date(NOW));
 
   assertEquals(plan.schema_version, 6);
-  assertEquals(plan.model_version, "marginal-value-planner-v30");
+  assertEquals(plan.model_version, "marginal-value-planner-v31");
   // Asserted explicitly: an earlier version of this test checked the pool
   // energy but not the status, and so passed while every schema 6 plan was
   // reported infeasible by validations that still assumed fixed blocks.
@@ -3641,4 +3641,38 @@ Deno.test('cached plan validity covers the full 72-hour schedule beyond publishe
   assertEquals(plan.valid_until, new Date(start + 72 * 60 * 60_000).toISOString());
   assertEquals(plan.binding_until, new Date(start + 5 * 60 * 60_000).toISOString());
   assertEquals(plan.plans.priority.slots.length, 288);
+});
+
+Deno.test("late snapshots never earn expired energy and partial quarters reconcile with dispatch", () => {
+  const source = input({schema_version: 6, captured_at: "2026-08-10T08:14:55Z", services: [],
+    capabilities: {pv: false, battery: true, pool: false, boiler: false, ev: false}});
+  source.sources.pv = null;
+  source.sources.battery!.issued_at = source.captured_at;
+  source.battery!.soc = .05;
+  source.policy.battery_target_is_hard = false;
+  source.slots.forEach((s, i) => {
+    s.pv_forecast_w = 0;
+    s.import_price_sek_per_kwh = i < 2 ? .5 : 3;
+    s.export_price_sek_per_kwh = .2;
+  });
+  for (const [time, skipped, hours] of [
+    ["2026-08-10T08:14:55Z", 0, 5 / 3600],
+    ["2026-08-10T08:15:20Z", 1, 880 / 3600],
+  ] as const) {
+    const original = structuredClone(source);
+    const now = new Date(time);
+    const plan = generateOptimisationPlan(source, now);
+    assertEquals(plan.status, "ready");
+    assertEquals(source, original);
+    const first = plan.plans.priority.slots[0];
+    assertEquals(first.start, source.slots[skipped].start);
+    assertAlmostEquals(first.duration_hours!, hours);
+    assert(first.battery_charge_w > 0, "cheap remaining period should charge");
+    assertAlmostEquals(first.battery_soc!, .05 + first.battery_charge_w / 1000 * hours * .95 / 10, 1e-6);
+    const bench = dispatchWorkbench(source, [], plan.price_outlook, now)!;
+    assertEquals(bench.slot_start_ms[0], Date.parse(first.start));
+    assertAlmostEquals(bench.stores.find(s => s.key === "battery")!.initial_state, 0);
+    assertEquals(bench.planned.power_w.battery.map(w => Math.round(w * 100) / 100),
+      plan.plans.priority.slots.map(s => s.battery_charge_w));
+  }
 });

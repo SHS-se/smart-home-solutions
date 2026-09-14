@@ -104,7 +104,7 @@ serve(withTrafficMetrics("energy-optimisation-fixed-plan", async (request, traff
           ...Object.fromEntries((curves ?? []).map((c) => [c.store_key, c])),
         },
       };
-      const bench = dispatchWorkbench(resolved, [], source.price_outlook);
+      const bench = dispatchWorkbench(resolved, [], source.price_outlook, new Date(source.issued_at));
       if (!bench) {
         return json(
           { error: "This home has no editable dispatch schedule." },

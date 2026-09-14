@@ -51,7 +51,7 @@ Deno.test("reference rejects expired, future, self, schema and capability mismat
     ]
   ) assertEquals(replanReference(bad, input, now), null);
   assertEquals(
-    replanReference(previous, input, new Date(now.getTime() + 900000)),
+    replanReference(previous, { ...input, slots: input.slots.slice(0, 1) }, new Date(now.getTime() + 900000)),
     null,
   );
 });
@@ -255,4 +255,19 @@ Deno.test("workbench uses the frozen planning time when capture preceded issuanc
     generated.plans.priority.slots[0].battery_discharge_w,
     .005,
   );
+});
+
+Deno.test("boundary-crossing snapshots reference the active quarter", () => {
+  const { input, previous } = referencedSnapshot();
+  const now = new Date(Date.parse(input.slots[1].start) + 20_000);
+  input.captured_at = new Date(now.getTime() - 25_000).toISOString();
+  const reference = replanReference(previous, input, now);
+  assert(reference);
+  assertEquals(reference.slot_start, input.slots[1].start);
+  input.replan_reference = reference;
+  const plan = generateOptimisationPlan(input, now);
+  assertEquals(plan.status, "ready", JSON.stringify(plan.validation_errors));
+  assertEquals(plan.plans.priority.slots[0].start, input.slots[1].start);
+  assert(plan.plans.priority.continuity);
+  assert(plan.plans.priority.continuity.reason !== "invalid_reference");
 });

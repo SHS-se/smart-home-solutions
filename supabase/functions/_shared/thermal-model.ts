@@ -541,13 +541,14 @@ export function projectZoneTemperature(
   outdoorC: number[],
   heatInputW: number[],
   solarWPerM2?: (number | null)[] | null,
+  durationHours?: number[],
 ): number[] {
   const projection: number[] = [];
   let temperature = startTemperatureC;
   for (let index = 0; index < outdoorC.length; index += 1) {
     projection.push(Math.round(temperature * 1000) / 1000);
     const power = heatInputW[index] ?? 0;
-    temperature += SLOT_HOURS * (
+    temperature += (durationHours?.[index] ?? SLOT_HOURS) * (
       model.gain_c_per_wh * power +
       model.cooling_constant_per_h * (outdoorC[index] - temperature) +
       backgroundRateForSlot(model, index, solarWPerM2)

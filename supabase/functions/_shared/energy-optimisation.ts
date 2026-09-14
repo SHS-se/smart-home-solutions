@@ -118,9 +118,9 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6, 7, 8] as const;
  * prices executable setpoints and records exact quarter evidence.
  */
 // v28 emits battery operations and enforces export eligibility and reserves in dispatch.
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v30";
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v31";
 /** Schema 5 service sizing also no longer pads energy to a minimum runtime. */
-export const LEGACY_MODEL_VERSION = "thermal-room-planner-v9";
+export const LEGACY_MODEL_VERSION = "thermal-room-planner-v10";
 export const SLOT_MINUTES = 15;
 export const SLOT_HOURS = SLOT_MINUTES / 60;
 export const MAX_FORECAST_SLOTS = 72 * 4;
@@ -531,6 +531,8 @@ export interface QuarterDecisionDiagnostic {
 }
 
 export interface PlannedSlot {
+  /** Physical time modelled after the effective planning timestamp. */
+  duration_hours?: number;
   start: string;
   binding: boolean;
   pv_raw_w: number;
@@ -706,6 +708,7 @@ export type OptimisationPlanV8 = Omit<OptimisationPlan, "schema_version"> & { sc
 export type OptimisationPlanV7 = Omit<OptimisationPlan, "schema_version"> & { schema_version: 7 };
 
 interface PreparedSlot extends ForecastSlotInput {
+  duration_hours: number;
   index: number;
   epoch_ms: number;
   local_day: string;
@@ -1537,10 +1540,33 @@ export function validateSnapshot(snapshot: OptimisationSnapshot): string[] {
   return [...new Set(errors)];
 }
 
+/** Keep the observed state at the effective planning time; never replay expired energy. */
+function remainingSnapshot(snapshot: OptimisationSnapshot, effectiveAt: number): OptimisationSnapshot {
+  const offset = snapshot.slots.findIndex(slot => isoMs(slot.start) + SLOT_MS > effectiveAt);
+  if (offset < 0) throw new Error("Snapshot has no remaining planning slots");
+  if (offset === 0) return snapshot;
+  return {
+    ...snapshot,
+    slots: snapshot.slots.slice(offset),
+    outdoor_temperature_c: snapshot.outdoor_temperature_c?.slice(offset),
+    solar_irradiance_w_per_m2: snapshot.solar_irradiance_w_per_m2?.slice(offset),
+    device_models: snapshot.device_models.map(model => ({...model, forecast_w_by_slot: model.forecast_w_by_slot.slice(offset)})),
+    services: snapshot.services.filter(service => isoMs(service.deadline) > effectiveAt).map(service =>
+      isDutyCycleService(service) ? {...service, control: {...service.control,
+        expected_power_w_by_slot: service.control.expected_power_w_by_slot.slice(offset)}} : service),
+    thermal_zones: snapshot.thermal_zones?.map(zone => ({...zone,
+      comfort_min_c: zone.comfort_min_c.slice(offset), target_c: zone.target_c.slice(offset),
+      comfort_max_c: zone.comfort_max_c.slice(offset), maximum_power_w_by_slot: zone.maximum_power_w_by_slot.slice(offset),
+      unplanned_power_w: zone.unplanned_power_w.slice(offset),
+    })),
+  };
+}
+
 function preparedSlots(
   snapshot: OptimisationSnapshot,
   archive: StoredPriceRow[] = [],
   resolvedPriceOutlook?: OptimisationPlan["price_outlook"],
+  effectiveAt = isoMs(snapshot.captured_at),
 ): { slots: PreparedSlot[]; outlook: PriceOutlook } {
   const captured = isoMs(snapshot.captured_at);
   const controlledCategories = new Set<string>();
@@ -1606,6 +1632,7 @@ function preparedSlots(
       ...slot,
       index,
       epoch_ms: epoch,
+      duration_hours: Math.min(SLOT_HOURS, (epoch + SLOT_MS - effectiveAt) / 3_600_000),
       local_day: local.day,
       local_minute_of_day: local.minuteOfDay,
       pv_raw_w: slot.pv_forecast_w,
@@ -1647,7 +1674,7 @@ function availableServiceSlots(
   const earliest = isoMs(service.earliest_start);
   const deadline = isoMs(service.deadline);
   return slots.filter((slot) =>
-    slot.epoch_ms >= earliest && slot.epoch_ms + SLOT_MS <= deadline
+    slot.epoch_ms >= earliest && slot.epoch_ms + SLOT_MS <= deadline && slot.duration_hours === SLOT_HOURS
   ).length;
 }
 
@@ -1710,7 +1737,9 @@ function candidateStarts(
   const deadline = isoMs(service.deadline);
   const candidates: number[] = [];
   for (let start = 0; start + count <= slots.length; start += 1) {
-    if (slots[start].epoch_ms < earliest) continue;
+    // Legacy services promise whole-quarter blocks; the store auction above
+    // can instead dispatch the physically remaining fraction of this quarter.
+    if (slots[start].epoch_ms < earliest || slots[start].duration_hours < SLOT_HOURS) continue;
     if (slots[start + count - 1].epoch_ms + SLOT_MINUTES * 60_000 > deadline) {
       continue;
     }
@@ -1770,8 +1799,8 @@ function serviceCost(
     // One objective across the whole horizon, in SEK. Published price where the
     // market set one, measured shape prior where it did not, so the day-ahead
     // boundary is no longer a discontinuity the planner can arbitrage.
-    total += (solarW / 1_000) * SLOT_HOURS * slot.shadow_export_sek_per_kwh;
-    total += (gridW / 1_000) * SLOT_HOURS * slot.shadow_import_sek_per_kwh;
+    total += (solarW / 1_000) * slot.duration_hours * slot.shadow_export_sek_per_kwh;
+    total += (gridW / 1_000) * slot.duration_hours * slot.shadow_import_sek_per_kwh;
     total += peakPenalty(slot, gridW, occupiedW[index], reservedW[index]);
     if (key === "priority" && reservedW[index] > 0 && powerW > 0) {
       total += 1_000_000;
@@ -1821,7 +1850,7 @@ function replacementCostsBySlot(
       : Number.POSITIVE_INFINITY;
     const slot = slots[index];
     const surplusW = slot.pv_w - fixedLoadW(slot);
-    if (surplusW > 0) surplusKwh += surplusW / 1_000 * SLOT_HOURS;
+    if (surplusW > 0) surplusKwh += surplusW / 1_000 * slot.duration_hours;
     cheapest = Math.min(cheapest, slot.shadow_import_sek_per_kwh);
     remainingCount += 1;
   }
@@ -1906,9 +1935,9 @@ function discreteCurrentCandidate(
       const solarAfter = Math.min(powers[offset] + deltaW, availableSolar);
       const solarW = solarAfter - solarBefore;
       const gridW = deltaW - solarW;
-      const score = solarW / 1_000 * SLOT_HOURS *
+      const score = solarW / 1_000 * slots[index].duration_hours *
           slots[index].shadow_export_sek_per_kwh +
-        gridW / 1_000 * SLOT_HOURS *
+        gridW / 1_000 * slots[index].duration_hours *
           slots[index].shadow_import_sek_per_kwh +
         peakPenalty(slots[index], gridW, occupiedW[index], reservedW[index]);
       return [{
@@ -1955,7 +1984,6 @@ function applyEvCurrentEnvelopes(
     }
     const control = service.control;
     const powerPerAmp = wattsPerAmp(control);
-    const perAmpSlotKwh = powerPerAmp / 1_000 * SLOT_HOURS;
     const earliest = isoMs(service.earliest_start);
     const deadline = isoMs(service.deadline);
     const targetByIndex = new Map(
@@ -1969,13 +1997,13 @@ function applyEvCurrentEnvelopes(
       if (slot.epoch_ms < earliest || slot.epoch_ms + SLOT_MS > deadline) {
         continue;
       }
+      const perAmpSlotKwh = powerPerAmp / 1_000 * slot.duration_hours;
       const remainingKwh = Math.max(0, service.required_kwh - plannedKwh);
-      const futureCount = slots.filter((candidate) =>
+      const futureHours = slots.filter((candidate) =>
         candidate.index > slot.index && candidate.epoch_ms >= earliest &&
         candidate.epoch_ms + SLOT_MS <= deadline
-      ).length;
-      const futureCapacityKwh = futureCount * control.max_current_a *
-        perAmpSlotKwh;
+      ).reduce((sum, candidate) => sum + candidate.duration_hours, 0);
+      const futureCapacityKwh = futureHours * control.max_current_a * powerPerAmp / 1_000;
       const neededNowKwh = Math.max(0, remainingKwh - futureCapacityKwh);
       let minimumA = 0;
       if (neededNowKwh > 1e-9) {
@@ -2072,12 +2100,12 @@ function applyDutyCycleServices(
       // that empirical expected energy inside the same local-day window when
       // there is later headroom, without claiming an exact compressor or
       // element switch-on time.
-      let deferredW = inhibited.reduce(
-        (sum, index) => sum + expected[index],
+      let deferredWh = inhibited.reduce(
+        (sum, index) => sum + expected[index] * slots[index].duration_hours,
         0,
       );
-      deferredW = Math.max(0, deferredW - indices.reduce((sum, i) =>
-        sum + (frozen.has(slots[i].epoch_ms) ? Math.max(0, schedule.boiler[i] - expected[i]) : 0), 0));
+      deferredWh = Math.max(0, deferredWh - indices.reduce((sum, i) =>
+        sum + (frozen.has(slots[i].epoch_ms) ? Math.max(0, schedule.boiler[i] - expected[i]) * slots[i].duration_hours : 0), 0));
       //
       // Where it goes is a price decision. Ranking on residual load alone put
       // the catch-up in the quietest quarter — quiet precisely because PV was
@@ -2111,28 +2139,28 @@ function applyDutyCycleServices(
         const surplusW = Math.max(0, slot.pv_w - fixedLoadW(slot) - takenW);
         const solarW = Math.min(powerW, surplusW);
         const gridW = powerW - solarW;
-        return (solarW / 1_000) * SLOT_HOURS * slot.shadow_export_sek_per_kwh +
-          (gridW / 1_000) * SLOT_HOURS * slot.shadow_import_sek_per_kwh +
+        return (solarW / 1_000) * slot.duration_hours * slot.shadow_export_sek_per_kwh +
+          (gridW / 1_000) * slot.duration_hours * slot.shadow_import_sek_per_kwh +
           peakPenalty(slot, gridW, takenW, 0);
       };
       // Ties fall to the earliest quarter, which is the order `recovery` is
       // already in — a thermostat catches up as soon as it is allowed to.
-      while (deferredW > 1e-6) {
+      while (deferredWh > 1e-6) {
         let cheapest: number | null = null;
         let bestRate = Number.POSITIVE_INFINITY;
         for (const index of recovery) {
-          const takeW = Math.min(roomFor(index), deferredW);
+          const takeW = Math.min(roomFor(index), deferredWh / slots[index].duration_hours);
           if (takeW <= 1e-6) continue;
-          const rate = costOf(index, takeW) / takeW;
+          const rate = costOf(index, takeW) / (takeW * slots[index].duration_hours);
           if (rate < bestRate - 1e-12) {
             bestRate = rate;
             cheapest = index;
           }
         }
         if (cheapest === null) break;
-        const takeW = Math.min(roomFor(cheapest), deferredW);
+        const takeW = Math.min(roomFor(cheapest), deferredWh / slots[cheapest].duration_hours);
         schedule.boiler[cheapest] += takeW;
-        deferredW -= takeW;
+        deferredWh -= takeW * slots[cheapest].duration_hours;
       }
     }
 
@@ -2209,7 +2237,7 @@ function deriveBatteryValueCurve(
     battery.capacity_kwh;
   const remainingSurplusKwh = slots.reduce((total, slot) => {
     const surplusW = slot.pv_w - fixedLoadW(slot);
-    return total + (surplusW > 0 ? surplusW / 1_000 * SLOT_HOURS : 0);
+    return total + (surplusW > 0 ? surplusW / 1_000 * slot.duration_hours : 0);
   }, 0);
 
   /**
@@ -2273,7 +2301,7 @@ function deriveBatteryValueCurve(
       runDraw.push({
         start: slot.start,
         sek_per_kwh: slot.shadow_import_sek_per_kwh,
-        ac_kwh: -netW / 1_000 * SLOT_HOURS,
+        ac_kwh: -netW / 1_000 * slot.duration_hours,
       });
     } else if (runDraw.length > 0) {
       runs.push(runDraw);
@@ -2533,7 +2561,7 @@ function buildDispatchStores(
       units_per_kwh: (waterC, index) =>
         poolCop(model.heat_pump, airAt(index), waterC) / capacityKwhPerK,
       drift: (waterC, index) =>
-        stepPoolTemperature(model, waterC, airAt(index), 0),
+        stepPoolTemperature(model, waterC, airAt(index), 0, 0, slots[index].duration_hours),
     });
   }
 
@@ -2639,6 +2667,7 @@ function buildDispatchStores(
     }
   }
 
+  for (const store of stores) store.slot_hours = slots.map(slot => slot.duration_hours);
   return stores.length > 0 ? stores : null;
 }
 
@@ -2796,6 +2825,7 @@ function scheduleServices(
     const stores = buildDispatchStores(slots, snapshot, derivedBatteryValue);
     if (stores) {
       const dispatchSlots = slots.map((slot, index) => ({
+        duration_hours: slot.duration_hours,
         pv_w: slot.pv_w,
         fixed_load_w: fixedLoadW(slot) + reservedW[index] + (frozen.has(slot.epoch_ms)
           ? frozen.get(slot.epoch_ms)!.targets.boiler_expected_w + Object.values(frozen.get(slot.epoch_ms)!.targets.room_heating_w).reduce((a, b) => a + b, 0)
@@ -3105,7 +3135,7 @@ function thermalSlotScore(
   const peakWeight = key === "priority"
     ? THERMAL_PRIORITY_PEAK_WEIGHT_SEK_PER_KW2
     : PEAK_WEIGHT_SEK_PER_KW2;
-  let score = SLOT_HOURS / 1_000 * (
+  let score = slot.duration_hours / 1_000 * (
         importW * slot.shadow_import_sek_per_kwh -
         exportW * slot.shadow_export_sek_per_kwh
       ) + peakWeight * (importW / 1_000) ** 2;
@@ -3156,6 +3186,7 @@ function optimiseRoomPreheating(
       zone.start_temperature_c,
       outdoor,
       powers,
+      undefined, slots.map(slot => slot.duration_hours),
     );
     const retentionByLag = Array.from(
       { length: powers.length + 1 },
@@ -3199,11 +3230,11 @@ function optimiseRoomPreheating(
           candidate += 1
         ) {
           if (frozen.has(slots[candidate].epoch_ms)) continue;
-          const retention = retentionByLag[source - candidate];
+          const retention = retentionByLag[source - candidate] * slots[candidate].duration_hours / slots[source].duration_hours;
           if (!(retention > 1e-6)) continue;
           const maxAddW = Math.min(
             zone.maximum_power_w_by_slot[candidate] - powers[candidate],
-            comfortHeadroomW[candidate],
+            comfortHeadroomW[candidate] * SLOT_HOURS / slots[candidate].duration_hours,
           );
           if (maxAddW <= 0.01) continue;
           const removeW = Math.min(
@@ -3262,7 +3293,7 @@ function optimiseRoomPreheating(
         // that interval avoids a full 72-hour projection after every 100 W
         // move while preserving the same trajectory.
         for (let at = best.candidate + 1; at <= source; at += 1) {
-          temperatures[at] += best.addW * heatGain *
+          temperatures[at] += best.addW * heatGain * slots[best.candidate].duration_hours / SLOT_HOURS *
             retentionByLag[at - best.candidate - 1];
         }
         movedFromSource = true;
@@ -3275,6 +3306,7 @@ function optimiseRoomPreheating(
           zone.start_temperature_c,
           outdoor,
           powers,
+          undefined, slots.map(slot => slot.duration_hours),
         );
       }
     }
@@ -3309,7 +3341,7 @@ function scheduleRoomHeating(
   for (const zone of zones) {
     if (snapshot.schema_version >= 7) {
       try {
-        const discrete = discreteRoomPlan(snapshot, zone, schedule.roomHeating[zone.key], fixed);
+        const discrete = discreteRoomPlan(snapshot, zone, schedule.roomHeating[zone.key], fixed, slots.map(slot => slot.duration_hours));
         if (discrete) {
           schedule.roomHeating[zone.key] = discrete.powers;
           Object.assign(schedule.roomDevicePower, discrete.devicePower);
@@ -3324,6 +3356,7 @@ function scheduleRoomHeating(
       zone.start_temperature_c,
       outdoor,
       powers,
+      undefined, slots.map(slot => slot.duration_hours),
     );
     for (let index = 0; index < slots.length; index += 1) {
       if (
@@ -3391,7 +3424,7 @@ function batteryReservation(
       );
       const maxChargeW = Math.min(
         battery.charge_max_w,
-        roomKwh / battery.charge_efficiency * 1_000 / SLOT_HOURS,
+        roomKwh / battery.charge_efficiency * 1_000 / slots[index].duration_hours,
       );
       const availableKwh = Math.max(
         0,
@@ -3399,7 +3432,7 @@ function batteryReservation(
       );
       let maxDischargeW = Math.min(
         battery.discharge_max_w,
-        availableKwh * battery.discharge_efficiency * 1_000 / SLOT_HOURS,
+        availableKwh * battery.discharge_efficiency * 1_000 / slots[index].duration_hours,
       );
       if (enforceTarget && index >= lastSolar) {
         const aboveTargetKwh = Math.max(
@@ -3408,7 +3441,7 @@ function batteryReservation(
         );
         maxDischargeW = Math.min(
           maxDischargeW,
-          aboveTargetKwh * battery.discharge_efficiency * 1_000 / SLOT_HOURS,
+          aboveTargetKwh * battery.discharge_efficiency * 1_000 / slots[index].duration_hours,
         );
       }
 
@@ -3416,16 +3449,16 @@ function batteryReservation(
         const chargeW = Math.min(netW, maxChargeW);
         const neededW = Math.max(0, target - assumedSoc) *
           battery.capacity_kwh /
-          battery.charge_efficiency * 1_000 / SLOT_HOURS;
+          battery.charge_efficiency * 1_000 / slots[index].duration_hours;
         if (enforceTarget && index >= firstSolar && index <= lastSolar) {
           reservedW[index] = Math.min(chargeW, neededW);
         }
         assumedSoc += chargeW * battery.charge_efficiency / 1_000 *
-          SLOT_HOURS / battery.capacity_kwh;
+          slots[index].duration_hours / battery.capacity_kwh;
       } else {
         const dischargeW = Math.min(-netW, maxDischargeW);
         assumedSoc -= dischargeW / battery.discharge_efficiency / 1_000 *
-          SLOT_HOURS / battery.capacity_kwh;
+          slots[index].duration_hours / battery.capacity_kwh;
       }
       assumedSoc = Math.max(
         battery.min_soc,
@@ -3782,18 +3815,18 @@ function simulate(
     );
     const maxChargeW = Math.min(
       battery.charge_max_w,
-      roomKwh / battery.charge_efficiency * 1_000 / SLOT_HOURS,
+      roomKwh / battery.charge_efficiency * 1_000 / slot.duration_hours,
     );
     let maxDischargeW = Math.min(
       battery.discharge_max_w,
-      availableKwh * battery.discharge_efficiency * 1_000 / SLOT_HOURS,
+      availableKwh * battery.discharge_efficiency * 1_000 / slot.duration_hours,
     );
     const floor = protectedSoc[slot.index];
     if (floor !== null) {
       const aboveFloorKwh = Math.max(0, (soc - floor) * battery.capacity_kwh);
       maxDischargeW = Math.min(
         maxDischargeW,
-        aboveFloorKwh * battery.discharge_efficiency * 1_000 / SLOT_HOURS,
+        aboveFloorKwh * battery.discharge_efficiency * 1_000 / slot.duration_hours,
       );
     }
 
@@ -3828,7 +3861,7 @@ function simulate(
     );
     const maxExportDischargeW = Math.min(
       maxDischargeW,
-      exportableKwh * battery.discharge_efficiency * 1_000 / SLOT_HOURS,
+      exportableKwh * battery.discharge_efficiency * 1_000 / slot.duration_hours,
     );
     // When the dispatch owns the battery it has already decided this slot by
     // marginal value, against the same prices every other store bid on. Simulate
@@ -3851,7 +3884,7 @@ function simulate(
       if (snapshot.schema_version >= 8 && batteryExportW > 0.01 &&
           (!snapshot.policy.battery_export_enabled || !slot.binding ||
            slot.export_price_sek_per_kwh === null || slot.export_price_sek_per_kwh < snapshot.policy.battery_export_min_price_sek_per_kwh ||
-           soc - batteryDischargeW / 1000 * SLOT_HOURS / battery.discharge_efficiency / battery.capacity_kwh < snapshot.policy.battery_export_reserve_soc - 1e-6)) {
+           soc - batteryDischargeW / 1000 * slot.duration_hours / battery.discharge_efficiency / battery.capacity_kwh < snapshot.policy.battery_export_reserve_soc - 1e-6)) {
         errors.push(`${slot.start}: battery export violates permission, price or reserve`);
       }
       const balanceW = netW - batteryChargeW + batteryDischargeW;
@@ -3901,19 +3934,19 @@ function simulate(
     soc += (
       batteryChargeW * battery.charge_efficiency -
       batteryDischargeW / battery.discharge_efficiency
-    ) / 1_000 * SLOT_HOURS / battery.capacity_kwh;
+    ) / 1_000 * slot.duration_hours / battery.capacity_kwh;
     soc = Math.max(battery.min_soc, Math.min(battery.max_soc, soc));
     socLow = Math.min(socLow, soc);
     if (evSoc !== null && snapshot.ev_battery) {
       evSoc = Math.min(
         1,
         evSoc + evW * snapshot.ev_battery.charge_efficiency / 1_000 *
-            SLOT_HOURS / snapshot.ev_battery.capacity_kwh,
+            slot.duration_hours / snapshot.ev_battery.capacity_kwh,
       );
     }
 
-    const slotImportKwh = gridImportW / 1_000 * SLOT_HOURS;
-    const slotExportKwh = gridExportW / 1_000 * SLOT_HOURS;
+    const slotImportKwh = gridImportW / 1_000 * slot.duration_hours;
+    const slotExportKwh = gridExportW / 1_000 * slot.duration_hours;
     const importCostSek = slot.binding
       ? slotImportKwh * slot.import_price_sek_per_kwh!
       : null;
@@ -4010,6 +4043,7 @@ function simulate(
 
     output.push({
       start: slot.start,
+      duration_hours: slot.duration_hours,
       binding: slot.binding,
       pv_raw_w: round(slot.pv_raw_w, 2),
       pv_w: round(slot.pv_w, 2),
@@ -4078,12 +4112,12 @@ function simulate(
       },
     });
 
-    loadKwh += loadW / 1_000 * SLOT_HOURS;
-    flexibleKwh += flexibleW / 1_000 * SLOT_HOURS;
-    pvKwh += slot.pv_w / 1_000 * SLOT_HOURS;
+    loadKwh += loadW / 1_000 * slot.duration_hours;
+    flexibleKwh += flexibleW / 1_000 * slot.duration_hours;
+    pvKwh += slot.pv_w / 1_000 * slot.duration_hours;
     importKwh += slotImportKwh;
     exportKwh += slotExportKwh;
-    curtailedKwh += curtailedW / 1_000 * SLOT_HOURS;
+    curtailedKwh += curtailedW / 1_000 * slot.duration_hours;
     if (slot.binding) {
       pricedImportKwh += slotImportKwh;
       pricedExportKwh += slotExportKwh;
@@ -4138,7 +4172,7 @@ function simulate(
         slots.reduce(
           (serviceSum, slot) =>
             slot.epoch_ms >= earliest && slot.epoch_ms + SLOT_MS <= deadline
-              ? serviceSum + schedule.boiler[slot.index] / 1_000 * SLOT_HOURS
+              ? serviceSum + schedule.boiler[slot.index] / 1_000 * slot.duration_hours
               : serviceSum,
           0,
         );
@@ -4146,18 +4180,18 @@ function simulate(
     if (isDiscreteCurrentService(service)) {
       const currents = schedule.serviceCurrentsA[service.id] ?? [];
       return sum + currents.reduce(
-        (serviceSum, currentA) =>
+        (serviceSum, currentA, offset) =>
           serviceSum + currentA * wattsPerAmp(service.control) / 1_000 *
-            SLOT_HOURS,
+            slots[indices[offset]].duration_hours,
         0,
       );
     }
-    return sum + indices.length * service.control.power_w / 1_000 * SLOT_HOURS;
+    return sum + indices.reduce((energy, index) => energy + service.control.power_w / 1_000 * slots[index].duration_hours, 0);
   }, 0);
   const thermalKwh = Object.values(schedule.roomHeating).reduce(
     (total, powers) =>
       total + powers.reduce(
-        (sum, watts) => sum + watts / 1_000 * SLOT_HOURS,
+        (sum, watts, index) => sum + watts / 1_000 * slots[index].duration_hours,
         0,
       ),
     0,
@@ -4167,9 +4201,9 @@ function simulate(
       total +
       (schedule.dispatched.has("pool") ? schedule.pool[slot.index] : 0) /
         1_000 *
-        SLOT_HOURS +
+        slot.duration_hours +
       (schedule.dispatched.has("ev") ? schedule.ev[slot.index] : 0) / 1_000 *
-        SLOT_HOURS,
+        slot.duration_hours,
     0,
   );
   if (
@@ -4219,11 +4253,11 @@ function simulate(
     }
     const serviceDelivered = isDiscreteCurrentService(service)
       ? (schedule.serviceCurrentsA[service.id] ?? []).reduce(
-        (sum, currentA) =>
-          sum + currentA * wattsPerAmp(service.control) / 1_000 * SLOT_HOURS,
+        (sum, currentA, offset) =>
+          sum + currentA * wattsPerAmp(service.control) / 1_000 * slots[indices[offset]].duration_hours,
         0,
       )
-      : indices.length * service.control.power_w / 1_000 * SLOT_HOURS;
+      : indices.reduce((energy, index) => energy + service.control.power_w / 1_000 * slots[index].duration_hours, 0);
     if (serviceDelivered + 1e-6 < service.required_kwh) {
       errors.push(
         `${service.id}: delivered ${round(serviceDelivered, 3)} kWh for ` +
@@ -4319,7 +4353,7 @@ function simulate(
                     slot.epoch_ms >= earliest &&
                       slot.epoch_ms + SLOT_MS <= deadline
                       ? serviceSum +
-                        schedule.boiler[slot.index] / 1_000 * SLOT_HOURS
+                        schedule.boiler[slot.index] / 1_000 * slot.duration_hours
                       : serviceSum,
                   0,
                 );
@@ -4522,15 +4556,19 @@ export function dispatchWorkbench(
   snapshot: OptimisationSnapshot,
   priceArchive: StoredPriceRow[] = [],
   resolvedPriceOutlook?: OptimisationPlan["price_outlook"],
+  now = new Date(snapshot.replan_reference?.evaluated_at ?? snapshot.captured_at),
 ): DispatchWorkbench | null {
-  const { slots } = preparedSlots(snapshot, priceArchive, resolvedPriceOutlook);
+  const effectiveAt = Math.max(now.getTime(), isoMs(snapshot.captured_at));
+  // Stored plan outlooks are already aligned to the remaining horizon.
+  snapshot = remainingSnapshot(snapshot, effectiveAt);
+  const { slots } = preparedSlots(snapshot, priceArchive, resolvedPriceOutlook, effectiveAt);
   const { reservedW, protectedSoc } = batteryReservation(slots, snapshot);
   const derivedBatteryValue = snapshot.schema_version >= 6
     ? deriveBatteryValueCurve(slots, snapshot)
     : null;
   const dispatchCache = new Map<string, DispatchBundle | null>();
   buildPriorityPlan(slots, snapshot, reservedW, protectedSoc, dispatchCache,
-                    derivedBatteryValue, new Date(snapshot.replan_reference?.evaluated_at ?? snapshot.captured_at));
+                    derivedBatteryValue, now);
   const bundle = [...dispatchCache.values()].find((entry) => entry !== null);
   if (!bundle) return null;
   const peakShaping = derivePeakShaping(snapshot);
@@ -4588,11 +4626,12 @@ export function generateOptimisationPlan(
   if (validationErrors.length > 0) {
     throw new Error(validationErrors.join("; "));
   }
-  const { slots, outlook } = preparedSlots(
-    snapshot,
-    priceArchive,
-    resolvedPriceOutlook,
-  );
+  const effectiveAt = Math.max(now.getTime(), isoMs(snapshot.captured_at));
+  const originalCount = snapshot.slots.length;
+  snapshot = remainingSnapshot(snapshot, effectiveAt);
+  if (resolvedPriceOutlook) resolvedPriceOutlook = {...resolvedPriceOutlook,
+    shadow_import_sek_per_kwh: resolvedPriceOutlook.shadow_import_sek_per_kwh.slice(originalCount - snapshot.slots.length)};
+  const { slots, outlook } = preparedSlots(snapshot, priceArchive, resolvedPriceOutlook, effectiveAt);
   const { reservedW, protectedSoc } = batteryReservation(slots, snapshot);
   const derivedBatteryValue = snapshot.schema_version >= 6
     ? deriveBatteryValueCurve(slots, snapshot)

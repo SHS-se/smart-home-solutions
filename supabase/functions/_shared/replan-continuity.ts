@@ -65,8 +65,9 @@ export function replanReference(
         snapshot.capabilities[key as keyof typeof snapshot.capabilities]
     )
   ) return null;
+  const current = snapshot.slots.find(s => Date.parse(s.start) + QUARTER_MS > now.getTime());
   const slot = previous.plans?.priority?.slots.find((s) =>
-    Date.parse(s.start) === Date.parse(snapshot.slots[0]?.start)
+    Date.parse(s.start) === Date.parse(current?.start ?? "")
   );
   if (!slot?.binding || previous.plans.priority.status !== "ready") return null;
   const reference: ReplanReference = {
@@ -90,7 +91,7 @@ export function replanReference(
   return usableReference(
       reference,
       snapshot.snapshot_id,
-      Date.parse(snapshot.slots[0].start),
+      Date.parse(current!.start),
       now.getTime(),
     )
     ? reference

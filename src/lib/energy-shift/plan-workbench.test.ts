@@ -1027,3 +1027,15 @@ Deno.test('an export covers the whole horizon whatever day is on screen', () => 
     'a windowed comparison really does change the file, so the caller matters',
   );
 });
+
+Deno.test('a partial first quarter has consistent workbench energy and cost', () => {
+  const bench = workbench();
+  bench.slots[0].duration_hours = .125;
+  bench.stores[0].slot_hours = bench.slots.map(s => s.duration_hours ?? .25);
+  const model = buildWorkbenchModel(bench, 'hour');
+  assertAlmostEquals(model.planned['ev:charge'][0] * .875, 11.04 * .125);
+  const score = compareWorkbench(bench, bench.planned).manual;
+  const chart = buildWorkbenchChart(bench, bench.planned, score, String, key => key);
+  assertAlmostEquals(chart.rows[0].cumulativeCostSek, 11.54 * .125 * 2.4);
+  assertAlmostEquals(chart.rows.at(-1)!.cumulativeCostSek, score.billable_sek);
+});

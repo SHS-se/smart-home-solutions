@@ -17,6 +17,7 @@ export function discreteRoomPlan(
   zone: ThermalZonePlanningInput,
   preferred: number[],
   fixed?: FixedEnergyPlan | null,
+  durationHours?: number[],
 ) {
   const models = zone.device_keys.map((key) =>
     snapshot.device_models.find((m) => m.key === key)!
@@ -37,7 +38,7 @@ export function discreteRoomPlan(
   const desired = projectZoneTemperature(zone.model, zone.start_temperature_c, [
     ...outdoor,
     outdoor.at(-1)!,
-  ], preferred);
+  ], preferred, undefined, durationHours);
   type Node = {
     temperature: number;
     cost: number;
@@ -72,7 +73,7 @@ export function discreteRoomPlan(
           continue;
         }
         const temperature = prior.temperature +
-          0.25 * (zone.model.gain_c_per_wh * watts +
+          (durationHours?.[i] ?? 0.25) * (zone.model.gain_c_per_wh * watts +
               zone.model.cooling_constant_per_h *
                 (outdoor[i] - prior.temperature) +
               backgroundRateForSlot(zone.model, i));

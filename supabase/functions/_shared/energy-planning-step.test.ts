@@ -242,3 +242,11 @@ Deno.test("distributed planning preserves continuity candidates and selection", 
   input.snapshot.replan_reference!.battery!.discharge_w -= 10;
   assertStagesMatch(input);
 });
+
+Deno.test("distributed planning preserves the remaining horizon across a quarter boundary", () => {
+  const input = inputFor(snapshot());
+  const boundary = Date.parse(input.snapshot.slots[1].start);
+  input.snapshot.captured_at = new Date(boundary - 5_000).toISOString();
+  input.now = new Date(boundary + 20_000).toISOString();
+  assertStagesMatch(input);
+});
