@@ -1,5 +1,4 @@
-import { replanReference } from "../_shared/replan-continuity.ts";
-import type { OptimisationPlan } from "../_shared/energy-optimisation.ts";
+import { replanReference, type ReplanPreviousPlan } from "../_shared/replan-continuity.ts";
 import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
 import type { FixedEnergyPlan } from "../_shared/fixed-energy-plan.ts";
 import { applyBatteryChoice } from "../_shared/home-planning.ts";
@@ -1930,9 +1929,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       }
 
       const { data: fixedState, error: fixedReadError } = await supabase
-        .from("energy_optimisation_current")
-        .select("fixed_plan, fixed_plan_revision, plan")
-        .eq("home_id", auth.homeId).maybeSingle();
+        .rpc("get_energy_replan_state", { p_home_id: auth.homeId });
       if (fixedReadError) return json({ error: "fixed_plan_read_failed" }, 500);
       const fixedPlan = fixedState?.fixed_plan as FixedEnergyPlan | null;
       const fixedRevision = fixedState?.fixed_plan_revision ?? 0;
@@ -1948,7 +1945,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         snapshot = thermal.snapshot;
         thermalZones = thermal.zones;
         const planningNow = new Date();
-        snapshot = { ...snapshot, replan_reference: replanReference(fixedState?.plan as OptimisationPlan | null, snapshot, planningNow) };
+        snapshot = { ...snapshot, replan_reference: replanReference(fixedState?.previous_plan as ReplanPreviousPlan | null, snapshot, planningNow) };
         const planningStarted = performance.now();
         console.info("[ENERGY-OPTIMISATION] planning started", {
           request_id: requestId,

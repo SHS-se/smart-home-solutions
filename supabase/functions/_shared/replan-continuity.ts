@@ -55,9 +55,24 @@ export interface ContinuityCandidate {
   objective_sek: number;
 }
 
+/** Fields read by continuity; the database omits other scenarios and diagnostics. */
+export type ReplanPreviousPlan = Pick<OptimisationPlan,
+  "status" | "schema_version" | "plan_id" | "fixed_plan" | "mode" |
+  "capabilities" | "issued_at" | "valid_until"
+> & {
+  plans: { priority: Pick<OptimisationPlan["plans"]["priority"],
+    "status" | "dispatched_devices"
+  > & {
+    slots: Pick<OptimisationPlan["plans"]["priority"]["slots"][number],
+      "start" | "binding" | "pool_w" | "battery_command" |
+      "battery_charge_w" | "battery_discharge_w"
+    >[];
+  } };
+};
+
 /** Only the server's last issued plan supplies the reference; freeze it into the replay snapshot. */
 export function replanReference(
-  previous: OptimisationPlan | null,
+  previous: ReplanPreviousPlan | null,
   snapshot: OptimisationSnapshot,
   now: Date,
 ): ReplanReference | null {
