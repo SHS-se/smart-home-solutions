@@ -118,7 +118,7 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6, 7, 8] as const;
  * prices executable setpoints and records exact quarter evidence.
  */
 // v28 emits battery operations and enforces export eligibility and reserves in dispatch.
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v32";
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v33";
 /** Schema 5 service sizing also no longer pads energy to a minimum runtime. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v10";
 export const SLOT_MINUTES = 15;
@@ -4470,6 +4470,9 @@ function buildPriorityPlan(
     const cache = new Map(dispatchCache).set(cacheKey, selectedBundle);
     const plan = materialize(cache);
     if (plan.status !== "ready") { decision.reason = "reference_plan_infeasible"; continue; }
+    if (reference.battery && plan.slots[0].battery_command?.operation !== reference.battery.operation) {
+      decision.reason = "battery_operation_changed"; continue;
+    }
     if (ancillary(plan) !== proposedAncillary) { decision.reason = "ancillary_divergence"; continue; }
     plan.continuity = { ...decision, selected: candidate.construction, reason: "within_deadband", reference_sek: candidate.objective_sek };
     dispatchCache.set(cacheKey, selectedBundle);

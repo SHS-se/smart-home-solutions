@@ -95,3 +95,22 @@ export const snapshot = (): OptimisationSnapshot => {
     service_requirement_sample_days: {},
   };
 };
+
+/** The same household with explicit pool ownership and executable battery commands. */
+export const snapshotV8 = (): OptimisationSnapshot => {
+  const input = snapshot();
+  input.schema_version = 8;
+  input.device_models = [{
+    key: 'pool-heater', name: 'Pool heater', statistic_id: 'sensor.pool_energy',
+    category: 'pool_heating', planning_service: 'pool', suggested_load_type: 'fixed_full_load',
+    load_type: 'fixed_full_load', planning_role: 'controllable',
+    control_type: 'switch_schedule', active_power_w: 3500, profile_sample_count: 100,
+    forecast_w_by_slot: input.slots.map(() => 0),
+  }];
+  input.services = [{
+    id: 'pool:horizon', device: 'pool', earliest_start: input.slots[0].start,
+    deadline: new Date(Date.parse(input.slots.at(-1)!.start) + 900000).toISOString(),
+    required_kwh: 0, control: { type: 'fixed_power', power_w: 3500 }, priority: 2,
+  }];
+  return input;
+};

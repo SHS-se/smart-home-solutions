@@ -4,7 +4,7 @@ import {
   assertEquals,
   assertThrows,
 } from "jsr:@std/assert@1";
-import { snapshot } from "../../../src/lib/energy-shift/optimisation-snapshot.fixture.ts";
+import { snapshot, snapshotV8 } from "../../../src/lib/energy-shift/optimisation-snapshot.fixture.ts";
 import {
   dispatchWorkbench,
   generateOptimisationPlan,
@@ -13,11 +13,80 @@ import {
   continuityCandidates,
   REPLAN_DEADBAND_SEK,
   replanReference,
+  usableReference,
 } from "./replan-continuity.ts";
 import { scoreDispatch } from "./dispatch-plan.ts";
+import { batterySnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
+
+function batteryContinuitySnapshot(solar = true) {
+  const input = batterySnapshot();
+  input.captured_at = input.slots[0].start;
+  input.slots = input.slots.map((slot, index) => ({
+    ...slot,
+    pv_forecast_w: solar && index < 8 ? 4753.18 : 0,
+    base_load_forecast_w: 1835.72,
+    base_load_p10_w: 0,
+    base_load_p90_w: 5000,
+    import_price_sek_per_kwh: 1,
+    export_price_sek_per_kwh: 0.01,
+  }));
+  input.policy.battery_export_enabled = true;
+  input.policy.battery_export_reserve_soc = 0.05;
+  input.policy.battery_export_min_price_sek_per_kwh = 0;
+  return input;
+}
+
+for (const solar of [true, false]) {
+  Deno.test(`continuity cannot turn ${solar ? "solar capture into grid charging" : "house supply into export"}`, () => {
+    const input = batteryContinuitySnapshot(solar);
+    const now = new Date(input.captured_at);
+    const previous = generateOptimisationPlan(input, now);
+    const operation = solar ? "solar_charge" : "supply_house";
+    assertEquals(previous.plans.priority.slots[0].battery_command!.operation, operation);
+    input.snapshot_id = "00000000-0000-4000-8000-000000000002";
+    input.slots[0].base_load_forecast_w += solar ? 200 : -200;
+    input.replan_reference = replanReference(previous, input, now);
+    assert(input.replan_reference);
+
+    const fresh = generateOptimisationPlan({ ...input, replan_reference: null }, now);
+    const freshCommand = fresh.plans.priority.slots[0].battery_command!;
+    assertEquals(freshCommand.allow_grid_charge, false);
+    assertEquals(freshCommand.allow_battery_export, false);
+    const continued = generateOptimisationPlan(input, now);
+    assertEquals(continued.status, "ready", JSON.stringify(continued.validation_errors));
+    assertEquals(continued.plans.priority.slots[0].battery_command, freshCommand);
+    assertEquals(continued.plans.priority.continuity!.selected, "proposed");
+    assertEquals(continued.plans.priority.continuity!.reason, "battery_operation_changed");
+    assertEquals(continued.plans.priority.slots, fresh.plans.priority.slots);
+  });
+}
+
+Deno.test("continuity can retain hold while a materially better fresh grid charge can replace solar", () => {
+  const input = batteryContinuitySnapshot();
+  const now = new Date(input.captured_at);
+  input.slots[0].pv_forecast_w = input.slots[0].base_load_forecast_w;
+  const previous = generateOptimisationPlan(input, now);
+  assertEquals(previous.plans.priority.slots[0].battery_command!.operation, "hold");
+  input.snapshot_id = "00000000-0000-4000-8000-000000000002";
+  input.slots[0].pv_forecast_w += 100;
+  input.replan_reference = replanReference(previous, input, now);
+  const held = generateOptimisationPlan(input, now);
+  assertEquals(held.plans.priority.slots[0].battery_command!.operation, "hold");
+  assertEquals(held.plans.priority.continuity!.selected, "direct");
+
+  const solar = batteryContinuitySnapshot();
+  const previousSolar = generateOptimisationPlan(solar, now);
+  assertEquals(previousSolar.plans.priority.slots[0].battery_command!.operation, "solar_charge");
+  solar.snapshot_id = "00000000-0000-4000-8000-000000000002";
+  solar.slots[0].import_price_sek_per_kwh = -1;
+  solar.replan_reference = replanReference(previousSolar, solar, now);
+  const replenished = generateOptimisationPlan(solar, now);
+  assertEquals(replenished.plans.priority.slots[0].battery_command!.operation, "grid_charge");
+  assertEquals(replenished.plans.priority.continuity!.selected, "proposed");
+});
 
 function referencedSnapshot(cheap = false) {
-  const input = snapshot();
+  const input = snapshotV8();
   if (cheap) {
     input.slots.forEach((s) => {
       if (s.import_price_sek_per_kwh !== null) s.import_price_sek_per_kwh *= .1;
@@ -104,7 +173,7 @@ Deno.test("small battery changes retain a feasible request while material gains 
     stable.plans.priority.slots[0].battery_discharge_w,
     .005,
   );
-  input.replan_reference!.battery = { charge_w: 0, discharge_w: 0 };
+  input.replan_reference!.battery = { operation: "hold", charge_w: 0, discharge_w: 0 };
   const changed = generateOptimisationPlan(input, new Date(input.captured_at));
   assertEquals(changed.plans.priority.continuity!.selected, "proposed");
   assertEquals(changed.plans.priority.continuity!.reason, "material_benefit");
@@ -113,7 +182,7 @@ Deno.test("small battery changes retain a feasible request while material gains 
 
 Deno.test("old battery rating and export requests cannot become command authority", () => {
   const { input } = referencedSnapshot();
-  input.replan_reference!.battery = { charge_w: 1e6, discharge_w: 0 };
+  input.replan_reference!.battery = { operation: "grid_charge", charge_w: 1e6, discharge_w: 0 };
   const result = generateOptimisationPlan(input, new Date(input.captured_at));
   assertEquals(result.plans.priority.continuity!.selected, "proposed");
   assertEquals(
@@ -121,7 +190,7 @@ Deno.test("old battery rating and export requests cannot become command authorit
     "reference_infeasible",
   );
   const bench = dispatchWorkbench({ ...input, replan_reference: null })!;
-  input.replan_reference!.battery = { charge_w: 0, discharge_w: 2000 };
+  input.replan_reference!.battery = { operation: "export", charge_w: 0, discharge_w: 2000 };
   const bundle = {
     ...bench,
     result: {
@@ -270,4 +339,61 @@ Deno.test("boundary-crossing snapshots reference the active quarter", () => {
   assertEquals(plan.plans.priority.slots[0].start, input.slots[1].start);
   assert(plan.plans.priority.continuity);
   assert(plan.plans.priority.continuity.reason !== "invalid_reference");
+});
+
+Deno.test("continuity requires explicit prior intent and rejects legacy or inconsistent references", () => {
+  const input = batteryContinuitySnapshot();
+  const now = new Date(input.captured_at);
+  const previous = generateOptimisationPlan(input, now);
+  input.snapshot_id = "00000000-0000-4000-8000-000000000002";
+  const reference = replanReference(previous, input, now)!;
+  assertEquals(reference.version, 2);
+  assertEquals(reference.battery!.operation, "solar_charge");
+  for (const mutate of [
+    (value: typeof reference) => { Reflect.set(value, "version", 1); },
+    (value: typeof reference) => { Reflect.deleteProperty(value.battery!, "operation"); },
+    (value: typeof reference) => { Reflect.set(value.battery!, "operation", "unknown"); },
+    (value: typeof reference) => { Reflect.set(value.battery!, "operation", "self_consumption"); },
+    (value: typeof reference) => { value.battery!.operation = "hold"; },
+    (value: typeof reference) => { value.battery!.operation = "supply_house"; },
+    (value: typeof reference) => { value.battery!.discharge_w = 100; },
+    (value: typeof reference) => { value.battery!.charge_w = -1; },
+    (value: typeof reference) => { value.battery!.charge_w = NaN; },
+  ]) {
+    const invalid = structuredClone(reference);
+    mutate(invalid);
+    assertEquals(usableReference(invalid, input.snapshot_id, Date.parse(input.slots[0].start), now.getTime()), false);
+    const plan = generateOptimisationPlan({ ...input, replan_reference: invalid }, now);
+    assertEquals(plan.plans.priority.continuity!.reason, "invalid_reference");
+    assertEquals(plan.plans.priority.slots[0].battery_command!.operation, "solar_charge");
+  }
+  delete previous.plans.priority.slots[0].battery_command;
+  assertEquals(replanReference(previous, input, now), null);
+
+  const legacy = snapshot();
+  const legacyPlan = generateOptimisationPlan(legacy, new Date(legacy.captured_at));
+  legacy.snapshot_id = input.snapshot_id;
+  assertEquals(replanReference(legacyPlan, legacy, new Date(legacy.captured_at)), null);
+});
+
+Deno.test("pool-only continuity does not require a battery command", () => {
+  const input = snapshotV8();
+  input.capabilities.battery = false;
+  input.battery = null;
+  input.sources.battery = null;
+  input.policy = {
+    battery_end_of_solar_target_soc: 0, battery_target_is_hard: false,
+    terminal_soc_min: 0, terminal_energy_value_sek_per_kwh: 0,
+    battery_export_enabled: false, battery_export_reserve_soc: 0,
+    battery_export_min_price_sek_per_kwh: 0,
+  };
+  const now = new Date(input.captured_at);
+  const previous = generateOptimisationPlan(input, now);
+  input.snapshot_id = "00000000-0000-4000-8000-000000000002";
+  const reference = replanReference(previous, input, now);
+  assert(reference);
+  assertEquals(reference.battery, null);
+  assertEquals(reference.pool_heat, previous.plans.priority.slots[0].pool_w > 0);
+  const plan = generateOptimisationPlan({ ...input, replan_reference: reference }, now);
+  assertEquals(plan.plans.priority.continuity!.reason, "agrees");
 });

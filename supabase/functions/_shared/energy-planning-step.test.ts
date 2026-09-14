@@ -1,6 +1,6 @@
 import { replanReference } from "./replan-continuity.ts";
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
-import { snapshot } from "../../../src/lib/energy-shift/optimisation-snapshot.fixture.ts";
+import { snapshot, snapshotV8 } from "../../../src/lib/energy-shift/optimisation-snapshot.fixture.ts";
 import { dispatchedEvSnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
 import {
   generateOptimisationPlan,
@@ -231,7 +231,7 @@ Deno.test("invalid snapshot remains a caller error across the worker boundary", 
 });
 
 Deno.test("distributed planning preserves continuity candidates and selection", () => {
-  const input = inputFor(snapshot());
+  const input = inputFor(snapshotV8());
   input.snapshot.slots.forEach(s => {
     if (s.import_price_sek_per_kwh !== null) s.import_price_sek_per_kwh *= .1;
     if (s.export_price_sek_per_kwh !== null) s.export_price_sek_per_kwh *= .1;

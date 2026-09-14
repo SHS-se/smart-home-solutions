@@ -17,9 +17,11 @@ import {
   QUARTER_MS,
 } from "./fixed-energy-plan.ts";
 
+import type { BatteryOperation } from "./battery-command.ts";
+
 export const REPLAN_DEADBAND_SEK = 0.05;
 export interface ReplanReference {
-  version: 1;
+  version: 2;
   source_plan_id: string;
   issued_at: string;
   evaluated_at: string;
@@ -27,7 +29,11 @@ export interface ReplanReference {
   slot_start: string;
   store_keys: string[];
   pool_heat: boolean | null;
-  battery: { charge_w: number; discharge_w: number } | null;
+  battery: {
+    operation: Exclude<BatteryOperation, "self_consumption">;
+    charge_w: number;
+    discharge_w: number;
+  } | null;
 }
 export interface ReplanDecision {
   source_plan_id: string;
@@ -70,8 +76,12 @@ export function replanReference(
     Date.parse(s.start) === Date.parse(current?.start ?? "")
   );
   if (!slot?.binding || previous.plans.priority.status !== "ready") return null;
+  const batteryDispatched = previous.plans.priority.dispatched_devices.includes("battery");
+  const command = slot.battery_command;
+  // Forecast watts alone cannot preserve which source or destination was authorized.
+  if (batteryDispatched && (!command || command.schema_version !== 2 || command.operation === "self_consumption")) return null;
   const reference: ReplanReference = {
-    version: 1,
+    version: 2,
     source_plan_id: previous.plan_id,
     issued_at: previous.issued_at,
     evaluated_at: now.toISOString(),
@@ -81,8 +91,9 @@ export function replanReference(
     pool_heat: previous.plans.priority.dispatched_devices.includes("pool")
       ? slot.pool_w > 0
       : null,
-    battery: previous.plans.priority.dispatched_devices.includes("battery")
+    battery: batteryDispatched && command && command.operation !== "self_consumption"
       ? {
+        operation: command.operation,
         charge_w: slot.battery_charge_w,
         discharge_w: slot.battery_discharge_w,
       }
@@ -104,7 +115,7 @@ export function usableReference(
   start: number,
   now: number,
 ): boolean {
-  return reference.version === 1 && reference.source_plan_id !== snapshotId &&
+  return reference.version === 2 && reference.source_plan_id !== snapshotId &&
     typeof reference.source_plan_id === "string" &&
     reference.source_plan_id.length > 0 &&
     Date.parse(reference.issued_at) <= Date.parse(reference.evaluated_at) &&
@@ -117,10 +128,24 @@ export function usableReference(
     (reference.pool_heat === null ||
       typeof reference.pool_heat === "boolean") &&
     (reference.battery === null || (reference.battery != null &&
-      !(reference.battery.charge_w > 0 && reference.battery.discharge_w > 0) &&
       [reference.battery.charge_w, reference.battery.discharge_w].every((w) =>
         typeof w === "number" && Number.isFinite(w) && w >= 0
-      )));
+      ) && batteryOperationMatchesPower(reference.battery)));
+}
+
+function batteryOperationMatchesPower(battery: NonNullable<ReplanReference["battery"]>): boolean {
+  switch (battery.operation) {
+    case "solar_charge":
+    case "grid_charge":
+      return battery.charge_w > 0 && battery.discharge_w === 0;
+    case "supply_house":
+    case "export":
+      return battery.discharge_w > 0 && battery.charge_w === 0;
+    case "hold":
+      return battery.charge_w === 0 && battery.discharge_w === 0;
+    default:
+      return false;
+  }
 }
 
 /** Generate both a warm trajectory and a repaired one; heuristic suffix noise cannot erase the warm candidate. */
