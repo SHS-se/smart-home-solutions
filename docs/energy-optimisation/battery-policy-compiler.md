@@ -74,9 +74,11 @@ a local benchmark of the existing scorer completed 288,000 interval evaluations
 in 0.30 seconds, and the complete compiler measurements below support reuse for
 this bounded slice. Revisit that decision if larger workloads disprove it.
 
-Also defer interpolated state bands and general feasibility certificates. Exact
-input coverage and explicit finite-search omissions are sufficient for this
-prototype. No second physics/economic implementation or solver dependency is added.
+The exact compiler keeps exact input coverage and explicit finite-search omissions.
+The subsequent [time/state coverage module](battery-policy-coverage.md) reuses this
+solver to build diagnostic bands, with a restricted physical feasibility witness
+and empirical held-out error evidence. General feasibility certificates remain
+deferred. No second physics/economic implementation or solver dependency is added.
 
 ## Search and status semantics
 
@@ -187,9 +189,11 @@ negative prices, wear, shaping and ramp costs.
 ## Remaining delivery work
 
 The implemented slice establishes battery counterfactual search and C/F accounting.
-It does not complete the broader production policy compiler. Next work includes
-resolved real-case inputs, broader state/forecast/time coverage with held-out error
-evidence, commissioned native inverter response and supported operation templates,
-then the pure HA decision/reconciliation runtime and versioned acceptance contract.
+The subsequent [regional coverage stage](battery-policy-coverage.md) adds bounded
+time/state bands and empirical held-out checks. The HA repository also contains a
+pure decision/reconciliation runtime, energy ledger and exact-anchor policy binding.
+Production work still includes resolved real-case inputs, additional forecast/state
+coverage, commissioned native inverter response, supported operation templates and
+a versioned regional acceptance contract connected to the runtime.
 Hardware activation still requires its delivery and commissioning gates. Thermal
 model calibration and joint thermal recovery stay deferred to their own workstream.

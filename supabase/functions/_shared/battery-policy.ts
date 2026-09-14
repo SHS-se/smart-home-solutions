@@ -76,7 +76,7 @@ type Outcome =
   };
 
 const nonnegative = z.number().finite().nonnegative();
-const requestSchema = z.object({
+export const batteryPolicyRequestSchema = z.object({
   problem: z.unknown(),
   reference_id: z.string().min(1).max(100),
   alternatives: z.array(
@@ -257,7 +257,7 @@ function extensions(
 }
 
 function compile(input: unknown) {
-  const request = requestSchema.parse(input);
+  const request = batteryPolicyRequestSchema.parse(input);
   // Check raw cardinalities before parsing/cloning the resolved model.
   z.object({
     intervals: z.array(z.unknown()).min(1).max(BATTERY_POLICY_LIMITS.intervals),
