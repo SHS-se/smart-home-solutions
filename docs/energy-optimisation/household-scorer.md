@@ -120,6 +120,10 @@ phase limits, general tariff statistics, nonlinear/native response, uncertain
 operations, conditional reservation release and scenario probabilities are not.
 Unknown fields cannot silently enable any of those unsupported capabilities.
 
+The separate [capture accounting audit](household-capture-validation.md) now checks
+current replay capsules against their own electrical forecasts and published
+price ledger. It is not an adapter into this scorer.
+
 Legacy snapshots/capsules do not contain all required resolved room utility,
 shared-equipment or response evidence. There is deliberately no automatic legacy
 adapter. Captured-case resolution, model calibration, joint suffix search and the
