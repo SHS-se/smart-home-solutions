@@ -4,7 +4,8 @@
     "generate:ha-contract-fixture": "deno run --allow-write scripts/generate-ha-plan-fixture.ts"
   },
   "imports": {
-    "@/": "./src/"
+    "@/": "./src/",
+    "@std/assert": "jsr:@std/assert@1"
   },
   "compilerOptions": {
     "strict": false,

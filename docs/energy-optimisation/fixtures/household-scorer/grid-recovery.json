@@ -1,0 +1,620 @@
+{
+  "problem": {
+    "schema_version": 1,
+    "identity": {
+      "case_id": "synthetic-grid-recovery",
+      "intent_revision": "synthetic-intent-1",
+      "model_revision": "synthetic-models-1",
+      "actuals_watermark": "2026-09-14T08:00:00.000Z",
+      "provenance": "synthetic"
+    },
+    "intervals": [
+      {
+        "start": "2026-09-14T08:00:00.000Z",
+        "end": "2026-09-14T08:15:00.000Z"
+      },
+      {
+        "start": "2026-09-14T08:15:00.000Z",
+        "end": "2026-09-14T08:30:00.000Z"
+      },
+      {
+        "start": "2026-09-14T08:30:00.000Z",
+        "end": "2026-09-14T08:45:00.000Z"
+      },
+      {
+        "start": "2026-09-14T08:45:00.000Z",
+        "end": "2026-09-14T09:00:00.000Z"
+      }
+    ],
+    "plant": {
+      "grid": {
+        "import_limit_w": 10000,
+        "export_limit_w": 5000
+      },
+      "pv_w": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "residual_loads": [
+        {
+          "id": "uncontrolled-house",
+          "power_w": [
+            500,
+            500,
+            500,
+            500
+          ]
+        }
+      ],
+      "thermal_stores": [
+        {
+          "id": "room",
+          "model_id": "synthetic-lumped-v1",
+          "role": "room",
+          "state_c": {
+            "initial": 20,
+            "min": 0,
+            "max": 80,
+            "provenance": "synthetic fixture, not installation ratings"
+          },
+          "capacity_kwh_per_c": 1,
+          "loss_kw_per_c": 0.2,
+          "environment_c": [
+            10,
+            10,
+            10,
+            10
+          ],
+          "background_kw": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "withdrawal_kwh": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "pool",
+          "model_id": "synthetic-lumped-v1",
+          "role": "pool",
+          "state_c": {
+            "initial": 20,
+            "min": 0,
+            "max": 80,
+            "provenance": "synthetic fixture, not installation ratings"
+          },
+          "capacity_kwh_per_c": 50,
+          "loss_kw_per_c": 0.2,
+          "environment_c": [
+            10,
+            10,
+            10,
+            10
+          ],
+          "background_kw": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "withdrawal_kwh": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "tank",
+          "model_id": "synthetic-lumped-v1",
+          "role": "tank",
+          "state_c": {
+            "initial": 45,
+            "min": 0,
+            "max": 80,
+            "provenance": "synthetic fixture, not installation ratings"
+          },
+          "capacity_kwh_per_c": 0.3,
+          "loss_kw_per_c": 0.001,
+          "environment_c": [
+            10,
+            10,
+            10,
+            10
+          ],
+          "background_kw": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "withdrawal_kwh": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "equipment": [
+        {
+          "id": "battery",
+          "kind": "battery",
+          "model_id": "synthetic-storage-v1",
+          "available": [
+            true,
+            true,
+            true,
+            true
+          ],
+          "state_kwh": {
+            "initial": 2,
+            "min": 0,
+            "max": 10,
+            "provenance": "synthetic fixture, not installation ratings"
+          },
+          "charge_max_w": 4000,
+          "discharge_max_w": 4000,
+          "charge_efficiency": 1,
+          "discharge_efficiency": 1,
+          "wear_sek_per_kwh": 0.1,
+          "grid_charge_allowed": [
+            true,
+            true,
+            true,
+            true
+          ],
+          "export_allowed": [
+            false,
+            false,
+            false,
+            false
+          ]
+        },
+        {
+          "id": "ev",
+          "kind": "ev",
+          "model_id": "synthetic-ac-v1",
+          "available": [
+            true,
+            true,
+            true,
+            true
+          ],
+          "state_kwh": {
+            "initial": 38,
+            "min": 0,
+            "max": 100,
+            "provenance": "synthetic fixture, not installation ratings"
+          },
+          "watts_per_amp": 200,
+          "current_steps_a": [
+            0,
+            5,
+            10
+          ],
+          "charge_efficiency": 1,
+          "wear_sek_per_kwh": 0,
+          "connected": [
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        {
+          "id": "room-heater",
+          "kind": "heater",
+          "model_id": "synthetic-fixed-cop-v1",
+          "available": [
+            true,
+            true,
+            true,
+            true
+          ],
+          "technology": "resistive",
+          "power_steps_w": [
+            0,
+            1000,
+            2000
+          ],
+          "initially_running": false,
+          "start_cost_sek": 0,
+          "routes": [
+            {
+              "store_id": "room",
+              "cop": [
+                1,
+                1,
+                1,
+                1
+              ],
+              "auxiliary_w": 0
+            }
+          ]
+        },
+        {
+          "id": "shared-heat-pump",
+          "kind": "heater",
+          "model_id": "synthetic-fixed-cop-v1",
+          "available": [
+            true,
+            true,
+            true,
+            true
+          ],
+          "technology": "heat_pump",
+          "power_steps_w": [
+            0,
+            1000,
+            2000
+          ],
+          "initially_running": false,
+          "start_cost_sek": 0.5,
+          "routes": [
+            {
+              "store_id": "pool",
+              "cop": [
+                3,
+                3,
+                3,
+                3
+              ],
+              "auxiliary_w": 0
+            },
+            {
+              "store_id": "tank",
+              "cop": [
+                3,
+                3,
+                3,
+                3
+              ],
+              "auxiliary_w": 0
+            }
+          ]
+        }
+      ]
+    },
+    "economics": {
+      "tariff": "energy_only",
+      "import_sek_per_kwh": [
+        0.4,
+        0.4,
+        0.4,
+        0.4
+      ],
+      "export_sek_per_kwh": [
+        0.1,
+        0.1,
+        0.1,
+        0.1
+      ],
+      "shaping_sek_per_kwh_per_kw": 0,
+      "ramp_sek_per_kw": 0,
+      "initial_import_w": null,
+      "completed_event_ids": [],
+      "services": [
+        {
+          "id": "room-warmth",
+          "kind": "continuous",
+          "store_id": "room",
+          "curves": [
+            {
+              "unit": "celsius",
+              "points": [
+                {
+                  "at": 100,
+                  "sek_per_unit": 10
+                },
+                {
+                  "at": 101,
+                  "sek_per_unit": 0
+                }
+              ]
+            },
+            {
+              "unit": "celsius",
+              "points": [
+                {
+                  "at": 100,
+                  "sek_per_unit": 10
+                },
+                {
+                  "at": 101,
+                  "sek_per_unit": 0
+                }
+              ]
+            },
+            {
+              "unit": "celsius",
+              "points": [
+                {
+                  "at": 100,
+                  "sek_per_unit": 10
+                },
+                {
+                  "at": 101,
+                  "sek_per_unit": 0
+                }
+              ]
+            },
+            {
+              "unit": "celsius",
+              "points": [
+                {
+                  "at": 100,
+                  "sek_per_unit": 10
+                },
+                {
+                  "at": 101,
+                  "sek_per_unit": 0
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "departure",
+          "kind": "event",
+          "store_id": "ev",
+          "at": "2026-09-14T09:00:00.000Z",
+          "curve": {
+            "unit": "kwh",
+            "points": [
+              {
+                "at": 30,
+                "sek_per_unit": 5
+              },
+              {
+                "at": 38,
+                "sek_per_unit": 0.2
+              },
+              {
+                "at": 40,
+                "sek_per_unit": 0
+              }
+            ]
+          }
+        }
+      ],
+      "terminal": [
+        {
+          "id": "future-battery",
+          "store_id": "battery",
+          "curve": {
+            "unit": "kwh",
+            "points": [
+              {
+                "at": 100,
+                "sek_per_unit": 0.1
+              },
+              {
+                "at": 101,
+                "sek_per_unit": 0
+              }
+            ]
+          },
+          "coverage_from": "2026-09-14T09:00:00.000Z",
+          "model_id": "synthetic-future-replacement",
+          "event_ids": []
+        }
+      ]
+    }
+  },
+  "candidates": [
+    {
+      "id": "leave-off",
+      "pv_curtail_w": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "actions": {
+        "battery": [
+          {
+            "kind": "battery",
+            "charge_w": 0,
+            "discharge_w": 0,
+            "solar_charge_w": 0,
+            "export_w": 0
+          },
+          {
+            "kind": "battery",
+            "charge_w": 0,
+            "discharge_w": 0,
+            "solar_charge_w": 0,
+            "export_w": 0
+          },
+          {
+            "kind": "battery",
+            "charge_w": 0,
+            "discharge_w": 0,
+            "solar_charge_w": 0,
+            "export_w": 0
+          },
+          {
+            "kind": "battery",
+            "charge_w": 0,
+            "discharge_w": 0,
+            "solar_charge_w": 0,
+            "export_w": 0
+          }
+        ],
+        "ev": [
+          {
+            "kind": "ev",
+            "current_a": 0
+          },
+          {
+            "kind": "ev",
+            "current_a": 0
+          },
+          {
+            "kind": "ev",
+            "current_a": 0
+          },
+          {
+            "kind": "ev",
+            "current_a": 0
+          }
+        ],
+        "room-heater": [
+          {
+            "kind": "heater",
+            "store_id": null,
+            "power_w": 0
+          },
+          {
+            "kind": "heater",
+            "store_id": null,
+            "power_w": 0
+          },
+          {
+            "kind": "heater",
+            "store_id": null,
+            "power_w": 0
+          },
+          {
+            "kind": "heater",
+            "store_id": null,
+            "power_w": 0
+          }
+        ],
+        "shared-heat-pump": [
+          {
+            "kind": "heater",
+            "store_id": null,
+            "power_w": 0
+          },
+          {
+            "kind": "heater",
+            "store_id": null,
+            "power_w": 0
+          },
+          {
+            "kind": "heater",
+            "store_id": null,
+            "power_w": 0
+          },
+          {
+            "kind": "heater",
+            "store_id": null,
+            "power_w": 0
+          }
+        ]
+      }
+    },
+    {
+      "id": "grid-supported-room-and-ev",
+      "pv_curtail_w": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "actions": {
+        "battery": [
+          {
+            "kind": "battery",
+            "charge_w": 0,
+            "discharge_w": 2000,
+            "solar_charge_w": 0,
+            "export_w": 0
+          },
+          {
+            "kind": "battery",
+            "charge_w": 0,
+            "discharge_w": 2000,
+            "solar_charge_w": 0,
+            "export_w": 0
+          },
+          {
+            "kind": "battery",
+            "charge_w": 0,
+            "discharge_w": 2000,
+            "solar_charge_w": 0,
+            "export_w": 0
+          },
+          {
+            "kind": "battery",
+            "charge_w": 0,
+            "discharge_w": 2000,
+            "solar_charge_w": 0,
+            "export_w": 0
+          }
+        ],
+        "ev": [
+          {
+            "kind": "ev",
+            "current_a": 0
+          },
+          {
+            "kind": "ev",
+            "current_a": 0
+          },
+          {
+            "kind": "ev",
+            "current_a": 10
+          },
+          {
+            "kind": "ev",
+            "current_a": 10
+          }
+        ],
+        "room-heater": [
+          {
+            "kind": "heater",
+            "store_id": "room",
+            "power_w": 2000
+          },
+          {
+            "kind": "heater",
+            "store_id": "room",
+            "power_w": 2000
+          },
+          {
+            "kind": "heater",
+            "store_id": "room",
+            "power_w": 2000
+          },
+          {
+            "kind": "heater",
+            "store_id": "room",
+            "power_w": 2000
+          }
+        ],
+        "shared-heat-pump": [
+          {
+            "kind": "heater",
+            "store_id": null,
+            "power_w": 0
+          },
+          {
+            "kind": "heater",
+            "store_id": null,
+            "power_w": 0
+          },
+          {
+            "kind": "heater",
+            "store_id": null,
+            "power_w": 0
+          },
+          {
+            "kind": "heater",
+            "store_id": null,
+            "power_w": 0
+          }
+        ]
+      }
+    }
+  ]
+}
