@@ -1,0 +1,149 @@
+{
+  "problem": {
+    "schema_version": 1,
+    "identity": {
+      "case_id": "fixed-tail-reversal",
+      "intent_revision": "synthetic-v1",
+      "model_revision": "ideal-battery-v1",
+      "actuals_watermark": "2026-09-14T08:00:00.000Z",
+      "provenance": "synthetic"
+    },
+    "intervals": [
+      {
+        "start": "2026-09-14T08:00:00.000Z",
+        "end": "2026-09-14T08:15:00.000Z"
+      },
+      {
+        "start": "2026-09-14T08:15:00.000Z",
+        "end": "2026-09-14T08:30:00.000Z"
+      },
+      {
+        "start": "2026-09-14T08:30:00.000Z",
+        "end": "2026-09-14T08:45:00.000Z"
+      }
+    ],
+    "plant": {
+      "grid": {
+        "import_limit_w": 4000,
+        "export_limit_w": 4000
+      },
+      "pv_w": [
+        0,
+        0,
+        0
+      ],
+      "residual_loads": [
+        {
+          "id": "external-demand",
+          "power_w": [
+            1000,
+            1000,
+            1000
+          ]
+        }
+      ],
+      "thermal_stores": [],
+      "equipment": [
+        {
+          "id": "battery",
+          "kind": "battery",
+          "model_id": "ideal-battery",
+          "available": [
+            true,
+            true,
+            true
+          ],
+          "state_kwh": {
+            "initial": 0.25,
+            "min": 0,
+            "max": 0.25,
+            "provenance": "synthetic analytical example"
+          },
+          "charge_max_w": 1000,
+          "discharge_max_w": 1000,
+          "charge_efficiency": 1,
+          "discharge_efficiency": 1,
+          "wear_sek_per_kwh": 0,
+          "grid_charge_allowed": [
+            false,
+            false,
+            false
+          ],
+          "export_allowed": [
+            false,
+            false,
+            false
+          ]
+        }
+      ]
+    },
+    "economics": {
+      "tariff": "energy_only",
+      "import_sek_per_kwh": [
+        2,
+        10,
+        1
+      ],
+      "export_sek_per_kwh": [
+        0,
+        0,
+        0
+      ],
+      "shaping_sek_per_kwh_per_kw": 0,
+      "ramp_sek_per_kw": 0,
+      "initial_import_w": null,
+      "services": [],
+      "completed_event_ids": [],
+      "terminal": []
+    }
+  },
+  "reference_id": "hold",
+  "alternatives": [
+    {
+      "id": "hold",
+      "current": {
+        "actions": [
+          {
+            "kind": "battery",
+            "charge_w": 0,
+            "discharge_w": 0,
+            "solar_charge_w": 0,
+            "export_w": 0
+          }
+        ],
+        "pv_curtail_w": [
+          0
+        ]
+      }
+    },
+    {
+      "id": "discharge",
+      "current": {
+        "actions": [
+          {
+            "kind": "battery",
+            "charge_w": 0,
+            "discharge_w": 1000,
+            "solar_charge_w": 0,
+            "export_w": 0
+          }
+        ],
+        "pv_curtail_w": [
+          0
+        ]
+      }
+    }
+  ],
+  "search": {
+    "energy_levels_kwh": [
+      0,
+      0.25
+    ],
+    "pv_curtailment_fractions": [
+      0,
+      1
+    ],
+    "retained_per_level": 4,
+    "max_interval_evaluations": 10000
+  }
+}
