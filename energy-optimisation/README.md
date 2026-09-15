@@ -1,5 +1,12 @@
 # Load-shifting plan — hourly prototype
 
+## Later design decision — 15 September 2026
+
+Preserve the historical behaviour and evidence below. The agreed participation ownership, metadata exclusion, chart partition and explicit battery supply scope supersede conflicting target requirements; this record is not current replacement rollout guidance.
+
+See the [agreed participation and battery supply specification](../docs/energy-optimisation/device-participation-and-battery-supply.md).
+Documentation only; replacement implementation and coordinated rollout remain pending.
+
 > **Superseded.** This folder is the original **hourly** prototype, kept for the
 > findings written up below. The live version is 15-minute and lives in the
 > portal:

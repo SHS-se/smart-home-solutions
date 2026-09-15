@@ -1,5 +1,12 @@
 # Contracts and data
 
+## Required participation and supply contract — 15 September 2026
+
+Use separately owned HA inclusion, website planning and HA requested/effective authority, resolved into one acknowledged revision-bound scope. Stop excluded-device telemetry and descriptive inventory; aggregate demand remains. The next versioned battery contract carries explicit house-supply selector and solar attribution, distinct from forecast watts, physical limits and economic alternatives. Bind these identities at acceptance and before dispatch; do not reinterpret schema-2 commands or add compatibility fallbacks.
+
+See the [agreed participation and battery supply specification](device-participation-and-battery-supply.md).
+Documentation only; replacement implementation and coordinated rollout remain pending.
+
 [Architecture index](../../ENERGY_OPTIMISATION_ARCHITECTURE.md) · [Reactive integration controls](reactive-controls.md)
 
 Status: current contract requirements, reconciled 2026-09-06. The machine-readable contract under `contracts/ha-api` and its supported runtime versions determine the wire format. This prose does not deploy a schema change.

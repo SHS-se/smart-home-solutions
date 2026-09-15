@@ -1,5 +1,12 @@
 # Energy optimisation architecture
 
+## Latest agreed ownership and battery scope — 15 September 2026
+
+The canonical participation/supply decision supersedes conflicting older terminology: HA owns Included/Excluded and Verification/Controlling; the website owns Monitoring/Planned. Explicit battery house-supply scope is an agreed requirement, evaluated against actual eligible demand and the existing future-cost policy. The companion below links the canonical specification; older prototype and deployment records remain dated evidence.
+
+See the [agreed participation and battery supply specification](docs/energy-optimisation/device-participation-and-battery-supply.md).
+Documentation only; replacement implementation and coordinated rollout remain pending.
+
 Updated: 2026-09-06. This is the entry point for the split architecture.
 
 The server plans the horizon; the Home Assistant integration coordinates and confirms local execution. The portal configures the system and explains its evidence.

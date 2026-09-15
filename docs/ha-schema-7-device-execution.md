@@ -1,5 +1,12 @@
 # 0.8.0-beta.25 — Per-device plan execution
 
+## Later design decision — 15 September 2026
+
+Preserve the historical behaviour and evidence below. The agreed participation ownership, metadata exclusion, chart partition and explicit battery supply scope supersede conflicting target requirements; this record is not current replacement rollout guidance.
+
+See the [agreed participation and battery supply specification](energy-optimisation/device-participation-and-battery-supply.md).
+Documentation only; replacement implementation and coordinated rollout remain pending.
+
 Deploy the accompanying website schema-7 contract and optimiser first, then
 upgrade HA. The website continues serving schema 5/6 to existing clients during
 the coordinated release. This integration requests schema 7; it refuses an

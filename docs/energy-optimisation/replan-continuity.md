@@ -1,5 +1,12 @@
 # Current-quarter replan continuity
 
+## Later design decision — 15 September 2026
+
+Preserve the historical behaviour and evidence below. The agreed participation ownership, metadata exclusion, chart partition and explicit battery supply scope supersede conflicting target requirements; this record is not current replacement rollout guidance.
+
+See the [agreed participation and battery supply specification](device-participation-and-battery-supply.md).
+Documentation only; replacement implementation and coordinated rollout remain pending.
+
 Planner v30 adds an economic reference to the priority scenario. Ingest derives `snapshot.replan_reference` from the server's previous ready plan, never from a client claim. The bounded reference describes the current absolute quarter's battery powers and pool heat/defer action. It is frozen in the enriched snapshot, so saved replays and distributed planning see the same input. It is not evidence that a device applied or delivered the old request.
 
 The ordinary solution is scored against two alternatives: replace its first-quarter battery/pool allocations while retaining its future trajectory, and reoptimize the suffix after those allocations. Both use fresh measured state, current limits and the existing complete dispatch objective. Pool heat uses the current learned power. Battery powers are rejected if infeasible; they are not clipped or promoted to fixed-plan authority.

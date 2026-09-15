@@ -1,5 +1,12 @@
 # Battery policy coverage over time and state
 
+## Scope is a coverage dimension — 15 September 2026
+
+Published coverage must bind participation, eligible demand selector, solar attribution, observation basis and native response capability. Aggregate whole-house evidence does not establish base/selected-device coverage. Required missing or stale subgroup inputs remain unavailable; no forecast, all-house or rated-power fallback is implied. A change of scope invalidates dependent certificates and runtime identity.
+
+See the [agreed participation and battery supply specification](device-participation-and-battery-supply.md).
+Documentation only; replacement implementation and coordinated rollout remain pending.
+
 Implemented 14 September 2026. The offline compiler now builds continuous
 remaining-time/battery-energy cells, with component C/F interpolation, a common
 feasible reference and fresh held-out counterfactual solves. This extends the

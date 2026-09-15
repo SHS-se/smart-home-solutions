@@ -1,5 +1,12 @@
 # Energy optimisation — decisions requiring attention
 
+## D9. Participation ownership and explicit battery supply — 15 September 2026
+
+Settled: HA Devices owns Included/Excluded; the website owns Monitoring/Planned; HA Schedule shows only Planned equipment in Verification (default) or Controlling. Exclusion removes future device-specific metadata as well as readings. Grey is gross base consumption, with omitted Planned series kept in Other planned devices. Battery intent explicitly selects None, Whole house, Base, Selected Planned devices, or Base+selected, using measured eligible demand and future-cost ranking. Solar is shared proportionally across gross consumption, with the selected scope receiving its share of self-consumed PV; no automatic max-discharge rule or new fallback is authorized. This supersedes the earlier review treating beneficiary accounting as optional/outside scope.
+
+See the [agreed participation and battery supply specification](docs/energy-optimisation/device-participation-and-battery-supply.md).
+Documentation only; replacement implementation and coordinated rollout remain pending.
+
 Updated: 2026-09-10. Battery scope and operating policy settled on 10 September; implementation verification remains. Split from the [architecture](ENERGY_OPTIMISATION_ARCHITECTURE.md) on 6 September; D3 and D6 narrowed on 8 September against the [battery valuation investigation](docs/energy-optimisation/battery-valuation-investigation.md) and a survey of the reference installation's [control surfaces](docs/energy-optimisation/reactive-controls.md#surveyed-control-surfaces).
 
 This file now contains only unresolved product or commissioning choices. Clear mathematical errors, arithmetic mistakes, stale statuses, and conflicting definitions have been corrected in the current specifications. Their disposition is in the [reconciliation record](docs/energy-optimisation/reconciliation.md); technical implementation and validation work is in the [engineering backlog](docs/energy-optimisation/verification-and-delivery.md#engineering-backlog-not-household-decisions).

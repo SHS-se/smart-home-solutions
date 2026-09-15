@@ -1,5 +1,12 @@
 # Energy optimisation — working notes
 
+## Later design decision — 15 September 2026
+
+Preserve the historical behaviour and evidence below. The agreed participation ownership, metadata exclusion, chart partition and explicit battery supply scope supersede conflicting target requirements; this record is not current replacement rollout guidance.
+
+See the [agreed participation and battery supply specification](docs/energy-optimisation/device-participation-and-battery-supply.md).
+Documentation only; replacement implementation and coordinated rollout remain pending.
+
 Status: **working document, not committed.** Written 2026-08-09 while wiring EMHASS up
 against Phil's house. Captures what exists, what was learned the hard way, and where this
 is going. Everything here was verified against the live Home Assistant instance rather

@@ -1,5 +1,12 @@
 # Mixed-mode execution scope (schema 9)
 
+## Replacement scope terminology — 15 September 2026
+
+The schema-9 four-local-mode implementation below is historical basis for the next contract. The replacement has HA inclusion, website Monitoring/Planned, and HA Verification/Controlling. Planned Verification equipment stays separately identified but external to executable decision variables. Base consumption and fixed external demand are distinct; add uncontrolled Planned demand once. Battery supply eligibility may include a Planned Verification device without treating its hypothetical actions as real.
+
+See the [agreed participation and battery supply specification](device-participation-and-battery-supply.md).
+Documentation only; replacement implementation and coordinated rollout remain pending.
+
 A live battery must not depend on a hypothetical shutdown of a pool or heater
 that SHS is only planning or verifying. Schema 9 carries two independently
 solved plans: the top-level planning preview and a self-contained

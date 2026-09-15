@@ -1,5 +1,12 @@
 # Reconciliation record
 
+## Participation changes are not delivered actions — 15 September 2026
+
+Acknowledged inclusion, planning, physical-authority and supply-scope revisions must match the reconciled plan/policy. Verification commands never create delivered demand changes or released headroom. Scope membership changes invalidate dependent unsent decisions but do not erase actual energy, prior costs or possible effects. Scope attribution is an accounting convention and must not be presented as measured appliance-level source delivery.
+
+See the [agreed participation and battery supply specification](device-participation-and-battery-supply.md).
+Documentation only; replacement implementation and coordinated rollout remain pending.
+
 [Architecture index](../../ENERGY_OPTIMISATION_ARCHITECTURE.md) · [Outstanding decisions](../../ENERGY_OPTIMISATION_ARCHITECTURE_REVIEW.md)
 
 On 2026-09-06 the original architecture was split into current topic specifications and a separately labelled historical record. The full 5,370-line source, including new 6 September workbench notes, is preserved in [history](history/README.md). Current specifications take precedence over historical prose. This record describes documentation changes, not runtime fixes.

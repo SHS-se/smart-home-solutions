@@ -1,5 +1,12 @@
 # Offline household scorer — step 2
 
+## Scoped feasibility, unchanged objective ownership — 15 September 2026
+
+Extend native physical feasibility with explicit house-supply eligibility and its declared solar accounting. Keep the one whole-house import/export, losses, wear and terminal objective; selecting a scope adds no duplicate reward or separate device battery bill. Verification demand is external unless control is physically effective. Candidate comparisons share participation, source attribution and current observations, and distinguish physical measurement from source accounting.
+
+See the [agreed participation and battery supply specification](device-participation-and-battery-supply.md).
+Documentation only; replacement implementation and coordinated rollout remain pending.
+
 Implementation started 14 September 2026. This is an offline resolved-model
 scorer, not the shipping planner objective or an executable HA policy.
 

@@ -1,5 +1,12 @@
 # 0.8.0-beta.26 — Four-page configuration
 
+## Later design decision — 15 September 2026
+
+Preserve the historical behaviour and evidence below. The agreed participation ownership, metadata exclusion, chart partition and explicit battery supply scope supersede conflicting target requirements; this record is not current replacement rollout guidance.
+
+See the [agreed participation and battery supply specification](energy-optimisation/device-participation-and-battery-supply.md).
+Documentation only; replacement implementation and coordinated rollout remain pending.
+
 Phase 3 is implemented on top of Phase 4. The schema-7 command channel and
 journaled controller remain in place; this release does not enable new targets.
 

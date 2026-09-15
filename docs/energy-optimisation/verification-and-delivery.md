@@ -1,5 +1,12 @@
 # Verification and delivery
 
+## Additional required acceptance gates — 15 September 2026
+
+Add three-owner participation and re-admission tests, no excluded metadata/telemetry, exact chart/base partition including >8 Planned devices, external Verification demand, and explicit None/Whole house/Base/Selected/Base+selected supply. Validate PV attribution, stale/missing/overlapping subgroup meters, native enforcement latency, membership changes during pending writes, and C + V action ranking with equal final-energy comparisons. The v35 cap shortcut is superseded as target; this documentation enables no hardware.
+
+See the [agreed participation and battery supply specification](device-participation-and-battery-supply.md).
+Documentation only; replacement implementation and coordinated rollout remain pending.
+
 [Architecture index](../../ENERGY_OPTIMISATION_ARCHITECTURE.md) · [Decisions requiring Phil](../../ENERGY_OPTIMISATION_ARCHITECTURE_REVIEW.md)
 
 Status: current verification requirements, reconciled 2026-09-06. Historical test counts, version labels, and “next” milestones are evidence from their dates, not a current release checklist.

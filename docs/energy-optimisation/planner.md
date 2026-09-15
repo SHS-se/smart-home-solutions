@@ -1,5 +1,12 @@
 # Server planner
 
+## Explicit scope alongside forecast and economics — 15 September 2026
+
+Emit explicit battery house-supply scope for each supported policy alternative: None, Whole house, Base, Selected Planned devices, or Base+selected. Predict current/future device consumption separately from that permission. Scope membership comes from the agreed participation contract; Verification demand stays external in executable forecasts. Current eligible demand is measured in HA and ranked using the existing remaining-interval C + V policy. Scope bounds feasibility; it does not prove every eligible kWh is worth supplying or justify a rating-wide ceiling.
+
+See the [agreed participation and battery supply specification](device-participation-and-battery-supply.md).
+Documentation only; replacement implementation and coordinated rollout remain pending.
+
 [Architecture index](../../ENERGY_OPTIMISATION_ARCHITECTURE.md) · [Decisions requiring Phil](../../ENERGY_OPTIMISATION_ARCHITECTURE_REVIEW.md)
 
 Status: current design requirements, reconciled 2026-09-06. This document does not certify that the shipping heuristic meets them. Historical algorithm versions and capsule results are in [planner experiments](history/planner-experiments.md).

@@ -1,5 +1,12 @@
 # Current Home Assistant readiness and recovery
 
+## Scope-preserving recovery — 15 September 2026
+
+Persist and validate participation and battery supply/solar-attribution identities alongside existing policy, ownership and pending effects. Restart cannot revive excluded or demoted control, invent subgroup observations, reset accounting or broaden supply to the whole house/rating. Existing explicit release and durable-effect rules remain; this decision introduces no recovery fallback.
+
+See the [agreed participation and battery supply specification](device-participation-and-battery-supply.md).
+Documentation only; replacement implementation and coordinated rollout remain pending.
+
 Plan acceptance is a historical event. The portal treats a plan as available only
 when Home Assistant has reported `ready` for that exact plan ID within the last
 150 seconds and both the binding and validity boundaries remain in the future.

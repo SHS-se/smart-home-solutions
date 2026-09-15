@@ -1,5 +1,12 @@
 # Reactive controls in the Home Assistant integration
 
+## Scope-aware live execution — 15 September 2026
+
+Only Planned equipment has a command interface, with HA Verification/Controlling authority; the observation interface still covers the whole household. Supply scope selects eligible demand, while the existing policy ranks battery actions from measured state and future consequences. Feed gross residual consumption and PV separately, apply the explicit attribution once, and enforce the scoped house-supply response within declared native capabilities. Reject missing coverage through the existing release protocol; no forecast, whole-house or rated-power fallback is added.
+
+See the [agreed participation and battery supply specification](device-participation-and-battery-supply.md).
+Documentation only; replacement implementation and coordinated rollout remain pending.
+
 [Architecture index](../../ENERGY_OPTIMISATION_ARCHITECTURE.md) · [Server planner](planner.md) · [Decisions requiring Phil](../../ENERGY_OPTIMISATION_ARCHITECTURE_REVIEW.md)
 
 Owner: `shs_energy` in `shs-ha-integration`. Status: specification for the integration-owned reactive allocator and executors; this document does not claim that they have been implemented or commissioned. Reconciled 2026-09-06 from the former §§4.2–4.4, 6.3–6.4, and 7. Battery policy corrected 2026-09-10 from Phil's operating decisions; the earlier signed-target design is superseded.

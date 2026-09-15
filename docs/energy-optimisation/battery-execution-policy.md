@@ -1,5 +1,12 @@
 # Battery execution policy
 
+## Required scope extension; not in v1 — 15 September 2026
+
+The existing software contract below does not yet encode the newly agreed explicit house-supply selector. Extend compilation, conditions, native response, bounded coverage and final-dispatch identity together, including measured eligible demand and declared PV attribution. Preserve the existing finite C + V economics and single writer. A fixed forecast ceiling or rating-wide permission is not a substitute, and missing subgroup readings cannot silently widen scope.
+
+See the [agreed participation and battery supply specification](device-participation-and-battery-supply.md).
+Documentation only; replacement implementation and coordinated rollout remain pending.
+
 The executable software contract is `battery-execution-policy-v1`. It is separate
 from the offline exact-anchor compiler and diagnostic interpolation coverage.
 The [cross-repository architecture decision](https://github.com/SHS-se/shs-ha-integration/blob/main/docs/battery-execution-design.md)

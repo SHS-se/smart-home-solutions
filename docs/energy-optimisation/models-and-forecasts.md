@@ -1,5 +1,12 @@
 # Device models and forecasts
 
+## Authoritative load partition — 15 September 2026
+
+Gross base consumption is whole-house non-battery consumption minus all Planned device consumption. Verification devices remain Planned yet contribute external demand to live planning; ineffective requested control is not assumed delivered. Monitoring/Excluded consumption stays in the aggregate. PV is separate and subtracted once to obtain signed net demand. Do not derive the partition from visible chart bands or treat missing subgroup measurements as zero. Future uncontrolled demand still requires forecasts even when current watts are measured.
+
+See the [agreed participation and battery supply specification](device-participation-and-battery-supply.md).
+Documentation only; replacement implementation and coordinated rollout remain pending.
+
 [Architecture index](../../ENERGY_OPTIMISATION_ARCHITECTURE.md) · [Planner](planner.md) · [Model history](history/models-and-delivery.md)
 
 Status: current modelling requirements and known limitations, reconciled 2026-09-06. Measured, fitted, assumed, and commissioned values must remain distinguishable.

@@ -1,5 +1,12 @@
 # Battery valuation investigation — 7 September 2026
 
+## New explicit intent requirement — 15 September 2026
+
+Future valuation audits must compare actions within the same explicit battery house-supply scope and solar-attribution convention. Scope limits eligible demand without assigning physical electrons to devices. Measured current demand and future replenishment both matter; neither a forecast-sized cap, rating-wide cap nor an unrepaired fixed-tail minimum establishes optimality. Historical examples below retain their original policy/version assumptions.
+
+See the [agreed participation and battery supply specification](device-participation-and-battery-supply.md).
+Documentation only; replacement implementation and coordinated rollout remain pending.
+
 Source: the household's `plan-2026-09-06-16-30.json` workbench export, captured at 16:30 UTC on 6 September. It contains 288 quarters, EV and battery stores, and both planner and manual schedules. The pool is absent from this export.
 
 ## Result

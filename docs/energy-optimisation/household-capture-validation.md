@@ -1,5 +1,12 @@
 # Captured household plan validation
 
+## Participation and scope capture requirements — 15 September 2026
+
+Capture separate inclusion/planning/authority revisions, actual effective physical owners, chosen supply scope, attributed solar and measurement provenance. Replay current eligible demand independently of forecast watts and preserve hypothetical-versus-live distinction. Include small planned chart loads, Verification loads that keep running, metadata exclusion, unavailable subgroup meters and scope changes during pending effects. Earlier capture/test results do not validate these new requirements.
+
+See the [agreed participation and battery supply specification](device-participation-and-battery-supply.md).
+Documentation only; replacement implementation and coordinated rollout remain pending.
+
 14 September 2026 — step 2 continuation. The offline household scorer still
 requires a fully resolved problem. The existing portal captures provide a useful,
 narrower check of shipping forecast accounting before constructing those cases.

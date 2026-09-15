@@ -1,5 +1,12 @@
 # Offline battery policy compiler — step 3
 
+## Scope-aware acceptance cases — 15 September 2026
+
+The offline prototype below predates explicit battery house-supply scope. Extend input resolution and future candidate feasibility with the agreed selector and PV attribution before claiming scoped correctness. Compare alternatives under identical scope, measured initial state and future assumptions, allowing feasible future replenishment. Test the 406 W capture and counterexamples where saving energy is cheaper; none of the existing test counts proves this extension.
+
+See the [agreed participation and battery supply specification](device-participation-and-battery-supply.md).
+Documentation only; replacement implementation and coordinated rollout remain pending.
+
 Implemented 14 September 2026. This is the first bounded battery compiler slice:
 explicit battery alternatives, future battery rescheduling and reconciled current/
 future economic values. It is an offline exact-condition prototype, not a shipping
