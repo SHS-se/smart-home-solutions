@@ -44,3 +44,19 @@ rollout, checking external demand, the execution battery request and actual
 controller readbacks. Generated schema 9 fixtures and tests cover conservation,
 current-quarter evidence, staged solving, mode changes, and the user-facing
 scope selection.
+
+## Charge timing after the accounting correction
+
+The later 14:53 Stockholm capture started at 37.6% SOC; the subsequent live
+reading was 38.2%. It did not demonstrate a negative charge-tracking error.
+Under its expected external forecast the plan held until 15:15 and first bought
+battery energy at 21:30, with about 0.33 stored kWh above cutoff beforehand.
+Keeping the measured pool/pump demand through 21:30 changed the immediate replay
+request to about 3.29 kW charging. This is a sensitivity, not a run-duration forecast.
+
+The [opportunity-cost adjustment](https://github.com/SHS-se/shs-ha-integration/blob/main/docs/battery-opportunity-cost.md)
+requires charge-now and wait comparisons from the same actual state, each with
+adapted future actions. It uses the existing C/F/J policy architecture and keeps
+forecast risk explicit. It adds no automatic top-up to a forecast SOC and no
+hardcoded cheap-price window. Documentation only: the current accounting fix
+and the future compiled-policy host cutover remain separate deliverables.

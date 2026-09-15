@@ -163,3 +163,22 @@ Rollout requires migration `20260909120100_fixed_energy_plans.sql`, deployment o
 then the portal build. Executable plan schemas remain unchanged; `fixed_plan`
 is descriptive metadata. The fixed controls are available before loading the
 editor so a stored schedule can be rescinded after reloading the page.
+
+## Battery charge-now versus wait requirement
+
+The [15 September charge-timing design](https://github.com/SHS-se/shs-ha-integration/blob/main/docs/battery-opportunity-cost.md)
+clarifies the actual-state opportunity-cost requirement. Compare each useful
+current charge amount with waiting using current cost plus its conditional future;
+later purchases and discharges can change in both branches. The previous projected
+SOC is not an obligation. Expensive later quarters alone do not establish a need
+for more stored energy when demand is already covered or later PV/refill is better.
+
+The live schema-9 planner already includes tariffs and its battery-value
+approximation. The finite continuation compiler/evaluator exists but awaits the
+production host/adapter cutover. Its exact-family scoring must be checked against
+fresh bounded future searches; neither is a global-optimum claim. The first next
+implementation unit is an offline charge-timing audit, not a separate local
+optimiser or an SOC-recovery overlay. Report cost decomposition, coverage,
+projected margin before refill and sensitivity to external-demand assumptions.
+Scenarios need evidence and an explicit information/risk model before they can
+change control; unweighted stress cases remain diagnostics.
