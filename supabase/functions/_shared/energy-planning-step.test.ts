@@ -4,6 +4,7 @@ import { snapshot, snapshotV8 } from "../../../src/lib/energy-shift/optimisation
 import { dispatchedEvSnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
 import {
   generateOptimisationPlan,
+  generateOptimisationPlanWithBatteryProjection,
   type OptimisationSnapshot,
 } from "./energy-optimisation.ts";
 import { energyPlanningStep } from "./energy-planning-step.ts";
@@ -145,7 +146,7 @@ Deno.test("ingest client completes real planning over serialized stage requests"
   assert(calls >= 4);
   assertEquals(
     result,
-    wire(generateOptimisationPlan(input.snapshot, new Date(input.now))),
+    wire(generateOptimisationPlanWithBatteryProjection(input.snapshot, new Date(input.now))),
   );
 });
 
@@ -249,4 +250,17 @@ Deno.test("distributed planning preserves the remaining horizon across a quarter
   input.snapshot.captured_at = new Date(boundary - 5_000).toISOString();
   input.now = new Date(boundary + 20_000).toISOString();
   assertStagesMatch(input);
+});
+
+Deno.test("worker cannot drop or substitute the exact battery projection", async () => {
+  const input = inputFor(dispatchedEvSnapshot());
+  const plan = generateOptimisationPlan(input.snapshot, new Date(input.now));
+  for (const projection of [undefined, { status: "ready" },
+    { status: "ready", provenance: { snapshot_id: "wrong", issued_at: plan.issued_at } },
+    { status: "ready", provenance: { snapshot_id: plan.snapshot_id, issued_at: "wrong" } }]) {
+    await assertRejects(() => generateRemoteOptimisationPlan(input, connection, () => Promise.resolve(
+      Response.json({ protocol: ENERGY_PLANNING_PROTOCOL, request_id: connection.requestId,
+        done: true, plan, battery_projection: projection }),
+    )), EnergyPlanningError, "missing or mismatched battery projection");
+  }
 });

@@ -1,3 +1,4 @@
+import type { BatteryProjection } from "../_shared/battery-dispatch-projection.ts";
 import { replanReference, type ReplanPreviousPlan } from "../_shared/replan-continuity.ts";
 import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
 import type { FixedEnergyPlan } from "../_shared/fixed-energy-plan.ts";
@@ -1813,6 +1814,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       ? new Date(Math.max(...thermalStarts) + SLOT_MS).toISOString()
       : null;
 
+    let batteryProjection: BatteryProjection | null = null;
     let generated:
       | (ReturnType<typeof generateOptimisationPlan> & {
         thermal_projection?: NonNullable<
@@ -1953,7 +1955,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
           device_count: snapshot.device_models.length,
           thermal_zone_count: thermalZones.length,
         });
-        generated = await generateRemoteOptimisationPlan({
+        const planned = await generateRemoteOptimisationPlan({
           snapshot,
           now: planningNow.toISOString(),
           price_archive: priceArchive,
@@ -1963,6 +1965,8 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
           planningSecret: Deno.env.get("ENERGY_PLANNING_SECRET") ?? "",
           requestId,
         }, traffic.fetch);
+        generated = planned.plan;
+        batteryProjection = planned.battery_projection;
         console.info("[ENERGY-OPTIMISATION] planning completed", {
           request_id: requestId,
           elapsed_ms: Math.round(performance.now() - planningStarted),
@@ -2025,6 +2029,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         model_version: generated.model_version,
         snapshot,
         plan: generated,
+        battery_projection: batteryProjection,
         updated_at: new Date().toISOString(),
       };
       const { error: currentError } = await supabase

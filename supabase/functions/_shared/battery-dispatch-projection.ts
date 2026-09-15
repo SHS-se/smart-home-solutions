@@ -31,7 +31,7 @@ export interface BatteryProjectionIdentity {
   snapshot_id: string;
   model_version: string;
   issued_at: string;
-  branch: "execution" | "priority";
+  branch: "execution" | "priority" | "battery_verification";
   operating_scope: OperatingScope | null;
 }
 export interface ResolvedBatterySource {

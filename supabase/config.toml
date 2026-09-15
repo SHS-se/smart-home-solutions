@@ -125,3 +125,6 @@ verify_jwt = false
 
 [functions.energy-optimisation-fixed-plan]
 verify_jwt = false
+
+[functions.energy-battery-policy]
+verify_jwt = false

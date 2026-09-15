@@ -1,4 +1,4 @@
-import { generateOptimisationPlan } from "./energy-optimisation.ts";
+import { generateOptimisationPlanWithBatteryProjection } from "./energy-optimisation.ts";
 import {
   type DispatchAuctionSolver,
   dispatchAuctionSteps,
@@ -32,7 +32,7 @@ export function energyPlanningStep(
     throw pending;
   };
   try {
-    const plan = generateOptimisationPlan(
+    const result = generateOptimisationPlanWithBatteryProjection(
       input.snapshot,
       new Date(input.now),
       input.price_archive,
@@ -43,7 +43,7 @@ export function energyPlanningStep(
     if (index !== continuation.completed.length || continuation.checkpoint) {
       throw new Error("Planning continuation does not match the input");
     }
-    return { done: true, plan };
+    return { done: true, ...result };
   } catch (error) {
     if (error !== pending || !problem) throw error;
   }

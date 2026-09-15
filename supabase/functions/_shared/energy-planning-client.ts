@@ -1,4 +1,4 @@
-import type { OptimisationPlan } from "./energy-optimisation.ts";
+import type { OptimisationResult } from "./energy-optimisation.ts";
 import {
   ENERGY_PLANNING_PROTOCOL,
   type EnergyPlanningContinuation,
@@ -24,7 +24,7 @@ export async function generateRemoteOptimisationPlan(
     requestId: string;
   },
   fetcher: typeof fetch = fetch,
-): Promise<OptimisationPlan> {
+): Promise<OptimisationResult> {
   if (
     !connection.url || !connection.planningSecret
   ) {
@@ -101,7 +101,13 @@ export async function generateRemoteOptimisationPlan(
           "Planning worker returned a plan for a different snapshot",
         );
       }
-      return body.plan;
+      if (!body.battery_projection || !["ready", "unsupported"].includes(body.battery_projection.status) ||
+          body.battery_projection.status === "ready" &&
+          (body.battery_projection.provenance?.snapshot_id !== input.snapshot.snapshot_id ||
+           body.battery_projection.provenance?.issued_at !== body.plan.issued_at)) {
+        throw new EnergyPlanningError("Planning worker returned a missing or mismatched battery projection");
+      }
+      return { plan: body.plan, battery_projection: body.battery_projection };
     }
     if (body.done !== false || !Array.isArray(body.continuation?.completed)) {
       throw new EnergyPlanningError(

@@ -1,12 +1,13 @@
 import type {
   OptimisationPlan,
+  OptimisationResult,
   OptimisationSnapshot,
 } from "./energy-optimisation.ts";
 import type { DispatchCheckpoint, DispatchResult } from "./dispatch-plan.ts";
 import type { StoredPriceRow } from "./energy-price-shape.ts";
 import type { FixedEnergyPlan } from "./fixed-energy-plan.ts";
 
-export const ENERGY_PLANNING_PROTOCOL = 2;
+export const ENERGY_PLANNING_PROTOCOL = 3;
 
 export interface EnergyPlanningInput {
   snapshot: OptimisationSnapshot;
@@ -22,5 +23,5 @@ export interface EnergyPlanningContinuation {
 }
 
 export type EnergyPlanningStep =
-  | { done: true; plan: OptimisationPlan }
+  | ({ done: true } & OptimisationResult)
   | { done: false; continuation: EnergyPlanningContinuation };
