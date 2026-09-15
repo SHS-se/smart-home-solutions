@@ -26,7 +26,7 @@ export interface Objective {
   billable_sek: number;
   total_sek: number;
 }
-const empty = (): Objective => ({
+export const emptyObjective = (): Objective => ({
   import_sek: 0,
   export_sek: 0,
   wear_sek: 0,
@@ -38,12 +38,38 @@ const empty = (): Objective => ({
   billable_sek: 0,
   total_sek: 0,
 });
-const reconcile = (v: Objective): Objective => ({
+export const reconcileObjective = (v: Objective): Objective => ({
   ...v,
   billable_sek: v.import_sek - v.export_sek,
   total_sek: v.import_sek - v.export_sek + v.wear_sek + v.starts_sek +
     v.shaping_sek + v.ramp_sek - v.service_sek - v.terminal_sek,
 });
+/** Duration-based electricity account shared by trajectory and native-response scoring.
+ * Hours are not rounded through timestamps; a native saturation can occur between ms.
+ */
+export function scoreElectricityInterval(input: {
+  hours: number;
+  import_w: number;
+  export_w: number;
+  previous_import_w: number | null;
+  import_sek_per_kwh: number;
+  export_sek_per_kwh: number;
+  shaping_sek_per_kwh_per_kw: number;
+  ramp_sek_per_kw: number;
+}): Objective {
+  const result = emptyObjective();
+  const imported = input.import_w / 1000, exported = input.export_w / 1000;
+  result.import_sek = imported * input.hours * input.import_sek_per_kwh;
+  result.export_sek = exported * input.hours * input.export_sek_per_kwh;
+  result.shaping_sek = 0.5 * input.shaping_sek_per_kwh_per_kw * imported ** 2 *
+    input.hours;
+  if (input.previous_import_w !== null) {
+    result.ramp_sek = Math.abs(input.import_w - input.previous_import_w) /
+      1000 * input.ramp_sek_per_kw;
+  }
+  return reconcileObjective(result);
+}
+
 export type HouseholdScore =
   | { status: "invalid_candidate"; violations: Violation[] }
   | {
@@ -124,20 +150,18 @@ export function createHouseholdScorer(input: unknown) {
       };
     }
     const rows = trajectory.intervals.map((physical, i) => {
-      const objective = empty();
-      const imported = physical.import_w / 1000,
-        exported = physical.export_w / 1000;
-      objective.import_sek = imported * hours[i] * econ.import_sek_per_kwh[i];
-      objective.export_sek = exported * hours[i] * econ.export_sek_per_kwh[i];
-      objective.shaping_sek = 0.5 * econ.shaping_sek_per_kwh_per_kw *
-        imported ** 2 * hours[i];
-      const previousImport = i > 0
-        ? trajectory.intervals[i - 1].import_w
-        : econ.initial_import_w;
-      if (previousImport !== null) {
-        objective.ramp_sek = Math.abs(physical.import_w - previousImport) /
-          1000 * econ.ramp_sek_per_kw;
-      }
+      const objective = scoreElectricityInterval({
+        hours: hours[i],
+        import_w: physical.import_w,
+        export_w: physical.export_w,
+        previous_import_w: i > 0
+          ? trajectory.intervals[i - 1].import_w
+          : econ.initial_import_w,
+        import_sek_per_kwh: econ.import_sek_per_kwh[i],
+        export_sek_per_kwh: econ.export_sek_per_kwh[i],
+        shaping_sek_per_kwh_per_kw: econ.shaping_sek_per_kwh_per_kw,
+        ramp_sek_per_kw: econ.ramp_sek_per_kw,
+      });
       for (const e of plant.equipment) {
         if (e.kind !== "heater") {
           objective.wear_sek +=
@@ -151,7 +175,7 @@ export function createHouseholdScorer(input: unknown) {
       }
       return { ...problem.intervals[i], objective };
     });
-    const closing = empty();
+    const closing = emptyObjective();
     const serviceValues: Record<string, number> = Object.create(null);
     for (const service of econ.services) {
       const values = trajectory.state[service.store_id];
@@ -179,13 +203,13 @@ export function createHouseholdScorer(input: unknown) {
       closing.terminal_sek += value;
       terminalValues[t.id] = value;
     }
-    const total = empty();
+    const total = emptyObjective();
     for (const account of [...rows.map((r) => r.objective), closing]) {
       for (const key of Object.keys(total) as (keyof Objective)[]) {
         total[key] += account[key];
       }
     }
-    const objective = reconcile(total);
+    const objective = reconcileObjective(total);
     if (Object.values(objective).some((v) => !Number.isFinite(v))) {
       return {
         status: "invalid_candidate",
@@ -202,8 +226,11 @@ export function createHouseholdScorer(input: unknown) {
       scorer_version: HOUSEHOLD_SCORER_VERSION,
       trajectory,
       objective,
-      intervals: rows.map((r) => ({ ...r, objective: reconcile(r.objective) })),
-      closing: reconcile(closing),
+      intervals: rows.map((r) => ({
+        ...r,
+        objective: reconcileObjective(r.objective),
+      })),
+      closing: reconcileObjective(closing),
       service_values: serviceValues,
       terminal_values: terminalValues,
     };
