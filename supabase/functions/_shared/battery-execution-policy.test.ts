@@ -98,9 +98,9 @@ function witnesses(request: BatteryExecutionRequest) {
 Deno.test("execution wire is closed, bounded, deterministic, and honestly reports unmeasured regret", () => {
   const p = compiled();
   assertEquals(compiled(), p);
-  assertEquals(p.schema, "battery-execution-policy-v1");
-  assertEquals(p.quality.scorer_revision, "offline-household-v1");
-  assertEquals(p.quality.compiler_revision, "execution-v1");
+  assertEquals(p.schema, "battery-execution-policy-v2");
+  assertEquals(p.quality.scorer_revision, "offline-household-v2");
+  assertEquals(p.quality.compiler_revision, "execution-v2");
   assertEquals(p.quality.heldout_count, 0);
   assertEquals(p.quality.heldout_max_regret_sek, null);
   assertEquals(p.quality.certified_regret_bound_sek, null);
@@ -138,11 +138,11 @@ Deno.test("execution wire is closed, bounded, deterministic, and honestly report
   ) assert(!batteryExecutionPolicySchema.safeParse(malformed).success);
 });
 
-Deno.test("every published bridge/suffix cross-scores all Objective components at endpoints and random E/P interiors", () => {
-  const r = executionFixtureRequest(),
-    b = battery(r),
-    p = compiled(r),
-    paths = witnesses(r);
+for (const wearBasis of ["ac_throughput", "discharged_storage"] as const) {
+Deno.test(`every bridge/suffix cross-scores at endpoints and interiors with ${wearBasis} wear`, () => {
+  const r = executionFixtureRequest(), b = battery(r);
+  b.wear_basis = wearBasis;
+  const p = compiled(r), paths = witnesses(r);
   let seed = 721;
   const random = () => {
     seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
@@ -207,6 +207,8 @@ Deno.test("every published bridge/suffix cross-scores all Objective components a
   }
   assert(count >= 500);
 });
+
+}
 
 Deno.test("terminal utility remains exact with no future, and with bridge but no fixed suffix", () => {
   for (const n of [1, 2]) {
@@ -433,6 +435,7 @@ Deno.test("native source permissions narrow bridge domains while the idle family
 Deno.test("filter native-invalid optimized suffixes and ALL minimum-curtailment witnesses", () => {
   const r = executionFixtureRequest(3), b = battery(r);
   r.problem.plant.pv_w[2] = 20000;
+  r.future_supply_bound_w[2] = 0;
   r.problem.plant.residual_loads[0].power_w[2] = 0;
   r.problem.plant.residual_loads[1].power_w[2] = 0;
   const raw = compileBatteryPolicy({
@@ -586,6 +589,7 @@ Deno.test("forced-export bridge domains protect reserve; house supply may cross 
   const r = executionFixtureRequest(2), b = battery(r);
   r.problem.plant.pv_w[1] = 0;
   r.problem.plant.residual_loads[0].power_w[1] = 200;
+  r.future_supply_bound_w[1] = 200;
   r.problem.plant.residual_loads[1].power_w[1] = 0;
   const p = compiled(r), paths = witnesses(r);
   let forced = 0, houseBelowReserve = 0;
@@ -607,7 +611,10 @@ Deno.test("forced-export bridge domains protect reserve; house supply may cross 
     }
   }
   assert(forced > 0 && houseBelowReserve > 0);
+  // Current ineligibility must not remove a separately eligible future export.
   r.permissions.export_price_eligible = false;
+  assertEquals(compiled(r).continuation, p.continuation);
+  b.export_allowed[1] = false;
   const ineligible = compiled(r);
   for (
     const cell of ineligible.continuation.cells.filter((c) =>
@@ -851,4 +858,37 @@ Deno.test("continuation clips only numerical edge noise and resolves numerical t
   assertEquals(evaluateExecutionContinuation(p, 1, -2e-9), null);
   first.cost.import_sek.polynomial[0] = 2e-7;
   assertEquals(evaluateExecutionContinuation(p, 2, 0)?.cell_id, "z-second");
+});
+
+Deno.test("discharged-storage wear charges energy removed from storage, never charging throughput", () => {
+  const r = executionFixtureRequest();
+  const b = battery(r); b.wear_basis = "discharged_storage";
+  for (const vector of executionCurrentVectors(r).cases) {
+    if (vector.expected.eligible) {
+      assertAlmostEquals(vector.expected.current.wear_sek,
+        Math.max(0, vector.energy_kwh - vector.expected.energy_end_kwh) * b.wear_sek_per_kwh);
+    }
+  }
+});
+
+Deno.test("current grid-charge prohibition does not remove explicitly permitted future recovery", () => {
+  const r = executionFixtureRequest(2), b = battery(r);
+  b.grid_charge_allowed = [false, true];
+  r.permissions.grid_charge_allowed = false;
+  r.problem.economics.import_sek_per_kwh = [2.77, -1];
+  r.problem.plant.pv_w = [0, 0];
+  r.problem.plant.residual_loads[0].power_w = [2000, 2000];
+  r.future_supply_bound_w = [2000, 2000];
+  const p = compiled(r);
+  const charge = p.operations.find(op => op.operation === "grid_charge");
+  assert(charge);
+  const current = evaluateExecutionCurrent(p, charge, {
+    at_ms: p.validity.from_ms, energy_kwh: 5, pv_w: 0, residual_load_w: 2000, previous_import_w: 2000,
+  });
+  assertEquals(current, { eligible: false, reason: "grid_charge_not_allowed" });
+  const permitted = evaluateExecutionContinuation(p, 4.5, 2000);
+  b.grid_charge_allowed[1] = false;
+  const prohibited = evaluateExecutionContinuation(compiled(r), 4.5, 2000);
+  assert(permitted && prohibited);
+  assert(permitted.objective.total_sek < prohibited.objective.total_sek);
 });

@@ -212,7 +212,7 @@ const PlanPanels: React.FC<{
     ]);
     const loadMax = Math.max(
       0.5,
-      ...loadBands[loadBands.length - 1].map(pair => pair[1]),
+      ...loadBands[loadBands.length - 1].map(pair => pair[1]).filter(Number.isFinite),
       ...rows.map(row => (row.solarW ?? 0) / 1_000),
     ) * 1.1;
     const flowLabels = placeBandLabels([...supply, ...disposal], FLOW_NAMES(t), x, flowY);

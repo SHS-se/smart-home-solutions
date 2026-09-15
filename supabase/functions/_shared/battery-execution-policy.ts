@@ -1,4 +1,5 @@
 /** Executable, bounded finite bridge/suffix family. No native writes or continuous-optimum claim. */
+import { batterySupplyScopeSchema, proportionalSupply, SOLAR_ATTRIBUTION } from "./battery-supply.ts";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { compileBatteryPolicy } from "./battery-policy.ts";
@@ -130,7 +131,9 @@ const cellSchema = z.object({
   cost: costSchema,
 }).strict();
 const basePolicySchema = z.object({
-  schema: z.literal("battery-execution-policy-v1"),
+  schema: z.literal("battery-execution-policy-v2"),
+  supply_scope: batterySupplyScopeSchema,
+  solar_attribution: z.literal(SOLAR_ATTRIBUTION),
   profile: z.literal("finite-continuation-v1"),
   view: z.literal("executable"),
   identity: identitySchema,
@@ -146,6 +149,7 @@ const basePolicySchema = z.object({
     discharge_efficiency: finite.positive().max(1),
     import_limit_w: physical,
     export_limit_w: physical,
+    wear_basis: z.enum(["ac_throughput", "discharged_storage"]),
     wear_sek_per_kwh: physical,
   }).strict(),
   permissions: permissionsSchema,
@@ -170,7 +174,7 @@ const basePolicySchema = z.object({
   quality: z.object({
     assurance: z.literal("exact-scoring-within-published-family"),
     scorer_revision: z.literal(HOUSEHOLD_SCORER_VERSION),
-    compiler_revision: z.literal("execution-v1"),
+    compiler_revision: z.literal("execution-v2"),
     family_id: id,
     source_hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
     numeric_tolerance_sek: z.literal(1e-7),
@@ -297,6 +301,11 @@ export const batteryExecutionPolicySchema = basePolicySchema.superRefine(
 );
 
 const requestSchema = z.object({
+  supply_scope: batterySupplyScopeSchema,
+  solar_attribution: z.literal(SOLAR_ATTRIBUTION),
+  // Explicit future permissions, computed from the same partition/scopes as the
+  // planner. Their length and physical balance are checked below.
+  future_supply_bound_w: z.array(physical),
   problem: z.unknown(),
   identity: identitySchema,
   validity: validitySchema,
@@ -333,6 +342,7 @@ export type ExecutionConditions = {
   pv_w: number;
   residual_load_w: number;
   previous_import_w: number;
+  eligible_load_w?: number;
 };
 const conditionsSchema = z.object({
   at_ms: timestamp,
@@ -340,6 +350,7 @@ const conditionsSchema = z.object({
   pv_w: physical,
   residual_load_w: physical,
   previous_import_w: physical,
+  eligible_load_w: physical.optional(),
 }).strict();
 export type ExecutionCurrentResponse = { eligible: false; reason: string } | {
   eligible: true;
@@ -412,6 +423,16 @@ export function evaluateExecutionCurrent(
     : ["self_consumption", "supply_house"].includes(op)
     ? Math.min(operation.discharge_limit_w, deficit)
     : 0;
+  if (policy.supply_scope.kind === "selected" && c.eligible_load_w === undefined) {
+    return reject("scope_measurements_unavailable");
+  }
+  const eligible = policy.supply_scope.kind === "whole_house" ? c.residual_load_w :
+    policy.supply_scope.kind === "none" ? 0 : c.eligible_load_w!;
+  if (eligible > c.residual_load_w) return reject("unreconciled_supply_measurements");
+  const bound = proportionalSupply(c.residual_load_w, c.pv_w, eligible).houseSupplyBoundW;
+  // A native operation remains exactly the commissioned target. Reject it when
+  // it would exceed scope; never pretend that a clipped model changed hardware.
+  if (Math.min(discharge, deficit) > bound + EPS) return reject("native_operation_exceeds_supply_scope");
   const hours = (policy.validity.boundary_ms - c.at_ms) / 3600000;
   const rate =
     (charge * p.charge_efficiency - discharge / p.discharge_efficiency) / 1000;
@@ -453,8 +474,8 @@ export function evaluateExecutionCurrent(
       export_w: exported,
       previous_import_w: previous,
     });
-    account.wear_sek = (s.charge + s.discharge) / 1000 * s.hours *
-      p.wear_sek_per_kwh;
+    account.wear_sek = (p.wear_basis === "discharged_storage"
+      ? s.discharge / p.discharge_efficiency : s.charge + s.discharge) / 1000 * s.hours * p.wear_sek_per_kwh;
     for (const key of costKeys) result[key] += account[key];
     energy +=
       (s.charge * p.charge_efficiency - s.discharge / p.discharge_efficiency) /
@@ -619,8 +640,7 @@ function exportAllowed(
   index: number,
 ): boolean {
   const p = request.permissions;
-  return p.battery_export_allowed && b.export_allowed[index] &&
-    p.export_price_eligible &&
+  return b.export_allowed[index] &&
     request.problem.economics.export_sek_per_kwh[index] >=
       p.minimum_export_price_sek_per_kwh;
 }
@@ -639,13 +659,14 @@ function nativeSuffixFeasible(
       ),
       pv = source.plant.pv_w[i];
     if (
-      (!request.permissions.available || !b.available[i]) &&
+      !b.available[i] &&
       a.charge_w + a.discharge_w > 0
     ) return false;
     if (
-      (!request.permissions.grid_charge_allowed || !b.grid_charge_allowed[i]) &&
+      !b.grid_charge_allowed[i] &&
       a.charge_w > Math.max(0, pv - load)
     ) return false;
+    if (Math.min(a.discharge_w, Math.max(0, load - pv)) > request.future_supply_bound_w[i] + EPS) return false;
     if (a.discharge_w > Math.max(0, load - pv)) {
       if (
         !exportAllowed(request, b, i) ||
@@ -706,10 +727,11 @@ function bridgeCells(
       else if (p[1] < 0) lo = Math.max(lo, (maximum - p[0]) / p[1]);
       else if (p[0] > maximum) possible = false;
     };
-    const available = perm.available && b.available[1];
+    const available = b.available[1];
     limit(c, available ? b.charge_max_w : 0);
     limit(d, available ? b.discharge_max_w : 0);
-    if (!perm.grid_charge_allowed || !b.grid_charge_allowed[1]) {
+    if (request.future_supply_bound_w[1] < deficit) limit(d, request.future_supply_bound_w[1]);
+    if (!b.grid_charge_allowed[1]) {
       limit(c, surplus);
     }
     if (!exportAllowed(request, b, 1) || anchor < perm.export_reserve_kwh) {
@@ -746,7 +768,9 @@ function bridgeCells(
     );
     addLinear(
       "wear_sek",
-      [c[0] + d[0], c[1] + d[1]],
+      b.wear_basis === "discharged_storage"
+        ? [d[0] / b.discharge_efficiency, d[1] / b.discharge_efficiency]
+        : [c[0] + d[0], c[1] + d[1]],
       h / 1000 * b.wear_sek_per_kwh,
     );
     const shaping = 0.5 * source.economics.shaping_sek_per_kwh_per_kw * h /
@@ -877,6 +901,10 @@ function compile(input: unknown): BatteryExecutionPolicy {
     problem: parseHouseholdProblem(raw.problem),
   } as BatteryExecutionRequest;
   const { problem, identity, permissions, projection, search } = request;
+  requireCondition(request.future_supply_bound_w.length === problem.intervals.length &&
+    request.future_supply_bound_w.every((bound, i) => bound <= Math.max(0,
+      problem.plant.residual_loads.reduce((sum, load) => sum + load.power_w[i], 0) - problem.plant.pv_w[i])),
+    "invalid_future_supply_bounds");
   const b = problem.plant.equipment[0];
   requireCondition(
     b.kind === "battery" && !problem.economics.services.length &&
@@ -936,7 +964,9 @@ function compile(input: unknown): BatteryExecutionPolicy {
     createHash("sha256").update(JSON.stringify(request)).digest("hex")
   }`;
   const policy: BatteryExecutionPolicy = {
-    schema: "battery-execution-policy-v1",
+    schema: "battery-execution-policy-v2",
+    supply_scope: request.supply_scope,
+    solar_attribution: request.solar_attribution,
     profile: "finite-continuation-v1",
     view: "executable",
     identity,
@@ -952,6 +982,7 @@ function compile(input: unknown): BatteryExecutionPolicy {
       discharge_efficiency: b.discharge_efficiency,
       import_limit_w: problem.plant.grid.import_limit_w,
       export_limit_w: problem.plant.grid.export_limit_w,
+      wear_basis: b.wear_basis,
       wear_sek_per_kwh: b.wear_sek_per_kwh,
     },
     permissions,
@@ -971,7 +1002,7 @@ function compile(input: unknown): BatteryExecutionPolicy {
     quality: {
       assurance: "exact-scoring-within-published-family",
       scorer_revision: HOUSEHOLD_SCORER_VERSION,
-      compiler_revision: "execution-v1",
+      compiler_revision: "execution-v2",
       family_id: `family-${hash.slice(7, 31)}`,
       source_hash: hash,
       numeric_tolerance_sek: EPS,

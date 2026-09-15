@@ -439,7 +439,7 @@ test.describe('staff navigation shell', () => {
     await mockSupabase(context, 'staff');
   });
 
-  test('planning toggles preserve methods across exclusion and reload without rewriting existing choices', async ({ page, context }) => {
+  test('planning toggles preserve methods across Monitoring and reload without rewriting existing choices', async ({ page, context }) => {
     const methods = [null, 'switch_schedule', 'variable_power', 'permit_inhibit', 'setpoint'];
     const labels = ['Välj metod', 'På/av-schema', 'Variabel effekt', 'Tillåt/blockera', 'Börvärde'];
     const devices = methods.map((method, index) => ({
@@ -472,7 +472,7 @@ test.describe('staff navigation shell', () => {
       } else battery.battery_included = body.p_included;
       await route.fulfill({ json: device ?? battery });
     });
-    const toggle = (i: number) => page.getByRole('switch', { name: `Inkludera Device ${i} i planen`, exact: true });
+    const toggle = (i: number) => page.getByRole('switch', { name: `Planera Device ${i}`, exact: true });
     const method = (i: number) => page.getByRole('combobox', { name: `Styrmetod för Device ${i}`, exact: true });
     await login(page);
     await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-modeling?tab=devices`);
@@ -481,7 +481,7 @@ test.describe('staff navigation shell', () => {
         await expect(method(i)).toHaveText(labels[i]);
         await expect(toggle(i)).toBeChecked({ checked: i > 0 });
       }
-      await expect(page.getByRole('switch', { name: 'Inkludera husbatteriet i planen', exact: true })).not.toBeChecked();
+      await expect(page.getByRole('switch', { name: 'Planera husbatteriet', exact: true })).not.toBeChecked();
       expect(writes).toEqual([]);
       if (pass === 0) await page.reload();
     }
@@ -512,8 +512,8 @@ test.describe('staff navigation shell', () => {
     await page.keyboard.press('Space');
     await expect(page.getByText('Save failed').first()).toBeVisible();
     await expect(toggle(0)).not.toBeChecked();
-    await page.getByRole('switch', { name: 'Inkludera husbatteriet i planen', exact: true }).click();
-    await expect(page.getByRole('switch', { name: 'Inkludera husbatteriet i planen', exact: true })).toBeChecked();
+    await page.getByRole('switch', { name: 'Planera husbatteriet', exact: true }).click();
+    await expect(page.getByRole('switch', { name: 'Planera husbatteriet', exact: true })).toBeChecked();
     expect(writes.at(-1)).toEqual({ p_home_id: PRIMARY_HOME_ID, p_included: true });
   });
 

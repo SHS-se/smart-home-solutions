@@ -1,6 +1,6 @@
 {
   "problem": {
-    "schema_version": 1,
+    "schema_version": 2,
     "identity": {
       "case_id": "fixed-tail-reversal",
       "intent_revision": "synthetic-v1",
@@ -73,7 +73,8 @@
             false,
             false,
             false
-          ]
+          ],
+          "wear_basis": "ac_throughput"
         }
       ]
     },

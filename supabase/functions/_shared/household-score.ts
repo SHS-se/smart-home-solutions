@@ -13,7 +13,7 @@ import {
   type PhysicalTrajectory,
 } from "./household-physics.ts";
 
-export const HOUSEHOLD_SCORER_VERSION = "offline-household-v1";
+export const HOUSEHOLD_SCORER_VERSION = "offline-household-v2";
 export interface Objective {
   import_sek: number;
   export_sek: number;
@@ -165,8 +165,9 @@ export function createHouseholdScorer(input: unknown) {
       for (const e of plant.equipment) {
         if (e.kind !== "heater") {
           objective.wear_sek +=
-            (physical.charge_kwh[e.id] + physical.discharge_kwh[e.id]) *
-            e.wear_sek_per_kwh;
+            (e.kind === "battery" && e.wear_basis === "discharged_storage"
+              ? physical.discharge_kwh[e.id] / e.discharge_efficiency
+              : physical.charge_kwh[e.id] + physical.discharge_kwh[e.id]) * e.wear_sek_per_kwh;
         }
       }
       for (const key of physical.starts) {

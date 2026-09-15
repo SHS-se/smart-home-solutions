@@ -1,17 +1,3 @@
-// Which meters earn a band of their own in the consumption stack.
-//
-// A house reports whatever Home Assistant reports — nineteen meters here,
-// including a fridge, a TV socket and a bulb group. Drawing all of them stacked
-// was the original chart's worst fault: eight distinguishable hues is the
-// ceiling, so the palette was cycled and three meters shared every colour.
-//
-// Bucketing them by category is not the answer either. The planner dispatches
-// individual devices, so a chart that draws "Kitchen & cold" describes
-// something no schedule can act on. The answer is to draw fewer meters, not
-// coarser ones: a meter earns its own band when it is something the plan can
-// *move*, and when it moved enough to be worth looking at. Everything else
-// joins base load, where it is honest about being background.
-
 /** A quarter of average watts is that many watt-hours over four. */
 const QUARTER_W_TO_KWH = 4_000;
 
@@ -23,8 +9,7 @@ export const SPIKE_KWH = 0.4;
 
 /**
  * Eight is the ceiling on hues a reader can tell apart, so it is the ceiling
- * on bands. A ninth qualifying meter joins base load rather than taking a
- * ninth colour that nobody could name.
+ * on individually named bands. Remaining Planned meters share one band.
  */
 export const MAX_SERIES = 8;
 
@@ -53,11 +38,12 @@ export interface ConsumptionSeries {
 export interface ConsumptionSplit {
   /** Drawn bands, largest first. */
   series: ConsumptionSeries[];
-  /** Base load plus every meter that did not earn a band. */
+  /** Gross house consumption minus every Planned meter, before solar. */
   baseValues: number[];
   baseKwh: number;
-  /** How many meters ended up in base load, for the caption to admit to. */
+  /** Monitoring meters, already included in gross base consumption. */
   foldedCount: number;
+  invalidIndices: number[];
 }
 
 /**
@@ -84,11 +70,9 @@ const totalKwh = (values: readonly number[]): number =>
 /**
  * Split the window's meters into bands and background.
  *
- * `houseDemandW` is the authority on the total: the folded band is whatever is
- * left of it once the drawn bands are taken out, so the top of the stack is
- * always the demand the flows panel has to match. Deriving it by addition
- * instead would let a disagreement between the plan's base figure and its
- * per-device figures show up as a stack that quietly missed the total.
+ * `houseDemandW` is gross household consumption. Subtract all Planned meters,
+ * including those grouped for display. Inconsistent or missing measurements
+ * produce a gap in the whole stack, never an invented zero remainder.
  */
 export const splitConsumption = (
   candidates: readonly ConsumptionCandidate[],
@@ -111,7 +95,7 @@ export const splitConsumption = (
     .map(candidate => ({
       key: candidate.key,
       name: candidate.name,
-      values: candidate.values,
+      values: [...candidate.values],
       kwh: totalKwh(candidate.values),
       slot: slotByKey.get(candidate.key) ?? 0,
     }))
@@ -119,22 +103,34 @@ export const splitConsumption = (
 
   const series = eligible.slice(0, MAX_SERIES);
   const drawn = new Set(series.map(entry => entry.key));
-
+  const grouped = candidates.filter(c => c.schedulable && !drawn.has(c.key));
+  if (grouped.some(c => c.values.some(w => w > 0))) {
+    const values = Array.from({ length }, (_, i) => grouped.reduce((sum, c) => sum + c.values[i], 0));
+    series.push({ key: "$other_planned", name: "Other planned devices", values,
+      kwh: totalKwh(values), slot: MAX_SERIES });
+  }
+  const planned = candidates.filter(c => c.schedulable);
+  const invalidIndices: number[] = [];
+  const duplicate = new Set(candidates.map(c => c.key)).size !== candidates.length;
   const baseValues = Array.from({ length }, (_, index) => {
     const demand = houseDemandW[index];
-    const drawnW = series.reduce((sum, entry) => sum + (entry.values[index] ?? 0), 0);
-    if (demand !== null && Number.isFinite(demand)) return Math.max(0, demand - drawnW);
-    // No measured total: fall back to adding up what is left.
-    return candidates.reduce(
-      (sum, candidate) => drawn.has(candidate.key) ? sum : sum + (candidate.values[index] ?? 0),
-      0,
-    );
+    const values = planned.map(c => c.values[index]);
+    const plannedW = values.reduce((sum, watts) => sum + watts, 0);
+    if (duplicate || demand === null || !Number.isFinite(demand) || demand < 0 ||
+        values.some(w => !Number.isFinite(w) || w < 0) || plannedW > demand) {
+      invalidIndices.push(index);
+      // A gap is honest; zero would manufacture a reconciled house balance.
+      for (const entry of series) entry.values = entry.values.map((w, i) => i === index ? NaN : w);
+      return NaN;
+    }
+    return demand - plannedW;
   });
 
   return {
     series,
     baseValues,
-    baseKwh: totalKwh(baseValues),
-    foldedCount: candidates.length - series.length,
+    baseKwh: invalidIndices.length ? NaN : totalKwh(baseValues),
+    foldedCount: candidates.filter(c => !c.schedulable).length,
+    invalidIndices,
   };
 };

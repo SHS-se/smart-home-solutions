@@ -91,17 +91,20 @@ export const stepAreaPath = (
 export type Band = ReadonlyArray<readonly [number, number]>;
 
 export const stepBandPath = (band: Band, x: Scale, y: Scale): string => {
-  if (band.length === 0) return '';
-  const top = band.map(([, upper], index) => {
-    const at = fmt(y(upper));
-    return `${index === 0 ? 'M' : 'L'}${fmt(x(index))},${at}L${fmt(x(index + 1))},${at}`;
-  }).join('');
-  let bottom = '';
-  for (let index = band.length - 1; index >= 0; index -= 1) {
-    const at = fmt(y(band[index][0]));
-    bottom += `L${fmt(x(index + 1))},${at}L${fmt(x(index))},${at}`;
-  }
-  return `${top}${bottom}Z`;
+  return runs(band.map(([lo, hi]) => Number.isFinite(lo) && Number.isFinite(hi) ? hi : null))
+    .map(run => {
+      const top = run.values.map((upper, offset) => {
+        const index = run.start + offset;
+        const at = fmt(y(upper));
+        return `${offset === 0 ? 'M' : 'L'}${fmt(x(index))},${at}L${fmt(x(index + 1))},${at}`;
+      }).join('');
+      let bottom = '';
+      for (let index = run.start + run.values.length - 1; index >= run.start; index -= 1) {
+        const at = fmt(y(band[index][0]));
+        bottom += `L${fmt(x(index + 1))},${at}L${fmt(x(index))},${at}`;
+      }
+      return `${top}${bottom}Z`;
+    }).join('');
 };
 
 /**
@@ -127,7 +130,7 @@ export const stackBands = (
   const running = new Array<number>(length).fill(0);
   return series.map(values => values.map((value, index) => {
     const lower = running[index];
-    running[index] += Number.isFinite(value) ? value : 0;
+    running[index] += Number.isFinite(value) ? value : NaN;
     return [lower, running[index]] as [number, number];
   }));
 };

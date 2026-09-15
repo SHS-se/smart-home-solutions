@@ -34,7 +34,7 @@ const curve = (unit: "kwh" | "celsius", value: number) => ({
 });
 function problem(n = 4): HouseholdProblem {
   return {
-    schema_version: 1,
+    schema_version: 2,
     identity: {
       case_id: "analytical",
       intent_revision: "intent-1",
@@ -77,6 +77,7 @@ function battery(n = 4): Equipment {
     discharge_max_w: 4000,
     charge_efficiency: 1,
     discharge_efficiency: 1,
+    wear_basis: "ac_throughput",
     wear_sek_per_kwh: 0.1,
     grid_charge_allowed: bools(n),
     export_allowed: bools(n),

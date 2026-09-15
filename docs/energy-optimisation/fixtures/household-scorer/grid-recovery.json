@@ -1,6 +1,6 @@
 {
   "problem": {
-    "schema_version": 1,
+    "schema_version": 2,
     "identity": {
       "case_id": "synthetic-grid-recovery",
       "intent_revision": "synthetic-intent-1",
@@ -176,7 +176,8 @@
             false,
             false,
             false
-          ]
+          ],
+          "wear_basis": "ac_throughput"
         },
         {
           "id": "ev",

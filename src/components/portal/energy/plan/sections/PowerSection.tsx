@@ -117,15 +117,14 @@ const PowerSection: React.FC<{
   /**
    * Individual meters, never categories — the plan dispatches devices, so a
    * band labelled by category would describe something no schedule can act on.
-   * Which meters earn a band is decided in consumption-series.ts; the rest
-   * join base load.
+   * Small Planned meters share Other planned devices; Monitoring stays in base.
    */
   const consumption = useMemo(() => {
-    const active = activeDeviceKeys(rows, range);
+    const active = new Set([...activeDeviceKeys(rows, range), ...schedulableKeys]);
     const candidates = [...active].map(key => ({
       key,
       name: deviceNameByKey.get(key) ?? key,
-      values: view.map(row => row.deviceW[key] ?? 0),
+      values: view.map(row => row.deviceW[key] ?? NaN),
       schedulable: schedulableKeys.has(key),
     }));
     return splitConsumption(candidates, view.map(row => row.loadW));
@@ -201,9 +200,14 @@ const PowerSection: React.FC<{
           if (row && plannedStarts.has(Date.parse(row.start))) setSelectedQuarterStart(row.start);
         }}
       />
+      {hasHistory && <p className="text-xs text-muted-foreground">{t(
+        'Historisk förbrukning visas med denna plans enhetsindelning.',
+        'Historical consumption is reclassified using this plan’s device roles.')}</p>}
+      {consumption.invalidIndices.length > 0 && <p role="status" className="text-xs text-muted-foreground">{t(
+        'Luckor betyder att total och enhetsmätningar inte kan stämmas av.',
+        'Gaps mean household and device measurements cannot be reconciled.')}</p>}
       <PanelLegend
         series={consumption.series}
-        foldedCount={consumption.foldedCount}
         hasBattery={hasBattery}
         hasEvBattery={hasEvBattery}
       />
@@ -234,10 +238,9 @@ const PowerSection: React.FC<{
  */
 const PanelLegend: React.FC<{
   series: ConsumptionSeries[];
-  foldedCount: number;
   hasBattery: boolean;
   hasEvBattery: boolean;
-}> = ({ series, foldedCount, hasBattery, hasEvBattery }) => {
+}> = ({ series, hasBattery, hasEvBattery }) => {
   const { t } = useLanguage();
   const flows: Array<{ label: string; colour: string; line?: boolean }> = [
     { label: t('Sol', 'Solar'), colour: PLAN_COLOURS.solar },
@@ -254,15 +257,10 @@ const PanelLegend: React.FC<{
       ))}
       <span className="text-border" aria-hidden="true">|</span>
       {series.map(entry => (
-        <Key key={entry.key} colour={loadColour(entry.slot)}>{entry.name}</Key>
+        <Key key={entry.key} colour={loadColour(entry.slot)}>{entry.key === '$other_planned' ? t('Övriga planerade enheter', 'Other planned devices') : entry.name}</Key>
       ))}
       <Key colour={PLAN_COLOURS.base}>
-        {foldedCount > 0
-          ? t(
-            `Baslast + ${foldedCount} små mätare`,
-            `Base load + ${foldedCount} small meters`,
-          )
-          : t('Baslast', 'Base load')}
+        {t('Baslast', 'Base load')}
       </Key>
       <span className="inline-flex items-center gap-1.5">
         <span className="flex" aria-hidden="true">

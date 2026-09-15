@@ -1,7 +1,7 @@
 {
   "source": {
     "problem": {
-      "schema_version": 1,
+      "schema_version": 2,
       "identity": {
         "case_id": "negative-price-grid-recovery",
         "intent_revision": "synthetic-v1",
@@ -65,7 +65,8 @@
             "export_allowed": [
               false,
               false
-            ]
+            ],
+            "wear_basis": "ac_throughput"
           }
         ]
       },

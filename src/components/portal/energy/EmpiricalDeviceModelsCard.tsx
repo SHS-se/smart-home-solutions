@@ -54,8 +54,8 @@ const PlanningToggle: React.FC<{
   const { t } = useLanguage();
   return <label className="inline-flex items-center gap-2 whitespace-nowrap">
     <Switch checked={included} disabled={disabled} onCheckedChange={onChange}
-      aria-label={t(`Inkludera ${name} i planen`, `Include ${name} in the plan`)} />
-    <span>{included ? t('Inkluderat', 'Included') : t('Exkluderat', 'Excluded')}</span>
+      aria-label={t(`Planera ${name}`, `Plan ${name}`)} />
+    <span>{included ? t('Planerad', 'Planned') : t('Övervakning', 'Monitoring')}</span>
   </label>;
 };
 
@@ -159,15 +159,15 @@ const EmpiricalDeviceModelsCard: React.FC<{
         {choiceError && <p role="alert" className="text-destructive">{choiceError}</p>}
         {battery?.battery_present && <div className="rounded-md border p-3">
           <strong>{t('Husbatteri', 'House battery')}</strong>
-          <label className="mt-2 block text-sm">{t('Inkludera i planen', 'Include in the plan')}</label>
+          <label className="mt-2 block text-sm">{t('Planering', 'Planning')}</label>
           <PlanningToggle name={t('husbatteriet', 'house battery')} included={battery.battery_included}
             disabled={savingId !== null} onChange={included => void chooseBattery(included)} />
           <p className="mt-2 text-xs text-muted-foreground">{t('Tillåt styrning i Home Assistant.', 'Permission to operate it is chosen in Home Assistant.')}</p>
         </div>}
         <p className="text-sm text-muted-foreground">
           {t(
-            'Alla nya enheter börjar som baslast och lärs från verkliga 15-minutersvärden. Reglaget inkluderar en enhet i planen. Styrmetoden sparas separat och behålls när reglaget är av. Enheten stannar i baslasten tills en matchande lokal entitetsmappning har bekräftats; först då visas den som en egen planserie.',
-            'Every new device starts in base load and is learned from real 15-minute values. The toggle includes a device in the plan. Its control method is saved separately and is retained when the toggle is off. The device stays in base load until a matching local entity mapping is confirmed; only then does it become a separate plan series.',
+            'Alla nya enheter börjar som baslast och lärs från verkliga 15-minutersvärden. Välj Övervakning för baslast eller Planerad för individuell schemaläggning. Styrmetoden sparas separat och behålls när reglaget är av. Planerad utrustning behöver en giltig lokal konfiguration. Saknad konfiguration visas som ett planeringshinder.',
+            'Every new device starts in base load and is learned from real 15-minute values. Choose Monitoring to keep consumption in base load, or Planned to schedule it individually. Its control method is saved separately and is retained when the toggle is off. Planned equipment needs valid local setup. Missing setup is shown as a planning blocker.',
           )}
         </p>
         {(pendingCount > 0 || invalidCount > 0) && (
@@ -200,7 +200,7 @@ const EmpiricalDeviceModelsCard: React.FC<{
                 <TableRow>
                   <TableHead>{t('Enhet', 'Device')}</TableHead>
                   <TableHead>{t('Kategori', 'Category')}</TableHead>
-                  <TableHead>{t('Inkludera i planen', 'Include in the plan')}</TableHead>
+                  <TableHead>{t('Planering', 'Planning')}</TableHead>
                   <TableHead>{t('Styrmetod', 'Control method')}</TableHead>
                   <TableHead>{t('Lastkaraktär', 'Load characteristic')}</TableHead>
                   <TableHead className="text-right">{t('Aktiv effekt', 'Active power')}</TableHead>

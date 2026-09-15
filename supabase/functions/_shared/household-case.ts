@@ -44,6 +44,7 @@ const battery = z.object({
   discharge_max_w: nonnegative,
   charge_efficiency: positive.max(1),
   discharge_efficiency: positive.max(1),
+  wear_basis: z.enum(["ac_throughput", "discharged_storage"]),
   wear_sek_per_kwh: nonnegative,
   grid_charge_allowed: z.array(z.boolean()),
   export_allowed: z.array(z.boolean()),
@@ -93,7 +94,7 @@ const service = z.discriminatedUnion("kind", [
     .strict(),
 ]);
 export const householdProblemSchema = z.object({
-  schema_version: z.literal(1),
+  schema_version: z.literal(2),
   identity: z.object({
     case_id: id,
     intent_revision: id,

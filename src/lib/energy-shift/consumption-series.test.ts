@@ -75,21 +75,23 @@ Deno.test('the stack always adds up to house demand', () => {
   });
 });
 
-Deno.test('base load never goes negative', () => {
+Deno.test('unreconciled device totals are gaps rather than clamped base load', () => {
   // Device meters can exceed a reported total by a rounding error, and a
   // negative band would draw below the axis in a panel that has no below.
   const split = splitConsumption([
     candidate({ key: 'boiler', values: flat(2_100, 4) }),
   ], flat(2_000, 4));
-  assert(split.baseValues.every(value => value >= 0), JSON.stringify(split.baseValues));
+  assert(split.baseValues.every(Number.isNaN));
+  assertEquals(split.invalidIndices, [0, 1, 2, 3]);
 });
 
-Deno.test('an unknown total falls back to adding up the remainder', () => {
+Deno.test('an unknown household total cannot be reconstructed from partial meters', () => {
   const split = splitConsumption([
     candidate({ key: 'boiler', values: flat(2_000, 2) }),
     candidate({ key: 'fridge', values: flat(90, 2), schedulable: false }),
   ], [null, null]);
-  assertEquals(split.baseValues, [90, 90]);
+  assert(split.baseValues.every(Number.isNaN));
+  assertEquals(split.invalidIndices, [0, 1]);
 });
 
 Deno.test('colour follows the meter, not its rank', () => {
@@ -127,14 +129,16 @@ Deno.test('bands are ordered largest first', () => {
   assertEquals(split.series.map(entry => entry.key), ['large', 'small']);
 });
 
-Deno.test('past the colour ceiling, the smallest meters join base load', () => {
+Deno.test('past the colour ceiling, Planned meters retain a separate grouped band', () => {
   const many = Array.from({ length: MAX_SERIES + 3 }, (_, index) => candidate({
     key: `meter-${String(index).padStart(2, '0')}`,
     values: flat(forKwh(0.5 + index), 6),
   }));
   const split = splitConsumption(many, flat(forKwh(100), 6));
-  assertEquals(split.series.length, MAX_SERIES);
-  assertEquals(split.foldedCount, 3);
+  assertEquals(split.series.length, MAX_SERIES + 1);
+  assertEquals(split.series.at(-1)?.key, "$other_planned");
+  assertEquals(split.foldedCount, 0);
+  assertEquals(split.baseValues[0], forKwh(100) - many.reduce((sum, c) => sum + c.values[0], 0));
   assert(
     split.baseValues.every(value => value > 0),
     'the folded meters should still be somewhere',
@@ -146,4 +150,19 @@ Deno.test('an empty window produces an empty stack rather than throwing', () => 
   assertEquals(split.series, []);
   assertEquals(split.baseValues, []);
   assertEquals(split.baseKwh, 0);
+});
+
+Deno.test("small Planned consumption remains separate from gross base before solar", () => {
+  const split = splitConsumption([candidate({ key: "small", values: [50, 0] }),
+    candidate({ key: "monitored", values: [100, 100], schedulable: false })], [1000, 1000]);
+  assertEquals(split.baseValues, [950, 1000]);
+  assertEquals(split.series.map(s => s.key), ["$other_planned"]);
+  assertEquals(split.series[0].values, [50, 0]);
+});
+
+Deno.test("duplicate meter identities cannot manufacture base consumption", () => {
+  const c = candidate({ key: "same", values: [100] });
+  const split = splitConsumption([c, c], [500]);
+  assertEquals(split.invalidIndices, [0]);
+  assert(Number.isNaN(split.baseValues[0]));
 });

@@ -1,3 +1,4 @@
+import { consumptionPlanSlots } from '@/lib/energy-shift/consumption-partition';
 import { downloadTrafficReport, recordPortalSync } from '@/lib/network-traffic';
 import { HistoryCache, type HistoryDelta, type ChangedValue } from '@/lib/energy-shift/portal-sync';
 import { readPlanRefresh } from '@/lib/energy-shift/plan-refresh';
@@ -589,24 +590,22 @@ const PlanView: React.FC<{
     () => new Map(empiricalDevices.map(device => [device.id, device.device_key])),
     [empiricalDevices],
   );
-  // Which meters the plan is allowed to move. Only these earn a band of their
-  // own in the consumption panel; the rest are background whatever they draw.
+  // Membership belongs to the captured parent, including Verification devices.
   const schedulableKeys = useMemo(
-    () => new Set(
-      empiricalDevices
-        .filter(device => effectivePlanningRole(device) === 'controllable')
-        .map(device => device.device_key),
-    ),
-    [empiricalDevices],
+    () => new Set(current.plan.device_models.map(device => device.key)),
+    [current.plan.device_models],
   );
+  const consumptionSlots = useMemo(() => consumptionPlanSlots(
+    current.plan, active.slots, hasExecution && selectedScope === 'execution',
+  ), [current.plan, active.slots, hasExecution, selectedScope]);
   const timeline = useMemo(() => buildEnergyTimeline({
     actuals,
     deviceActuals,
     prices,
-    planSlots: active.slots,
+    planSlots: consumptionSlots,
     deviceKeyById,
     nowMs,
-  }), [actuals, active.slots, deviceActuals, deviceKeyById, nowMs, prices]);
+  }), [actuals, consumptionSlots, deviceActuals, deviceKeyById, nowMs, prices]);
   const dayWindowOptions = availableDayWindows(timeline, nowMs, homeTimeZone);
   const timelineRange = dayWindowRange(timeline, dayWindow, nowMs, homeTimeZone);
   const windowSummary = summariseTimeline(timeline, timelineRange);

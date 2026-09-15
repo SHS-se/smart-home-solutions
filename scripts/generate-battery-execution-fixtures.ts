@@ -27,8 +27,11 @@ export function executionFixtureRequest(
   const series = (values: number[]) =>
     Array.from({ length: intervalCount }, (_, i) => values[i % values.length]);
   return {
+    supply_scope: { kind: "whole_house" },
+    solar_attribution: "proportional-self-consumed-pv-v1",
+    future_supply_bound_w: series([7000, 0, 1300, 2000]),
     problem: {
-      schema_version: 1,
+      schema_version: 2,
       identity: {
         case_id: "synthetic-execution",
         intent_revision: identity.intent_revision,
@@ -67,7 +70,8 @@ export function executionFixtureRequest(
           discharge_max_w: 4000,
           charge_efficiency: 0.95,
           discharge_efficiency: 0.9,
-          wear_sek_per_kwh: 0.1,
+          wear_basis: "ac_throughput",
+    wear_sek_per_kwh: 0.1,
           grid_charge_allowed: Array(intervalCount).fill(true),
           export_allowed: Array(intervalCount).fill(true),
         }],

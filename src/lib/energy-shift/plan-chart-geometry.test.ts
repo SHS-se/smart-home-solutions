@@ -153,3 +153,13 @@ Deno.test('placements come back in band order', () => {
   );
   assertEquals(placed.map(placement => placement.band), [0, 1]);
 });
+
+Deno.test('invalid consumption quarters remain gaps through stacking and SVG paths', () => {
+  const bands = stackBands([[1, NaN, 1], [2, NaN, 2]]);
+  for (const band of bands) {
+    assert(Number.isNaN(band[1][1]));
+    const path = stepBandPath(band, x, y);
+    assertEquals(path.split('M').length - 1, 2);
+    assert(!path.includes('NaN'));
+  }
+});
