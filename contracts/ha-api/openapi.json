@@ -7,8 +7,8 @@
   },
   "x-shs-versioning": {
     "api_version": 1,
-    "supported_snapshot_schema_versions": [5, 6, 7, 8],
-    "supported_plan_schema_versions": [5, 6, 7, 8],
+    "supported_snapshot_schema_versions": [5, 6, 7, 8, 9],
+    "supported_plan_schema_versions": [5, 6, 7, 8, 9],
     "minimum_snapshot_schema_version": 5,
     "minimum_plan_schema_version": 5
   },
@@ -248,6 +248,143 @@
       }
     },
     "schemas": {
+      "OperatingScopeV1": {
+        "type": "object",
+        "required": [
+          "modes",
+          "device_owners",
+          "external_demands"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "modes": {
+            "type": "object",
+            "required": [
+              "$battery",
+              "$pool",
+              "$ev"
+            ],
+            "additionalProperties": {
+              "enum": [
+                "monitoring",
+                "planning",
+                "control_verification",
+                "controlling"
+              ]
+            }
+          },
+          "device_owners": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "external_demands": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "required": [
+                "forecast_w_by_slot",
+                "recent_observation"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "forecast_w_by_slot": {
+                  "type": "array",
+                  "minItems": 4,
+                  "maxItems": 288,
+                  "items": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 100000
+                  }
+                },
+                "recent_observation": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "start",
+                        "end",
+                        "average_w",
+                        "source"
+                      ],
+                      "properties": {
+                        "start": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "end": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "average_w": {
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 100000
+                        },
+                        "source": {
+                          "const": "completed_meter_quarter"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "SnapshotV9": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SnapshotCommon"
+          },
+          {
+            "type": "object",
+            "required": [
+              "operating_scope"
+            ],
+            "properties": {
+              "schema_version": {
+                "const": 9
+              },
+              "operating_scope": {
+                "$ref": "#/components/schemas/OperatingScopeV1"
+              }
+            }
+          }
+        ]
+      },
+      "PlanV9": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PlanCommon"
+          },
+          {
+            "type": "object",
+            "required": [
+              "operating_scope",
+              "execution_plan"
+            ],
+            "properties": {
+              "schema_version": {
+                "const": 9
+              },
+              "operating_scope": {
+                "$ref": "#/components/schemas/OperatingScopeV1"
+              },
+              "execution_plan": {
+                "$ref": "#/components/schemas/PlanV8"
+              }
+            }
+          }
+        ]
+      },
       "SnapshotV8": {
         "allOf": [
           {
@@ -558,8 +695,8 @@
         ],
         "properties": {
           "api_version": { "const": 1 },
-          "supported_snapshot_schema_versions": { "const": [5, 6, 7, 8] },
-          "supported_plan_schema_versions": { "const": [5, 6, 7, 8] },
+          "supported_snapshot_schema_versions": { "const": [5, 6, 7, 8, 9] },
+          "supported_plan_schema_versions": { "const": [5, 6, 7, 8, 9] },
           "minimum_snapshot_schema_version": { "const": 5 },
           "minimum_plan_schema_version": { "const": 5 },
           "latest_plan_request_id": {
@@ -710,7 +847,7 @@
             "type": "array",
             "minItems": 1,
             "uniqueItems": true,
-            "items": { "enum": [5, 6, 7, 8] }
+            "items": { "enum": [5, 6, 7, 8, 9] }
           },
           "integration_version": {
             "type": "string",
@@ -753,7 +890,8 @@
               { "$ref": "#/components/schemas/SnapshotV5" },
               { "$ref": "#/components/schemas/SnapshotV6" },
               { "$ref": "#/components/schemas/SnapshotV7" },
-              { "$ref": "#/components/schemas/SnapshotV8" }
+              { "$ref": "#/components/schemas/SnapshotV8" },
+              { "$ref": "#/components/schemas/SnapshotV9" }
             ]
           }
         },
@@ -1246,6 +1384,7 @@
               { "$ref": "#/components/schemas/PlanV6" },
               { "$ref": "#/components/schemas/PlanV7" },
               { "$ref": "#/components/schemas/PlanV8" },
+              { "$ref": "#/components/schemas/PlanV9" },
               { "type": "null" }
             ]
           },
@@ -1302,7 +1441,7 @@
           "api_version": { "const": 1 },
           "plan_id": { "type": "string", "format": "uuid" },
           "snapshot_id": { "type": "string", "format": "uuid" },
-          "plan_schema_version": { "enum": [5, 6, 7, 8] },
+          "plan_schema_version": { "enum": [5, 6, 7, 8, 9] },
           "integration_version": {
             "type": "string",
             "minLength": 1,

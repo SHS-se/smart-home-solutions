@@ -89,8 +89,9 @@ export const effectiveControlType = (
 export function isOptimisationPlan(value: unknown): value is PortalOptimisationPlan {
   if (!value || typeof value !== 'object') return false;
   const plan = value as Partial<OptimisationPlan>;
-  // Schema 8 adds battery execution intent; the chart still reads the same flows.
-  return (plan.schema_version === 5 || plan.schema_version === 6 || plan.schema_version === 7 || plan.schema_version === 8)
+  if (plan.schema_version === 9 && (!plan.operating_scope?.modes
+    || plan.execution_plan?.schema_version !== 8 || !isOptimisationPlan(plan.execution_plan))) return false;
+  return (plan.schema_version === 5 || plan.schema_version === 6 || plan.schema_version === 7 || plan.schema_version === 8 || plan.schema_version === 9)
     && plan.mode === 'live'
     && plan.slot_minutes === 15
     && typeof plan.issued_at === 'string'

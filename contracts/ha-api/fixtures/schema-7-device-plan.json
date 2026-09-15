@@ -10,12 +10,12 @@
       "boiler": false,
       "ev": false
     },
-    "model_version": "marginal-value-planner-v24",
+    "model_version": "marginal-value-planner-v34",
     "decision_diagnostics_version": 2,
     "plan_id": "eedefc70-b625-42f0-be09-b1e79c0c88d9",
     "snapshot_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
     "issued_at": "2026-08-20T08:55:00.000Z",
-    "valid_until": "2026-08-20T10:10:00.000Z",
+    "valid_until": "2026-08-20T11:00:00.000Z",
     "binding_until": "2026-08-20T11:00:00.000Z",
     "timezone": "Europe/Stockholm",
     "slot_minutes": 15,
@@ -182,6 +182,7 @@
         "slots": [
           {
             "start": "2026-08-20T09:00:00.000Z",
+            "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 0,
             "pv_w": 0,
@@ -251,6 +252,7 @@
           },
           {
             "start": "2026-08-20T09:15:00.000Z",
+            "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 0,
             "pv_w": 0,
@@ -320,6 +322,7 @@
           },
           {
             "start": "2026-08-20T09:30:00.000Z",
+            "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 0,
             "pv_w": 0,
@@ -389,6 +392,7 @@
           },
           {
             "start": "2026-08-20T09:45:00.000Z",
+            "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 0,
             "pv_w": 0,
@@ -458,6 +462,7 @@
           },
           {
             "start": "2026-08-20T10:00:00.000Z",
+            "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 0,
             "pv_w": 0,
@@ -527,6 +532,7 @@
           },
           {
             "start": "2026-08-20T10:15:00.000Z",
+            "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 0,
             "pv_w": 0,
@@ -596,6 +602,7 @@
           },
           {
             "start": "2026-08-20T10:30:00.000Z",
+            "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 0,
             "pv_w": 0,
@@ -665,6 +672,7 @@
           },
           {
             "start": "2026-08-20T10:45:00.000Z",
+            "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 0,
             "pv_w": 0,
@@ -766,6 +774,7 @@
         "slots": [
           {
             "start": "2026-08-20T09:00:00.000Z",
+            "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 0,
             "pv_w": 0,
@@ -835,6 +844,7 @@
           },
           {
             "start": "2026-08-20T09:15:00.000Z",
+            "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 0,
             "pv_w": 0,
@@ -904,6 +914,7 @@
           },
           {
             "start": "2026-08-20T09:30:00.000Z",
+            "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 0,
             "pv_w": 0,
@@ -973,6 +984,7 @@
           },
           {
             "start": "2026-08-20T09:45:00.000Z",
+            "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 0,
             "pv_w": 0,
@@ -1042,6 +1054,7 @@
           },
           {
             "start": "2026-08-20T10:00:00.000Z",
+            "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 0,
             "pv_w": 0,
@@ -1111,6 +1124,7 @@
           },
           {
             "start": "2026-08-20T10:15:00.000Z",
+            "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 0,
             "pv_w": 0,
@@ -1180,6 +1194,7 @@
           },
           {
             "start": "2026-08-20T10:30:00.000Z",
+            "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 0,
             "pv_w": 0,
@@ -1249,6 +1264,7 @@
           },
           {
             "start": "2026-08-20T10:45:00.000Z",
+            "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 0,
             "pv_w": 0,
@@ -1350,6 +1366,7 @@
         "slots": [
           {
             "start": "2026-08-20T09:00:00.000Z",
+            "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 0,
             "pv_w": 0,
@@ -1419,6 +1436,7 @@
           },
           {
             "start": "2026-08-20T09:15:00.000Z",
+            "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 0,
             "pv_w": 0,
@@ -1488,6 +1506,7 @@
           },
           {
             "start": "2026-08-20T09:30:00.000Z",
+            "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 0,
             "pv_w": 0,
@@ -1557,6 +1576,7 @@
           },
           {
             "start": "2026-08-20T09:45:00.000Z",
+            "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 0,
             "pv_w": 0,
@@ -1626,6 +1646,7 @@
           },
           {
             "start": "2026-08-20T10:00:00.000Z",
+            "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 0,
             "pv_w": 0,
@@ -1695,6 +1716,7 @@
           },
           {
             "start": "2026-08-20T10:15:00.000Z",
+            "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 0,
             "pv_w": 0,
@@ -1764,6 +1786,7 @@
           },
           {
             "start": "2026-08-20T10:30:00.000Z",
+            "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 0,
             "pv_w": 0,
@@ -1833,6 +1856,7 @@
           },
           {
             "start": "2026-08-20T10:45:00.000Z",
+            "duration_hours": 0.25,
             "binding": true,
             "pv_raw_w": 0,
             "pv_w": 0,

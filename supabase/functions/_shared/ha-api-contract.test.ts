@@ -9,7 +9,7 @@ import {
   pendingReplanRequestId,
   validatePlanningNegotiation,
 } from "./ha-api-contract.ts";
-import { batteryPlanFixture, dispatchedEvPlanFixture } from "../../../scripts/generate-ha-plan-fixture.ts";
+import { batteryPlanFixture, dispatchedEvPlanFixture, mixedModePlanFixture } from "../../../scripts/generate-ha-plan-fixture.ts";
 
 const contractUrl = new URL(
   "../../../contracts/ha-api/openapi.json",
@@ -264,4 +264,9 @@ Deno.test("the schema-8 battery fixture is emitted by the real planner", async (
   }
   assertEquals(validatePlanningNegotiation({api_version: 1, integration_version: "0.7.0-beta.56",
     accepted_plan_schema_versions: [8]}, 8), null);
+});
+
+Deno.test("schema 9 mixed-mode consumer fixture matches real planner output", async () => {
+  const saved = JSON.parse(await Deno.readTextFile(new URL("../../../contracts/ha-api/fixtures/schema-9-mixed-mode-plan.json", import.meta.url)));
+  assertEquals(saved, mixedModePlanFixture());
 });

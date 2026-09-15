@@ -1,7 +1,9 @@
+import type { OperatingScope } from "../supabase/functions/_shared/operating-scope.ts";
 import {
   generateOptimisationPlan,
   type OptimisationSnapshotV6,
   type OptimisationSnapshotV8,
+  type OptimisationSnapshot,
 } from "../supabase/functions/_shared/energy-optimisation.ts";
 
 const NOW = new Date("2026-08-20T08:55:00.000Z");
@@ -154,7 +156,47 @@ export function batteryPlanFixture() {
       plan_id: "c22f37ca-7791-4b9c-a1ec-793ba6e226bd"}};
 }
 
+export function mixedModeSnapshot(): OptimisationSnapshot & {operating_scope: OperatingScope} {
+  const s = batterySnapshot();
+  s.slots = s.slots.slice(0, 16);
+  const captured = new Date(Date.parse(s.slots[0].start) + 60_000).toISOString();
+  const models = [{key: "pool_heater", watts: 1400, method: "setpoint" as const},
+                  {key: "pool_pump", watts: 700, method: "switch_schedule" as const}].map(m => ({
+    key: m.key, name: m.key, statistic_id: `sensor.${m.key}`, category: "pool_heating",
+    planning_service: "pool" as const, suggested_load_type: "fixed_full_load" as const,
+    load_type: "fixed_full_load" as const, planning_role: "controllable" as const,
+    control_type: m.method, active_power_w: m.watts, profile_sample_count: 1000,
+    forecast_w_by_slot: s.slots.map(() => m.watts * .6),
+  }));
+  return {...s, schema_version: 9 as const, captured_at: captured,
+    capabilities: {...s.capabilities, pool: true}, device_models: models,
+    pool: {volume_m3: 55, water_temperature_c: 26.3, heating_running: true},
+    services: [{id: "pool:horizon", device: "pool" as const, earliest_start: s.slots[0].start,
+      deadline: new Date(Date.parse(s.slots.at(-1)!.start) + 900_000).toISOString(), priority: 2,
+      required_kwh: 0, control: {type: "fixed_power" as const, power_w: 2100}}],
+    operating_scope: {
+      modes: {$battery: "controlling" as const, $pool: "control_verification" as const,
+        $ev: "monitoring" as const, pool_pump: "planning" as const},
+      device_owners: {pool_heater: "$pool", pool_pump: "pool_pump"},
+      external_demands: Object.fromEntries(models.map(m => [m.key, {
+        forecast_w_by_slot: [...m.forecast_w_by_slot],
+        recent_observation: {start: new Date(Date.parse(s.slots[0].start) - 900_000).toISOString(),
+          end: s.slots[0].start, average_w: m.active_power_w, source: "completed_meter_quarter" as const},
+      }])),
+    },
+  };
+}
+
+export function mixedModePlanFixture() {
+  const snapshot = mixedModeSnapshot();
+  return {contract_fixture: "schema-9-mixed-mode", generated_by: "generateOptimisationPlan",
+    validation_time: snapshot.captured_at,
+    plan: generateOptimisationPlan(snapshot, new Date(snapshot.captured_at))};
+}
+
 if (import.meta.main) {
+  await Deno.writeTextFile(new URL("../contracts/ha-api/fixtures/schema-9-mixed-mode-plan.json", import.meta.url),
+    `${JSON.stringify(mixedModePlanFixture(), null, 2)}\n`);
   await Deno.writeTextFile(new URL("../contracts/ha-api/fixtures/schema-8-battery-plan.json", import.meta.url),
     `${JSON.stringify(batteryPlanFixture(), null, 2)}\n`);
   const target = new URL(

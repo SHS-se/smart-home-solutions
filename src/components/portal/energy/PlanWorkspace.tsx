@@ -493,7 +493,11 @@ const PlanView: React.FC<{
 }) => {
   const { t } = useLanguage();
   const homeTimeZone = useHomeTimeZone();
-  const model = usePlanModel(current, empiricalDevices, stale);
+  const [scopeView, setScopeView] = useState<'execution' | 'preview' | null>(null);
+  const hasExecution = Boolean(current.plan.execution_plan);
+  const selectedScope = scopeView ?? (Object.values(current.plan.operating_scope?.modes ?? {}).includes('controlling') ? 'execution' : 'preview');
+  const displayedPlan = hasExecution && selectedScope === 'execution' ? current.plan.execution_plan! : current.plan;
+  const model = usePlanModel({ ...current, plan: displayedPlan }, empiricalDevices, stale);
   const {
     plan, planView, setPlanView, executed, active, comparison, hasBattery, hasEvBattery,
     sourceStale, bindingExpired, ready, pct, costDelta, costTone, costMeaning,
@@ -842,6 +846,18 @@ const PlanView: React.FC<{
               )}
             </div>
             <div className="space-y-1.5 text-right">
+              {hasExecution && <>
+                <div className="flex gap-1" role="group" aria-label={t('Drift och förhandsvisning', 'Operation and preview')}>
+                  {(['execution', 'preview'] as const).map(scope => <Button key={scope} size="sm"
+                    variant={selectedScope === scope ? 'default' : 'outline'} aria-pressed={selectedScope === scope}
+                    onClick={() => setScopeView(scope)}>
+                    {scope === 'execution' ? t('Faktisk drift', 'Live operation') : t('Planeringsförhandsvisning', 'Planning preview')}
+                  </Button>)}
+                </div>
+                <p className="max-w-sm text-[11px] text-muted-foreground">{selectedScope === 'execution'
+                  ? t('Enheter som SHS inte styr räknas som förväntad förbrukning.', 'Devices SHS does not control count as expected demand.')
+                  : t('Visar vad som kunde ske om SHS styrde alla inkluderade enheter.', 'Shows what could happen if SHS controlled all included devices.')}</p>
+              </>}
               <div className="flex gap-1" role="group" aria-label={t('Jämför planvyer', 'Compare plan views')}>
                 <Button
                   size="sm"

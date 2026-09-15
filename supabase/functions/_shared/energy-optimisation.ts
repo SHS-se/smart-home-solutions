@@ -1,3 +1,4 @@
+import { projectExecutionSnapshot, validateOperatingScope, type OperatingScope } from "./operating-scope.ts";
 /**
  * Pure 15-minute energy planner shared by the ingestion edge function and its
  * contract tests. It deliberately has no database or browser dependencies.
@@ -72,8 +73,8 @@ import {
  * and a daily energy budget it has to believe. Schema 7 adds device commands;
  * schema 8 adds explicit battery operations and source/destination permissions.
  */
-export const OPTIMISATION_SCHEMA_VERSION = 8;
-export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6, 7, 8] as const;
+export const OPTIMISATION_SCHEMA_VERSION = 9;
+export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6, 7, 8, 9] as const;
 /**
  * The planner's own version. It lives here because the planner lives here — the
  * integration only validates the string, against a set since beta.19, so this
@@ -118,7 +119,7 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6, 7, 8] as const;
  * prices executable setpoints and records exact quarter evidence.
  */
 // v28 emits battery operations and enforces export eligibility and reserves in dispatch.
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v33";
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v34";
 /** Schema 5 service sizing also no longer pads energy to a minimum runtime. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v10";
 export const SLOT_MINUTES = 15;
@@ -354,9 +355,11 @@ export interface ThermalZonePlanningInput {
 }
 
 export interface OptimisationSnapshot {
+  /** Required by schema 9; frozen before server forecast enrichment. */
+  operating_scope?: OperatingScope;
   /** Server-derived economic reference, frozen with the replay input; never physical authority. */
   replan_reference?: ReplanReference | null;
-  schema_version: 5 | 6 | 7 | 8;
+  schema_version: 5 | 6 | 7 | 8 | 9;
   // Only Home Assistant live snapshots cross the ingestion boundary. The
   // website's promotional demo is a client-side plan fixture, not a snapshot.
   mode: "live";
@@ -627,8 +630,11 @@ export interface GeneratedPlan {
 }
 
 export interface OptimisationPlan {
+  /** Required by schema 9. Top-level scenarios remain hypothetical. */
+  operating_scope?: OperatingScope;
+  execution_plan?: OptimisationPlan;
   fixed_plan?: { id: string; starts_at: string; ends_at: string };
-  schema_version: 5 | 6 | 7 | 8;
+  schema_version: 5 | 6 | 7 | 8 | 9;
   mode: PlanMode;
   capabilities: OptimisationCapabilities;
   model_version: string;
@@ -943,10 +949,10 @@ export function validateSnapshot(snapshot: OptimisationSnapshot): string[] {
   const errors: string[] = [];
   if (
     !SUPPORTED_SNAPSHOT_VERSIONS.includes(
-      snapshot?.schema_version as 5 | 6 | 7 | 8,
+      snapshot?.schema_version as 5 | 6 | 7 | 8 | 9,
     )
   ) {
-    errors.push("schema_version must be 5, 6, 7 or 8");
+    errors.push("schema_version must be 5, 6, 7, 8 or 9");
   }
   if (snapshot?.mode !== "live") {
     errors.push("mode must be live");
@@ -1547,6 +1553,9 @@ function remainingSnapshot(snapshot: OptimisationSnapshot, effectiveAt: number):
   if (offset === 0) return snapshot;
   return {
     ...snapshot,
+    ...(snapshot.operating_scope ? {operating_scope: { ...snapshot.operating_scope,
+      external_demands: Object.fromEntries(Object.entries(snapshot.operating_scope.external_demands).map(([key, d]) =>
+        [key, {...d, forecast_w_by_slot: d.forecast_w_by_slot.slice(offset), recent_observation: null}]))}} : {}),
     slots: snapshot.slots.slice(offset),
     outdoor_temperature_c: snapshot.outdoor_temperature_c?.slice(offset),
     solar_irradiance_w_per_m2: snapshot.solar_irradiance_w_per_m2?.slice(offset),
@@ -4601,6 +4610,23 @@ export function dispatchWorkbench(
 }
 
 export function generateOptimisationPlan(
+  snapshot: OptimisationSnapshot, now = new Date(), priceArchive: StoredPriceRow[] = [],
+  resolvedPriceOutlook?: OptimisationPlan["price_outlook"], fixed?: FixedEnergyPlan | null,
+  solveAuction?: DispatchAuctionSolver,
+): OptimisationPlan {
+  if (snapshot.schema_version !== 9) return generatePlanBody(snapshot, now, priceArchive, resolvedPriceOutlook, fixed, solveAuction);
+  validateOperatingScope(snapshot);
+  if (fixed) throw new Error("Rescind the fixed plan before generating an operating-scope plan");
+  const hypotheticalInput = { ...snapshot, schema_version: 8 as const };
+  delete hypotheticalInput.operating_scope;
+  const hypothetical = generatePlanBody(hypotheticalInput, now, priceArchive, resolvedPriceOutlook, null, solveAuction);
+  const execution = generatePlanBody(projectExecutionSnapshot(snapshot), now, priceArchive, resolvedPriceOutlook, null, solveAuction);
+  return { ...hypothetical, schema_version: 9,
+    operating_scope: remainingSnapshot(snapshot, Math.max(now.getTime(), isoMs(snapshot.captured_at))).operating_scope,
+    execution_plan: execution };
+}
+
+function generatePlanBody(
   snapshot: OptimisationSnapshot,
   now = new Date(),
   /**

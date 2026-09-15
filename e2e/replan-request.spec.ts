@@ -16,6 +16,8 @@
 import { test, expect, type BrowserContext } from '../playwright-fixture';
 import { CAPTURED_AT, snapshot } from '../src/lib/energy-shift/optimisation-snapshot.fixture';
 import { generateOptimisationPlan } from '../supabase/functions/_shared/energy-optimisation';
+import { readFileSync } from 'node:fs';
+const mixedModeFixture = JSON.parse(readFileSync(new URL('../contracts/ha-api/fixtures/schema-9-mixed-mode-plan.json', import.meta.url), 'utf8'));
 import { portalDelta } from './helpers/portal-delta';
 
 const CUSTOMER_ID = '11111111-2222-4333-8444-555555555555';
@@ -56,7 +58,7 @@ const idle: ReplanColumns = {
  * control. Held in a mutable cell so pressing the button can change what the
  * next read returns, which is the whole behaviour being checked.
  */
-async function mockBackend(context: BrowserContext, replan: { row: ReplanColumns; reportedPlanId?: string }) {
+async function mockBackend(context: BrowserContext, replan: { row: ReplanColumns; reportedPlanId?: string }, plan = PLAN) {
   const nowIso = new Date().toISOString();
   const email = 'ana@example.com';
   const user = {
@@ -119,13 +121,13 @@ async function mockBackend(context: BrowserContext, replan: { row: ReplanColumns
           home_id: HOME_ID,
           captured_at: CAPTURED_AT,
           updated_at: CAPTURED_AT,
-          plan_id: PLAN.plan_id,
+          plan_id: plan.plan_id,
           generation_request_id: null,
-          plan_schema_version: PLAN.schema_version,
+          plan_schema_version: plan.schema_version,
           ha_runtime: replan.reportedPlanId ? {
             plan_id: replan.reportedPlanId, observed_at: CAPTURED_AT, state: 'ready',
-            reason: 'A validated plan is available', binding_until: PLAN.binding_until,
-            valid_until: PLAN.valid_until, recovering: false, retry_at: null, last_error: null,
+            reason: 'A validated plan is available', binding_until: plan.binding_until,
+            valid_until: plan.valid_until, recovering: false, retry_at: null, last_error: null,
           } : null,
           ha_runtime_received_at: replan.reportedPlanId ? CAPTURED_AT : null,
           ha_ack_status: 'accepted',
@@ -135,7 +137,7 @@ async function mockBackend(context: BrowserContext, replan: { row: ReplanColumns
           ha_ack_error: null,
           ...replan.row,
         },
-        plan: PLAN,
+        plan,
       }) });
       return;
     }
@@ -155,7 +157,7 @@ async function mockBackend(context: BrowserContext, replan: { row: ReplanColumns
       ? [{ id: CUSTOMER_ID, primary_home_id: HOME_ID }]
       : table === 'energy_optimisation_current'
       // The economics editor loads its snapshot on demand, separately from sync.
-      ? [{ snapshot: snapshot(), plan: PLAN }]
+      ? [{ snapshot: snapshot(), plan }]
       : [];
     const single = (route.request().headers().accept || '').includes('vnd.pgrst.object');
     await route.fulfill({
@@ -272,4 +274,26 @@ test.describe('requesting a replan', () => {
       page.getByText(/Omplanering beställd|Replan requested/),
     ).toHaveCount(0);
   });
+});
+
+
+test('mixed modes default to live operation and keep the hypothetical preview separate', async ({ context, page }) => {
+  const plan = mixedModeFixture.plan as typeof PLAN;
+  await page.clock.setFixedTime(new Date(mixedModeFixture.validation_time));
+  await mockBackend(context, { row: { ...idle } }, plan);
+  await page.goto('/login');
+  await page.fill('#email', 'whoever@example.com');
+  await page.fill('#password', 'mock-password');
+  await page.getByRole('button', { name: 'Logga in' }).click();
+  await page.waitForURL(url => !url.pathname.endsWith('/login'));
+  await page.goto('/portal/energy-modeling?tab=plan');
+  const live = page.getByRole('button', { name: /Faktisk drift|Live operation/ });
+  const preview = page.getByRole('button', { name: /Planeringsförhandsvisning|Planning preview/ });
+  await expect(live).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByText(/Devices SHS does not control|Enheter som SHS inte styr/)).toBeVisible();
+  await preview.click();
+  await expect(preview).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByText(/Shows what could happen|Visar vad som kunde ske/)).toBeVisible();
+  await live.click();
+  await expect(live).toHaveAttribute('aria-pressed', 'true');
 });
