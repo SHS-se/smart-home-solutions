@@ -1,4 +1,4 @@
-/** Closed, offline resolved-model input. This is not an HA plan schema. */
+/** Closed resolved-model input for scoring and projections, not an HA plan schema. */
 import { z } from "zod";
 import { validateCurve } from "./store-value.ts";
 
@@ -331,7 +331,7 @@ export function candidateIssues(
     if (!expected.has(key)) issue(`actions.${key}`, "unknown equipment");
   }
   for (const e of p.plant.equipment) {
-    const actions = Object.hasOwn(c.actions, e.id)
+    const actions = Object.prototype.hasOwnProperty.call(c.actions, e.id)
       ? c.actions[e.id]
       : undefined;
     if (!actions || actions.length !== n) {

@@ -47,17 +47,47 @@ battery discharge incident.** The normative decisions remain in
   native adapter only composes supplied commissioned transitions. Neither module
   is attached to HA setup or granted physical authority yet.
 
+## Production conditional projection
+
+`generateOptimisationPlanWithBatteryProjection` returns the existing plan and a
+separate resolved battery projection from the same generation. The existing plan
+API and HA wire output are unchanged. Schema 9 returns the execution branch's
+projection; provenance is trimmed with that branch's remaining horizon.
+
+Each continuity candidate carries its own materialization. The selected candidate
+supplies unrounded final household demand after thermal/device scheduling, exact
+remaining-quarter durations and battery flows. Its selected dispatch bundle
+supplies tariffs, limits, usable-energy state, terminal curve and discharged-storage
+wear. There is no second workbench solve and no reconstruction from display values.
+
+The projected household problem freezes the final non-battery schedule. Its total
+plus `dispatch_total_offset_sek` reproduces the **conditional one-battery** dispatch
+score; the offset is initial stored-energy utility. Initial import is null because
+batch dispatch has no initial-to-first-slot ramp charge. This does not assert joint
+optimality of the earlier auction and subsequent thermal scheduling.
+
+Ready projections are detached and immutable. Unsupported models/constraints or
+infeasible selected trajectories return explicit reasons and cannot authorize a
+substitute command. Grid charging is feasible in the dispatch scoring domain;
+ordinary charge-bidding heuristics are not treated as physical permission. This
+record grants no device authority and is not yet a native execution-policy request.
+
+Parity tests compare alternative battery schedules under two different fixed
+household schedules, negative/positive prices, partial first quarters, losses,
+wear, shaping, ramp and terminal utility. A production thermal example also
+cross-scores using its actual resolved store. Tests cover selected continuity,
+quarter-boundary provenance, mixed-mode external demand and unchanged plan output.
+
 ## Work still required before the battery replacement is complete
 
-1. Build the production projection from the *selected* resolved dispatch bundle
-   into the conditional one-battery problem. Preserve exact tariffs, curve/state
-   basis, limits and non-battery trajectories. Do not reconstruct them from rounded
-   display slots or run a second potentially different dispatch solve.
-2. Cross-score that projection against live dispatch. Wear representation is now
-   available; initial ramp and terminal normalization still need explicit mapping.
-   Nonzero shaping thresholds, hard per-boundary targets and curtailment are not
-   currently represented by the execution compiler and must remain unsupported
-   until modeled consistently.
+1. Compile and exchange a native execution policy from the resolved conditional
+   projection. Bind the approved supply selector, proportional forecast bounds,
+   participation revisions, commissioned catalog and explicit native permissions.
+   Economic feasibility is not a physical grant; current and future native
+   permissions must be intersected at that boundary.
+2. Extend represented constraints if needed. Nonzero shaping thresholds, hard
+   per-boundary targets, positive reserves for enabled battery export, fixed-plan
+   authority and curtailment remain explicitly unsupported by this projection.
 3. Connect policy exchange/renewal, same-capture physical evidence, durable grant
    arbitration and commissioned adapter IO to HA setup. Fence/release the old
    battery writer before any new runtime grant; requested Controlling alone is not
