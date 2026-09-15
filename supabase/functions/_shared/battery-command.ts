@@ -25,6 +25,7 @@ export function batteryCommand(input: {
   exportEnabled: boolean;
 }): BatteryCommand {
   const { chargeW, dischargeW } = input;
+  const residualW = Math.max(0, input.loadW - input.pvW);
   const operation: BatteryOperation = input.baseline
     ? "self_consumption"
     : chargeW > 0
@@ -32,19 +33,22 @@ export function batteryCommand(input: {
       ? "solar_charge"
       : "grid_charge")
     : dischargeW > 0
-    ? (dischargeW > Math.max(0, input.loadW - input.pvW) + 0.01
+    ? (dischargeW > residualW + 0.01
       ? "export"
       : "supply_house")
     : "hold";
   if (operation === "export" && !input.exportEnabled) {
     throw new Error("Battery export was not authorized");
   }
+  // Full house supply is a native demand-following permission. Keep a
+  // deliberate partial allocation capped: the planner chose some grid import.
+  const followsDemand = operation === "supply_house" && dischargeW + 0.01 >= residualW;
   return {
     schema_version: 2,
     operation,
     // Solar capture is a permission, not a forecast-sized charging request.
     charge_limit_w: input.baseline || operation === "solar_charge" ? input.chargeMaxW : chargeW,
-    discharge_limit_w: input.baseline ? input.dischargeMaxW : dischargeW,
+    discharge_limit_w: input.baseline || followsDemand ? input.dischargeMaxW : dischargeW,
     allow_grid_charge: operation === "grid_charge",
     allow_battery_export: operation === "export",
   };

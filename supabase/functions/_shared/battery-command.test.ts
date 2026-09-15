@@ -53,3 +53,30 @@ Deno.test("solar capture permits rated charging while grid replenishment retains
   assertEquals(supply.discharge_limit_w, 2712);
   assertEquals(supply.charge_limit_w, 0);
 });
+
+
+Deno.test("full household supply follows actual deficit while partial allocations remain capped", () => {
+  // 15 September 17:30 capture: 405.60 W was predicted, but actual demand
+  // exceeded it. Predicted flow must not become a load-following ceiling.
+  const input = {baseline: false, loadW: 833.16, pvW: 427.56,
+    chargeW: 0, dischargeW: 405.6, chargeMaxW: 8800, dischargeMaxW: 9600,
+    exportEnabled: false};
+  const command = batteryCommand(input);
+  assertEquals(command, {schema_version: 2, operation: "supply_house",
+    charge_limit_w: 0, discharge_limit_w: 9600,
+    allow_grid_charge: false, allow_battery_export: false});
+  // Serialization rounds the allocation to 0.01 W, but inputs may be unrounded.
+  assertEquals(batteryCommand({...input, loadW: 833.164}).discharge_limit_w, 9600);
+  assertEquals(batteryCommand({...input, loadW: 833.156}).operation, "supply_house");
+  for (const [loadW, pvW, dischargeW, ceiling] of [
+    [3000, 0, 2000, 2000], // deliberate import: preserve the economic allocation
+    [12000, 0, 9600, 9600], // power limited: cannot exceed battery rating
+    [833.16, 427.56, 0, 0], // hold is not inferred as permission to supply
+    [3000, 4000, 0, 0], // no forecast deficit creates no discharge permission
+  ]) {
+    assertEquals(batteryCommand({...input, loadW, pvW, dischargeW}).discharge_limit_w, ceiling);
+  }
+  const exported = batteryCommand({...input, dischargeW: 1000, exportEnabled: true});
+  assertEquals(exported.operation, "export");
+  assertEquals(exported.discharge_limit_w, 1000);
+});
