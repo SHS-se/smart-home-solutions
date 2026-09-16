@@ -17,5 +17,5 @@ export function proportionalSupply(houseW: number, pvW: number, eligibleGrossW: 
   }
   const attributedPvW = houseW ? Math.min(pvW, houseW) * eligibleGrossW / houseW : 0;
   return { eligibleGrossW, attributedPvW,
-    houseSupplyBoundW: Math.min(eligibleGrossW - attributedPvW, Math.max(0, houseW - pvW)) };
+    houseSupplyBoundW: Math.max(0, Math.min(eligibleGrossW - attributedPvW, houseW - pvW)) };
 }

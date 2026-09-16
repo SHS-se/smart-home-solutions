@@ -403,8 +403,8 @@ Deno.test("battery compiler bounds terminal curve complexity before suffix searc
     curve: {
       unit: "kwh",
       points: Array.from(
-        { length: 65 },
-        (_, i) => ({ at: i + 1, sek_per_unit: 65 - i }),
+        { length: 579 },
+        (_, i) => ({ at: i + 1, sek_per_unit: 579 - i }),
       ),
     },
   }];

@@ -9,11 +9,11 @@ import {
   BATTERY_EXECUTION_LIMITS,
   batteryExecutionPolicySchema,
   type BatteryExecutionRequest,
+  batteryProblemSuffix,
   compileBatteryExecutionPolicy,
   evaluateExecutionContinuation,
   evaluateExecutionCurrent,
   type ExecutionCell,
-  executionFutureProblem,
 } from "./battery-execution-policy.ts";
 import { compileBatteryPolicy } from "./battery-policy.ts";
 import { type HouseholdCandidate } from "./household-case.ts";
@@ -77,7 +77,7 @@ function witnesses(request: BatteryExecutionRequest) {
   ].sort((a, b) => a - b);
   return new Map<string, { anchor: number; candidate: HouseholdCandidate }>(
     anchors.flatMap((anchor, i) => {
-      const future = executionFutureProblem(request.problem, anchor);
+      const future = batteryProblemSuffix(request.problem, 1, anchor);
       const result = compileBatteryPolicy({
         problem: future,
         reference_id: "hold",
@@ -171,7 +171,7 @@ for (const wearBasis of ["ac_throughput", "discharged_storage"] as const) {
             random() * p.plant.import_limit_w,
           ]
         ) {
-          const future = executionFutureProblem(r.problem, energy);
+          const future = batteryProblemSuffix(r.problem, 1, energy);
           future.economics.initial_import_w = previous;
           const candidate: HouseholdCandidate = structuredClone(
             witness.candidate,
@@ -443,7 +443,7 @@ Deno.test("filter native-invalid optimized suffixes and ALL minimum-curtailment 
   r.problem.plant.residual_loads[0].power_w[2] = 0;
   r.problem.plant.residual_loads[1].power_w[2] = 0;
   const raw = compileBatteryPolicy({
-    problem: executionFutureProblem(r.problem, 5),
+    problem: batteryProblemSuffix(r.problem, 1, 5),
     reference_id: "hold",
     alternatives: [{
       id: "hold",
@@ -525,7 +525,7 @@ Deno.test("projection requires real external demand, exact participant sets and 
   }
 });
 
-Deno.test("reject subdivisions, aggregate work and AFTER-split bounds without truncation", () => {
+Deno.test("reject subdivisions, aggregate work and oversized terminal curves without truncation", () => {
   const r = executionFixtureRequest();
   r.search.max_interval_evaluations = 10;
   assertEquals(compileBatteryExecutionPolicy(r).status, "rejected");
@@ -539,12 +539,9 @@ Deno.test("reject subdivisions, aggregate work and AFTER-split bounds without tr
   assertEquals(compileBatteryExecutionPolicy(subdivided).status, "rejected");
   const crowded = executionFixtureRequest(1);
   crowded.problem.economics.terminal[0].curve.points = Array.from({
-    length: 64,
-  }, (_, i) => ({ at: 1.1 + i * 8.8 / 63, sek_per_unit: 1 - i / 64 }));
-  assertEquals(compileBatteryExecutionPolicy(crowded), {
-    status: "rejected",
-    reason: "after_split_cell_limit",
-  });
+    length: 579,
+  }, (_, i) => ({ at: 1.1 + i * 8.8 / 578, sek_per_unit: 1 - i / 579 }));
+  assertEquals(compileBatteryExecutionPolicy(crowded).status, "rejected");
   const tooManyOperations = executionFixtureRequest(1);
   tooManyOperations.operations = Array.from(
     { length: 13 },
@@ -633,12 +630,12 @@ Deno.test("forced-export bridge domains protect reserve; house supply may cross 
   }
 });
 
-Deno.test("maximum 64 AFTER-split cells and 12 operations compile; larger byte payload rejects", () => {
+Deno.test("full terminal curve and 12 operations compile; wire cell and byte bounds reject excess", () => {
   const r = executionFixtureRequest(1);
   r.search.max_interval_evaluations = 40_000_000;
   r.problem.economics.terminal[0].curve.points = Array.from(
-    { length: 63 },
-    (_, i) => ({ at: 1.1 + i * 8.8 / 62, sek_per_unit: 1 - i / 64 }),
+    { length: 578 },
+    (_, i) => ({ at: 1.1 + i * 8.8 / 577, sek_per_unit: 1 - i / 578 }),
   );
   r.operations.push(
     ...Array.from(
@@ -652,7 +649,17 @@ Deno.test("maximum 64 AFTER-split cells and 12 operations compile; larger byte p
   );
   const p = compiled(r);
   assertEquals(p.operations.length, 12);
-  assertEquals(p.continuation.cells.length, 64);
+  assertEquals(p.continuation.cells.length, 579);
+  const maximum = structuredClone(p);
+  maximum.continuation.cells = Array.from({
+    length: BATTERY_EXECUTION_LIMITS.cells,
+  }, (_, i) => ({
+    ...p.continuation.cells[i % p.continuation.cells.length],
+    id: `cell-${i}`,
+  }));
+  assert(batteryExecutionPolicySchema.safeParse(maximum).success);
+  maximum.continuation.cells.push({ ...p.continuation.cells[0], id: "excess" });
+  assert(!batteryExecutionPolicySchema.safeParse(maximum).success);
   const large = structuredClone(p);
   const wideNumber = Number("1.1234567890123456e100");
   for (const [i, cell] of large.continuation.cells.entries()) {
@@ -739,7 +746,7 @@ Deno.test("idle future is scored across continuous energy including sparse-ancho
     const [lo, hi] = cell.domain.energy_kwh;
     for (const energy of [lo, (lo + hi) / 2, hi]) {
       for (const previous of [0, 7213, p.plant.import_limit_w]) {
-        const future = executionFutureProblem(r.problem, energy);
+        const future = batteryProblemSuffix(r.problem, 1, energy);
         future.economics.initial_import_w = previous;
         const candidate: HouseholdCandidate = {
           id: "idle-oracle",
@@ -774,7 +781,7 @@ Deno.test("bridge suffix seeding handles solar above export capacity without cur
     const anchor = anchors[Number(cell.witness_id.split("-")[1])];
     const [lo, hi] = cell.domain.energy_kwh;
     for (const energy of [lo, (lo + hi) / 2, hi]) {
-      const future = executionFutureProblem(r.problem, energy);
+      const future = batteryProblemSuffix(r.problem, 1, energy);
       future.economics.initial_import_w = 3123;
       const charge = (anchor - energy) / b.charge_efficiency / 0.25 * 1000;
       assert(charge >= 2000 - 1e-7);
@@ -796,7 +803,7 @@ Deno.test("bridge suffix seeding handles solar above export capacity without cur
 
 Deno.test("wire rejects semantic duplicates, zero ceilings and inconsistent quality; historical import remains valid", () => {
   const p = compiled();
-  assertEquals(BATTERY_EXECUTION_LIMITS.policy_bytes, 128000);
+  assertEquals(BATTERY_EXECUTION_LIMITS.policy_bytes, 512000);
   for (
     const malformed of [
       {
@@ -930,7 +937,7 @@ for (const wearBasis of ["ac_throughput", "discharged_storage"] as const) {
           cell.domain.open_energy?.[0] && energy === lo ||
           cell.domain.open_energy?.[1] && energy === hi
         ) continue;
-        const future = executionFutureProblem(r.problem, energy);
+        const future = batteryProblemSuffix(r.problem, 1, energy);
         future.economics.initial_import_w = 1700;
         const candidate = structuredClone(witness.candidate),
           delta = witness.anchor - energy,
@@ -974,3 +981,25 @@ for (const wearBasis of ["ac_throughput", "discharged_storage"] as const) {
     }
   });
 }
+
+Deno.test("full horizon with a detailed terminal curve compiles within explicit wire bounds", () => {
+  const request = executionFixtureRequest(288);
+  request.search = {
+    energy_levels_kwh: [],
+    retained_per_level: 2,
+    max_interval_evaluations: 8_000_000,
+  };
+  request.problem.economics.terminal[0].curve.points = Array.from({
+    length: 81,
+  }, (_, i) => ({
+    at: 1 + i * 9 / 80,
+    sek_per_unit: .8 * (1 - i / 80),
+  }));
+  const policy = compiled(request);
+  assert(policy.continuation.cells.length > 64);
+  assert(policy.continuation.cells.length <= BATTERY_EXECUTION_LIMITS.cells);
+  assert(
+    new TextEncoder().encode(JSON.stringify(policy)).length <=
+      BATTERY_EXECUTION_LIMITS.policy_bytes,
+  );
+});

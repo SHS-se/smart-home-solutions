@@ -415,3 +415,20 @@ Deno.test("invalid resolved battery bounds are unsupported rather than breaking 
     reasons: ["invalid_resolved_model"],
   });
 });
+
+Deno.test("decimal battery flows remain exact before non-export feasibility checks", () => {
+  const s = batterySnapshot();
+  s.policy.battery_export_enabled = false;
+  s.slots.forEach((slot) =>
+    Object.assign(slot, {
+      base_load_forecast_w: 1279.009,
+      base_load_p10_w: 1200,
+      base_load_p90_w: 1400,
+    })
+  );
+  const { battery_projection: p } =
+    generateOptimisationPlanWithBatteryProjection(s, new Date(s.captured_at));
+  assert(p.status === "ready", JSON.stringify(p));
+  assert(p.provenance.final_demand.some((r) => r.discharge_w > 0));
+  for (const row of p.provenance.final_demand) assert(row.export_w < 1e-7);
+});

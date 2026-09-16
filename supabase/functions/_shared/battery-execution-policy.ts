@@ -15,7 +15,10 @@ import {
 } from "./battery-supply.ts";
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { compileBatteryPolicy } from "./battery-policy.ts";
+import {
+  BATTERY_POLICY_LIMITS,
+  compileBatteryPolicy,
+} from "./battery-policy.ts";
 import {
   type Equipment,
   type HouseholdCandidate,
@@ -33,8 +36,9 @@ import {
 import { totalUtility } from "./store-value.ts";
 
 export const BATTERY_EXECUTION_LIMITS = {
-  policy_bytes: 128000,
-  cells: 64,
+  policy_bytes: 512000,
+  // Full terminal curve plus the finite bridge family; retain explicit wire bounds.
+  cells: 640,
   operations: 12,
   interval_evaluations: 40_000_000,
 } as const;
@@ -723,39 +727,56 @@ function action(
   };
 }
 
-/** Remove the current interval and set the declared future initial energy. */
-export function executionFutureProblem(
+/** Select captured intervals without moving their timestamps or assuming actual SOC.
+ * The anchor only seeds continuation search; runtime decisions use measured energy.
+ * Local admission must supply retained meter evidence at the selected watermark.
+ */
+export function batteryProblemSuffix(
   problem: HouseholdProblem,
+  firstInterval: number,
   anchor: number,
 ): HouseholdProblem {
-  const b = problem.plant.equipment[0] as Battery;
+  if (
+    !Number.isInteger(firstInterval) || firstInterval < 0 ||
+    firstInterval >= problem.intervals.length
+  ) {
+    throw new RangeError(
+      "Battery policy interval is outside the captured horizon",
+    );
+  }
+  const source = structuredClone(problem);
+  const b = source.plant.equipment[0] as Battery;
   return {
-    ...structuredClone(problem),
+    ...source,
     identity: {
-      ...problem.identity,
-      actuals_watermark: problem.intervals[1].start,
+      ...source.identity,
+      actuals_watermark: source.intervals[firstInterval].start,
     },
-    intervals: problem.intervals.slice(1),
+    intervals: source.intervals.slice(firstInterval),
     plant: {
-      ...problem.plant,
-      pv_w: problem.plant.pv_w.slice(1),
-      residual_loads: problem.plant.residual_loads.map((l) => ({
+      ...source.plant,
+      pv_w: source.plant.pv_w.slice(firstInterval),
+      residual_loads: source.plant.residual_loads.map((l) => ({
         ...l,
-        power_w: l.power_w.slice(1),
+        power_w: l.power_w.slice(firstInterval),
       })),
       equipment: [{
         ...b,
         state_kwh: { ...b.state_kwh, initial: anchor },
-        available: b.available.slice(1),
-        grid_charge_allowed: b.grid_charge_allowed.slice(1),
-        export_allowed: b.export_allowed.slice(1),
+        available: b.available.slice(firstInterval),
+        grid_charge_allowed: b.grid_charge_allowed.slice(firstInterval),
+        export_allowed: b.export_allowed.slice(firstInterval),
       }],
     },
     economics: {
-      ...problem.economics,
+      ...source.economics,
       initial_import_w: null,
-      import_sek_per_kwh: problem.economics.import_sek_per_kwh.slice(1),
-      export_sek_per_kwh: problem.economics.export_sek_per_kwh.slice(1),
+      import_sek_per_kwh: source.economics.import_sek_per_kwh.slice(
+        firstInterval,
+      ),
+      export_sek_per_kwh: source.economics.export_sek_per_kwh.slice(
+        firstInterval,
+      ),
     },
   };
 }
@@ -1140,7 +1161,7 @@ function terminalCells(request: BatteryExecutionRequest): ExecutionCell[] {
 /** A normal family member: unchanged energy, native idle electricity and exact terminal utility. */
 function idleCells(request: BatteryExecutionRequest): ExecutionCell[] {
   const b = request.problem.plant.equipment[0] as Battery;
-  const future = executionFutureProblem(request.problem, b.state_kwh.initial);
+  const future = batteryProblemSuffix(request.problem, 1, b.state_kwh.initial);
   const candidate: HouseholdCandidate = {
     id: "idle",
     actions: { [b.id]: future.intervals.map(() => action(0, 0, 0, 0)) },
@@ -1188,7 +1209,13 @@ function compile(input: unknown): BatteryExecutionPolicy {
     }),
     economics: z.object({
       terminal: z.array(
-        z.object({ curve: z.object({ points: z.array(z.unknown()).max(64) }) }),
+        z.object({
+          curve: z.object({
+            points: z.array(z.unknown()).max(
+              BATTERY_POLICY_LIMITS.terminal_points,
+            ),
+          }),
+        }),
       ).max(1),
     }),
   }).parse(raw.problem);
@@ -1381,7 +1408,7 @@ function compile(input: unknown): BatteryExecutionPolicy {
         seedDischarge * 0.25 / (b.conversion ? 1 : b.discharge_efficiency) /
           1000;
       if (initial < b.state_kwh.min || initial > b.state_kwh.max) continue;
-      const future = executionFutureProblem(problem, initial);
+      const future = batteryProblemSuffix(problem, 1, initial);
       const compiled = compileBatteryPolicy({
         problem: future,
         reference_id: "hold",

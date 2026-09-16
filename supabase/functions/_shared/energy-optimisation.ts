@@ -120,7 +120,7 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6, 7, 8, 9] as const;
  * prices executable setpoints and records exact quarter evidence.
  */
 // v28 emits battery operations and enforces export eligibility and reserves in dispatch.
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v35";
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v36";
 /** Schema 5 service sizing also no longer pads energy to a minimum runtime. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v10";
 export const SLOT_MINUTES = 15;
@@ -2923,8 +2923,10 @@ function scheduleServices(
         if (store.key === "battery") {
           // The battery's own charge is not a house load: it is settled in the
           // energy balance below, so it must not enter `occupiedW`.
-          schedule.batteryChargeW[index] = powerW;
-          schedule.batteryDischargeW[index] = round(returns[index], 2);
+          // Keep physical flows exact; display rounding can fabricate exports
+          // and invalidate the captured policy source when export is forbidden.
+          schedule.batteryChargeW[index] = powers[index];
+          schedule.batteryDischargeW[index] = returns[index];
           continue;
         }
         if (powerW <= 0) continue;

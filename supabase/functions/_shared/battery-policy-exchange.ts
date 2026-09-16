@@ -11,6 +11,7 @@ import {
 } from "./battery-supply.ts";
 import {
   type BatteryExecutionRequest,
+  batteryProblemSuffix,
   compileBatteryExecutionPolicy,
   executionOperationSchema,
 } from "./battery-execution-policy.ts";
@@ -81,7 +82,7 @@ const blocked = (...reasons: string[]) => ({
   reasons,
 });
 
-/** No timestamp rebasing: the source cut still belongs to the real generation. */
+/** Compile the captured current quarter; never move forecasts to new timestamps. */
 export function buildBatteryPolicyRequest(
   stored: StoredBatteryGeneration,
   input: unknown,
@@ -127,13 +128,26 @@ export function buildBatteryPolicyRequest(
     (p.provenance.branch === "battery_verification" &&
       mode !== "control_verification")
   ) return blocked("battery_mode_mismatch");
-  const problem = parseHouseholdProblem(p.problem);
+  const source = parseHouseholdProblem(p.problem);
+  const offset = source.intervals.findIndex((interval) =>
+    Date.parse(interval.start) <= now && now < Date.parse(interval.end)
+  );
+  if (
+    !Number.isSafeInteger(now) || offset < 0 ||
+    now >= Date.parse(stored.plan.valid_until) ||
+    now >= Date.parse(stored.plan.binding_until)
+  ) return blocked("plan_window_unavailable");
+  const sourceBattery = source.plant.equipment[0];
+  if (sourceBattery?.kind !== "battery" || !stored.plan.battery) {
+    return blocked("battery_source_missing");
+  }
+  const problem = batteryProblemSuffix(
+    source,
+    offset,
+    sourceBattery.state_kwh.initial,
+  );
   const from = Date.parse(problem.intervals[0].start),
     boundary = Date.parse(problem.intervals[0].end);
-  if (
-    !Number.isSafeInteger(now) || now < from || now >= boundary ||
-    now >= Date.parse(stored.plan.valid_until)
-  ) return blocked("source_quarter_expired");
   const c = body.native_context;
   if (!c) return blocked("native_context_required");
   if (c.evidence_id.startsWith("synthetic")) {
@@ -187,7 +201,8 @@ export function buildBatteryPolicyRequest(
   ) return blocked("unknown_planned_supply_member");
   const bounds: number[] = [];
   for (let i = 0; i < problem.intervals.length; i++) {
-    const row = p.provenance.final_demand[i];
+    const sourceIndex = offset + i;
+    const row = p.provenance.final_demand[sourceIndex];
     if (!row) return blocked("partition_unavailable");
     const components = { ...row.device_loads_w };
     for (
@@ -196,9 +211,9 @@ export function buildBatteryPolicyRequest(
       )
     ) {
       if (key in components) return blocked("overlapping_partition");
-      components[key] = i === 0 && demand.recent_observation
+      components[key] = sourceIndex === 0 && demand.recent_observation
         ? demand.recent_observation.average_w
-        : demand.forecast_w_by_slot[i];
+        : demand.forecast_w_by_slot[sourceIndex];
     }
     if (
       configured.some((key) => !(key in components)) ||
@@ -248,7 +263,12 @@ export function buildBatteryPolicyRequest(
     response_model_revision: c.response_model_revision,
     catalog_revision: c.catalog_revision,
   };
-  const until = Math.min(boundary, c.valid_until_ms);
+  const until = Math.min(
+    boundary,
+    c.valid_until_ms,
+    Date.parse(stored.plan.valid_until),
+    Date.parse(stored.plan.binding_until),
+  );
   const energyOrigin = stored.plan.battery.min_soc *
     stored.plan.battery.capacity_kwh;
   const request: BatteryExecutionRequest = {
@@ -293,7 +313,8 @@ export function buildBatteryPolicyRequest(
     search: {
       energy_levels_kwh: [],
       retained_per_level: 2,
-      max_interval_evaluations: 1_000_000,
+      // Cover the complete 288-quarter suffix across all three energy anchors.
+      max_interval_evaluations: 8_000_000,
     },
   };
   return {

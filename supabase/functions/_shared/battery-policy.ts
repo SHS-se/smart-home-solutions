@@ -18,6 +18,8 @@ import {
 
 export const BATTERY_POLICY_VERSION = "offline-battery-policy-v1";
 export const BATTERY_POLICY_LIMITS = {
+  // A 288-quarter merit-order curve can use two points per band plus endpoints.
+  terminal_points: 578,
   intervals: 288,
   alternatives: 12,
   requested_levels: 32,
@@ -221,10 +223,12 @@ function extensions(
   for (const target of targets) {
     const delta = target.energy - state;
     const charge = delta > 0
-      ? delta * 1000 / hours / (battery.conversion ? 1 : battery.charge_efficiency)
+      ? delta * 1000 / hours /
+        (battery.conversion ? 1 : battery.charge_efficiency)
       : 0;
     const discharge = delta < 0
-      ? -delta * 1000 / hours * (battery.conversion ? 1 : battery.discharge_efficiency)
+      ? -delta * 1000 / hours *
+        (battery.conversion ? 1 : battery.discharge_efficiency)
       : 0;
     const minimumCurtailment = battery.conversion ? 0 : Math.max(
       0,
@@ -235,13 +239,25 @@ function extensions(
       minimumCurtailment,
     ]);
     for (const curtail of curtailments) {
-      const f = battery.conversion ? convertedFlows(battery.conversion,charge,discharge,pv-curtail,load) : null;
+      const f = battery.conversion
+        ? convertedFlows(
+          battery.conversion,
+          charge,
+          discharge,
+          pv - curtail,
+          load,
+        )
+        : null;
       const action: BatteryAction = {
         kind: "battery",
         charge_w: charge,
         discharge_w: discharge,
-        solar_charge_w: f ? f.solar : Math.min(charge, Math.max(0, pv - curtail)),
-        export_w: f ? Math.max(0,f.discharge-Math.max(0,load-pv+curtail)) : Math.max(0, discharge - load),
+        solar_charge_w: f
+          ? f.solar
+          : Math.min(charge, Math.max(0, pv - curtail)),
+        export_w: f
+          ? Math.max(0, f.discharge - Math.max(0, load - pv + curtail))
+          : Math.max(0, discharge - load),
       };
       const stepKey = JSON.stringify([action, curtail]);
       if (paths.has(stepKey)) continue;
@@ -288,7 +304,13 @@ function compile(input: unknown) {
       import_sek_per_kwh: boundedSeries,
       export_sek_per_kwh: boundedSeries,
       terminal: z.array(
-        z.object({ curve: z.object({ points: z.array(z.unknown()).max(64) }) }),
+        z.object({
+          curve: z.object({
+            points: z.array(z.unknown()).max(
+              BATTERY_POLICY_LIMITS.terminal_points,
+            ),
+          }),
+        }),
       ).max(1),
     }),
   }).parse(request.problem);

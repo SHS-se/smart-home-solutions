@@ -130,7 +130,7 @@ Deno.test("source and native admission reject stale, missing, unknown or unackno
       f.request,
       f.stored,
       f.request.native_context.valid_until_ms,
-      "source_quarter_expired",
+      "native_context_expired_or_different_cut",
     ],
     [
       {
@@ -407,4 +407,173 @@ Deno.test("battery policy errors use the SHS envelope before a body can be read"
   assertEquals(wire.ok, true);
   assertEquals(wire.data.status, "blocked");
   assertEquals(wire.data.reasons, ["projection_unavailable"]);
+});
+
+function requestForInterval(
+  f: ReturnType<typeof policyExchangeFixture>,
+  offset: number,
+) {
+  const p = f.stored.battery_projection;
+  assert(p?.status === "ready");
+  return {
+    ...structuredClone(f.request),
+    native_context: {
+      ...structuredClone(f.request.native_context),
+      source_cut_ms: Date.parse(p.problem.intervals[offset].start),
+      valid_until_ms: Date.parse(p.problem.intervals[offset].end),
+      future_permissions: structuredClone(
+        f.request.native_context.future_permissions.slice(offset),
+      ),
+    },
+  };
+}
+
+Deno.test("one accepted plan supplies policies for partial, later and final captured quarters", () => {
+  const f = policyExchangeFixture();
+  const source = f.stored.battery_projection;
+  assert(source?.status === "ready");
+  const before = structuredClone(f.stored);
+  for (const offset of [0, 1, 4, source.problem.intervals.length - 1]) {
+    const input = requestForInterval(f, offset);
+    const now = input.native_context.source_cut_ms + 30000;
+    const built = buildBatteryPolicyRequest(f.stored, input, now);
+    assert(built.status === "ready", JSON.stringify(built));
+    const p = built.request.problem;
+    assertEquals(p.intervals, source.problem.intervals.slice(offset));
+    assertEquals(
+      p.identity.intent_revision,
+      source.problem.identity.intent_revision,
+    );
+    assertEquals(p.identity.actuals_watermark, p.intervals[0].start);
+    assertEquals(p.plant.pv_w, source.problem.plant.pv_w.slice(offset));
+    assertEquals(
+      p.plant.residual_loads[0].power_w,
+      source.problem.plant.residual_loads[0].power_w.slice(offset),
+    );
+    assertEquals(
+      p.economics.import_sek_per_kwh,
+      source.problem.economics.import_sek_per_kwh.slice(offset),
+    );
+    assertEquals(
+      p.economics.export_sek_per_kwh,
+      source.problem.economics.export_sek_per_kwh.slice(offset),
+    );
+    assertEquals(p.economics.terminal, source.problem.economics.terminal);
+    const compiled = compileBatteryExecutionPolicy(built.request);
+    assert(compiled.status === "compiled", JSON.stringify(compiled));
+    assertEquals(
+      compiled.policy.actuals_origin_ms,
+      input.native_context.source_cut_ms,
+    );
+    assertEquals(
+      compiled.policy.validity.until_ms,
+      input.native_context.valid_until_ms,
+    );
+    assertEquals(
+      compiled.policy.economics.import_sek_per_kwh,
+      p.economics.import_sek_per_kwh[0],
+    );
+    assertEquals(
+      compiled.policy.identity.intent_revision,
+      f.request.snapshot_id,
+    );
+  }
+  assertEquals(
+    f.stored,
+    before,
+    "quarter selection must not alter the stored generation",
+  );
+});
+
+Deno.test("later quarter uses its own permissions and external demand, never the initial observation", () => {
+  const f = structuredClone(policyExchangeFixture());
+  const p = f.stored.battery_projection;
+  assert(p?.status === "ready");
+  const input = requestForInterval(f, 1);
+  input.native_context.future_permissions[0].grid_charge_allowed = false;
+  input.native_context.supply_scope = { kind: "whole_house" };
+  // Deliberately different first-quarter observations expose an index-zero reset.
+  p.provenance.operating_scope!.external_demands.pool_heater.recent_observation!
+    .average_w = 100000;
+  const built = buildBatteryPolicyRequest(
+    f.stored,
+    input,
+    input.native_context.source_cut_ms,
+  );
+  assert(built.status === "ready", JSON.stringify(built));
+  const b = built.request.problem.plant.equipment[0];
+  assert(b.kind === "battery");
+  assertEquals(b.grid_charge_allowed.slice(0, 2), [false, true]);
+  assertEquals(built.request.permissions.grid_charge_allowed, false);
+  assertEquals(
+    built.request.future_supply_bound_w[0],
+    Math.max(0, p.provenance.final_demand[1].house_w - p.problem.plant.pv_w[1]),
+  );
+  input.native_context.future_permissions[0].start =
+    p.problem.intervals[0].start;
+  assertEquals(
+    buildBatteryPolicyRequest(
+      f.stored,
+      input,
+      input.native_context.source_cut_ms,
+    ),
+    { status: "blocked", reasons: ["future_permissions_mismatch"] },
+  );
+});
+
+Deno.test("current-quarter policies cannot extend expired or advisory-only plan coverage", () => {
+  const f = policyExchangeFixture();
+  const input = requestForInterval(f, 1);
+  const now = input.native_context.source_cut_ms;
+  for (const key of ["binding_until", "valid_until"] as const) {
+    const stored = structuredClone(f.stored);
+    stored.plan[key] = new Date(now).toISOString();
+    assertEquals(buildBatteryPolicyRequest(stored, input, now), {
+      status: "blocked",
+      reasons: ["plan_window_unavailable"],
+    });
+    stored.plan[key] = new Date(now + 30000).toISOString();
+    const built = buildBatteryPolicyRequest(stored, input, now);
+    assert(built.status === "ready");
+    assertEquals(built.request.validity.until_ms, now + 30000);
+  }
+  assertEquals(
+    buildBatteryPolicyRequest(
+      f.stored,
+      input,
+      Date.parse(f.stored.plan.valid_until),
+    ),
+    { status: "blocked", reasons: ["plan_window_unavailable"] },
+  );
+});
+
+Deno.test("a policy reply crossing its quarter boundary is discarded and the next quarter recovers", async () => {
+  const f = policyExchangeFixture();
+  let now = f.now;
+  const ports: BatteryExchangePorts = {
+    authenticate: async () => ({ homeId: "home", subscriptionActive: true }),
+    load: async () => f.stored,
+    now: () => now,
+    compile: async (request) => {
+      const result = compileBatteryExecutionPolicy(request);
+      now = request.validity.until_ms;
+      return result;
+    },
+  };
+  const send = (body: unknown) =>
+    handleBatteryPolicyExchange(
+      new Request("https://test/policy", {
+        method: "POST",
+        headers: { "X-SHS-API-Version": "1" },
+        body: JSON.stringify(body),
+      }),
+      ports,
+    );
+  const expired = await (await send(f.request)).json();
+  assertEquals(expired.data.reasons, ["source_quarter_expired"]);
+  ports.compile = async (request) => compileBatteryExecutionPolicy(request);
+  const next = await (await send(requestForInterval(f, 1))).json();
+  assertEquals(next.data.status, "delivered");
+  assertEquals(next.data.policy.actuals_origin_ms, now);
+  assertEquals(next.data.plan_id, f.stored.plan_id);
 });
