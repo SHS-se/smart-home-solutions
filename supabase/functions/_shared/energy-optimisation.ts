@@ -631,6 +631,8 @@ export interface GeneratedPlan {
 }
 
 export interface OptimisationPlan {
+  /** Explicit default planning intent: all household consumption is eligible. */
+  battery_supply_scope?: {kind:"whole_house"} | {kind:"none"} | {kind:"selected";include_base:boolean;planned_device_keys:string[]};
   /** Required by schema 9. Top-level scenarios remain hypothetical. */
   operating_scope?: OperatingScope;
   execution_plan?: OptimisationPlan;
@@ -4818,7 +4820,8 @@ function generatePlanBody(
     },
     battery_value_curve: derivedBatteryValueCurve,
     policy: snapshot.policy,
-    battery: snapshot.battery,
+    battery_supply_scope: {kind:"whole_house"},
+      battery: snapshot.battery,
     ev_battery: snapshot.ev_battery ?? null,
     pool: snapshot.pool ?? null,
     grid: snapshot.grid,

@@ -1,3 +1,4 @@
+import { convertedFlows } from "./battery-conversion.ts";
 import { assert, assertAlmostEquals, assertEquals } from "@std/assert";
 import {
   executionContinuationVectors,
@@ -139,75 +140,78 @@ Deno.test("execution wire is closed, bounded, deterministic, and honestly report
 });
 
 for (const wearBasis of ["ac_throughput", "discharged_storage"] as const) {
-Deno.test(`every bridge/suffix cross-scores at endpoints and interiors with ${wearBasis} wear`, () => {
-  const r = executionFixtureRequest(), b = battery(r);
-  b.wear_basis = wearBasis;
-  const p = compiled(r), paths = witnesses(r);
-  let seed = 721;
-  const random = () => {
-    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
-    return seed / 2 ** 32;
-  };
-  let count = 0;
-  for (
-    const cell of p.continuation.cells.filter((c) => c.witness_id !== "idle")
-  ) {
-    const witness = paths.get(cell.witness_id)!;
-    assert(witness);
-    assert(witness.candidate.pv_curtail_w.every((w) => w === 0));
-    const [lo, hi] = cell.domain.energy_kwh;
+  Deno.test(`every bridge/suffix cross-scores at endpoints and interiors with ${wearBasis} wear`, () => {
+    const r = executionFixtureRequest(), b = battery(r);
+    b.wear_basis = wearBasis;
+    const p = compiled(r), paths = witnesses(r);
+    let seed = 721;
+    const random = () => {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      return seed / 2 ** 32;
+    };
+    let count = 0;
     for (
-      const energy of [
-        lo,
-        hi,
-        ...Array.from({ length: 16 }, () => lo + random() * (hi - lo)),
-      ]
+      const cell of p.continuation.cells.filter((c) => c.witness_id !== "idle")
     ) {
+      const witness = paths.get(cell.witness_id)!;
+      assert(witness);
+      assert(witness.candidate.pv_curtail_w.every((w) => w === 0));
+      const [lo, hi] = cell.domain.energy_kwh;
       for (
-        const previous of [
-          0,
-          p.plant.import_limit_w,
-          random() * p.plant.import_limit_w,
+        const energy of [
+          lo,
+          hi,
+          ...Array.from({ length: 16 }, () => lo + random() * (hi - lo)),
         ]
       ) {
-        const future = executionFutureProblem(r.problem, energy);
-        future.economics.initial_import_w = previous;
-        const candidate: HouseholdCandidate = structuredClone(
-          witness.candidate,
-        );
-        const delta = witness.anchor - energy;
-        const charge = Math.max(delta, 0) / b.charge_efficiency / 0.25 * 1000;
-        const discharge = Math.max(-delta, 0) * b.discharge_efficiency / 0.25 *
-          1000;
-        const load = future.plant.residual_loads.reduce(
-          (sum, l) => sum + l.power_w[0],
-          0,
-        );
-        candidate.actions[b.id][0] = {
-          kind: "battery",
-          charge_w: charge,
-          discharge_w: discharge,
-          solar_charge_w: Math.min(charge, future.plant.pv_w[0]),
-          export_w: Math.max(0, discharge - load),
-        };
-        const score = createHouseholdScorer(future).score(candidate);
-        assert(
-          score.status === "scored",
-          JSON.stringify({ cell: cell.id, energy, score }),
-        );
-        assertObjective(cellObjective(cell, energy, previous), score.objective);
-        const selected = evaluateExecutionContinuation(p, energy, previous);
-        assert(
-          selected &&
-            selected.objective.total_sek <= score.objective.total_sek + 1e-7,
-        );
-        count++;
+        for (
+          const previous of [
+            0,
+            p.plant.import_limit_w,
+            random() * p.plant.import_limit_w,
+          ]
+        ) {
+          const future = executionFutureProblem(r.problem, energy);
+          future.economics.initial_import_w = previous;
+          const candidate: HouseholdCandidate = structuredClone(
+            witness.candidate,
+          );
+          const delta = witness.anchor - energy;
+          const charge = Math.max(delta, 0) / b.charge_efficiency / 0.25 * 1000;
+          const discharge = Math.max(-delta, 0) * b.discharge_efficiency /
+            0.25 *
+            1000;
+          const load = future.plant.residual_loads.reduce(
+            (sum, l) => sum + l.power_w[0],
+            0,
+          );
+          candidate.actions[b.id][0] = {
+            kind: "battery",
+            charge_w: charge,
+            discharge_w: discharge,
+            solar_charge_w: Math.min(charge, future.plant.pv_w[0]),
+            export_w: Math.max(0, discharge - load),
+          };
+          const score = createHouseholdScorer(future).score(candidate);
+          assert(
+            score.status === "scored",
+            JSON.stringify({ cell: cell.id, energy, score }),
+          );
+          assertObjective(
+            cellObjective(cell, energy, previous),
+            score.objective,
+          );
+          const selected = evaluateExecutionContinuation(p, energy, previous);
+          assert(
+            selected &&
+              selected.objective.total_sek <= score.objective.total_sek + 1e-7,
+          );
+          count++;
+        }
       }
     }
-  }
-  assert(count >= 500);
-});
-
+    assert(count >= 500);
+  });
 }
 
 Deno.test("terminal utility remains exact with no future, and with bridge but no fixed suffix", () => {
@@ -862,11 +866,15 @@ Deno.test("continuation clips only numerical edge noise and resolves numerical t
 
 Deno.test("discharged-storage wear charges energy removed from storage, never charging throughput", () => {
   const r = executionFixtureRequest();
-  const b = battery(r); b.wear_basis = "discharged_storage";
+  const b = battery(r);
+  b.wear_basis = "discharged_storage";
   for (const vector of executionCurrentVectors(r).cases) {
     if (vector.expected.eligible) {
-      assertAlmostEquals(vector.expected.current.wear_sek,
-        Math.max(0, vector.energy_kwh - vector.expected.energy_end_kwh) * b.wear_sek_per_kwh);
+      assertAlmostEquals(
+        vector.expected.current.wear_sek,
+        Math.max(0, vector.energy_kwh - vector.expected.energy_end_kwh) *
+          b.wear_sek_per_kwh,
+      );
     }
   }
 });
@@ -880,10 +888,14 @@ Deno.test("current grid-charge prohibition does not remove explicitly permitted 
   r.problem.plant.residual_loads[0].power_w = [2000, 2000];
   r.future_supply_bound_w = [2000, 2000];
   const p = compiled(r);
-  const charge = p.operations.find(op => op.operation === "grid_charge");
+  const charge = p.operations.find((op) => op.operation === "grid_charge");
   assert(charge);
   const current = evaluateExecutionCurrent(p, charge, {
-    at_ms: p.validity.from_ms, energy_kwh: 5, pv_w: 0, residual_load_w: 2000, previous_import_w: 2000,
+    at_ms: p.validity.from_ms,
+    energy_kwh: 5,
+    pv_w: 0,
+    residual_load_w: 2000,
+    previous_import_w: 2000,
   });
   assertEquals(current, { eligible: false, reason: "grid_charge_not_allowed" });
   const permitted = evaluateExecutionContinuation(p, 4.5, 2000);
@@ -892,3 +904,73 @@ Deno.test("current grid-charge prohibition does not remove explicitly permitted 
   assert(permitted && prohibited);
   assert(permitted.objective.total_sek < prohibited.objective.total_sek);
 });
+
+for (const wearBasis of ["ac_throughput", "discharged_storage"] as const) {
+  Deno.test(`DC conversion bridge and suffix match physical replay with ${wearBasis}`, () => {
+    const r = executionFixtureRequest(), b = battery(r);
+    b.conversion = {
+      revision: "measured-test",
+      grid_charge: { gain: .96, overhead_w: 90 },
+      surplus_charge: { gain: .97, overhead_w: 20 },
+      discharge: { gain: .987, overhead_w: 161 },
+      idle_loss_w: 30,
+    };
+    b.wear_basis = wearBasis;
+    r.identity.response_model_revision = "pv-first-dc-v2";
+    const p = compiled(r), paths = witnesses(r);
+    let checked = 0;
+    for (
+      const cell of p.continuation.cells.filter((c) => c.witness_id !== "idle")
+    ) {
+      const witness = paths.get(cell.witness_id)!;
+      assert(witness);
+      const [lo, hi] = cell.domain.energy_kwh;
+      for (const energy of [lo, hi, (lo + hi) / 2, lo + (hi - lo) * .137]) {
+        if (
+          cell.domain.open_energy?.[0] && energy === lo ||
+          cell.domain.open_energy?.[1] && energy === hi
+        ) continue;
+        const future = executionFutureProblem(r.problem, energy);
+        future.economics.initial_import_w = 1700;
+        const candidate = structuredClone(witness.candidate),
+          delta = witness.anchor - energy,
+          c = Math.max(0, delta) * 4000,
+          d = Math.max(0, -delta) * 4000;
+        const load = future.plant.residual_loads.reduce(
+            (s, l) => s + l.power_w[0],
+            0,
+          ),
+          pv = future.plant.pv_w[0];
+        const flow = convertedFlows(b.conversion, c, d, pv, load);
+        candidate.actions[b.id][0] = {
+          kind: "battery",
+          charge_w: c,
+          discharge_w: d,
+          solar_charge_w: flow.solar,
+          export_w: Math.max(0, flow.discharge - Math.max(0, load - pv)),
+        };
+        const score = createHouseholdScorer(future).score(candidate);
+        assert(
+          score.status === "scored",
+          JSON.stringify({ cell, energy, score }),
+        );
+        assertObjective(cellObjective(cell, energy, 1700), score.objective);
+        checked++;
+      }
+    }
+    assert(checked > 10);
+    const current = evaluateExecutionCurrent(p, {
+      ...p.operations.find((o) => o.operation === "supply_house")!,
+    }, {
+      at_ms: p.validity.from_ms,
+      energy_kwh: 5,
+      pv_w: 0,
+      residual_load_w: 1000,
+      previous_import_w: 1000,
+    });
+    assert(current.eligible, JSON.stringify(current));
+    if (current.eligible) {
+      assertAlmostEquals(current.terminal_import_w, 0, 1e-7);
+    }
+  });
+}

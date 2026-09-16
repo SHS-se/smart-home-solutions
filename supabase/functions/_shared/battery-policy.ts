@@ -1,3 +1,4 @@
+import { convertedFlows } from "./battery-conversion.ts";
 /** Offline battery counterfactuals. No HA commands, interpolation or thermal model. */
 import { z } from "zod";
 import {
@@ -220,12 +221,12 @@ function extensions(
   for (const target of targets) {
     const delta = target.energy - state;
     const charge = delta > 0
-      ? delta * 1000 / hours / battery.charge_efficiency
+      ? delta * 1000 / hours / (battery.conversion ? 1 : battery.charge_efficiency)
       : 0;
     const discharge = delta < 0
-      ? -delta * 1000 / hours * battery.discharge_efficiency
+      ? -delta * 1000 / hours * (battery.conversion ? 1 : battery.discharge_efficiency)
       : 0;
-    const minimumCurtailment = Math.max(
+    const minimumCurtailment = battery.conversion ? 0 : Math.max(
       0,
       pv + discharge - load - charge - problem.plant.grid.export_limit_w,
     );
@@ -234,12 +235,13 @@ function extensions(
       minimumCurtailment,
     ]);
     for (const curtail of curtailments) {
+      const f = battery.conversion ? convertedFlows(battery.conversion,charge,discharge,pv-curtail,load) : null;
       const action: BatteryAction = {
         kind: "battery",
         charge_w: charge,
         discharge_w: discharge,
-        solar_charge_w: Math.min(charge, Math.max(0, pv - curtail)),
-        export_w: Math.max(0, discharge - load),
+        solar_charge_w: f ? f.solar : Math.min(charge, Math.max(0, pv - curtail)),
+        export_w: f ? Math.max(0,f.discharge-Math.max(0,load-pv+curtail)) : Math.max(0, discharge - load),
       };
       const stepKey = JSON.stringify([action, curtail]);
       if (paths.has(stepKey)) continue;

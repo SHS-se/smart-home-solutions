@@ -1,3 +1,4 @@
+import { conversionSchema } from "./battery-conversion.ts";
 /** Device-authenticated delivery boundary. Compiling economics grants no control authority. */
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -23,7 +24,8 @@ export const nativePolicyContextSchema = z.object({
   config_revision: id,
   catalog_revision: id,
   evidence_id: id,
-  response_model_revision: z.literal("pv-first-v1"),
+  response_model_revision: z.enum(["pv-first-v1", "pv-first-dc-v2"]),
+  conversion: conversionSchema.optional(),
   energy_basis: z.literal("usable_kwh_above_min_soc"),
   source_cut_ms: stamp,
   valid_until_ms: stamp,
@@ -139,6 +141,9 @@ export function buildBatteryPolicyRequest(
   if (c.source_cut_ms !== from || c.valid_until_ms <= now) {
     return blocked("native_context_expired_or_different_cut");
   }
+  if ((c.response_model_revision === "pv-first-dc-v2") !== !!c.conversion) {
+    return blocked("conversion_model_basis_mismatch");
+  }
   const b = problem.plant.equipment[0];
   if (b?.kind !== "battery" || !stored.plan.battery) {
     return blocked("battery_source_missing");
@@ -153,6 +158,9 @@ export function buildBatteryPolicyRequest(
       perm.start !== problem.intervals[i].start
     )
   ) return blocked("future_permissions_mismatch");
+  if (c.conversion) {
+    b.conversion = c.conversion as NonNullable<typeof b.conversion>;
+  }
   const originalExport = [...b.export_allowed];
   for (let i = 0; i < problem.intervals.length; i++) {
     b.available[i] = b.available[i] && c.future_permissions[i].available;
@@ -162,6 +170,14 @@ export function buildBatteryPolicyRequest(
       c.future_permissions[i].battery_export_allowed;
   }
   const scope = c.supply_scope;
+  const sourcePlan = mode === "controlling"
+    ? stored.plan.execution_plan
+    : stored.plan;
+  if (
+    c.response_model_revision === "pv-first-dc-v2" &&
+    canonicalHash(scope) !==
+      canonicalHash(sourcePlan?.battery_supply_scope ?? null)
+  ) return blocked("planner_supply_scope_mismatch");
   const configured = Object.keys(p.provenance.operating_scope.device_owners)
     .sort();
   if (
@@ -219,13 +235,16 @@ export function buildBatteryPolicyRequest(
       config: c.config_revision,
     }),
     scope_revision: canonicalHash({
+      ...(c.response_model_revision === "pv-first-dc-v2"
+        ? { native: c.catalog_revision }
+        : {}),
       operating: p.provenance.operating_scope,
       supply: scope,
       config: c.config_revision,
     }),
     external_scenario_revision: canonicalHash(p.provenance.final_demand),
     tariff_revision: tariff,
-    response_model_revision: "pv-first-v1" as const,
+    response_model_revision: c.response_model_revision,
     catalog_revision: c.catalog_revision,
   };
   const until = Math.min(boundary, c.valid_until_ms);

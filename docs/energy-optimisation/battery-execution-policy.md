@@ -1,17 +1,30 @@
 # Battery execution policy
 
-## Required scope extension; not in v1 — 15 September 2026
+## Production Sigen connection — 16 September 2026
 
-The existing software contract below does not yet encode the newly agreed explicit house-supply selector. Extend compilation, conditions, native response, bounded coverage and final-dispatch identity together, including measured eligible demand and declared PV attribution. Preserve the existing finite C + V economics and single writer. A fixed forecast ceiling or rating-wide permission is not a substitute, and missing subgroup readings cannot silently widen scope.
+The contract is `battery-execution-policy-v2`: explicit house-supply scope,
+proportional solar attribution, wear basis and current/future permissions are
+implemented. The HA production owner now connects the policy to live readings,
+a durable sole-writer journal and actual Sigen mode/limit service calls.
+See [participation decisions](device-participation-and-battery-supply.md) and
+[deployment status](scoped-participation-implementation.md). This is implemented
+software, not a claim that the user's inverter has been upgraded or tested.
 
-See the [agreed participation and battery supply specification](device-participation-and-battery-supply.md).
-Documentation only; replacement implementation and coordinated rollout remain pending.
+Production uses the explicit `pv-first-dc-v2` response model. ESS command watts
+and stored-energy changes are DC; converted household/grid flows are used for
+costs. HA sends versioned gain/fixed-overhead curves and their current catalog.
+The backend projects future battery actions using those same curves. Grid charging,
+solar-surplus charging and discharging retain distinct models. Fits from isolated
+history replace configured initial assumptions only when their evidence qualifies.
+Reported PV remains a site-balance approximation: pure PV-to-battery efficiency
+and separate PV-to-house conversion cannot be inferred from the four site meters.
 
-The executable software contract is `battery-execution-policy-v1`. It is separate
-from the offline exact-anchor compiler and diagnostic interpolation coverage.
-The [cross-repository architecture decision](https://github.com/SHS-se/shs-ha-integration/blob/main/docs/battery-execution-design.md)
-records the independent Claude Opus Max/Codex comparison and the complete wire
-shape. The native Home Assistant ports and hardware cutover are subsequent stages.
+Native catalog identity includes the local operating-mode revision; scope identity
+also binds this catalog. Temporary withdrawal and readmission cannot reuse an old
+execution grant. The supplied scope must match the source plan's explicit
+`battery_supply_scope`; current generated plans declare `whole_house`.
+The separately declared `pv-first-v1` AC model remains in offline tests; it is not
+a fallback for Sigen commands. Missing DC conversion metadata is rejected.
 
 The producer owns future optimisation. It compiles a bounded family of bridge-to-
 anchor continuations using the existing household scorer and battery optimiser.
@@ -55,18 +68,18 @@ remain distinct constraints.
 Generated policy/current-response/continuation fixtures exercise the producer and Python
 consumer. Continuation tests compare cell evaluations with full household scoring
 at boundaries and interior points. These checks establish software consistency;
-installation coverage, forecast error, compile cadence, native transition timing,
-exclusive live writer cutover and abrupt-outage behaviour remain deployment gates.
+installation coverage, forecast error and physical response/timing remain live
+test work. Software tests cover the exclusive writer, restart and failed transport.
 Thermal modelling, direct user controls and notifications remain deferred.
 
 
-Validation for this implementation: the full Deno suite passes **1,119 tests**;
-repository lint has **0 errors and 26 existing warnings**; the production and dev test-mode
-frontend builds and **31 mocked-backend Playwright tests** pass. The final E2E run
-uses the fresh test-mode bundle required on the backend dev branch. Explicit scoped lint for
-the new backend/scorer files is clean. The generated family has 17 cells and the
-cross-language corpus contains 180 current responses and 96 continuation cases.
-The old offline example outputs remain byte-identical after scorer extraction.
+## Verification
+
+DC fixtures cover both current response and future continuation, including fixed
+losses, activation discontinuities, grid-flow sign changes and coincident floating
+point roots. Python evaluates provider-generated vectors; continuation witnesses
+are checked against the full household physics/scorer. Full-suite, frontend-build,
+lint and browser results are recorded with the implementation change.
 
 Regenerate or verify fixtures from the backend repository:
 
@@ -80,3 +93,9 @@ From the HA repository, verify the provider and consumer copies together:
 ```sh
 python3.13 scripts/generate-execution-policy-fixtures.py ../smart-home-solutions-t-by --check
 ```
+
+Final validation on 16 September: 1,155 backend tests, 697 HA tests, 61 HA panel
+tests and 32 local browser tests passed. The test-mode website build and targeted
+TypeScript checks passed. Lint reports zero errors and 26 existing warnings; the
+build retains its bundle-size warning. The generated AC/DC provider-consumer
+fixtures match. Deployment and physical inverter tests remain separate.

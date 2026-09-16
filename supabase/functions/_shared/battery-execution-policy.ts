@@ -1,5 +1,18 @@
+import {
+  type Conversion,
+  conversionSchema,
+  convertedFlows,
+  gridPower,
+  inputPower,
+  outputPower,
+  solarCapacity,
+} from "./battery-conversion.ts";
 /** Executable, bounded finite bridge/suffix family. No native writes or continuous-optimum claim. */
-import { batterySupplyScopeSchema, proportionalSupply, SOLAR_ATTRIBUTION } from "./battery-supply.ts";
+import {
+  batterySupplyScopeSchema,
+  proportionalSupply,
+  SOLAR_ATTRIBUTION,
+} from "./battery-supply.ts";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { compileBatteryPolicy } from "./battery-policy.ts";
@@ -46,7 +59,7 @@ const identitySchema = z.object({
   scope_revision: id,
   external_scenario_revision: id,
   tariff_revision: id,
-  response_model_revision: z.literal("pv-first-v1"),
+  response_model_revision: z.enum(["pv-first-v1", "pv-first-dc-v2"]),
   catalog_revision: id,
 }).strict();
 const validitySchema = z.object({
@@ -122,6 +135,7 @@ const cellSchema = z.object({
   witness_id: id,
   domain: z.object({
     energy_kwh: range,
+    open_energy: z.tuple([z.boolean(), z.boolean()]).optional(),
     previous_import_w: range,
     inequalities: z.array(
       z.object({ energy: finite, previous_import: finite, maximum: finite })
@@ -141,6 +155,7 @@ const basePolicySchema = z.object({
   validity: validitySchema,
   domain: domainSchema,
   plant: z.object({
+    conversion: conversionSchema.optional(),
     cutoff_kwh: physical,
     capacity_kwh: physical.positive(),
     charge_max_w: physical,
@@ -189,9 +204,27 @@ const basePolicySchema = z.object({
 type RequiredFields<T> = T extends object
   ? { [K in keyof T]-?: RequiredFields<T[K]> }
   : T;
-export type BatteryExecutionPolicy = RequiredFields<
-  z.infer<typeof basePolicySchema>
->;
+type ParsedPolicy = RequiredFields<z.infer<typeof basePolicySchema>>;
+export type BatteryExecutionPolicy =
+  & Omit<ParsedPolicy, "plant" | "continuation">
+  & {
+    plant: Omit<ParsedPolicy["plant"], "conversion"> & {
+      conversion?: Conversion;
+    };
+    continuation: Omit<ParsedPolicy["continuation"], "cells"> & {
+      cells: Array<
+        Omit<ParsedPolicy["continuation"]["cells"][number], "domain"> & {
+          domain:
+            & Omit<
+              ParsedPolicy["continuation"]["cells"][number]["domain"],
+              "open_energy"
+            >
+            & { open_energy?: [boolean, boolean] };
+        }
+      >;
+    };
+  };
+
 export type ExecutionOperation = RequiredFields<
   z.infer<typeof executionOperationSchema>
 >;
@@ -226,6 +259,10 @@ export const batteryExecutionPolicySchema = basePolicySchema.superRefine(
     const p = raw as BatteryExecutionPolicy;
     const fail = (message: string) => ctx.addIssue({ code: "custom", message });
     const v = p.validity, b = p.plant;
+    if (
+      (p.identity.response_model_revision === "pv-first-dc-v2") !==
+        !!b.conversion
+    ) fail("conversion model/basis mismatch");
     if (
       !(p.actuals_origin_ms <= v.from_ms && v.from_ms <= v.refresh_after_ms &&
         v.refresh_after_ms < v.until_ms && v.until_ms <= v.boundary_ms &&
@@ -377,9 +414,21 @@ export function evaluateExecutionCurrent(
   if (
     !executionOperationSchema.safeParse(operation).success ||
     !policy.operations.some((o) =>
-      o.id === operation.id && o.operation === operation.operation &&
-      o.charge_limit_w === operation.charge_limit_w &&
-      o.discharge_limit_w === operation.discharge_limit_w
+      o.operation === operation.operation && (
+        o.id === operation.id &&
+          o.charge_limit_w === operation.charge_limit_w &&
+          o.discharge_limit_w === operation.discharge_limit_w ||
+        !!policy.plant.conversion &&
+          !["hold", "self_consumption"].includes(o.operation) &&
+          operation.id ===
+            `${
+              o.id.slice(0, 70)
+            }@${operation.charge_limit_w}:${operation.discharge_limit_w}` &&
+          Number.isInteger(operation.charge_limit_w) &&
+          Number.isInteger(operation.discharge_limit_w) &&
+          operation.charge_limit_w <= o.charge_limit_w &&
+          operation.discharge_limit_w <= o.discharge_limit_w
+      )
     )
   ) return reject("unknown_operation");
   const c = conditions,
@@ -416,26 +465,50 @@ export function evaluateExecutionCurrent(
   const charge = op === "grid_charge"
     ? operation.charge_limit_w
     : ["self_consumption", "solar_charge"].includes(op)
-    ? Math.min(operation.charge_limit_w, surplus)
+    ? Math.min(
+      operation.charge_limit_w,
+      p.conversion
+        ? solarCapacity(p.conversion, c.pv_w, c.residual_load_w)
+        : surplus,
+    )
     : 0;
   const discharge = op === "export"
     ? operation.discharge_limit_w
     : ["self_consumption", "supply_house"].includes(op)
-    ? Math.min(operation.discharge_limit_w, deficit)
+    ? Math.min(
+      operation.discharge_limit_w,
+      p.conversion ? inputPower(p.conversion.discharge, deficit) : deficit,
+    )
     : 0;
-  if (policy.supply_scope.kind === "selected" && c.eligible_load_w === undefined) {
+  if (
+    policy.supply_scope.kind === "selected" && c.eligible_load_w === undefined
+  ) {
     return reject("scope_measurements_unavailable");
   }
-  const eligible = policy.supply_scope.kind === "whole_house" ? c.residual_load_w :
-    policy.supply_scope.kind === "none" ? 0 : c.eligible_load_w!;
-  if (eligible > c.residual_load_w) return reject("unreconciled_supply_measurements");
-  const bound = proportionalSupply(c.residual_load_w, c.pv_w, eligible).houseSupplyBoundW;
+  const eligible = policy.supply_scope.kind === "whole_house"
+    ? c.residual_load_w
+    : policy.supply_scope.kind === "none"
+    ? 0
+    : c.eligible_load_w!;
+  if (eligible > c.residual_load_w) {
+    return reject("unreconciled_supply_measurements");
+  }
+  const bound =
+    proportionalSupply(c.residual_load_w, c.pv_w, eligible).houseSupplyBoundW;
   // A native operation remains exactly the commissioned target. Reject it when
   // it would exceed scope; never pretend that a clipped model changed hardware.
-  if (Math.min(discharge, deficit) > bound + EPS) return reject("native_operation_exceeds_supply_scope");
+  if (
+    Math.min(
+      p.conversion ? outputPower(p.conversion.discharge, discharge) : discharge,
+      deficit,
+    ) > bound + EPS
+  ) return reject("native_operation_exceeds_supply_scope");
   const hours = (policy.validity.boundary_ms - c.at_ms) / 3600000;
   const rate =
-    (charge * p.charge_efficiency - discharge / p.discharge_efficiency) / 1000;
+    (p.conversion
+      ? charge - discharge
+      : charge * p.charge_efficiency - discharge / p.discharge_efficiency) /
+    1000;
   if (!Number.isFinite(rate)) return reject("numeric_overflow");
   if (
     op === "export" && c.energy_kwh + rate * hours < perm.export_reserve_kwh
@@ -456,13 +529,32 @@ export function evaluateExecutionCurrent(
     if (s.charge > p.charge_max_w || s.discharge > p.discharge_max_w) {
       return reject("power_limit");
     }
-    if (!perm.grid_charge_allowed && s.charge > surplus) {
+    if (
+      !perm.grid_charge_allowed &&
+      s.charge >
+        (p.conversion
+            ? solarCapacity(p.conversion, c.pv_w, c.residual_load_w)
+            : surplus) + EPS
+    ) {
       return reject("native_grid_charge_not_allowed");
     }
-    if (!perm.battery_export_allowed && s.discharge > deficit) {
+    if (
+      !perm.battery_export_allowed &&
+      (p.conversion
+          ? outputPower(p.conversion.discharge, s.discharge)
+          : s.discharge) > deficit + EPS
+    ) {
       return reject("native_battery_export_not_allowed");
     }
-    const net = c.residual_load_w + s.charge - s.discharge - c.pv_w;
+    const net = p.conversion
+      ? gridPower(
+        p.conversion,
+        s.charge,
+        s.discharge,
+        c.pv_w,
+        c.residual_load_w,
+      )
+      : c.residual_load_w + s.charge - s.discharge - c.pv_w;
     const imported = Math.max(0, net), exported = Math.max(0, -net);
     if (imported > p.import_limit_w || exported > p.export_limit_w) {
       return reject("grid_limit");
@@ -474,11 +566,26 @@ export function evaluateExecutionCurrent(
       export_w: exported,
       previous_import_w: previous,
     });
+    const flow = p.conversion
+      ? convertedFlows(
+        p.conversion,
+        s.charge,
+        s.discharge,
+        c.pv_w,
+        c.residual_load_w,
+      )
+      : null;
     account.wear_sek = (p.wear_basis === "discharged_storage"
-      ? s.discharge / p.discharge_efficiency : s.charge + s.discharge) / 1000 * s.hours * p.wear_sek_per_kwh;
-    for (const key of costKeys) result[key] += account[key];
-    energy +=
-      (s.charge * p.charge_efficiency - s.discharge / p.discharge_efficiency) /
+      ? s.discharge / (p.conversion ? 1 : p.discharge_efficiency)
+      : flow
+      ? flow.charge + flow.discharge
+      : s.charge + s.discharge) / 1000 * s.hours * p.wear_sek_per_kwh;
+    for (const key of costKeys) {
+      result[key] += account[key];
+    }
+    energy += (p.conversion
+      ? s.charge - s.discharge
+      : s.charge * p.charge_efficiency - s.discharge / p.discharge_efficiency) /
       1000 * s.hours;
     if (energy < p.cutoff_kwh - EPS || energy > p.capacity_kwh + EPS) {
       return reject("state_limit");
@@ -494,8 +601,16 @@ export function evaluateExecutionCurrent(
     current,
     energy_end_kwh: Math.max(p.cutoff_kwh, Math.min(p.capacity_kwh, energy)),
     terminal_import_w: previous,
-    possible_import_w: op === "grid_charge" ? operation.charge_limit_w : 0,
-    possible_export_w: op === "export" ? operation.discharge_limit_w : 0,
+    possible_import_w: op === "grid_charge"
+      ? p.conversion
+        ? inputPower(p.conversion.grid_charge, operation.charge_limit_w)
+        : operation.charge_limit_w
+      : 0,
+    possible_export_w: op === "export"
+      ? p.conversion
+        ? outputPower(p.conversion.discharge, operation.discharge_limit_w)
+        : operation.discharge_limit_w
+      : 0,
   };
 }
 
@@ -508,6 +623,10 @@ export function evaluateExecutionContinuation(
   if (!Number.isFinite(energy) || !Number.isFinite(previousImport)) return null;
   const candidates = policy.continuation.cells.flatMap((cell) => {
     const d = cell.domain;
+    if (
+      (d.open_energy?.[0] && energy <= d.energy_kwh[0]) ||
+      (d.open_energy?.[1] && energy >= d.energy_kwh[1])
+    ) return [];
     if (
       energy < d.energy_kwh[0] - PHYSICAL_EPS ||
       energy > d.energy_kwh[1] + PHYSICAL_EPS ||
@@ -588,13 +707,19 @@ function action(
   discharge: number,
   pv: number,
   load: number,
+  conversion?: Conversion,
 ): Action {
+  const f = conversion
+    ? convertedFlows(conversion, charge, discharge, pv, load)
+    : null;
   return {
     kind: "battery",
     charge_w: charge,
     discharge_w: discharge,
-    solar_charge_w: Math.min(charge, pv),
-    export_w: Math.max(0, discharge - load),
+    solar_charge_w: f ? f.solar : Math.min(charge, pv),
+    export_w: f
+      ? Math.max(0, f.discharge - Math.max(0, load - pv))
+      : Math.max(0, discharge - load),
   };
 }
 
@@ -664,10 +789,19 @@ function nativeSuffixFeasible(
     ) return false;
     if (
       !b.grid_charge_allowed[i] &&
-      a.charge_w > Math.max(0, pv - load)
+      a.charge_w >
+        (b.conversion
+            ? solarCapacity(b.conversion, pv, load)
+            : Math.max(0, pv - load)) + EPS
     ) return false;
-    if (Math.min(a.discharge_w, Math.max(0, load - pv)) > request.future_supply_bound_w[i] + EPS) return false;
-    if (a.discharge_w > Math.max(0, load - pv)) {
+    const delivered = b.conversion
+      ? outputPower(b.conversion.discharge, a.discharge_w)
+      : a.discharge_w;
+    if (
+      Math.min(delivered, Math.max(0, load - pv)) >
+        request.future_supply_bound_w[i] + EPS
+    ) return false;
+    if (delivered > Math.max(0, load - pv) + EPS) {
       if (
         !exportAllowed(request, b, i) ||
         states[j] <= request.permissions.export_reserve_kwh ||
@@ -689,6 +823,16 @@ function bridgeCells(
   const source = request.problem,
     b = source.plant.equipment[0] as Battery,
     perm = request.permissions;
+  if (b.conversion) {
+    return dcBridgeCells(
+      request,
+      anchor,
+      witness,
+      constant,
+      firstTailImport,
+      b.conversion,
+    );
+  }
   const pv = source.plant.pv_w[1],
     load = source.plant.residual_loads.reduce(
       (sum, l) => sum + l.power_w[1],
@@ -730,7 +874,9 @@ function bridgeCells(
     const available = b.available[1];
     limit(c, available ? b.charge_max_w : 0);
     limit(d, available ? b.discharge_max_w : 0);
-    if (request.future_supply_bound_w[1] < deficit) limit(d, request.future_supply_bound_w[1]);
+    if (request.future_supply_bound_w[1] < deficit) {
+      limit(d, request.future_supply_bound_w[1]);
+    }
     if (!b.grid_charge_allowed[1]) {
       limit(c, surplus);
     }
@@ -775,6 +921,156 @@ function bridgeCells(
     );
     const shaping = 0.5 * source.economics.shaping_sek_per_kwh_per_kw * h /
       1_000_000;
+    cell.cost.shaping_sek.polynomial[0] += shaping * imports[0] ** 2;
+    cell.cost.shaping_sek.polynomial[1] += shaping * 2 * imports[0] *
+      imports[1];
+    cell.cost.shaping_sek.polynomial[2] += shaping * imports[1] ** 2;
+    const weight = source.economics.ramp_sek_per_kw / 1000;
+    cell.cost.ramp_sek.absolute_terms.push({
+      weight,
+      energy: imports[1],
+      previous_import: -1,
+      constant: imports[0],
+    });
+    if (firstTailImport !== null) {
+      cell.cost.ramp_sek.absolute_terms.push({
+        weight,
+        energy: -imports[1],
+        previous_import: 0,
+        constant: firstTailImport - imports[0],
+      });
+    }
+    cells.push(cell);
+  }
+  return cells;
+}
+
+/** DC bridge with exact point cells at idle/source changes and open affine spans. */
+function dcBridgeCells(
+  request: BatteryExecutionRequest,
+  anchor: number,
+  witness: string,
+  constant: Objective,
+  firstTailImport: number | null,
+  m: Conversion,
+): ExecutionCell[] {
+  const source = request.problem,
+    b = source.plant.equipment[0] as Battery,
+    perm = request.permissions;
+  const pv = source.plant.pv_w[1],
+    load = source.plant.residual_loads.reduce((s, l) => s + l.power_w[1], 0),
+    deficit = Math.max(0, load - pv),
+    h = .25,
+    k = 1000 / h;
+  const cap = solarCapacity(m, pv, load);
+  const points = sorted(
+    [
+      b.state_kwh.min,
+      b.state_kwh.max,
+      anchor,
+      anchor - cap / k,
+      anchor + m.discharge.overhead_w / m.discharge.gain / k,
+      anchor + inputPower(m.discharge, deficit) / k,
+      perm.export_reserve_kwh,
+    ].filter((e) => e >= b.state_kwh.min && e <= b.state_kwh.max),
+  );
+
+  const cells: ExecutionCell[] = [];
+  const powers = (e: number) => {
+    const c = Math.max(0, (anchor - e) * k),
+      d = Math.max(0, (e - anchor) * k),
+      f = convertedFlows(m, c, d, pv, load);
+    return {
+      c,
+      d,
+      net: load - pv + f.charge - f.discharge + f.idle,
+      ac: f.discharge,
+      wear: b.wear_basis === "discharged_storage" ? d : f.charge + f.discharge,
+    };
+  };
+  const roots: number[] = [];
+  for (let i = 0; i + 1 < points.length; i++) {
+    const lo = points[i],
+      hi = points[i + 1],
+      a = lo + (hi - lo) / 3,
+      z = lo + 2 * (hi - lo) / 3;
+    const fa = powers(a).net, fz = powers(z).net, slope = (fz - fa) / (z - a);
+    if (slope !== 0) {
+      const root = a - fa / slope;
+      if (root > lo && root < hi) roots.push(root);
+    }
+  }
+  const split = sorted([...points, ...roots]);
+  const spans: Array<[number, number, boolean]> = split.flatMap((p, i) =>
+    i + 1 < split.length
+      ? [[p, p, false], [p, split[i + 1], true]]
+      : [[p, p, false]]
+  );
+  for (const [left, right, open] of spans) {
+    // Coincident algebraic roots may differ by a floating-point ulp. Such a
+    // span has no distinct interior samples; retain its exact point cells.
+    if (open && right - left < 1e-12) continue;
+    let lo = left, hi = right, possible = true;
+    const middle = (lo + hi) / 2,
+      p = powers(middle),
+      other = open ? powers((lo + middle) / 2) : p,
+      dx = open ? (lo + middle) / 2 - middle : 1;
+    const affine = (key: keyof typeof p) => {
+      const slope = (other[key] - p[key]) / dx;
+      return [p[key] - slope * middle, slope];
+    };
+    const c = affine("c"),
+      d = affine("d"),
+      net = affine("net"),
+      ac = affine("ac"),
+      wear = affine("wear");
+    const limit = (v: number[], max: number) => {
+      if (v[1] > 0) hi = Math.min(hi, (max - v[0]) / v[1]);
+      else if (v[1] < 0) lo = Math.max(lo, (max - v[0]) / v[1]);
+      else if (v[0] > max + EPS) possible = false;
+    };
+    limit(c, b.available[1] ? b.charge_max_w : 0);
+    limit(d, b.available[1] ? b.discharge_max_w : 0);
+    if (!b.grid_charge_allowed[1]) limit(c, cap);
+    if (request.future_supply_bound_w[1] < deficit) {
+      limit(ac, request.future_supply_bound_w[1]);
+    }
+    if (!exportAllowed(request, b, 1) || anchor < perm.export_reserve_kwh) {
+      limit(ac, deficit);
+    } else if (p.ac > deficit) lo = Math.max(lo, perm.export_reserve_kwh);
+    limit(net, source.plant.grid.import_limit_w);
+    limit([-net[0], -net[1]], source.plant.grid.export_limit_w);
+    if (
+      !possible || lo > hi ||
+      (open && lo === hi && (lo === left || hi === right))
+    ) continue;
+    const cell = makeCell(
+      witness,
+      cells.length,
+      lo,
+      hi,
+      source.plant.grid.import_limit_w,
+    );
+    if (open) cell.domain.open_energy = [lo === left, hi === right];
+    for (const key of costKeys) cell.cost[key].polynomial[0] = constant[key];
+    const imports = p.net > 0 ? net : [0, 0],
+      exports = p.net < 0 ? [-net[0], -net[1]] : [0, 0];
+    const linear = (key: CostKey, v: number[], factor: number) => {
+      cell.cost[key].polynomial[0] += v[0] * factor;
+      cell.cost[key].polynomial[1] += v[1] * factor;
+    };
+    linear(
+      "import_sek",
+      imports,
+      h / 1000 * source.economics.import_sek_per_kwh[1],
+    );
+    linear(
+      "export_sek",
+      exports,
+      h / 1000 * source.economics.export_sek_per_kwh[1],
+    );
+    linear("wear_sek", wear, h / 1000 * b.wear_sek_per_kwh);
+    const shaping = .5 * source.economics.shaping_sek_per_kwh_per_kw * h / 1e6;
     cell.cost.shaping_sek.polynomial[0] += shaping * imports[0] ** 2;
     cell.cost.shaping_sek.polynomial[1] += shaping * 2 * imports[0] *
       imports[1];
@@ -901,10 +1197,19 @@ function compile(input: unknown): BatteryExecutionPolicy {
     problem: parseHouseholdProblem(raw.problem),
   } as BatteryExecutionRequest;
   const { problem, identity, permissions, projection, search } = request;
-  requireCondition(request.future_supply_bound_w.length === problem.intervals.length &&
-    request.future_supply_bound_w.every((bound, i) => bound <= Math.max(0,
-      problem.plant.residual_loads.reduce((sum, load) => sum + load.power_w[i], 0) - problem.plant.pv_w[i])),
-    "invalid_future_supply_bounds");
+  requireCondition(
+    request.future_supply_bound_w.length === problem.intervals.length &&
+      request.future_supply_bound_w.every((bound, i) =>
+        bound <= Math.max(
+          0,
+          problem.plant.residual_loads.reduce(
+            (sum, load) => sum + load.power_w[i],
+            0,
+          ) - problem.plant.pv_w[i],
+        )
+      ),
+    "invalid_future_supply_bounds",
+  );
   const b = problem.plant.equipment[0];
   requireCondition(
     b.kind === "battery" && !problem.economics.services.length &&
@@ -974,6 +1279,7 @@ function compile(input: unknown): BatteryExecutionPolicy {
     validity: request.validity,
     domain: request.domain,
     plant: {
+      ...(b.conversion ? { conversion: b.conversion } : {}),
       cutoff_kwh: b.state_kwh.min,
       capacity_kwh: b.state_kwh.max,
       charge_max_w: b.charge_max_w,
@@ -1053,17 +1359,27 @@ function compile(input: unknown): BatteryExecutionPolicy {
     const pv = problem.plant.pv_w[1];
     // The optimizer needs a physically feasible first interval ending at the anchor.
     // Its account is replaced analytically, so use only power required by grid limits.
-    const seedCharge = Math.max(
+    const seedChargeAC = Math.max(
       0,
       pv - load - problem.plant.grid.export_limit_w,
     );
-    const seedDischarge = Math.max(
+    const seedDischargeAC = Math.max(
       0,
       load - pv - problem.plant.grid.import_limit_w,
     );
+    const seedCharge = b.conversion
+      ? seedChargeAC > 0
+        ? Math.max(1, outputPower(b.conversion.surplus_charge, seedChargeAC))
+        : 0
+      : seedChargeAC;
+    const seedDischarge = b.conversion
+      ? inputPower(b.conversion.discharge, seedDischargeAC)
+      : seedDischargeAC;
     for (const [index, anchor] of anchors.entries()) {
-      const initial = anchor - seedCharge * 0.25 * b.charge_efficiency / 1000 +
-        seedDischarge * 0.25 / b.discharge_efficiency / 1000;
+      const initial = anchor -
+        seedCharge * 0.25 * (b.conversion ? 1 : b.charge_efficiency) / 1000 +
+        seedDischarge * 0.25 / (b.conversion ? 1 : b.discharge_efficiency) /
+          1000;
       if (initial < b.state_kwh.min || initial > b.state_kwh.max) continue;
       const future = executionFutureProblem(problem, initial);
       const compiled = compileBatteryPolicy({
@@ -1072,7 +1388,9 @@ function compile(input: unknown): BatteryExecutionPolicy {
         alternatives: [{
           id: "hold",
           current: {
-            actions: [action(seedCharge, seedDischarge, pv, load)],
+            actions: [
+              action(seedCharge, seedDischarge, pv, load, b.conversion),
+            ],
             pv_curtail_w: [0],
           },
         }],

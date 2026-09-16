@@ -308,3 +308,48 @@ Deno.test("zero-base partitions tolerate arithmetic noise but reject real excess
     reasons: ["partition_exceeds_house"],
   });
 });
+
+Deno.test("production DC delivery binds conversion and planner scope", () => {
+  const f = policyExchangeFixture();
+  const conversion = {
+    revision: "measured-installation",
+    grid_charge: { gain: .95, overhead_w: 95 },
+    surplus_charge: { gain: .95, overhead_w: 0 },
+    discharge: { gain: .987, overhead_w: 161 },
+    idle_loss_w: 0,
+  };
+  const request = {
+    ...f.request,
+    native_context: {
+      ...f.request.native_context,
+      response_model_revision: "pv-first-dc-v2",
+      conversion,
+    },
+  };
+  const built = buildBatteryPolicyRequest(f.stored, request, f.now);
+  assert(built.status === "ready", JSON.stringify(built));
+  const compiled = compileBatteryExecutionPolicy(built.request);
+  assert(compiled.status === "compiled", JSON.stringify(compiled));
+  assertEquals(compiled.policy.plant.conversion, conversion);
+  const changed = buildBatteryPolicyRequest(f.stored, {
+    ...request,
+    native_context: {
+      ...request.native_context,
+      catalog_revision: "new-mode-epoch",
+    },
+  }, f.now);
+  assert(changed.status === "ready");
+  assert(
+    changed.request.identity.scope_revision !==
+      built.request.identity.scope_revision,
+  );
+  const widened = buildBatteryPolicyRequest(f.stored, {
+    ...request,
+    native_context: {
+      ...request.native_context,
+      supply_scope: { kind: "none" },
+    },
+  }, f.now);
+  assert(widened.status === "blocked");
+  assertEquals(widened.reasons, ["planner_supply_scope_mismatch"]);
+});

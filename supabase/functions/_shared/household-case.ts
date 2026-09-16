@@ -1,3 +1,4 @@
+import { conversionSchema } from "./battery-conversion.ts";
 /** Closed resolved-model input for scoring and projections, not an HA plan schema. */
 import { z } from "zod";
 import { validateCurve } from "./store-value.ts";
@@ -37,6 +38,7 @@ const bounds = z.object({
 );
 const common = { id, model_id: id, available: z.array(z.boolean()) };
 const battery = z.object({
+  conversion: conversionSchema.optional(),
   ...common,
   kind: z.literal("battery"),
   state_kwh: bounds,
@@ -139,7 +141,8 @@ export const householdProblemSchema = z.object({
 // The repository disables strictNullChecks, which makes Zod infer required fields
 // as optional. Parsing still enforces them; restore required domain fields here.
 type RequiredFields<T> = T extends unknown[] ? RequiredFields<T[number]>[]
-  : T extends object ? { [K in keyof T]-?: RequiredFields<T[K]> }
+  : T extends object ? { [K in Exclude<keyof T, "conversion">]-?: RequiredFields<T[K]> } &
+      ("conversion" extends keyof T ? { conversion?: RequiredFields<T["conversion"]> } : {})
   : T;
 export type HouseholdProblem = RequiredFields<
   z.infer<typeof householdProblemSchema>

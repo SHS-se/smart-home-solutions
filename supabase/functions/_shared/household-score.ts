@@ -166,7 +166,7 @@ export function createHouseholdScorer(input: unknown) {
         if (e.kind !== "heater") {
           objective.wear_sek +=
             (e.kind === "battery" && e.wear_basis === "discharged_storage"
-              ? physical.discharge_kwh[e.id] / e.discharge_efficiency
+              ? e.conversion ? (candidate.actions[e.id][i] as {discharge_w:number}).discharge_w * hours[i]/1000 : physical.discharge_kwh[e.id] / e.discharge_efficiency
               : physical.charge_kwh[e.id] + physical.discharge_kwh[e.id]) * e.wear_sek_per_kwh;
         }
       }

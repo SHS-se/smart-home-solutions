@@ -1,6 +1,6 @@
 # Device participation and battery supply — backend contract companion
 
-**Agreed design, 15 September 2026. Implementation pending.**
+**Agreed design, 15 September 2026; production command wiring implemented 16 September. Deployment pending.**
 The [canonical cross-repository specification](https://github.com/SHS-se/shs-ha-integration/blob/main/docs/device-participation-and-battery-supply.md)
 owns terminology, UI behaviour, accounting formulas, lifecycle, source permissions
 and acceptance. This companion maps those decisions to the producer and reporting
@@ -110,3 +110,27 @@ of better cost. The full scope-capable host/adapter remains required implementat
 [Architecture index](../../ENERGY_OPTIMISATION_ARCHITECTURE.md) ·
 [Planner](planner.md) · [Execution policy](battery-execution-policy.md) ·
 [Portal](portal-and-reporting.md) · [Acceptance](verification-and-delivery.md)
+
+## Production Sigen connection — 16 September 2026
+
+Generated plans now carry explicit `battery_supply_scope` (`whole_house` for the
+current planner). The policy exchange rejects a DC request whose selector differs
+from its source plan. Native catalog changes, including local operating-mode
+revisions, change scope identity and require fresh admission.
+
+The production HA owner connects the existing future-cost policy to actual Sigen
+mode and ESS-limit commands, with live measurements, source-cut energy counters,
+one durable writer, final shared-lock checks and cloud-independent release.
+Verification evaluates without issuing new optimization commands. Planned devices
+remain separately measured in either local mode.
+
+ESS watts and battery energy are DC; grid and household delivery are converted
+AC quantities. Versioned directional gain/fixed-overhead curves are shared by
+current and future scoring. Suitable isolated history identifies discharge and
+grid-charge curves; insufficient evidence retains labelled configured assumptions.
+Solar residuals do not identify pure DC conversion efficiency, and separate
+PV-to-house conversion remains unmodelled in this version.
+
+See [implementation and rollout](scoped-participation-implementation.md) and the
+[HA live guide](https://github.com/SHS-se/shs-ha-integration/blob/main/docs/battery-live-commissioning.md)
+for signs, sensor freshness, adapter timing, loss-fit evidence and deployment tests.

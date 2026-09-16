@@ -1,3 +1,4 @@
+import { convertedFlows } from "./battery-conversion.ts";
 /** Deterministic materialisation. No prices, preferences or utility are read here. */
 import type {
   HouseholdCandidate,
@@ -64,6 +65,8 @@ export function materializeHousehold(
       const a = candidate.actions[e.id][i];
       const path = `${prefix}.${e.id}`;
       if (e.kind === "battery" && a.kind === "battery") {
+        check(!e.conversion || plant.equipment.length===1,path,"DC conversion requires materialized nonbattery residual loads");
+        check(!e.conversion || candidate.pv_curtail_w[i]===0,path,"PV First DC operation does not authorize solar curtailment");
         check(
           a.charge_w <= e.charge_max_w + EPS &&
             a.discharge_w <= e.discharge_max_w + EPS,
@@ -81,7 +84,7 @@ export function materializeHousehold(
           "battery unavailable",
         );
         check(
-          a.solar_charge_w <= a.charge_w + EPS,
+          !!e.conversion || a.solar_charge_w <= a.charge_w + EPS,
           path,
           "solar allocation exceeds charge",
         );
@@ -91,7 +94,7 @@ export function materializeHousehold(
           "export allocation exceeds discharge",
         );
         check(
-          e.grid_charge_allowed[i] || a.charge_w - a.solar_charge_w <= EPS,
+          e.grid_charge_allowed[i] || (e.conversion ? convertedFlows(e.conversion,a.charge_w,a.discharge_w,plant.pv_w[i]-candidate.pv_curtail_w[i],load).charge : a.charge_w) - a.solar_charge_w <= EPS,
           path,
           "grid charging not permitted",
         );
@@ -100,17 +103,24 @@ export function materializeHousehold(
           path,
           "battery export not permitted",
         );
-        charge += a.charge_w;
-        discharge += a.discharge_w;
+        const f = e.conversion ? convertedFlows(e.conversion, a.charge_w, a.discharge_w,
+          plant.pv_w[i]-candidate.pv_curtail_w[i],load) : null;
+        if (f) {
+          check(Math.abs(a.solar_charge_w-f.solar)<=EPS,path,"DC model solar attribution mismatch");
+          check(Math.abs(a.export_w-Math.max(0,f.discharge-Math.max(0,load-plant.pv_w[i]+candidate.pv_curtail_w[i])))<=EPS,path,"DC model export attribution mismatch");
+        }
+        charge += f ? f.charge : a.charge_w;
+        discharge += f ? f.discharge : a.discharge_w;
+        if (f) load += f.idle;
         solarCharge += a.solar_charge_w;
         batteryExport += a.export_w;
-        charged[e.id] = a.charge_w * h / 1000;
-        discharged[e.id] = a.discharge_w * h / 1000;
+        charged[e.id] = (f ? f.charge : a.charge_w) * h / 1000;
+        discharged[e.id] = (f ? f.discharge : a.discharge_w) * h / 1000;
         state[e.id].push(
-          state[e.id][i] + charged[e.id] * e.charge_efficiency -
-            discharged[e.id] / e.discharge_efficiency,
+          state[e.id][i] + (f ? (a.charge_w-a.discharge_w)*h/1000 : charged[e.id] * e.charge_efficiency -
+            discharged[e.id] / e.discharge_efficiency),
         );
-        equipmentW[e.id] = a.charge_w - a.discharge_w;
+        equipmentW[e.id] = f ? f.charge-f.discharge+f.idle : a.charge_w - a.discharge_w;
       } else if (e.kind === "ev" && a.kind === "ev") {
         check(
           legalLevel(e.current_steps_a, a.current_a),

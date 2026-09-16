@@ -71,7 +71,7 @@ export function executionFixtureRequest(
           charge_efficiency: 0.95,
           discharge_efficiency: 0.9,
           wear_basis: "ac_throughput",
-    wear_sek_per_kwh: 0.1,
+          wear_sek_per_kwh: 0.1,
           grid_charge_allowed: Array(intervalCount).fill(true),
           export_allowed: Array(intervalCount).fill(true),
         }],
@@ -326,7 +326,20 @@ if (import.meta.main) {
   if (battery.kind !== "battery") throw new Error("fixture battery missing");
   battery.grid_charge_allowed.fill(false);
   battery.export_allowed.fill(false);
+  const dc = executionFixtureRequest();
+  dc.identity.response_model_revision = "pv-first-dc-v2";
+  const dcBattery = dc.problem.plant.equipment[0];
+  if (dcBattery.kind !== "battery") throw new Error("battery required");
+  dcBattery.conversion = {
+    revision: "synthetic-measured-curves",
+    grid_charge: { gain: .95, overhead_w: 95 },
+    surplus_charge: { gain: .98, overhead_w: 20 },
+    discharge: { gain: .987, overhead_w: 161 },
+    idle_loss_w: 30,
+  };
   const files = {
+    "dc-current-vectors.json": executionCurrentVectors(dc),
+    "dc-continuation-vectors.json": executionContinuationVectors(dc),
     "policy.json": vectors.policy,
     "current-vectors.json": vectors,
     "native-permissions-current-vectors.json": executionCurrentVectors(native),
