@@ -48,11 +48,19 @@ export function convertedFlows(
   house: number,
 ) {
   const inputs = chargeInputs(c, charge, pv, house);
+  // Preserve installation overhead when configured efficiency-only curves are
+  // active. Fitted directional overhead already present in the flows counts
+  // once, including discharge below the curve's clamped zero crossing.
+  const chargeFixed = (inputs.solar > 0
+    ? c.surplus_charge.overhead_w / c.surplus_charge.gain : 0) +
+    (inputs.grid > 0 ? c.grid_charge.overhead_w / c.grid_charge.gain : 0);
+  const dischargeFixed = discharge > 0 ? c.discharge.overhead_w : 0;
+  const represented = chargeFixed + Math.min(dischargeFixed, c.discharge.gain * discharge);
   return {
     charge: inputs.solar + inputs.grid,
     solar: inputs.solar,
     discharge: outputPower(c.discharge, discharge),
-    idle: charge === 0 && discharge === 0 ? c.idle_loss_w : 0,
+    idle: Math.max(c.idle_loss_w, chargeFixed + dischargeFixed) - represented,
   };
 }
 export function gridPower(
