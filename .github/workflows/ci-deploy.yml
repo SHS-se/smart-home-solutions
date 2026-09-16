@@ -65,6 +65,9 @@ jobs:
       - name: Unit tests
         run: deno task test
 
+      - name: Check isolated edge-function dependencies
+        run: deno run --allow-read --allow-write --allow-run scripts/check-edge-function-dependencies.ts
+
       - name: Build
         # dev branch builds against the TEST Supabase (mode=test); all others use prod (.env).
         run: |
