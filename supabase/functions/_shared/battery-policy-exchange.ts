@@ -1,3 +1,4 @@
+import { haApiResponse } from "./ha-api-contract.ts";
 import { conversionSchema } from "./battery-conversion.ts";
 /** Device-authenticated delivery boundary. Compiling economics grants no control authority. */
 import { createHash } from "node:crypto";
@@ -318,34 +319,43 @@ export async function handleBatteryPolicyExchange(
   request: Request,
   ports: BatteryExchangePorts,
 ): Promise<Response> {
+  const requestId = request.headers.get("X-Request-ID") || crypto.randomUUID();
+  const respond = (body: unknown, status = 200) =>
+    haApiResponse(
+      requestId,
+      body,
+      status,
+      {},
+      request.headers.get("X-SHS-API-Version"),
+    );
   if (request.method !== "POST") {
-    return Response.json({ error: "method_not_allowed" }, { status: 405 });
+    return respond({ error: "method_not_allowed" }, 405);
   }
   const auth = await ports.authenticate(request);
-  if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
+  if (!auth) return respond({ error: "unauthorized" }, 401);
   if (!auth.subscriptionActive) {
-    return Response.json({ error: "subscription_inactive" }, { status: 402 });
+    return respond({ error: "subscription_inactive" }, 402);
   }
   if (Number(request.headers.get("content-length")) > 128_000) {
-    return Response.json({ error: "request_too_large" }, { status: 413 });
+    return respond({ error: "request_too_large" }, 413);
   }
   const raw = await request.text();
   if (new TextEncoder().encode(raw).length > 128_000) {
-    return Response.json({ error: "request_too_large" }, { status: 413 });
+    return respond({ error: "request_too_large" }, 413);
   }
   let input: unknown;
   try {
     input = JSON.parse(raw);
   } catch {
-    return Response.json({ error: "invalid_body" }, { status: 400 });
+    return respond({ error: "invalid_body" }, 400);
   }
   const parsed = batteryPolicyExchangeSchema.safeParse(input);
   if (!parsed.success) {
-    return Response.json({ error: "invalid_body" }, { status: 400 });
+    return respond({ error: "invalid_body" }, 400);
   }
   const body = parsed.data;
   const reply = (outcome: object) =>
-    Response.json({
+    respond({
       schema: "battery-policy-delivery-v1",
       request_id: body.request_id,
       plan_id: body.plan_id,

@@ -1,6 +1,9 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { authenticateDevice } from "../_shared/ha-device-auth.ts";
-import { HA_API_CORS_HEADERS } from "../_shared/ha-api-contract.ts";
+import {
+  HA_API_CORS_HEADERS,
+  haApiResponse,
+} from "../_shared/ha-api-contract.ts";
 import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
 import {
   handleBatteryPolicyExchange,
@@ -51,10 +54,17 @@ Deno.serve(
         "[BATTERY-POLICY] exchange failed",
         error instanceof Error ? error.message : "unknown",
       );
-      return Response.json({ error: "policy_exchange_failed" }, {
-        status: 503,
-        headers: HA_API_CORS_HEADERS,
-      });
+      return haApiResponse(
+        request.headers.get("X-Request-ID") || crypto.randomUUID(),
+        {
+          error: "policy_exchange_failed",
+          message: "Battery policy service is temporarily unavailable",
+          retryable: true,
+        },
+        503,
+        {},
+        request.headers.get("X-SHS-API-Version"),
+      );
     }
   }),
 );

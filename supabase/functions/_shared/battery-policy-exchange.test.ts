@@ -209,6 +209,10 @@ Deno.test("delivery is home-authenticated, bounded, and never grants physical au
   const request = (body: unknown = f.request) =>
     new Request("https://test/policy", {
       method: "POST",
+      headers: {
+        "X-SHS-API-Version": "1",
+        "X-Request-ID": "transport-request",
+      },
       body: JSON.stringify(body),
     });
   authorized = false;
@@ -227,9 +231,13 @@ Deno.test("delivery is home-authenticated, bounded, and never grants physical au
   subscribed = true;
   const result = await (await handleBatteryPolicyExchange(request(), ports))
     .json();
-  assertEquals(result.status, "delivered");
-  assertEquals(result.control_authority, false);
-  assertEquals(result.native_context, f.request.native_context);
+  assertEquals(result.api_version, 1);
+  assertEquals(result.ok, true);
+  assertEquals(result.request_id, "transport-request");
+  assertEquals(result.data.request_id, f.request.request_id);
+  assertEquals(result.data.status, "delivered");
+  assertEquals(result.data.control_authority, false);
+  assertEquals(result.data.native_context, f.request.native_context);
   assertEquals(calls, 1);
   assertEquals(homes, ["home-1", "home-1"]);
   assertEquals(
@@ -245,7 +253,7 @@ Deno.test("delivery is home-authenticated, bounded, and never grants physical au
   };
   const stale = await (await handleBatteryPolicyExchange(request(), ports))
     .json();
-  assertEquals(stale.reasons, ["superseded_plan"]);
+  assertEquals(stale.data.reasons, ["superseded_plan"]);
 });
 
 Deno.test("provider delivery fixture is the real compiler output and explicitly synthetic", async () => {
@@ -352,4 +360,51 @@ Deno.test("production DC delivery binds conversion and planner scope", () => {
   }, f.now);
   assert(widened.status === "blocked");
   assertEquals(widened.reasons, ["planner_supply_scope_mismatch"]);
+});
+
+Deno.test("battery policy errors use the SHS envelope before a body can be read", async () => {
+  const f = policyExchangeFixture();
+  const ports: BatteryExchangePorts = {
+    authenticate: async () => ({ homeId: "home", subscriptionActive: true }),
+    load: async () => null,
+    compile: async (request) => compileBatteryExecutionPolicy(request),
+    now: () => f.now,
+  };
+  const request = (body: string, method = "POST") =>
+    new Request("https://test/policy", {
+      method,
+      headers: {
+        "X-SHS-API-Version": "1",
+        "X-Request-ID": "transport-request",
+      },
+      ...(method === "POST" ? { body } : {}),
+    });
+  for (
+    const [body, method, status, code] of [
+      ["", "GET", 405, "method_not_allowed"],
+      ["{", "POST", 400, "invalid_body"],
+      ["{}", "POST", 400, "invalid_body"],
+      ["x".repeat(128001), "POST", 413, "request_too_large"],
+    ] as const
+  ) {
+    const response = await handleBatteryPolicyExchange(
+      request(body, method),
+      ports,
+    );
+    const wire = await response.json();
+    assertEquals(response.status, status);
+    assertEquals(wire.api_version, 1);
+    assertEquals(wire.ok, false);
+    assertEquals(wire.request_id, "transport-request");
+    assertEquals(response.headers.get("X-Request-ID"), "transport-request");
+    assertEquals(wire.error_info.code, code);
+  }
+  const response = await handleBatteryPolicyExchange(
+    request(JSON.stringify(f.request)),
+    ports,
+  );
+  const wire = await response.json();
+  assertEquals(wire.ok, true);
+  assertEquals(wire.data.status, "blocked");
+  assertEquals(wire.data.reasons, ["projection_unavailable"]);
 });
