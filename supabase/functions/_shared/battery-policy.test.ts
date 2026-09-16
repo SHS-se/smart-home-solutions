@@ -410,3 +410,26 @@ Deno.test("battery compiler bounds terminal curve complexity before suffix searc
   }];
   assertEquals(compileBatteryPolicy(c).status, "rejected");
 });
+
+Deno.test("full-horizon search work grows with added intervals rather than rescoring every prefix", () => {
+  const run = (n: number) => {
+    const c = base(n);
+    c.search.energy_levels_kwh = [];
+    c.search.retained_per_level = 2;
+    c.search.pv_curtailment_fractions = [0];
+    c.search.max_interval_evaluations = 25000;
+    const result = compileBatteryPolicy(c);
+    assert(result.status === "compiled", JSON.stringify(result));
+    assert(
+      result.work.interval_evaluations <=
+        result.work.interval_evaluations_upper_bound,
+    );
+    return result.work;
+  };
+  const half = run(144), full = run(288);
+  assert(
+    full.interval_evaluations_upper_bound <=
+      half.interval_evaluations_upper_bound * 2 + 100,
+  );
+  assert(full.interval_evaluations_upper_bound < 25000);
+});

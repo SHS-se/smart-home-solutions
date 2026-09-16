@@ -530,7 +530,7 @@ Deno.test("reject subdivisions, aggregate work and oversized terminal curves wit
   r.search.max_interval_evaluations = 10;
   assertEquals(compileBatteryExecutionPolicy(r).status, "rejected");
   const excessive = executionFixtureRequest(288);
-  excessive.search.max_interval_evaluations = 40_000_000;
+  excessive.search.max_interval_evaluations = 1_000;
   assertEquals(compileBatteryExecutionPolicy(excessive).status, "rejected");
   const subdivided = executionFixtureRequest();
   subdivided.problem.intervals[0].end = new Date(

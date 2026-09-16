@@ -10,6 +10,8 @@ import {
   type Violation,
 } from "./household-case.ts";
 import {
+  type BatteryPrefix,
+  createBatteryPrefixScorer,
   createHouseholdScorer,
   HOUSEHOLD_SCORER_VERSION,
   type HouseholdScore,
@@ -45,7 +47,7 @@ interface Alternative {
 }
 interface Node {
   path: Path;
-  score: Scored;
+  score: BatteryPrefix;
   bucket: number;
   key: string;
 }
@@ -147,7 +149,7 @@ function combine(terms: { value: Objective; weight: number }[]): Objective {
   ) as unknown as Objective;
 }
 
-/** Cost/physics all go through cached scorer instances for complete prefixes. */
+/** Full scoring is retained for the forced current prefix and final witness. */
 function prefixScorers(problem: HouseholdProblem, battery: Battery) {
   const cache = new Map<number, ReturnType<typeof createHouseholdScorer>>();
   return (length: number) => {
@@ -205,7 +207,7 @@ function extensions(
   levels: number[],
   fractions: number[],
 ) {
-  const state = node.score.trajectory.state[battery.id].at(-1)!;
+  const state = node.score.energy_kwh;
   const interval = problem.intervals[index];
   const hours = (Date.parse(interval.end) - Date.parse(interval.start)) /
     3_600_000;
@@ -390,6 +392,7 @@ function compile(input: unknown) {
   }
   const fractions = sortedNumbers(search.pv_curtailment_fractions);
   const scorers = prefixScorers(problem, battery);
+  const incremental = createBatteryPrefixScorer(problem);
   const evidence = (): SearchEvidence => ({
     scorer_calls: 0,
     interval_evaluations: 0,
@@ -446,7 +449,7 @@ function compile(input: unknown) {
   let perAlternativeBound = block + n; // forced prefix plus final rescore
   for (let length = block + 1; length <= n; length++) {
     perAlternativeBound += (length === block + 1 ? 1 : maxNodes) *
-      maxExtensions * length;
+      maxExtensions;
   }
   if (
     perAlternativeBound > search.max_interval_evaluations ||
@@ -472,7 +475,12 @@ function compile(input: unknown) {
       }
       let frontier: Node[] = [{
         path: a.current,
-        score,
+        score: {
+          length: block,
+          energy_kwh: score.trajectory.state[battery.id].at(-1)!,
+          import_w: score.trajectory.intervals.at(-1)!.import_w,
+          objective: score.objective,
+        },
         bucket: levels.indexOf(score.trajectory.state[battery.id].at(-1)!),
         key: JSON.stringify(a.current),
       }];
@@ -489,14 +497,28 @@ function compile(input: unknown) {
               fractions,
             )
           ) {
-            const result = evaluate(extension.path, stats);
-            if (result.status !== "scored") continue;
+            stats.scorer_calls++;
+            stats.interval_evaluations++;
+            const step = incremental.extend(
+              node.score,
+              extension.path.actions.at(-1)!,
+              extension.path.pv_curtail_w.at(-1)!,
+            );
+            if (step.status === "invalid_candidate") {
+              throw new Error(
+                `Compiler generated an invalid candidate: ${
+                  JSON.stringify(step.violations)
+                }`,
+              );
+            }
+            if (step.status !== "scored") continue;
+            const result = step.prefix;
             stats.feasible_extensions++;
             const next: Node = { ...extension, score: result };
             // Exact Markov-state dominance only: no rounded energy/import buckets.
             const stateKey = JSON.stringify([
-              result.trajectory.state[battery.id].at(-1),
-              result.trajectory.intervals.at(-1)!.import_w,
+              result.energy_kwh,
+              result.import_w,
             ]);
             const previous = merged.get(stateKey);
             if (previous) stats.dominated_prefixes++;

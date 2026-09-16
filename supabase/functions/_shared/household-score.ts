@@ -2,6 +2,7 @@
 import { totalUtility, type UtilityCurve } from "./store-value.ts";
 import {
   candidateIssues,
+  type Equipment,
   type HouseholdCandidate,
   householdCandidateSchema,
   type HouseholdProblem,
@@ -10,6 +11,7 @@ import {
 } from "./household-case.ts";
 import {
   materializeHousehold,
+  type PhysicalInterval,
   type PhysicalTrajectory,
 } from "./household-physics.ts";
 
@@ -114,6 +116,172 @@ function meanUtility(
   return integral / (high - low);
 }
 
+/** Shared wear account for complete trajectories and incremental battery search. */
+function equipmentWear(
+  e: Exclude<Equipment, { kind: "heater" }>,
+  physical: PhysicalInterval,
+  action: HouseholdCandidate["actions"][string][number],
+  hours: number,
+): number {
+  return (e.kind === "battery" && e.wear_basis === "discharged_storage"
+    ? e.conversion && action.kind === "battery"
+      ? action.discharge_w * hours / 1000
+      : physical.discharge_kwh[e.id] / e.discharge_efficiency
+    : physical.charge_kwh[e.id] + physical.discharge_kwh[e.id]) *
+    e.wear_sek_per_kwh;
+}
+
+/** Sufficient immutable state for the single-battery, service-free objective. */
+export interface BatteryPrefix {
+  length: number;
+  energy_kwh: number;
+  import_w: number | null;
+  objective: Objective;
+}
+type BatteryPrefixResult =
+  | { status: "scored"; prefix: BatteryPrefix }
+  | {
+    status: "invalid_candidate" | "physically_infeasible";
+    violations: Violation[];
+  };
+
+/** Advance one interval through the same physics and accounts as the full scorer.
+ * No previous interval is reparsed/materialized. Final witnesses still require a full score.
+ */
+export function createBatteryPrefixScorer(input: unknown) {
+  const problem = parseHouseholdProblem(input);
+  const { plant, economics: econ } = problem;
+  const battery = plant.equipment[0];
+  if (
+    plant.equipment.length !== 1 || battery.kind !== "battery" ||
+    plant.thermal_stores.length || econ.services.length
+  ) {
+    throw new Error(
+      "Incremental battery scoring requires one battery and no household services",
+    );
+  }
+  const slots = problem.intervals.map((interval, i) => ({
+    hours: (Date.parse(interval.end) - Date.parse(interval.start)) / 3600000,
+    plant: {
+      ...plant,
+      pv_w: [plant.pv_w[i]],
+      residual_loads: plant.residual_loads.map((l) => ({
+        ...l,
+        power_w: [l.power_w[i]],
+      })),
+      equipment: [{
+        ...battery,
+        available: [battery.available[i]],
+        grid_charge_allowed: [battery.grid_charge_allowed[i]],
+        export_allowed: [battery.export_allowed[i]],
+      }],
+    },
+  }));
+  const initial: BatteryPrefix = {
+    length: 0,
+    energy_kwh: battery.state_kwh.initial,
+    import_w: econ.initial_import_w,
+    objective: emptyObjective(),
+  };
+  const extend = (
+    prefix: BatteryPrefix,
+    action: Extract<
+      HouseholdCandidate["actions"][string][number],
+      { kind: "battery" }
+    >,
+    curtailedW: number,
+  ): BatteryPrefixResult => {
+    const i = prefix.length;
+    if (!Number.isInteger(i) || i < 0 || i >= slots.length) {
+      throw new RangeError("Battery prefix is outside the horizon");
+    }
+    const parsed = householdCandidateSchema.safeParse({
+      id: "incremental",
+      actions: { [battery.id]: [action] },
+      pv_curtail_w: [curtailedW],
+    });
+    if (!parsed.success) {
+      return {
+        status: "invalid_candidate",
+        violations: parsed.error.issues.map((e) => ({
+          path: e.path.join("."),
+          message: e.message,
+        })),
+      };
+    }
+    const candidate = parsed.data as HouseholdCandidate;
+    const slot = slots[i], e = slot.plant.equipment[0];
+    const trajectory = materializeHousehold(
+      {
+        ...slot.plant,
+        equipment: [{
+          ...e,
+          state_kwh: { ...e.state_kwh, initial: prefix.energy_kwh },
+        }],
+      },
+      [slot.hours],
+      candidate,
+    );
+    if (trajectory.violations.length) {
+      return {
+        status: "physically_infeasible",
+        violations: trajectory.violations.map((v) => ({
+          ...v,
+          path: v.path.replace(/^intervals\.0/, `intervals.${i}`),
+        })),
+      };
+    }
+    const physical = trajectory.intervals[0];
+    const account = scoreElectricityInterval({
+      hours: slot.hours,
+      import_w: physical.import_w,
+      export_w: physical.export_w,
+      previous_import_w: prefix.import_w,
+      import_sek_per_kwh: econ.import_sek_per_kwh[i],
+      export_sek_per_kwh: econ.export_sek_per_kwh[i],
+      shaping_sek_per_kwh_per_kw: econ.shaping_sek_per_kwh_per_kw,
+      ramp_sek_per_kw: econ.ramp_sek_per_kw,
+    });
+    account.wear_sek += equipmentWear(
+      battery,
+      physical,
+      candidate.actions[battery.id][0],
+      slot.hours,
+    );
+    const energy = trajectory.state[battery.id][1];
+    const total = { ...prefix.objective };
+    for (const key of Object.keys(total) as (keyof Objective)[]) {
+      total[key] += account[key];
+    }
+    if (i === slots.length - 1) {
+      // Same closing account and summation order as complete trajectory scoring.
+      let terminal = 0;
+      for (const t of econ.terminal) terminal += totalUtility(t.curve, energy);
+      total.terminal_sek += terminal;
+    }
+    const objective = reconcileObjective(total);
+    if (Object.values(objective).some((v) => !Number.isFinite(v))) {
+      return {
+        status: "invalid_candidate",
+        violations: [{
+          path: "objective",
+          message: "numeric overflow while scoring",
+        }],
+      };
+    }
+    return {
+      status: "scored",
+      prefix: {
+        length: i + 1,
+        energy_kwh: energy,
+        import_w: physical.import_w,
+        objective,
+      },
+    };
+  };
+  return { initial, extend };
+}
+
 export function createHouseholdScorer(input: unknown) {
   const problem = parseHouseholdProblem(input); // zod creates an owned deep copy
   const { plant, economics: econ } = problem;
@@ -164,10 +332,12 @@ export function createHouseholdScorer(input: unknown) {
       });
       for (const e of plant.equipment) {
         if (e.kind !== "heater") {
-          objective.wear_sek +=
-            (e.kind === "battery" && e.wear_basis === "discharged_storage"
-              ? e.conversion ? (candidate.actions[e.id][i] as {discharge_w:number}).discharge_w * hours[i]/1000 : physical.discharge_kwh[e.id] / e.discharge_efficiency
-              : physical.charge_kwh[e.id] + physical.discharge_kwh[e.id]) * e.wear_sek_per_kwh;
+          objective.wear_sek += equipmentWear(
+            e,
+            physical,
+            candidate.actions[e.id][i],
+            hours[i],
+          );
         }
       }
       for (const key of physical.starts) {
