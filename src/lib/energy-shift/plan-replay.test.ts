@@ -1,6 +1,24 @@
-import { assertEquals } from 'jsr:@std/assert@1';
-import { replayHistory } from './plan-replay.ts';
+import { assertEquals, assertThrows } from 'jsr:@std/assert@1';
+import { replayHistory, replayPlanSelection } from './plan-replay.ts';
 import { buildEnergyTimeline, SLOT_MS } from './energy-timeline.ts';
+import { generateOptimisationPlan } from '../../../supabase/functions/_shared/energy-optimisation.ts';
+import { mixedModeSnapshot } from '../../../scripts/generate-ha-plan-fixture.ts';
+
+Deno.test('replay retains both branches of a scoped solve and bookmarks the displayed scenario', () => {
+  const snapshot = mixedModeSnapshot();
+  const now = new Date(snapshot.captured_at);
+  const plan = generateOptimisationPlan(snapshot, now);
+  for (const scenario of ['priority', 'baseline'] as const) {
+    const slot = plan.plans[scenario].slots[1];
+    const replay = replayPlanSelection(plan, scenario, slot.start);
+    assertEquals(replay.selection, { scenario, quarter_index: 1, quarter_start: slot.start });
+    assertEquals(replay.expected.planner_output, generateOptimisationPlan(snapshot, now, [], plan.price_outlook));
+    assertEquals(replay.expected.selected_quarter, slot);
+    assertEquals(replay.expected.planner_output.device_models.length, 2);
+    assertEquals(replay.expected.planner_output.execution_plan!.device_models.length, 0);
+  }
+  assertThrows(() => replayPlanSelection(plan, 'priority', '2000-01-01T00:00:00Z'));
+});
 
 Deno.test('replay includes measured overnight device power outside the visible window and preserves gaps', () => {
   const at = Date.parse('2026-09-10T22:30:00Z');

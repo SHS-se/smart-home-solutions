@@ -16,6 +16,7 @@
 import { test, expect, type BrowserContext } from '../playwright-fixture';
 import { CAPTURED_AT, snapshot } from '../src/lib/energy-shift/optimisation-snapshot.fixture';
 import { generateOptimisationPlan } from '../supabase/functions/_shared/energy-optimisation';
+import { mixedModeSnapshot } from '../scripts/generate-ha-plan-fixture';
 import { readFileSync } from 'node:fs';
 const mixedModeFixture = JSON.parse(readFileSync(new URL('../contracts/ha-api/fixtures/schema-9-mixed-mode-plan.json', import.meta.url), 'utf8'));
 import { portalDelta } from './helpers/portal-delta';
@@ -58,7 +59,7 @@ const idle: ReplanColumns = {
  * control. Held in a mutable cell so pressing the button can change what the
  * next read returns, which is the whole behaviour being checked.
  */
-async function mockBackend(context: BrowserContext, replan: { row: ReplanColumns; reportedPlanId?: string }, plan = PLAN) {
+async function mockBackend(context: BrowserContext, replan: { row: ReplanColumns; reportedPlanId?: string }, plan = PLAN, planSnapshot = snapshot()) {
   const nowIso = new Date().toISOString();
   const email = 'ana@example.com';
   const user = {
@@ -122,7 +123,7 @@ async function mockBackend(context: BrowserContext, replan: { row: ReplanColumns
           captured_at: CAPTURED_AT,
           updated_at: CAPTURED_AT,
           plan_id: plan.plan_id,
-          generation_request_id: null,
+          generation_request_id: REQUEST_ID,
           plan_schema_version: plan.schema_version,
           ha_runtime: replan.reportedPlanId ? {
             plan_id: replan.reportedPlanId, observed_at: CAPTURED_AT, state: 'ready',
@@ -157,7 +158,7 @@ async function mockBackend(context: BrowserContext, replan: { row: ReplanColumns
       ? [{ id: CUSTOMER_ID, primary_home_id: HOME_ID }]
       : table === 'energy_optimisation_current'
       // The economics editor loads its snapshot on demand, separately from sync.
-      ? [{ snapshot: snapshot(), plan }]
+      ? [{ snapshot: planSnapshot, plan }]
       : [];
     const single = (route.request().headers().accept || '').includes('vnd.pgrst.object');
     await route.fulfill({
@@ -277,10 +278,10 @@ test.describe('requesting a replan', () => {
 });
 
 
-test('mixed modes default to live operation and keep the hypothetical preview separate', async ({ context, page }) => {
+test('mixed modes show one complete device plan and export the selected comparison', async ({ context, page }) => {
   const plan = mixedModeFixture.plan as typeof PLAN;
   await page.clock.setFixedTime(new Date(mixedModeFixture.validation_time));
-  await mockBackend(context, { row: { ...idle } }, plan);
+  await mockBackend(context, { row: { ...idle } }, plan, mixedModeSnapshot());
   await page.goto('/login');
   await page.fill('#email', 'whoever@example.com');
   await page.fill('#password', 'mock-password');
@@ -289,11 +290,20 @@ test('mixed modes default to live operation and keep the hypothetical preview se
   await page.goto('/portal/energy-modeling?tab=plan');
   const live = page.getByRole('button', { name: /Faktisk drift|Live operation/ });
   const preview = page.getByRole('button', { name: /Planeringsförhandsvisning|Planning preview/ });
-  await expect(live).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByText(/Devices SHS does not control|Enheter som SHS inte styr/)).toBeVisible();
-  await preview.click();
-  await expect(preview).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByText(/Shows what could happen|Visar vad som kunde ske/)).toBeVisible();
-  await live.click();
-  await expect(live).toHaveAttribute('aria-pressed', 'true');
+  await expect(live).toHaveCount(0);
+  await expect(preview).toHaveCount(0);
+  const downloadReplay = async (scenario: 'priority' | 'baseline') => {
+    const downloaded = page.waitForEvent('download');
+    await page.getByRole('button', { name: /replay|repris/i }).click();
+    const file = await downloaded;
+    const bundle = JSON.parse(readFileSync((await file.path())!, 'utf8'));
+    expect(bundle.selection.scenario).toBe(scenario);
+    expect(bundle.expected.planner_output).toEqual(plan);
+    expect(bundle.expected.selected_quarter).toEqual(
+      plan.plans[scenario].slots[bundle.selection.quarter_index],
+    );
+  };
+  await downloadReplay('priority');
+  await page.getByRole('button', { name: /Utan plan|Without plan/ }).click();
+  await downloadReplay('baseline');
 });

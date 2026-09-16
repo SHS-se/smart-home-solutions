@@ -1,4 +1,3 @@
-import { consumptionPlanSlots } from '@/lib/energy-shift/consumption-partition';
 import { downloadTrafficReport, recordPortalSync } from '@/lib/network-traffic';
 import { HistoryCache, type HistoryDelta, type ChangedValue } from '@/lib/energy-shift/portal-sync';
 import { readPlanRefresh } from '@/lib/energy-shift/plan-refresh';
@@ -494,11 +493,7 @@ const PlanView: React.FC<{
 }) => {
   const { t } = useLanguage();
   const homeTimeZone = useHomeTimeZone();
-  const [scopeView, setScopeView] = useState<'execution' | 'preview' | null>(null);
-  const hasExecution = Boolean(current.plan.execution_plan);
-  const selectedScope = scopeView ?? (Object.values(current.plan.operating_scope?.modes ?? {}).includes('controlling') ? 'execution' : 'preview');
-  const displayedPlan = hasExecution && selectedScope === 'execution' ? current.plan.execution_plan! : current.plan;
-  const model = usePlanModel({ ...current, plan: displayedPlan }, empiricalDevices, stale);
+  const model = usePlanModel(current, empiricalDevices, stale);
   const {
     plan, planView, setPlanView, executed, active, comparison, hasBattery, hasEvBattery,
     sourceStale, bindingExpired, ready, pct, costDelta, costTone, costMeaning,
@@ -590,22 +585,20 @@ const PlanView: React.FC<{
     () => new Map(empiricalDevices.map(device => [device.id, device.device_key])),
     [empiricalDevices],
   );
-  // Membership belongs to the captured parent, including Verification devices.
+  // Only Planned devices get a schedule band. A change to Monitored takes
+  // effect in the chart while the replacement plan is being requested.
   const schedulableKeys = useMemo(
-    () => new Set(current.plan.device_models.map(device => device.key)),
-    [current.plan.device_models],
+    () => new Set(model.deviceRoleView.visibleModels.map(device => device.key)),
+    [model.deviceRoleView.visibleModels],
   );
-  const consumptionSlots = useMemo(() => consumptionPlanSlots(
-    current.plan, active.slots, hasExecution && selectedScope === 'execution',
-  ), [current.plan, active.slots, hasExecution, selectedScope]);
   const timeline = useMemo(() => buildEnergyTimeline({
     actuals,
     deviceActuals,
     prices,
-    planSlots: consumptionSlots,
+    planSlots: active.slots,
     deviceKeyById,
     nowMs,
-  }), [actuals, consumptionSlots, deviceActuals, deviceKeyById, nowMs, prices]);
+  }), [actuals, active.slots, deviceActuals, deviceKeyById, nowMs, prices]);
   const dayWindowOptions = availableDayWindows(timeline, nowMs, homeTimeZone);
   const timelineRange = dayWindowRange(timeline, dayWindow, nowMs, homeTimeZone);
   const windowSummary = summariseTimeline(timeline, timelineRange);
@@ -845,18 +838,6 @@ const PlanView: React.FC<{
               )}
             </div>
             <div className="space-y-1.5 text-right">
-              {hasExecution && <>
-                <div className="flex gap-1" role="group" aria-label={t('Drift och förhandsvisning', 'Operation and preview')}>
-                  {(['execution', 'preview'] as const).map(scope => <Button key={scope} size="sm"
-                    variant={selectedScope === scope ? 'default' : 'outline'} aria-pressed={selectedScope === scope}
-                    onClick={() => setScopeView(scope)}>
-                    {scope === 'execution' ? t('Faktisk drift', 'Live operation') : t('Planeringsförhandsvisning', 'Planning preview')}
-                  </Button>)}
-                </div>
-                <p className="max-w-sm text-[11px] text-muted-foreground">{selectedScope === 'execution'
-                  ? t('Enheter som SHS inte styr räknas som förväntad förbrukning.', 'Devices SHS does not control count as expected demand.')
-                  : t('Visar vad som kunde ske om SHS styrde alla inkluderade enheter.', 'Shows what could happen if SHS controlled all included devices.')}</p>
-              </>}
               <div className="flex gap-1" role="group" aria-label={t('Jämför planvyer', 'Compare plan views')}>
                 <Button
                   size="sm"

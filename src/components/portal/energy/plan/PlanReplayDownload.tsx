@@ -23,7 +23,7 @@ import type { TimelineRange, TimelineRow } from '@/lib/energy-shift/energy-timel
 import type { PlanModel } from './usePlanModel';
 import { useHomeTimeZone } from '../HomeTimeZoneContext';
 import { formatHomeStamp } from '@/lib/energy-shift/home-time';
-import { replayHistory } from '@/lib/energy-shift/plan-replay';
+import { replayHistory, replayPlanSelection } from '@/lib/energy-shift/plan-replay';
 
 const PlanReplayDownload: React.FC<{
   model: PlanModel;
@@ -53,10 +53,6 @@ const PlanReplayDownload: React.FC<{
       return at >= first && at <= last;
     });
   }, [model.active.slots, windowRows]);
-  const indexByStart = React.useMemo(
-    () => new Map(model.active.slots.map((slot, index) => [Date.parse(slot.start), index])),
-    [model.active.slots],
-  );
   // A historical selection is recorded in history; the replay bookmark must
   // still point to a planned quarter, including on a history-only chart day.
   const replaySlot = React.useMemo(() => {
@@ -73,7 +69,7 @@ const PlanReplayDownload: React.FC<{
     model.plan.price_outlook.shadow_import_sek_per_kwh.length === model.active.slots.length,
   );
 
-  const downloadReplay = async (slot: PlannedSlot, slotIndex: number) => {
+  const downloadReplay = async (slot: PlannedSlot) => {
     if (!model.current.home_id || !model.current.generation_request_id || !canReplay) return;
     setReplayLoading(true);
     try {
@@ -92,7 +88,7 @@ const PlanReplayDownload: React.FC<{
           'The plan was replaced before its replay data could be fetched.',
         ));
       }
-      const { thermal_projection: thermalProjection, ...plannerOutput } = model.plan;
+      const capturedPlan = model.current.plan;
       const bundle = {
         format: 'shs-energy-optimisation-quarter-replay',
         schema_version: 2,
@@ -103,24 +99,15 @@ const PlanReplayDownload: React.FC<{
           invocation: 'generateOptimisationPlan(arguments.snapshot, new Date(arguments.now), arguments.price_archive, arguments.resolved_price_outlook)',
           arguments: {
             snapshot: data.snapshot,
-            now: model.plan.issued_at,
+            now: capturedPlan.issued_at,
             price_archive: [],
-            resolved_price_outlook: model.plan.price_outlook,
+            resolved_price_outlook: capturedPlan.price_outlook,
           },
         },
         input_hash: data.input_hash,
         generation_request_id: model.current.generation_request_id,
-        selection: {
-          scenario: model.active.key,
-          quarter_index: slotIndex,
-          quarter_start: slot.start,
-        },
+        ...replayPlanSelection(capturedPlan, model.active.key, slot.start),
         history: replayHistory(timeline, range, homeTimeZone, selectedStart),
-        expected: {
-          planner_output: plannerOutput,
-          thermal_projection: thermalProjection ?? null,
-          selected_quarter: slot,
-        },
       };
       const url = URL.createObjectURL(new Blob(
         [`${JSON.stringify(bundle, null, 2)}\n`],
@@ -166,10 +153,7 @@ const PlanReplayDownload: React.FC<{
           ? t('Nästa plan kommer att innehålla exakta replaydata.', 'The next plan will contain exact replay data.')
           : t(`Pekar ut kvarten ${quarter}. Klicka i grafen för att välja en annan.`,
             `Points at the quarter ${quarter}. Click the chart to pick another.`)}
-        onClick={() => void downloadReplay(
-          replaySlot,
-          indexByStart.get(Date.parse(replaySlot.start)) ?? 0,
-        )}
+        onClick={() => void downloadReplay(replaySlot)}
       >
         {replayLoading
           ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />

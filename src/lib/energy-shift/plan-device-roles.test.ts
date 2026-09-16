@@ -2,6 +2,7 @@ import {
   foldDevicePowerIntoBase,
   reconcilePlanDeviceRoles,
 } from './plan-device-roles.ts';
+import { splitConsumption } from './consumption-series.ts';
 
 const assertEquals = (actual: unknown, expected: unknown, message: string) => {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
@@ -43,4 +44,21 @@ Deno.test('a newly controllable device waits for the next plan', () => {
   ]);
 
   assertEquals(view.requiresPlanRefresh, true, 'plan refresh state');
+});
+
+Deno.test('the consumption chart schedules only Planned meters and keeps Monitored demand in base', () => {
+  const view = reconcilePlanDeviceRoles([{ key: 'pump' }, { key: 'heater' }], [
+    { device_key: 'pump', planning_role_override: 'controllable' },
+    { device_key: 'heater', planning_role_override: 'base_load' },
+    { device_key: 'fridge', planning_role_override: 'base_load' },
+  ]);
+  const plannedKeys = new Set(view.visibleModels.map(model => model.key));
+  const consumption = splitConsumption([
+    { key: 'pump', name: 'Pump', values: [764, 764, 764, 764] },
+    { key: 'heater', name: 'Heater', values: [1311, 1311, 1311, 1311] },
+    { key: 'fridge', name: 'Fridge', values: [100, 100, 100, 100] },
+  ].map(meter => ({ ...meter, schedulable: plannedKeys.has(meter.key) })), [2500, 2500, 2500, 2500]);
+  assertEquals(consumption.series.map(series => series.key), ['pump'], 'only the Planned pump is scheduled');
+  assertEquals(consumption.baseValues, [1736, 1736, 1736, 1736], 'Monitored demand remains in household load');
+  assertEquals(consumption.foldedCount, 2, 'both Monitored meters remain in base');
 });
