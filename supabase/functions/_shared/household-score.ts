@@ -13,6 +13,7 @@ import {
   materializeHousehold,
   type PhysicalInterval,
   type PhysicalTrajectory,
+  prepareBatteryInterval,
 } from "./household-physics.ts";
 
 export const HOUSEHOLD_SCORER_VERSION = "offline-household-v2";
@@ -160,29 +161,23 @@ export function createBatteryPrefixScorer(input: unknown) {
       "Incremental battery scoring requires one battery and no household services",
     );
   }
-  const slots = problem.intervals.map((interval, i) => ({
-    hours: (Date.parse(interval.end) - Date.parse(interval.start)) / 3600000,
-    plant: {
-      ...plant,
-      pv_w: [plant.pv_w[i]],
-      residual_loads: plant.residual_loads.map((l) => ({
-        ...l,
-        power_w: [l.power_w[i]],
-      })),
-      equipment: [{
-        ...battery,
-        available: [battery.available[i]],
-        grid_charge_allowed: [battery.grid_charge_allowed[i]],
-        export_allowed: [battery.export_allowed[i]],
-      }],
-    },
-  }));
+  const hours = problem.intervals.map((interval) =>
+    (Date.parse(interval.end) - Date.parse(interval.start)) / 3600000
+  );
   const initial: BatteryPrefix = {
     length: 0,
     energy_kwh: battery.state_kwh.initial,
     import_w: econ.initial_import_w,
     objective: emptyObjective(),
   };
+  // Sibling search paths repeatedly use the same action with different energy
+  // and previous imports. Validate each distinct action once in the active slot.
+  // Retaining one slot bounds memory across both backward guides and forward search.
+  let validatedSlot = -1;
+  const validatedActions = new Map<string, {
+    candidate: HouseholdCandidate;
+    physics: ReturnType<typeof prepareBatteryInterval>;
+  }>();
   const extend = (
     prefix: BatteryPrefix,
     action: Extract<
@@ -192,48 +187,80 @@ export function createBatteryPrefixScorer(input: unknown) {
     curtailedW: number,
   ): BatteryPrefixResult => {
     const i = prefix.length;
-    if (!Number.isInteger(i) || i < 0 || i >= slots.length) {
+    if (!Number.isInteger(i) || i < 0 || i >= hours.length) {
       throw new RangeError("Battery prefix is outside the horizon");
     }
-    const parsed = householdCandidateSchema.safeParse({
-      id: "incremental",
-      actions: { [battery.id]: [action] },
-      pv_curtail_w: [curtailedW],
-    });
-    if (!parsed.success) {
-      return {
-        status: "invalid_candidate",
-        violations: parsed.error.issues.map((e) => ({
-          path: e.path.join("."),
-          message: e.message,
-        })),
-      };
+    if (validatedSlot !== i) {
+      validatedSlot = i;
+      validatedActions.clear();
     }
-    const candidate = parsed.data as HouseholdCandidate;
-    const slot = slots[i], e = slot.plant.equipment[0];
-    const trajectory = materializeHousehold(
-      {
-        ...slot.plant,
-        equipment: [{
-          ...e,
-          state_kwh: { ...e.state_kwh, initial: prefix.energy_kwh },
-        }],
-      },
-      [slot.hours],
-      candidate,
-    );
-    if (trajectory.violations.length) {
+    // Cache only ordinary closed scalar actions. Malformed/non-JSON objects
+    // still go through the authoritative schema and cannot alias a valid entry.
+    const scalarAction = action &&
+      Object.getPrototypeOf(action) === Object.prototype &&
+      Object.keys(action).length === 5 && action.kind === "battery" &&
+      [
+        action.charge_w,
+        action.discharge_w,
+        action.solar_charge_w,
+        action.export_w,
+        curtailedW,
+      ]
+        .every((v) => typeof v === "number" && Number.isFinite(v));
+    const actionKey = scalarAction
+      ? JSON.stringify([
+        action.charge_w,
+        action.discharge_w,
+        action.solar_charge_w,
+        action.export_w,
+        curtailedW,
+      ])
+      : null;
+    let prepared = actionKey === null
+      ? undefined
+      : validatedActions.get(actionKey);
+    if (!prepared) {
+      const parsed = householdCandidateSchema.safeParse({
+        id: "incremental",
+        actions: { [battery.id]: [action] },
+        pv_curtail_w: [curtailedW],
+      });
+      if (!parsed.success) {
+        return {
+          status: "invalid_candidate",
+          violations: parsed.error.issues.map((e) => ({
+            path: e.path.join("."),
+            message: e.message,
+          })),
+        };
+      }
+      const candidate = parsed.data as HouseholdCandidate;
+      const checkedAction = candidate.actions[battery.id][0];
+      if (checkedAction.kind !== "battery") {
+        throw new Error("Expected a battery action");
+      }
+      prepared = {
+        candidate,
+        physics: prepareBatteryInterval(
+          plant,
+          hours[i],
+          i,
+          checkedAction,
+          curtailedW,
+        ),
+      };
+      if (actionKey !== null) validatedActions.set(actionKey, prepared);
+    }
+    const { energy, violations } = prepared.physics.advance(prefix.energy_kwh);
+    if (violations.length) {
       return {
         status: "physically_infeasible",
-        violations: trajectory.violations.map((v) => ({
-          ...v,
-          path: v.path.replace(/^intervals\.0/, `intervals.${i}`),
-        })),
+        violations: violations.map((v) => ({ ...v })),
       };
     }
-    const physical = trajectory.intervals[0];
+    const physical = prepared.physics.physical, candidate = prepared.candidate;
     const account = scoreElectricityInterval({
-      hours: slot.hours,
+      hours: hours[i],
       import_w: physical.import_w,
       export_w: physical.export_w,
       previous_import_w: prefix.import_w,
@@ -246,14 +273,13 @@ export function createBatteryPrefixScorer(input: unknown) {
       battery,
       physical,
       candidate.actions[battery.id][0],
-      slot.hours,
+      hours[i],
     );
-    const energy = trajectory.state[battery.id][1];
     const total = { ...prefix.objective };
     for (const key of Object.keys(total) as (keyof Objective)[]) {
       total[key] += account[key];
     }
-    if (i === slots.length - 1) {
+    if (i === hours.length - 1) {
       // Same closing account and summation order as complete trajectory scoring.
       let terminal = 0;
       for (const t of econ.terminal) terminal += totalUtility(t.curve, energy);

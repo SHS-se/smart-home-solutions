@@ -165,3 +165,69 @@ Deno.test("incremental scoring retains full scorer physical and structural rejec
     }
   }
 });
+
+Deno.test("prepared actions retain live energy, previous-import costs, interval permissions and input isolation", () => {
+  const { problem } = executionFixtureRequest(2),
+    b = problem.plant.equipment[0];
+  assert(b.kind === "battery");
+  problem.plant.pv_w.fill(0);
+  problem.plant.residual_loads.forEach((l) => l.power_w.fill(1000));
+  b.available[1] = false;
+  const scorer = createBatteryPrefixScorer(problem), a = action(500);
+  const first = scorer.extend(scorer.initial, a, 0);
+  assert(first.status === "scored");
+  const ramp = scorer.extend({ ...scorer.initial, import_w: 0 }, a, 0);
+  assert(ramp.status === "scored");
+  assert(ramp.prefix.objective.ramp_sek !== first.prefix.objective.ramp_sek);
+  const high = scorer.extend(
+    { ...scorer.initial, energy_kwh: b.state_kwh.max },
+    a,
+    0,
+  );
+  assert(high.status === "physically_infeasible");
+  // Mutating a rejection must not poison cached physics for siblings.
+  high.violations[0].message = "caller mutation";
+  assertEquals(scorer.extend(scorer.initial, a, 0), first);
+  a.charge_w = b.charge_max_w + 1;
+  assertEquals(
+    scorer.extend(scorer.initial, a, 0).status,
+    "physically_infeasible",
+  );
+  a.charge_w = 500;
+  assertEquals(
+    scorer.extend(scorer.initial, a, 1).status,
+    "physically_infeasible",
+  );
+  assertEquals(
+    scorer.extend(first.prefix, a, 0).status,
+    "physically_infeasible",
+  );
+  assertEquals(scorer.extend(scorer.initial, a, 0), first);
+});
+
+Deno.test("cached action validation never admits malformed scalar or extra fields", () => {
+  const { problem } = executionFixtureRequest(1);
+  const scorer = createBatteryPrefixScorer(problem);
+  assertEquals(scorer.extend(scorer.initial, action(500), 0).status, "scored");
+  for (
+    const raw of [
+      { ...action(500), extra: undefined },
+      { ...action(500), charge_w: { toJSON: () => 500 } },
+      { ...action(500), charge_w: NaN },
+      { ...action(500), charge_w: null },
+      { ...action(500), charge_w: Infinity },
+      { ...action(500), charge_w: "500" },
+      null,
+    ]
+  ) {
+    assertEquals(
+      scorer.extend(scorer.initial, raw as Action, 0).status,
+      "invalid_candidate",
+    );
+  }
+  assertEquals(
+    scorer.extend(scorer.initial, action(500), NaN).status,
+    "invalid_candidate",
+  );
+  assertEquals(scorer.extend(scorer.initial, action(500), 0).status, "scored");
+});

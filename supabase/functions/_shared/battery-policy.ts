@@ -50,10 +50,14 @@ interface Alternative {
   current: Path;
 }
 interface Node {
-  path: Path;
+  previous: Node | null;
+  action: BatteryAction | null;
+  curtail_w: number;
   score: BatteryPrefix;
   bucket: number;
-  key: string;
+  parentRank: number;
+  stepKey: string;
+  rank: number;
   idle: boolean;
   guided: boolean;
 }
@@ -131,9 +135,25 @@ class Rejection extends Error {
 }
 const sortedNumbers = (values: number[]) =>
   [...new Set(values)].sort((a, b) => a - b);
+// Equal-depth paths sort lexically by parent, then by their final step. Rank
+// retained parents once instead of copying/comparing complete history strings.
+const comparePaths = (a: Node, b: Node) =>
+  a.parentRank - b.parentRank ||
+  (a.stepKey < b.stepKey ? -1 : a.stepKey > b.stepKey ? 1 : 0);
 const compareNodes = (a: Node, b: Node) =>
   a.score.objective.total_sek - b.score.objective.total_sek ||
-  (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
+  comparePaths(a, b);
+function materializePath(node: Node, current: Path): Path {
+  const actions: BatteryAction[] = [], curtailed: number[] = [];
+  for (let step = node; step.previous !== null; step = step.previous) {
+    actions.push(step.action!);
+    curtailed.push(step.curtail_w);
+  }
+  return {
+    actions: [...current.actions, ...actions.reverse()],
+    pv_curtail_w: [...current.pv_curtail_w, ...curtailed.reverse()],
+  };
+}
 const candidate = (
   id: string,
   battery: Battery,
@@ -523,7 +543,11 @@ function compile(input: unknown, scope: BatterySearchScope) {
         };
       }
       let frontier: Node[] = [{
-        path: a.current,
+        previous: null,
+        action: null,
+        curtail_w: 0,
+        parentRank: 0,
+        rank: 0,
         score: {
           length: block,
           energy_kwh: score.trajectory.state[battery.id].at(-1)!,
@@ -533,7 +557,7 @@ function compile(input: unknown, scope: BatterySearchScope) {
         bucket: bandIndex(bands, score.trajectory.state[battery.id].at(-1)!),
         idle: true,
         guided: true,
-        key: JSON.stringify(a.current),
+        stepKey: "",
       }];
       for (let index = block; index < n; index++) {
         const merged = new Map<string, Node>();
@@ -565,13 +589,12 @@ function compile(input: unknown, scope: BatterySearchScope) {
             if (step.status !== "scored") continue;
             stats.feasible_extensions++;
             children.push({
-              path: {
-                actions: [...node.path.actions, extension.action],
-                pv_curtail_w: [...node.path.pv_curtail_w, extension.curtail_w],
-              },
-              key: `${node.key}/${
-                JSON.stringify([extension.action, extension.curtail_w])
-              }`,
+              previous: node,
+              action: extension.action,
+              curtail_w: extension.curtail_w,
+              parentRank: node.rank,
+              rank: 0,
+              stepKey: JSON.stringify([extension.action, extension.curtail_w]),
               score: step.prefix,
               bucket: bandIndex(bands, step.prefix.energy_kwh),
               idle: node.idle && extension.action.charge_w === 0 &&
@@ -614,7 +637,9 @@ function compile(input: unknown, scope: BatterySearchScope) {
           );
           stats.pruned_prefixes += bucket.length - retained.length;
           return retained;
-        }).sort(compareNodes);
+        });
+        frontier.sort(comparePaths).forEach((node, rank) => node.rank = rank);
+        frontier.sort(compareNodes);
         if (!frontier.length) break;
       }
       stats.exhaustive_in_declared_graph = stats.pruned_prefixes === 0;
@@ -629,7 +654,8 @@ function compile(input: unknown, scope: BatterySearchScope) {
         };
       }
       const best = frontier.sort(compareNodes)[0];
-      const verified = evaluate(best.path, stats);
+      const bestPath = materializePath(best, a.current);
+      const verified = evaluate(bestPath, stats);
       if (
         verified.status !== "scored" ||
         JSON.stringify(verified.objective) !==
@@ -641,7 +667,7 @@ function compile(input: unknown, scope: BatterySearchScope) {
       return {
         id: a.id,
         status: "solved",
-        candidate: candidate(a.id, battery, best.path),
+        candidate: candidate(a.id, battery, bestPath),
         score: verified,
         search: stats,
       };
