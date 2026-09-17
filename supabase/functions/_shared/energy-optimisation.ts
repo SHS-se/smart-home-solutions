@@ -120,7 +120,7 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6, 7, 8, 9] as const;
  * prices executable setpoints and records exact quarter evidence.
  */
 // v28 emits battery operations and enforces export eligibility and reserves in dispatch.
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v36";
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v37";
 /** Schema 5 service sizing also no longer pads energy to a minimum runtime. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v10";
 export const SLOT_MINUTES = 15;
@@ -184,8 +184,6 @@ export interface ForecastSlotInput {
   start: string;
   pv_forecast_w: number;
   base_load_forecast_w: number;
-  base_load_p10_w: number;
-  base_load_p90_w: number;
   import_price_sek_per_kwh: number | null;
   export_price_sek_per_kwh: number | null;
 }
@@ -542,8 +540,6 @@ export interface PlannedSlot {
   pv_raw_w: number;
   pv_w: number;
   base_w: number;
-  base_p10_w: number;
-  base_p90_w: number;
   import_price_sek_per_kwh: number | null;
   export_price_sek_per_kwh: number | null;
   /**
@@ -1012,14 +1008,6 @@ export function validateSnapshot(snapshot: OptimisationSnapshot): string[] {
       if (!finite(value) || value < 0 || value > 100_000) {
         errors.push(`slots[${index}].${field} is invalid`);
       }
-    }
-    if (
-      !finite(slot?.base_load_p10_w) || !finite(slot?.base_load_p90_w) ||
-      slot.base_load_p10_w < 0 || slot.base_load_p90_w < slot.base_load_p10_w ||
-      slot.base_load_forecast_w < slot.base_load_p10_w ||
-      slot.base_load_forecast_w > slot.base_load_p90_w
-    ) {
-      errors.push(`slots[${index}] has invalid base-load confidence bounds`);
     }
     for (
       const field of [
@@ -4070,8 +4058,6 @@ function simulate(
       pv_raw_w: round(slot.pv_raw_w, 2),
       pv_w: round(slot.pv_w, 2),
       base_w: round(slot.base_load_forecast_w, 2),
-      base_p10_w: round(slot.base_load_p10_w, 2),
-      base_p90_w: round(slot.base_load_p90_w, 2),
       import_price_sek_per_kwh: slot.import_price_sek_per_kwh,
       export_price_sek_per_kwh: slot.export_price_sek_per_kwh,
       shadow_import_sek_per_kwh: round(slot.shadow_import_sek_per_kwh, 5),
@@ -4674,8 +4660,7 @@ export function generateOptimisationPlanWithBatteryProjection(
       sources: { ...execution.snapshot.sources, battery: snapshot.sources.battery },
       pool: null, ev_battery: null, services: [], device_models: [], thermal_zones: [], replan_reference: null,
       slots: execution.snapshot.slots.map((slot, i) => ({ ...slot,
-        base_load_forecast_w: execution.rows[i].house_w,
-        base_load_p10_w: execution.rows[i].house_w, base_load_p90_w: execution.rows[i].house_w })),
+        base_load_forecast_w: execution.rows[i].house_w })),
     };
     batteryProjection = generatePlanBody(conditional, now, priceArchive, execution.plan.price_outlook,
       null, solveAuction, operatingScope, "battery_verification", execution.rows).battery_projection;

@@ -15,8 +15,6 @@ export function dispatchedEvSnapshot(): OptimisationSnapshotV6 {
     start: new Date(first + index * SLOT_MS).toISOString(),
     pv_forecast_w: index >= 8 && index < 32 ? 7_000 : 0,
     base_load_forecast_w: 700,
-    base_load_p10_w: 500,
-    base_load_p90_w: 1_000,
     import_price_sek_per_kwh: 1.5,
     export_price_sek_per_kwh: 0.1,
   }));

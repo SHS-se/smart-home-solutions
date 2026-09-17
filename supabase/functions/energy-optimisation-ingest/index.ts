@@ -2127,8 +2127,6 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
             base_load_forecast_w: snapshot.slots.map((slot) =>
               slot.base_load_forecast_w
             ),
-            base_load_p10_w: snapshot.slots.map((slot) => slot.base_load_p10_w),
-            base_load_p90_w: snapshot.slots.map((slot) => slot.base_load_p90_w),
             outdoor_temperature_c: snapshot.slots.map((_slot, index) =>
               outdoor?.[index] ?? null
             ),

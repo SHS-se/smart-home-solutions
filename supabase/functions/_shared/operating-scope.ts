@@ -96,8 +96,7 @@ export function projectExecutionSnapshot(snapshot: OptimisationSnapshot): Optimi
     slots: snapshot.slots.map((slot, i) => {
       const fixed = Object.values(scope.external_demands).reduce((sum, d) =>
         sum + (i === 0 && d.recent_observation !== null ? d.recent_observation.average_w : d.forecast_w_by_slot[i]), 0);
-      return { ...slot, base_load_forecast_w: slot.base_load_forecast_w + fixed,
-        base_load_p10_w: slot.base_load_p10_w + fixed, base_load_p90_w: slot.base_load_p90_w + fixed };
+      return { ...slot, base_load_forecast_w: slot.base_load_forecast_w + fixed };
     }),
     capabilities: { ...snapshot.capabilities, battery: battery !== null,
       pool: pool.length > 0, ev: ev.length > 0, boiler: boiler.length > 0 },

@@ -353,8 +353,6 @@ Deno.test("projection follows accepted continuity materialization and rejects ha
   s.slots.forEach((slot, i) => {
     slot.pv_forecast_w = i < 8 ? 4753.18 : 0;
     slot.base_load_forecast_w = 1835.72;
-    slot.base_load_p10_w = 0;
-    slot.base_load_p90_w = 5000;
     slot.import_price_sek_per_kwh = 1;
     slot.export_price_sek_per_kwh = .01;
   });
@@ -422,8 +420,6 @@ Deno.test("decimal battery flows remain exact before non-export feasibility chec
   s.slots.forEach((slot) =>
     Object.assign(slot, {
       base_load_forecast_w: 1279.009,
-      base_load_p10_w: 1200,
-      base_load_p90_w: 1400,
     })
   );
   const { battery_projection: p } =

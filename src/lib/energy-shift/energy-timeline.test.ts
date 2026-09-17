@@ -46,8 +46,6 @@ const planned = (startMs: number, overrides: Partial<PlannedSlot> = {}): Planned
   pv_raw_w: 0,
   pv_w: 2_000,
   base_w: 400,
-  base_p10_w: 0,
-  base_p90_w: 0,
   import_price_sek_per_kwh: 1,
   export_price_sek_per_kwh: 0.2,
   pool_w: 0,

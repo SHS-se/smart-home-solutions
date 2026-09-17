@@ -78,8 +78,6 @@ export function createWebsiteDemoPlan(
       start: start.toISOString(),
       pv_forecast_w: Math.round(shape.pvW),
       base_load_forecast_w: Math.round(shape.baseW),
-      base_load_p10_w: Math.round(shape.baseW * 0.72),
-      base_load_p90_w: Math.round(shape.baseW * 1.38),
       import_price_sek_per_kwh: shape.importPrice,
       export_price_sek_per_kwh: shape.exportPrice,
     };

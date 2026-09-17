@@ -26,8 +26,6 @@ const input = (
     start: new Date(start + index * 15 * 60_000).toISOString(),
     pv_forecast_w: index >= 8 && index < 24 ? 4_000 : 0,
     base_load_forecast_w: 500,
-    base_load_p10_w: 350,
-    base_load_p90_w: 900,
     import_price_sek_per_kwh: index < 20 ? 1 + index / 100 : null,
     export_price_sek_per_kwh: index < 20 ? 0.2 + index / 200 : null,
   }));
@@ -186,8 +184,6 @@ const horizon = (
       start: new Date(start + index * 15 * 60_000).toISOString(),
       pv_forecast_w: pv,
       base_load_forecast_w: baseLoadW,
-      base_load_p10_w: Math.round(baseLoadW * 0.8),
-      base_load_p90_w: Math.round(baseLoadW * 1.4),
       // A dear evening against an ordinary day, which is what makes storing and
       // spending distinguishable at all.
       import_price_sek_per_kwh: priced ? (hour >= 17 ? 2.4 : 1.6) : null,
@@ -224,6 +220,20 @@ const routedEvService = (snapshot: OptimisationSnapshot) => ({
   },
 
   priority: 3,
+});
+
+Deno.test("base-load forecasts need no confidence bounds to produce a plan", () => {
+  const snapshot = input();
+  snapshot.slots.forEach((slot, index) => {
+    slot.base_load_forecast_w = index % 2 ? 1368 : 500;
+  });
+  assertEquals(validateSnapshot(snapshot), []);
+  const plan = generateOptimisationPlan(snapshot, new Date(NOW));
+  assertEquals(plan.status, "ready");
+  assertEquals(plan.plans.priority.slots[1].base_w, 1368);
+  for (const slot of plan.plans.priority.slots) {
+    assertEquals(Object.keys(slot).filter(key => key.startsWith("base_")), ["base_w"]);
+  }
 });
 
 Deno.test("a new pool is dispatched at its declared power without a historical budget", () => {
@@ -412,8 +422,6 @@ Deno.test("the battery covers the boiler too, not just the base load", () => {
     start: new Date(start + index * 15 * 60_000).toISOString(),
     pv_forecast_w: 0,
     base_load_forecast_w: 800,
-    base_load_p10_w: 600,
-    base_load_p90_w: 1_100,
     // Dear now against a cheap replacement later, which is what makes the
     // stored energy worth spending rather than holding.
     import_price_sek_per_kwh: index < 96 ? (index < 40 ? 3.3 : 0.5) : null,
@@ -500,8 +508,6 @@ Deno.test("the stores leave the connection the services still need", () => {
     start: new Date(start + index * 15 * 60_000).toISOString(),
     pv_forecast_w: 0,
     base_load_forecast_w: 800,
-    base_load_p10_w: 600,
-    base_load_p90_w: 1_100,
     // Cheap enough that every store wants all of it at once.
     import_price_sek_per_kwh: index < 96 ? 0.35 : null,
     export_price_sek_per_kwh: index < 96 ? 0.1 : null,
@@ -609,8 +615,6 @@ Deno.test("deferred hot water comes back at the cheapest hours, not the quietest
       start: new Date(start + index * 15 * 60_000).toISOString(),
       pv_forecast_w: index === quiet ? 990 : 0,
       base_load_forecast_w: heavy ? 9_000 : 1_000,
-      base_load_p10_w: heavy ? 7_000 : 800,
-      base_load_p90_w: heavy ? 11_000 : 1_400,
       import_price_sek_per_kwh: priced ? price : null,
       export_price_sek_per_kwh: priced ? 0.4 : null,
     };
@@ -1768,7 +1772,7 @@ Deno.test("schema 6 with pool state dispatches by temperature, not by budget", (
   const plan = generateOptimisationPlan(snapshot, new Date(NOW));
 
   assertEquals(plan.schema_version, 6);
-  assertEquals(plan.model_version, "marginal-value-planner-v36");
+  assertEquals(plan.model_version, "marginal-value-planner-v37");
   // Asserted explicitly: an earlier version of this test checked the pool
   // energy but not the status, and so passed while every schema 6 plan was
   // reported infeasible by validations that still assumed fixed blocks.
@@ -2244,8 +2248,6 @@ Deno.test("no allocation is charged for more solar than the quarter had", () => 
       start: new Date(start + index * 15 * 60_000).toISOString(),
       pv_forecast_w: 0,
       base_load_forecast_w: 1_000,
-      base_load_p10_w: 800,
-      base_load_p90_w: 1_300,
       import_price_sek_per_kwh: index < 96
         ? (hour >= 16 && hour < 20 ? 2.4 : 0.8)
         : null,
@@ -2938,8 +2940,6 @@ const splitHorizon = (
       start: new Date(start + index * 15 * 60_000).toISOString(),
       pv_forecast_w: pv,
       base_load_forecast_w: 1_000,
-      base_load_p10_w: 800,
-      base_load_p90_w: 1_400,
       import_price_sek_per_kwh: firstDay ? dearFirstDaySekPerKwh : 1.0,
       export_price_sek_per_kwh: exportSekPerKwh,
     };
@@ -3125,8 +3125,6 @@ Deno.test("a battery that charges in winter also discharges", () => {
       start: new Date(start + index * 15 * 60_000).toISOString(),
       pv_forecast_w: 0,
       base_load_forecast_w: hour >= 16 && hour < 21 ? 5_000 : 2_500,
-      base_load_p10_w: 2_000,
-      base_load_p90_w: 6_500,
       // A real day/night spread, which is the only thing a battery can trade.
       import_price_sek_per_kwh: index < 96
         ? (hour >= 6 && hour < 9 ? 3.2 : hour >= 16 && hour < 20 ? 2.9 : 0.8)
@@ -3173,8 +3171,6 @@ Deno.test("a shaped peak spreads a charge instead of concentrating it", () => {
       start: new Date(start + index * 15 * 60_000).toISOString(),
       pv_forecast_w: 0,
       base_load_forecast_w: hour >= 16 && hour < 21 ? 5_000 : 2_500,
-      base_load_p10_w: 2_000,
-      base_load_p90_w: 6_500,
       import_price_sek_per_kwh: index < 96
         ? (hour >= 6 && hour < 9 ? 3.2 : hour >= 16 && hour < 20 ? 2.9 : 0.8)
         : null,
@@ -3250,8 +3246,6 @@ Deno.test("§8.12 #12 — a winter covering window is the dear stretch, not the 
       start: new Date(start + index * 15 * 60_000).toISOString(),
       pv_forecast_w: 0,
       base_load_forecast_w: hour >= 16 && hour < 21 ? 5_000 : 2_500,
-      base_load_p10_w: 2_000,
-      base_load_p90_w: 6_500,
       import_price_sek_per_kwh: index < 96
         ? (hour >= 6 && hour < 9 ? 3.2 : hour >= 16 && hour < 20 ? 2.9 : 0.8)
         : null,
@@ -3345,8 +3339,6 @@ Deno.test("§8.12 #11 — charge power gives way to the load already in the quar
         // backed off because a quarter were dearer, this would be measuring the
         // energy objective it already had.
         base_load_forecast_w: load,
-        base_load_p10_w: Math.round(load * 0.8),
-        base_load_p90_w: Math.round(load * 1.3),
         import_price_sek_per_kwh: index < 96 ? (index < 48 ? 0.8 : 3.0) : null,
         export_price_sek_per_kwh: index < 96 ? 0.2 : null,
       };
@@ -3424,8 +3416,6 @@ Deno.test("a soft battery reserve cannot inflate terminal value beyond replaceme
       start: new Date(start + index * 15 * 60_000).toISOString(),
       pv_forecast_w: 0,
       base_load_forecast_w: hour >= 16 && hour < 21 ? 5_000 : 2_500,
-      base_load_p10_w: 2_000,
-      base_load_p90_w: 6_500,
       import_price_sek_per_kwh: index < 96
         ? (hour >= 6 && hour < 9 ? 3.2 : hour >= 16 && hour < 20 ? 2.9 : 0.8)
         : null,
@@ -3492,8 +3482,6 @@ Deno.test("§8.19 — the home's own wear cost reaches the curve", () => {
       start: new Date(start + index * 15 * 60_000).toISOString(),
       pv_forecast_w: 0,
       base_load_forecast_w: 1_500,
-      base_load_p10_w: 1_000,
-      base_load_p90_w: 2_500,
       import_price_sek_per_kwh: index < 96
         ? (hour >= 17 && hour < 21 ? 1.35 : 0.9)
         : null,

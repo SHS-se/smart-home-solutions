@@ -25,8 +25,6 @@ function batteryContinuitySnapshot(solar = true) {
     ...slot,
     pv_forecast_w: solar && index < 8 ? 4753.18 : 0,
     base_load_forecast_w: 1835.72,
-    base_load_p10_w: 0,
-    base_load_p90_w: 5000,
     import_price_sek_per_kwh: 1,
     export_price_sek_per_kwh: 0.01,
   }));

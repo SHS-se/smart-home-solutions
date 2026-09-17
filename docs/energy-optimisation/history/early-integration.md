@@ -1,5 +1,9 @@
 # Historical record: Early Integration
 
+Historical note: base-load confidence bounds described below were removed on
+17 September 2026. The [constraint requirements](../constraint-requirements.md)
+supersede those proposals; do not reintroduce them without an explicit user requirement.
+
 [Architecture index](../../../ENERGY_OPTIMISATION_ARCHITECTURE.md) · [History index](README.md)
 
 > **Historical evidence, not current requirements.** This is a preserved part of the pre-split document, including superseded claims, old implementation statuses, and unresolved experiments. The current topic specifications linked from the architecture index take precedence. References to deployed behaviour describe the date of the original entry, not a fresh verification.

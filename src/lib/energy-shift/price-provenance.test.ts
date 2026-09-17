@@ -61,8 +61,6 @@ const snapshot = (): OptimisationSnapshot => {
         ? Math.round(5_200 * Math.sin(((hour - 5.5) / 14.5) * Math.PI))
         : 0,
       base_load_forecast_w: 800,
-      base_load_p10_w: 600,
-      base_load_p90_w: 1_400,
       import_price_sek_per_kwh: priced ? importPrice : null,
       export_price_sek_per_kwh: priced
         ? Math.max(0.05, (importPrice - 0.835) / 1.25 + 0.033)

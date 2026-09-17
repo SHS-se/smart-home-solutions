@@ -40,8 +40,6 @@ export const snapshot = (): OptimisationSnapshot => {
       start: new Date(ms).toISOString(),
       pv_forecast_w: pv,
       base_load_forecast_w: 800,
-      base_load_p10_w: 600,
-      base_load_p90_w: 1_400,
       import_price_sek_per_kwh: priced ? importPrice : null,
       export_price_sek_per_kwh: priced ? (importPrice - 0.835) / 1.25 + 0.033 : null,
     };

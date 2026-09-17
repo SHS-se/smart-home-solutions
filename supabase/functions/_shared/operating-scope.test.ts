@@ -15,8 +15,6 @@ Deno.test("mixed mode conserves fixed demand and conditions only the current qua
   assertEquals(projected.services, []);
   assertEquals(projected.slots[0].base_load_forecast_w, s.slots[0].base_load_forecast_w + 2100);
   assertEquals(projected.slots[1].base_load_forecast_w, s.slots[1].base_load_forecast_w + 1260);
-  assertEquals(projected.slots[0].base_load_p90_w - projected.slots[0].base_load_forecast_w,
-    s.slots[0].base_load_p90_w - s.slots[0].base_load_forecast_w);
   assertEquals(projected.replan_reference, null);
 });
 

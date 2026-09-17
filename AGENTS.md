@@ -19,6 +19,10 @@ Keep this command aligned with `.github/workflows/ci-deploy.yml`. The separate
 
 # Planner changes
 
+Follow [the constraint requirements](docs/energy-optimisation/constraint-requirements.md).
+Do not invent or restore arbitrary validity constraints, including prediction
+bounds or source-timestamp event ordering, unless the user explicitly requires them.
+
 Whenever the planner model version or generated plan output changes, run
 `deno task generate:ha-contract-fixture` and include any resulting changes to
 `contracts/ha-api/fixtures/schema-6-dispatched-ev-plan.json` in the same commit.
