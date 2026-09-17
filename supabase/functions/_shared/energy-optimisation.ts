@@ -1,3 +1,4 @@
+import { buildBatteryExecutionContract, validateExecutionFeedback, type ExecutionFeedback, type BatteryExecutionContract } from "./battery-plan-execution.ts";
 import { projectBatteryDispatch, type BatteryProjection, type BatteryProjectionRow } from "./battery-dispatch-projection.ts";
 import { projectExecutionSnapshot, validateOperatingScope, type OperatingScope } from "./operating-scope.ts";
 /**
@@ -354,6 +355,7 @@ export interface ThermalZonePlanningInput {
 }
 
 export interface OptimisationSnapshot {
+  battery_execution_feedback?: ExecutionFeedback;
   /** Required by schema 9; frozen before server forecast enrichment. */
   operating_scope?: OperatingScope;
   /** Server-derived economic reference, frozen with the replay input; never physical authority. */
@@ -627,6 +629,7 @@ export interface GeneratedPlan {
 }
 
 export interface OptimisationPlan {
+  battery_execution?: BatteryExecutionContract;
   /** Explicit default planning intent: all household consumption is eligible. */
   battery_supply_scope?: {kind:"whole_house"} | {kind:"none"} | {kind:"selected";include_base:boolean;planned_device_keys:string[]};
   /** Required by schema 9. Top-level scenarios remain hypothetical. */
@@ -4637,6 +4640,7 @@ export function generateOptimisationPlanWithBatteryProjection(
   resolvedPriceOutlook?: OptimisationPlan["price_outlook"], fixed?: FixedEnergyPlan | null,
   solveAuction?: DispatchAuctionSolver,
 ): OptimisationResult {
+  if (snapshot.battery_execution_feedback) validateExecutionFeedback(snapshot.battery_execution_feedback);
   if (snapshot.schema_version !== 9) {
     const { plan, battery_projection } = generatePlanBody(snapshot, now, priceArchive, resolvedPriceOutlook, fixed, solveAuction);
     return { plan, battery_projection };
@@ -4649,6 +4653,7 @@ export function generateOptimisationPlanWithBatteryProjection(
   const operatingScope = remainingSnapshot(snapshot, Math.max(now.getTime(), isoMs(snapshot.captured_at))).operating_scope;
   const execution = generatePlanBody(projectExecutionSnapshot(snapshot), now, priceArchive, resolvedPriceOutlook, null, solveAuction, operatingScope);
   let batteryProjection = execution.battery_projection;
+  let batteryExecution = execution;
   if (snapshot.operating_scope?.modes.$battery === "control_verification" && snapshot.battery && execution.plan.status === "ready") {
     // A distinct counterfactual: freeze every other device to the physical
     // execution schedule. Re-running the joint hypothetical schedule would
@@ -4662,10 +4667,19 @@ export function generateOptimisationPlanWithBatteryProjection(
       slots: execution.snapshot.slots.map((slot, i) => ({ ...slot,
         base_load_forecast_w: execution.rows[i].house_w })),
     };
-    batteryProjection = generatePlanBody(conditional, now, priceArchive, execution.plan.price_outlook,
-      null, solveAuction, operatingScope, "battery_verification", execution.rows).battery_projection;
+    batteryExecution = generatePlanBody(conditional, now, priceArchive, execution.plan.price_outlook,
+      null, solveAuction, operatingScope, "battery_verification", execution.rows);
+    batteryProjection = batteryExecution.battery_projection;
   }
+  const feedback = snapshot.battery_execution_feedback;
+  const mode = snapshot.operating_scope?.modes.$battery;
+  const contract = feedback && snapshot.battery && batteryExecution.plan.status === "ready" &&
+      (mode === "controlling" || mode === "control_verification")
+    ? buildBatteryExecutionContract({ plan: batteryExecution.plan, rows: batteryExecution.rows,
+        pv_w: batteryExecution.pv_w, mode, scope_revision: feedback.scope_revision!, feedback })
+    : undefined;
   return { battery_projection: batteryProjection, plan: { ...hypothetical.plan, schema_version: 9,
+    ...(contract ? { battery_execution: contract } : {}),
     operating_scope: operatingScope,
     execution_plan: execution.plan } };
 }
@@ -4690,7 +4704,7 @@ function generatePlanBody(
   operatingScope?: OperatingScope,
   projectionBranch: "execution" | "priority" | "battery_verification" = operatingScope ? "execution" : "priority",
   frozenDemand?: BatteryProjectionRow[],
-): OptimisationResult & { rows: BatteryProjectionRow[]; snapshot: OptimisationSnapshot } {
+): OptimisationResult & { rows: BatteryProjectionRow[]; snapshot: OptimisationSnapshot; pv_w: number[] } {
   const validationErrors = validateSnapshot(snapshot);
   const snapshotAge = now.getTime() - isoMs(snapshot.captured_at);
   if (
@@ -4819,6 +4833,7 @@ function generatePlanBody(
     plans,
   };
   const reasons: string[] = [];
+  if (snapshot.battery_execution_feedback) reasons.push("replaced_by_plan_execution_contract");
   if (status !== "ready") reasons.push("selected_plan_not_ready");
   if (fixed) reasons.push("fixed_plan_authority");
   if (snapshot.policy.battery_target_is_hard) reasons.push("hard_battery_target");
@@ -4835,5 +4850,5 @@ function generatePlanBody(
         issued_at: plan.issued_at, branch: projectionBranch,
         operating_scope: operatingScope ?? null },
     });
-  return { plan, battery_projection, rows: priority.exactRows, snapshot };
+  return { plan, battery_projection, rows: priority.exactRows, snapshot, pv_w: slots.map(s => s.pv_w) };
 }

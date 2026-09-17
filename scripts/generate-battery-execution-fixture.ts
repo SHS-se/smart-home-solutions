@@ -1,19 +1,19 @@
 import { batterySnapshot } from "./generate-ha-plan-fixture.ts";
 import { generateOptimisationPlanWithBatteryProjection } from "../supabase/functions/_shared/energy-optimisation.ts";
-import { buildBatteryExecutionContract } from "../supabase/functions/_shared/battery-plan-execution.ts";
+
 
 export function batteryExecutionFixture() {
-  const snapshot = batterySnapshot();
+  const snapshot = { ...batterySnapshot(), schema_version: 9 as const,
+    operating_scope: { modes: { $battery: "controlling" as const, $pool: "monitoring" as const, $ev: "monitoring" as const },
+      device_owners: {}, external_demands: {} },
+    battery_execution_feedback: { generation: 1, source_receipt: 0, previous_contract_id: null,
+      objectives: [], scope_revision: "fixture-whole-house" },
+  };
   const now = new Date(Date.parse(snapshot.slots[0].start) + 8 * 60_000);
   snapshot.captured_at = now.toISOString();
   const result = generateOptimisationPlanWithBatteryProjection(snapshot, now);
-  const projection = result.battery_projection;
-  if (projection.status !== "ready") throw new Error(projection.reasons.join(","));
-  const contract = buildBatteryExecutionContract({
-    plan: result.plan, rows: projection.provenance.final_demand,
-    pv_w: projection.problem.plant.pv_w, mode: "controlling", scope_revision: "fixture-whole-house",
-    feedback: { generation: 0, source_receipt: 0, previous_contract_id: null, objectives: [] },
-  });
+  const contract = result.plan.battery_execution;
+  if (!contract) throw new Error("planner did not publish execution instructions");
   return {
     fixture: "battery-plan-execution-v1", generated_by: "generateOptimisationPlanWithBatteryProjection",
     captured_at: now.toISOString(), contract,

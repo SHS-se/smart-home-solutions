@@ -69,3 +69,63 @@ Deno.test("stored execution consumer fixture comes from the real planner", async
   const stored = JSON.parse(await Deno.readTextFile(new URL("../../../contracts/ha-api/fixtures/battery-plan-execution-v1.json", import.meta.url)));
   assertEquals(stored, batteryExecutionFixture());
 });
+
+import { mixedModeSnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
+import { energyPlanningStep } from "./energy-planning-step.ts";
+import type { EnergyPlanningContinuation } from "./energy-planning-protocol.ts";
+
+function captured(mode: "controlling" | "control_verification") {
+  const s = mixedModeSnapshot();
+  s.operating_scope.modes.$battery = mode;
+  s.battery_execution_feedback = { generation: 4, source_receipt: 17, previous_contract_id: null,
+    scope_revision: "local-setup", observed: { at_ms: Date.parse(s.captured_at),
+      stored_mwh: Math.round(s.battery!.soc * s.battery!.capacity_kwh * 1e6), source: "soc" }, objectives: [] };
+  return s;
+}
+
+Deno.test("production contract binds the physical branch and acknowledges captured evidence", () => {
+  const s = captured("controlling");
+  const { plan, battery_projection } = generateOptimisationPlanWithBatteryProjection(s, new Date(s.captured_at));
+  const contract = plan.battery_execution!;
+  assert(contract);
+  assertEquals(contract.generation, 4); assertEquals(contract.source_receipt, 17);
+  assertEquals(contract.scope_revision, "local-setup");
+  assertEquals(contract.intervals[0].load_mwh, Math.round(plan.execution_plan!.plans.priority.slots[0].load_w * plan.execution_plan!.plans.priority.slots[0].duration_hours * 1000));
+  assertEquals(battery_projection.status, "unsupported");
+});
+
+Deno.test("Verification freezes other devices to their physical schedule", () => {
+  const s = captured("control_verification");
+  const { plan } = generateOptimisationPlanWithBatteryProjection(s, new Date(s.captured_at));
+  const contract = plan.battery_execution!;
+  assertEquals(contract.mode, "control_verification");
+  assertEquals(plan.execution_plan!.battery, null);
+  for (const [i, row] of contract.intervals.entries()) {
+    const slot = plan.execution_plan!.plans.priority.slots[i];
+    assert(Math.abs(row.load_mwh - slot.load_w * slot.duration_hours * 1000) <= 2);
+  }
+});
+
+Deno.test("excluded battery cannot be resurrected by retained feedback", () => {
+  const s = captured("control_verification");
+  s.battery = null; s.capabilities.battery = false; s.sources.battery = null;
+  s.policy = {battery_target_is_hard:false,battery_end_of_solar_target_soc:0,
+    terminal_soc_min:0,terminal_energy_value_sek_per_kwh:0,battery_export_enabled:false,
+    battery_export_reserve_soc:0,battery_export_min_price_sek_per_kwh:0};
+  assertEquals(generateOptimisationPlanWithBatteryProjection(s, new Date(s.captured_at)).plan.battery_execution, undefined);
+});
+
+Deno.test("execution feedback survives staged worker planning and repeats deterministically", () => {
+  const s = captured("control_verification");
+  let continuation: EnergyPlanningContinuation | undefined;
+  for (let i=0;i<100;i++) {
+    const step = energyPlanningStep({ snapshot:s, now:s.captured_at, price_archive:[] }, continuation);
+    if (step.done === true) {
+      assertEquals(step.plan.battery_execution,
+        generateOptimisationPlanWithBatteryProjection(s,new Date(s.captured_at)).plan.battery_execution);
+      return;
+    }
+    continuation=step.continuation;
+  }
+  throw new Error("worker did not finish");
+});

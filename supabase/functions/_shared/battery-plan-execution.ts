@@ -7,6 +7,11 @@ import type { OptimisationPlan } from "./energy-optimisation.ts";
 import type { BatteryProjectionRow } from "./battery-dispatch-projection.ts";
 
 export interface ExecutionFeedback {
+  scope_revision?: string;
+  observed?: { at_ms: number; stored_mwh: number; source: string } | null;
+  balance?: unknown;
+  reason?: string | null;
+  pending_effects?: unknown[];
   generation: number;
   source_receipt: number;
   previous_contract_id: string | null;
@@ -147,7 +152,7 @@ export function buildBatteryExecutionContract(input: {
       export_allowed: command.allow_battery_export,
       charge_ac_limit_w: Math.floor(command.charge_limit_w),
       discharge_ac_limit_w: Math.floor(command.discharge_limit_w),
-      follows_demand: operation === "supply_house" && row.discharge_w + 0.01 >= Math.max(0, row.house_w - pv),
+      follows_demand: operation === "supply_house",
       charge_ac_mwh: energy(row.charge_w), discharge_ac_mwh: energy(row.discharge_w),
       pv_mwh: energy(pv), load_mwh: energy(row.house_w), import_mwh: energy(Math.max(0, net)),
       export_mwh: energy(Math.max(0, -net)), curtailed_mwh: energy(row.curtailed_w),
@@ -218,4 +223,25 @@ export function buildBatteryExecutionContract(input: {
             reason: "Revised strategy no longer requests this objective; this is not measured fulfilment" };
       }),
   };
+}
+
+/** Validate the external capture before solving; receipt ordering is local only. */
+export function validateExecutionFeedback(value: ExecutionFeedback): void {
+  integer(value.generation, "generation");
+  integer(value.source_receipt, "source receipt");
+  if (!value.generation || typeof value.scope_revision !== "string" || !value.scope_revision ||
+      (value.previous_contract_id !== null && (typeof value.previous_contract_id !== "string" || !value.previous_contract_id)) ||
+      !Array.isArray(value.objectives)) throw new Error("Invalid battery execution feedback identity");
+  if (value.observed) {
+    integer(value.observed.at_ms, "observed time"); integer(value.observed.stored_mwh, "observed storage");
+    if (typeof value.observed.source !== "string" || !value.observed.source) throw new Error("Missing observation provenance");
+  }
+  const ids = new Set<string>();
+  for (const row of value.objectives) {
+    if (!row || typeof row.objective?.id !== "string" || !row.objective.id || ids.has(row.objective.id) ||
+        !["stored_energy", "demand_following", "permission"].includes(row.objective.kind) ||
+        !["outstanding", "retained", "incorporated", "retired"].includes(row.responsibility) ||
+        typeof row.outcome !== "string") throw new Error("Invalid prior battery objective");
+    integer(row.objective.deadline_ms, "objective deadline"); ids.add(row.objective.id);
+  }
 }

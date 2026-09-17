@@ -7,12 +7,28 @@
   },
   "x-shs-versioning": {
     "api_version": 1,
-    "supported_snapshot_schema_versions": [5, 6, 7, 8, 9],
-    "supported_plan_schema_versions": [5, 6, 7, 8, 9],
+    "supported_snapshot_schema_versions": [
+      5,
+      6,
+      7,
+      8,
+      9
+    ],
+    "supported_plan_schema_versions": [
+      5,
+      6,
+      7,
+      8,
+      9
+    ],
     "minimum_snapshot_schema_version": 5,
     "minimum_plan_schema_version": 5
   },
-  "servers": [{ "url": "https://{project}.supabase.co/functions/v1" }],
+  "servers": [
+    {
+      "url": "https://{project}.supabase.co/functions/v1"
+    }
+  ],
   "paths": {
     "/pair-device": {
       "post": {
@@ -21,7 +37,9 @@
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/PairDeviceRequest" }
+              "schema": {
+                "$ref": "#/components/schemas/PairDeviceRequest"
+              }
             }
           }
         },
@@ -30,18 +48,26 @@
             "description": "Paired",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/PairDeviceResponse" }
+                "schema": {
+                  "$ref": "#/components/schemas/PairDeviceResponse"
+                }
               }
             }
           },
-          "default": { "$ref": "#/components/responses/Error" }
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
     "/integration-status": {
       "get": {
         "operationId": "getIntegrationStatus",
-        "security": [{ "deviceToken": [] }],
+        "security": [
+          {
+            "deviceToken": []
+          }
+        ],
         "responses": {
           "200": {
             "description": "Subscription and compatibility discovery",
@@ -53,21 +79,31 @@
               }
             }
           },
-          "default": { "$ref": "#/components/responses/Error" }
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       },
       "post": {
         "operationId": "reportIntegrationStatus",
         "description": "Report current HA runtime readiness or a requested replan failure, and read status back. The response is the same discovery document the GET returns.",
-        "security": [{ "deviceToken": [] }],
+        "security": [
+          {
+            "deviceToken": []
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "oneOf": [
-                  { "$ref": "#/components/schemas/ReplanFailureRequest" },
-                  { "$ref": "#/components/schemas/RuntimeStatusRequest" }
+                  {
+                    "$ref": "#/components/schemas/ReplanFailureRequest"
+                  },
+                  {
+                    "$ref": "#/components/schemas/RuntimeStatusRequest"
+                  }
                 ]
               }
             }
@@ -84,14 +120,20 @@
               }
             }
           },
-          "default": { "$ref": "#/components/responses/Error" }
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
     "/integration-tariff": {
       "get": {
         "operationId": "getIntegrationTariff",
-        "security": [{ "deviceToken": [] }],
+        "security": [
+          {
+            "deviceToken": []
+          }
+        ],
         "responses": {
           "200": {
             "description": "Effective tariff catalogue",
@@ -103,24 +145,36 @@
               }
             }
           },
-          "default": { "$ref": "#/components/responses/Error" }
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
     "/integration-prices": {
       "get": {
         "operationId": "getIntegrationPrices",
-        "security": [{ "deviceToken": [] }],
+        "security": [
+          {
+            "deviceToken": []
+          }
+        ],
         "parameters": [
           {
             "name": "from",
             "in": "query",
-            "schema": { "type": "string", "format": "date" }
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
           },
           {
             "name": "to",
             "in": "query",
-            "schema": { "type": "string", "format": "date" }
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
           }
         ],
         "responses": {
@@ -134,14 +188,20 @@
               }
             }
           },
-          "default": { "$ref": "#/components/responses/Error" }
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
     "/ha-energy-ingest": {
       "post": {
         "operationId": "ingestDailyEnergy",
-        "security": [{ "deviceToken": [] }],
+        "security": [
+          {
+            "deviceToken": []
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -163,14 +223,20 @@
               }
             }
           },
-          "default": { "$ref": "#/components/responses/Error" }
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
     "/energy-optimisation-ingest": {
       "post": {
         "operationId": "ingestEnergyOptimisation",
-        "security": [{ "deviceToken": [] }],
+        "security": [
+          {
+            "deviceToken": []
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -192,15 +258,23 @@
               }
             }
           },
-          "426": { "$ref": "#/components/responses/Error" },
-          "default": { "$ref": "#/components/responses/Error" }
+          "426": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     },
     "/energy-optimisation-plan-ack": {
       "post": {
         "operationId": "acknowledgeEnergyOptimisationPlan",
-        "security": [{ "deviceToken": [] }],
+        "security": [
+          {
+            "deviceToken": []
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -222,8 +296,12 @@
               }
             }
           },
-          "409": { "$ref": "#/components/responses/Error" },
-          "default": { "$ref": "#/components/responses/Error" }
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
         }
       }
     }
@@ -239,10 +317,18 @@
     "responses": {
       "Error": {
         "description": "Versioned machine-readable error",
-        "headers": { "X-Request-ID": { "schema": { "type": "string" } } },
+        "headers": {
+          "X-Request-ID": {
+            "schema": {
+              "type": "string"
+            }
+          }
+        },
         "content": {
           "application/json": {
-            "schema": { "$ref": "#/components/schemas/ErrorEnvelope" }
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
           }
         }
       }
@@ -355,6 +441,9 @@
               },
               "operating_scope": {
                 "$ref": "#/components/schemas/OperatingScopeV1"
+              },
+              "battery_execution_feedback": {
+                "$ref": "#/components/schemas/BatteryExecutionFeedbackV1"
               }
             }
           }
@@ -380,6 +469,9 @@
               },
               "execution_plan": {
                 "$ref": "#/components/schemas/PlanV8"
+              },
+              "battery_execution": {
+                "$ref": "#/components/schemas/BatteryExecutionExecutionContract"
               }
             }
           }
@@ -609,14 +701,29 @@
           }
         }
       },
-      "RequestId": { "type": "string", "minLength": 8, "maxLength": 128 },
+      "RequestId": {
+        "type": "string",
+        "minLength": 8,
+        "maxLength": 128
+      },
       "ApiSuccess": {
         "type": "object",
-        "required": ["api_version", "request_id", "ok", "data"],
+        "required": [
+          "api_version",
+          "request_id",
+          "ok",
+          "data"
+        ],
         "properties": {
-          "api_version": { "const": 1 },
-          "request_id": { "$ref": "#/components/schemas/RequestId" },
-          "ok": { "const": true },
+          "api_version": {
+            "const": 1
+          },
+          "request_id": {
+            "$ref": "#/components/schemas/RequestId"
+          },
+          "ok": {
+            "const": true
+          },
           "data": {}
         },
         "additionalProperties": true,
@@ -624,57 +731,117 @@
       },
       "ErrorInfo": {
         "type": "object",
-        "required": ["code", "message", "path", "details", "retryable"],
+        "required": [
+          "code",
+          "message",
+          "path",
+          "details",
+          "retryable"
+        ],
         "properties": {
-          "code": { "type": "string", "pattern": "^[a-z][a-z0-9_]+$" },
-          "message": { "type": "string", "minLength": 1 },
-          "path": { "type": ["string", "null"] },
+          "code": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]+$"
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "details": {},
-          "retryable": { "type": "boolean" }
+          "retryable": {
+            "type": "boolean"
+          }
         },
         "additionalProperties": false
       },
       "ErrorEnvelope": {
         "type": "object",
-        "required": ["api_version", "request_id", "ok", "error", "error_info"],
+        "required": [
+          "api_version",
+          "request_id",
+          "ok",
+          "error",
+          "error_info"
+        ],
         "properties": {
-          "api_version": { "const": 1 },
-          "request_id": { "$ref": "#/components/schemas/RequestId" },
-          "ok": { "const": false },
+          "api_version": {
+            "const": 1
+          },
+          "request_id": {
+            "$ref": "#/components/schemas/RequestId"
+          },
+          "ok": {
+            "const": false
+          },
           "error": {
             "type": "string",
             "description": "Temporary v0 alias for error_info.code."
           },
-          "error_info": { "$ref": "#/components/schemas/ErrorInfo" }
+          "error_info": {
+            "$ref": "#/components/schemas/ErrorInfo"
+          }
         },
         "additionalProperties": true
       },
       "PairDeviceRequest": {
         "type": "object",
-        "required": ["code", "device_name"],
+        "required": [
+          "code",
+          "device_name"
+        ],
         "properties": {
-          "code": { "type": "string", "pattern": "^[A-Z2-9]{8}$" },
-          "device_name": { "type": "string", "minLength": 1, "maxLength": 100 }
+          "code": {
+            "type": "string",
+            "pattern": "^[A-Z2-9]{8}$"
+          },
+          "device_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          }
         },
         "additionalProperties": false
       },
       "PairDeviceData": {
         "type": "object",
-        "required": ["device_token", "customer_id", "home_id"],
+        "required": [
+          "device_token",
+          "customer_id",
+          "home_id"
+        ],
         "properties": {
-          "device_token": { "type": "string", "pattern": "^shs_[0-9a-f]{64}$" },
-          "customer_id": { "type": "string", "format": "uuid" },
-          "home_id": { "type": "string", "format": "uuid" }
+          "device_token": {
+            "type": "string",
+            "pattern": "^shs_[0-9a-f]{64}$"
+          },
+          "customer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "home_id": {
+            "type": "string",
+            "format": "uuid"
+          }
         },
         "additionalProperties": true
       },
       "PairDeviceResponse": {
         "allOf": [
-          { "$ref": "#/components/schemas/ApiSuccess" },
+          {
+            "$ref": "#/components/schemas/ApiSuccess"
+          },
           {
             "type": "object",
             "properties": {
-              "data": { "$ref": "#/components/schemas/PairDeviceData" }
+              "data": {
+                "$ref": "#/components/schemas/PairDeviceData"
+              }
             }
           }
         ]
@@ -694,66 +861,143 @@
           "server_time"
         ],
         "properties": {
-          "api_version": { "const": 1 },
-          "supported_snapshot_schema_versions": { "const": [5, 6, 7, 8, 9] },
-          "supported_plan_schema_versions": { "const": [5, 6, 7, 8, 9] },
-          "minimum_snapshot_schema_version": { "const": 5 },
-          "minimum_plan_schema_version": { "const": 5 },
+          "api_version": {
+            "const": 1
+          },
+          "supported_snapshot_schema_versions": {
+            "const": [
+              5,
+              6,
+              7,
+              8,
+              9
+            ]
+          },
+          "supported_plan_schema_versions": {
+            "const": [
+              5,
+              6,
+              7,
+              8,
+              9
+            ]
+          },
+          "minimum_snapshot_schema_version": {
+            "const": 5
+          },
+          "minimum_plan_schema_version": {
+            "const": 5
+          },
           "latest_plan_request_id": {
             "oneOf": [
-              { "$ref": "#/components/schemas/RequestId" },
-              { "type": "null" }
+              {
+                "$ref": "#/components/schemas/RequestId"
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "pending_replan_request_id": {
             "description": "A replan the household has asked for and not yet been given. The device answers it by pushing a snapshot to /energy-optimisation-ingest carrying this id.",
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "uuid"
           },
-          "subscription_active": { "type": "boolean" },
+          "subscription_active": {
+            "type": "boolean"
+          },
           "subscription_expires_at": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "date-time"
           },
-          "customer_name": { "type": ["string", "null"] },
-          "home_id": { "type": "string", "format": "uuid" },
-          "server_time": { "type": "string", "format": "date-time" }
+          "customer_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "home_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "server_time": {
+            "type": "string",
+            "format": "date-time"
+          }
         },
         "additionalProperties": false
       },
       "IntegrationStatusResponse": {
         "allOf": [
-          { "$ref": "#/components/schemas/ApiSuccess" },
+          {
+            "$ref": "#/components/schemas/ApiSuccess"
+          },
           {
             "type": "object",
             "properties": {
-          "runtime_received": { "type": ["boolean", "null"], "description": "True only when this request stored the runtime report; false for ignored reports, null for other status requests." },
-              "data": { "$ref": "#/components/schemas/IntegrationStatusData" }
+              "runtime_received": {
+                "type": [
+                  "boolean",
+                  "null"
+                ],
+                "description": "True only when this request stored the runtime report; false for ignored reports, null for other status requests."
+              },
+              "data": {
+                "$ref": "#/components/schemas/IntegrationStatusData"
+              }
             }
           }
         ]
       },
       "ObjectSuccessResponse": {
         "allOf": [
-          { "$ref": "#/components/schemas/ApiSuccess" },
-          { "type": "object", "properties": { "data": { "type": "object" } } }
+          {
+            "$ref": "#/components/schemas/ApiSuccess"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object"
+              }
+            }
+          }
         ]
       },
       "DailyEnergyIngestRequest": {
         "type": "object",
-        "required": ["readings", "calculations", "supplier_costs"],
+        "required": [
+          "readings",
+          "calculations",
+          "supplier_costs"
+        ],
         "properties": {
           "readings": {
             "type": "array",
             "maxItems": 500,
-            "items": { "type": "object" }
+            "items": {
+              "type": "object"
+            }
           },
           "calculations": {
             "type": "array",
             "maxItems": 240,
-            "items": { "type": "object" }
+            "items": {
+              "type": "object"
+            }
           },
-          "supplier_costs": { "type": "array", "items": { "type": "object" } }
+          "supplier_costs": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
         },
         "additionalProperties": false
       },
@@ -778,76 +1022,167 @@
           "service_requirement_sample_days"
         ],
         "properties": {
-          "schema_version": { "type": "integer" },
-          "mode": { "const": "live" },
-          "snapshot_id": { "type": "string", "format": "uuid" },
-          "captured_at": { "type": "string", "format": "date-time" },
-          "timezone": { "type": "string", "minLength": 1 },
-          "slot_minutes": { "const": 15 },
-          "capabilities": { "type": "object" },
+          "schema_version": {
+            "type": "integer"
+          },
+          "mode": {
+            "const": "live"
+          },
+          "snapshot_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "captured_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "timezone": {
+            "type": "string",
+            "minLength": 1
+          },
+          "slot_minutes": {
+            "const": 15
+          },
+          "capabilities": {
+            "type": "object"
+          },
           "slots": {
             "type": "array",
             "minItems": 4,
             "maxItems": 288,
-            "items": { "type": "object" }
+            "items": {
+              "type": "object"
+            }
           },
-          "sources": { "type": "object" },
-          "pv_calibration": { "type": "object" },
-          "battery": { "type": ["object", "null"] },
-          "ev_battery": { "type": ["object", "null"] },
-          "pool": { "type": ["object", "null"] },
-          "grid": { "type": "object" },
-          "policy": { "type": "object" },
+          "sources": {
+            "type": "object"
+          },
+          "pv_calibration": {
+            "type": "object"
+          },
+          "battery": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "ev_battery": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "pool": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "grid": {
+            "type": "object"
+          },
+          "policy": {
+            "type": "object"
+          },
           "device_models": {
             "type": "array",
             "maxItems": 100,
-            "items": { "type": "object" }
+            "items": {
+              "type": "object"
+            }
           },
-          "services": { "type": "array", "items": { "type": "object" } },
+          "services": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
           "service_requirement_sample_days": {
             "type": "object",
-            "additionalProperties": { "type": "integer", "minimum": 0 }
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 0
+            }
           }
         },
         "additionalProperties": true
       },
       "SnapshotV5": {
         "allOf": [
-          { "$ref": "#/components/schemas/SnapshotCommon" },
+          {
+            "$ref": "#/components/schemas/SnapshotCommon"
+          },
           {
             "type": "object",
-            "properties": { "schema_version": { "const": 5 } }
+            "properties": {
+              "schema_version": {
+                "const": 5
+              }
+            }
           }
         ]
       },
       "SnapshotV7": {
         "allOf": [
-          { "$ref": "#/components/schemas/SnapshotCommon" },
+          {
+            "$ref": "#/components/schemas/SnapshotCommon"
+          },
           {
             "type": "object",
-            "properties": { "schema_version": { "const": 7 } }
+            "properties": {
+              "schema_version": {
+                "const": 7
+              }
+            }
           }
         ]
       },
       "SnapshotV6": {
         "allOf": [
-          { "$ref": "#/components/schemas/SnapshotCommon" },
+          {
+            "$ref": "#/components/schemas/SnapshotCommon"
+          },
           {
             "type": "object",
-            "properties": { "schema_version": { "const": 6 } }
+            "properties": {
+              "schema_version": {
+                "const": 6
+              }
+            }
           }
         ]
       },
       "OptimisationIngestRequest": {
         "type": "object",
         "properties": {
-          "equipment": { "type": "object", "required": ["battery"], "properties": { "battery": { "type": "boolean" } }, "additionalProperties": false },
-          "api_version": { "const": 1 },
+          "equipment": {
+            "type": "object",
+            "required": [
+              "battery"
+            ],
+            "properties": {
+              "battery": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          "api_version": {
+            "const": 1
+          },
           "accepted_plan_schema_versions": {
             "type": "array",
             "minItems": 1,
             "uniqueItems": true,
-            "items": { "enum": [5, 6, 7, 8, 9] }
+            "items": {
+              "enum": [
+                5,
+                6,
+                7,
+                8,
+                9
+              ]
+            }
           },
           "integration_version": {
             "type": "string",
@@ -857,29 +1192,41 @@
           "actual_slots": {
             "type": "array",
             "maxItems": 288,
-            "items": { "type": "object" }
+            "items": {
+              "type": "object"
+            }
           },
           "devices": {
             "type": "array",
             "maxItems": 100,
-            "items": { "type": "object" }
+            "items": {
+              "type": "object"
+            }
           },
           "thermal_slots": {
             "type": "array",
             "maxItems": 288,
-            "items": { "type": "object" }
+            "items": {
+              "type": "object"
+            }
           },
           "price_slots": {
             "type": "array",
             "maxItems": 2880,
-            "items": { "type": "object" }
+            "items": {
+              "type": "object"
+            }
           },
           "pool_slots": {
             "type": "array",
             "maxItems": 288,
-            "items": { "type": "object" }
+            "items": {
+              "type": "object"
+            }
           },
-          "device_inventory_complete": { "type": "boolean" },
+          "device_inventory_complete": {
+            "type": "boolean"
+          },
           "replan_request_id": {
             "description": "The pending_replan_request_id this push answers. Only meaningful with a snapshot, because only a generated plan can complete a request.",
             "type": "string",
@@ -887,16 +1234,28 @@
           },
           "snapshot": {
             "oneOf": [
-              { "$ref": "#/components/schemas/SnapshotV5" },
-              { "$ref": "#/components/schemas/SnapshotV6" },
-              { "$ref": "#/components/schemas/SnapshotV7" },
-              { "$ref": "#/components/schemas/SnapshotV8" },
-              { "$ref": "#/components/schemas/SnapshotV9" }
+              {
+                "$ref": "#/components/schemas/SnapshotV5"
+              },
+              {
+                "$ref": "#/components/schemas/SnapshotV6"
+              },
+              {
+                "$ref": "#/components/schemas/SnapshotV7"
+              },
+              {
+                "$ref": "#/components/schemas/SnapshotV8"
+              },
+              {
+                "$ref": "#/components/schemas/SnapshotV9"
+              }
             ]
           }
         },
         "dependentRequired": {
-          "replan_request_id": ["snapshot"],
+          "replan_request_id": [
+            "snapshot"
+          ],
           "api_version": [
             "accepted_plan_schema_versions",
             "integration_version"
@@ -933,36 +1292,92 @@
           "plans"
         ],
         "properties": {
-          "schema_version": { "type": "integer" },
-          "mode": { "const": "live" },
-          "model_version": { "type": "string", "minLength": 1 },
+          "schema_version": {
+            "type": "integer"
+          },
+          "mode": {
+            "const": "live"
+          },
+          "model_version": {
+            "type": "string",
+            "minLength": 1
+          },
           "decision_diagnostics_version": {
             "const": 2,
             "description": "Independent version of additive, non-executable decision evidence. Version 2 adds the exact derived home-battery curve; absent on plans issued before marginal-value-planner-v11."
           },
-          "plan_id": { "type": "string", "format": "uuid" },
-          "snapshot_id": { "type": "string", "format": "uuid" },
-          "issued_at": { "type": "string", "format": "date-time" },
-          "valid_until": { "type": "string", "format": "date-time" },
-          "binding_until": { "type": "string", "format": "date-time" },
-          "slot_minutes": { "const": 15 },
-          "status": { "enum": ["ready", "incomplete", "infeasible"] },
-          "services": { "type": "array", "items": { "type": "object" } },
-          "device_models": { "type": "array", "items": { "type": "object" } },
-          "price_outlook": { "$ref": "#/components/schemas/ResolvedPriceOutlookV1" },
+          "plan_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "snapshot_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "issued_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "valid_until": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "binding_until": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "slot_minutes": {
+            "const": 15
+          },
+          "status": {
+            "enum": [
+              "ready",
+              "incomplete",
+              "infeasible"
+            ]
+          },
+          "services": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "device_models": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "price_outlook": {
+            "$ref": "#/components/schemas/ResolvedPriceOutlookV1"
+          },
           "battery_value_curve": {
             "oneOf": [
-              { "$ref": "#/components/schemas/BatteryValueCurveDiagnosticV1" },
-              { "type": "null" }
+              {
+                "$ref": "#/components/schemas/BatteryValueCurveDiagnosticV1"
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "plans": {
             "type": "object",
-            "required": ["baseline", "priority", "cost"],
+            "required": [
+              "baseline",
+              "priority",
+              "cost"
+            ],
             "properties": {
-              "baseline": { "$ref": "#/components/schemas/GeneratedPlan" },
-              "priority": { "$ref": "#/components/schemas/GeneratedPlan" },
-              "cost": { "$ref": "#/components/schemas/GeneratedPlan" }
+              "baseline": {
+                "$ref": "#/components/schemas/GeneratedPlan"
+              },
+              "priority": {
+                "$ref": "#/components/schemas/GeneratedPlan"
+              },
+              "cost": {
+                "$ref": "#/components/schemas/GeneratedPlan"
+              }
             }
           }
         },
@@ -971,19 +1386,37 @@
       "ResolvedPriceOutlookV1": {
         "type": "object",
         "required": [
-          "shaped", "observed_days", "effective_days",
-          "level_sek_per_kwh", "shadow_import_sek_per_kwh"
+          "shaped",
+          "observed_days",
+          "effective_days",
+          "level_sek_per_kwh",
+          "shadow_import_sek_per_kwh"
         ],
         "properties": {
-          "shaped": { "type": "boolean" },
-          "observed_days": { "type": "integer", "minimum": 0 },
-          "effective_days": { "type": "number", "minimum": 0 },
-          "level_sek_per_kwh": { "type": ["number", "null"] },
+          "shaped": {
+            "type": "boolean"
+          },
+          "observed_days": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "effective_days": {
+            "type": "number",
+            "minimum": 0
+          },
+          "level_sek_per_kwh": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
           "shadow_import_sek_per_kwh": {
             "type": "array",
             "minItems": 1,
             "maxItems": 288,
-            "items": { "type": "number" },
+            "items": {
+              "type": "number"
+            },
             "description": "Exact unrounded all-in import value used for each horizon quarter; supplying it as the fourth planner argument bypasses price-shape estimation for deterministic replay."
           }
         },
@@ -992,24 +1425,45 @@
       "BatteryValueCurveDiagnosticV1": {
         "type": "object",
         "required": [
-          "schema_version", "curve", "state_basis", "initial_state_kwh",
-          "usable_capacity_kwh", "covering_window", "curve_input"
+          "schema_version",
+          "curve",
+          "state_basis",
+          "initial_state_kwh",
+          "usable_capacity_kwh",
+          "covering_window",
+          "curve_input"
         ],
         "properties": {
-          "schema_version": { "const": 1 },
+          "schema_version": {
+            "const": 1
+          },
           "curve": {
             "type": "object",
-            "required": ["unit", "points"],
+            "required": [
+              "unit",
+              "points"
+            ],
             "properties": {
-              "unit": { "const": "kwh" },
+              "unit": {
+                "const": "kwh"
+              },
               "points": {
                 "type": "array",
                 "items": {
                   "type": "object",
-                  "required": ["at", "sek_per_unit"],
+                  "required": [
+                    "at",
+                    "sek_per_unit"
+                  ],
                   "properties": {
-                    "at": { "type": "number", "minimum": 0 },
-                    "sek_per_unit": { "type": "number", "minimum": 0 }
+                    "at": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "sek_per_unit": {
+                      "type": "number",
+                      "minimum": 0
+                    }
                   },
                   "additionalProperties": false
                 }
@@ -1017,23 +1471,44 @@
             },
             "additionalProperties": false
           },
-          "state_basis": { "const": "usable_kwh_above_min_soc" },
-          "initial_state_kwh": { "type": "number", "minimum": 0 },
-          "usable_capacity_kwh": { "type": "number", "minimum": 0 },
+          "state_basis": {
+            "const": "usable_kwh_above_min_soc"
+          },
+          "initial_state_kwh": {
+            "type": "number",
+            "minimum": 0
+          },
+          "usable_capacity_kwh": {
+            "type": "number",
+            "minimum": 0
+          },
           "covering_window": {
             "type": "array",
             "maxItems": 288,
             "items": {
               "type": "object",
               "required": [
-                "start", "import_price_sek_per_kwh",
-                "residual_load_ac_kwh", "battery_energy_kwh"
+                "start",
+                "import_price_sek_per_kwh",
+                "residual_load_ac_kwh",
+                "battery_energy_kwh"
               ],
               "properties": {
-                "start": { "type": "string", "format": "date-time" },
-                "import_price_sek_per_kwh": { "type": "number" },
-                "residual_load_ac_kwh": { "type": "number", "minimum": 0 },
-                "battery_energy_kwh": { "type": "number", "minimum": 0 }
+                "start": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "import_price_sek_per_kwh": {
+                  "type": "number"
+                },
+                "residual_load_ac_kwh": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "battery_energy_kwh": {
+                  "type": "number",
+                  "minimum": 0
+                }
               },
               "additionalProperties": false
             }
@@ -1041,15 +1516,34 @@
           "curve_input": {
             "type": "object",
             "required": [
-              "future_surplus_kwh", "usable_kwh", "round_trip_efficiency",
-              "degradation_sek_per_kwh", "expected_draw_kwh"
+              "future_surplus_kwh",
+              "usable_kwh",
+              "round_trip_efficiency",
+              "degradation_sek_per_kwh",
+              "expected_draw_kwh"
             ],
             "properties": {
-              "future_surplus_kwh": { "type": "number", "minimum": 0 },
-              "usable_kwh": { "type": "number", "minimum": 0 },
-              "round_trip_efficiency": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
-              "degradation_sek_per_kwh": { "type": "number", "minimum": 0 },
-              "expected_draw_kwh": { "type": "number", "minimum": 0 }
+              "future_surplus_kwh": {
+                "type": "number",
+                "minimum": 0
+              },
+              "usable_kwh": {
+                "type": "number",
+                "minimum": 0
+              },
+              "round_trip_efficiency": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 1
+              },
+              "degradation_sek_per_kwh": {
+                "type": "number",
+                "minimum": 0
+              },
+              "expected_draw_kwh": {
+                "type": "number",
+                "minimum": 0
+              }
             },
             "additionalProperties": false
           }
@@ -1058,12 +1552,16 @@
       },
       "GeneratedPlan": {
         "type": "object",
-        "required": ["slots"],
+        "required": [
+          "slots"
+        ],
         "properties": {
           "slots": {
             "type": "array",
             "maxItems": 288,
-            "items": { "$ref": "#/components/schemas/PlannedSlot" }
+            "items": {
+              "$ref": "#/components/schemas/PlannedSlot"
+            }
           }
         },
         "additionalProperties": true
@@ -1071,62 +1569,158 @@
       "PlannedSlot": {
         "type": "object",
         "properties": {
-          "decision": { "$ref": "#/components/schemas/QuarterDecisionV1" }
+          "decision": {
+            "$ref": "#/components/schemas/QuarterDecisionV1"
+          }
         },
         "additionalProperties": true
       },
       "QuarterDecisionV1": {
         "type": "object",
-        "required": ["schema_version", "store_allocations", "battery", "grid_balance"],
+        "required": [
+          "schema_version",
+          "store_allocations",
+          "battery",
+          "grid_balance"
+        ],
         "properties": {
-          "schema_version": { "const": 1 },
+          "schema_version": {
+            "const": 1
+          },
           "store_allocations": {
             "type": "array",
-            "items": { "$ref": "#/components/schemas/DispatchAllocationDiagnosticV1" }
+            "items": {
+              "$ref": "#/components/schemas/DispatchAllocationDiagnosticV1"
+            }
           },
           "battery": {
             "oneOf": [
-              { "$ref": "#/components/schemas/BatteryDecisionDiagnosticV1" },
-              { "type": "null" }
+              {
+                "$ref": "#/components/schemas/BatteryDecisionDiagnosticV1"
+              },
+              {
+                "type": "null"
+              }
             ]
           },
-          "grid_balance": { "$ref": "#/components/schemas/GridBalanceDiagnosticV1" }
+          "grid_balance": {
+            "$ref": "#/components/schemas/GridBalanceDiagnosticV1"
+          }
         },
         "additionalProperties": false
       },
       "DispatchAllocationDiagnosticV1": {
         "type": "object",
         "required": [
-          "store_key", "direction", "trigger", "allocation_order",
-          "run_start_index", "run_slots", "power_w", "state_before",
-          "state_after", "state_unit", "retention_factor",
-          "average_value_sek_per_kwh", "energy_cost_sek_per_kwh",
-          "wear_cost_sek_per_kwh", "start_cost_sek", "net_value_sek",
-          "run_net_value_sek", "solar_w", "grid_w", "discharge_destination"
+          "store_key",
+          "direction",
+          "trigger",
+          "allocation_order",
+          "run_start_index",
+          "run_slots",
+          "power_w",
+          "state_before",
+          "state_after",
+          "state_unit",
+          "retention_factor",
+          "average_value_sek_per_kwh",
+          "energy_cost_sek_per_kwh",
+          "wear_cost_sek_per_kwh",
+          "start_cost_sek",
+          "net_value_sek",
+          "run_net_value_sek",
+          "solar_w",
+          "grid_w",
+          "discharge_destination"
         ],
         "properties": {
-          "store_key": { "type": "string", "minLength": 1 },
-          "direction": { "enum": ["charge", "discharge"] },
-          "trigger": { "enum": ["economic_winner", "minimum_run_continuation"] },
-          "allocation_order": { "type": "integer", "minimum": 1 },
-          "run_start_index": { "type": "integer", "minimum": 0, "maximum": 287 },
-          "run_slots": { "type": "integer", "minimum": 1, "maximum": 288 },
-          "power_w": { "type": "number", "minimum": 0 },
-          "state_before": { "type": "number" },
-          "state_after": { "type": "number" },
-          "state_unit": { "type": "string", "minLength": 1 },
-          "retention_factor": { "type": "number", "minimum": 0 },
-          "average_value_sek_per_kwh": { "type": "number" },
-          "energy_cost_sek_per_kwh": { "type": "number" },
-          "wear_cost_sek_per_kwh": { "type": "number", "minimum": 0 },
-          "start_cost_sek": { "type": "number", "minimum": 0 },
-          "net_value_sek": { "type": "number" },
-          "run_net_value_sek": { "type": "number" },
-          "solar_w": { "type": "number", "minimum": 0 },
-          "grid_w": { "type": "number", "minimum": 0 },
+          "store_key": {
+            "type": "string",
+            "minLength": 1
+          },
+          "direction": {
+            "enum": [
+              "charge",
+              "discharge"
+            ]
+          },
+          "trigger": {
+            "enum": [
+              "economic_winner",
+              "minimum_run_continuation"
+            ]
+          },
+          "allocation_order": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "run_start_index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 287
+          },
+          "run_slots": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 288
+          },
+          "power_w": {
+            "type": "number",
+            "minimum": 0
+          },
+          "state_before": {
+            "type": "number"
+          },
+          "state_after": {
+            "type": "number"
+          },
+          "state_unit": {
+            "type": "string",
+            "minLength": 1
+          },
+          "retention_factor": {
+            "type": "number",
+            "minimum": 0
+          },
+          "average_value_sek_per_kwh": {
+            "type": "number"
+          },
+          "energy_cost_sek_per_kwh": {
+            "type": "number"
+          },
+          "wear_cost_sek_per_kwh": {
+            "type": "number",
+            "minimum": 0
+          },
+          "start_cost_sek": {
+            "type": "number",
+            "minimum": 0
+          },
+          "net_value_sek": {
+            "type": "number"
+          },
+          "run_net_value_sek": {
+            "type": "number"
+          },
+          "solar_w": {
+            "type": "number",
+            "minimum": 0
+          },
+          "grid_w": {
+            "type": "number",
+            "minimum": 0
+          },
           "discharge_destination": {
-            "type": ["string", "null"],
-            "enum": ["load", "export", "mixed", null]
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "load",
+              "export",
+              "mixed",
+              null
+            ]
           }
         },
         "additionalProperties": false
@@ -1134,58 +1728,157 @@
       "BatteryDecisionDiagnosticV1": {
         "type": "object",
         "required": [
-          "action", "reason", "state_before", "state_after", "state_unit",
-          "comparison_power_w", "power_w", "comparison_price_sek_per_kwh",
-          "stored_value_sek_per_kwh", "wear_cost_sek_per_kwh", "net_value_sek"
+          "action",
+          "reason",
+          "state_before",
+          "state_after",
+          "state_unit",
+          "comparison_power_w",
+          "power_w",
+          "comparison_price_sek_per_kwh",
+          "stored_value_sek_per_kwh",
+          "wear_cost_sek_per_kwh",
+          "net_value_sek"
         ],
         "properties": {
-          "action": { "enum": ["charge", "discharge", "hold"] },
-          "reason": {
+          "action": {
             "enum": [
-              "profitable_charge", "profitable_discharge",
-              "retained_value_exceeds_import", "charge_value_below_export",
-              "state_floor", "state_ceiling", "future_state_constraint",
-              "load_added_after_dispatch", "balanced"
+              "charge",
+              "discharge",
+              "hold"
             ]
           },
-          "state_before": { "type": "number" },
-          "state_after": { "type": "number" },
-          "state_unit": { "type": "string", "minLength": 1 },
-          "comparison_power_w": { "type": "number", "minimum": 0 },
-          "power_w": { "type": "number", "minimum": 0 },
-          "comparison_price_sek_per_kwh": { "type": ["number", "null"] },
-          "stored_value_sek_per_kwh": { "type": ["number", "null"] },
-          "wear_cost_sek_per_kwh": { "type": "number", "minimum": 0 },
-          "net_value_sek": { "type": ["number", "null"] }
+          "reason": {
+            "enum": [
+              "profitable_charge",
+              "profitable_discharge",
+              "retained_value_exceeds_import",
+              "charge_value_below_export",
+              "state_floor",
+              "state_ceiling",
+              "future_state_constraint",
+              "load_added_after_dispatch",
+              "balanced"
+            ]
+          },
+          "state_before": {
+            "type": "number"
+          },
+          "state_after": {
+            "type": "number"
+          },
+          "state_unit": {
+            "type": "string",
+            "minLength": 1
+          },
+          "comparison_power_w": {
+            "type": "number",
+            "minimum": 0
+          },
+          "power_w": {
+            "type": "number",
+            "minimum": 0
+          },
+          "comparison_price_sek_per_kwh": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "stored_value_sek_per_kwh": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "wear_cost_sek_per_kwh": {
+            "type": "number",
+            "minimum": 0
+          },
+          "net_value_sek": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
         },
         "additionalProperties": false
       },
       "GridBalanceDiagnosticV1": {
         "type": "object",
         "required": [
-          "load_w", "pv_w", "battery_charge_w", "battery_discharge_w",
-          "residual_w", "direction", "power_w", "limit_w", "limit_binding", "reason"
+          "load_w",
+          "pv_w",
+          "battery_charge_w",
+          "battery_discharge_w",
+          "residual_w",
+          "direction",
+          "power_w",
+          "limit_w",
+          "limit_binding",
+          "reason"
         ],
         "properties": {
-          "load_w": { "type": "number", "minimum": 0 },
-          "pv_w": { "type": "number", "minimum": 0 },
-          "battery_charge_w": { "type": "number", "minimum": 0 },
-          "battery_discharge_w": { "type": "number", "minimum": 0 },
-          "residual_w": { "type": "number" },
-          "direction": { "enum": ["import", "export", "balanced"] },
-          "power_w": { "type": "number", "minimum": 0 },
-          "limit_w": { "type": "number", "minimum": 0 },
-          "limit_binding": { "type": "boolean" },
-          "reason": { "enum": ["residual_after_dispatch", "import_limit", "export_limit", "balanced"] }
+          "load_w": {
+            "type": "number",
+            "minimum": 0
+          },
+          "pv_w": {
+            "type": "number",
+            "minimum": 0
+          },
+          "battery_charge_w": {
+            "type": "number",
+            "minimum": 0
+          },
+          "battery_discharge_w": {
+            "type": "number",
+            "minimum": 0
+          },
+          "residual_w": {
+            "type": "number"
+          },
+          "direction": {
+            "enum": [
+              "import",
+              "export",
+              "balanced"
+            ]
+          },
+          "power_w": {
+            "type": "number",
+            "minimum": 0
+          },
+          "limit_w": {
+            "type": "number",
+            "minimum": 0
+          },
+          "limit_binding": {
+            "type": "boolean"
+          },
+          "reason": {
+            "enum": [
+              "residual_after_dispatch",
+              "import_limit",
+              "export_limit",
+              "balanced"
+            ]
+          }
         },
         "additionalProperties": false
       },
       "PlanV5": {
         "allOf": [
-          { "$ref": "#/components/schemas/PlanCommon" },
+          {
+            "$ref": "#/components/schemas/PlanCommon"
+          },
           {
             "type": "object",
-            "properties": { "schema_version": { "const": 5 } }
+            "properties": {
+              "schema_version": {
+                "const": 5
+              }
+            }
           }
         ]
       },
@@ -1338,25 +2031,45 @@
       },
       "PlanV7": {
         "allOf": [
-          { "$ref": "#/components/schemas/PlanCommon" },
+          {
+            "$ref": "#/components/schemas/PlanCommon"
+          },
           {
             "type": "object",
-            "properties": { "schema_version": { "const": 7 }, "plans": {
-              "type": "object", "properties": {
-                "baseline": { "$ref": "#/components/schemas/GeneratedPlanV7" },
-                "priority": { "$ref": "#/components/schemas/GeneratedPlanV7" },
-                "cost": { "$ref": "#/components/schemas/GeneratedPlanV7" }
+            "properties": {
+              "schema_version": {
+                "const": 7
+              },
+              "plans": {
+                "type": "object",
+                "properties": {
+                  "baseline": {
+                    "$ref": "#/components/schemas/GeneratedPlanV7"
+                  },
+                  "priority": {
+                    "$ref": "#/components/schemas/GeneratedPlanV7"
+                  },
+                  "cost": {
+                    "$ref": "#/components/schemas/GeneratedPlanV7"
+                  }
+                }
               }
-            } }
+            }
           }
         ]
       },
       "PlanV6": {
         "allOf": [
-          { "$ref": "#/components/schemas/PlanCommon" },
+          {
+            "$ref": "#/components/schemas/PlanCommon"
+          },
           {
             "type": "object",
-            "properties": { "schema_version": { "const": 6 } }
+            "properties": {
+              "schema_version": {
+                "const": 6
+              }
+            }
           }
         ]
       },
@@ -1373,32 +2086,109 @@
           "home_configuration"
         ],
         "properties": {
-          "actual_slots_accepted": { "type": "integer", "minimum": 0 },
-          "thermal_slots_accepted": { "type": "integer", "minimum": 0 },
-          "price_slots_accepted": { "type": "integer", "minimum": 0 },
-          "plan_id": { "type": ["string", "null"], "format": "uuid" },
-          "snapshot_id": { "type": ["string", "null"], "format": "uuid" },
+          "actual_slots_accepted": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "thermal_slots_accepted": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "price_slots_accepted": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "plan_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "snapshot_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
           "plan": {
             "oneOf": [
-              { "$ref": "#/components/schemas/PlanV5" },
-              { "$ref": "#/components/schemas/PlanV6" },
-              { "$ref": "#/components/schemas/PlanV7" },
-              { "$ref": "#/components/schemas/PlanV8" },
-              { "$ref": "#/components/schemas/PlanV9" },
-              { "type": "null" }
+              {
+                "$ref": "#/components/schemas/PlanV5"
+              },
+              {
+                "$ref": "#/components/schemas/PlanV6"
+              },
+              {
+                "$ref": "#/components/schemas/PlanV7"
+              },
+              {
+                "$ref": "#/components/schemas/PlanV8"
+              },
+              {
+                "$ref": "#/components/schemas/PlanV9"
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "device_configuration": {
             "type": "array",
-            "items": { "type": "object", "required": ["key", "planning_role", "planning_choice_at"],
-              "properties": { "key": { "type": "string" }, "planning_role": { "enum": ["base_load", "controllable"] },
-                "planning_choice_at": { "type": ["string", "null"], "format": "date-time", "description": "Actual website decision; null means never reviewed. Inventory pushes do not change it." } } }
+            "items": {
+              "type": "object",
+              "required": [
+                "key",
+                "planning_role",
+                "planning_choice_at"
+              ],
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "planning_role": {
+                  "enum": [
+                    "base_load",
+                    "controllable"
+                  ]
+                },
+                "planning_choice_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time",
+                  "description": "Actual website decision; null means never reviewed. Inventory pushes do not change it."
+                }
+              }
+            }
           },
           "home_configuration": {
-            "type": "object", "required": ["battery"], "properties": {
-              "battery": { "type": "object", "required": ["included", "choice_at"], "properties": {
-                "included": { "type": "boolean" }, "choice_at": { "type": ["string", "null"], "format": "date-time" }
-              } }
+            "type": "object",
+            "required": [
+              "battery"
+            ],
+            "properties": {
+              "battery": {
+                "type": "object",
+                "required": [
+                  "included",
+                  "choice_at"
+                ],
+                "properties": {
+                  "included": {
+                    "type": "boolean"
+                  },
+                  "choice_at": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "date-time"
+                  }
+                }
+              }
             }
           }
         },
@@ -1406,22 +2196,42 @@
       },
       "OptimisationIngestResponse": {
         "allOf": [
-          { "$ref": "#/components/schemas/ApiSuccess" },
+          {
+            "$ref": "#/components/schemas/ApiSuccess"
+          },
           {
             "type": "object",
             "properties": {
-              "data": { "$ref": "#/components/schemas/OptimisationIngestData" }
+              "data": {
+                "$ref": "#/components/schemas/OptimisationIngestData"
+              }
             }
           }
         ]
       },
       "PlanRejection": {
         "type": "object",
-        "required": ["code", "message", "path", "details"],
+        "required": [
+          "code",
+          "message",
+          "path",
+          "details"
+        ],
         "properties": {
-          "code": { "type": "string", "pattern": "^[a-z][a-z0-9_]+$" },
-          "message": { "type": "string", "minLength": 1 },
-          "path": { "type": ["string", "null"] },
+          "code": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]+$"
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "details": {}
         },
         "additionalProperties": false
@@ -1438,33 +2248,78 @@
           "error"
         ],
         "properties": {
-          "api_version": { "const": 1 },
-          "plan_id": { "type": "string", "format": "uuid" },
-          "snapshot_id": { "type": "string", "format": "uuid" },
-          "plan_schema_version": { "enum": [5, 6, 7, 8, 9] },
+          "api_version": {
+            "const": 1
+          },
+          "plan_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "snapshot_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "plan_schema_version": {
+            "enum": [
+              5,
+              6,
+              7,
+              8,
+              9
+            ]
+          },
           "integration_version": {
             "type": "string",
             "minLength": 1,
             "maxLength": 100
           },
-          "outcome": { "enum": ["accepted", "rejected"] },
+          "outcome": {
+            "enum": [
+              "accepted",
+              "rejected"
+            ]
+          },
           "error": {
             "oneOf": [
-              { "$ref": "#/components/schemas/PlanRejection" },
-              { "type": "null" }
+              {
+                "$ref": "#/components/schemas/PlanRejection"
+              },
+              {
+                "type": "null"
+              }
             ]
           }
         },
         "allOf": [
           {
-            "if": { "properties": { "outcome": { "const": "accepted" } } },
-            "then": { "properties": { "error": { "type": "null" } } }
-          },
-          {
-            "if": { "properties": { "outcome": { "const": "rejected" } } },
+            "if": {
+              "properties": {
+                "outcome": {
+                  "const": "accepted"
+                }
+              }
+            },
             "then": {
               "properties": {
-                "error": { "$ref": "#/components/schemas/PlanRejection" }
+                "error": {
+                  "type": "null"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "outcome": {
+                  "const": "rejected"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "error": {
+                  "$ref": "#/components/schemas/PlanRejection"
+                }
               }
             }
           }
@@ -1473,9 +2328,15 @@
       },
       "ReplanFailureRequest": {
         "type": "object",
-        "required": ["replan_request_id", "error"],
+        "required": [
+          "replan_request_id",
+          "error"
+        ],
         "properties": {
-          "replan_request_id": { "type": "string", "format": "uuid" },
+          "replan_request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
           "error": {
             "description": "Why this device could not build a snapshot to plan from, in the household's own terms.",
             "type": "string",
@@ -1484,6 +2345,714 @@
           }
         },
         "additionalProperties": false
+      },
+      "BatteryExecutionReferenceInterval": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "start_ms",
+          "end_ms",
+          "stored_start_mwh",
+          "stored_end_mwh",
+          "operation",
+          "target_kind",
+          "grid_charge_allowed",
+          "export_allowed",
+          "charge_ac_limit_w",
+          "discharge_ac_limit_w",
+          "follows_demand",
+          "charge_ac_mwh",
+          "discharge_ac_mwh",
+          "pv_mwh",
+          "load_mwh",
+          "import_mwh",
+          "export_mwh",
+          "curtailed_mwh",
+          "unserved_mwh",
+          "rounding_mwh"
+        ],
+        "properties": {
+          "start_ms": {
+            "type": "integer"
+          },
+          "end_ms": {
+            "type": "integer"
+          },
+          "stored_start_mwh": {
+            "type": "integer"
+          },
+          "stored_end_mwh": {
+            "type": "integer"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "target_kind": {
+            "type": "string"
+          },
+          "grid_charge_allowed": {
+            "type": "boolean"
+          },
+          "export_allowed": {
+            "type": "boolean"
+          },
+          "charge_ac_limit_w": {
+            "type": "integer"
+          },
+          "discharge_ac_limit_w": {
+            "type": "integer"
+          },
+          "follows_demand": {
+            "type": "boolean"
+          },
+          "charge_ac_mwh": {
+            "type": "integer"
+          },
+          "discharge_ac_mwh": {
+            "type": "integer"
+          },
+          "pv_mwh": {
+            "type": "integer"
+          },
+          "load_mwh": {
+            "type": "integer"
+          },
+          "import_mwh": {
+            "type": "integer"
+          },
+          "export_mwh": {
+            "type": "integer"
+          },
+          "curtailed_mwh": {
+            "type": "integer"
+          },
+          "unserved_mwh": {
+            "type": "integer"
+          },
+          "rounding_mwh": {
+            "type": "integer"
+          }
+        }
+      },
+      "BatteryExecutionObjective": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "kind",
+          "start_ms",
+          "deadline_ms",
+          "target_mwh",
+          "reason"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "start_ms": {
+            "type": "integer"
+          },
+          "deadline_ms": {
+            "type": "integer"
+          },
+          "target_mwh": {
+            "type": "integer"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "BatteryExecutionRecovery": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "objective_id",
+          "start_ms",
+          "end_ms",
+          "max_correction_mwh",
+          "extra_charge_dc_w",
+          "order",
+          "resource_id",
+          "rule",
+          "reason"
+        ],
+        "properties": {
+          "objective_id": {
+            "type": "string"
+          },
+          "start_ms": {
+            "type": "integer"
+          },
+          "end_ms": {
+            "type": "integer"
+          },
+          "max_correction_mwh": {
+            "type": "integer"
+          },
+          "extra_charge_dc_w": {
+            "type": "integer"
+          },
+          "order": {
+            "type": "integer"
+          },
+          "resource_id": {
+            "type": "string"
+          },
+          "rule": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "BatteryExecutionDisposition": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "objective_id",
+          "outcome",
+          "replacement_id",
+          "reason"
+        ],
+        "properties": {
+          "objective_id": {
+            "type": "string"
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "replacement_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "BatteryExecutionExecutionContract": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schema",
+          "id",
+          "plan_id",
+          "generation",
+          "mode",
+          "scope_revision",
+          "model_revision",
+          "energy_basis",
+          "capacity_mwh",
+          "minimum_mwh",
+          "maximum_mwh",
+          "export_reserve_mwh",
+          "valid_until_ms",
+          "source_receipt",
+          "previous_contract_id",
+          "intervals",
+          "objectives",
+          "recovery",
+          "dispositions"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "plan_id": {
+            "type": "string"
+          },
+          "generation": {
+            "type": "integer"
+          },
+          "mode": {
+            "enum": [
+              "controlling",
+              "control_verification"
+            ]
+          },
+          "scope_revision": {
+            "type": "string"
+          },
+          "model_revision": {
+            "type": "string"
+          },
+          "energy_basis": {
+            "const": "stored_energy_mwh"
+          },
+          "capacity_mwh": {
+            "type": "integer"
+          },
+          "minimum_mwh": {
+            "type": "integer"
+          },
+          "maximum_mwh": {
+            "type": "integer"
+          },
+          "export_reserve_mwh": {
+            "type": "integer"
+          },
+          "valid_until_ms": {
+            "type": "integer"
+          },
+          "source_receipt": {
+            "type": "integer"
+          },
+          "previous_contract_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "intervals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BatteryExecutionReferenceInterval"
+            }
+          },
+          "objectives": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BatteryExecutionObjective"
+            }
+          },
+          "recovery": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BatteryExecutionRecovery"
+            }
+          },
+          "dispositions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BatteryExecutionDisposition"
+            }
+          },
+          "schema": {
+            "const": "battery-plan-execution-v1"
+          }
+        }
+      },
+      "BatteryExecutionStateObservation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "at_ms",
+          "stored_mwh",
+          "source",
+          "measured"
+        ],
+        "properties": {
+          "at_ms": {
+            "type": "integer"
+          },
+          "stored_mwh": {
+            "type": "integer"
+          },
+          "source": {
+            "type": "string"
+          },
+          "measured": {
+            "type": "boolean"
+          }
+        }
+      },
+      "BatteryExecutionBalance": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "reference_mwh",
+          "charge",
+          "discharge",
+          "flow_debt_low_mwh",
+          "flow_debt_high_mwh",
+          "state_debt_mwh",
+          "state_residual_low_mwh",
+          "state_residual_high_mwh"
+        ],
+        "properties": {
+          "reference_mwh": {
+            "type": "integer"
+          },
+          "charge": {
+            "$ref": "#/components/schemas/BatteryExecutionBounds"
+          },
+          "discharge": {
+            "$ref": "#/components/schemas/BatteryExecutionBounds"
+          },
+          "flow_debt_low_mwh": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "flow_debt_high_mwh": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state_debt_mwh": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state_residual_low_mwh": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state_residual_high_mwh": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "BatteryExecutionBounds": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "low",
+          "high"
+        ],
+        "properties": {
+          "low": {
+            "type": "integer"
+          },
+          "high": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "BatteryExecutionOutcome": {
+        "type": "object",
+        "required": [
+          "objective",
+          "responsibility",
+          "outcome",
+          "shortfall_mwh",
+          "fulfilment_basis"
+        ],
+        "properties": {
+          "objective": {
+            "$ref": "#/components/schemas/BatteryExecutionObjective"
+          },
+          "origin_contract_id": {
+            "type": "string"
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "objective",
+                "contract_id",
+                "at_ms"
+              ],
+              "properties": {
+                "objective": {
+                  "$ref": "#/components/schemas/BatteryExecutionObjective"
+                },
+                "contract_id": {
+                  "type": "string"
+                },
+                "at_ms": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "dispositions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "objective_id",
+                "outcome",
+                "replacement_id",
+                "reason",
+                "contract_id",
+                "at_ms"
+              ],
+              "properties": {
+                "objective_id": {
+                  "type": "string"
+                },
+                "outcome": {
+                  "type": "string"
+                },
+                "replacement_id": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "contract_id": {
+                  "type": "string"
+                },
+                "at_ms": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "responsibility": {
+            "enum": [
+              "outstanding",
+              "retained",
+              "incorporated",
+              "retired"
+            ]
+          },
+          "outcome": {
+            "enum": [
+              "open",
+              "missed",
+              "fulfilled",
+              "unresolved",
+              "forecast_complete",
+              "changed_before_deadline"
+            ]
+          },
+          "shortfall_mwh": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "fulfilment_basis": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "flow_shortfall_mwh": {
+            "type": "integer"
+          }
+        }
+      },
+      "BatteryExecutionFeedbackV1": {
+        "type": "object",
+        "required": [
+          "generation",
+          "source_receipt",
+          "previous_contract_id",
+          "scope_revision",
+          "observed",
+          "balance",
+          "objectives",
+          "pending_effects",
+          "reason",
+          "state_reconciliations",
+          "settled_history"
+        ],
+        "properties": {
+          "generation": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "source_receipt": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "previous_contract_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scope_revision": {
+            "type": "string",
+            "minLength": 1
+          },
+          "observed": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BatteryExecutionStateObservation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "balance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BatteryExecutionBalance"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "objectives": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BatteryExecutionOutcome"
+            }
+          },
+          "state_reconciliations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BatteryExecutionStateReconciliation"
+            }
+          },
+          "settled_history": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "objective_count",
+              "sha256",
+              "through_receipt",
+              "previously_acknowledged_receipt",
+              "late_evidence_count",
+              "earliest_amended_source_ms"
+            ],
+            "properties": {
+              "objective_count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "through_receipt": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "previously_acknowledged_receipt": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "late_evidence_count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "earliest_amended_source_ms": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pending_effects": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "Journalled native attempts, including request identity, transport state and possible physical effects."
+            }
+          }
+        }
+      },
+      "BatteryExecutionStateReconciliation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "at_ms",
+          "old_capacity_mwh",
+          "new_capacity_mwh",
+          "observation",
+          "prior_flow_debt_low_mwh",
+          "prior_flow_debt_high_mwh",
+          "reason"
+        ],
+        "properties": {
+          "at_ms": {
+            "type": "integer"
+          },
+          "old_capacity_mwh": {
+            "type": "integer"
+          },
+          "new_capacity_mwh": {
+            "type": "integer"
+          },
+          "observation": {
+            "$ref": "#/components/schemas/BatteryExecutionStateObservation"
+          },
+          "prior_flow_debt_low_mwh": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "prior_flow_debt_high_mwh": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
       }
     }
   }
