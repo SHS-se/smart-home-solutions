@@ -1190,7 +1190,50 @@ function idleCells(request: BatteryExecutionRequest): ExecutionCell[] {
   });
 }
 
-function compile(input: unknown): BatteryExecutionPolicy {
+/** Explanatory metadata only: never part of the executable policy or its checkpoint. */
+export type OutlookQuarter = {
+  start_ms: number;
+  end_ms: number;
+  consumption_w: number;
+  solar_w: number;
+  import_sek_per_kwh: number;
+};
+export type OutlookEvent = OutlookQuarter & { battery_w: number };
+export type OutlookWitness = { kind: "idle" | "terminal" } | {
+  kind: "anchor";
+  anchor_kwh: number;
+  first_suffix_charge: OutlookEvent | null;
+  first_suffix_discharge: OutlookEvent | null;
+};
+export type BatteryExecutionOutlook = {
+  schema: "battery-execution-outlook-v1";
+  source_hash: string;
+  family_id: string;
+  battery_power_basis: "ac" | "dc";
+  horizon_end_ms: number;
+  bridge: OutlookQuarter | null;
+  witnesses: Record<string, OutlookWitness>;
+};
+
+function outlookQuarter(
+  problem: BatteryExecutionRequest["problem"],
+  i: number,
+): OutlookQuarter {
+  return {
+    start_ms: Date.parse(problem.intervals[i].start),
+    end_ms: Date.parse(problem.intervals[i].end),
+    consumption_w: problem.plant.residual_loads.reduce(
+      (sum, l) => sum + l.power_w[i],
+      0,
+    ),
+    solar_w: problem.plant.pv_w[i],
+    import_sek_per_kwh: problem.economics.import_sek_per_kwh[i],
+  };
+}
+
+function compile(
+  input: unknown,
+): { policy: BatteryExecutionPolicy; outlook: BatteryExecutionOutlook } {
   let inputBytes: number;
   try {
     inputBytes = bytes(input);
@@ -1346,6 +1389,15 @@ function compile(input: unknown): BatteryExecutionPolicy {
       certified_regret_bound_sek: null,
     },
   };
+  const outlook: BatteryExecutionOutlook = {
+    schema: "battery-execution-outlook-v1",
+    source_hash: hash,
+    family_id: policy.quality.family_id,
+    battery_power_basis: b.conversion ? "dc" : "ac",
+    horizon_end_ms: Date.parse(problem.intervals.at(-1)!.end),
+    bridge: problem.intervals.length > 1 ? outlookQuarter(problem, 1) : null,
+    witnesses: {},
+  };
   // Validate authorities/operations before any solve (temporarily provide a structural cell).
   batteryExecutionPolicySchema.parse({
     ...policy,
@@ -1364,6 +1416,7 @@ function compile(input: unknown): BatteryExecutionPolicy {
   });
   if (problem.intervals.length === 1) {
     policy.continuation.cells = terminalCells(request);
+    outlook.witnesses.terminal = { kind: "terminal" };
   } else {
     const anchors = sorted([
       b.state_kwh.min,
@@ -1379,6 +1432,9 @@ function compile(input: unknown): BatteryExecutionPolicy {
     );
     requireCondition(budget > horizon, "aggregate_work_limit");
     policy.continuation.cells = idleCells(request);
+    if (policy.continuation.cells.length) {
+      outlook.witnesses.idle = { kind: "idle" };
+    }
     const load = problem.plant.residual_loads.reduce(
       (sum, l) => sum + l.power_w[1],
       0,
@@ -1465,15 +1521,41 @@ function compile(input: unknown): BatteryExecutionPolicy {
         }
       }
       constant.terminal_sek = verified.closing.terminal_sek;
-      policy.continuation.cells.push(
-        ...bridgeCells(
-          request,
-          anchor,
-          `anchor-${index}`,
-          constant,
-          verified.trajectory.intervals[1]?.import_w ?? null,
-        ),
+      const witness = `anchor-${index}`;
+      const cells = bridgeCells(
+        request,
+        anchor,
+        witness,
+        constant,
+        verified.trajectory.intervals[1]?.import_w ?? null,
       );
+      policy.continuation.cells.push(...cells);
+      if (cells.length) {
+        const events: {
+          charge: OutlookEvent | null;
+          discharge: OutlookEvent | null;
+        } = { charge: null, discharge: null };
+        // Index 0 is the synthetic seed. HA reconstructs that bridge from live energy.
+        for (const [j, rawAction] of solved.candidate.actions[b.id].entries()) {
+          if (j === 0) continue;
+          const a = rawAction as Action;
+          for (const direction of ["charge", "discharge"] as const) {
+            const power = direction === "charge" ? a.charge_w : a.discharge_w;
+            if (!events[direction] && power > 0) {
+              events[direction] = {
+                ...outlookQuarter(problem, j + 1),
+                battery_w: power,
+              };
+            }
+          }
+        }
+        outlook.witnesses[witness] = {
+          kind: "anchor",
+          anchor_kwh: anchor,
+          first_suffix_charge: events.charge,
+          first_suffix_discharge: events.discharge,
+        };
+      }
       requireCondition(
         policy.continuation.cells.length <= BATTERY_EXECUTION_LIMITS.cells,
         "after_split_cell_limit",
@@ -1492,18 +1574,27 @@ function compile(input: unknown): BatteryExecutionPolicy {
     bytes(policy) <= BATTERY_EXECUTION_LIMITS.policy_bytes,
     "policy_byte_limit",
   );
-  return batteryExecutionPolicySchema.parse(policy) as BatteryExecutionPolicy;
+  return {
+    policy: batteryExecutionPolicySchema.parse(
+      policy,
+    ) as BatteryExecutionPolicy,
+    outlook,
+  };
 }
 
 /** Public bounded compiler. Malformed/unsupported scope returns a reason; defects throw. */
 export function compileBatteryExecutionPolicy(
   request: unknown,
-): { status: "compiled"; policy: BatteryExecutionPolicy } | {
+): {
+  status: "compiled";
+  policy: BatteryExecutionPolicy;
+  outlook: BatteryExecutionOutlook;
+} | {
   status: "rejected";
   reason: string;
 } {
   try {
-    return { status: "compiled", policy: compile(request) };
+    return { status: "compiled", ...compile(request) };
   } catch (error) {
     if (error instanceof Rejection) {
       return { status: "rejected", reason: error.message };

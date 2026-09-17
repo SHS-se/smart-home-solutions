@@ -337,7 +337,19 @@ if (import.meta.main) {
     discharge: { gain: .987, overhead_w: 161 },
     idle_loss_w: 30,
   };
+  const outlookRequests = [executionFixtureRequest(), structuredClone(dc)];
+  const [acOutlook, dcOutlook] = outlookRequests.map((request) => {
+    request.search.energy_levels_kwh = [1, 3, 4.5, 5, 5.5, 7, 10];
+    request.problem.economics.import_sek_per_kwh[2] = -2;
+    request.problem.economics.import_sek_per_kwh[3] = 4;
+    return compileBatteryExecutionPolicy(request);
+  });
+  if (acOutlook.status !== "compiled" || dcOutlook.status !== "compiled") {
+    throw new Error("outlook fixture rejected");
+  }
   const files = {
+    "outlook.json": { policy: acOutlook.policy, outlook: acOutlook.outlook },
+    "dc-outlook.json": { policy: dcOutlook.policy, outlook: dcOutlook.outlook },
     "dc-current-vectors.json": executionCurrentVectors(dc),
     "dc-continuation-vectors.json": executionContinuationVectors(dc),
     "policy.json": vectors.policy,

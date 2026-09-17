@@ -404,6 +404,7 @@ export async function handleBatteryPolicyExchange(
   return reply({
     status: "delivered",
     policy: result.policy,
+    outlook: result.outlook,
     context_hash: built.context_hash,
     energy_basis: "usable_kwh_above_min_soc",
     energy_origin_kwh: built.energy_origin_kwh,

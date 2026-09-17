@@ -97,6 +97,7 @@ export function policyDeliveryFixture() {
       control_authority: false,
       status: "delivered",
       policy: compiled.policy,
+      outlook: compiled.outlook,
       native_context: request.native_context,
       context_hash: canonicalHash(request.native_context),
       energy_basis: "usable_kwh_above_min_soc",

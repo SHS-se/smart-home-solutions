@@ -1003,3 +1003,85 @@ Deno.test("full horizon with a detailed terminal curve compiles within explicit 
       BATTERY_EXECUTION_LIMITS.policy_bytes,
   );
 });
+
+for (const dc of [false, true]) {
+  Deno.test(`outlook preserves only emitted witnesses and exact suffix actions (${dc ? "DC" : "AC"})`, () => {
+    const request = executionFixtureRequest(), b = battery(request);
+    request.search.energy_levels_kwh = [1, 3, 4.5, 5, 5.5, 7, 10];
+    request.problem.economics.import_sek_per_kwh[2] = -2;
+    request.problem.economics.import_sek_per_kwh[3] = 4;
+    if (dc) {
+      request.identity.response_model_revision = "pv-first-dc-v2";
+      b.conversion = {
+        revision: "synthetic-measured-curves",
+        grid_charge: { gain: .95, overhead_w: 95 },
+        surplus_charge: { gain: .98, overhead_w: 20 },
+        discharge: { gain: .987, overhead_w: 161 },
+        idle_loss_w: 30,
+      };
+    }
+    const result = compileBatteryExecutionPolicy(request);
+    assert(result.status === "compiled");
+    const { policy, outlook } = result;
+    assertEquals(outlook.source_hash, policy.quality.source_hash);
+    assertEquals(outlook.family_id, policy.quality.family_id);
+    assertEquals(outlook.battery_power_basis, dc ? "dc" : "ac");
+    assertEquals(
+      Object.keys(outlook.witnesses).sort(),
+      [...new Set(policy.continuation.cells.map((c) => c.witness_id))].sort(),
+    );
+    assertEquals(outlook.bridge!.start_ms, policy.validity.boundary_ms);
+    const paths = witnesses(request);
+    let checked = 0;
+    for (const [id, w] of Object.entries(outlook.witnesses)) {
+      if (w.kind !== "anchor") continue;
+      const path = paths.get(id)!;
+      assertEquals(w.anchor_kwh, path.anchor);
+      for (const direction of ["charge", "discharge"] as const) {
+        const j = path.candidate.actions[b.id].findIndex((a, j) =>
+          j > 0 && a.kind === "battery" && a[`${direction}_w`] > 0
+        );
+        const event = direction === "charge"
+          ? w.first_suffix_charge
+          : w.first_suffix_discharge;
+        if (j < 0) {
+          assertEquals(event, null);
+          continue;
+        }
+        assert(event);
+        const action = path.candidate.actions[b.id][j];
+        assert(action.kind === "battery");
+        assertEquals(event.battery_w, action[`${direction}_w`]);
+        assertEquals(
+          event.start_ms,
+          Date.parse(request.problem.intervals[j + 1].start),
+        );
+        assertEquals(
+          event.end_ms,
+          Date.parse(request.problem.intervals[j + 1].end),
+        );
+        assertEquals(
+          event.consumption_w,
+          request.problem.plant.residual_loads.reduce(
+            (sum, l) => sum + l.power_w[j + 1],
+            0,
+          ),
+        );
+        assertEquals(event.solar_w, request.problem.plant.pv_w[j + 1]);
+        checked++;
+      }
+    }
+    assert(checked > 0);
+  });
+}
+
+Deno.test("terminal outlook has no invented future quarter", () => {
+  const result = compileBatteryExecutionPolicy(executionFixtureRequest(1));
+  assert(result.status === "compiled");
+  assertEquals(result.outlook.bridge, null);
+  assertEquals(
+    result.outlook.horizon_end_ms,
+    result.policy.validity.boundary_ms,
+  );
+  assertEquals(result.outlook.witnesses, { terminal: { kind: "terminal" } });
+});
