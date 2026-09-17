@@ -241,23 +241,24 @@ Deno.test("battery compiler does not invent a feasible reference or subtract inf
   assertEquals(selectBatteryPolicy(r, c.problem).status, "unavailable");
 });
 
-Deno.test("battery compiler reports no finite-graph completion without claiming continuous infeasibility", () => {
+Deno.test("sparse goals admit reachable partial discharge required by the grid limit", () => {
   const c = base(2);
   c.problem.plant.grid.import_limit_w = 500;
   c.problem.plant.residual_loads[0].power_w = [0, 1000];
   battery(c).discharge_max_w = 600;
   c.alternatives = [c.alternatives[0]];
-  const r = compileBatteryPolicy(c);
-  assert(r.status === "reference_unavailable");
-  const outcome = r.outcomes[0];
-  assert(outcome.status === "no_solution_found");
-  assertEquals(outcome.reason, "declared_graph_exhausted");
+  c.search.energy_levels_kwh = [];
+  const r = compiled(c);
   const feasible = createHouseholdScorer(c.problem).score(
     fullCandidate(c, [action(), action(0, 500)]),
   );
-  assertEquals(feasible.status, "scored");
-  c.search.energy_levels_kwh.push(0.125);
-  assertEquals(compileBatteryPolicy(c).status, "compiled");
+  assert(feasible.status === "scored");
+  assert(r.alternatives[0].full.total_sek <= feasible.objective.total_sek);
+  const selected = r.alternatives[0].candidate.actions[battery(c).id][1];
+  assert(
+    selected.kind === "battery" && selected.discharge_w >= 500 &&
+      selected.discharge_w <= 600,
+  );
 });
 
 Deno.test("battery compiler rejects unsupported scope, malformed coverage and oversized work", () => {
@@ -328,7 +329,7 @@ Deno.test("battery compiler is deterministic, owns input, and refuses changed an
   }
 });
 
-Deno.test("battery compiler matches independent exhaustive power enumeration on small ideal cases", () => {
+Deno.test("battery compiler beats or matches independent coarse power enumeration on small ideal cases", () => {
   let seed = 1729;
   const random = () => {
     seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
@@ -364,8 +365,11 @@ Deno.test("battery compiler matches independent exhaustive power enumeration on 
           }
         }
       }
-      assertAlmostEquals(alternative.full.total_sek, best);
-      assert(alternative.search.exhaustive_in_declared_graph);
+      assert(alternative.full.total_sek <= best + 1e-9);
+      assertEquals(
+        alternative.search.exhaustive_in_declared_graph,
+        alternative.search.pruned_prefixes === 0,
+      );
     }
   }
 });
@@ -417,7 +421,7 @@ Deno.test("full-horizon search work grows with added intervals rather than resco
     c.search.energy_levels_kwh = [];
     c.search.retained_per_level = 2;
     c.search.pv_curtailment_fractions = [0];
-    c.search.max_interval_evaluations = 25000;
+    c.search.max_interval_evaluations = 500000;
     const result = compileBatteryPolicy(c);
     assert(result.status === "compiled", JSON.stringify(result));
     assert(
@@ -426,10 +430,63 @@ Deno.test("full-horizon search work grows with added intervals rather than resco
     );
     return result.work;
   };
-  const half = run(144), full = run(288);
-  assert(
-    full.interval_evaluations_upper_bound <=
-      half.interval_evaluations_upper_bound * 2 + 100,
+  const quarter = run(72), half = run(144), full = run(288);
+  assertEquals(
+    full.interval_evaluations_upper_bound -
+      half.interval_evaluations_upper_bound,
+    2 *
+      (half.interval_evaluations_upper_bound -
+        quarter.interval_evaluations_upper_bound),
   );
-  assert(full.interval_evaluations_upper_bound < 25000);
+  assert(full.interval_evaluations_upper_bound < 500000);
 });
+
+for (const constrained of [false, true]) {
+  Deno.test(`sparse search retains cheap early charge until expensive demand (headroom constrained: ${constrained})`, () => {
+    const c = base(6), b = battery(c);
+    b.state_kwh = { ...b.state_kwh, min: 0, max: 10, initial: 0 };
+    b.charge_max_w = b.discharge_max_w = 4000;
+    b.charge_efficiency = b.discharge_efficiency = 1;
+    b.wear_sek_per_kwh = 0;
+    b.grid_charge_allowed.fill(true);
+    c.problem.plant.grid.import_limit_w = 4000;
+    c.problem.plant.residual_loads[0].power_w = constrained
+      ? [0, 0, 0, 3600, 0, 4000]
+      : [0, 0, 0, 0, 0, 4000];
+    c.problem.economics.import_sek_per_kwh = constrained
+      ? [1, .1, 20, .01, 20, 10]
+      : [1, .1, 2, 2, 2, 10];
+    c.problem.economics.terminal = [];
+    c.problem.economics.ramp_sek_per_kw =
+      c.problem.economics
+        .shaping_sek_per_kwh_per_kw =
+        0;
+    c.alternatives = [{
+      id: "hold",
+      current: { actions: [action()], pv_curtail_w: [0] },
+    }];
+    c.reference_id = "hold";
+    c.search.energy_levels_kwh = [];
+    c.search.retained_per_level = 2;
+    const r = compiled(c), selected = r.alternatives[0];
+    const known = createHouseholdScorer(c.problem).score(
+      fullCandidate(c, [
+        action(),
+        action(4000),
+        action(),
+        action(),
+        action(),
+        action(0, 4000),
+      ]),
+    );
+    assert(known.status === "scored");
+    assertAlmostEquals(known.objective.total_sek, constrained ? .109 : .1);
+    assert(
+      selected.full.total_sek <= known.objective.total_sek + 1e-9,
+      JSON.stringify(selected),
+    );
+    const actions = selected.candidate.actions[b.id];
+    assert(actions[1].kind === "battery" && actions[1].charge_w > 0);
+    assert(actions[5].kind === "battery" && actions[5].discharge_w > 0);
+  });
+}

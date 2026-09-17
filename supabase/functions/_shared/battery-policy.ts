@@ -1,4 +1,7 @@
-import { convertedFlows } from "./battery-conversion.ts";
+import {
+  type BatterySearchScope,
+  createBatteryActionDomain,
+} from "./battery-action-domain.ts";
 /** Offline battery counterfactuals. No HA commands, interpolation or thermal model. */
 import { z } from "zod";
 import {
@@ -13,6 +16,7 @@ import {
   type BatteryPrefix,
   createBatteryPrefixScorer,
   createHouseholdScorer,
+  emptyObjective,
   HOUSEHOLD_SCORER_VERSION,
   type HouseholdScore,
   type Objective,
@@ -50,6 +54,8 @@ interface Node {
   score: BatteryPrefix;
   bucket: number;
   key: string;
+  idle: boolean;
+  guided: boolean;
 }
 export interface SearchEvidence {
   scorer_calls: number;
@@ -194,89 +200,111 @@ function prefixScorers(problem: HouseholdProblem, battery: Battery) {
   };
 }
 
-/** Proposes finite paths; only the household scorer decides their feasibility.
- * Source allocation maximises solar charging and minimises battery export. For
- * this single-battery, source-independent objective that admits every legal flow
- * represented by the proposed charge/discharge/curtailment, without added value.
- */
-function extensions(
+/** Bands allocate beam slots only; actual energy and action powers remain exact. */
+function energyBands(
   problem: HouseholdProblem,
   battery: Battery,
-  node: Node,
-  index: number,
-  levels: number[],
-  fractions: number[],
+  goals: number[],
 ) {
-  const state = node.score.energy_kwh;
-  const interval = problem.intervals[index];
-  const hours = (Date.parse(interval.end) - Date.parse(interval.start)) /
-    3_600_000;
-  const load = problem.plant.residual_loads.reduce(
-    (sum, item) => sum + item.power_w[index],
-    0,
+  const duration = Math.max(
+    ...problem.intervals.map((i) =>
+      (Date.parse(i.end) - Date.parse(i.start)) / 3600000
+    ),
   );
-  const pv = problem.plant.pv_w[index];
-  const targets = levels.map((energy, bucket) => ({ energy, bucket }));
-  // Hold actual state rather than snapping it to its nominal target bucket.
-  if (!levels.includes(state)) {
-    targets.push({ energy: state, bucket: node.bucket });
+  const transfers = [
+    battery.charge_max_w * (battery.conversion ? 1 : battery.charge_efficiency),
+    battery.discharge_max_w /
+    (battery.conversion ? 1 : battery.discharge_efficiency),
+  ]
+    .filter((x) => x > 0).map((x) => x * duration / 1000);
+  const span = battery.state_kwh.max - battery.state_kwh.min;
+  const count = transfers.length
+    ? Math.max(1, Math.min(24, Math.ceil(span / Math.min(...transfers))))
+    : 1;
+  return sortedNumbers([
+    ...goals,
+    ...Array.from(
+      { length: count + 1 },
+      (_, i) => battery.state_kwh.min + span * i / count,
+    ),
+  ]);
+}
+function bandIndex(edges: number[], energy: number) {
+  let lo = 0, hi = edges.length - 1;
+  while (lo + 1 < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (edges[mid] <= energy) lo = mid;
+    else hi = mid;
   }
-  const paths = new Map<string, { path: Path; bucket: number; key: string }>();
-  for (const target of targets) {
-    const delta = target.energy - state;
-    const charge = delta > 0
-      ? delta * 1000 / hours /
-        (battery.conversion ? 1 : battery.charge_efficiency)
-      : 0;
-    const discharge = delta < 0
-      ? -delta * 1000 / hours *
-        (battery.conversion ? 1 : battery.discharge_efficiency)
-      : 0;
-    const minimumCurtailment = battery.conversion ? 0 : Math.max(
-      0,
-      pv + discharge - load - charge - problem.plant.grid.export_limit_w,
-    );
-    const curtailments = sortedNumbers([
-      ...fractions.map((f) => f * pv),
-      minimumCurtailment,
-    ]);
-    for (const curtail of curtailments) {
-      const f = battery.conversion
-        ? convertedFlows(
-          battery.conversion,
-          charge,
-          discharge,
-          pv - curtail,
-          load,
+  return lo;
+}
+/** Future cost is a pruning guide, never the reported objective or a feasibility test.
+ * Drop inter-quarter ramp for the guide; the actual search and final score retain it.
+ */
+function futureGuide(
+  problem: HouseholdProblem,
+  start: number,
+  edges: number[],
+  domain: ReturnType<typeof createBatteryActionDomain>,
+  fractions: number[],
+  scorer: ReturnType<typeof createBatteryPrefixScorer>,
+) {
+  const rows = Array.from(
+    { length: problem.intervals.length + 1 },
+    () => edges.map(() => 0),
+  );
+  let evaluations = 0;
+  function value(index: number, energy: number) {
+    const j = bandIndex(edges, energy), row = rows[index];
+    if (edges.length === 1 || energy <= edges[j]) return row[j];
+    if (energy >= edges[j + 1]) return row[j + 1];
+    if (!Number.isFinite(row[j]) || !Number.isFinite(row[j + 1])) {
+      // Unknown neighboring guide states do not restrict the exact search.
+      return Math.min(row[j], row[j + 1]);
+    }
+    return row[j] +
+      (row[j + 1] - row[j]) * (energy - edges[j]) / (edges[j + 1] - edges[j]);
+  }
+  for (let i = problem.intervals.length - 1; i >= start; i--) {
+    for (const [j, energy] of edges.entries()) {
+      let best = Infinity;
+      for (
+        const step of domain.propose(
+          i,
+          energy,
+          [edges[0], edges.at(-1)!],
+          fractions,
+          null,
         )
-        : null;
-      const action: BatteryAction = {
-        kind: "battery",
-        charge_w: charge,
-        discharge_w: discharge,
-        solar_charge_w: f
-          ? f.solar
-          : Math.min(charge, Math.max(0, pv - curtail)),
-        export_w: f
-          ? Math.max(0, f.discharge - Math.max(0, load - pv + curtail))
-          : Math.max(0, discharge - load),
-      };
-      const stepKey = JSON.stringify([action, curtail]);
-      if (paths.has(stepKey)) continue;
-      paths.set(stepKey, {
-        path: {
-          actions: [...node.path.actions, action],
-          pv_curtail_w: [...node.path.pv_curtail_w, curtail],
-        },
-        bucket: target.bucket,
-        key: `${node.key}/${stepKey}`,
-      });
+      ) {
+        evaluations++;
+        const result = scorer.extend(
+          {
+            length: i,
+            energy_kwh: energy,
+            import_w: null,
+            objective: emptyObjective(),
+          },
+          step.action,
+          step.curtail_w,
+        );
+        if (result.status === "invalid_candidate") {
+          throw new Error("Invalid guide action");
+        }
+        if (result.status !== "scored") continue;
+        best = Math.min(
+          best,
+          result.prefix.objective.total_sek +
+            value(i + 1, result.prefix.energy_kwh),
+        );
+      }
+      rows[i][j] = best;
     }
   }
-  return paths.values();
+  return { value, evaluations };
 }
 
-function compile(input: unknown) {
+function compile(input: unknown, scope: BatterySearchScope) {
   const request = batteryPolicyRequestSchema.parse(input);
   // Check raw cardinalities before parsing/cloning the resolved model.
   z.object({
@@ -444,25 +472,46 @@ function compile(input: unknown) {
       "Too many combined target energy levels",
     );
   }
-  const maxNodes = levels.length * search.retained_per_level;
-  const maxExtensions = (levels.length + 1) * (fractions.length + 1);
-  let perAlternativeBound = block + n; // forced prefix plus final rescore
+  const domain = createBatteryActionDomain(problem, scope);
+  const bands = energyBands(problem, battery, levels);
+  const maxNodes = Math.max(1, bands.length - 1) * search.retained_per_level +
+    2;
+  const maxExtensions = domain.proposalBound(levels.length, fractions.length);
+  const guideBound = (n - block) * bands.length *
+    domain.proposalBound(2, fractions.length);
+  let perAlternativeBound = block + n;
   for (let length = block + 1; length <= n; length++) {
     perAlternativeBound += (length === block + 1 ? 1 : maxNodes) *
       maxExtensions;
   }
+  const totalBound = guideBound + perAlternativeBound * alternatives.length;
   if (
-    perAlternativeBound > search.max_interval_evaluations ||
-    perAlternativeBound * alternatives.length >
-      BATTERY_POLICY_LIMITS.total_interval_evaluations
+    guideBound + perAlternativeBound > search.max_interval_evaluations ||
+    totalBound > BATTERY_POLICY_LIMITS.total_interval_evaluations
   ) {
     throw new Rejection(
       "work_limit_exceeded",
-      `Worst-case work ${perAlternativeBound} interval evaluations per alternative (${
-        perAlternativeBound * alternatives.length
-      } total) exceeds the declared or compiler limit`,
+      `Worst-case work ${
+        guideBound + perAlternativeBound
+      } interval evaluations per alternative (${totalBound} total) exceeds the declared or compiler limit`,
     );
   }
+  const guide = futureGuide(
+    problem,
+    block,
+    bands,
+    domain,
+    fractions,
+    incremental,
+  );
+  if (guide.evaluations > guideBound) {
+    throw new Error("Guide exceeded preflight work bound");
+  }
+  const compareGuided = (a: Node, b: Node) =>
+    (a.score.objective.total_sek +
+        guide.value(a.score.length, a.score.energy_kwh)) -
+      (b.score.objective.total_sek +
+        guide.value(b.score.length, b.score.energy_kwh)) || compareNodes(a, b);
   const outcomes: Outcome[] = initial.map(
     ({ alternative: a, stats, score }): Outcome => {
       if (score.status !== "scored") {
@@ -481,28 +530,30 @@ function compile(input: unknown) {
           import_w: score.trajectory.intervals.at(-1)!.import_w,
           objective: score.objective,
         },
-        bucket: levels.indexOf(score.trajectory.state[battery.id].at(-1)!),
+        bucket: bandIndex(bands, score.trajectory.state[battery.id].at(-1)!),
+        idle: true,
+        guided: true,
         key: JSON.stringify(a.current),
       }];
       for (let index = block; index < n; index++) {
         const merged = new Map<string, Node>();
         for (const node of frontier) {
+          const children: Node[] = [];
           for (
-            const extension of extensions(
-              problem,
-              battery,
-              node,
+            const extension of domain.propose(
               index,
+              node.score.energy_kwh,
               levels,
               fractions,
+              node.score.import_w,
             )
           ) {
             stats.scorer_calls++;
             stats.interval_evaluations++;
             const step = incremental.extend(
               node.score,
-              extension.path.actions.at(-1)!,
-              extension.path.pv_curtail_w.at(-1)!,
+              extension.action,
+              extension.curtail_w,
             );
             if (step.status === "invalid_candidate") {
               throw new Error(
@@ -512,19 +563,38 @@ function compile(input: unknown) {
               );
             }
             if (step.status !== "scored") continue;
-            const result = step.prefix;
             stats.feasible_extensions++;
-            const next: Node = { ...extension, score: result };
-            // Exact Markov-state dominance only: no rounded energy/import buckets.
+            children.push({
+              path: {
+                actions: [...node.path.actions, extension.action],
+                pv_curtail_w: [...node.path.pv_curtail_w, extension.curtail_w],
+              },
+              key: `${node.key}/${
+                JSON.stringify([extension.action, extension.curtail_w])
+              }`,
+              score: step.prefix,
+              bucket: bandIndex(bands, step.prefix.energy_kwh),
+              idle: node.idle && extension.action.charge_w === 0 &&
+                extension.action.discharge_w === 0 && extension.curtail_w === 0,
+              guided: false,
+            });
+          }
+          if (node.guided && children.length) {
+            children.sort(compareGuided)[0].guided = true;
+          }
+          for (const next of children) {
             const stateKey = JSON.stringify([
-              result.energy_kwh,
-              result.import_w,
+              next.score.energy_kwh,
+              next.score.import_w,
             ]);
             const previous = merged.get(stateKey);
-            if (previous) stats.dominated_prefixes++;
-            if (!previous || compareNodes(next, previous) < 0) {
-              merged.set(stateKey, next);
-            }
+            if (previous) {
+              stats.dominated_prefixes++;
+              const winner = compareNodes(next, previous) < 0 ? next : previous;
+              winner.idle = next.idle || previous.idle;
+              winner.guided = next.guided || previous.guided;
+              merged.set(stateKey, winner);
+            } else merged.set(stateKey, next);
           }
         }
         const buckets = new Map<number, Node[]>();
@@ -534,13 +604,16 @@ function compile(input: unknown) {
           buckets.set(node.bucket, bucket);
         }
         frontier = [...buckets.values()].flatMap((bucket) => {
-          bucket.sort(compareNodes);
+          bucket.sort(compareGuided);
           // Once complete, keep all finals until the minimum is selected.
           const keep = index === n - 1
             ? bucket.length
             : search.retained_per_level;
-          stats.pruned_prefixes += Math.max(0, bucket.length - keep);
-          return bucket.slice(0, keep);
+          const retained = bucket.filter((node, i) =>
+            i < keep || node.idle || node.guided
+          );
+          stats.pruned_prefixes += bucket.length - retained.length;
+          return retained;
         }).sort(compareNodes);
         if (!frontier.length) break;
       }
@@ -576,12 +649,15 @@ function compile(input: unknown) {
   );
   const reference = outcomes.find((a) => a.id === request.reference_id)!;
   const work = {
-    interval_evaluations_upper_bound: perAlternativeBound * alternatives.length,
+    interval_evaluations_upper_bound: totalBound,
     interval_evaluations: outcomes.reduce(
       (sum, a) => sum + a.search.interval_evaluations,
-      0,
+      guide.evaluations,
     ),
-    scorer_calls: outcomes.reduce((sum, a) => sum + a.search.scorer_calls, 0),
+    scorer_calls: outcomes.reduce(
+      (sum, a) => sum + a.search.scorer_calls,
+      guide.evaluations,
+    ),
   };
   if (reference.status !== "solved") {
     return {
@@ -658,7 +734,10 @@ function compile(input: unknown) {
 }
 
 /** Pure synchronous compilation. Invalid requests fail closed before publication. */
-export function compileBatteryPolicy(input: unknown) {
+export function compileBatteryPolicy(
+  input: unknown,
+  scope: BatterySearchScope = { kind: "physical" },
+) {
   try {
     let encoded: string | undefined;
     try {
@@ -675,7 +754,7 @@ export function compileBatteryPolicy(input: unknown) {
     ) {
       throw new Rejection("work_limit_exceeded", "Input exceeds 2 MB limit");
     }
-    const result = compile(input);
+    const result = compile(input, scope);
     if (
       new TextEncoder().encode(JSON.stringify(result)).length >
         BATTERY_POLICY_LIMITS.output_bytes

@@ -9,6 +9,7 @@ import {
   BATTERY_EXECUTION_LIMITS,
   batteryExecutionPolicySchema,
   type BatteryExecutionRequest,
+  batteryExecutionSearchScope,
   batteryProblemSuffix,
   compileBatteryExecutionPolicy,
   evaluateExecutionContinuation,
@@ -86,7 +87,7 @@ function witnesses(request: BatteryExecutionRequest) {
           current: { actions: [hold], pv_curtail_w: [0] },
         }],
         search: { ...request.search, pv_curtailment_fractions: [0] },
-      });
+      }, batteryExecutionSearchScope(request, 1));
       if (result.status !== "compiled") return [];
       return [[`anchor-${i}`, {
         anchor,
@@ -422,6 +423,7 @@ Deno.test("native source permissions narrow bridge domains while the idle family
   r.problem.plant.residual_loads[0].power_w[1] = 2000;
   r.problem.plant.residual_loads[1].power_w[1] = 0;
   const p = compiled(r), paths = witnesses(r);
+  assert(p.continuation.cells.some((c) => c.witness_id !== "idle"));
   for (
     const cell of p.continuation.cells.filter((c) => c.witness_id !== "idle")
   ) {
@@ -436,7 +438,7 @@ Deno.test("native source permissions narrow bridge domains while the idle family
   assertEquals(evaluateExecutionContinuation(p, 2, 0)?.witness_id, "idle");
 });
 
-Deno.test("filter native-invalid optimized suffixes and ALL minimum-curtailment witnesses", () => {
+Deno.test("search native-legal alternatives before ranking and reject required curtailment", () => {
   const r = executionFixtureRequest(3), b = battery(r);
   r.problem.plant.pv_w[2] = 20000;
   r.future_supply_bound_w[2] = 0;
@@ -463,6 +465,7 @@ Deno.test("filter native-invalid optimized suffixes and ALL minimum-curtailment 
   r.permissions.grid_charge_allowed = false;
   b.grid_charge_allowed.fill(false);
   const p = compiled(r), paths = witnesses(r);
+  assert(p.continuation.cells.some((c) => c.witness_id !== "idle"));
   for (
     const cell of p.continuation.cells.filter((c) => c.witness_id !== "idle")
   ) {
@@ -1084,4 +1087,73 @@ Deno.test("terminal outlook has no invented future quarter", () => {
     result.policy.validity.boundary_ms,
   );
   assertEquals(result.outlook.witnesses, { terminal: { kind: "terminal" } });
+});
+
+Deno.test("production sparse anchors expose useful partial discharge with an 18 kWh installation", () => {
+  const request = executionFixtureRequest(12),
+    b = battery(request),
+    p = request.problem;
+  b.state_kwh = {
+    initial: 11.28192,
+    min: 0,
+    max: 17.176,
+    provenance: "synthetic installation-scale regression",
+  };
+  b.charge_max_w = 8800;
+  b.discharge_max_w = 9600;
+  b.conversion = {
+    revision: "synthetic-directional-losses",
+    grid_charge: { gain: .948, overhead_w: 36 },
+    surplus_charge: { gain: .95, overhead_w: 0 },
+    discharge: { gain: .974, overhead_w: 143 },
+    idle_loss_w: 124,
+  };
+  b.export_allowed.fill(false);
+  b.wear_sek_per_kwh = 0;
+  request.permissions.battery_export_allowed = false;
+  request.identity.response_model_revision = "pv-first-dc-v2";
+  request.domain.energy_kwh = [0, 17.176];
+  request.search = {
+    energy_levels_kwh: [],
+    retained_per_level: 2,
+    max_interval_evaluations: 8_000_000,
+  };
+  p.plant.pv_w.fill(0);
+  p.plant.residual_loads[0].power_w.fill(3000);
+  p.plant.residual_loads[1].power_w.fill(0);
+  request.future_supply_bound_w.fill(3000);
+  p.economics.import_sek_per_kwh.fill(2.5);
+  p.economics.export_sek_per_kwh.fill(.2);
+  p.economics.terminal = [];
+  p.economics.shaping_sek_per_kwh_per_kw = 0;
+  p.economics.ramp_sek_per_kw = 0;
+  const result = compileBatteryExecutionPolicy(request);
+  assert(result.status === "compiled", JSON.stringify(result));
+  const event = result.outlook.witnesses["anchor-1"];
+  assert(event.kind === "anchor" && event.first_suffix_discharge);
+  assert(event.first_suffix_discharge.battery_w > 0);
+  const future = batteryProblemSuffix(p, 1, b.state_kwh.initial);
+  const known: HouseholdCandidate = {
+    id: "feasible-partial-discharge",
+    actions: { [b.id]: Array.from({ length: 11 }, () => ({ ...hold })) },
+    pv_curtail_w: Array(11).fill(0),
+  };
+  known.actions[b.id][1] = { ...hold, discharge_w: 1000 };
+  const score = createHouseholdScorer(future).score(known);
+  assert(score.status === "scored");
+  const compiled = compileBatteryPolicy({
+    problem: future,
+    reference_id: "hold",
+    alternatives: [{
+      id: "hold",
+      current: { actions: [hold], pv_curtail_w: [0] },
+    }],
+    search: { ...request.search, pv_curtailment_fractions: [0] },
+  }, batteryExecutionSearchScope(request, 1));
+  assert(compiled.status === "compiled");
+  assert(compiled.alternatives[0].full.total_sek < score.objective.total_sek);
+  assert(
+    compiled.work.interval_evaluations <=
+      compiled.work.interval_evaluations_upper_bound,
+  );
 });

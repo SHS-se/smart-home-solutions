@@ -1,4 +1,9 @@
 import {
+  batteryAction as action,
+  type BatterySearchScope,
+  createBatteryActionDomain,
+} from "./battery-action-domain.ts";
+import {
   type Conversion,
   conversionSchema,
   convertedFlows,
@@ -706,27 +711,6 @@ function makeCell(
     cost: emptyCost(),
   };
 }
-function action(
-  charge: number,
-  discharge: number,
-  pv: number,
-  load: number,
-  conversion?: Conversion,
-): Action {
-  const f = conversion
-    ? convertedFlows(conversion, charge, discharge, pv, load)
-    : null;
-  return {
-    kind: "battery",
-    charge_w: charge,
-    discharge_w: discharge,
-    solar_charge_w: f ? f.solar : Math.min(charge, pv),
-    export_w: f
-      ? Math.max(0, f.discharge - Math.max(0, load - pv))
-      : Math.max(0, discharge - load),
-  };
-}
-
 /** Select captured intervals without moving their timestamps or assuming actual SOC.
  * The anchor only seeds continuation search; runtime decisions use measured energy.
  * Local admission must supply retained meter evidence at the selected watermark.
@@ -790,47 +774,37 @@ function exportAllowed(
     request.problem.economics.export_sek_per_kwh[index] >=
       p.minimum_export_price_sek_per_kwh;
 }
+/** Same native authority for candidate search and the final executable witness. */
+export function batteryExecutionSearchScope(
+  request: BatteryExecutionRequest,
+  firstInterval: number,
+): BatterySearchScope {
+  const b = request.problem.plant.equipment[0] as Battery;
+  return {
+    kind: "pv_first",
+    house_supply_max_w: request.future_supply_bound_w.slice(firstInterval),
+    export_eligible: request.problem.intervals.slice(firstInterval).map((
+      _,
+      j,
+    ) => exportAllowed(request, b, j + firstInterval)),
+    export_reserve_kwh: request.permissions.export_reserve_kwh,
+  };
+}
 function nativeSuffixFeasible(
   request: BatteryExecutionRequest,
   candidate: HouseholdCandidate,
   states: number[],
 ): boolean {
-  const source = request.problem, b = source.plant.equipment[0] as Battery;
-  if (candidate.pv_curtail_w.some((w) => w !== 0)) return false;
-  return candidate.actions[b.id].every((raw, j) => {
-    const a = raw as Action, i = j + 1;
-    const load = source.plant.residual_loads.reduce(
-        (sum, l) => sum + l.power_w[i],
-        0,
-      ),
-      pv = source.plant.pv_w[i];
-    if (
-      !b.available[i] &&
-      a.charge_w + a.discharge_w > 0
-    ) return false;
-    if (
-      !b.grid_charge_allowed[i] &&
-      a.charge_w >
-        (b.conversion
-            ? solarCapacity(b.conversion, pv, load)
-            : Math.max(0, pv - load)) + EPS
-    ) return false;
-    const delivered = b.conversion
-      ? outputPower(b.conversion.discharge, a.discharge_w)
-      : a.discharge_w;
-    if (
-      Math.min(delivered, Math.max(0, load - pv)) >
-        request.future_supply_bound_w[i] + EPS
-    ) return false;
-    if (delivered > Math.max(0, load - pv) + EPS) {
-      if (
-        !exportAllowed(request, b, i) ||
-        states[j] <= request.permissions.export_reserve_kwh ||
-        states[j + 1] < request.permissions.export_reserve_kwh
-      ) return false;
-    }
-    return true;
-  });
+  const future = batteryProblemSuffix(request.problem, 1, states[0]);
+  const domain = createBatteryActionDomain(
+    future,
+    batteryExecutionSearchScope(request, 1),
+  );
+  const b = future.plant.equipment[0];
+  return candidate.actions[b.id].every((raw, j) =>
+    raw.kind === "battery" &&
+    domain.admits(j, states[j], raw, candidate.pv_curtail_w[j])
+  );
 }
 
 /** Analytic bridge: powers, grid flow and source attribution are affine on each split. */
@@ -1465,15 +1439,23 @@ function compile(
           1000;
       if (initial < b.state_kwh.min || initial > b.state_kwh.max) continue;
       const future = batteryProblemSuffix(problem, 1, initial);
+      const seed = action(seedCharge, seedDischarge, pv, load, b.conversion);
+      const nativeScope = batteryExecutionSearchScope(request, 1);
+      if (
+        !createBatteryActionDomain(future, nativeScope).admits(
+          0,
+          initial,
+          seed,
+          0,
+        )
+      ) continue;
       const compiled = compileBatteryPolicy({
         problem: future,
         reference_id: "hold",
         alternatives: [{
           id: "hold",
           current: {
-            actions: [
-              action(seedCharge, seedDischarge, pv, load, b.conversion),
-            ],
+            actions: [seed],
             pv_curtail_w: [0],
           },
         }],
@@ -1482,7 +1464,7 @@ function compile(
           pv_curtailment_fractions: [0],
           max_interval_evaluations: budget - horizon,
         },
-      });
+      }, nativeScope);
       if (compiled.status === "rejected") {
         throw new Rejection(`suffix_${compiled.reason}: ${compiled.detail}`);
       }
@@ -1509,7 +1491,7 @@ function compile(
           solved.candidate,
           verified.trajectory.state[b.id],
         )
-      ) continue;
+      ) throw new Error("Optimized witness violates native permissions");
       const constant = emptyObjective();
       // Omit seed bridge account and the original first tail ramp, retain all later ramps and terminal.
       for (const [i, row] of verified.intervals.entries()) {
