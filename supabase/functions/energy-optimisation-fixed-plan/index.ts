@@ -59,7 +59,7 @@ serve(withTrafficMetrics("energy-optimisation-fixed-plan", async (request, traff
       "energy_optimisation_current",
     )
       .select(
-        "snapshot, plan, snapshot_id, fixed_plan, fixed_plan_revision, fixed_plan_generation_revision, ha_ack_status, ha_ack_error, valid_until, replan_error, replan_request_id, replan_completed_request_id",
+        "snapshot, price_outlook:plan->price_outlook, issued_at:plan->>issued_at, priority_slots:plan->plans->priority->slots, snapshot_id, fixed_plan, fixed_plan_revision",
       )
       .eq("home_id", body.home_id).maybeSingle();
     if (error) throw new Error(error.message);
@@ -82,7 +82,11 @@ serve(withTrafficMetrics("energy-optimisation-fixed-plan", async (request, traff
             "The planner has newer measurements. Reload your plan before activating it.",
         }, 409);
       }
-      const source = row.plan as OptimisationPlan;
+      const source = {
+        price_outlook: row.price_outlook as OptimisationPlan["price_outlook"],
+        issued_at: row.issued_at as string,
+        slots: row.priority_slots as OptimisationPlan["plans"]["priority"]["slots"],
+      };
       const snapshot = row.snapshot as OptimisationSnapshot;
       if (snapshot.schema_version < 6) {
         return json(
@@ -145,7 +149,7 @@ serve(withTrafficMetrics("energy-optimisation-fixed-plan", async (request, traff
         return json({ error: issues.map((i) => i.message).join("; ") }, 422);
       }
       const originalSlots = new Map(
-        source.plans.priority.slots.map((s) => [Date.parse(s.start), s]),
+        source.slots.map((s) => [Date.parse(s.start), s]),
       );
       fixed = {
         id: crypto.randomUUID(),

@@ -96,21 +96,10 @@ schedule. Its gross load and Planned/base partition come from that execution
 schedule, not the joint hypothetical plan. Controlling uses the selected execution
 projection without another battery solve.
 
-`energy-battery-policy` authenticates the device and subscription, loads only its
-home's current acknowledged generation, and checks fixed-plan revisions. The
-caller supplies a local native context (configuration/catalog revisions, declared
-response evidence, supported operations, scope, bounded domain and explicit
-per-quarter permissions). It cannot submit economics or a search budget. The
-server restores all Planned demand components, including Verification devices,
-shares solar proportionally, and intersects each quarter's native permissions with
-the source problem. Current restrictions do not erase permitted future charging.
-The source cut is never rebased: a later quarter requires a fresh plan.
-
-Compilation is followed by another source/expiry check. Every response explicitly
-has `purpose: verification` and `control_authority: false`. The HA exchange validates
-the closed delivery envelope and Python policy, coalesces requests, persists status,
-and rejects replies overtaken by reconfiguration, expiry or shutdown. Schedule and
-HA diagnostics expose delivery blockers separately from existing command status.
+The retired battery-policy exchange endpoint has been removed. Current HA builds
+receive battery execution data through the household plan exchange; they do not
+request a separate server-compiled battery policy. The offline compiler remains
+available to model tests and fixture tooling.
 
 ## Production connection and remaining rollout
 

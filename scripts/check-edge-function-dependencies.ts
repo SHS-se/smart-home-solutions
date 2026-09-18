@@ -13,7 +13,6 @@ try {
   // only existing deno.json files would silently skip the broken deployment.
   for (
     const name of [
-      "energy-battery-policy",
       "energy-optimisation-fixed-plan",
       "energy-optimisation-ingest",
       "energy-optimisation-plan-step",
