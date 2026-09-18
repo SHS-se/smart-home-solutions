@@ -1,6 +1,7 @@
 import {
   generateOptimisationPlan,
   dispatchWorkbench,
+  poolStopTemperature,
   type OptimisationSnapshot,
   validateSnapshot,
 } from "./energy-optimisation.ts";
@@ -3663,4 +3664,20 @@ Deno.test("late snapshots never earn expired energy and partial quarters reconci
     assertEquals(bench.planned.power_w.battery.map(w => Math.round(w * 100) / 100),
       plan.plans.priority.slots.map(s => s.battery_charge_w));
   }
+});
+
+Deno.test("pool Stop at is explicit and distinct from Preferred level", () => {
+  const curve = { unit: "celsius", points: [
+    { at: 28, sek_per_unit: 30 }, { at: 30, sek_per_unit: 15 }, { at: 32, sek_per_unit: 0 },
+  ] };
+  assertEquals(poolStopTemperature(curve), 32);
+  assertEquals(poolStopTemperature({ ...curve, points: [{ at: 30, sek_per_unit: 5 }] }), null);
+  const snapshot = horizon({
+    capabilities: { pv: true, battery: true, pool: true, boiler: false, ev: false },
+    pool: { water_temperature_c: 33, volume_m3: 55 },
+    value_curves: { pool: curve },
+  });
+  const plan = generateOptimisationPlan(snapshot, new Date(NOW));
+  assertEquals(plan.pool?.stop_temperature_c, 32);
+  assertEquals(plan.plans.priority.slots[0].pool_w, 0);
 });

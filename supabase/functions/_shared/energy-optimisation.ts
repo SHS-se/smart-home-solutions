@@ -221,6 +221,12 @@ export interface PoolStateInput {
   source_entity_ids?: Record<string, string>;
 }
 
+/** Explicit upper temperature from the pool curve's zero-value endpoint (website Stop at). */
+export function poolStopTemperature(curve: UtilityCurve): number | null {
+  const end = curve.points.at(-1);
+  return end?.sek_per_unit === 0 ? end.at : null;
+}
+
 export interface EvBatteryInput {
   name: string;
   /** Measured cable state; planning assumes the car can be plugged in. */
@@ -678,8 +684,8 @@ export interface OptimisationPlan {
   policy: OptimisationSnapshot["policy"];
   battery: BatteryInput | null;
   ev_battery: EvBatteryInput | null;
-  /** Echoed like the batteries, so a reader can see the state it was planned from. */
-  pool: PoolStateInput | null;
+  /** Measured planning state plus the website-owned upper temperature for execution. */
+  pool: (PoolStateInput & { stop_temperature_c: number | null }) | null;
   grid: OptimisationSnapshot["grid"];
   /**
    * The shaping constants this solve used (§8.16).
@@ -2533,6 +2539,7 @@ function buildDispatchStores(
       key: "pool",
       curve: anchorPreferenceCurve(curves.pool, poolUnitsPerKwh, reference),
       initial_state: pool.water_temperature_c,
+      max_state: poolStopTemperature(curves.pool) ?? undefined,
       max_power_w: poolPowerW,
       // A `fixed_power` heat pump has one power and off, so the auction may
       // only bid that. Without a floor `executablePowerLevels` treats zero as
@@ -4824,7 +4831,7 @@ function generatePlanBody(
     battery_supply_scope: {kind:"whole_house"},
       battery: snapshot.battery,
     ev_battery: snapshot.ev_battery ?? null,
-    pool: snapshot.pool ?? null,
+    pool: snapshot.pool ? { ...snapshot.pool, stop_temperature_c: poolStopTemperature(snapshot.value_curves?.pool ?? DEFAULT_VALUE_CURVES.pool) } : null,
     grid: snapshot.grid,
     peak_shaping: derivePeakShaping(snapshot),
     device_models: snapshot.device_models,

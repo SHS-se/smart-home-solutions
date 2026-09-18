@@ -1379,6 +1379,21 @@
                 "$ref": "#/components/schemas/GeneratedPlan"
               }
             }
+          },
+          "pool": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "stop_temperature_c": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "description": "Website Stop at temperature. Controllers may enable scheduled heating only below this measured water temperature; null means no explicit zero-value endpoint is configured."
+              }
+            }
           }
         },
         "additionalProperties": true
