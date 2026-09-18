@@ -162,6 +162,8 @@ export function buildBatteryExecutionContract(input: {
       result.load_mwh + result.unserved_mwh - result.charge_ac_mwh - result.export_mwh - result.curtailed_mwh;
     return result;
   });
+  const liveObjectives = feedback.objectives.filter((r) =>
+    r.responsibility === "outstanding" || r.responsibility === "retained");
   const objectives: ExecutionObjective[] = [];
   const recovery: RecoveryInstruction[] = [];
   // A contiguous charging window has one state objective and its original end.
@@ -174,7 +176,11 @@ export function buildBatteryExecutionContract(input: {
       intervals[i + 1].operation === intervals[first].operation) i++;
     const last = i++;
     const deadline = intervals[last].end_ms;
-    const id = `battery:${kind}:${deadline}`;
+    // A window can disappear, be incorporated, and later return. Only a live
+    // responsibility retains its identity; a closed obligation must not revive.
+    const prior = liveObjectives.find(({ objective }) =>
+      objective.kind === kind && objective.deadline_ms === deadline);
+    const id = prior?.objective.id ?? `battery:${kind}:${deadline}:${plan.plan_id}:${feedback.generation}`;
     const objective: ExecutionObjective = {
       id, kind, start_ms: intervals[first].start_ms, deadline_ms: deadline,
       target_mwh: intervals[last].stored_end_mwh,
@@ -211,17 +217,16 @@ export function buildBatteryExecutionContract(input: {
     export_reserve_mwh: Math.max(minimum, Math.round(plan.policy.battery_export_reserve_soc * capacity)),
     valid_until_ms: Date.parse(plan.valid_until), source_receipt: feedback.source_receipt,
     previous_contract_id: feedback.previous_contract_id, intervals, objectives, recovery,
-    dispositions: feedback.objectives.filter((r) => r.responsibility === "outstanding" || r.responsibility === "retained")
-      .map(({ objective }) => {
-        const same = objectives.find((o) => o.id === objective.id && o.deadline_ms === objective.deadline_ms);
-        if (same) return { objective_id: objective.id, outcome: "retained" as const,
-          replacement_id: null, reason: "Original objective and deadline remain in the revised reference" };
-        const next = objectives.find((o) => o.kind === objective.kind);
-        return next ? { objective_id: objective.id, outcome: "incorporated" as const, replacement_id: next.id,
-          reason: "Replanned from observed state; historical delivery and missed deadlines remain recorded" } :
-          { objective_id: objective.id, outcome: "retired" as const, replacement_id: null,
-            reason: "Revised strategy no longer requests this objective; this is not measured fulfilment" };
-      }),
+    dispositions: liveObjectives.map(({ objective }) => {
+      const same = objectives.find((o) => o.id === objective.id && o.deadline_ms === objective.deadline_ms);
+      if (same) return { objective_id: objective.id, outcome: "retained" as const,
+        replacement_id: null, reason: "Original objective and deadline remain in the revised reference" };
+      const next = objectives.find((o) => o.kind === objective.kind);
+      return next ? { objective_id: objective.id, outcome: "incorporated" as const, replacement_id: next.id,
+        reason: "Replanned from observed state; historical delivery and missed deadlines remain recorded" } :
+        { objective_id: objective.id, outcome: "retired" as const, replacement_id: null,
+          reason: "Revised strategy no longer requests this objective; this is not measured fulfilment" };
+    }),
   };
 }
 

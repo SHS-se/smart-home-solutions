@@ -129,3 +129,63 @@ Deno.test("execution feedback survives staged worker planning and repeats determ
   }
   throw new Error("worker did not finish");
 });
+
+Deno.test("live responsibilities retain identity and explicitly amend changed targets", () => {
+  const input = source();
+  const old = buildBatteryExecutionContract(input);
+  const first = old.objectives[0];
+  input.plan.battery!.soc += 0.01;
+  for (const responsibility of ["outstanding", "retained"]) {
+    const revised = buildBatteryExecutionContract({ ...input, feedback: {
+      generation: 1, source_receipt: 10, previous_contract_id: old.id,
+      objectives: [{ objective: first, responsibility, outcome: "pending" }],
+    }});
+    assertEquals(revised.objectives[0].id, first.id);
+    assert(revised.objectives[0].target_mwh !== first.target_mwh);
+    assertEquals(revised.dispositions[0].outcome, "retained");
+  }
+});
+
+Deno.test("incorporated windows that return get a new lifetime identity", () => {
+  const input = source();
+  const old = buildBatteryExecutionContract(input);
+  const first = old.objectives[0];
+  // Replace the first permission window with demand-following. The old
+  // permission is incorporated into the later permission window.
+  assertEquals(first.kind, "permission");
+  const nextInput = structuredClone(input);
+  for (const [i, row] of nextInput.rows.entries()) {
+    if (Date.parse(row.end) <= first.deadline_ms) {
+      nextInput.plan.plans.priority.slots[i].battery_command!.operation = "supply_house";
+    }
+  }
+  const revised = buildBatteryExecutionContract({ ...nextInput, feedback: {
+    generation: 1, source_receipt: 10, previous_contract_id: old.id,
+    objectives: old.objectives.map((objective) => ({ objective,
+      responsibility: "outstanding", outcome: "open" })),
+  }});
+  const disposition = revised.dispositions.find((d) => d.objective_id === first.id)!;
+  assertEquals(disposition.outcome, "incorporated");
+  assert(disposition.replacement_id !== first.id);
+  input.plan.battery!.soc += 0.01;
+  // Compact feedback contains all current responsibilities, but not the
+  // original permission that was incorporated into the later window.
+  const revivedInput = { ...input, feedback: {
+    generation: 2, source_receipt: 20, previous_contract_id: revised.id,
+    objectives: revised.objectives.map((objective) => ({ objective,
+      responsibility: "outstanding", outcome: "open" })),
+  }};
+  const revived = buildBatteryExecutionContract(revivedInput);
+  assertEquals(revived.objectives[0].deadline_ms, first.deadline_ms);
+  assert(revived.objectives[0].target_mwh !== first.target_mwh);
+  assert(revived.objectives[0].id !== first.id);
+  assertEquals(revived, buildBatteryExecutionContract(revivedInput));
+  // Full feedback must not revive closed identities either.
+  for (const responsibility of ["incorporated", "retired"]) {
+    const withHistory = buildBatteryExecutionContract({ ...revivedInput, feedback: {
+      ...revivedInput.feedback, objectives: [...revivedInput.feedback.objectives,
+        { objective: first, responsibility, outcome: "changed_before_deadline" }],
+    }});
+    assertEquals(withHistory, revived);
+  }
+});
