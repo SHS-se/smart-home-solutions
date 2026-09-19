@@ -9,13 +9,19 @@ import { describeThrown } from "./ha-api-contract.ts";
 
 const MAX_BODY_BYTES = 16_000_000;
 /**
- * Supabase ends a request after 2 s of CPU (546 WORKER_RESOURCE_LIMIT). The
- * transfer and refinement stages pause part-way once this much has gone. What
- * the budget cannot interrupt — boot, reading the body, the transfer or trial
- * in progress, serializing the checkpoint — fits in the remainder. The auction
- * stage cannot pause and still has to fit on its own.
+ * Supabase ends a request after 2 s of CPU (546 WORKER_RESOURCE_LIMIT). A call
+ * works through stages until this much has gone; the transfer and refinement
+ * stages pause part-way at it. What the budget cannot interrupt — boot,
+ * reading the body, the transfer or trial in progress, serializing the
+ * checkpoint — fits in the remainder.
  */
 const STAGE_BUDGET_MS = 1_200;
+/**
+ * An auction's bidding and settlement cannot pause (about 0.5 s on the worker
+ * for a 288-quarter home), so a call starts one after finishing another only
+ * this early, leaving room for an auction three times that size.
+ */
+const AUCTION_START_MS = 300;
 
 /** Internal endpoint: requires a dedicated secret, never a device token or user JWT. */
 export async function handleEnergyPlanningStep(
@@ -54,20 +60,23 @@ export async function handleEnergyPlanningStep(
       return json({ error: "planning_protocol_mismatch" }, 409);
     }
     const started = performance.now();
+    const elapsed = () => performance.now() - received;
     const result: EnergyPlanningStep = energyPlanningStep(
       body.input,
       body.continuation,
-      () => performance.now() - received > STAGE_BUDGET_MS,
+      {
+        spent: () => elapsed() > STAGE_BUDGET_MS,
+        allowsAuction: () => elapsed() < AUCTION_START_MS,
+      },
     );
     console.info("[ENERGY-PLANNING-STEP] completed", {
       request_id: requestId,
       auction: body.continuation?.completed.length ?? 0,
-      stage: body.continuation?.checkpoint?.next ?? "auction_or_assembly",
+      stage: body.continuation?.checkpoint?.next ?? "auction",
       elapsed_ms: Math.round(performance.now() - started),
       done: result.done,
-      next: result.done === true
-        ? null
-        : result.continuation.checkpoint?.next ?? "auction",
+      finished: result.completed.length,
+      next: result.checkpoint?.next ?? null,
     });
     return json(result);
   } catch (error) {

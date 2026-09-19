@@ -1,10 +1,12 @@
 import type { OptimisationResult } from "./energy-optimisation.ts";
+import type { DispatchCheckpoint, DispatchResult } from "./dispatch-plan.ts";
 import {
   ENERGY_PLANNING_PROTOCOL,
-  type EnergyPlanningContinuation,
   type EnergyPlanningInput,
   type EnergyPlanningStep,
 } from "./energy-planning-protocol.ts";
+import { assembleOptimisationPlan } from "./energy-planning-step.ts";
+import { describeThrown } from "./ha-api-contract.ts";
 
 const MAX_STEPS = 64;
 
@@ -15,7 +17,12 @@ export class EnergyPlanningError extends Error {
   }
 }
 
-/** Network waits do not consume ingest's CPU budget. Never solve inline. */
+/**
+ * Network waits do not consume ingest's CPU budget, so every auction is solved
+ * by the planning worker; never solve inline. The worker returns each finished
+ * auction once and ingest assembles the plan from them, which is replay rather
+ * than search: the multi-megabyte plan never crosses the worker boundary.
+ */
 export async function generateRemoteOptimisationPlan(
   input: EnergyPlanningInput,
   connection: {
@@ -32,7 +39,13 @@ export async function generateRemoteOptimisationPlan(
   }
   const started = performance.now();
   const signal = AbortSignal.timeout(20_000);
-  let continuation: EnergyPlanningContinuation | undefined;
+  // The worker plans from the input as JSON delivers it, so the plan is
+  // assembled from that same form. Each part is serialized once, not per call.
+  const inputJson = JSON.stringify(input);
+  const wireInput: EnergyPlanningInput = JSON.parse(inputJson);
+  const completed: DispatchResult[] = [];
+  const completedJson: string[] = [];
+  let checkpoint: DispatchCheckpoint | undefined;
   for (let index = 0; index < MAX_STEPS; index += 1) {
     let response: Response;
     try {
@@ -45,11 +58,10 @@ export async function generateRemoteOptimisationPlan(
             "content-type": "application/json",
             "x-request-id": connection.requestId,
           },
-          body: JSON.stringify({
-            protocol: ENERGY_PLANNING_PROTOCOL,
-            input,
-            continuation,
-          }),
+          body: `{"protocol":${ENERGY_PLANNING_PROTOCOL},"input":${inputJson},` +
+            `"continuation":{"completed":[${completedJson.join(",")}]${
+              checkpoint ? `,"checkpoint":${JSON.stringify(checkpoint)}` : ""
+            }}}`,
           signal,
         },
       );
@@ -93,31 +105,41 @@ export async function generateRemoteOptimisationPlan(
         "Planning worker response protocol or request ID mismatch",
       );
     }
-    if (body.done === true) {
-      if (
-        body.plan?.snapshot_id !== input.snapshot.snapshot_id ||
-        body.plan.schema_version !== input.snapshot.schema_version
-      ) {
-        throw new EnergyPlanningError(
-          "Planning worker returned a plan for a different snapshot",
-        );
-      }
-      if (!body.battery_projection || !["ready", "unsupported"].includes(body.battery_projection.status) ||
-          body.battery_projection.status === "ready" &&
-          (body.battery_projection.provenance?.snapshot_id !== input.snapshot.snapshot_id ||
-           body.battery_projection.provenance?.issued_at !== body.plan.issued_at)) {
-        throw new EnergyPlanningError("Planning worker returned a missing or mismatched battery projection");
-      }
-      console.info("[ENERGY-PLANNING] request completed", { request_id: connection.requestId,
-        stages: index + 1, elapsed_ms: Math.round(performance.now() - started) });
-      return { plan: body.plan, battery_projection: body.battery_projection };
-    }
-    if (body.done !== false || !Array.isArray(body.continuation?.completed)) {
+    if (
+      typeof body.done !== "boolean" || !Array.isArray(body.completed) ||
+      (body.checkpoint !== undefined &&
+        (body.done || typeof body.checkpoint !== "object"))
+    ) {
       throw new EnergyPlanningError(
         "Planning worker returned an invalid continuation",
       );
     }
-    continuation = body.continuation;
+    for (const auction of body.completed) {
+      completed.push(auction);
+      completedJson.push(JSON.stringify(auction));
+    }
+    checkpoint = body.checkpoint;
+    if (body.done) {
+      const assembling = performance.now();
+      let result: OptimisationResult;
+      try {
+        result = assembleOptimisationPlan(wireInput, completed);
+      } catch (error) {
+        throw new EnergyPlanningError(
+          `Planning worker's auctions do not assemble into a plan: ${
+            describeThrown(error)
+          }`,
+        );
+      }
+      console.info("[ENERGY-PLANNING] request completed", {
+        request_id: connection.requestId,
+        calls: index + 1,
+        auctions: completed.length,
+        elapsed_ms: Math.round(performance.now() - started),
+        assembly_ms: Math.round(performance.now() - assembling),
+      });
+      return result;
+    }
   }
   throw new EnergyPlanningError("Planning worker exceeded the stage limit");
 }

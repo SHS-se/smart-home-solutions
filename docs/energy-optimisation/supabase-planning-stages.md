@@ -2,13 +2,22 @@
 
 `energy-optimisation-ingest` stores observations and prepares the snapshot, then
 calls the internal `energy-optimisation-plan-step` endpoint sequentially. Each
-call executes one auction stage: bidding and settlement, paired energy transfers,
-or cost refinement and diagnostics. A final call assembles all three scenarios.
-Each invocation has its own CPU budget; network waits do not consume ingest CPU.
-The transfer and refinement stages can also stop part-way once their call has
-spent 1.2 s (`STAGE_BUDGET_MS` in the worker): transfers between two transfers,
-refinement between two source quarters. The next call resumes from the
-checkpoint, and the plan is identical either way.
+auction has three stages: bidding and settlement, paired energy transfers, and
+cost refinement with diagnostics. Each invocation has its own CPU budget;
+network waits do not consume ingest CPU. A call works through stages until it
+has spent 1.2 s (`STAGE_BUDGET_MS` in the worker). The transfer and refinement
+stages stop part-way at that point, transfers between two transfers and
+refinement between two source quarters. Bidding and settlement cannot stop, so
+a call starts the next auction only within its first 0.3 s
+(`AUCTION_START_MS`). The next call resumes from the checkpoint, and the plan is
+identical wherever the calls divide the work.
+
+A call returns only what it added: the auctions it finished, and a checkpoint if
+it stopped inside one. Ingest keeps the continuation and, once every auction is
+done, assembles all three scenarios itself by replaying the finished auctions.
+Assembly never searches: an auction missing from the continuation is a planning
+failure. The multi-megabyte plan therefore never crosses the worker boundary,
+and each auction result crosses it once.
 
 The stages use the same generator as the synchronous planner. A continuation
 contains numeric schedules, trajectories, allocations and completed auction
@@ -27,9 +36,11 @@ leaving room inside the integration's existing 30-second request timeout.
 
 The step endpoint requires the project's `ENERGY_PLANNING_SECRET` in the
 `x-shs-planning-secret` header; device tokens and user JWTs cannot submit work. It has no database access.
-Every stage log carries the original request ID, auction index, stage, elapsed
-time and the stage the next call starts (`next`). Public Home Assistant schemas
-and planner model versions are unchanged.
+Every call's log carries the original request ID, the auction and stage it
+resumed, elapsed time, the auctions it finished and the stage the next call
+resumes (`next`). Ingest's completion log adds the number of calls and the
+assembly time. Public Home Assistant schemas and planner model versions are
+unchanged.
 
 ## Deployment and verification
 
@@ -40,15 +51,30 @@ the local deploy script run this first. Existing secrets are preserved across
 deployments. Both functions use the same Supabase project; there is no new paid
 service or database migration. Deploy both whenever their
 shared planning code changes. Incompatible checkpoint/wire changes require a
-bump to `ENERGY_PLANNING_PROTOCOL`; a mismatch fails explicitly. Paused stages
-only add optional fields to a checkpoint (`transferred`, `refinement`), and a
-checkpoint without them resumes as before, so they did not need a bump.
+bump to `ENERGY_PLANNING_PROTOCOL`; a mismatch fails explicitly. Protocol 4
+(incremental responses, ingest-side assembly) is one such change: between the
+two deployments of a CI run, ingest's pushes fail with a retryable 502. Paused
+stages only add optional fields to a checkpoint (`transferred`, `refinement`),
+and a checkpoint without them resumes as before, so those did not need a bump.
 
 Run `deno task test` for the full suite. The staged tests serialize every
 continuation and compare complete output against the synchronous planner for
 288-quarter sunny/dark snapshots, discrete EV alternatives and fixed schedules.
 `deno bench --no-check scripts/benchmark-energy-optimisation.ts` reports total
-planning time and individual stage time, including JSON parsing/serialization.
+planning time, individual stage time including JSON parsing/serialization, and
+ingest's assembly time.
+
+## Traffic
+
+Supabase bills Edge Function egress as data sent to the client, so the
+worker's responses to ingest count and ingest's requests to the worker do not. Before protocol 4, every call returned every finished auction again
+plus the checkpoint, and the last call returned the plan. On the test home's
+288-quarter input of 2026-09-19 that was 12 calls and 11.4 MB of decoded
+responses per plan (1.49 MB gzip). With stages chained under the budget,
+incremental responses and ingest-side assembly, the same plan took 8 calls and
+2.05 MB (0.34 MB gzip), with the call budget scaled to a local machine. Ingest's
+assembly took 39 ms locally. The worker's calls are still re-sent the whole
+input and continuation, about 8 MB per plan, as request bodies.
 
 Stage boundaries reduce CPU per invocation rather than total computation. An
 individual stage can still reach Supabase's limit as workloads grow. Use the

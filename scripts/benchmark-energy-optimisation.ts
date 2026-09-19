@@ -5,7 +5,10 @@ import {
   snapshot,
 } from "../src/lib/energy-shift/optimisation-snapshot.fixture.ts";
 import { generateOptimisationPlan } from "../supabase/functions/_shared/energy-optimisation.ts";
-import { energyPlanningStep } from "../supabase/functions/_shared/energy-planning-step.ts";
+import {
+  assembleOptimisationPlan,
+  energyPlanningStep,
+} from "../supabase/functions/_shared/energy-planning-step.ts";
 import type { EnergyPlanningContinuation } from "../supabase/functions/_shared/energy-planning-protocol.ts";
 
 for (const season of ["sunny", "dark"] as const) {
@@ -27,24 +30,26 @@ for (const season of ["sunny", "dark"] as const) {
       );
     }
   });
-  let continuation: EnergyPlanningContinuation | undefined;
+  // One stage per call, as a worker without a budget runs them.
+  const planningInput = { snapshot: input, now: CAPTURED_AT, price_archive: [] };
+  const continuation: EnergyPlanningContinuation = { completed: [] };
   for (let stage = 0; stage < 32; stage++) {
-    const payload = JSON.stringify({
-      input: { snapshot: input, now: CAPTURED_AT, price_archive: [] },
-      continuation,
-    });
+    const payload = JSON.stringify({ input: planningInput, continuation });
     const run = () => {
       const request = JSON.parse(payload);
       return energyPlanningStep(request.input, request.continuation);
     };
     const result = run();
-    const name = result.done
-      ? "assembly"
-      : continuation?.checkpoint?.next ?? "auction";
+    const name = continuation.checkpoint?.next ?? "auction";
     Deno.bench(`72-hour ${season} stage ${stage}: ${name}`, () => {
       JSON.stringify(run());
     });
-    if (result.done === true) break;
-    continuation = result.continuation;
+    continuation.completed.push(...result.completed);
+    continuation.checkpoint = result.checkpoint;
+    if (result.done) break;
   }
+  // Ingest's share: the plan from the finished auctions, replayed not searched.
+  Deno.bench(`72-hour ${season} ingest assembly`, () => {
+    assembleOptimisationPlan(planningInput, continuation.completed);
+  });
 }

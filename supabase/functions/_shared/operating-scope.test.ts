@@ -3,7 +3,7 @@ import { mixedModeSnapshot } from "../../../scripts/generate-ha-plan-fixture.ts"
 import { commandSnapshot } from "../../../scripts/generate-ha-device-plan-fixture.ts";
 import { generateOptimisationPlan, type OptimisationSnapshot } from "./energy-optimisation.ts";
 import { projectExecutionSnapshot, validateOperatingScope } from "./operating-scope.ts";
-import { energyPlanningStep } from "./energy-planning-step.ts";
+import { assembleOptimisationPlan, energyPlanningStep } from "./energy-planning-step.ts";
 import type { EnergyPlanningContinuation } from "./energy-planning-protocol.ts";
 
 Deno.test("mixed mode conserves fixed demand and conditions only the current quarter", () => {
@@ -65,14 +65,16 @@ Deno.test("scope requires complete nonnegative evidence and accepts observed zer
 
 Deno.test("both scope solves survive staged planning reconstruction", () => {
   const s = mixedModeSnapshot(); const now = s.captured_at;
-  let continuation: EnergyPlanningContinuation | undefined;
+  const input = {snapshot: s, now, price_archive: []};
+  const continuation: EnergyPlanningContinuation = { completed: [] };
   for (let i = 0; i < 100; i++) {
-    const step = energyPlanningStep({snapshot: s, now, price_archive: []}, continuation);
-    if (step.done === true) {
-      assertEquals(step.plan, generateOptimisationPlan(s, new Date(now)));
+    const step = energyPlanningStep(input, continuation);
+    continuation.completed.push(...step.completed);
+    continuation.checkpoint = step.checkpoint;
+    if (step.done) {
+      assertEquals(assembleOptimisationPlan(input, continuation.completed).plan, generateOptimisationPlan(s, new Date(now)));
       return;
     }
-    continuation = step.continuation;
   }
   throw new Error('scoped planner did not finish');
 });

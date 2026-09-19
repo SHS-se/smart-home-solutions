@@ -71,7 +71,7 @@ Deno.test("stored execution consumer fixture comes from the real planner", async
 });
 
 import { mixedModeSnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
-import { energyPlanningStep } from "./energy-planning-step.ts";
+import { assembleOptimisationPlan, energyPlanningStep } from "./energy-planning-step.ts";
 import type { EnergyPlanningContinuation } from "./energy-planning-protocol.ts";
 
 function captured(mode: "controlling" | "control_verification") {
@@ -117,15 +117,17 @@ Deno.test("excluded battery cannot be resurrected by retained feedback", () => {
 
 Deno.test("execution feedback survives staged worker planning and repeats deterministically", () => {
   const s = captured("control_verification");
-  let continuation: EnergyPlanningContinuation | undefined;
+  const input = { snapshot:s, now:s.captured_at, price_archive:[] };
+  const continuation: EnergyPlanningContinuation = { completed: [] };
   for (let i=0;i<100;i++) {
-    const step = energyPlanningStep({ snapshot:s, now:s.captured_at, price_archive:[] }, continuation);
-    if (step.done === true) {
-      assertEquals(step.plan.battery_execution,
+    const step = energyPlanningStep(input, continuation);
+    continuation.completed.push(...step.completed);
+    continuation.checkpoint = step.checkpoint;
+    if (step.done) {
+      assertEquals(assembleOptimisationPlan(input, continuation.completed).plan.battery_execution,
         generateOptimisationPlanWithBatteryProjection(s,new Date(s.captured_at)).plan.battery_execution);
       return;
     }
-    continuation=step.continuation;
   }
   throw new Error("worker did not finish");
 });

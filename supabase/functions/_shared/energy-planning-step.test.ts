@@ -7,12 +7,17 @@ import {
   generateOptimisationPlanWithBatteryProjection,
   type OptimisationSnapshot,
 } from "./energy-optimisation.ts";
-import { energyPlanningStep } from "./energy-planning-step.ts";
+import {
+  assembleOptimisationPlan,
+  energyPlanningStep,
+  type PlanningBudget,
+} from "./energy-planning-step.ts";
 import {
   ENERGY_PLANNING_PROTOCOL,
-  type EnergyPlanningContinuation,
   type EnergyPlanningInput,
+  type EnergyPlanningStep,
 } from "./energy-planning-protocol.ts";
+import type { DispatchCheckpoint, DispatchResult } from "./dispatch-plan.ts";
 import { handleEnergyPlanningStep } from "./energy-planning-worker.ts";
 import {
   EnergyPlanningError,
@@ -27,11 +32,21 @@ const inputFor = (snapshot: OptimisationSnapshot): EnergyPlanningInput => ({
   price_archive: [],
 });
 
-/** Returns how many times the transfer and refinement stages paused part-way. */
+/** A worker call's budget that runs out after `checks` pause points. */
+const countedBudget = (checks: number): () => PlanningBudget => () => {
+  let used = 0;
+  return { spent: () => ++used > checks, allowsAuction: () => used <= checks };
+};
+
+/**
+ * Runs the chain over JSON as ingest does, one budget per call, and checks the
+ * assembled plan against the synchronous planner. Returns how many calls it
+ * took and how often a stage paused part-way.
+ */
 function assertStagesMatch(
   input: EnergyPlanningInput,
-  budgetSpent?: () => boolean,
-): { transfers: number; refinement: number } {
+  budget?: () => PlanningBudget,
+) {
   const original = wire(input);
   const expected = generateOptimisationPlan(
     input.snapshot,
@@ -40,21 +55,30 @@ function assertStagesMatch(
     input.resolved_price_outlook,
     input.fixed_plan,
   );
-  let continuation: EnergyPlanningContinuation | undefined;
+  const completed: DispatchResult[] = [];
+  let checkpoint: DispatchCheckpoint | undefined;
   const seen = new Set<string>();
-  const paused = { transfers: 0, refinement: 0 };
+  const counts = { calls: 0, transfers: 0, refinement: 0 };
   for (let i = 0; i < 512; i++) {
-    const step = energyPlanningStep(wire(input), continuation, budgetSpent);
-    if (step.done === true) {
-      assertEquals(wire(step.plan), wire(expected));
+    counts.calls++;
+    const step: EnergyPlanningStep = wire(
+      energyPlanningStep(wire(input), wire({ completed, checkpoint }), budget?.()),
+    );
+    completed.push(...step.completed);
+    checkpoint = step.checkpoint;
+    if (step.done) {
+      assertEquals(checkpoint, undefined);
+      assertEquals(
+        wire(assembleOptimisationPlan(wire(input), completed).plan),
+        wire(expected),
+      );
       assertEquals(input, original);
-      assert(seen.has("transfers") && seen.has("refinement"));
-      return paused;
+      if (!budget) assert(seen.has("transfers") && seen.has("refinement"));
+      return counts;
     }
-    continuation = wire(step.continuation);
-    if (continuation.checkpoint) seen.add(continuation.checkpoint.next);
-    if (continuation.checkpoint?.transferred) paused.transfers++;
-    if (continuation.checkpoint?.refinement) paused.refinement++;
+    if (checkpoint) seen.add(checkpoint.next);
+    if (checkpoint?.transferred) counts.transfers++;
+    if (checkpoint?.refinement) counts.refinement++;
   }
   throw new Error("Planning did not finish");
 }
@@ -74,22 +98,24 @@ const seasonInput = (season: "sunny" | "dark") => {
 
 for (const season of ["sunny", "dark"] as const) {
   Deno.test(`distributed 288-quarter ${season} plan preserves every command and diagnostic`, () => {
-    assertEquals(assertStagesMatch(seasonInput(season)), {
-      transfers: 0,
-      refinement: 0,
-    });
+    const counts = assertStagesMatch(seasonInput(season));
+    assertEquals([counts.transfers, counts.refinement], [0, 0]);
   });
 
   Deno.test(`distributed ${season} plan survives transfer and refinement stages paused part-way`, () => {
     // A worker whose CPU budget is spent checkpoints between two transfers or
     // two refinement trials; the resumed stages must reach exactly the plan an
     // uninterrupted solve does.
-    let checks = 0;
-    const paused = assertStagesMatch(
-      seasonInput(season),
-      () => ++checks % 25 === 0,
-    );
-    assert(paused.transfers > 0 && paused.refinement > 0, JSON.stringify(paused));
+    const counts = assertStagesMatch(seasonInput(season), countedBudget(25));
+    assert(counts.transfers > 0 && counts.refinement > 0, JSON.stringify(counts));
+  });
+
+  Deno.test(`distributed ${season} plan crosses every boundary in memory when the budget allows`, () => {
+    const counts = assertStagesMatch(seasonInput(season), () => ({
+      spent: () => false,
+      allowsAuction: () => true,
+    }));
+    assertEquals(counts.calls, 1);
   });
 }
 
@@ -169,7 +195,41 @@ Deno.test("ingest client completes real planning over serialized stage requests"
     connection,
     fetcher,
   );
-  assert(calls >= 4);
+  assert(calls >= 1);
+  assertEquals(
+    result,
+    wire(generateOptimisationPlanWithBatteryProjection(input.snapshot, new Date(input.now))),
+  );
+});
+
+Deno.test("ingest client accumulates each call's auctions and checkpoint across many calls", async () => {
+  // A worker with almost no budget: every call pauses or ends at a boundary,
+  // so the client must carry the continuation exactly, call after call.
+  const input = inputFor(snapshot());
+  let calls = 0;
+  let resumed = 0;
+  const fetcher: typeof fetch = (_url, init) => {
+    calls++;
+    const body = JSON.parse(String(init!.body));
+    assertEquals(body.protocol, ENERGY_PLANNING_PROTOCOL);
+    if (body.continuation.checkpoint) resumed++;
+    const step = energyPlanningStep(
+      body.input,
+      body.continuation,
+      countedBudget(40)(),
+    );
+    return Promise.resolve(Response.json({
+      protocol: ENERGY_PLANNING_PROTOCOL,
+      request_id: connection.requestId,
+      ...step,
+    }));
+  };
+  const result = await generateRemoteOptimisationPlan(
+    input,
+    connection,
+    fetcher,
+  );
+  assert(calls > 3 && resumed > 0, JSON.stringify({ calls, resumed }));
   assertEquals(
     result,
     wire(generateOptimisationPlanWithBatteryProjection(input.snapshot, new Date(input.now))),
@@ -212,7 +272,14 @@ Deno.test("worker contract errors and malformed responses fail explicitly", asyn
         protocol: ENERGY_PLANNING_PROTOCOL,
         request_id: connection.requestId,
         done: true,
-        plan: { snapshot_id: "wrong" },
+        completed: [],
+        checkpoint: {},
+      },
+      {
+        protocol: ENERGY_PLANNING_PROTOCOL,
+        request_id: connection.requestId,
+        done: "yes",
+        completed: [],
       },
     ]
   ) {
@@ -278,15 +345,24 @@ Deno.test("distributed planning preserves the remaining horizon across a quarter
   assertStagesMatch(input);
 });
 
-Deno.test("worker cannot drop or substitute the exact battery projection", async () => {
+Deno.test("a worker cannot finish a plan it has not solved", async () => {
+  // Ingest assembles the plan by replaying the worker's auctions and never
+  // searches itself: a missing auction is a planning failure, not work to do.
   const input = inputFor(dispatchedEvSnapshot());
-  const plan = generateOptimisationPlan(input.snapshot, new Date(input.now));
-  for (const projection of [undefined, { status: "ready" },
-    { status: "ready", provenance: { snapshot_id: "wrong", issued_at: plan.issued_at } },
-    { status: "ready", provenance: { snapshot_id: plan.snapshot_id, issued_at: "wrong" } }]) {
-    await assertRejects(() => generateRemoteOptimisationPlan(input, connection, () => Promise.resolve(
-      Response.json({ protocol: ENERGY_PLANNING_PROTOCOL, request_id: connection.requestId,
-        done: true, plan, battery_projection: projection }),
-    )), EnergyPlanningError, "missing or mismatched battery projection");
-  }
+  let calls = 0;
+  await assertRejects(
+    () =>
+      generateRemoteOptimisationPlan(input, connection, () => {
+        calls++;
+        return Promise.resolve(Response.json({
+          protocol: ENERGY_PLANNING_PROTOCOL,
+          request_id: connection.requestId,
+          done: true,
+          completed: [],
+        }));
+      }),
+    EnergyPlanningError,
+    "do not assemble into a plan",
+  );
+  assertEquals(calls, 1);
 });

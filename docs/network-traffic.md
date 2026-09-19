@@ -100,3 +100,12 @@ before deploying the changed Edge Functions. Current HA builds already send the
 API-version header; no additional HA release is needed for this follow-up. The
 existing traffic reports can compare these endpoints over equivalent activity
 windows after deployment.
+
+The September 19 follow-up addresses the largest remaining source, the planning
+chain between `energy-optimisation-ingest` and `energy-optimisation-plan-step`.
+The worker now returns each finished auction once and never the plan, which
+ingest assembles from the auctions, and each call runs as many stages as its
+CPU budget allows. On the test home's input this cut the worker's decoded
+responses per plan from 11.4 MB to about 2 MB. See
+[planning within Supabase CPU limits](energy-optimisation/supabase-planning-stages.md#traffic).
+The full plan still goes to Home Assistant in every planned ingest response.
